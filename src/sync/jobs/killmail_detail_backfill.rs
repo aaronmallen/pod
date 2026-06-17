@@ -273,6 +273,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_is_a_no_op_when_no_killmail_needs_backfill() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let outcome = run_against(&db, &server.uri()).await;
+
+      assert_eq!(outcome, Outcome::Empty);
+    }
+
+    #[tokio::test]
     async fn it_never_posts_a_kill_hash_to_zkillboard() {
       let server = MockServer::start().await;
       mount_detail(&server, "/killmails/100/killhash/", detail_body()).await;
@@ -291,23 +308,6 @@ mod tests {
         .unwrap();
 
       run_against(&db, &server.uri()).await;
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_when_no_killmail_needs_backfill() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .respond_with(ResponseTemplate::new(500))
-        .expect(0)
-        .mount(&server)
-        .await;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let outcome = run_against(&db, &server.uri()).await;
-
-      assert_eq!(outcome, Outcome::Empty);
     }
   }
 }

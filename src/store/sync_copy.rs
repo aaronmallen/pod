@@ -263,80 +263,23 @@ mod tests {
     connection.close().await.unwrap();
   }
 
-  mod pull_if_newer {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_copies_the_canonical_copy_when_the_share_generation_is_newer() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"canonical bytes").unwrap();
-      write_generation(&layout.sidecar, 5).unwrap();
-      write_generation(&layout.marker, 3).unwrap();
-
-      let pulled = layout.engine().pull_if_newer().unwrap();
-
-      assert_eq!(pulled, true);
-      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"canonical bytes");
-      assert_eq!(read_generation(&layout.marker), 5);
-    }
-
-    #[test]
-    fn it_transfers_nothing_when_the_generations_are_equal() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"canonical bytes").unwrap();
-      fs::write(&layout.working_copy, b"local bytes").unwrap();
-      write_generation(&layout.sidecar, 4).unwrap();
-      write_generation(&layout.marker, 4).unwrap();
-
-      let pulled = layout.engine().pull_if_newer().unwrap();
-
-      assert_eq!(pulled, false);
-      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"local bytes");
-    }
-
-    #[test]
-    fn it_transfers_nothing_when_the_local_marker_is_ahead() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"canonical bytes").unwrap();
-      fs::write(&layout.working_copy, b"local bytes").unwrap();
-      write_generation(&layout.sidecar, 2).unwrap();
-      write_generation(&layout.marker, 9).unwrap();
-
-      let pulled = layout.engine().pull_if_newer().unwrap();
-
-      assert_eq!(pulled, false);
-      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"local bytes");
-    }
-
-    #[test]
-    fn it_does_not_back_up_the_working_copy_when_pulling_a_newer_canonical() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"share bytes").unwrap();
-      fs::write(&layout.working_copy, b"local bytes").unwrap();
-      write_generation(&layout.sidecar, 6).unwrap();
-      write_generation(&layout.marker, 2).unwrap();
-
-      layout.engine().pull_if_newer().unwrap();
-
-      let backups = fs::read_dir(layout.working_copy.parent().unwrap())
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .count();
-      assert_eq!(
-        backups, 0,
-        "the single-writer lease guarantees the parked copy holds no un-pushed writes, so the routine pull never backs up"
-      );
-      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"share bytes");
-    }
-  }
-
   mod checkpoint_and_push {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_bumps_both_generation_markers() {
+      let layout = Layout::new();
+      seed_wal_database(&layout.working_copy).await;
+      write_generation(&layout.sidecar, 7).unwrap();
+      write_generation(&layout.marker, 7).unwrap();
+
+      layout.engine().checkpoint_and_push().await.unwrap();
+
+      assert_eq!(read_generation(&layout.sidecar), 8);
+      assert_eq!(read_generation(&layout.marker), 8);
+    }
 
     #[tokio::test]
     async fn it_checkpoints_the_wal_and_pushes_a_self_contained_database() {
@@ -357,19 +300,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_bumps_both_generation_markers() {
-      let layout = Layout::new();
-      seed_wal_database(&layout.working_copy).await;
-      write_generation(&layout.sidecar, 7).unwrap();
-      write_generation(&layout.marker, 7).unwrap();
-
-      layout.engine().checkpoint_and_push().await.unwrap();
-
-      assert_eq!(read_generation(&layout.sidecar), 8);
-      assert_eq!(read_generation(&layout.marker), 8);
-    }
-
-    #[tokio::test]
     async fn it_never_copies_the_wal_or_shm_sidecars_to_the_share() {
       let layout = Layout::new();
       seed_wal_database(&layout.working_copy).await;
@@ -385,6 +315,17 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_leaves_the_source_in_place() {
+      let layout = Layout::new();
+      let destination = layout.canonical.parent().unwrap().join("consolidated.db");
+      seed_wal_database(&layout.working_copy).await;
+
+      checkpoint_into(&layout.working_copy, &destination).await.unwrap();
+
+      assert!(layout.working_copy.exists(), "the source is not consumed");
+    }
 
     #[tokio::test]
     async fn it_writes_a_self_contained_copy_without_wal_sidecars() {
@@ -405,17 +346,6 @@ mod tests {
       assert_eq!(body, "hello");
       assert!(!with_suffix(&destination, "-wal").exists());
       assert!(!with_suffix(&destination, "-shm").exists());
-    }
-
-    #[tokio::test]
-    async fn it_leaves_the_source_in_place() {
-      let layout = Layout::new();
-      let destination = layout.canonical.parent().unwrap().join("consolidated.db");
-      seed_wal_database(&layout.working_copy).await;
-
-      checkpoint_into(&layout.working_copy, &destination).await.unwrap();
-
-      assert!(layout.working_copy.exists(), "the source is not consumed");
     }
   }
 
@@ -506,68 +436,6 @@ mod tests {
     }
   }
 
-  mod publish_database {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_backs_up_a_non_empty_destination_before_overwriting_it() {
-      let layout = Layout::new();
-      // The gen-0-vs-0 data-loss scenario: an empty working copy about to clobber real canonical data.
-      fs::write(&layout.canonical, b"real canonical data").unwrap();
-      fs::write(&layout.working_copy, b"").unwrap();
-
-      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
-
-      let backup = fs::read_dir(layout.canonical.parent().unwrap())
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .expect("a timestamped backup of the prior canonical exists");
-      assert_eq!(fs::read(backup.path()).unwrap(), b"real canonical data");
-    }
-
-    #[test]
-    fn it_does_not_back_up_when_the_caller_signals_a_routine_replace() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"real canonical data").unwrap();
-      fs::write(&layout.working_copy, b"replacement data").unwrap();
-
-      publish_database(&layout.working_copy, &layout.canonical, false).unwrap();
-
-      let backups = fs::read_dir(layout.canonical.parent().unwrap())
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .count();
-      assert_eq!(
-        backups, 0,
-        "a routine replace overwrites a strict ancestor and warrants no backup"
-      );
-      assert_eq!(fs::read(&layout.canonical).unwrap(), b"replacement data");
-    }
-
-    #[test]
-    fn it_skips_the_backup_when_the_destination_is_missing_or_empty() {
-      let layout = Layout::new();
-      fs::write(&layout.working_copy, b"new data").unwrap();
-      // Destination absent.
-      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
-      // Destination present but empty.
-      fs::write(&layout.canonical, b"").unwrap();
-      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
-
-      let backups = fs::read_dir(layout.canonical.parent().unwrap())
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
-        .count();
-      assert_eq!(backups, 0, "nothing of value is overwritten, so no backup is written");
-      assert_eq!(fs::read(&layout.canonical).unwrap(), b"new data");
-    }
-  }
-
   mod prune_backups {
     use pretty_assertions::assert_eq;
 
@@ -649,6 +517,138 @@ mod tests {
         "the wal sidecar is untouched"
       );
       assert_eq!(backup_stamps(&layout.canonical).len(), 3);
+    }
+  }
+
+  mod publish_database {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_backs_up_a_non_empty_destination_before_overwriting_it() {
+      let layout = Layout::new();
+      // The gen-0-vs-0 data-loss scenario: an empty working copy about to clobber real canonical data.
+      fs::write(&layout.canonical, b"real canonical data").unwrap();
+      fs::write(&layout.working_copy, b"").unwrap();
+
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
+
+      let backup = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .expect("a timestamped backup of the prior canonical exists");
+      assert_eq!(fs::read(backup.path()).unwrap(), b"real canonical data");
+    }
+
+    #[test]
+    fn it_does_not_back_up_when_the_caller_signals_a_routine_replace() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"real canonical data").unwrap();
+      fs::write(&layout.working_copy, b"replacement data").unwrap();
+
+      publish_database(&layout.working_copy, &layout.canonical, false).unwrap();
+
+      let backups = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(
+        backups, 0,
+        "a routine replace overwrites a strict ancestor and warrants no backup"
+      );
+      assert_eq!(fs::read(&layout.canonical).unwrap(), b"replacement data");
+    }
+
+    #[test]
+    fn it_skips_the_backup_when_the_destination_is_missing_or_empty() {
+      let layout = Layout::new();
+      fs::write(&layout.working_copy, b"new data").unwrap();
+      // Destination absent.
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
+      // Destination present but empty.
+      fs::write(&layout.canonical, b"").unwrap();
+      publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
+
+      let backups = fs::read_dir(layout.canonical.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(backups, 0, "nothing of value is overwritten, so no backup is written");
+      assert_eq!(fs::read(&layout.canonical).unwrap(), b"new data");
+    }
+  }
+
+  mod pull_if_newer {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_copies_the_canonical_copy_when_the_share_generation_is_newer() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"canonical bytes").unwrap();
+      write_generation(&layout.sidecar, 5).unwrap();
+      write_generation(&layout.marker, 3).unwrap();
+
+      let pulled = layout.engine().pull_if_newer().unwrap();
+
+      assert_eq!(pulled, true);
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"canonical bytes");
+      assert_eq!(read_generation(&layout.marker), 5);
+    }
+
+    #[test]
+    fn it_does_not_back_up_the_working_copy_when_pulling_a_newer_canonical() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"share bytes").unwrap();
+      fs::write(&layout.working_copy, b"local bytes").unwrap();
+      write_generation(&layout.sidecar, 6).unwrap();
+      write_generation(&layout.marker, 2).unwrap();
+
+      layout.engine().pull_if_newer().unwrap();
+
+      let backups = fs::read_dir(layout.working_copy.parent().unwrap())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".backup"))
+        .count();
+      assert_eq!(
+        backups, 0,
+        "the single-writer lease guarantees the parked copy holds no un-pushed writes, so the routine pull never backs up"
+      );
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"share bytes");
+    }
+
+    #[test]
+    fn it_transfers_nothing_when_the_generations_are_equal() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"canonical bytes").unwrap();
+      fs::write(&layout.working_copy, b"local bytes").unwrap();
+      write_generation(&layout.sidecar, 4).unwrap();
+      write_generation(&layout.marker, 4).unwrap();
+
+      let pulled = layout.engine().pull_if_newer().unwrap();
+
+      assert_eq!(pulled, false);
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"local bytes");
+    }
+
+    #[test]
+    fn it_transfers_nothing_when_the_local_marker_is_ahead() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"canonical bytes").unwrap();
+      fs::write(&layout.working_copy, b"local bytes").unwrap();
+      write_generation(&layout.sidecar, 2).unwrap();
+      write_generation(&layout.marker, 9).unwrap();
+
+      let pulled = layout.engine().pull_if_newer().unwrap();
+
+      assert_eq!(pulled, false);
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"local bytes");
     }
   }
 }

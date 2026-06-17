@@ -131,6 +131,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_defaults_items_to_an_empty_list_when_absent() {
+      let body = r#"{"ship_type_id": 35832, "damage_taken": 142}"#;
+
+      let victim: Victim = serde_json::from_str(body).unwrap();
+
+      assert!(victim.items.is_empty());
+    }
+
+    #[test]
     fn it_deserializes_a_realistic_esi_item_array_keyed_by_item_type_id() {
       let body = r#"{
         "character_id": 2002,
@@ -163,15 +172,6 @@ mod tests {
       assert_eq!(victim.items[3].type_id, 3467);
       assert_eq!(victim.items[3].items.len(), 2);
       assert_eq!(victim.items[3].items[0].type_id, 34);
-    }
-
-    #[test]
-    fn it_defaults_items_to_an_empty_list_when_absent() {
-      let body = r#"{"ship_type_id": 35832, "damage_taken": 142}"#;
-
-      let victim: Victim = serde_json::from_str(body).unwrap();
-
-      assert!(victim.items.is_empty());
     }
   }
 }

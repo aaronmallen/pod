@@ -1048,13 +1048,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_the_catalog_without_a_selection() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = modal(&state);
-    }
-
-    #[test]
     fn it_renders_the_catalog_with_a_family_variant_selected() {
       let mut state = State::new();
       let filters = Filters {
@@ -1077,17 +1070,19 @@ mod tests {
 
       let _el: Element<'_, Message> = modal(&state);
     }
+
+    #[test]
+    fn it_renders_the_catalog_without_a_selection() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = modal(&state);
+    }
   }
 
   mod modal_selected_label {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_returns_the_label_for_a_single_row_type() {
-      assert_eq!(modal_selected_label(47702), Some("Stasis Webifier".to_owned()));
-    }
 
     #[test]
     fn it_qualifies_a_family_variant_with_its_size() {
@@ -1097,6 +1092,11 @@ mod tests {
     #[test]
     fn it_returns_none_for_an_unknown_type() {
       assert_eq!(modal_selected_label(1), None);
+    }
+
+    #[test]
+    fn it_returns_the_label_for_a_single_row_type() {
+      assert_eq!(modal_selected_label(47702), Some("Stasis Webifier".to_owned()));
     }
   }
 }

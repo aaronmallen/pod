@@ -147,7 +147,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_persists_skill_metadata_and_dogma_for_a_skill_type() {
+    async fn it_aborts_without_writing_when_a_skill_is_missing_a_dogma_attribute() {
       let server = MockServer::start().await;
       mount_json(
         &server,
@@ -157,7 +157,6 @@ mod tests {
           "dogma_attributes": [
             { "attribute_id": 275, "value": 1.0 },
             { "attribute_id": 180, "value": 167.0 },
-            { "attribute_id": 181, "value": 168.0 },
           ],
         }),
       )
@@ -171,16 +170,10 @@ mod tests {
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let ctx = build_ctx(&db, &esi, &image, &image_store);
 
-      resolve_item_type(&ctx, 3300).await.unwrap();
+      let result = resolve_item_type(&ctx, 3300).await;
 
-      let metadata = skills::get_skill_metadata(&db, 3300).await.unwrap().unwrap();
-      assert_eq!(metadata.rank(), 1);
-      assert_eq!(metadata.primary_attribute(), 167);
-      assert_eq!(metadata.secondary_attribute(), 168);
-
-      let item_type = sde::get_item_type(&db, 3300).await.unwrap().unwrap();
-      let dogma: serde_json::Value = serde_json::from_str(item_type.dogma_attributes()).unwrap();
-      assert_eq!(dogma.as_array().unwrap().len(), 3);
+      assert!(result.is_err());
+      assert_eq!(skills::get_skill_metadata(&db, 3300).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -221,7 +214,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_aborts_without_writing_when_a_skill_is_missing_a_dogma_attribute() {
+    async fn it_persists_skill_metadata_and_dogma_for_a_skill_type() {
       let server = MockServer::start().await;
       mount_json(
         &server,
@@ -231,6 +224,7 @@ mod tests {
           "dogma_attributes": [
             { "attribute_id": 275, "value": 1.0 },
             { "attribute_id": 180, "value": 167.0 },
+            { "attribute_id": 181, "value": 168.0 },
           ],
         }),
       )
@@ -244,10 +238,16 @@ mod tests {
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let ctx = build_ctx(&db, &esi, &image, &image_store);
 
-      let result = resolve_item_type(&ctx, 3300).await;
+      resolve_item_type(&ctx, 3300).await.unwrap();
 
-      assert!(result.is_err());
-      assert_eq!(skills::get_skill_metadata(&db, 3300).await.unwrap(), None);
+      let metadata = skills::get_skill_metadata(&db, 3300).await.unwrap().unwrap();
+      assert_eq!(metadata.rank(), 1);
+      assert_eq!(metadata.primary_attribute(), 167);
+      assert_eq!(metadata.secondary_attribute(), 168);
+
+      let item_type = sde::get_item_type(&db, 3300).await.unwrap().unwrap();
+      let dogma: serde_json::Value = serde_json::from_str(item_type.dogma_attributes()).unwrap();
+      assert_eq!(dogma.as_array().unwrap().len(), 3);
     }
   }
 }

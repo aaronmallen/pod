@@ -62,14 +62,28 @@ fn portion(factor: u16) -> Length {
 mod tests {
   use super::*;
 
+  mod portion {
+    use iced::Length;
+
+    use super::super::portion;
+
+    #[test]
+    fn it_uses_a_fill_portion_for_a_non_empty_segment() {
+      assert_eq!(portion(1), Length::FillPortion(1));
+      assert_eq!(portion(1000), Length::FillPortion(1000));
+    }
+
+    #[test]
+    fn it_uses_a_true_zero_width_for_an_empty_segment() {
+      // `FillPortion(0)` resolves to the full width, so an empty segment must be
+      // `Fixed(0.0)` to avoid a 0% bar painting full / a 100% bar painting empty.
+      assert_eq!(portion(0), Length::Fixed(0.0));
+    }
+  }
+
   mod progress_bar {
     use super::*;
     use crate::ui::style::color;
-
-    #[test]
-    fn it_renders_a_partial_fill() {
-      let _el: Element<'_, ()> = progress_bar(0.5, color::accent::PLASMA, 2.0);
-    }
 
     #[test]
     fn it_clamps_out_of_range_fractions() {
@@ -78,28 +92,14 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_a_partial_fill() {
+      let _el: Element<'_, ()> = progress_bar(0.5, color::accent::PLASMA, 2.0);
+    }
+
+    #[test]
     fn it_renders_empty_and_full_boundaries() {
       let _empty: Element<'_, ()> = progress_bar(0.0, color::accent::PLASMA, 2.0);
       let _full: Element<'_, ()> = progress_bar(1.0, color::accent::PLASMA, 2.0);
-    }
-  }
-
-  mod portion {
-    use iced::Length;
-
-    use super::super::portion;
-
-    #[test]
-    fn it_uses_a_true_zero_width_for_an_empty_segment() {
-      // `FillPortion(0)` resolves to the full width, so an empty segment must be
-      // `Fixed(0.0)` to avoid a 0% bar painting full / a 100% bar painting empty.
-      assert_eq!(portion(0), Length::Fixed(0.0));
-    }
-
-    #[test]
-    fn it_uses_a_fill_portion_for_a_non_empty_segment() {
-      assert_eq!(portion(1), Length::FillPortion(1));
-      assert_eq!(portion(1000), Length::FillPortion(1000));
     }
   }
 }

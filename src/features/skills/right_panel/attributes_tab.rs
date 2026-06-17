@@ -203,8 +203,17 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_the_awaiting_state_with_no_model() {
-    let _el: Element<'_, ()> = view(None, now());
+  fn it_flags_an_out_of_spec_current_base() {
+    let mut row = attributes_row();
+    row.charisma = 31;
+    row.intelligence = 17;
+    row.memory = 17;
+    row.perception = 17;
+    row.willpower = 17;
+    let model = AttrTabModel::new(&row, Attributes::default(), None, &weights());
+
+    assert!(model.recommendation.current_out_of_spec);
+    let _el: Element<'_, ()> = view(Some(&model), now());
   }
 
   #[test]
@@ -243,16 +252,7 @@ mod tests {
   }
 
   #[test]
-  fn it_flags_an_out_of_spec_current_base() {
-    let mut row = attributes_row();
-    row.charisma = 31;
-    row.intelligence = 17;
-    row.memory = 17;
-    row.perception = 17;
-    row.willpower = 17;
-    let model = AttrTabModel::new(&row, Attributes::default(), None, &weights());
-
-    assert!(model.recommendation.current_out_of_spec);
-    let _el: Element<'_, ()> = view(Some(&model), now());
+  fn it_renders_the_awaiting_state_with_no_model() {
+    let _el: Element<'_, ()> = view(None, now());
   }
 }

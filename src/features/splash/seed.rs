@@ -1454,6 +1454,179 @@ fn default_one_f64() -> f64 {
 mod tests {
   use super::*;
 
+  mod build_blueprint_rows {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn parse(yaml: &str) -> HashMap<i64, SdeBlueprintEntry> {
+      serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn it_captures_activity_time_and_max_production_limit() {
+      let entries = parse(
+        "939:\n  activities:\n    manufacturing:\n      \
+        products:\n        - { typeID: 587, quantity: 1 }\n      time: 600\n      maxProductionLimit: 300\n",
+      );
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        meta,
+        vec![BlueprintActivityMetaRow {
+          activity_id: 1,
+          blueprint_type_id: 939,
+          max_production_limit: 300,
+          time: 600,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_defaults_a_missing_max_production_limit_to_zero() {
+      let entries = parse(
+        "939:\n  activities:\n    reaction:\n      products:\n        - { typeID: 16640, quantity: 200 }\n      time: 3600\n",
+      );
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        meta,
+        vec![BlueprintActivityMetaRow {
+          activity_id: 11,
+          blueprint_type_id: 939,
+          max_production_limit: 0,
+          time: 3600,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_omits_meta_for_an_activity_without_a_time() {
+      let entries =
+        parse("939:\n  activities:\n    manufacturing:\n      products:\n        - { typeID: 587, quantity: 1 }\n");
+
+      let (_products, _materials, meta) = build_blueprint_rows(entries);
+
+      assert!(meta.is_empty());
+    }
+
+    #[test]
+    fn it_skips_unknown_activity_names() {
+      let entries = parse(
+        "1:\n  activities:\n    mystery:\n      materials:\n        \
+        - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+      );
+
+      let (products, materials, meta) = build_blueprint_rows(entries);
+
+      assert!(products.is_empty());
+      assert!(materials.is_empty());
+      assert!(meta.is_empty());
+    }
+
+    #[test]
+    fn it_splits_products_and_materials_with_mapped_activity_ids() {
+      let entries = parse(
+        "939:\n  activities:\n    manufacturing:\n      materials:\n        \
+        - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
+      );
+
+      let (products, materials, _meta) = build_blueprint_rows(entries);
+
+      assert_eq!(
+        products,
+        vec![BlueprintActivityRow {
+          blueprint_type_id: 939,
+          activity_id: 1,
+          type_id: 587,
+          quantity: 1,
+        }]
+      );
+      assert_eq!(
+        materials,
+        vec![BlueprintActivityRow {
+          blueprint_type_id: 939,
+          activity_id: 1,
+          type_id: 34,
+          quantity: 32,
+        }]
+      );
+    }
+  }
+
+  mod build_cert_skill_levels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_levels_into_the_zero_to_five_range() {
+      let lvl = CertSkillLevel {
+        basic: -3,
+        improved: 0,
+        advanced: 5,
+        elite: 9,
+      };
+
+      assert_eq!(build_cert_skill_levels(&lvl), [0, 0, 5, 5]);
+    }
+
+    #[test]
+    fn it_maps_each_grade_level_in_order() {
+      let lvl = CertSkillLevel {
+        basic: 1,
+        improved: 2,
+        advanced: 3,
+        elite: 4,
+      };
+
+      assert_eq!(build_cert_skill_levels(&lvl), [1, 2, 3, 4]);
+    }
+  }
+
+  mod build_dogma_attribute {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn make_entry(display_name: Option<&str>, description: Option<&str>) -> SdeDogmaAttrEntry {
+      SdeDogmaAttrEntry {
+        name: "cpuOutput".to_owned(),
+        display_name: display_name.map(|d| LocalizedString {
+          en: Some(d.to_owned()),
+        }),
+        description: description.map(str::to_owned),
+        default_value: Some(0.0),
+        high_is_good: true,
+        icon_id: Some(1403),
+        published: true,
+        stackable: false,
+        unit_id: Some(101),
+      }
+    }
+
+    #[test]
+    fn it_drops_empty_display_name_and_description_to_none() {
+      let model = build_dogma_attribute(48, make_entry(Some(""), Some("")));
+
+      assert_eq!(model.display_name(), &None);
+      assert_eq!(model.description(), &None);
+    }
+
+    #[test]
+    fn it_maps_the_localized_display_name_to_english() {
+      let model = build_dogma_attribute(48, make_entry(Some("CPU Output"), None));
+
+      assert_eq!(model.attribute_id(), 48);
+      assert_eq!(model.name(), "cpuOutput");
+      assert_eq!(model.display_name().as_deref(), Some("CPU Output"));
+      assert_eq!(model.high_is_good(), true);
+      assert_eq!(model.unit_id(), Some(101));
+    }
+  }
+
   mod build_item_type {
     use pretty_assertions::assert_eq;
 
@@ -1494,44 +1667,95 @@ mod tests {
     }
   }
 
-  mod build_dogma_attribute {
+  mod build_mastery_entries {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn make_entry(display_name: Option<&str>, description: Option<&str>) -> SdeDogmaAttrEntry {
-      SdeDogmaAttrEntry {
-        name: "cpuOutput".to_owned(),
-        display_name: display_name.map(|d| LocalizedString {
-          en: Some(d.to_owned()),
-        }),
-        description: description.map(str::to_owned),
-        default_value: Some(0.0),
-        high_is_good: true,
-        icon_id: Some(1403),
-        published: true,
-        stackable: false,
-        unit_id: Some(101),
-      }
+    fn make_outer(ship_id: i64, tier: i64, certs: Vec<i64>) -> serde_yaml::Mapping {
+      let cert_seq =
+        serde_yaml::Value::Sequence(certs.into_iter().map(|c| serde_yaml::Value::Number(c.into())).collect());
+      let mut tier_map = serde_yaml::Mapping::new();
+      tier_map.insert(serde_yaml::Value::Number(tier.into()), cert_seq);
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::Number(ship_id.into()),
+        serde_yaml::Value::Mapping(tier_map),
+      );
+      outer
     }
 
     #[test]
-    fn it_maps_the_localized_display_name_to_english() {
-      let model = build_dogma_attribute(48, make_entry(Some("CPU Output"), None));
+    fn it_accepts_tier_index_4_storing_it_as_5() {
+      let outer = make_outer(1234, 4, vec![100]);
 
-      assert_eq!(model.attribute_id(), 48);
-      assert_eq!(model.name(), "cpuOutput");
-      assert_eq!(model.display_name().as_deref(), Some("CPU Output"));
-      assert_eq!(model.high_is_good(), true);
-      assert_eq!(model.unit_id(), Some(101));
+      let result = build_mastery_entries(outer);
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].1, 5);
     }
 
     #[test]
-    fn it_drops_empty_display_name_and_description_to_none() {
-      let model = build_dogma_attribute(48, make_entry(Some(""), Some("")));
+    fn it_extracts_ship_tier_and_cert_ids() {
+      let outer = make_outer(1234, 2, vec![100, 200]);
 
-      assert_eq!(model.display_name(), &None);
-      assert_eq!(model.description(), &None);
+      let result = build_mastery_entries(outer);
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].0, 1234);
+      assert_eq!(result[0].1, 3);
+      assert_eq!(result[0].2, vec![100, 200]);
+    }
+
+    #[test]
+    fn it_returns_empty_for_empty_mapping() {
+      let result = build_mastery_entries(serde_yaml::Mapping::new());
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_entries_with_empty_cert_ids() {
+      let outer = make_outer(1234, 1, vec![]);
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_non_numeric_ship_keys() {
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::String("not-a-number".to_string()),
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+      );
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_ships_with_non_mapping_tiers_value() {
+      let mut outer = serde_yaml::Mapping::new();
+      outer.insert(
+        serde_yaml::Value::Number(1234i64.into()),
+        serde_yaml::Value::String("not-a-mapping".to_string()),
+      );
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
+    }
+
+    #[test]
+    fn it_skips_tier_index_5_and_above() {
+      let outer = make_outer(1234, 5, vec![100]);
+
+      let result = build_mastery_entries(outer);
+
+      assert!(result.is_empty());
     }
   }
 
@@ -1565,17 +1789,6 @@ mod tests {
     }
 
     #[test]
-    fn it_rounds_fractional_dogma_values() {
-      let d = dogma(&[(275, 2.6), (180, 167.4), (181, 165.5)]);
-
-      let result = build_skill_metadata(3300, Some(&d)).unwrap();
-
-      assert_eq!(result.rank(), 3);
-      assert_eq!(result.primary_attribute(), 167);
-      assert_eq!(result.secondary_attribute(), 166);
-    }
-
-    #[test]
     fn it_returns_none_when_a_required_attribute_is_missing() {
       let d = dogma(&[(275, 1.0), (180, 167.0)]);
 
@@ -1586,239 +1799,16 @@ mod tests {
     fn it_returns_none_when_no_dogma_exists() {
       assert!(build_skill_metadata(3300, None).is_none());
     }
-  }
-
-  mod seed_types {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store;
-
-    async fn write_yaml(dir: &Path, name: &str, body: &str) {
-      tokio::fs::write(dir.join(name), body).await.unwrap();
-    }
-
-    async fn write_fixture(dir: &Path) {
-      write_yaml(
-        dir,
-        "categories.yaml",
-        "16: { name: { en: Skill }, published: true }\n4: { name: { en: Material }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        dir,
-        "groups.yaml",
-        "255: { categoryID: 16, name: { en: Gunnery }, published: true }\n\
-        18: { categoryID: 4, name: { en: Mineral }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        dir,
-        "types.yaml",
-        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
-        3301: { groupID: 255, name: { en: Small Hybrid Turret }, published: true }\n\
-        3302: { groupID: 255, name: { en: Retired Skill }, published: false }\n\
-        34: { groupID: 18, name: { en: Tritanium }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        dir,
-        "typeDogma.yaml",
-        "3300:\n  dogmaAttributes:\n    - { attributeID: 275, value: 1.0 }\n    \
-        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 166.0 }\n\
-        3301:\n  dogmaAttributes:\n    - { attributeID: 275, value: 2.0 }\n    \
-        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 168.0 }\n",
-      )
-      .await;
-    }
-
-    async fn run_seed_types(dir: &Path) -> Database {
-      let db = store::open_test().await.unwrap();
-      seed_categories(&db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(&db, &dir.join("groups.yaml")).await.unwrap();
-      seed_types(
-        &db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
-      )
-      .await
-      .unwrap();
-      db
-    }
-
-    #[tokio::test]
-    async fn it_seeds_one_metadata_row_per_published_skill() {
-      let tmp = tempfile::tempdir().unwrap();
-      write_fixture(tmp.path()).await;
-
-      let db = run_seed_types(tmp.path()).await;
-
-      let m3300 = skills::get_skill_metadata(&db, 3300).await.unwrap().unwrap();
-      assert_eq!(m3300.rank(), 1);
-      assert_eq!(m3300.primary_attribute(), 167);
-      assert_eq!(m3300.secondary_attribute(), 166);
-
-      let m3301 = skills::get_skill_metadata(&db, 3301).await.unwrap().unwrap();
-      assert_eq!(m3301.rank(), 2);
-      assert_eq!(m3301.secondary_attribute(), 168);
-
-      assert_eq!(skills::get_skill_metadata(&db, 34).await.unwrap(), None);
-      assert_eq!(skills::get_skill_metadata(&db, 3302).await.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent_across_reseed() {
-      let tmp = tempfile::tempdir().unwrap();
-      write_fixture(tmp.path()).await;
-
-      let db = run_seed_types(tmp.path()).await;
-      seed_types(
-        &db,
-        &tmp.path().join("types.yaml"),
-        &tmp.path().join("typeDogma.yaml"),
-        &tmp.path().join("groups.yaml"),
-      )
-      .await
-      .unwrap();
-
-      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM skill_metadata")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(count, 2);
-    }
-
-    #[tokio::test]
-    async fn it_carries_module_skill_requirement_dogma_through_to_the_picker() {
-      let tmp = tempfile::tempdir().unwrap();
-      write_yaml(
-        tmp.path(),
-        "categories.yaml",
-        "7: { name: { en: Module }, published: true }\n16: { name: { en: Skill }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        tmp.path(),
-        "groups.yaml",
-        "55: { categoryID: 7, name: { en: Projectile Weapon }, published: true }\n\
-        255: { categoryID: 16, name: { en: Gunnery }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        tmp.path(),
-        "types.yaml",
-        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
-        2929: { groupID: 55, name: { en: 200mm AutoCannon I }, published: true }\n",
-      )
-      .await;
-      write_yaml(
-        tmp.path(),
-        "typeDogma.yaml",
-        "2929:\n  dogmaAttributes:\n    - { attributeID: 182, value: 3300.0 }\n    \
-        - { attributeID: 277, value: 1.0 }\n",
-      )
-      .await;
-
-      let db = run_seed_types(tmp.path()).await;
-
-      let modules = skills::modules_for_picker(&db).await.unwrap();
-      assert_eq!(modules.len(), 1);
-      assert_eq!(modules[0].id, 2929);
-      assert_eq!(modules[0].group_name, "Projectile Weapon");
-      assert_eq!(modules[0].skill_requirements, vec![("Gunnery".to_owned(), 1)]);
-    }
-  }
-
-  mod build_mastery_entries {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn make_outer(ship_id: i64, tier: i64, certs: Vec<i64>) -> serde_yaml::Mapping {
-      let cert_seq =
-        serde_yaml::Value::Sequence(certs.into_iter().map(|c| serde_yaml::Value::Number(c.into())).collect());
-      let mut tier_map = serde_yaml::Mapping::new();
-      tier_map.insert(serde_yaml::Value::Number(tier.into()), cert_seq);
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::Number(ship_id.into()),
-        serde_yaml::Value::Mapping(tier_map),
-      );
-      outer
-    }
 
     #[test]
-    fn it_returns_empty_for_empty_mapping() {
-      let result = build_mastery_entries(serde_yaml::Mapping::new());
+    fn it_rounds_fractional_dogma_values() {
+      let d = dogma(&[(275, 2.6), (180, 167.4), (181, 165.5)]);
 
-      assert!(result.is_empty());
-    }
+      let result = build_skill_metadata(3300, Some(&d)).unwrap();
 
-    #[test]
-    fn it_extracts_ship_tier_and_cert_ids() {
-      let outer = make_outer(1234, 2, vec![100, 200]);
-
-      let result = build_mastery_entries(outer);
-
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].0, 1234);
-      assert_eq!(result[0].1, 3);
-      assert_eq!(result[0].2, vec![100, 200]);
-    }
-
-    #[test]
-    fn it_skips_tier_index_5_and_above() {
-      let outer = make_outer(1234, 5, vec![100]);
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
-    }
-
-    #[test]
-    fn it_skips_entries_with_empty_cert_ids() {
-      let outer = make_outer(1234, 1, vec![]);
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
-    }
-
-    #[test]
-    fn it_accepts_tier_index_4_storing_it_as_5() {
-      let outer = make_outer(1234, 4, vec![100]);
-
-      let result = build_mastery_entries(outer);
-
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].1, 5);
-    }
-
-    #[test]
-    fn it_skips_ships_with_non_mapping_tiers_value() {
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::Number(1234i64.into()),
-        serde_yaml::Value::String("not-a-mapping".to_string()),
-      );
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
-    }
-
-    #[test]
-    fn it_skips_non_numeric_ship_keys() {
-      let mut outer = serde_yaml::Mapping::new();
-      outer.insert(
-        serde_yaml::Value::String("not-a-number".to_string()),
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
-      );
-
-      let result = build_mastery_entries(outer);
-
-      assert!(result.is_empty());
+      assert_eq!(result.rank(), 3);
+      assert_eq!(result.primary_attribute(), 167);
+      assert_eq!(result.secondary_attribute(), 166);
     }
   }
 
@@ -1826,6 +1816,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_differs_when_sde_build_differs() {
+      let a = composite_version("20240101.1");
+      let b = composite_version("20240102.1");
+
+      assert_ne!(a, b);
+    }
 
     #[test]
     fn it_embeds_the_sde_build_pod_version_and_seed_revision() {
@@ -1840,65 +1838,89 @@ mod tests {
         )
       );
     }
+  }
+
+  mod derive_orbit_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fixture() -> (
+      HashMap<i64, SdeMapPlanetEntry>,
+      HashMap<i64, SdeMapMoonEntry>,
+      HashMap<i64, String>,
+    ) {
+      let planets = HashMap::from([(
+        40009082,
+        SdeMapPlanetEntry {
+          celestial_index: 4,
+          solar_system_id: 30000142,
+        },
+      )]);
+      let moons = HashMap::from([(
+        40009087,
+        SdeMapMoonEntry {
+          orbit_id: 40009082,
+          orbit_index: 4,
+          position: None,
+          radius: None,
+          solar_system_id: None,
+          type_id: None,
+        },
+      )]);
+      let systems = HashMap::from([(30000142, "Jita".to_owned())]);
+      (planets, moons, systems)
+    }
 
     #[test]
-    fn it_differs_when_sde_build_differs() {
-      let a = composite_version("20240101.1");
-      let b = composite_version("20240102.1");
+    fn it_names_a_moon_with_an_arabic_orbit_index_under_its_parent_planet() {
+      let (planets, moons, systems) = fixture();
 
-      assert_ne!(a, b);
+      let name = derive_orbit_name(Some(40009087), &planets, &moons, &systems);
+
+      assert_eq!(name.as_deref(), Some("Jita IV - Moon 4"));
+    }
+
+    #[test]
+    fn it_names_a_planet_with_a_roman_celestial_index() {
+      let (planets, moons, systems) = fixture();
+
+      let name = derive_orbit_name(Some(40009082), &planets, &moons, &systems);
+
+      assert_eq!(name.as_deref(), Some("Jita IV"));
+    }
+
+    #[test]
+    fn it_returns_none_for_an_unknown_orbit() {
+      let (planets, moons, systems) = fixture();
+
+      assert_eq!(derive_orbit_name(Some(999), &planets, &moons, &systems), None);
+      assert_eq!(derive_orbit_name(None, &planets, &moons, &systems), None);
     }
   }
 
-  mod should_skip_download {
+  mod derive_station_name {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    fn it_skips_when_the_marker_matches_the_current_composite() {
-      let dir = tempfile::tempdir().unwrap();
-      let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
+    fn it_appends_the_operation_name_when_present() {
+      let name = derive_station_name(Some("Jita IV - Moon 4"), Some("Caldari Navy"), Some("Assembly Plant"));
 
-      assert!(should_skip_download(Some("12345"), Some(&marker), true));
+      assert_eq!(name, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
     }
 
     #[test]
-    fn it_downloads_when_only_the_build_matches_a_stale_composite() {
-      let dir = tempfile::tempdir().unwrap();
-      let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, "12345+pod-0.0.0+seed-0").unwrap();
+    fn it_omits_the_operation_name_when_absent() {
+      let name = derive_station_name(Some("Tanoo IV"), Some("Amarr Navy"), None);
 
-      assert!(!should_skip_download(Some("12345"), Some(&marker), true));
-    }
-
-    #[test]
-    fn it_downloads_when_the_probe_returns_nothing() {
-      let dir = tempfile::tempdir().unwrap();
-      let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
-
-      assert!(!should_skip_download(None, Some(&marker), true));
-    }
-
-    #[test]
-    fn it_downloads_when_the_database_is_not_yet_seeded() {
-      let dir = tempfile::tempdir().unwrap();
-      let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
-
-      assert!(!should_skip_download(Some("12345"), Some(&marker), false));
+      assert_eq!(name, "Tanoo IV - Amarr Navy");
     }
   }
 
   mod parse_cert_ids {
     use super::*;
-
-    #[test]
-    fn it_returns_empty_for_non_sequence_value() {
-      let result = parse_cert_ids(serde_yaml::Value::Null);
-
-      assert!(result.is_empty());
-    }
 
     #[test]
     fn it_extracts_cert_ids_from_sequence() {
@@ -1908,6 +1930,13 @@ mod tests {
       ]);
 
       assert_eq!(parse_cert_ids(v), vec![100, 200]);
+    }
+
+    #[test]
+    fn it_returns_empty_for_non_sequence_value() {
+      let result = parse_cert_ids(serde_yaml::Value::Null);
+
+      assert!(result.is_empty());
     }
 
     #[test]
@@ -1940,15 +1969,15 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_none_for_non_numeric_string() {
-      let v = serde_yaml::Value::String("bad".to_string());
+    fn it_returns_none_for_mapping_value() {
+      let v = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
 
       assert_eq!(parse_tier_index(&v), None);
     }
 
     #[test]
-    fn it_returns_none_for_mapping_value() {
-      let v = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+    fn it_returns_none_for_non_numeric_string() {
+      let v = serde_yaml::Value::String("bad".to_string());
 
       assert_eq!(parse_tier_index(&v), None);
     }
@@ -1980,317 +2009,113 @@ mod tests {
     }
   }
 
-  mod build_cert_skill_levels {
+  mod roman_numeral {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_maps_each_grade_level_in_order() {
-      let lvl = CertSkillLevel {
-        basic: 1,
-        improved: 2,
-        advanced: 3,
-        elite: 4,
-      };
-
-      assert_eq!(build_cert_skill_levels(&lvl), [1, 2, 3, 4]);
+    fn it_converts_celestial_indices_to_roman_numerals() {
+      assert_eq!(roman_numeral(1), "I");
+      assert_eq!(roman_numeral(4), "IV");
+      assert_eq!(roman_numeral(9), "IX");
+      assert_eq!(roman_numeral(14), "XIV");
+      assert_eq!(roman_numeral(29), "XXIX");
     }
 
     #[test]
-    fn it_clamps_levels_into_the_zero_to_five_range() {
-      let lvl = CertSkillLevel {
-        basic: -3,
-        improved: 0,
-        advanced: 5,
-        elite: 9,
-      };
-
-      assert_eq!(build_cert_skill_levels(&lvl), [0, 0, 5, 5]);
+    fn it_falls_back_to_arabic_for_non_positive_values() {
+      assert_eq!(roman_numeral(0), "0");
+      assert_eq!(roman_numeral(-3), "-3");
     }
   }
 
-  mod seed_races {
-    use pretty_assertions::assert_eq;
-
+  mod sde_is_current {
     use super::*;
-    use crate::store::{self, repo::sde};
 
-    #[tokio::test]
-    async fn it_seeds_races_and_defaults_a_missing_alliance_to_zero() {
+    #[test]
+    fn it_reports_current_when_the_marker_matches_the_composite() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("races.yaml");
-      tokio::fs::write(
-        &path,
-        "1: { name: { en: Caldari }, allianceID: 500001 }\n4: { name: { en: Jove } }\n",
-      )
-      .await
-      .unwrap();
-      let db = store::open_test().await.unwrap();
+      let marker = tmp.path().join("sde_version");
+      let composite = composite_version("20240101.1");
+      write_stored_sde_version(&marker, &composite);
 
-      seed_races(&db, &path).await.unwrap();
+      assert!(sde_is_current(Some(&marker), Some(&composite)));
+    }
 
-      let caldari = sde::get_race(&db, 1).await.unwrap().unwrap();
-      assert_eq!(caldari.name(), "Caldari");
-      assert_eq!(caldari.alliance_id(), 500_001);
+    #[test]
+    fn it_reports_stale_for_a_versionless_build() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("sde_version");
+      write_stored_sde_version(&marker, &composite_version("20240101.1"));
 
-      let jove = sde::get_race(&db, 4).await.unwrap().unwrap();
-      assert_eq!(jove.alliance_id(), 0);
+      assert!(!sde_is_current(Some(&marker), None));
+    }
+
+    #[test]
+    fn it_reports_stale_when_the_marker_differs() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("sde_version");
+      write_stored_sde_version(&marker, &composite_version("20240101.1"));
+
+      assert!(!sde_is_current(Some(&marker), Some(&composite_version("20240102.1"))));
+    }
+
+    #[test]
+    fn it_reports_stale_when_the_marker_is_absent() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("sde_version");
+
+      assert!(!sde_is_current(Some(&marker), Some("20240101.1+pod-0.5.0+seed-2")));
     }
   }
 
-  mod seed_bloodlines {
+  mod seed_abyssal_module_stats {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::{self, model::Race, repo::sde};
+    use crate::store::{self, repo::assets};
 
-    async fn seed_parent_race(db: &Database) {
-      sde::upsert_race(db, &Race::new(1, 0, "Caldari", "Caldari"))
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_seeds_bloodlines_and_sets_a_present_ship_type_id() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("bloodlines.yaml");
-      tokio::fs::write(
-        &path,
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035, shipTypeID: 596, \
-        charisma: 6, intelligence: 9, memory: 7, perception: 4, willpower: 4 }\n",
-      )
-      .await
-      .unwrap();
-      let db = store::open_test().await.unwrap();
-      seed_parent_race(&db).await;
-
-      seed_bloodlines(&db, &path).await.unwrap();
-
-      let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
-      assert_eq!(deteis.name, "Deteis");
-      assert_eq!(deteis.race_id, 1);
-      assert_eq!(deteis.ship_type_id, Some(596));
-      assert_eq!(deteis.charisma, 6);
-    }
+    const FIXTURE: &str = "47405:\n  \
+      attributeIDs:\n    6: { min: 0.6, max: 1.4 }\n    30: { min: 0.9, max: 1.1 }\n  \
+      inputOutputMapping:\n    - { applicableTypes: [12058], resultingType: 47408 }\n    \
+      - { applicableTypes: [12060], resultingType: 47410 }\n";
 
     #[tokio::test]
-    async fn it_leaves_ship_type_id_null_when_the_sde_value_is_zero() {
+    async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("bloodlines.yaml");
-      tokio::fs::write(
-        &path,
-        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035 }\n",
-      )
-      .await
-      .unwrap();
-      let db = store::open_test().await.unwrap();
-      seed_parent_race(&db).await;
-
-      seed_bloodlines(&db, &path).await.unwrap();
-
-      let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
-      assert_eq!(deteis.ship_type_id, None);
-    }
-  }
-
-  mod seed_factions {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{self, repo::sde};
-
-    #[tokio::test]
-    async fn it_seeds_factions_with_solar_system_and_unique_flag() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("factions.yaml");
-      tokio::fs::write(
-        &path,
-        "500001: { name: { en: Caldari State }, sizeFactor: 5.5, solarSystemID: 30000145, isUnique: true }\n\
-        500024: { name: { en: Generic } }\n",
-      )
-      .await
-      .unwrap();
+      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
 
-      seed_factions(&db, &path).await.unwrap();
+      seed_abyssal_module_stats(&db, &path).await.unwrap();
+      seed_abyssal_module_stats(&db, &path).await.unwrap();
 
-      let state = sde::get_faction(&db, 500_001).await.unwrap().unwrap();
-      assert_eq!(state.name, "Caldari State");
-      assert_eq!(state.size_factor, 5.5);
-      assert_eq!(state.solar_system_id, Some(30_000_145));
-      assert_eq!(state.is_unique, 1);
-      assert_eq!(state.station_count, 0);
-
-      let generic = sde::get_faction(&db, 500_024).await.unwrap().unwrap();
-      assert_eq!(generic.size_factor, 1.0);
-      assert_eq!(generic.is_unique, 0);
-      assert_eq!(generic.solar_system_id, None);
-    }
-  }
-
-  mod seed_certificates {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{self, repo::skills};
-
-    async fn seed_parent_skills(db: &Database, dir: &Path, ids: &[i64]) {
-      tokio::fs::write(dir.join("categories.yaml"), "16: { name: { en: Skill } }\n")
-        .await
-        .unwrap();
-      tokio::fs::write(
-        dir.join("groups.yaml"),
-        "255: { categoryID: 16, name: { en: Gunnery } }\n",
-      )
-      .await
-      .unwrap();
-      let types: String = ids
-        .iter()
-        .map(|id| format!("{id}: {{ groupID: 255, name: {{ en: Skill }} }}\n"))
-        .collect();
-      tokio::fs::write(dir.join("types.yaml"), types).await.unwrap();
-      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
-
-      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
-      seed_types(
-        db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
-      )
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_seeds_certificates_with_their_per_skill_levels() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("certificates.yaml");
-      tokio::fs::write(
-        &path,
-        "1001:\n  name: { en: Core Fitting }\n  description: { en: Basic fitting }\n  grade: 3\n  \
-        skillTypes:\n    3300: { basic: 1, improved: 3, advanced: 4, elite: 5 }\n    \
-        3301: { basic: 2 }\n",
-      )
-      .await
-      .unwrap();
-      let db = store::open_test().await.unwrap();
-      seed_parent_skills(&db, tmp.path(), &[3300, 3301]).await;
-
-      seed_certificates(&db, &path).await.unwrap();
-
-      let cert = skills::by_ids(&db, &[1001]).await.unwrap();
-      assert_eq!(cert.len(), 1);
-      assert_eq!(cert[0].grade(), 3);
-      assert_eq!(cert[0].name(), "Core Fitting");
-
-      let mut skills = skills::skills_for(&db, 1001).await.unwrap();
-      skills.sort_by_key(|s| s.skill_id());
-      assert_eq!(skills.len(), 2);
-      assert_eq!(skills[0].skill_id(), 3300);
-      assert_eq!(skills[0].basic(), 1);
-      assert_eq!(skills[0].improved(), 3);
-      assert_eq!(skills[0].advanced(), 4);
-      assert_eq!(skills[0].elite(), 5);
-    }
-
-    #[tokio::test]
-    async fn it_defaults_and_clamps_grade_into_one_to_five() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("certificates.yaml");
-      tokio::fs::write(
-        &path,
-        "1001:\n  name: { en: NoGrade }\n1002:\n  name: { en: TooHigh }\n  grade: 9\n",
-      )
-      .await
-      .unwrap();
-      let db = store::open_test().await.unwrap();
-
-      seed_certificates(&db, &path).await.unwrap();
-
-      let certs = skills::by_ids(&db, &[1001, 1002]).await.unwrap();
-      let by_id = |id: i64| certs.iter().find(|c| c.id() == id).unwrap();
-      assert_eq!(by_id(1001).grade(), 1);
-      assert_eq!(by_id(1002).grade(), 5);
-    }
-  }
-
-  mod seed_masteries {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{self, model::Certificate, repo::skills};
-
-    async fn seed_parents(db: &Database, dir: &Path) {
-      tokio::fs::write(dir.join("categories.yaml"), "25: { name: { en: Ship } }\n")
-        .await
-        .unwrap();
-      tokio::fs::write(
-        dir.join("groups.yaml"),
-        "25: { categoryID: 25, name: { en: Frigate } }\n",
-      )
-      .await
-      .unwrap();
-      tokio::fs::write(dir.join("types.yaml"), "596: { groupID: 25, name: { en: Impairor } }\n")
-        .await
-        .unwrap();
-      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
-      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
-      seed_types(
-        db,
-        &dir.join("types.yaml"),
-        &dir.join("typeDogma.yaml"),
-        &dir.join("groups.yaml"),
-      )
-      .await
-      .unwrap();
-      skills::certificate_upsert_many(
-        db,
-        &[Certificate {
-          description: None,
-          grade: 1,
-          id: 100,
-          name: "Cert".to_owned(),
-        }],
-        &[],
-      )
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_seeds_one_mastery_row_per_cert_at_each_tier() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("masteries.yaml");
-      tokio::fs::write(&path, "596:\n  1:\n    - 100\n").await.unwrap();
-      let db = store::open_test().await.unwrap();
-      seed_parents(&db, tmp.path()).await;
-
-      seed_masteries(&db, &path).await.unwrap();
-
-      let masteries = skills::for_ship(&db, 596).await.unwrap();
-      assert_eq!(masteries.len(), 1);
-      assert_eq!(masteries[0].certificate_id(), 100);
-      assert_eq!(masteries[0].tier(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_is_a_noop_when_the_file_has_no_usable_rows() {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("masteries.yaml");
-      tokio::fs::write(&path, "- just-a-list\n").await.unwrap();
-      let db = store::open_test().await.unwrap();
-
-      seed_masteries(&db, &path).await.unwrap();
-
-      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ship_masteries")
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM abyssal_module_stats")
         .fetch_one(&db.0)
         .await
         .unwrap();
-      assert_eq!(count, 0);
+      assert_eq!(count, 4);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_one_bound_row_per_resulting_type_and_attribute() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      tokio::fs::write(&path, FIXTURE).await.unwrap();
+      let db = store::open_test().await.unwrap();
+
+      seed_abyssal_module_stats(&db, &path).await.unwrap();
+
+      let stats = assets::module_stats_for_type(&db, 47408).await.unwrap();
+      assert_eq!(stats.len(), 2);
+      let attr6 = stats.iter().find(|s| s.attribute_id() == 6).unwrap();
+      assert_eq!(attr6.min_mult(), 0.6);
+      assert_eq!(attr6.max_mult(), 1.4);
+
+      let mut ids = assets::abyssal_type_ids(&db).await.unwrap();
+      ids.sort_unstable();
+      assert_eq!(ids, [47408, 47410]);
     }
   }
 
@@ -2493,38 +2318,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_if_stale_writes_the_version_marker_when_stale() {
-      let tmp = tempfile::tempdir().unwrap();
-      write_full_fixture(tmp.path()).await;
-      let marker = tmp.path().join("sde_version");
-      let db = store::open_test().await.unwrap();
-      let (mut tx, _rx) = channel();
-
-      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
-        .await
-        .unwrap();
-
-      assert_eq!(read_stored_sde_version(&marker), Some(composite_version("20240101.1")));
-      assert!(sde::get_race(&db, 1).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn seed_if_stale_skips_seeding_when_the_stored_version_matches() {
-      let tmp = tempfile::tempdir().unwrap();
-      write_full_fixture(tmp.path()).await;
-      let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
-      let db = store::open_test().await.unwrap();
-      let (mut tx, _rx) = channel();
-
-      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
-        .await
-        .unwrap();
-
-      assert!(sde::get_race(&db, 1).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
     async fn seed_if_stale_backfills_dogma_attributes_when_current_but_unseeded() {
       let tmp = tempfile::tempdir().unwrap();
       write_full_fixture(tmp.path()).await;
@@ -2556,194 +2349,246 @@ mod tests {
       assert!(sde::get_race(&db, 1).await.unwrap().is_some());
       assert!(!marker.exists());
     }
-  }
 
-  mod sde_is_current {
-    use super::*;
-
-    #[test]
-    fn it_reports_current_when_the_marker_matches_the_composite() {
+    #[tokio::test]
+    async fn seed_if_stale_skips_seeding_when_the_stored_version_matches() {
       let tmp = tempfile::tempdir().unwrap();
-      let marker = tmp.path().join("sde_version");
-      let composite = composite_version("20240101.1");
-      write_stored_sde_version(&marker, &composite);
-
-      assert!(sde_is_current(Some(&marker), Some(&composite)));
-    }
-
-    #[test]
-    fn it_reports_stale_when_the_marker_differs() {
-      let tmp = tempfile::tempdir().unwrap();
+      write_full_fixture(tmp.path()).await;
       let marker = tmp.path().join("sde_version");
       write_stored_sde_version(&marker, &composite_version("20240101.1"));
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
 
-      assert!(!sde_is_current(Some(&marker), Some(&composite_version("20240102.1"))));
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
+        .await
+        .unwrap();
+
+      assert!(sde::get_race(&db, 1).await.unwrap().is_none());
     }
 
-    #[test]
-    fn it_reports_stale_when_the_marker_is_absent() {
+    #[tokio::test]
+    async fn seed_if_stale_writes_the_version_marker_when_stale() {
       let tmp = tempfile::tempdir().unwrap();
+      write_full_fixture(tmp.path()).await;
       let marker = tmp.path().join("sde_version");
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
 
-      assert!(!sde_is_current(Some(&marker), Some("20240101.1+pod-0.5.0+seed-2")));
-    }
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
+        .await
+        .unwrap();
 
-    #[test]
-    fn it_reports_stale_for_a_versionless_build() {
-      let tmp = tempfile::tempdir().unwrap();
-      let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
-
-      assert!(!sde_is_current(Some(&marker), None));
+      assert_eq!(read_stored_sde_version(&marker), Some(composite_version("20240101.1")));
+      assert!(sde::get_race(&db, 1).await.unwrap().is_some());
     }
   }
 
-  mod seed_abyssal_module_stats {
+  mod seed_bloodlines {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::{self, repo::assets};
+    use crate::store::{self, model::Race, repo::sde};
 
-    const FIXTURE: &str = "47405:\n  \
-      attributeIDs:\n    6: { min: 0.6, max: 1.4 }\n    30: { min: 0.9, max: 1.1 }\n  \
-      inputOutputMapping:\n    - { applicableTypes: [12058], resultingType: 47408 }\n    \
-      - { applicableTypes: [12060], resultingType: 47410 }\n";
+    async fn seed_parent_race(db: &Database) {
+      sde::upsert_race(db, &Race::new(1, 0, "Caldari", "Caldari"))
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
-    async fn it_seeds_one_bound_row_per_resulting_type_and_attribute() {
+    async fn it_leaves_ship_type_id_null_when_the_sde_value_is_zero() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      let path = tmp.path().join("bloodlines.yaml");
+      tokio::fs::write(
+        &path,
+        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035 }\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+      seed_parent_race(&db).await;
+
+      seed_bloodlines(&db, &path).await.unwrap();
+
+      let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
+      assert_eq!(deteis.ship_type_id, None);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_bloodlines_and_sets_a_present_ship_type_id() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("bloodlines.yaml");
+      tokio::fs::write(
+        &path,
+        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035, shipTypeID: 596, \
+        charisma: 6, intelligence: 9, memory: 7, perception: 4, willpower: 4 }\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+      seed_parent_race(&db).await;
+
+      seed_bloodlines(&db, &path).await.unwrap();
+
+      let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
+      assert_eq!(deteis.name, "Deteis");
+      assert_eq!(deteis.race_id, 1);
+      assert_eq!(deteis.ship_type_id, Some(596));
+      assert_eq!(deteis.charisma, 6);
+    }
+  }
+
+  mod seed_blueprints {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    /// A two-blueprint fixture: a manufacturing blueprint that makes a Rifter from minerals, and a
+    /// reaction blueprint that makes a moon material. Exercises both activity kinds and both tables.
+    const FIXTURE: &str = "\
+939:
+  activities:
+    manufacturing:
+      materials:
+        - { typeID: 34, quantity: 32 }
+        - { typeID: 35, quantity: 6 }
+      products:
+        - { typeID: 587, quantity: 1 }
+      time: 600
+      maxProductionLimit: 300
+    copying:
+      time: 480
+  blueprintTypeID: 939
+46167:
+  activities:
+    reaction:
+      materials:
+        - { typeID: 16633, quantity: 100 }
+      products:
+        - { typeID: 16640, quantity: 200 }
+      time: 3600
+  blueprintTypeID: 46167
+";
+
+    async fn seed_fixture() -> Database {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("blueprints.yaml");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
-
-      seed_abyssal_module_stats(&db, &path).await.unwrap();
-
-      let stats = assets::module_stats_for_type(&db, 47408).await.unwrap();
-      assert_eq!(stats.len(), 2);
-      let attr6 = stats.iter().find(|s| s.attribute_id() == 6).unwrap();
-      assert_eq!(attr6.min_mult(), 0.6);
-      assert_eq!(attr6.max_mult(), 1.4);
-
-      let mut ids = assets::abyssal_type_ids(&db).await.unwrap();
-      ids.sort_unstable();
-      assert_eq!(ids, [47408, 47410]);
+      super::super::seed_blueprints(&db, &path).await.unwrap();
+      db
     }
 
     #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("dynamicItemAttributes.yaml");
+      let path = tmp.path().join("blueprints.yaml");
       tokio::fs::write(&path, FIXTURE).await.unwrap();
       let db = store::open_test().await.unwrap();
 
-      seed_abyssal_module_stats(&db, &path).await.unwrap();
-      seed_abyssal_module_stats(&db, &path).await.unwrap();
+      super::super::seed_blueprints(&db, &path).await.unwrap();
+      super::super::seed_blueprints(&db, &path).await.unwrap();
 
-      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM abyssal_module_stats")
+      let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_products")
         .fetch_one(&db.0)
         .await
         .unwrap();
-      assert_eq!(count, 4);
-    }
-  }
+      let materials: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_materials")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
 
-  mod roman_numeral {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_converts_celestial_indices_to_roman_numerals() {
-      assert_eq!(roman_numeral(1), "I");
-      assert_eq!(roman_numeral(4), "IV");
-      assert_eq!(roman_numeral(9), "IX");
-      assert_eq!(roman_numeral(14), "XIV");
-      assert_eq!(roman_numeral(29), "XXIX");
+      assert_eq!(products, 2);
+      assert_eq!(materials, 3);
     }
 
-    #[test]
-    fn it_falls_back_to_arabic_for_non_positive_values() {
-      assert_eq!(roman_numeral(0), "0");
-      assert_eq!(roman_numeral(-3), "-3");
-    }
-  }
+    #[tokio::test]
+    async fn it_records_reaction_products_under_activity_eleven() {
+      let db = seed_fixture().await;
 
-  mod derive_orbit_name {
-    use pretty_assertions::assert_eq;
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_products \
+        WHERE blueprint_type_id = 46167 AND activity_id = 11 AND product_type_id = 16640",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
 
-    use super::*;
-
-    fn fixture() -> (
-      HashMap<i64, SdeMapPlanetEntry>,
-      HashMap<i64, SdeMapMoonEntry>,
-      HashMap<i64, String>,
-    ) {
-      let planets = HashMap::from([(
-        40009082,
-        SdeMapPlanetEntry {
-          celestial_index: 4,
-          solar_system_id: 30000142,
-        },
-      )]);
-      let moons = HashMap::from([(
-        40009087,
-        SdeMapMoonEntry {
-          orbit_id: 40009082,
-          orbit_index: 4,
-          position: None,
-          radius: None,
-          solar_system_id: None,
-          type_id: None,
-        },
-      )]);
-      let systems = HashMap::from([(30000142, "Jita".to_owned())]);
-      (planets, moons, systems)
+      assert_eq!(quantity, 200);
     }
 
-    #[test]
-    fn it_names_a_planet_with_a_roman_celestial_index() {
-      let (planets, moons, systems) = fixture();
+    #[tokio::test]
+    async fn it_seeds_a_manufacturing_product_row() {
+      let db = seed_fixture().await;
 
-      let name = derive_orbit_name(Some(40009082), &planets, &moons, &systems);
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_products \
+        WHERE blueprint_type_id = 939 AND activity_id = 1 AND product_type_id = 587",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
 
-      assert_eq!(name.as_deref(), Some("Jita IV"));
+      assert_eq!(quantity, 1);
     }
 
-    #[test]
-    fn it_names_a_moon_with_an_arabic_orbit_index_under_its_parent_planet() {
-      let (planets, moons, systems) = fixture();
+    #[tokio::test]
+    async fn it_seeds_manufacturing_activity_meta() {
+      let db = seed_fixture().await;
 
-      let name = derive_orbit_name(Some(40009087), &planets, &moons, &systems);
+      let row: (i64, i64) = sqlx::query_as(
+        "SELECT time, max_production_limit FROM blueprint_activity_meta \
+        WHERE blueprint_type_id = 939 AND activity_id = 1",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
 
-      assert_eq!(name.as_deref(), Some("Jita IV - Moon 4"));
+      assert_eq!(row, (600, 300));
     }
 
-    #[test]
-    fn it_returns_none_for_an_unknown_orbit() {
-      let (planets, moons, systems) = fixture();
+    #[tokio::test]
+    async fn it_seeds_manufacturing_material_rows() {
+      let db = seed_fixture().await;
 
-      assert_eq!(derive_orbit_name(Some(999), &planets, &moons, &systems), None);
-      assert_eq!(derive_orbit_name(None, &planets, &moons, &systems), None);
-    }
-  }
+      let quantity: i64 = sqlx::query_scalar(
+        "SELECT quantity FROM blueprint_activity_materials \
+        WHERE blueprint_type_id = 939 AND activity_id = 1 AND material_type_id = 34",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
 
-  mod derive_station_name {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_appends_the_operation_name_when_present() {
-      let name = derive_station_name(Some("Jita IV - Moon 4"), Some("Caldari Navy"), Some("Assembly Plant"));
-
-      assert_eq!(name, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      assert_eq!(quantity, 32);
     }
 
-    #[test]
-    fn it_omits_the_operation_name_when_absent() {
-      let name = derive_station_name(Some("Tanoo IV"), Some("Amarr Navy"), None);
+    #[tokio::test]
+    async fn it_seeds_reaction_activity_meta() {
+      let db = seed_fixture().await;
 
-      assert_eq!(name, "Tanoo IV - Amarr Navy");
+      let row: (i64, i64) = sqlx::query_as(
+        "SELECT time, max_production_limit FROM blueprint_activity_meta \
+        WHERE blueprint_type_id = 46167 AND activity_id = 11",
+      )
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+
+      assert_eq!(row, (3600, 0));
+    }
+
+    #[tokio::test]
+    async fn it_skips_meta_for_non_build_activities() {
+      let db = seed_fixture().await;
+
+      let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_meta WHERE activity_id NOT IN (1, 11)")
+          .fetch_one(&db.0)
+          .await
+          .unwrap();
+
+      assert_eq!(count, 0);
     }
   }
 
@@ -2773,6 +2618,26 @@ mod tests {
       .execute(&db.0)
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_across_reseed() {
+      let tmp = tempfile::tempdir().unwrap();
+      write(tmp.path(), "agentTypes.yaml", "2: { name: BasicAgent }\n").await;
+      let db = store::open_test().await.unwrap();
+
+      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+        .await
+        .unwrap();
+      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+        .await
+        .unwrap();
+
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_types")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(count, 1);
     }
 
     #[tokio::test]
@@ -2810,41 +2675,6 @@ mod tests {
         .await
         .unwrap();
       assert_eq!(division, "R&D");
-    }
-
-    #[tokio::test]
-    async fn it_upserts_npc_corporations_without_clobbering_esi_columns() {
-      let tmp = tempfile::tempdir().unwrap();
-      write(
-        tmp.path(),
-        "npcCorporations.yaml",
-        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000001, tickerName: CN }\n",
-      )
-      .await;
-      let db = store::open_test().await.unwrap();
-      sqlx::query(
-        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
-        VALUES (1000035, 42, 7, 99, 'Stale', 0.1, 'OLD')",
-      )
-      .execute(&db.0)
-      .await
-      .unwrap();
-
-      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"))
-        .await
-        .unwrap();
-
-      let (name, ticker, faction, ceo, members): (String, String, i64, i64, i64) =
-        sqlx::query_as("SELECT name, ticker, faction_id, ceo_id, member_count FROM corporations WHERE id = 1000035")
-          .fetch_one(&db.0)
-          .await
-          .unwrap();
-      assert_eq!(name, "Caldari Navy");
-      assert_eq!(ticker, "CN");
-      assert_eq!(faction, 500_001);
-
-      assert_eq!(ceo, 42);
-      assert_eq!(members, 99);
     }
 
     #[tokio::test]
@@ -2966,279 +2796,449 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_is_idempotent_across_reseed() {
+    async fn it_upserts_npc_corporations_without_clobbering_esi_columns() {
       let tmp = tempfile::tempdir().unwrap();
-      write(tmp.path(), "agentTypes.yaml", "2: { name: BasicAgent }\n").await;
+      write(
+        tmp.path(),
+        "npcCorporations.yaml",
+        "1000035: { name: { en: Caldari Navy }, factionID: 500001, stationID: 60000001, tickerName: CN }\n",
+      )
+      .await;
       let db = store::open_test().await.unwrap();
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (1000035, 42, 7, 99, 'Stale', 0.1, 'OLD')",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
 
-      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
-        .await
-        .unwrap();
-      seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
+      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"))
         .await
         .unwrap();
 
-      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_types")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(count, 1);
+      let (name, ticker, faction, ceo, members): (String, String, i64, i64, i64) =
+        sqlx::query_as("SELECT name, ticker, faction_id, ceo_id, member_count FROM corporations WHERE id = 1000035")
+          .fetch_one(&db.0)
+          .await
+          .unwrap();
+      assert_eq!(name, "Caldari Navy");
+      assert_eq!(ticker, "CN");
+      assert_eq!(faction, 500_001);
+
+      assert_eq!(ceo, 42);
+      assert_eq!(members, 99);
     }
   }
 
-  mod seed_blueprints {
+  mod seed_certificates {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::skills};
+
+    async fn seed_parent_skills(db: &Database, dir: &Path, ids: &[i64]) {
+      tokio::fs::write(dir.join("categories.yaml"), "16: { name: { en: Skill } }\n")
+        .await
+        .unwrap();
+      tokio::fs::write(
+        dir.join("groups.yaml"),
+        "255: { categoryID: 16, name: { en: Gunnery } }\n",
+      )
+      .await
+      .unwrap();
+      let types: String = ids
+        .iter()
+        .map(|id| format!("{id}: {{ groupID: 255, name: {{ en: Skill }} }}\n"))
+        .collect();
+      tokio::fs::write(dir.join("types.yaml"), types).await.unwrap();
+      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
+
+      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
+      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
+      seed_types(
+        db,
+        &dir.join("types.yaml"),
+        &dir.join("typeDogma.yaml"),
+        &dir.join("groups.yaml"),
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_defaults_and_clamps_grade_into_one_to_five() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("certificates.yaml");
+      tokio::fs::write(
+        &path,
+        "1001:\n  name: { en: NoGrade }\n1002:\n  name: { en: TooHigh }\n  grade: 9\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+
+      seed_certificates(&db, &path).await.unwrap();
+
+      let certs = skills::by_ids(&db, &[1001, 1002]).await.unwrap();
+      let by_id = |id: i64| certs.iter().find(|c| c.id() == id).unwrap();
+      assert_eq!(by_id(1001).grade(), 1);
+      assert_eq!(by_id(1002).grade(), 5);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_certificates_with_their_per_skill_levels() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("certificates.yaml");
+      tokio::fs::write(
+        &path,
+        "1001:\n  name: { en: Core Fitting }\n  description: { en: Basic fitting }\n  grade: 3\n  \
+        skillTypes:\n    3300: { basic: 1, improved: 3, advanced: 4, elite: 5 }\n    \
+        3301: { basic: 2 }\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+      seed_parent_skills(&db, tmp.path(), &[3300, 3301]).await;
+
+      seed_certificates(&db, &path).await.unwrap();
+
+      let cert = skills::by_ids(&db, &[1001]).await.unwrap();
+      assert_eq!(cert.len(), 1);
+      assert_eq!(cert[0].grade(), 3);
+      assert_eq!(cert[0].name(), "Core Fitting");
+
+      let mut skills = skills::skills_for(&db, 1001).await.unwrap();
+      skills.sort_by_key(|s| s.skill_id());
+      assert_eq!(skills.len(), 2);
+      assert_eq!(skills[0].skill_id(), 3300);
+      assert_eq!(skills[0].basic(), 1);
+      assert_eq!(skills[0].improved(), 3);
+      assert_eq!(skills[0].advanced(), 4);
+      assert_eq!(skills[0].elite(), 5);
+    }
+  }
+
+  mod seed_factions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::sde};
+
+    #[tokio::test]
+    async fn it_seeds_factions_with_solar_system_and_unique_flag() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("factions.yaml");
+      tokio::fs::write(
+        &path,
+        "500001: { name: { en: Caldari State }, sizeFactor: 5.5, solarSystemID: 30000145, isUnique: true }\n\
+        500024: { name: { en: Generic } }\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+
+      seed_factions(&db, &path).await.unwrap();
+
+      let state = sde::get_faction(&db, 500_001).await.unwrap().unwrap();
+      assert_eq!(state.name, "Caldari State");
+      assert_eq!(state.size_factor, 5.5);
+      assert_eq!(state.solar_system_id, Some(30_000_145));
+      assert_eq!(state.is_unique, 1);
+      assert_eq!(state.station_count, 0);
+
+      let generic = sde::get_faction(&db, 500_024).await.unwrap().unwrap();
+      assert_eq!(generic.size_factor, 1.0);
+      assert_eq!(generic.is_unique, 0);
+      assert_eq!(generic.solar_system_id, None);
+    }
+  }
+
+  mod seed_masteries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, model::Certificate, repo::skills};
+
+    async fn seed_parents(db: &Database, dir: &Path) {
+      tokio::fs::write(dir.join("categories.yaml"), "25: { name: { en: Ship } }\n")
+        .await
+        .unwrap();
+      tokio::fs::write(
+        dir.join("groups.yaml"),
+        "25: { categoryID: 25, name: { en: Frigate } }\n",
+      )
+      .await
+      .unwrap();
+      tokio::fs::write(dir.join("types.yaml"), "596: { groupID: 25, name: { en: Impairor } }\n")
+        .await
+        .unwrap();
+      tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
+      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
+      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
+      seed_types(
+        db,
+        &dir.join("types.yaml"),
+        &dir.join("typeDogma.yaml"),
+        &dir.join("groups.yaml"),
+      )
+      .await
+      .unwrap();
+      skills::certificate_upsert_many(
+        db,
+        &[Certificate {
+          description: None,
+          grade: 1,
+          id: 100,
+          name: "Cert".to_owned(),
+        }],
+        &[],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_is_a_noop_when_the_file_has_no_usable_rows() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("masteries.yaml");
+      tokio::fs::write(&path, "- just-a-list\n").await.unwrap();
+      let db = store::open_test().await.unwrap();
+
+      seed_masteries(&db, &path).await.unwrap();
+
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ship_masteries")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn it_seeds_one_mastery_row_per_cert_at_each_tier() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("masteries.yaml");
+      tokio::fs::write(&path, "596:\n  1:\n    - 100\n").await.unwrap();
+      let db = store::open_test().await.unwrap();
+      seed_parents(&db, tmp.path()).await;
+
+      seed_masteries(&db, &path).await.unwrap();
+
+      let masteries = skills::for_ship(&db, 596).await.unwrap();
+      assert_eq!(masteries.len(), 1);
+      assert_eq!(masteries[0].certificate_id(), 100);
+      assert_eq!(masteries[0].tier(), 2);
+    }
+  }
+
+  mod seed_races {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::sde};
+
+    #[tokio::test]
+    async fn it_seeds_races_and_defaults_a_missing_alliance_to_zero() {
+      let tmp = tempfile::tempdir().unwrap();
+      let path = tmp.path().join("races.yaml");
+      tokio::fs::write(
+        &path,
+        "1: { name: { en: Caldari }, allianceID: 500001 }\n4: { name: { en: Jove } }\n",
+      )
+      .await
+      .unwrap();
+      let db = store::open_test().await.unwrap();
+
+      seed_races(&db, &path).await.unwrap();
+
+      let caldari = sde::get_race(&db, 1).await.unwrap().unwrap();
+      assert_eq!(caldari.name(), "Caldari");
+      assert_eq!(caldari.alliance_id(), 500_001);
+
+      let jove = sde::get_race(&db, 4).await.unwrap().unwrap();
+      assert_eq!(jove.alliance_id(), 0);
+    }
+  }
+
+  mod seed_types {
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::store;
 
-    /// A two-blueprint fixture: a manufacturing blueprint that makes a Rifter from minerals, and a
-    /// reaction blueprint that makes a moon material. Exercises both activity kinds and both tables.
-    const FIXTURE: &str = "\
-939:
-  activities:
-    manufacturing:
-      materials:
-        - { typeID: 34, quantity: 32 }
-        - { typeID: 35, quantity: 6 }
-      products:
-        - { typeID: 587, quantity: 1 }
-      time: 600
-      maxProductionLimit: 300
-    copying:
-      time: 480
-  blueprintTypeID: 939
-46167:
-  activities:
-    reaction:
-      materials:
-        - { typeID: 16633, quantity: 100 }
-      products:
-        - { typeID: 16640, quantity: 200 }
-      time: 3600
-  blueprintTypeID: 46167
-";
+    async fn write_yaml(dir: &Path, name: &str, body: &str) {
+      tokio::fs::write(dir.join(name), body).await.unwrap();
+    }
 
-    async fn seed_fixture() -> Database {
-      let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("blueprints.yaml");
-      tokio::fs::write(&path, FIXTURE).await.unwrap();
+    async fn write_fixture(dir: &Path) {
+      write_yaml(
+        dir,
+        "categories.yaml",
+        "16: { name: { en: Skill }, published: true }\n4: { name: { en: Material }, published: true }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "groups.yaml",
+        "255: { categoryID: 16, name: { en: Gunnery }, published: true }\n\
+        18: { categoryID: 4, name: { en: Mineral }, published: true }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "types.yaml",
+        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
+        3301: { groupID: 255, name: { en: Small Hybrid Turret }, published: true }\n\
+        3302: { groupID: 255, name: { en: Retired Skill }, published: false }\n\
+        34: { groupID: 18, name: { en: Tritanium }, published: true }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "typeDogma.yaml",
+        "3300:\n  dogmaAttributes:\n    - { attributeID: 275, value: 1.0 }\n    \
+        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 166.0 }\n\
+        3301:\n  dogmaAttributes:\n    - { attributeID: 275, value: 2.0 }\n    \
+        - { attributeID: 180, value: 167.0 }\n    - { attributeID: 181, value: 168.0 }\n",
+      )
+      .await;
+    }
+
+    async fn run_seed_types(dir: &Path) -> Database {
       let db = store::open_test().await.unwrap();
-      super::super::seed_blueprints(&db, &path).await.unwrap();
+      seed_categories(&db, &dir.join("categories.yaml")).await.unwrap();
+      seed_groups(&db, &dir.join("groups.yaml")).await.unwrap();
+      seed_types(
+        &db,
+        &dir.join("types.yaml"),
+        &dir.join("typeDogma.yaml"),
+        &dir.join("groups.yaml"),
+      )
+      .await
+      .unwrap();
       db
     }
 
     #[tokio::test]
-    async fn it_seeds_a_manufacturing_product_row() {
-      let db = seed_fixture().await;
-
-      let quantity: i64 = sqlx::query_scalar(
-        "SELECT quantity FROM blueprint_activity_products \
-        WHERE blueprint_type_id = 939 AND activity_id = 1 AND product_type_id = 587",
+    async fn it_carries_module_skill_requirement_dogma_through_to_the_picker() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_yaml(
+        tmp.path(),
+        "categories.yaml",
+        "7: { name: { en: Module }, published: true }\n16: { name: { en: Skill }, published: true }\n",
       )
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
-
-      assert_eq!(quantity, 1);
-    }
-
-    #[tokio::test]
-    async fn it_seeds_manufacturing_material_rows() {
-      let db = seed_fixture().await;
-
-      let quantity: i64 = sqlx::query_scalar(
-        "SELECT quantity FROM blueprint_activity_materials \
-        WHERE blueprint_type_id = 939 AND activity_id = 1 AND material_type_id = 34",
+      .await;
+      write_yaml(
+        tmp.path(),
+        "groups.yaml",
+        "55: { categoryID: 7, name: { en: Projectile Weapon }, published: true }\n\
+        255: { categoryID: 16, name: { en: Gunnery }, published: true }\n",
       )
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
-
-      assert_eq!(quantity, 32);
-    }
-
-    #[tokio::test]
-    async fn it_records_reaction_products_under_activity_eleven() {
-      let db = seed_fixture().await;
-
-      let quantity: i64 = sqlx::query_scalar(
-        "SELECT quantity FROM blueprint_activity_products \
-        WHERE blueprint_type_id = 46167 AND activity_id = 11 AND product_type_id = 16640",
+      .await;
+      write_yaml(
+        tmp.path(),
+        "types.yaml",
+        "3300: { groupID: 255, name: { en: Gunnery }, published: true }\n\
+        2929: { groupID: 55, name: { en: 200mm AutoCannon I }, published: true }\n",
       )
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
-
-      assert_eq!(quantity, 200);
-    }
-
-    #[tokio::test]
-    async fn it_seeds_manufacturing_activity_meta() {
-      let db = seed_fixture().await;
-
-      let row: (i64, i64) = sqlx::query_as(
-        "SELECT time, max_production_limit FROM blueprint_activity_meta \
-        WHERE blueprint_type_id = 939 AND activity_id = 1",
+      .await;
+      write_yaml(
+        tmp.path(),
+        "typeDogma.yaml",
+        "2929:\n  dogmaAttributes:\n    - { attributeID: 182, value: 3300.0 }\n    \
+        - { attributeID: 277, value: 1.0 }\n",
       )
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
+      .await;
 
-      assert_eq!(row, (600, 300));
-    }
+      let db = run_seed_types(tmp.path()).await;
 
-    #[tokio::test]
-    async fn it_seeds_reaction_activity_meta() {
-      let db = seed_fixture().await;
-
-      let row: (i64, i64) = sqlx::query_as(
-        "SELECT time, max_production_limit FROM blueprint_activity_meta \
-        WHERE blueprint_type_id = 46167 AND activity_id = 11",
-      )
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
-
-      assert_eq!(row, (3600, 0));
-    }
-
-    #[tokio::test]
-    async fn it_skips_meta_for_non_build_activities() {
-      let db = seed_fixture().await;
-
-      let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_meta WHERE activity_id NOT IN (1, 11)")
-          .fetch_one(&db.0)
-          .await
-          .unwrap();
-
-      assert_eq!(count, 0);
+      let modules = skills::modules_for_picker(&db).await.unwrap();
+      assert_eq!(modules.len(), 1);
+      assert_eq!(modules[0].id, 2929);
+      assert_eq!(modules[0].group_name, "Projectile Weapon");
+      assert_eq!(modules[0].skill_requirements, vec![("Gunnery".to_owned(), 1)]);
     }
 
     #[tokio::test]
     async fn it_is_idempotent_across_reseed() {
       let tmp = tempfile::tempdir().unwrap();
-      let path = tmp.path().join("blueprints.yaml");
-      tokio::fs::write(&path, FIXTURE).await.unwrap();
-      let db = store::open_test().await.unwrap();
+      write_fixture(tmp.path()).await;
 
-      super::super::seed_blueprints(&db, &path).await.unwrap();
-      super::super::seed_blueprints(&db, &path).await.unwrap();
+      let db = run_seed_types(tmp.path()).await;
+      seed_types(
+        &db,
+        &tmp.path().join("types.yaml"),
+        &tmp.path().join("typeDogma.yaml"),
+        &tmp.path().join("groups.yaml"),
+      )
+      .await
+      .unwrap();
 
-      let products: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_products")
+      let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM skill_metadata")
         .fetch_one(&db.0)
         .await
         .unwrap();
-      let materials: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blueprint_activity_materials")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
+      assert_eq!(count, 2);
+    }
 
-      assert_eq!(products, 2);
-      assert_eq!(materials, 3);
+    #[tokio::test]
+    async fn it_seeds_one_metadata_row_per_published_skill() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_fixture(tmp.path()).await;
+
+      let db = run_seed_types(tmp.path()).await;
+
+      let m3300 = skills::get_skill_metadata(&db, 3300).await.unwrap().unwrap();
+      assert_eq!(m3300.rank(), 1);
+      assert_eq!(m3300.primary_attribute(), 167);
+      assert_eq!(m3300.secondary_attribute(), 166);
+
+      let m3301 = skills::get_skill_metadata(&db, 3301).await.unwrap().unwrap();
+      assert_eq!(m3301.rank(), 2);
+      assert_eq!(m3301.secondary_attribute(), 168);
+
+      assert_eq!(skills::get_skill_metadata(&db, 34).await.unwrap(), None);
+      assert_eq!(skills::get_skill_metadata(&db, 3302).await.unwrap(), None);
     }
   }
 
-  mod build_blueprint_rows {
-    use pretty_assertions::assert_eq;
-
+  mod should_skip_download {
     use super::*;
 
-    fn parse(yaml: &str) -> HashMap<i64, SdeBlueprintEntry> {
-      serde_yaml::from_str(yaml).unwrap()
+    #[test]
+    fn it_downloads_when_only_the_build_matches_a_stale_composite() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, "12345+pod-0.0.0+seed-0").unwrap();
+
+      assert!(!should_skip_download(Some("12345"), Some(&marker), true));
     }
 
     #[test]
-    fn it_splits_products_and_materials_with_mapped_activity_ids() {
-      let entries = parse(
-        "939:\n  activities:\n    manufacturing:\n      materials:\n        \
-        - { typeID: 34, quantity: 32 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
-      );
+    fn it_downloads_when_the_database_is_not_yet_seeded() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
 
-      let (products, materials, _meta) = build_blueprint_rows(entries);
-
-      assert_eq!(
-        products,
-        vec![BlueprintActivityRow {
-          blueprint_type_id: 939,
-          activity_id: 1,
-          type_id: 587,
-          quantity: 1,
-        }]
-      );
-      assert_eq!(
-        materials,
-        vec![BlueprintActivityRow {
-          blueprint_type_id: 939,
-          activity_id: 1,
-          type_id: 34,
-          quantity: 32,
-        }]
-      );
+      assert!(!should_skip_download(Some("12345"), Some(&marker), false));
     }
 
     #[test]
-    fn it_skips_unknown_activity_names() {
-      let entries = parse(
-        "1:\n  activities:\n    mystery:\n      materials:\n        \
-        - { typeID: 34, quantity: 1 }\n      products:\n        - { typeID: 587, quantity: 1 }\n",
-      );
+    fn it_downloads_when_the_probe_returns_nothing() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
 
-      let (products, materials, meta) = build_blueprint_rows(entries);
-
-      assert!(products.is_empty());
-      assert!(materials.is_empty());
-      assert!(meta.is_empty());
+      assert!(!should_skip_download(None, Some(&marker), true));
     }
 
     #[test]
-    fn it_captures_activity_time_and_max_production_limit() {
-      let entries = parse(
-        "939:\n  activities:\n    manufacturing:\n      \
-        products:\n        - { typeID: 587, quantity: 1 }\n      time: 600\n      maxProductionLimit: 300\n",
-      );
+    fn it_skips_when_the_marker_matches_the_current_composite() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345")).unwrap();
 
-      let (_products, _materials, meta) = build_blueprint_rows(entries);
-
-      assert_eq!(
-        meta,
-        vec![BlueprintActivityMetaRow {
-          activity_id: 1,
-          blueprint_type_id: 939,
-          max_production_limit: 300,
-          time: 600,
-        }]
-      );
-    }
-
-    #[test]
-    fn it_defaults_a_missing_max_production_limit_to_zero() {
-      let entries = parse(
-        "939:\n  activities:\n    reaction:\n      products:\n        - { typeID: 16640, quantity: 200 }\n      time: 3600\n",
-      );
-
-      let (_products, _materials, meta) = build_blueprint_rows(entries);
-
-      assert_eq!(
-        meta,
-        vec![BlueprintActivityMetaRow {
-          activity_id: 11,
-          blueprint_type_id: 939,
-          max_production_limit: 0,
-          time: 3600,
-        }]
-      );
-    }
-
-    #[test]
-    fn it_omits_meta_for_an_activity_without_a_time() {
-      let entries =
-        parse("939:\n  activities:\n    manufacturing:\n      products:\n        - { typeID: 587, quantity: 1 }\n");
-
-      let (_products, _materials, meta) = build_blueprint_rows(entries);
-
-      assert!(meta.is_empty());
+      assert!(should_skip_download(Some("12345"), Some(&marker), true));
     }
   }
 }

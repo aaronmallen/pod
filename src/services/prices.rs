@@ -88,8 +88,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_returns_no_batches_for_an_empty_input() {
-      assert!(batches(&[]).is_empty());
+    fn it_chunks_into_full_batches_plus_a_remainder() {
+      let ids: Vec<i64> = (0..25).collect();
+
+      let batched = batches(&ids);
+
+      assert_eq!(batched.iter().map(Vec::len).collect::<Vec<_>>(), [10, 10, 5]);
+      assert_eq!(batched.concat(), ids, "every id is covered exactly once, in order");
     }
 
     #[test]
@@ -103,13 +108,8 @@ mod tests {
     }
 
     #[test]
-    fn it_chunks_into_full_batches_plus_a_remainder() {
-      let ids: Vec<i64> = (0..25).collect();
-
-      let batched = batches(&ids);
-
-      assert_eq!(batched.iter().map(Vec::len).collect::<Vec<_>>(), [10, 10, 5]);
-      assert_eq!(batched.concat(), ids, "every id is covered exactly once, in order");
+    fn it_returns_no_batches_for_an_empty_input() {
+      assert!(batches(&[]).is_empty());
     }
   }
 
@@ -125,20 +125,6 @@ mod tests {
       assert_eq!(row.type_id(), 34);
       assert_eq!(row.date(), "2026-06-05");
       assert_eq!((row.open(), row.high(), row.low(), row.close()), (5.5, 5.5, 5.5, 5.5));
-    }
-  }
-
-  mod retention_cutoff {
-    use chrono::NaiveDate;
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_the_retention_window_before_today() {
-      let today = NaiveDate::from_ymd_opt(2026, 6, 5).unwrap();
-
-      assert_eq!(retention_cutoff(today), "2025-06-05");
     }
   }
 
@@ -190,23 +176,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_rolls_repeated_same_day_runs_into_a_correct_ohlc() {
-      let db = store::open_test().await.unwrap();
-      let date = Utc::now().format("%Y-%m-%d").to_string();
-
-      for price in [5.0_f64, 8.0, 6.0] {
-        let server = MockServer::start().await;
-        mount_type(&server, 34, price).await;
-        let esi = make_esi(&server.uri(), &db).await;
-        assert_eq!(refresh(&db, &esi, &[34]).await, 1);
+    async fn it_isolates_a_failing_batch_and_persists_the_rest() {
+      let mut type_ids: Vec<i64> = (1..=BATCH_SIZE as i64).collect();
+      type_ids.push(1000);
+      let server = MockServer::start().await;
+      for &type_id in &type_ids[..BATCH_SIZE] {
+        Mock::given(method("GET"))
+          .and(path(format!("/markets/{THE_FORGE_REGION_ID}/orders/")))
+          .and(query_param("type_id", type_id.to_string()))
+          .respond_with(ResponseTemplate::new(500))
+          .mount(&server)
+          .await;
       }
+      mount_type(&server, 1000, 42.0).await;
+      let db = store::open_test().await.unwrap();
+      let esi = make_esi(&server.uri(), &db).await;
 
-      let row = &finance::series(&db, 34).await.unwrap()[0];
-      assert_eq!(row.date(), &date, "all samples land in a single daily bucket");
-      assert_eq!(row.open(), 5.0, "open holds the first sample of the day");
-      assert_eq!(row.high(), 8.0, "high is the running max");
-      assert_eq!(row.low(), 5.0, "low is the running min");
-      assert_eq!(row.close(), 6.0, "close is the latest sample");
+      let persisted = refresh(&db, &esi, &type_ids).await;
+
+      assert_eq!(
+        persisted, 1,
+        "the surviving batch still persists despite the failed batch"
+      );
+      let date = Utc::now().format("%Y-%m-%d").to_string();
+      assert_eq!(finance::close_as_of(&db, 1000, &date).await.unwrap(), Some(42.0));
     }
 
     #[tokio::test]
@@ -245,6 +238,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_rolls_repeated_same_day_runs_into_a_correct_ohlc() {
+      let db = store::open_test().await.unwrap();
+      let date = Utc::now().format("%Y-%m-%d").to_string();
+
+      for price in [5.0_f64, 8.0, 6.0] {
+        let server = MockServer::start().await;
+        mount_type(&server, 34, price).await;
+        let esi = make_esi(&server.uri(), &db).await;
+        assert_eq!(refresh(&db, &esi, &[34]).await, 1);
+      }
+
+      let row = &finance::series(&db, 34).await.unwrap()[0];
+      assert_eq!(row.date(), &date, "all samples land in a single daily bucket");
+      assert_eq!(row.open(), 5.0, "open holds the first sample of the day");
+      assert_eq!(row.high(), 8.0, "high is the running max");
+      assert_eq!(row.low(), 5.0, "low is the running min");
+      assert_eq!(row.close(), 6.0, "close is the latest sample");
+    }
+
+    #[tokio::test]
     async fn it_skips_types_with_no_jita_sell_order() {
       let server = MockServer::start().await;
       mount_type(&server, 34, 5.5).await;
@@ -267,32 +280,19 @@ mod tests {
       let date = Utc::now().format("%Y-%m-%d").to_string();
       assert_eq!(finance::close_as_of(&db, 35, &date).await.unwrap(), None);
     }
+  }
 
-    #[tokio::test]
-    async fn it_isolates_a_failing_batch_and_persists_the_rest() {
-      let mut type_ids: Vec<i64> = (1..=BATCH_SIZE as i64).collect();
-      type_ids.push(1000);
-      let server = MockServer::start().await;
-      for &type_id in &type_ids[..BATCH_SIZE] {
-        Mock::given(method("GET"))
-          .and(path(format!("/markets/{THE_FORGE_REGION_ID}/orders/")))
-          .and(query_param("type_id", type_id.to_string()))
-          .respond_with(ResponseTemplate::new(500))
-          .mount(&server)
-          .await;
-      }
-      mount_type(&server, 1000, 42.0).await;
-      let db = store::open_test().await.unwrap();
-      let esi = make_esi(&server.uri(), &db).await;
+  mod retention_cutoff {
+    use chrono::NaiveDate;
+    use pretty_assertions::assert_eq;
 
-      let persisted = refresh(&db, &esi, &type_ids).await;
+    use super::*;
 
-      assert_eq!(
-        persisted, 1,
-        "the surviving batch still persists despite the failed batch"
-      );
-      let date = Utc::now().format("%Y-%m-%d").to_string();
-      assert_eq!(finance::close_as_of(&db, 1000, &date).await.unwrap(), Some(42.0));
+    #[test]
+    fn it_is_the_retention_window_before_today() {
+      let today = NaiveDate::from_ymd_opt(2026, 6, 5).unwrap();
+
+      assert_eq!(retention_cutoff(today), "2025-06-05");
     }
   }
 }

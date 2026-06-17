@@ -307,16 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_with_no_jump_clones() {
-      let loaded = LoadState::Loaded(Some(CharacterClones {
-        active: active_clone(),
-        jump_clones: Vec::new(),
-      }));
-
-      let _el: Element<'_, Message> = body(&loaded);
-    }
-
-    #[test]
     fn it_renders_the_awaiting_loading_and_error_states() {
       let none: LoadState<Option<CharacterClones>> = LoadState::Loaded(None);
       let loading: LoadState<Option<CharacterClones>> = LoadState::Loading;
@@ -325,6 +315,16 @@ mod tests {
       let _none: Element<'_, Message> = body(&none);
       let _loading: Element<'_, Message> = body(&loading);
       let _error: Element<'_, Message> = body(&error);
+    }
+
+    #[test]
+    fn it_renders_with_no_jump_clones() {
+      let loaded = LoadState::Loaded(Some(CharacterClones {
+        active: active_clone(),
+        jump_clones: Vec::new(),
+      }));
+
+      let _el: Element<'_, Message> = body(&loaded);
     }
   }
 }

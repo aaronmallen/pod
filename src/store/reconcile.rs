@@ -169,6 +169,31 @@ mod tests {
     }
   }
 
+  mod clean_direct_artifacts {
+    use super::*;
+
+    #[test]
+    fn it_removes_stray_sync_artifacts_left_from_a_prior_sync_config() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"live").unwrap();
+      fs::write(&layout.working_copy, b"stray working copy").unwrap();
+      fs::write(with_suffix(&layout.working_copy, "-wal"), b"wal").unwrap();
+      fs::write(marker_path(&layout.working_copy), b"5").unwrap();
+      fs::write(sidecar_path(&layout.canonical), b"5").unwrap();
+      let lease = layout.canonical.parent().unwrap().join(LEASE_FILE_NAME);
+      fs::write(&lease, b"{}").unwrap();
+
+      clean_direct_artifacts(&layout.canonical, &layout.working_copy);
+
+      assert!(!layout.working_copy.exists(), "the stray working copy is removed");
+      assert!(!with_suffix(&layout.working_copy, "-wal").exists());
+      assert!(!marker_path(&layout.working_copy).exists());
+      assert!(!sidecar_path(&layout.canonical).exists());
+      assert!(!lease.exists(), "the share lease is removed");
+      assert!(layout.canonical.exists(), "the canonical database is left intact");
+    }
+  }
+
   mod reconcile_sync {
     use pretty_assertions::assert_eq;
 
@@ -196,6 +221,24 @@ mod tests {
     }
 
     #[test]
+    fn it_adopts_the_newer_canonical_and_backs_up_the_diverged_working_copy() {
+      let layout = Layout::new();
+      fs::write(&layout.canonical, b"newer canonical").unwrap();
+      fs::write(&layout.working_copy, b"stale working copy").unwrap();
+      write_generation(&sidecar_path(&layout.canonical), 9).unwrap();
+      write_generation(&marker_path(&layout.working_copy), 2).unwrap();
+
+      reconcile_sync(&layout.canonical, &layout.working_copy).unwrap();
+
+      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"newer canonical");
+      let backup = layout
+        .backup_in(layout.working_copy.parent().unwrap())
+        .expect("the diverged working copy is backed up");
+      assert_eq!(fs::read(backup).unwrap(), b"stale working copy");
+      assert_eq!(read_generation(&marker_path(&layout.working_copy)), 9);
+    }
+
+    #[test]
     fn it_adopts_the_newer_working_copy_and_backs_up_the_diverged_canonical() {
       let layout = Layout::new();
       fs::write(&layout.canonical, b"stale canonical").unwrap();
@@ -219,24 +262,6 @@ mod tests {
         read_generation(&marker_path(&layout.working_copy)),
         "markers converge"
       );
-    }
-
-    #[test]
-    fn it_adopts_the_newer_canonical_and_backs_up_the_diverged_working_copy() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"newer canonical").unwrap();
-      fs::write(&layout.working_copy, b"stale working copy").unwrap();
-      write_generation(&sidecar_path(&layout.canonical), 9).unwrap();
-      write_generation(&marker_path(&layout.working_copy), 2).unwrap();
-
-      reconcile_sync(&layout.canonical, &layout.working_copy).unwrap();
-
-      assert_eq!(fs::read(&layout.working_copy).unwrap(), b"newer canonical");
-      let backup = layout
-        .backup_in(layout.working_copy.parent().unwrap())
-        .expect("the diverged working copy is backed up");
-      assert_eq!(fs::read(backup).unwrap(), b"stale working copy");
-      assert_eq!(read_generation(&marker_path(&layout.working_copy)), 9);
     }
 
     #[test]
@@ -282,31 +307,6 @@ mod tests {
         3,
         "the working copy's backup pile is pruned to the newest three"
       );
-    }
-  }
-
-  mod clean_direct_artifacts {
-    use super::*;
-
-    #[test]
-    fn it_removes_stray_sync_artifacts_left_from_a_prior_sync_config() {
-      let layout = Layout::new();
-      fs::write(&layout.canonical, b"live").unwrap();
-      fs::write(&layout.working_copy, b"stray working copy").unwrap();
-      fs::write(with_suffix(&layout.working_copy, "-wal"), b"wal").unwrap();
-      fs::write(marker_path(&layout.working_copy), b"5").unwrap();
-      fs::write(sidecar_path(&layout.canonical), b"5").unwrap();
-      let lease = layout.canonical.parent().unwrap().join(LEASE_FILE_NAME);
-      fs::write(&lease, b"{}").unwrap();
-
-      clean_direct_artifacts(&layout.canonical, &layout.working_copy);
-
-      assert!(!layout.working_copy.exists(), "the stray working copy is removed");
-      assert!(!with_suffix(&layout.working_copy, "-wal").exists());
-      assert!(!marker_path(&layout.working_copy).exists());
-      assert!(!sidecar_path(&layout.canonical).exists());
-      assert!(!lease.exists(), "the share lease is removed");
-      assert!(layout.canonical.exists(), "the canonical database is left intact");
     }
   }
 }

@@ -480,8 +480,12 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_defaults_to_the_features_category() {
-    assert_eq!(state().await.active, Category::Features);
+  async fn a_disabled_industry_panel_falls_back_to_the_default_category() {
+    let mut state = state().await;
+    state.settings.features_mut().set_industry(false);
+    state.active = Category::Industry;
+
+    let _el: Element<'_, Message> = view(&state);
   }
 
   #[tokio::test]
@@ -494,29 +498,8 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn reset_to_defaults_restores_the_active_category() {
-    let mut state = state().await;
-    state.settings.features_mut().set_wallet(false);
-    assert!(!state.settings.features().wallet());
-
-    let _task = update(&mut state, Message::ResetToDefaults);
-
-    assert!(
-      state.settings.features().wallet(),
-      "Features reset should re-enable wallet"
-    );
-  }
-
-  #[tokio::test]
-  async fn reset_on_accessibility_restores_the_default_scale_and_signals_a_live_change() {
-    let mut state = state().await;
-    state.active = Category::Accessibility;
-    state.settings.accessibility_mut().set_scale(125);
-
-    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
-
-    assert_eq!(outcome, Outcome::AccessibilityChanged);
-    assert_eq!(*state.settings.accessibility().scale(), 100);
+  async fn it_defaults_to_the_features_category() {
+    assert_eq!(state().await.active, Category::Features);
   }
 
   #[tokio::test]
@@ -529,6 +512,18 @@ mod tests {
 
     assert_eq!(outcome, Outcome::AccessibilityChanged);
     assert!(!*state.settings.accessibility().high_contrast());
+  }
+
+  #[tokio::test]
+  async fn reset_on_accessibility_restores_the_default_scale_and_signals_a_live_change() {
+    let mut state = state().await;
+    state.active = Category::Accessibility;
+    state.settings.accessibility_mut().set_scale(125);
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::AccessibilityChanged);
+    assert_eq!(*state.settings.accessibility().scale(), 100);
   }
 
   #[tokio::test]
@@ -546,25 +541,26 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn view_renders_each_category() {
-    let categories = Category::list(&Settings::default())
-      .into_iter()
-      .chain([Category::Industry, Category::About]);
+  async fn reset_to_defaults_restores_the_active_category() {
+    let mut state = state().await;
+    state.settings.features_mut().set_wallet(false);
+    assert!(!state.settings.features().wallet());
 
-    for category in categories {
-      let mut state = state().await;
-      state.settings.features_mut().set_industry(true);
-      state.active = category;
-      let _el: Element<'_, Message> = view(&state);
-    }
+    let _task = update(&mut state, Message::ResetToDefaults);
+
+    assert!(
+      state.settings.features().wallet(),
+      "Features reset should re-enable wallet"
+    );
   }
 
   #[tokio::test]
-  async fn the_industry_category_is_hidden_when_the_feature_is_disabled() {
-    let mut settings = Settings::default();
-    settings.features_mut().set_industry(false);
+  async fn the_about_category_can_be_selected() {
+    let mut state = state().await;
 
-    assert!(!Category::list(&settings).contains(&Category::Industry));
+    let _task = update(&mut state, Message::CategorySelected(Category::About));
+
+    assert_eq!(state.active, Category::About);
   }
 
   #[tokio::test]
@@ -576,20 +572,24 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn a_disabled_industry_panel_falls_back_to_the_default_category() {
-    let mut state = state().await;
-    state.settings.features_mut().set_industry(false);
-    state.active = Category::Industry;
+  async fn the_industry_category_is_hidden_when_the_feature_is_disabled() {
+    let mut settings = Settings::default();
+    settings.features_mut().set_industry(false);
 
-    let _el: Element<'_, Message> = view(&state);
+    assert!(!Category::list(&settings).contains(&Category::Industry));
   }
 
   #[tokio::test]
-  async fn the_about_category_can_be_selected() {
-    let mut state = state().await;
+  async fn view_renders_each_category() {
+    let categories = Category::list(&Settings::default())
+      .into_iter()
+      .chain([Category::Industry, Category::About]);
 
-    let _task = update(&mut state, Message::CategorySelected(Category::About));
-
-    assert_eq!(state.active, Category::About);
+    for category in categories {
+      let mut state = state().await;
+      state.settings.features_mut().set_industry(true);
+      state.active = category;
+      let _el: Element<'_, Message> = view(&state);
+    }
   }
 }

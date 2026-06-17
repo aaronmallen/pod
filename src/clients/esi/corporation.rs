@@ -230,31 +230,6 @@ mod tests {
       use super::*;
 
       #[tokio::test]
-      async fn it_posts_item_ids_with_the_bearer_token_and_parses_names() {
-        let server = MockServer::start().await;
-        let body = r#"[{"item_id":1000000016835,"name":"Corp Hauler"},{"item_id":1000000016836,"name":"Spare Parts"}]"#;
-        Mock::given(method("POST"))
-          .and(path("/corporations/2000/assets/names/"))
-          .and(header("Authorization", "Bearer corp-token"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("corp-token", 42);
-
-        let names = esi
-          .corporation_authenticated(&grant)
-          .assets_names(2000, &[1000000016835, 1000000016836])
-          .await
-          .unwrap();
-
-        assert_eq!(names.len(), 2);
-        assert_eq!(names[0].item_id, 1000000016835);
-        assert_eq!(names[0].name, "Corp Hauler");
-        assert_eq!(names[1].name, "Spare Parts");
-      }
-
-      #[tokio::test]
       async fn it_batches_ids_into_chunks_of_at_most_a_thousand() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -277,6 +252,31 @@ mod tests {
           .unwrap();
 
         assert_eq!(names.len(), 2);
+      }
+
+      #[tokio::test]
+      async fn it_posts_item_ids_with_the_bearer_token_and_parses_names() {
+        let server = MockServer::start().await;
+        let body = r#"[{"item_id":1000000016835,"name":"Corp Hauler"},{"item_id":1000000016836,"name":"Spare Parts"}]"#;
+        Mock::given(method("POST"))
+          .and(path("/corporations/2000/assets/names/"))
+          .and(header("Authorization", "Bearer corp-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("corp-token", 42);
+
+        let names = esi
+          .corporation_authenticated(&grant)
+          .assets_names(2000, &[1000000016835, 1000000016836])
+          .await
+          .unwrap();
+
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].item_id, 1000000016835);
+        assert_eq!(names[0].name, "Corp Hauler");
+        assert_eq!(names[1].name, "Spare Parts");
       }
 
       #[tokio::test]

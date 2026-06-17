@@ -454,119 +454,6 @@ mod tests {
     }
   }
 
-  mod map_journal_row {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_marks_a_positive_amount_as_income() {
-      let entry = map_journal_row(&journal_row(1, 42, Some(1_000.0), Some(5_000.0)));
-
-      assert!(entry.is_income());
-      assert_eq!(entry.amount, Some(1_000.0));
-      assert_eq!(entry.balance, Some(5_000.0));
-    }
-
-    #[test]
-    fn it_marks_a_negative_amount_as_spend() {
-      let entry = map_journal_row(&journal_row(2, 42, Some(-400.0), Some(4_600.0)));
-
-      assert!(!entry.is_income());
-    }
-
-    #[test]
-    fn it_treats_a_null_amount_as_neither_income_nor_spend() {
-      let entry = map_journal_row(&journal_row(3, 42, None, None));
-
-      assert!(!entry.is_income());
-      assert_eq!(entry.amount, None);
-    }
-
-    #[test]
-    fn it_carries_the_owning_character_through() {
-      let entry = map_journal_row(&journal_row(4, 7, Some(10.0), Some(10.0)));
-
-      assert_eq!(entry.character_id, 7);
-      assert_eq!(entry.id, 4);
-      assert_eq!(entry.ref_type, "bounty_prizes");
-    }
-  }
-
-  mod map_txn_row {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn type_names() -> HashMap<i64, String> {
-      HashMap::from([(34, "Tritanium".to_owned())])
-    }
-
-    fn location_names() -> HashMap<i64, String> {
-      HashMap::from([(60_003_760, "Jita IV - Moon 4".to_owned())])
-    }
-
-    #[test]
-    fn it_resolves_the_type_and_location_names() {
-      let entry = map_txn_row(
-        &txn_row(1, 34, 60_003_760, false, 100, 5.0),
-        &type_names(),
-        &location_names(),
-      )
-      .expect("a fully resolved row is kept");
-
-      assert_eq!(entry.item, "Tritanium");
-      assert_eq!(entry.location, "Jita IV - Moon 4");
-    }
-
-    #[test]
-    fn it_withholds_a_row_with_an_unresolved_type_or_location() {
-      let unresolved_type = map_txn_row(
-        &txn_row(2, 999, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-      );
-      let unresolved_location = map_txn_row(&txn_row(3, 34, 999_999, true, 1, 1.0), &type_names(), &location_names());
-
-      assert!(unresolved_type.is_none(), "an unresolved item type withholds the row");
-      assert!(
-        unresolved_location.is_none(),
-        "an unresolved location withholds the row"
-      );
-    }
-
-    #[test]
-    fn it_derives_total_as_unit_price_times_quantity() {
-      let entry = map_txn_row(
-        &txn_row(3, 34, 60_003_760, false, 250, 4.0),
-        &type_names(),
-        &location_names(),
-      )
-      .expect("a fully resolved row is kept");
-
-      assert_eq!(entry.total, 1_000.0);
-    }
-
-    #[test]
-    fn it_carries_the_buy_and_sell_side_through() {
-      let buy = map_txn_row(
-        &txn_row(4, 34, 60_003_760, true, 1, 1.0),
-        &type_names(),
-        &location_names(),
-      )
-      .expect("a fully resolved row is kept");
-      let sell = map_txn_row(
-        &txn_row(5, 34, 60_003_760, false, 1, 1.0),
-        &type_names(),
-        &location_names(),
-      )
-      .expect("a fully resolved row is kept");
-
-      assert!(buy.is_buy);
-      assert!(!sell.is_buy);
-    }
-  }
-
   mod contract_party_ids {
     use pretty_assertions::assert_eq;
 
@@ -607,194 +494,6 @@ mod tests {
       let entries = vec![entry(0, Some(-1), Some(55)), entry(66, None, None)];
 
       assert_eq!(super::contract_party_ids(&entries), vec![55, 66]);
-    }
-  }
-
-  mod derived_status {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn entry(status: &str, date_expired: Option<&str>) -> ContractEntry {
-      ContractEntry {
-        acceptor: None,
-        acceptor_id: None,
-        acceptor_image: PartyImage::default(),
-        assignee: None,
-        assignee_id: None,
-        assignee_image: PartyImage::default(),
-        character_id: 42,
-        collateral: None,
-        contract_id: 1,
-        date_expired: date_expired.map(str::to_owned),
-        date_issued: "2026-05-30T12:00:00Z".to_owned(),
-        is_buy: false,
-        issuer: None,
-        issuer_id: 11,
-        issuer_image: PartyImage::default(),
-        status: status.to_owned(),
-        value: None,
-        r#type: "item_exchange".to_owned(),
-      }
-    }
-
-    #[test]
-    fn it_derives_expired_for_an_outstanding_contract_past_its_expiry() {
-      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-
-      assert_eq!(
-        entry("outstanding", Some("2026-06-01T00:00:00Z")).derived_status(now),
-        "expired"
-      );
-    }
-
-    #[test]
-    fn it_keeps_outstanding_before_its_expiry() {
-      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-
-      assert_eq!(
-        entry("outstanding", Some("2026-07-01T00:00:00Z")).derived_status(now),
-        "outstanding"
-      );
-    }
-
-    #[test]
-    fn it_passes_through_a_terminal_status_even_when_expired() {
-      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-
-      assert_eq!(
-        entry("finished", Some("2026-06-01T00:00:00Z")).derived_status(now),
-        "finished"
-      );
-    }
-  }
-
-  mod party_image {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_yields_no_path_and_no_stale_keys_for_a_non_positive_id() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-
-      let resolved = super::party_image(&store, 0);
-
-      assert_eq!(resolved.path, None);
-      assert!(resolved.stale.is_empty());
-    }
-
-    #[test]
-    fn it_prefers_a_cached_portrait_over_a_logo() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-      let portrait = store.character_portrait_path(42);
-      store.write(&portrait, &[1]).unwrap();
-
-      let resolved = super::party_image(&store, 42);
-
-      assert_eq!(resolved.path, Some(portrait));
-      assert!(resolved.stale.is_empty());
-    }
-
-    #[test]
-    fn it_surfaces_both_candidate_keys_when_neither_image_is_cached() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-
-      let resolved = super::party_image(&store, 42);
-
-      assert_eq!(resolved.path, None);
-      assert!(resolved.stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
-      assert!(resolved.stale.contains(&(images::ImageKind::CorporationLogo, 42)));
-    }
-  }
-
-  mod pending_party_ids {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_keeps_ids_with_no_cached_image() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-
-      assert_eq!(super::pending_party_ids(&store, vec![11, 22]), vec![11, 22]);
-    }
-  }
-
-  mod load_contracts_page {
-    #[tokio::test]
-    async fn it_returns_no_entries_for_a_character_with_no_contracts() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let entries = super::load_contracts_page(&db, &[42], None, 10).await;
-
-      assert!(entries.is_empty());
-    }
-  }
-
-  mod map_contract_row {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn contract(price: Option<f64>, reward: Option<f64>) -> crate::store::model::CharacterContract {
-      crate::store::model::CharacterContract {
-        acceptor_id: None,
-        acceptor_name: None,
-        assignee_id: Some(95_002),
-        assignee_name: Some("Assignee Pilot".to_owned()),
-        availability: None,
-        character_id: 42,
-        collateral: Some(5_000.0),
-        contract_id: 7,
-        date_accepted: None,
-        date_completed: None,
-        date_expired: None,
-        date_issued: "2026-05-30T12:00:00Z".to_owned(),
-        days_to_complete: None,
-        end_location_id: None,
-        for_corporation: false,
-        issuer_corporation_id: None,
-        issuer_id: 95_001,
-        issuer_name: Some("Issuer Pilot".to_owned()),
-        price,
-        reward,
-        start_location_id: None,
-        status: "outstanding".to_owned(),
-        title: None,
-        r#type: "item_exchange".to_owned(),
-        volume: Some(1_000.0),
-      }
-    }
-
-    #[test]
-    fn it_reads_a_priced_contract_as_a_sell() {
-      let entry = map_contract_row(&contract(Some(200.0), None));
-
-      assert!(!entry.is_buy);
-      assert_eq!(entry.value, Some(200.0));
-      assert_eq!(entry.character_id, 42);
-      assert_eq!(entry.issuer.as_deref(), Some("Issuer Pilot"));
-    }
-
-    #[test]
-    fn it_reads_a_rewarded_or_unpriced_contract_as_a_buy() {
-      let courier = map_contract_row(&contract(None, Some(150.0)));
-      let want = map_contract_row(&contract(Some(0.0), None));
-
-      assert!(courier.is_buy);
-      assert_eq!(courier.value, Some(150.0));
-      assert!(want.is_buy);
     }
   }
 
@@ -889,6 +588,82 @@ mod tests {
     }
   }
 
+  mod derived_status {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn entry(status: &str, date_expired: Option<&str>) -> ContractEntry {
+      ContractEntry {
+        acceptor: None,
+        acceptor_id: None,
+        acceptor_image: PartyImage::default(),
+        assignee: None,
+        assignee_id: None,
+        assignee_image: PartyImage::default(),
+        character_id: 42,
+        collateral: None,
+        contract_id: 1,
+        date_expired: date_expired.map(str::to_owned),
+        date_issued: "2026-05-30T12:00:00Z".to_owned(),
+        is_buy: false,
+        issuer: None,
+        issuer_id: 11,
+        issuer_image: PartyImage::default(),
+        status: status.to_owned(),
+        value: None,
+        r#type: "item_exchange".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_derives_expired_for_an_outstanding_contract_past_its_expiry() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("outstanding", Some("2026-06-01T00:00:00Z")).derived_status(now),
+        "expired"
+      );
+    }
+
+    #[test]
+    fn it_keeps_outstanding_before_its_expiry() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("outstanding", Some("2026-07-01T00:00:00Z")).derived_status(now),
+        "outstanding"
+      );
+    }
+
+    #[test]
+    fn it_passes_through_a_terminal_status_even_when_expired() {
+      let now = DateTime::parse_from_rfc3339("2026-06-16T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      assert_eq!(
+        entry("finished", Some("2026-06-01T00:00:00Z")).derived_status(now),
+        "finished"
+      );
+    }
+  }
+
+  mod load_contracts_page {
+    #[tokio::test]
+    async fn it_returns_no_entries_for_a_character_with_no_contracts() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let entries = super::load_contracts_page(&db, &[42], None, 10).await;
+
+      assert!(entries.is_empty());
+    }
+  }
+
   mod load_corp_data {
     use pretty_assertions::assert_eq;
 
@@ -904,6 +679,26 @@ mod tests {
       corp.set_member_count(1);
       corp.set_tax_rate(0.0);
       org::upsert_corporation(db, &corp).await.unwrap();
+    }
+
+    fn corp_journal_dated(id: i64, division: i64, date: &str) -> crate::store::model::CorporationWalletJournal {
+      crate::store::model::CorporationWalletJournal {
+        amount: Some(1.0),
+        balance: Some(1.0),
+        context_id: None,
+        context_id_type: None,
+        corporation_id: CORP,
+        date: date.to_owned(),
+        description: "Entry".to_owned(),
+        division,
+        first_party_id: None,
+        id,
+        reason: None,
+        ref_type: "player_donation".to_owned(),
+        second_party_id: None,
+        tax: None,
+        tax_receiver_id: None,
+      }
     }
 
     #[tokio::test]
@@ -926,26 +721,6 @@ mod tests {
       let entries = load_corp_journal(&db, CORP, 1).await;
 
       assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), vec![2, 1]);
-    }
-
-    fn corp_journal_dated(id: i64, division: i64, date: &str) -> crate::store::model::CorporationWalletJournal {
-      crate::store::model::CorporationWalletJournal {
-        amount: Some(1.0),
-        balance: Some(1.0),
-        context_id: None,
-        context_id_type: None,
-        corporation_id: CORP,
-        date: date.to_owned(),
-        description: "Entry".to_owned(),
-        division,
-        first_party_id: None,
-        id,
-        reason: None,
-        ref_type: "player_donation".to_owned(),
-        second_party_id: None,
-        tax: None,
-        tax_receiver_id: None,
-      }
     }
   }
 
@@ -989,20 +764,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_unions_rows_across_all_in_scope_characters_newest_id_first() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_character(&db, 2).await;
-      append(&db, 1, 1, "2026-01-01T00:00:00Z").await;
-      append(&db, 2, 2, "2026-03-01T00:00:00Z").await;
-      append(&db, 3, 1, "2026-02-01T00:00:00Z").await;
-
-      let entries = load_journal_page(&db, &[1, 2], None, 50).await;
-
-      assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [3, 2, 1]);
-    }
-
-    #[tokio::test]
     async fn it_pages_the_union_after_a_cursor_id() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
@@ -1031,6 +792,20 @@ mod tests {
 
       assert_eq!(entries.len(), 1);
       assert_eq!(entries[0].character_id, 1);
+    }
+
+    #[tokio::test]
+    async fn it_unions_rows_across_all_in_scope_characters_newest_id_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_character(&db, 2).await;
+      append(&db, 1, 1, "2026-01-01T00:00:00Z").await;
+      append(&db, 2, 2, "2026-03-01T00:00:00Z").await;
+      append(&db, 3, 1, "2026-02-01T00:00:00Z").await;
+
+      let entries = load_journal_page(&db, &[1, 2], None, 50).await;
+
+      assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [3, 2, 1]);
     }
   }
 
@@ -1108,6 +883,231 @@ mod tests {
         entries.is_empty(),
         "a transaction with an unresolved location is withheld, never shown as Unknown"
       );
+    }
+  }
+
+  mod map_contract_row {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn contract(price: Option<f64>, reward: Option<f64>) -> crate::store::model::CharacterContract {
+      crate::store::model::CharacterContract {
+        acceptor_id: None,
+        acceptor_name: None,
+        assignee_id: Some(95_002),
+        assignee_name: Some("Assignee Pilot".to_owned()),
+        availability: None,
+        character_id: 42,
+        collateral: Some(5_000.0),
+        contract_id: 7,
+        date_accepted: None,
+        date_completed: None,
+        date_expired: None,
+        date_issued: "2026-05-30T12:00:00Z".to_owned(),
+        days_to_complete: None,
+        end_location_id: None,
+        for_corporation: false,
+        issuer_corporation_id: None,
+        issuer_id: 95_001,
+        issuer_name: Some("Issuer Pilot".to_owned()),
+        price,
+        reward,
+        start_location_id: None,
+        status: "outstanding".to_owned(),
+        title: None,
+        r#type: "item_exchange".to_owned(),
+        volume: Some(1_000.0),
+      }
+    }
+
+    #[test]
+    fn it_reads_a_priced_contract_as_a_sell() {
+      let entry = map_contract_row(&contract(Some(200.0), None));
+
+      assert!(!entry.is_buy);
+      assert_eq!(entry.value, Some(200.0));
+      assert_eq!(entry.character_id, 42);
+      assert_eq!(entry.issuer.as_deref(), Some("Issuer Pilot"));
+    }
+
+    #[test]
+    fn it_reads_a_rewarded_or_unpriced_contract_as_a_buy() {
+      let courier = map_contract_row(&contract(None, Some(150.0)));
+      let want = map_contract_row(&contract(Some(0.0), None));
+
+      assert!(courier.is_buy);
+      assert_eq!(courier.value, Some(150.0));
+      assert!(want.is_buy);
+    }
+  }
+
+  mod map_journal_row {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_carries_the_owning_character_through() {
+      let entry = map_journal_row(&journal_row(4, 7, Some(10.0), Some(10.0)));
+
+      assert_eq!(entry.character_id, 7);
+      assert_eq!(entry.id, 4);
+      assert_eq!(entry.ref_type, "bounty_prizes");
+    }
+
+    #[test]
+    fn it_marks_a_negative_amount_as_spend() {
+      let entry = map_journal_row(&journal_row(2, 42, Some(-400.0), Some(4_600.0)));
+
+      assert!(!entry.is_income());
+    }
+
+    #[test]
+    fn it_marks_a_positive_amount_as_income() {
+      let entry = map_journal_row(&journal_row(1, 42, Some(1_000.0), Some(5_000.0)));
+
+      assert!(entry.is_income());
+      assert_eq!(entry.amount, Some(1_000.0));
+      assert_eq!(entry.balance, Some(5_000.0));
+    }
+
+    #[test]
+    fn it_treats_a_null_amount_as_neither_income_nor_spend() {
+      let entry = map_journal_row(&journal_row(3, 42, None, None));
+
+      assert!(!entry.is_income());
+      assert_eq!(entry.amount, None);
+    }
+  }
+
+  mod map_txn_row {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn type_names() -> HashMap<i64, String> {
+      HashMap::from([(34, "Tritanium".to_owned())])
+    }
+
+    fn location_names() -> HashMap<i64, String> {
+      HashMap::from([(60_003_760, "Jita IV - Moon 4".to_owned())])
+    }
+
+    #[test]
+    fn it_carries_the_buy_and_sell_side_through() {
+      let buy = map_txn_row(
+        &txn_row(4, 34, 60_003_760, true, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
+      let sell = map_txn_row(
+        &txn_row(5, 34, 60_003_760, false, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
+
+      assert!(buy.is_buy);
+      assert!(!sell.is_buy);
+    }
+
+    #[test]
+    fn it_derives_total_as_unit_price_times_quantity() {
+      let entry = map_txn_row(
+        &txn_row(3, 34, 60_003_760, false, 250, 4.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
+
+      assert_eq!(entry.total, 1_000.0);
+    }
+
+    #[test]
+    fn it_resolves_the_type_and_location_names() {
+      let entry = map_txn_row(
+        &txn_row(1, 34, 60_003_760, false, 100, 5.0),
+        &type_names(),
+        &location_names(),
+      )
+      .expect("a fully resolved row is kept");
+
+      assert_eq!(entry.item, "Tritanium");
+      assert_eq!(entry.location, "Jita IV - Moon 4");
+    }
+
+    #[test]
+    fn it_withholds_a_row_with_an_unresolved_type_or_location() {
+      let unresolved_type = map_txn_row(
+        &txn_row(2, 999, 60_003_760, true, 1, 1.0),
+        &type_names(),
+        &location_names(),
+      );
+      let unresolved_location = map_txn_row(&txn_row(3, 34, 999_999, true, 1, 1.0), &type_names(), &location_names());
+
+      assert!(unresolved_type.is_none(), "an unresolved item type withholds the row");
+      assert!(
+        unresolved_location.is_none(),
+        "an unresolved location withholds the row"
+      );
+    }
+  }
+
+  mod party_image {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_a_cached_portrait_over_a_logo() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+      let portrait = store.character_portrait_path(42);
+      store.write(&portrait, &[1]).unwrap();
+
+      let resolved = super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, Some(portrait));
+      assert!(resolved.stale.is_empty());
+    }
+
+    #[test]
+    fn it_surfaces_both_candidate_keys_when_neither_image_is_cached() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
+      assert!(resolved.stale.contains(&(images::ImageKind::CorporationLogo, 42)));
+    }
+
+    #[test]
+    fn it_yields_no_path_and_no_stale_keys_for_a_non_positive_id() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::party_image(&store, 0);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.is_empty());
+    }
+  }
+
+  mod pending_party_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_ids_with_no_cached_image() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      assert_eq!(super::pending_party_ids(&store, vec![11, 22]), vec![11, 22]);
     }
   }
 }

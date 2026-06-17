@@ -1929,6 +1929,331 @@ mod tests {
     Race::new(2, 99_000_001, "A race.", "Caldari")
   }
 
+  mod all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_all_stored_characters() {
+      let db = store::open_test().await.unwrap();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+      let character = make_character();
+      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+
+      let result = all(&db).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_characters_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
+    }
+  }
+
+  mod all_owned {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{model::OwnerType, repo::infra};
+
+    #[tokio::test]
+    async fn it_returns_only_credentialed_characters() {
+      let db = store::open_test().await.unwrap();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+
+      let owned = make_character();
+      insert_with_org(&db, &owned, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(&db, owned.id(), OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+
+      let reference = Character::new(
+        87_654_321,
+        1,
+        90_000_001,
+        2,
+        "2003-05-12",
+        Gender::Male,
+        "Reference Character",
+      );
+      insert_with_org(&db, &reference, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+
+      let owned_rows = all_owned(&db).await.unwrap();
+      let all_rows = all(&db).await.unwrap();
+
+      assert_eq!(all_rows.len(), 2);
+      assert_eq!(owned_rows.len(), 1);
+      assert_eq!(owned_rows[0].id(), owned.id());
+    }
+  }
+
+  mod delete {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      model::ENTITY_TYPE_CORPORATION,
+      repo::{infra, org},
+    };
+
+    #[tokio::test]
+    async fn it_cleans_up_entity_tags_without_a_foreign_key_cascade() {
+      let db = store::open_test().await.unwrap();
+      let corporation = make_corporation();
+      let character = make_character();
+      let id = character.id();
+      insert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .unwrap();
+      let shared = infra::create(&db, "Shared", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, id, shared.id())
+        .await
+        .unwrap();
+      infra::assign(&db, ENTITY_TYPE_CORPORATION, corporation.id(), shared.id())
+        .await
+        .unwrap();
+
+      delete(&db, id).await.unwrap();
+
+      assert!(
+        infra::members(&db, shared.id(), ENTITY_TYPE_CHARACTER)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+      assert_eq!(
+        infra::members(&db, shared.id(), ENTITY_TYPE_CORPORATION).await.unwrap(),
+        vec![corporation.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_a_noop_for_an_unknown_character() {
+      let db = store::open_test().await.unwrap();
+
+      delete(&db, 999).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_re_adds_a_character_cleanly_after_a_remove() {
+      let db = store::open_test().await.unwrap();
+      let corporation = make_corporation();
+      let character = make_character();
+      let id = character.id();
+      insert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .unwrap();
+      infra::upsert(&db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+
+      delete(&db, id).await.unwrap();
+      upsert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .expect("re-adding a character whose corp row survived the remove must not 787");
+
+      assert!(get(&db, id).await.unwrap().is_some());
+      assert!(org::get_corporation(&db, corporation.id()).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_removes_the_character_its_credential_and_all_cascaded_data() {
+      let db = store::open_test().await.unwrap();
+      let corporation = make_corporation();
+      let character = make_character();
+      let id = character.id();
+      insert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &corporation,
+        Some(&make_alliance()),
+        None,
+      )
+      .await
+      .unwrap();
+      infra::upsert(&db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+      let squad = create(&db, "Crew", None, None).await.unwrap();
+      assign(&db, id, squad.id(), 0).await.unwrap();
+      let main = infra::create(&db, "Main", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, id, main.id()).await.unwrap();
+      sqlx::query(
+        "INSERT INTO character_skills (character_id, skill_id, active_skill_level, \
+        skillpoints_in_skill, trained_skill_level) VALUES (?, ?, ?, ?, ?)",
+      )
+      .bind(id)
+      .bind(100_i64)
+      .bind(5_i64)
+      .bind(1_000_000_i64)
+      .bind(5_i64)
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      delete(&db, id).await.unwrap();
+
+      assert_eq!(get(&db, id).await.unwrap(), None);
+      assert_eq!(infra::get(&db, id, OwnerType::Character).await.unwrap(), None);
+      assert!(memberships(&db).await.unwrap().is_empty());
+      assert!(infra::memberships(&db, ENTITY_TYPE_CHARACTER).await.unwrap().is_empty());
+      let skills: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM character_skills WHERE character_id = ?")
+        .bind(id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(skills, 0);
+      assert!(org::get_corporation(&db, corporation.id()).await.unwrap().is_some());
+    }
+  }
+
+  mod get {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_id() {
+      let db = store::open_test().await.unwrap();
+
+      let result = get(&db, 999).await.unwrap();
+
+      assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_character_for_a_known_id() {
+      let db = store::open_test().await.unwrap();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+      let character = make_character();
+      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+
+      let result = get(&db, 12_345_678).await.unwrap();
+
+      assert!(result.is_some());
+      let found = result.unwrap();
+      assert_eq!(found.id(), 12_345_678);
+      assert_eq!(found.name(), "Test Character");
+      assert_eq!(found.corporation_id(), 90_000_001);
+    }
+  }
+
+  mod insert_with_org {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_inserts_the_full_org_stack_without_fk_violation() {
+      let db = store::open_test().await.unwrap();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+      let character = make_character();
+
+      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+
+      let result = get(&db, 12_345_678).await.unwrap();
+      assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_with_faction_when_character_has_no_personal_alliance() {
+      let db = store::open_test().await.unwrap();
+      let faction = make_faction();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+      let character = make_character();
+
+      insert_with_org(
+        &db,
+        &character,
+        &bloodline,
+        &race,
+        &corporation,
+        Some(&alliance),
+        Some(&faction),
+      )
+      .await
+      .unwrap();
+
+      let result = get(&db, 12_345_678).await.unwrap();
+      assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_on_repeat_calls() {
+      let db = store::open_test().await.unwrap();
+      let alliance = make_alliance();
+      let race = make_race();
+      let corporation = make_corporation();
+      let bloodline = make_bloodline();
+      let character = make_character();
+
+      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
+        .await
+        .unwrap();
+
+      let result = all(&db).await.unwrap();
+      assert_eq!(result.len(), 1);
+    }
+  }
+
   mod killmails_page {
     use pretty_assertions::assert_eq;
 
@@ -2032,10 +2357,15 @@ mod tests {
     };
 
     const COBALT_EDGE: i64 = 98_000_001;
+
     const COBALT_RECRUIT: i64 = 1003;
+
     const COBALT_SCOUT: i64 = 1001;
+
     const NOW: &str = "2026-01-01T00:00:00Z";
+
     const RED_BARON: i64 = 1002;
+
     const RED_FEDERATION: i64 = 98_000_002;
 
     fn corp(id: i64, name: &str, ticker: &str) -> Corporation {
@@ -2131,72 +2461,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_matches_corp_name_or_ticker() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "corp:cobalt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
-      assert_eq!(matching(&db, "corp:redf").await, vec![RED_BARON]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_tags_with_or_within_the_key() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "tag:pvp").await, vec![COBALT_SCOUT]);
-      assert_eq!(matching(&db, "tag:pvp,alt").await, vec![COBALT_SCOUT, RED_BARON]);
-    }
-
-    #[tokio::test]
-    async fn it_negates_a_tag_filter() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "-tag:alt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_docked_status() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "status:docked").await, vec![COBALT_SCOUT]);
-      assert_eq!(matching(&db, "status:in-space").await, vec![RED_BARON]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_training_state() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "training:active").await, vec![COBALT_SCOUT]);
-      assert_eq!(matching(&db, "training:idle").await, vec![COBALT_RECRUIT, RED_BARON]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_across_facets() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "cobalt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
-      assert_eq!(matching(&db, "pvp").await, vec![COBALT_SCOUT]);
-    }
-
-    #[tokio::test]
     async fn it_ands_multiple_tokens() {
       let db = store::open_test().await.unwrap();
       seed_roster(&db).await;
 
       assert_eq!(matching(&db, "corp:cobalt tag:pvp").await, vec![COBALT_SCOUT]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_the_whole_roster_for_an_empty_query() {
-      let db = store::open_test().await.unwrap();
-      seed_roster(&db).await;
-
-      assert_eq!(matching(&db, "").await, vec![COBALT_RECRUIT, COBALT_SCOUT, RED_BARON]);
     }
 
     #[tokio::test]
@@ -2221,330 +2490,66 @@ mod tests {
       assert_eq!(scout.tags[0].name, "PvP");
       assert_eq!(scout.tags[0].color_hex.as_deref(), Some("#ff0000"));
     }
-  }
-
-  mod all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_characters_exist() {
+    async fn it_filters_by_docked_status() {
       let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
 
-      let result = all(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
+      assert_eq!(matching(&db, "status:docked").await, vec![COBALT_SCOUT]);
+      assert_eq!(matching(&db, "status:in-space").await, vec![RED_BARON]);
     }
 
     #[tokio::test]
-    async fn it_returns_all_stored_characters() {
+    async fn it_filters_by_training_state() {
       let db = store::open_test().await.unwrap();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-      let character = make_character();
-      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
+      seed_roster(&db).await;
 
-      let result = all(&db).await.unwrap();
-
-      assert_eq!(result.len(), 1);
-    }
-  }
-
-  mod all_owned {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{model::OwnerType, repo::infra};
-
-    #[tokio::test]
-    async fn it_returns_only_credentialed_characters() {
-      let db = store::open_test().await.unwrap();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-
-      let owned = make_character();
-      insert_with_org(&db, &owned, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
-      infra::upsert(&db, owned.id(), OwnerType::Character, "tok", "rt", 9999, None, None)
-        .await
-        .unwrap();
-
-      let reference = Character::new(
-        87_654_321,
-        1,
-        90_000_001,
-        2,
-        "2003-05-12",
-        Gender::Male,
-        "Reference Character",
-      );
-      insert_with_org(&db, &reference, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
-
-      let owned_rows = all_owned(&db).await.unwrap();
-      let all_rows = all(&db).await.unwrap();
-
-      assert_eq!(all_rows.len(), 2);
-      assert_eq!(owned_rows.len(), 1);
-      assert_eq!(owned_rows[0].id(), owned.id());
-    }
-  }
-
-  mod get {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_none_for_an_unknown_id() {
-      let db = store::open_test().await.unwrap();
-
-      let result = get(&db, 999).await.unwrap();
-
-      assert_eq!(result, None);
+      assert_eq!(matching(&db, "training:active").await, vec![COBALT_SCOUT]);
+      assert_eq!(matching(&db, "training:idle").await, vec![COBALT_RECRUIT, RED_BARON]);
     }
 
     #[tokio::test]
-    async fn it_returns_the_character_for_a_known_id() {
+    async fn it_matches_corp_name_or_ticker() {
       let db = store::open_test().await.unwrap();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-      let character = make_character();
-      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
+      seed_roster(&db).await;
 
-      let result = get(&db, 12_345_678).await.unwrap();
-
-      assert!(result.is_some());
-      let found = result.unwrap();
-      assert_eq!(found.id(), 12_345_678);
-      assert_eq!(found.name(), "Test Character");
-      assert_eq!(found.corporation_id(), 90_000_001);
-    }
-  }
-
-  mod delete {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{
-      model::ENTITY_TYPE_CORPORATION,
-      repo::{infra, org},
-    };
-
-    #[tokio::test]
-    async fn it_cleans_up_entity_tags_without_a_foreign_key_cascade() {
-      let db = store::open_test().await.unwrap();
-      let corporation = make_corporation();
-      let character = make_character();
-      let id = character.id();
-      insert_with_org(
-        &db,
-        &character,
-        &make_bloodline(),
-        &make_race(),
-        &corporation,
-        Some(&make_alliance()),
-        None,
-      )
-      .await
-      .unwrap();
-      let shared = infra::create(&db, "Shared", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, id, shared.id())
-        .await
-        .unwrap();
-      infra::assign(&db, ENTITY_TYPE_CORPORATION, corporation.id(), shared.id())
-        .await
-        .unwrap();
-
-      delete(&db, id).await.unwrap();
-
-      assert!(
-        infra::members(&db, shared.id(), ENTITY_TYPE_CHARACTER)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-      assert_eq!(
-        infra::members(&db, shared.id(), ENTITY_TYPE_CORPORATION).await.unwrap(),
-        vec![corporation.id()]
-      );
+      assert_eq!(matching(&db, "corp:cobalt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
+      assert_eq!(matching(&db, "corp:redf").await, vec![RED_BARON]);
     }
 
     #[tokio::test]
-    async fn it_removes_the_character_its_credential_and_all_cascaded_data() {
+    async fn it_matches_free_text_across_facets() {
       let db = store::open_test().await.unwrap();
-      let corporation = make_corporation();
-      let character = make_character();
-      let id = character.id();
-      insert_with_org(
-        &db,
-        &character,
-        &make_bloodline(),
-        &make_race(),
-        &corporation,
-        Some(&make_alliance()),
-        None,
-      )
-      .await
-      .unwrap();
-      infra::upsert(&db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
-        .await
-        .unwrap();
-      let squad = create(&db, "Crew", None, None).await.unwrap();
-      assign(&db, id, squad.id(), 0).await.unwrap();
-      let main = infra::create(&db, "Main", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, id, main.id()).await.unwrap();
-      sqlx::query(
-        "INSERT INTO character_skills (character_id, skill_id, active_skill_level, \
-        skillpoints_in_skill, trained_skill_level) VALUES (?, ?, ?, ?, ?)",
-      )
-      .bind(id)
-      .bind(100_i64)
-      .bind(5_i64)
-      .bind(1_000_000_i64)
-      .bind(5_i64)
-      .execute(&db.0)
-      .await
-      .unwrap();
+      seed_roster(&db).await;
 
-      delete(&db, id).await.unwrap();
-
-      assert_eq!(get(&db, id).await.unwrap(), None);
-      assert_eq!(infra::get(&db, id, OwnerType::Character).await.unwrap(), None);
-      assert!(memberships(&db).await.unwrap().is_empty());
-      assert!(infra::memberships(&db, ENTITY_TYPE_CHARACTER).await.unwrap().is_empty());
-      let skills: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM character_skills WHERE character_id = ?")
-        .bind(id)
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(skills, 0);
-      assert!(org::get_corporation(&db, corporation.id()).await.unwrap().is_some());
+      assert_eq!(matching(&db, "cobalt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
+      assert_eq!(matching(&db, "pvp").await, vec![COBALT_SCOUT]);
     }
 
     #[tokio::test]
-    async fn it_re_adds_a_character_cleanly_after_a_remove() {
+    async fn it_matches_tags_with_or_within_the_key() {
       let db = store::open_test().await.unwrap();
-      let corporation = make_corporation();
-      let character = make_character();
-      let id = character.id();
-      insert_with_org(
-        &db,
-        &character,
-        &make_bloodline(),
-        &make_race(),
-        &corporation,
-        Some(&make_alliance()),
-        None,
-      )
-      .await
-      .unwrap();
-      infra::upsert(&db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
-        .await
-        .unwrap();
+      seed_roster(&db).await;
 
-      delete(&db, id).await.unwrap();
-      upsert_with_org(
-        &db,
-        &character,
-        &make_bloodline(),
-        &make_race(),
-        &corporation,
-        Some(&make_alliance()),
-        None,
-      )
-      .await
-      .expect("re-adding a character whose corp row survived the remove must not 787");
-
-      assert!(get(&db, id).await.unwrap().is_some());
-      assert!(org::get_corporation(&db, corporation.id()).await.unwrap().is_some());
+      assert_eq!(matching(&db, "tag:pvp").await, vec![COBALT_SCOUT]);
+      assert_eq!(matching(&db, "tag:pvp,alt").await, vec![COBALT_SCOUT, RED_BARON]);
     }
 
     #[tokio::test]
-    async fn it_is_a_noop_for_an_unknown_character() {
+    async fn it_negates_a_tag_filter() {
       let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
 
-      delete(&db, 999).await.unwrap();
-    }
-  }
-
-  mod insert_with_org {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_inserts_the_full_org_stack_without_fk_violation() {
-      let db = store::open_test().await.unwrap();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-      let character = make_character();
-
-      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
-
-      let result = get(&db, 12_345_678).await.unwrap();
-      assert!(result.is_some());
+      assert_eq!(matching(&db, "-tag:alt").await, vec![COBALT_RECRUIT, COBALT_SCOUT]);
     }
 
     #[tokio::test]
-    async fn it_inserts_with_faction_when_character_has_no_personal_alliance() {
+    async fn it_returns_the_whole_roster_for_an_empty_query() {
       let db = store::open_test().await.unwrap();
-      let faction = make_faction();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-      let character = make_character();
+      seed_roster(&db).await;
 
-      insert_with_org(
-        &db,
-        &character,
-        &bloodline,
-        &race,
-        &corporation,
-        Some(&alliance),
-        Some(&faction),
-      )
-      .await
-      .unwrap();
-
-      let result = get(&db, 12_345_678).await.unwrap();
-      assert!(result.is_some());
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent_on_repeat_calls() {
-      let db = store::open_test().await.unwrap();
-      let alliance = make_alliance();
-      let race = make_race();
-      let corporation = make_corporation();
-      let bloodline = make_bloodline();
-      let character = make_character();
-
-      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
-      insert_with_org(&db, &character, &bloodline, &race, &corporation, Some(&alliance), None)
-        .await
-        .unwrap();
-
-      let result = all(&db).await.unwrap();
-      assert_eq!(result.len(), 1);
+      assert_eq!(matching(&db, "").await, vec![COBALT_RECRUIT, COBALT_SCOUT, RED_BARON]);
     }
   }
 
@@ -2621,6 +2626,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_names_the_entities_when_a_corporation_fk_violates_at_commit() {
+      let db = store::open_test().await.unwrap();
+      let character = make_character();
+      // Persist a DIFFERENT corp than the character's own (90_000_001), leaving the deferred
+      // characters.corporation_id FK dangling so the commit 787s — the shape of the NPC-CEO bug.
+      let mut other_corp = Corporation::new(90_000_002, "Other Corporation", "OTHR");
+      other_corp.set_ceo_id(12_345_678);
+      other_corp.set_creator_id(12_345_678);
+      other_corp.set_member_count(1);
+      other_corp.set_tax_rate(0.0);
+
+      let error = upsert_with_org(
+        &db,
+        &character,
+        &make_bloodline(),
+        &make_race(),
+        &other_corp,
+        None,
+        None,
+      )
+      .await
+      .expect_err("a dangling corporation_id FK fails at commit");
+
+      assert!(
+        error.is_foreign_key_violation(),
+        "the 787 is classified as a foreign-key violation"
+      );
+      let message = error.to_string();
+      assert!(message.contains("12345678"), "names the character: {message}");
+      assert!(
+        message.contains("90000001"),
+        "names the dangling corporation_id: {message}"
+      );
+      assert!(
+        message.contains("90000002"),
+        "names the corporation that was inserted: {message}"
+      );
+    }
+
+    #[tokio::test]
     async fn it_refreshes_mutable_character_and_corporation_rows() {
       let db = store::open_test().await.unwrap();
       let bloodline = make_bloodline();
@@ -2660,46 +2705,6 @@ mod tests {
       assert_eq!(char_row.title().as_deref(), Some("CEO"));
       assert_eq!(char_row.security_status(), Some(0.5));
       assert_eq!(corp_row.member_count(), Some(250));
-    }
-
-    #[tokio::test]
-    async fn it_names_the_entities_when_a_corporation_fk_violates_at_commit() {
-      let db = store::open_test().await.unwrap();
-      let character = make_character();
-      // Persist a DIFFERENT corp than the character's own (90_000_001), leaving the deferred
-      // characters.corporation_id FK dangling so the commit 787s — the shape of the NPC-CEO bug.
-      let mut other_corp = Corporation::new(90_000_002, "Other Corporation", "OTHR");
-      other_corp.set_ceo_id(12_345_678);
-      other_corp.set_creator_id(12_345_678);
-      other_corp.set_member_count(1);
-      other_corp.set_tax_rate(0.0);
-
-      let error = upsert_with_org(
-        &db,
-        &character,
-        &make_bloodline(),
-        &make_race(),
-        &other_corp,
-        None,
-        None,
-      )
-      .await
-      .expect_err("a dangling corporation_id FK fails at commit");
-
-      assert!(
-        error.is_foreign_key_violation(),
-        "the 787 is classified as a foreign-key violation"
-      );
-      let message = error.to_string();
-      assert!(message.contains("12345678"), "names the character: {message}");
-      assert!(
-        message.contains("90000001"),
-        "names the dangling corporation_id: {message}"
-      );
-      assert!(
-        message.contains("90000002"),
-        "names the corporation that was inserted: {message}"
-      );
     }
   }
 }
@@ -2758,6 +2763,21 @@ mod attributes_tests {
     }
 
     #[tokio::test]
+    async fn it_round_trips_null_remap_dates() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut attributes = make_attributes(42, 0);
+      attributes.last_remap_date = None;
+      attributes.accrued_remap_cooldown_date = None;
+      upsert_attributes(&db, &attributes).await.unwrap();
+
+      let result = super::attributes(&db, 42).await.unwrap().unwrap();
+
+      assert_eq!(result.last_remap_date(), &None);
+      assert_eq!(result.accrued_remap_cooldown_date(), &None);
+    }
+
+    #[tokio::test]
     async fn it_round_trips_the_stored_row_with_unallocated_sp() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -2774,21 +2794,6 @@ mod attributes_tests {
         result.accrued_remap_cooldown_date().as_deref(),
         Some("2026-01-01T00:00:00Z")
       );
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_null_remap_dates() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut attributes = make_attributes(42, 0);
-      attributes.last_remap_date = None;
-      attributes.accrued_remap_cooldown_date = None;
-      upsert_attributes(&db, &attributes).await.unwrap();
-
-      let result = super::attributes(&db, 42).await.unwrap().unwrap();
-
-      assert_eq!(result.last_remap_date(), &None);
-      assert_eq!(result.accrued_remap_cooldown_date(), &None);
     }
   }
 
@@ -2875,6 +2880,19 @@ mod implants_tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_leaves_other_characters_untouched() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::replace_implants(&db, 42, &full_set(42, 4)).await.unwrap();
+      super::replace_implants(&db, 43, &full_set(43, 3)).await.unwrap();
+
+      super::replace_implants(&db, 42, &[]).await.unwrap();
+
+      assert_eq!(implants(&db, 43).await.unwrap().len(), 5);
+    }
+
+    #[tokio::test]
     async fn it_overwrites_the_prior_five_row_set() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -2896,19 +2914,6 @@ mod implants_tests {
       assert_eq!(result.len(), 1);
       assert_eq!(result[0].attribute_id(), 166);
       assert_eq!(result[0].bonus(), 5);
-    }
-
-    #[tokio::test]
-    async fn it_leaves_other_characters_untouched() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::replace_implants(&db, 42, &full_set(42, 4)).await.unwrap();
-      super::replace_implants(&db, 43, &full_set(43, 3)).await.unwrap();
-
-      super::replace_implants(&db, 42, &[]).await.unwrap();
-
-      assert_eq!(implants(&db, 43).await.unwrap().len(), 5);
     }
   }
 }
@@ -2948,29 +2953,27 @@ mod skills_tests {
     }
   }
 
-  mod skills {
+  mod replace_skills {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_the_stored_sheet() {
+    async fn it_leaves_other_characters_untouched() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      replace_skills(&db, 42, &[make_skill(42, 3300, 100), make_skill(42, 3301, 200)])
+      seed_character(&db, 43).await;
+      super::replace_skills(&db, 42, &[make_skill(42, 3300, 100)])
+        .await
+        .unwrap();
+      super::replace_skills(&db, 43, &[make_skill(43, 3301, 200)])
         .await
         .unwrap();
 
-      let result = super::skills(&db, 42).await.unwrap();
+      super::replace_skills(&db, 42, &[]).await.unwrap();
 
-      assert_eq!(result.len(), 2);
+      assert_eq!(skills(&db, 43).await.unwrap().len(), 1);
     }
-  }
-
-  mod replace_skills {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
     async fn it_overwrites_the_whole_sheet() {
@@ -2989,22 +2992,24 @@ mod skills_tests {
       assert_eq!(result[0].skill_id(), 3400);
       assert_eq!(result[0].skillpoints_in_skill(), 500);
     }
+  }
+
+  mod skills {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
-    async fn it_leaves_other_characters_untouched() {
+    async fn it_returns_the_stored_sheet() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::replace_skills(&db, 42, &[make_skill(42, 3300, 100)])
-        .await
-        .unwrap();
-      super::replace_skills(&db, 43, &[make_skill(43, 3301, 200)])
+      replace_skills(&db, 42, &[make_skill(42, 3300, 100), make_skill(42, 3301, 200)])
         .await
         .unwrap();
 
-      super::replace_skills(&db, 42, &[]).await.unwrap();
+      let result = super::skills(&db, 42).await.unwrap();
 
-      assert_eq!(skills(&db, 43).await.unwrap().len(), 1);
+      assert_eq!(result.len(), 2);
     }
   }
 }
@@ -3111,57 +3116,10 @@ mod skillqueue_tests {
     }
   }
 
-  mod skillqueue {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_entries_in_queue_position_order() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_skillqueue(
-        &db,
-        42,
-        &[
-          make_entry(42, 2, 3302),
-          make_entry(42, 0, 3300),
-          make_entry(42, 1, 3301),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let result = super::skillqueue(&db, 42).await.unwrap();
-
-      assert_eq!(
-        result.iter().map(|e| e.skill_id()).collect::<Vec<_>>(),
-        [3300, 3301, 3302]
-      );
-    }
-  }
-
   mod replace_skillqueue {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_overwrites_the_whole_queue() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::replace_skillqueue(&db, 42, &[make_entry(42, 0, 3300), make_entry(42, 1, 3301)])
-        .await
-        .unwrap();
-
-      super::replace_skillqueue(&db, 42, &[make_entry(42, 0, 3400)])
-        .await
-        .unwrap();
-
-      let result = skillqueue(&db, 42).await.unwrap();
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].skill_id(), 3400);
-    }
 
     #[tokio::test]
     async fn it_clears_the_queue_when_given_no_entries() {
@@ -3191,6 +3149,53 @@ mod skillqueue_tests {
       super::replace_skillqueue(&db, 42, &[]).await.unwrap();
 
       assert_eq!(skillqueue(&db, 43).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_overwrites_the_whole_queue() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_skillqueue(&db, 42, &[make_entry(42, 0, 3300), make_entry(42, 1, 3301)])
+        .await
+        .unwrap();
+
+      super::replace_skillqueue(&db, 42, &[make_entry(42, 0, 3400)])
+        .await
+        .unwrap();
+
+      let result = skillqueue(&db, 42).await.unwrap();
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].skill_id(), 3400);
+    }
+  }
+
+  mod skillqueue {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_entries_in_queue_position_order() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_skillqueue(
+        &db,
+        42,
+        &[
+          make_entry(42, 2, 3302),
+          make_entry(42, 0, 3300),
+          make_entry(42, 1, 3301),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = super::skillqueue(&db, 42).await.unwrap();
+
+      assert_eq!(
+        result.iter().map(|e| e.skill_id()).collect::<Vec<_>>(),
+        [3300, 3301, 3302]
+      );
     }
   }
 }
@@ -3259,17 +3264,21 @@ mod state_tests {
     .unwrap();
   }
 
+  mod all_states {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_rows() {
+      let db = store::open_test().await.unwrap();
+      let result = super::all_states(&db).await.unwrap();
+      assert!(result.is_empty());
+    }
+  }
+
   mod state {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_returns_none_when_absent() {
-      let db = store::open_test().await.unwrap();
-      let result = super::state(&db, 1).await.unwrap();
-      assert!(result.is_none());
-    }
 
     #[tokio::test]
     async fn it_decodes_telemetry_columns_when_a_snapshot_exists() {
@@ -3283,16 +3292,12 @@ mod state_tests {
       assert_eq!(state.solar_system_id, Some(30_000_142));
       assert_eq!(state.synced_at, Some(1_700_000_000));
     }
-  }
-
-  mod all_states {
-    use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_when_no_rows() {
+    async fn it_returns_none_when_absent() {
       let db = store::open_test().await.unwrap();
-      let result = super::all_states(&db).await.unwrap();
-      assert!(result.is_empty());
+      let result = super::state(&db, 1).await.unwrap();
+      assert!(result.is_none());
     }
   }
 
@@ -3330,13 +3335,16 @@ mod state_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_is_null_before_any_journal_row() {
+    async fn it_carries_forward_over_trailing_null_balances() {
       let db = store::open_test().await.unwrap();
       insert_character(&db, 1, "Pilot").await;
+      insert_journal(&db, 1, 1, Some(100.0), Some(1000.0)).await;
+      insert_journal(&db, 2, 1, Some(250.0), None).await;
+      insert_journal(&db, 3, 1, Some(-50.0), None).await;
 
       let state = state(&db, 1).await.unwrap().unwrap();
 
-      assert!(state.wallet_balance.is_none());
+      assert_eq!(state.wallet_balance, Some(1200.0));
     }
 
     #[tokio::test]
@@ -3352,16 +3360,13 @@ mod state_tests {
     }
 
     #[tokio::test]
-    async fn it_carries_forward_over_trailing_null_balances() {
+    async fn it_is_null_before_any_journal_row() {
       let db = store::open_test().await.unwrap();
       insert_character(&db, 1, "Pilot").await;
-      insert_journal(&db, 1, 1, Some(100.0), Some(1000.0)).await;
-      insert_journal(&db, 2, 1, Some(250.0), None).await;
-      insert_journal(&db, 3, 1, Some(-50.0), None).await;
 
       let state = state(&db, 1).await.unwrap().unwrap();
 
-      assert_eq!(state.wallet_balance, Some(1200.0));
+      assert!(state.wallet_balance.is_none());
     }
   }
 }
@@ -3426,19 +3431,6 @@ mod telemetry_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_stores_a_new_snapshot() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_telemetry(&db, &make_telemetry(42)).await.unwrap();
-
-      let result = telemetry(&db, 42).await.unwrap().unwrap();
-      assert_eq!(result.solar_system_id(), 30_000_142);
-      assert_eq!(result.ship_name().as_deref(), Some("My Rifter"));
-      assert!(result.online());
-    }
-
-    #[tokio::test]
     async fn it_replaces_the_snapshot_on_conflict() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -3460,6 +3452,19 @@ mod telemetry_tests {
       assert_eq!(result.structure_id(), Some(1_021_000_000_000));
       assert_eq!(result.ship_name().as_deref(), None);
       assert_eq!(result.synced_at(), 1_700_000_999);
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_new_snapshot() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_telemetry(&db, &make_telemetry(42)).await.unwrap();
+
+      let result = telemetry(&db, 42).await.unwrap().unwrap();
+      assert_eq!(result.solar_system_id(), 30_000_142);
+      assert_eq!(result.ship_name().as_deref(), Some("My Rifter"));
+      assert!(result.online());
     }
   }
 }
@@ -3537,38 +3542,6 @@ mod clone_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_none_when_no_active_clone_exists() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      assert_eq!(super::clones(&db, 42).await.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn it_loads_the_active_clone_with_its_implants() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_active_clone(&db, 42).await;
-      seed_implant(&db, 42, None, 22_119, "Ocular Filter").await;
-      seed_implant(&db, 42, None, 10_212, "Memory Augmentation").await;
-
-      let result = super::clones(&db, 42).await.unwrap().unwrap();
-
-      assert_eq!(result.active.clone.home_location_id(), 60_003_760);
-      assert_eq!(
-        result.active.clone.home_location_name().as_deref(),
-        Some("Jita IV - Moon 4")
-      );
-      assert_eq!(
-        result.active.implants.iter().map(|i| i.type_id()).collect::<Vec<_>>(),
-        [10_212, 22_119]
-      );
-      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
-      assert_eq!(result.active.implants[0].icon().as_deref(), Some("type_10212_64.png"));
-      assert!(result.jump_clones.is_empty());
-    }
-
-    #[tokio::test]
     async fn it_loads_jump_clones_each_with_their_own_implants() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -3601,6 +3574,30 @@ mod clone_tests {
     }
 
     #[tokio::test]
+    async fn it_loads_the_active_clone_with_its_implants() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_active_clone(&db, 42).await;
+      seed_implant(&db, 42, None, 22_119, "Ocular Filter").await;
+      seed_implant(&db, 42, None, 10_212, "Memory Augmentation").await;
+
+      let result = super::clones(&db, 42).await.unwrap().unwrap();
+
+      assert_eq!(result.active.clone.home_location_id(), 60_003_760);
+      assert_eq!(
+        result.active.clone.home_location_name().as_deref(),
+        Some("Jita IV - Moon 4")
+      );
+      assert_eq!(
+        result.active.implants.iter().map(|i| i.type_id()).collect::<Vec<_>>(),
+        [10_212, 22_119]
+      );
+      assert_eq!(result.active.implants[0].name(), "Memory Augmentation");
+      assert_eq!(result.active.implants[0].icon().as_deref(), Some("type_10212_64.png"));
+      assert!(result.jump_clones.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_returns_an_active_clone_with_no_implants() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -3610,6 +3607,14 @@ mod clone_tests {
 
       assert_eq!(result.active.clone.character_id(), 42);
       assert!(result.active.implants.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_no_active_clone_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert_eq!(super::clones(&db, 42).await.unwrap(), None);
     }
   }
 
@@ -3768,21 +3773,31 @@ mod contact_tests {
       .unwrap();
   }
 
-  mod contacts {
+  mod contact_labels {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_collections_when_nothing_synced() {
+    async fn it_returns_only_the_labels_for_the_character() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
+      seed_label(&db, 42, 2, "Watchlist").await;
+      seed_label(&db, 42, 1, "Friendlies").await;
 
-      let result = super::contacts(&db, 42).await.unwrap();
+      let labels = super::super::contact_labels(&db, 42).await.unwrap();
 
-      assert!(result.contacts.is_empty());
-      assert!(result.labels.is_empty());
+      assert_eq!(
+        labels.iter().map(|l| l.label_name().as_str()).collect::<Vec<_>>(),
+        ["Friendlies", "Watchlist"]
+      );
     }
+  }
+
+  mod contacts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
     async fn it_returns_contacts_and_labels_with_resolved_names() {
@@ -3812,6 +3827,17 @@ mod contact_tests {
         ["Friendlies", "Watchlist"]
       );
     }
+
+    #[tokio::test]
+    async fn it_returns_empty_collections_when_nothing_synced() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let result = super::contacts(&db, 42).await.unwrap();
+
+      assert!(result.contacts.is_empty());
+      assert!(result.labels.is_empty());
+    }
   }
 
   mod contacts_page {
@@ -3829,48 +3855,6 @@ mod contact_tests {
 
     fn names(rows: &[CharacterContact]) -> Vec<&str> {
       rows.iter().map(|c| c.contact_name().as_str()).collect()
-    }
-
-    #[tokio::test]
-    async fn it_orders_a_name_ascending_page() {
-      let db = store::open_test().await.unwrap();
-      seed_three(&db).await;
-
-      let rows = super::contacts_page(
-        &db,
-        42,
-        None,
-        None,
-        ContactSortColumn::Name,
-        ContactSortDir::Asc,
-        None,
-        10,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot", "Charlie Corp"]);
-    }
-
-    #[tokio::test]
-    async fn it_orders_a_standing_descending_page() {
-      let db = store::open_test().await.unwrap();
-      seed_three(&db).await;
-
-      let rows = super::contacts_page(
-        &db,
-        42,
-        None,
-        None,
-        ContactSortColumn::Standing,
-        ContactSortDir::Desc,
-        None,
-        10,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(names(&rows), ["Bravo Pilot", "Charlie Corp", "Alpha Pilot"]);
     }
 
     #[tokio::test]
@@ -3937,11 +3921,11 @@ mod contact_tests {
     }
 
     #[tokio::test]
-    async fn it_walks_a_text_keyset_cursor_without_repeating_or_skipping() {
+    async fn it_orders_a_name_ascending_page() {
       let db = store::open_test().await.unwrap();
       seed_three(&db).await;
 
-      let first = super::contacts_page(
+      let rows = super::contacts_page(
         &db,
         42,
         None,
@@ -3949,28 +3933,33 @@ mod contact_tests {
         ContactSortColumn::Name,
         ContactSortDir::Asc,
         None,
-        2,
+        10,
       )
       .await
       .unwrap();
-      assert_eq!(names(&first), ["Alpha Pilot", "Bravo Pilot"]);
 
-      let last = first.last().unwrap();
-      let cursor = ContactCursor::Text(last.contact_name().clone(), last.contact_id());
-      let second = super::contacts_page(
+      assert_eq!(names(&rows), ["Alpha Pilot", "Bravo Pilot", "Charlie Corp"]);
+    }
+
+    #[tokio::test]
+    async fn it_orders_a_standing_descending_page() {
+      let db = store::open_test().await.unwrap();
+      seed_three(&db).await;
+
+      let rows = super::contacts_page(
         &db,
         42,
         None,
         None,
-        ContactSortColumn::Name,
-        ContactSortDir::Asc,
-        Some(&cursor),
-        2,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        10,
       )
       .await
       .unwrap();
 
-      assert_eq!(names(&second), ["Charlie Corp"]);
+      assert_eq!(names(&rows), ["Bravo Pilot", "Charlie Corp", "Alpha Pilot"]);
     }
 
     #[tokio::test]
@@ -4009,26 +3998,42 @@ mod contact_tests {
 
       assert_eq!(names(&second), ["Charlie Corp", "Alpha Pilot"]);
     }
-  }
-
-  mod contact_labels {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
-    async fn it_returns_only_the_labels_for_the_character() {
+    async fn it_walks_a_text_keyset_cursor_without_repeating_or_skipping() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_label(&db, 42, 2, "Watchlist").await;
-      seed_label(&db, 42, 1, "Friendlies").await;
+      seed_three(&db).await;
 
-      let labels = super::super::contact_labels(&db, 42).await.unwrap();
+      let first = super::contacts_page(
+        &db,
+        42,
+        None,
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        2,
+      )
+      .await
+      .unwrap();
+      assert_eq!(names(&first), ["Alpha Pilot", "Bravo Pilot"]);
 
-      assert_eq!(
-        labels.iter().map(|l| l.label_name().as_str()).collect::<Vec<_>>(),
-        ["Friendlies", "Watchlist"]
-      );
+      let last = first.last().unwrap();
+      let cursor = ContactCursor::Text(last.contact_name().clone(), last.contact_id());
+      let second = super::contacts_page(
+        &db,
+        42,
+        None,
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        Some(&cursor),
+        2,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(names(&second), ["Charlie Corp"]);
     }
   }
 
@@ -4058,30 +4063,42 @@ mod contact_tests {
     }
 
     #[tokio::test]
-    async fn it_replaces_contacts_atomically() {
+    async fn it_clears_existing_rows_when_given_empty_sets() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_contact(&db, 42, 91_000, "character", 1.0, false, "[]", "Stale Pilot").await;
+      seed_contact(&db, 42, 91_000, "character", 1.0, false, "[]", "Pilot").await;
+      seed_label(&db, 42, 1, "Friendlies").await;
 
+      super::replace_contacts_for_character(&db, 42, &[], &HashSet::new())
+        .await
+        .unwrap();
+      super::replace_labels_for_character(&db, 42, &[]).await.unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert!(result.contacts.is_empty());
+      assert!(result.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_resurrect_a_protected_contact_absent_from_the_server_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let protected = HashSet::from([95_020]);
       super::replace_contacts_for_character(
         &db,
         42,
-        &[
-          contact(42, 95_001, "character", "Trusted Pilot", "[1,2]"),
-          contact(42, 98_001, "corporation", "Allied Corp", "[]"),
-        ],
-        &HashSet::new(),
+        &[contact(42, 95_020, "character", "Stale Server Name", "[]")],
+        &protected,
       )
       .await
       .unwrap();
 
       let result = super::contacts(&db, 42).await.unwrap();
-      assert_eq!(
-        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
-        [95_001, 98_001]
+      assert!(
+        result.contacts.is_empty(),
+        "a contact with a pending remove (locally deleted) is not reinserted from the server set"
       );
-      assert_eq!(result.contacts[0].contact_name(), "Trusted Pilot");
-      assert_eq!(result.contacts[0].label_ids(), "[1,2]");
     }
 
     #[tokio::test]
@@ -4117,25 +4134,30 @@ mod contact_tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_resurrect_a_protected_contact_absent_from_the_server_set() {
+    async fn it_replaces_contacts_atomically() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
+      seed_contact(&db, 42, 91_000, "character", 1.0, false, "[]", "Stale Pilot").await;
 
-      let protected = HashSet::from([95_020]);
       super::replace_contacts_for_character(
         &db,
         42,
-        &[contact(42, 95_020, "character", "Stale Server Name", "[]")],
-        &protected,
+        &[
+          contact(42, 95_001, "character", "Trusted Pilot", "[1,2]"),
+          contact(42, 98_001, "corporation", "Allied Corp", "[]"),
+        ],
+        &HashSet::new(),
       )
       .await
       .unwrap();
 
       let result = super::contacts(&db, 42).await.unwrap();
-      assert!(
-        result.contacts.is_empty(),
-        "a contact with a pending remove (locally deleted) is not reinserted from the server set"
+      assert_eq!(
+        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
+        [95_001, 98_001]
       );
+      assert_eq!(result.contacts[0].contact_name(), "Trusted Pilot");
+      assert_eq!(result.contacts[0].label_ids(), "[1,2]");
     }
 
     #[tokio::test]
@@ -4167,23 +4189,6 @@ mod contact_tests {
       assert_eq!(result.labels.iter().map(|l| l.label_id()).collect::<Vec<_>>(), [1, 2]);
       assert!(result.labels.iter().all(|l| l.label_id() != 9));
     }
-
-    #[tokio::test]
-    async fn it_clears_existing_rows_when_given_empty_sets() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_contact(&db, 42, 91_000, "character", 1.0, false, "[]", "Pilot").await;
-      seed_label(&db, 42, 1, "Friendlies").await;
-
-      super::replace_contacts_for_character(&db, 42, &[], &HashSet::new())
-        .await
-        .unwrap();
-      super::replace_labels_for_character(&db, 42, &[]).await.unwrap();
-
-      let result = super::contacts(&db, 42).await.unwrap();
-      assert!(result.contacts.is_empty());
-      assert!(result.labels.is_empty());
-    }
   }
 
   mod single_row {
@@ -4211,6 +4216,22 @@ mod contact_tests {
         label_ids: label_ids.to_owned(),
         standing,
       }
+    }
+
+    #[tokio::test]
+    async fn it_deletes_only_the_targeted_contact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_contact(&db, 42, 95_001, "character", 5.0, true, "[]", "Keep Pilot").await;
+      seed_contact(&db, 42, 98_001, "corporation", 1.0, false, "[]", "Drop Corp").await;
+
+      super::delete_contact(&db, 42, 98_001).await.unwrap();
+
+      let result = super::contacts(&db, 42).await.unwrap();
+      assert_eq!(
+        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
+        [95_001]
+      );
     }
 
     #[tokio::test]
@@ -4252,22 +4273,6 @@ mod contact_tests {
       assert_eq!(result.contacts[0].standing(), -10.0);
       assert!(!result.contacts[0].is_watched());
       assert_eq!(result.contacts[0].label_ids(), "[2,3]");
-    }
-
-    #[tokio::test]
-    async fn it_deletes_only_the_targeted_contact() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_contact(&db, 42, 95_001, "character", 5.0, true, "[]", "Keep Pilot").await;
-      seed_contact(&db, 42, 98_001, "corporation", 1.0, false, "[]", "Drop Corp").await;
-
-      super::delete_contact(&db, 42, 98_001).await.unwrap();
-
-      let result = super::contacts(&db, 42).await.unwrap();
-      assert_eq!(
-        result.contacts.iter().map(|c| c.contact_id()).collect::<Vec<_>>(),
-        [95_001]
-      );
     }
   }
 }
@@ -4322,53 +4327,91 @@ mod killmail_tests {
     }
   }
 
-  mod upsert {
+  mod detail {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[tokio::test]
-    async fn it_inserts_a_new_killmail() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
+    fn attacker(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailAttacker {
+      KillmailAttacker {
+        alliance_id: Some(99_000_001),
+        attacker_character_id: Some(5005),
+        character_id,
+        corporation_id: Some(6006),
+        damage_done: 1234,
+        final_blow: ordinal == 0,
+        killmail_id,
+        ordinal,
+        ship_type_id: Some(670),
+      }
+    }
 
-      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
-
-      let rows = killmails(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].killmail_id(), 100);
-      assert_eq!(rows[0].value_isk(), 1234.5);
+    fn item(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailItem {
+      KillmailItem {
+        character_id,
+        flag: 27,
+        killmail_id,
+        ordinal,
+        quantity_destroyed: 1,
+        quantity_dropped: 0,
+        type_id: 2185,
+        value_isk: 4242.5,
+      }
     }
 
     #[tokio::test]
-    async fn it_is_idempotent_on_the_composite_key() {
+    async fn it_cascades_both_child_tables_when_the_character_is_deleted() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-
       upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
-      upsert_killmail(&db, &entry(42, 100, 9999.0)).await.unwrap();
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
+        .await
+        .unwrap();
 
-      let rows = killmails(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].value_isk(), 9999.0);
+      character::delete(&db, 42).await.unwrap();
+
+      assert_eq!(
+        killmail_attackers(&db, 42, 100).await.unwrap(),
+        Vec::<KillmailAttacker>::new()
+      );
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
     }
 
     #[tokio::test]
-    async fn it_round_trips_the_value_provenance_fields() {
+    async fn it_replaces_existing_detail_on_rewrite() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
+        .await
+        .unwrap();
+
+      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0), attacker(42, 100, 1)], &[])
+        .await
+        .unwrap();
+
+      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap().len(), 2);
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_attackers_items_and_victim_columns() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let mut kill = entry(42, 100, 1234.5);
-      kill.value_destroyed_isk = 1000.0;
-      kill.value_final = true;
-      kill.value_recheck_count = 3;
-      kill.value_source = "local".to_owned();
+      kill.victim_alliance_id = Some(7007);
+      kill.victim_damage_taken = 56_789;
       upsert_killmail(&db, &kill).await.unwrap();
+      let attackers = vec![attacker(42, 100, 0), attacker(42, 100, 1)];
+      let items = vec![item(42, 100, 0), item(42, 100, 1)];
 
-      let rows = killmails(&db, 42).await.unwrap();
-      assert_eq!(rows[0].value_destroyed_isk(), 1000.0);
-      assert_eq!(rows[0].value_final(), true);
-      assert_eq!(rows[0].value_recheck_count(), 3);
-      assert_eq!(rows[0].value_source(), "local");
+      upsert_killmail_detail(&db, 42, 100, &attackers, &items).await.unwrap();
+
+      let read_kill = killmails(&db, 42).await.unwrap();
+      assert_eq!(read_kill[0].victim_alliance_id(), Some(7007));
+      assert_eq!(read_kill[0].victim_damage_taken(), 56_789);
+      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap(), attackers);
+      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), items);
     }
   }
 
@@ -4421,91 +4464,53 @@ mod killmail_tests {
     }
   }
 
-  mod detail {
+  mod upsert {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn attacker(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailAttacker {
-      KillmailAttacker {
-        alliance_id: Some(99_000_001),
-        attacker_character_id: Some(5005),
-        character_id,
-        corporation_id: Some(6006),
-        damage_done: 1234,
-        final_blow: ordinal == 0,
-        killmail_id,
-        ordinal,
-        ship_type_id: Some(670),
-      }
-    }
+    #[tokio::test]
+    async fn it_inserts_a_new_killmail() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
 
-    fn item(character_id: i64, killmail_id: i64, ordinal: i64) -> KillmailItem {
-      KillmailItem {
-        character_id,
-        flag: 27,
-        killmail_id,
-        ordinal,
-        quantity_destroyed: 1,
-        quantity_dropped: 0,
-        type_id: 2185,
-        value_isk: 4242.5,
-      }
+      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
+
+      let rows = killmails(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].killmail_id(), 100);
+      assert_eq!(rows[0].value_isk(), 1234.5);
     }
 
     #[tokio::test]
-    async fn it_round_trips_attackers_items_and_victim_columns() {
+    async fn it_is_idempotent_on_the_composite_key() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
+      upsert_killmail(&db, &entry(42, 100, 9999.0)).await.unwrap();
+
+      let rows = killmails(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].value_isk(), 9999.0);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_value_provenance_fields() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let mut kill = entry(42, 100, 1234.5);
-      kill.victim_alliance_id = Some(7007);
-      kill.victim_damage_taken = 56_789;
+      kill.value_destroyed_isk = 1000.0;
+      kill.value_final = true;
+      kill.value_recheck_count = 3;
+      kill.value_source = "local".to_owned();
       upsert_killmail(&db, &kill).await.unwrap();
-      let attackers = vec![attacker(42, 100, 0), attacker(42, 100, 1)];
-      let items = vec![item(42, 100, 0), item(42, 100, 1)];
 
-      upsert_killmail_detail(&db, 42, 100, &attackers, &items).await.unwrap();
-
-      let read_kill = killmails(&db, 42).await.unwrap();
-      assert_eq!(read_kill[0].victim_alliance_id(), Some(7007));
-      assert_eq!(read_kill[0].victim_damage_taken(), 56_789);
-      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap(), attackers);
-      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), items);
-    }
-
-    #[tokio::test]
-    async fn it_replaces_existing_detail_on_rewrite() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
-      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
-        .await
-        .unwrap();
-
-      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0), attacker(42, 100, 1)], &[])
-        .await
-        .unwrap();
-
-      assert_eq!(killmail_attackers(&db, 42, 100).await.unwrap().len(), 2);
-      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
-    }
-
-    #[tokio::test]
-    async fn it_cascades_both_child_tables_when_the_character_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert_killmail(&db, &entry(42, 100, 1234.5)).await.unwrap();
-      upsert_killmail_detail(&db, 42, 100, &[attacker(42, 100, 0)], &[item(42, 100, 0)])
-        .await
-        .unwrap();
-
-      character::delete(&db, 42).await.unwrap();
-
-      assert_eq!(
-        killmail_attackers(&db, 42, 100).await.unwrap(),
-        Vec::<KillmailAttacker>::new()
-      );
-      assert_eq!(killmail_items(&db, 42, 100).await.unwrap(), Vec::<KillmailItem>::new());
+      let rows = killmails(&db, 42).await.unwrap();
+      assert_eq!(rows[0].value_destroyed_isk(), 1000.0);
+      assert_eq!(rows[0].value_final(), true);
+      assert_eq!(rows[0].value_recheck_count(), 3);
+      assert_eq!(rows[0].value_source(), "local");
     }
   }
 }
@@ -4550,6 +4555,28 @@ mod notification_tests {
     }
   }
 
+  mod notifications {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_notifications_newest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut older = notification(42, 1, false);
+      older.timestamp = "2024-01-01T00:00:00Z".to_owned();
+      let mut newer = notification(42, 2, false);
+      newer.timestamp = "2024-03-01T00:00:00Z".to_owned();
+      upsert_notification(&db, &older).await.unwrap();
+      upsert_notification(&db, &newer).await.unwrap();
+
+      let rows = notifications(&db, 42).await.unwrap();
+
+      assert_eq!(rows.iter().map(|n| n.notification_id()).collect::<Vec<_>>(), [2, 1]);
+    }
+  }
+
   mod upsert {
     use pretty_assertions::assert_eq;
 
@@ -4579,28 +4606,6 @@ mod notification_tests {
       let rows = notifications(&db, 42).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert!(rows[0].is_read());
-    }
-  }
-
-  mod notifications {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_notifications_newest_first() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut older = notification(42, 1, false);
-      older.timestamp = "2024-01-01T00:00:00Z".to_owned();
-      let mut newer = notification(42, 2, false);
-      newer.timestamp = "2024-03-01T00:00:00Z".to_owned();
-      upsert_notification(&db, &older).await.unwrap();
-      upsert_notification(&db, &newer).await.unwrap();
-
-      let rows = notifications(&db, 42).await.unwrap();
-
-      assert_eq!(rows.iter().map(|n| n.notification_id()).collect::<Vec<_>>(), [2, 1]);
     }
   }
 }
@@ -4940,17 +4945,6 @@ mod squad_tests {
     use super::*;
 
     #[tokio::test]
-    async fn get_or_create_unassigned_is_idempotent() {
-      let db = store::open_test().await.unwrap();
-
-      let first = get_or_create_unassigned(&db).await.unwrap();
-      let second = get_or_create_unassigned(&db).await.unwrap();
-
-      assert_eq!(first.id(), second.id());
-      assert!(is_unassigned(&first));
-    }
-
-    #[tokio::test]
     async fn all_user_squads_excludes_the_reserved_bucket() {
       let db = store::open_test().await.unwrap();
       create(&db, "Crew", None, None).await.unwrap();
@@ -4988,13 +4982,14 @@ mod squad_tests {
     }
 
     #[tokio::test]
-    async fn update_refuses_renaming_a_user_squad_onto_the_reserved_name() {
+    async fn get_or_create_unassigned_is_idempotent() {
       let db = store::open_test().await.unwrap();
-      let squad = create(&db, "Crew", None, None).await.unwrap();
 
-      let result = update(&db, squad.id(), RESERVED_UNASSIGNED_NAME, None, None).await;
+      let first = get_or_create_unassigned(&db).await.unwrap();
+      let second = get_or_create_unassigned(&db).await.unwrap();
 
-      assert!(matches!(result, Err(Error::ReservedSquad)));
+      assert_eq!(first.id(), second.id());
+      assert!(is_unassigned(&first));
     }
 
     #[tokio::test]
@@ -5006,12 +5001,49 @@ mod squad_tests {
       let reserved = get_or_create_unassigned(&db).await.unwrap();
       assert_eq!(unassigned_id(&db).await.unwrap(), Some(reserved.id()));
     }
+
+    #[tokio::test]
+    async fn update_refuses_renaming_a_user_squad_onto_the_reserved_name() {
+      let db = store::open_test().await.unwrap();
+      let squad = create(&db, "Crew", None, None).await.unwrap();
+
+      let result = update(&db, squad.id(), RESERVED_UNASSIGNED_NAME, None, None).await;
+
+      assert!(matches!(result, Err(Error::ReservedSquad)));
+    }
   }
 
   mod unassign {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn assigning_to_a_user_squad_moves_a_character_out_of_the_reserved_one() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 12_345_678).await;
+      let squad = create(&db, "Crew", None, None).await.unwrap();
+      unassign(&db, 12_345_678).await.unwrap();
+      let reserved = get_or_create_unassigned(&db).await.unwrap();
+
+      assign(&db, 12_345_678, squad.id(), 0).await.unwrap();
+
+      assert_eq!(members(&db, reserved.id()).await.unwrap(), Vec::<i64>::new());
+      assert_eq!(members(&db, squad.id()).await.unwrap(), vec![12_345_678]);
+    }
+
+    #[tokio::test]
+    async fn it_appends_each_unassigned_character_with_an_increasing_position() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 100).await;
+      seed_character(&db, 200).await;
+
+      unassign(&db, 100).await.unwrap();
+      unassign(&db, 200).await.unwrap();
+
+      let reserved = get_or_create_unassigned(&db).await.unwrap();
+      assert_eq!(members(&db, reserved.id()).await.unwrap(), vec![100, 200]);
+    }
 
     #[tokio::test]
     async fn it_moves_a_character_into_the_reserved_unassigned_squad() {
@@ -5033,33 +5065,6 @@ mod squad_tests {
         .unwrap();
       assert_eq!(row.squad_id(), reserved.id());
       assert_eq!(row.position(), 0);
-    }
-
-    #[tokio::test]
-    async fn it_appends_each_unassigned_character_with_an_increasing_position() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 100).await;
-      seed_character(&db, 200).await;
-
-      unassign(&db, 100).await.unwrap();
-      unassign(&db, 200).await.unwrap();
-
-      let reserved = get_or_create_unassigned(&db).await.unwrap();
-      assert_eq!(members(&db, reserved.id()).await.unwrap(), vec![100, 200]);
-    }
-
-    #[tokio::test]
-    async fn assigning_to_a_user_squad_moves_a_character_out_of_the_reserved_one() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 12_345_678).await;
-      let squad = create(&db, "Crew", None, None).await.unwrap();
-      unassign(&db, 12_345_678).await.unwrap();
-      let reserved = get_or_create_unassigned(&db).await.unwrap();
-
-      assign(&db, 12_345_678, squad.id(), 0).await.unwrap();
-
-      assert_eq!(members(&db, reserved.id()).await.unwrap(), Vec::<i64>::new());
-      assert_eq!(members(&db, squad.id()).await.unwrap(), vec![12_345_678]);
     }
   }
 
@@ -5125,6 +5130,59 @@ mod standing_tests {
     .unwrap();
   }
 
+  mod replace_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::CharacterStanding;
+
+    fn standing(character_id: i64, from_id: i64, from_type: &str, standing: f64, name: &str) -> CharacterStanding {
+      CharacterStanding {
+        character_id,
+        from_id,
+        from_name: name.to_owned(),
+        from_type: from_type.to_owned(),
+        standing,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_clears_existing_rows_when_given_an_empty_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_standing(&db, 42, 500_003, "faction", 1.0, "Amarr Empire").await;
+
+      super::replace_standings_for_character(&db, 42, &[]).await.unwrap();
+
+      assert!(super::standings(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_whole_set_atomically() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_standing(&db, 42, 500_003, "faction", 1.0, "Stale Faction").await;
+
+      super::replace_standings_for_character(
+        &db,
+        42,
+        &[
+          standing(42, 500_001, "faction", 7.5, "Caldari State"),
+          standing(42, 1_000_125, "npc_corp", -2.5, "Concord"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = super::standings(&db, 42).await.unwrap();
+      assert_eq!(
+        result.iter().map(|s| s.from_id()).collect::<Vec<_>>(),
+        [500_001, 1_000_125]
+      );
+      assert!(result.iter().all(|s| s.from_id() != 500_003));
+    }
+  }
+
   mod standings {
     use pretty_assertions::assert_eq;
 
@@ -5155,59 +5213,6 @@ mod standing_tests {
       let faction = result.iter().find(|s| s.from_type() == "faction").unwrap();
       assert_eq!(faction.from_name(), "Amarr Empire");
       assert!((faction.standing() - 7.5).abs() < f64::EPSILON);
-    }
-  }
-
-  mod replace_for_character {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::model::CharacterStanding;
-
-    fn standing(character_id: i64, from_id: i64, from_type: &str, standing: f64, name: &str) -> CharacterStanding {
-      CharacterStanding {
-        character_id,
-        from_id,
-        from_name: name.to_owned(),
-        from_type: from_type.to_owned(),
-        standing,
-      }
-    }
-
-    #[tokio::test]
-    async fn it_replaces_the_whole_set_atomically() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_standing(&db, 42, 500_003, "faction", 1.0, "Stale Faction").await;
-
-      super::replace_standings_for_character(
-        &db,
-        42,
-        &[
-          standing(42, 500_001, "faction", 7.5, "Caldari State"),
-          standing(42, 1_000_125, "npc_corp", -2.5, "Concord"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let result = super::standings(&db, 42).await.unwrap();
-      assert_eq!(
-        result.iter().map(|s| s.from_id()).collect::<Vec<_>>(),
-        [500_001, 1_000_125]
-      );
-      assert!(result.iter().all(|s| s.from_id() != 500_003));
-    }
-
-    #[tokio::test]
-    async fn it_clears_existing_rows_when_given_an_empty_set() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_standing(&db, 42, 500_003, "faction", 1.0, "Amarr Empire").await;
-
-      super::replace_standings_for_character(&db, 42, &[]).await.unwrap();
-
-      assert!(super::standings(&db, 42).await.unwrap().is_empty());
     }
   }
 }

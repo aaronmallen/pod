@@ -220,22 +220,47 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_writes_one_row_per_owned_character_for_todays_utc_date() {
+    async fn it_backfills_and_records_todays_corporation_net_worth() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      own(&db, 1).await;
-      insert_journal(&db, 1, 1, 100.0, 100.0).await;
+      own_corp(&db, 90_000_001).await;
+      insert_corp_journal(&db, 1, 90_000_001, 1, "2026-05-01T03:00:00Z", 400.0).await;
+      insert_corp_journal(&db, 2, 90_000_001, 2, "2026-05-01T03:00:00Z", 100.0).await;
+      insert_corp_division(&db, 90_000_001, 1, 1_000.0).await;
+      insert_corp_division(&db, 90_000_001, 2, 250.0).await;
 
       run_in(&db).await;
 
-      let date = today_utc();
-      let rows = finance::for_character_since(&db, 1, &date).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].date(), &date);
-      assert_eq!(rows[0].liquid(), 100.0);
-      assert_eq!(rows[0].net_worth(), 100.0);
-      assert_eq!(rows[0].asset_value(), None);
-      assert_eq!(rows[0].escrow(), None);
+      let rows = finance::for_corporation_since(&db, 90_000_001, "2026-01-01")
+        .await
+        .unwrap();
+      assert!(rows.len() >= 2, "corp journal history must produce a multi-point curve");
+
+      let backfilled = rows.iter().find(|r| r.date() == "2026-05-01").unwrap();
+      assert_eq!(backfilled.liquid(), 500.0);
+      assert_eq!(backfilled.net_worth(), 500.0);
+
+      let today = rows.iter().find(|r| r.date() == &today_utc()).unwrap();
+      assert_eq!(today.liquid(), 1_250.0);
+    }
+
+    #[tokio::test]
+    async fn it_backfills_historical_liquid_only_points_from_journal_history() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      own(&db, 1).await;
+      insert_journal_on(&db, 1, 1, "2026-05-01T03:00:00Z", 100.0).await;
+      insert_journal_on(&db, 2, 1, "2026-05-02T03:00:00Z", 250.0).await;
+
+      run_in(&db).await;
+
+      let rows = finance::for_character_since(&db, 1, "2026-01-01").await.unwrap();
+      assert!(rows.len() >= 2, "journal history must produce a multi-point curve");
+      let may_first = rows.iter().find(|r| r.date() == "2026-05-01").unwrap();
+      assert_eq!(may_first.liquid(), 100.0);
+      assert_eq!(may_first.net_worth(), 100.0);
+      assert_eq!(may_first.asset_value(), None);
+      assert_eq!(may_first.escrow(), None);
     }
 
     #[tokio::test]
@@ -253,6 +278,47 @@ mod tests {
       assert_eq!(rows[0].liquid(), 0.0);
       assert_eq!(rows[0].escrow(), Some(80.0));
       assert_eq!(rows[0].net_worth(), 80.0);
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_on_same_day_re_run() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      own(&db, 1).await;
+      insert_journal(&db, 1, 1, 100.0, 100.0).await;
+
+      run_in(&db).await;
+      insert_journal(&db, 2, 1, 50.0, 150.0).await;
+      run_in(&db).await;
+
+      let rows = finance::for_character_since(&db, 1, "2000-01-01").await.unwrap();
+      assert_eq!(
+        rows.len(),
+        2,
+        "re-running overwrites each UTC day's row rather than appending"
+      );
+
+      let today = rows.iter().find(|r| r.date() == &today_utc()).unwrap();
+      assert_eq!(today.liquid(), 150.0);
+      assert_eq!(today.net_worth(), 150.0);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_todays_full_composition_when_backfilling() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      own(&db, 1).await;
+      let date = today_utc();
+      insert_journal_on(&db, 1, 1, &format!("{date}T03:00:00Z"), 100.0).await;
+      insert_order(&db, 1, 1, 80.0).await;
+
+      run_in(&db).await;
+
+      let rows = finance::for_character_since(&db, 1, &date).await.unwrap();
+      let today = rows.iter().find(|r| r.date() == &date).unwrap();
+      assert_eq!(today.escrow(), Some(80.0), "forward escrow composition is preserved");
+      assert_eq!(today.liquid(), 100.0);
+      assert_eq!(today.net_worth(), 180.0);
     }
 
     #[tokio::test]
@@ -283,91 +349,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_backfills_historical_liquid_only_points_from_journal_history() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      own(&db, 1).await;
-      insert_journal_on(&db, 1, 1, "2026-05-01T03:00:00Z", 100.0).await;
-      insert_journal_on(&db, 2, 1, "2026-05-02T03:00:00Z", 250.0).await;
-
-      run_in(&db).await;
-
-      let rows = finance::for_character_since(&db, 1, "2026-01-01").await.unwrap();
-      assert!(rows.len() >= 2, "journal history must produce a multi-point curve");
-      let may_first = rows.iter().find(|r| r.date() == "2026-05-01").unwrap();
-      assert_eq!(may_first.liquid(), 100.0);
-      assert_eq!(may_first.net_worth(), 100.0);
-      assert_eq!(may_first.asset_value(), None);
-      assert_eq!(may_first.escrow(), None);
-    }
-
-    #[tokio::test]
-    async fn it_keeps_todays_full_composition_when_backfilling() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      own(&db, 1).await;
-      let date = today_utc();
-      insert_journal_on(&db, 1, 1, &format!("{date}T03:00:00Z"), 100.0).await;
-      insert_order(&db, 1, 1, 80.0).await;
-
-      run_in(&db).await;
-
-      let rows = finance::for_character_since(&db, 1, &date).await.unwrap();
-      let today = rows.iter().find(|r| r.date() == &date).unwrap();
-      assert_eq!(today.escrow(), Some(80.0), "forward escrow composition is preserved");
-      assert_eq!(today.liquid(), 100.0);
-      assert_eq!(today.net_worth(), 180.0);
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent_on_same_day_re_run() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      own(&db, 1).await;
-      insert_journal(&db, 1, 1, 100.0, 100.0).await;
-
-      run_in(&db).await;
-      insert_journal(&db, 2, 1, 50.0, 150.0).await;
-      run_in(&db).await;
-
-      let rows = finance::for_character_since(&db, 1, "2000-01-01").await.unwrap();
-      assert_eq!(
-        rows.len(),
-        2,
-        "re-running overwrites each UTC day's row rather than appending"
-      );
-
-      let today = rows.iter().find(|r| r.date() == &today_utc()).unwrap();
-      assert_eq!(today.liquid(), 150.0);
-      assert_eq!(today.net_worth(), 150.0);
-    }
-
-    #[tokio::test]
-    async fn it_backfills_and_records_todays_corporation_net_worth() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      own_corp(&db, 90_000_001).await;
-      insert_corp_journal(&db, 1, 90_000_001, 1, "2026-05-01T03:00:00Z", 400.0).await;
-      insert_corp_journal(&db, 2, 90_000_001, 2, "2026-05-01T03:00:00Z", 100.0).await;
-      insert_corp_division(&db, 90_000_001, 1, 1_000.0).await;
-      insert_corp_division(&db, 90_000_001, 2, 250.0).await;
-
-      run_in(&db).await;
-
-      let rows = finance::for_corporation_since(&db, 90_000_001, "2026-01-01")
-        .await
-        .unwrap();
-      assert!(rows.len() >= 2, "corp journal history must produce a multi-point curve");
-
-      let backfilled = rows.iter().find(|r| r.date() == "2026-05-01").unwrap();
-      assert_eq!(backfilled.liquid(), 500.0);
-      assert_eq!(backfilled.net_worth(), 500.0);
-
-      let today = rows.iter().find(|r| r.date() == &today_utc()).unwrap();
-      assert_eq!(today.liquid(), 1_250.0);
-    }
-
-    #[tokio::test]
     async fn it_skips_a_non_owned_corporation() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
@@ -379,6 +360,25 @@ mod tests {
         .await
         .unwrap();
       assert!(rows.is_empty(), "only owned corporations are snapshotted");
+    }
+
+    #[tokio::test]
+    async fn it_writes_one_row_per_owned_character_for_todays_utc_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      own(&db, 1).await;
+      insert_journal(&db, 1, 1, 100.0, 100.0).await;
+
+      run_in(&db).await;
+
+      let date = today_utc();
+      let rows = finance::for_character_since(&db, 1, &date).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].date(), &date);
+      assert_eq!(rows[0].liquid(), 100.0);
+      assert_eq!(rows[0].net_worth(), 100.0);
+      assert_eq!(rows[0].asset_value(), None);
+      assert_eq!(rows[0].escrow(), None);
     }
   }
 }

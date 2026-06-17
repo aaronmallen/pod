@@ -557,122 +557,23 @@ mod tests {
     .unwrap();
   }
 
-  mod click_kind {
-    use pretty_assertions::assert_eq;
+  async fn seed_character(db: &Database, id: i64) {
+    use crate::store::model::{Alliance, Bloodline, Character, Corporation, Gender, Race};
 
-    use super::*;
-
-    #[test]
-    fn it_maps_modifier_flags_to_intents() {
-      assert_eq!(ClickKind::from_modifiers(false, false), ClickKind::Plain);
-      assert_eq!(ClickKind::from_modifiers(true, false), ClickKind::Toggle);
-      assert_eq!(ClickKind::from_modifiers(false, true), ClickKind::Range);
-      assert_eq!(ClickKind::from_modifiers(true, true), ClickKind::RangeMerge);
-    }
-  }
-
-  mod queue_selection {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn order() -> Vec<i64> {
-      vec![0, 1, 2, 3, 4]
-    }
-
-    #[test]
-    fn a_plain_click_selects_only_that_row() {
-      let mut sel = QueueSelection::default();
-      sel.apply(2, ClickKind::Plain, &order());
-      assert_eq!(sel.ordered(&order()), vec![2]);
-    }
-
-    #[test]
-    fn a_plain_re_click_on_the_lone_selection_clears_it() {
-      let mut sel = QueueSelection::default();
-      sel.apply(2, ClickKind::Plain, &order());
-      sel.apply(2, ClickKind::Plain, &order());
-      assert!(sel.is_empty());
-    }
-
-    #[test]
-    fn a_plain_click_elsewhere_replaces_the_selection() {
-      let mut sel = QueueSelection::default();
-      sel.apply(2, ClickKind::Plain, &order());
-      sel.apply(4, ClickKind::Plain, &order());
-      assert_eq!(sel.ordered(&order()), vec![4]);
-    }
-
-    #[test]
-    fn a_toggle_click_adds_and_removes_keeping_the_rest() {
-      let mut sel = QueueSelection::default();
-      sel.apply(1, ClickKind::Toggle, &order());
-      sel.apply(3, ClickKind::Toggle, &order());
-      assert_eq!(sel.ordered(&order()), vec![1, 3]);
-      sel.apply(1, ClickKind::Toggle, &order());
-      assert_eq!(sel.ordered(&order()), vec![3]);
-    }
-
-    #[test]
-    fn a_range_click_selects_a_contiguous_run_from_the_anchor() {
-      let mut sel = QueueSelection::default();
-      sel.apply(1, ClickKind::Plain, &order());
-      sel.apply(3, ClickKind::Range, &order());
-      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn a_range_click_replaces_the_prior_selection() {
-      let mut sel = QueueSelection::default();
-      sel.apply(0, ClickKind::Toggle, &order());
-      sel.apply(2, ClickKind::Plain, &order());
-      sel.apply(4, ClickKind::Range, &order());
-      assert_eq!(sel.ordered(&order()), vec![2, 3, 4]);
-    }
-
-    #[test]
-    fn a_range_handles_a_reversed_anchor() {
-      let mut sel = QueueSelection::default();
-      sel.apply(3, ClickKind::Plain, &order());
-      sel.apply(1, ClickKind::Range, &order());
-      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn a_range_merge_unions_the_run_into_the_existing_selection() {
-      let mut sel = QueueSelection::default();
-      sel.apply(0, ClickKind::Toggle, &order());
-      sel.apply(2, ClickKind::Toggle, &order());
-      sel.apply(4, ClickKind::RangeMerge, &order());
-      assert_eq!(sel.ordered(&order()), vec![0, 2, 3, 4]);
-    }
-
-    #[test]
-    fn ordered_returns_queue_order_regardless_of_click_order() {
-      let mut sel = QueueSelection::default();
-      sel.apply(4, ClickKind::Toggle, &order());
-      sel.apply(1, ClickKind::Toggle, &order());
-      sel.apply(3, ClickKind::Toggle, &order());
-      assert_eq!(sel.ordered(&order()), vec![1, 3, 4]);
-    }
-
-    #[test]
-    fn prune_drops_positions_that_left_the_queue() {
-      let mut sel = QueueSelection::default();
-      sel.apply(1, ClickKind::Toggle, &order());
-      sel.apply(4, ClickKind::Toggle, &order());
-      sel.prune(&[0, 1, 2]);
-      assert_eq!(sel.ordered(&[0, 1, 2]), vec![1]);
-    }
-
-    #[test]
-    fn clear_empties_the_selection_and_anchor() {
-      let mut sel = QueueSelection::default();
-      sel.apply(2, ClickKind::Plain, &order());
-      sel.clear();
-      assert!(sel.is_empty());
-      assert_eq!(sel.len(), 0);
-    }
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Test Pilot");
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
   }
 
   mod active_attr_pair {
@@ -681,14 +582,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_prefers_the_head_skill_pair() {
-      let mut skill_meta = HashMap::new();
-      skill_meta.insert(100, meta(1, Attr::Intelligence, Attr::Memory, 0));
-      skill_meta.insert(200, meta(1, Attr::Charisma, Attr::Willpower, 0));
-
+    fn it_falls_back_to_perception_willpower_when_nothing_resolves() {
       assert_eq!(
-        active_attr_pair(Some(100), Some(200), &skill_meta),
-        (Attr::Intelligence, Attr::Memory)
+        active_attr_pair(None, None, &HashMap::new()),
+        (Attr::Perception, Attr::Willpower)
+      );
+      assert_eq!(
+        active_attr_pair(Some(1), Some(2), &HashMap::new()),
+        (Attr::Perception, Attr::Willpower)
       );
     }
 
@@ -704,15 +605,29 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_perception_willpower_when_nothing_resolves() {
+    fn it_prefers_the_head_skill_pair() {
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Intelligence, Attr::Memory, 0));
+      skill_meta.insert(200, meta(1, Attr::Charisma, Attr::Willpower, 0));
+
       assert_eq!(
-        active_attr_pair(None, None, &HashMap::new()),
-        (Attr::Perception, Attr::Willpower)
+        active_attr_pair(Some(100), Some(200), &skill_meta),
+        (Attr::Intelligence, Attr::Memory)
       );
-      assert_eq!(
-        active_attr_pair(Some(1), Some(2), &HashMap::new()),
-        (Attr::Perception, Attr::Willpower)
-      );
+    }
+  }
+
+  mod click_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_modifier_flags_to_intents() {
+      assert_eq!(ClickKind::from_modifiers(false, false), ClickKind::Plain);
+      assert_eq!(ClickKind::from_modifiers(true, false), ClickKind::Toggle);
+      assert_eq!(ClickKind::from_modifiers(false, true), ClickKind::Range);
+      assert_eq!(ClickKind::from_modifiers(true, true), ClickKind::RangeMerge);
     }
   }
 
@@ -720,13 +635,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_yields_an_empty_vec_for_an_empty_queue() {
-      let computed = compute_queue(&[], 1.0, &HashMap::new());
-
-      assert!(computed.is_empty());
-    }
 
     #[test]
     fn it_accumulates_cumulative_offsets_and_a_running_total() {
@@ -755,24 +663,6 @@ mod tests {
     }
 
     #[test]
-    fn it_treats_the_head_entry_progress_and_sp_differently_from_later_entries() {
-      let queue = vec![(entry(0, 100, 5), 0.5), (entry(1, 100, 5), 0.0)];
-      let mut skill_meta = HashMap::new();
-      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 1_000_000));
-
-      let computed = compute_queue(&queue, 1.0, &skill_meta);
-
-      assert_eq!(computed[0].progress, 0.5);
-      assert_eq!(computed[0].sp_needed, 128_000);
-      assert_eq!(computed[0].sp_now, 1_000_000 + 128_000);
-      assert_eq!(computed[0].sp_to, 1_000_000 + 256_000);
-      assert_eq!(computed[1].progress, 0.0);
-      assert_eq!(computed[1].sp_needed, 256_000);
-      assert_eq!(computed[1].sp_now, 1_000_000);
-      assert_eq!(computed[1].sp_to, 1_000_000 + 256_000);
-    }
-
-    #[test]
     fn it_falls_back_to_rank_one_perception_willpower_when_metadata_is_absent() {
       let queue = vec![(entry(0, 100, 1), 0.0), (entry(1, 101, 5), 0.0)];
 
@@ -792,13 +682,28 @@ mod tests {
     }
 
     #[test]
-    fn it_zeroes_durations_when_the_sp_rate_is_unknown() {
-      let queue = vec![(entry(0, 100, 1), 0.0)];
+    fn it_treats_the_head_entry_progress_and_sp_differently_from_later_entries() {
+      let queue = vec![(entry(0, 100, 5), 0.5), (entry(1, 100, 5), 0.0)];
+      let mut skill_meta = HashMap::new();
+      skill_meta.insert(100, meta(1, Attr::Perception, Attr::Willpower, 1_000_000));
 
-      let computed = compute_queue(&queue, 0.0, &HashMap::new());
+      let computed = compute_queue(&queue, 1.0, &skill_meta);
 
-      assert_eq!(computed[0].duration_secs, 0.0);
-      assert_eq!(computed[0].sp_needed, 250);
+      assert_eq!(computed[0].progress, 0.5);
+      assert_eq!(computed[0].sp_needed, 128_000);
+      assert_eq!(computed[0].sp_now, 1_000_000 + 128_000);
+      assert_eq!(computed[0].sp_to, 1_000_000 + 256_000);
+      assert_eq!(computed[1].progress, 0.0);
+      assert_eq!(computed[1].sp_needed, 256_000);
+      assert_eq!(computed[1].sp_now, 1_000_000);
+      assert_eq!(computed[1].sp_to, 1_000_000 + 256_000);
+    }
+
+    #[test]
+    fn it_yields_an_empty_vec_for_an_empty_queue() {
+      let computed = compute_queue(&[], 1.0, &HashMap::new());
+
+      assert!(computed.is_empty());
     }
 
     #[test]
@@ -817,106 +722,15 @@ mod tests {
         assert!(computed[0].sp_now <= computed[0].sp_to);
       }
     }
-  }
 
-  mod resolve_skill_meta {
-    use pretty_assertions::assert_eq;
+    #[test]
+    fn it_zeroes_durations_when_the_sp_rate_is_unknown() {
+      let queue = vec![(entry(0, 100, 1), 0.0)];
 
-    use super::*;
-    use crate::store::{
-      self,
-      model::{ItemCategory, ItemGroup, ItemType, SkillMetadata},
-      repo::{sde, skills},
-    };
+      let computed = compute_queue(&queue, 0.0, &HashMap::new());
 
-    fn skill_item_type(id: i64, group_id: i64, name: &str) -> ItemType {
-      ItemType {
-        capacity: None,
-        description: Some("Test skill".to_owned()),
-        dogma_attributes: "[]".to_owned(),
-        group_id,
-        icon_id: None,
-        id,
-        market_group_id: None,
-        name: name.to_owned(),
-        packaged_volume: None,
-        portion_size: None,
-        published: true,
-        radius: None,
-        volume: None,
-      }
-    }
-
-    async fn seed_skill(db: &Database, skill_id: i64, group_id: i64, group_name: &str, skill_name: &str) {
-      sde::upsert_item_category(
-        db,
-        &ItemCategory {
-          icon_id: None,
-          id: 16,
-          name: "Skill".to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_item_group(
-        db,
-        &ItemGroup {
-          category_id: 16,
-          icon_id: None,
-          id: group_id,
-          name: group_name.to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_item_type(db, &skill_item_type(skill_id, group_id, skill_name))
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_name_and_applies_defaults_when_metadata_is_absent() {
-      let db = store::open_test().await.unwrap();
-      seed_skill(&db, 3300, 255, "Gunnery", "Small Hybrid Turret").await;
-
-      let queue = vec![entry(0, 3300, 1)];
-      let meta = super::resolve_skill_meta(&db, 42, &queue).await;
-
-      let resolved = meta.get(&3300).expect("skill must be present even without metadata");
-      assert_eq!(resolved.skill_name, "Small Hybrid Turret");
-      assert_eq!(resolved.group_name, "Gunnery");
-      assert_eq!(resolved.rank, 1);
-      assert_eq!(resolved.primary, Attr::Perception);
-      assert_eq!(resolved.secondary, Attr::Willpower);
-      assert_eq!(resolved.sp_base, 0);
-    }
-
-    #[tokio::test]
-    async fn it_reads_rank_and_attributes_from_metadata_when_present() {
-      let db = store::open_test().await.unwrap();
-      seed_skill(&db, 3301, 255, "Gunnery", "Gunnery").await;
-      skills::upsert_skill_metadata(
-        &db,
-        &SkillMetadata {
-          primary_attribute: 165,
-          rank: 3,
-          secondary_attribute: 166,
-          skill_id: 3301,
-        },
-      )
-      .await
-      .unwrap();
-
-      let queue = vec![entry(0, 3301, 1)];
-      let meta = super::resolve_skill_meta(&db, 42, &queue).await;
-
-      let resolved = meta.get(&3301).expect("skill must be present");
-      assert_eq!(resolved.skill_name, "Gunnery");
-      assert_eq!(resolved.rank, 3);
-      assert_eq!(resolved.primary, Attr::Intelligence);
-      assert_eq!(resolved.secondary, Attr::Memory);
+      assert_eq!(computed[0].duration_secs, 0.0);
+      assert_eq!(computed[0].sp_needed, 250);
     }
   }
 
@@ -945,10 +759,71 @@ mod tests {
     }
   }
 
+  mod effective_attr_values {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{CharacterAttributes, CharacterImplant};
+
+    fn attributes(character_id: i64) -> CharacterAttributes {
+      CharacterAttributes {
+        accrued_remap_cooldown_date: None,
+        bonus_remaps: 0,
+        character_id,
+        charisma: 19,
+        intelligence: 20,
+        last_remap_date: None,
+        memory: 21,
+        perception: 27,
+        unallocated_sp: 0,
+        willpower: 24,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_defaults_to_zero_without_an_attributes_row() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let values = super::effective_attr_values(&db, 42).await;
+
+      assert_eq!(values, AttrValues::default());
+    }
+
+    #[tokio::test]
+    async fn it_sums_base_and_implant_bonuses_per_attribute() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      character::upsert_attributes(&db, &attributes(42)).await.unwrap();
+      character::replace_implants(
+        &db,
+        42,
+        &[CharacterImplant {
+          attribute_id: 167,
+          bonus: 5,
+          character_id: 42,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let values = super::effective_attr_values(&db, 42).await;
+
+      assert_eq!(values.perception, 32);
+      assert_eq!(values.willpower, 24);
+      assert_eq!(values.intelligence, 20);
+    }
+  }
+
   mod from_neural_id {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_degrades_unknown_ids_to_perception() {
+      assert_eq!(Attr::from_neural_id(0), Attr::Perception);
+      assert_eq!(Attr::from_neural_id(999), Attr::Perception);
+    }
 
     #[test]
     fn it_maps_the_five_neural_ids() {
@@ -957,12 +832,6 @@ mod tests {
       assert_eq!(Attr::from_neural_id(166), Attr::Memory);
       assert_eq!(Attr::from_neural_id(167), Attr::Perception);
       assert_eq!(Attr::from_neural_id(168), Attr::Willpower);
-    }
-
-    #[test]
-    fn it_degrades_unknown_ids_to_perception() {
-      assert_eq!(Attr::from_neural_id(0), Attr::Perception);
-      assert_eq!(Attr::from_neural_id(999), Attr::Perception);
     }
   }
 
@@ -995,6 +864,49 @@ mod tests {
     #[test]
     fn it_reports_idle_with_no_head() {
       assert!(is_idle(None));
+    }
+  }
+
+  mod load_computed_queue {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_assembles_a_row_per_queue_entry() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill_ref(&db, 3300, 255, "Gunnery", "Small Hybrid Turret").await;
+      character::replace_skillqueue(
+        &db,
+        42,
+        &[CharacterSkillqueue {
+          character_id: 42,
+          finish_date: Some("2026-06-03T12:00:00Z".to_owned()),
+          finished_level: 5,
+          level_end_sp: None,
+          level_start_sp: None,
+          queue_position: 0,
+          skill_id: 3300,
+          start_date: Some("2026-05-30T12:00:00Z".to_owned()),
+          training_start_sp: None,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let computed = super::load_computed_queue(&db, 42, now()).await;
+
+      assert_eq!(computed.items.len(), 1);
+      assert_eq!(computed.items[0].skill_name, "Small Hybrid Turret");
+    }
+
+    #[tokio::test]
+    async fn it_yields_an_empty_model_for_a_character_with_no_queue() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let computed = super::load_computed_queue(&db, 42, now()).await;
+
+      assert!(computed.items.is_empty());
+      assert_eq!(computed.total_secs, 0.0);
     }
   }
 
@@ -1131,6 +1043,110 @@ mod tests {
     }
   }
 
+  mod queue_selection {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn order() -> Vec<i64> {
+      vec![0, 1, 2, 3, 4]
+    }
+
+    #[test]
+    fn a_plain_click_elsewhere_replaces_the_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(4, ClickKind::Plain, &order());
+      assert_eq!(sel.ordered(&order()), vec![4]);
+    }
+
+    #[test]
+    fn a_plain_click_selects_only_that_row() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      assert_eq!(sel.ordered(&order()), vec![2]);
+    }
+
+    #[test]
+    fn a_plain_re_click_on_the_lone_selection_clears_it() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(2, ClickKind::Plain, &order());
+      assert!(sel.is_empty());
+    }
+
+    #[test]
+    fn a_range_click_replaces_the_prior_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(0, ClickKind::Toggle, &order());
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.apply(4, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn a_range_click_selects_a_contiguous_run_from_the_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Plain, &order());
+      sel.apply(3, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_range_handles_a_reversed_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(3, ClickKind::Plain, &order());
+      sel.apply(1, ClickKind::Range, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn a_range_merge_unions_the_run_into_the_existing_selection() {
+      let mut sel = QueueSelection::default();
+      sel.apply(0, ClickKind::Toggle, &order());
+      sel.apply(2, ClickKind::Toggle, &order());
+      sel.apply(4, ClickKind::RangeMerge, &order());
+      assert_eq!(sel.ordered(&order()), vec![0, 2, 3, 4]);
+    }
+
+    #[test]
+    fn a_toggle_click_adds_and_removes_keeping_the_rest() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(3, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 3]);
+      sel.apply(1, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![3]);
+    }
+
+    #[test]
+    fn clear_empties_the_selection_and_anchor() {
+      let mut sel = QueueSelection::default();
+      sel.apply(2, ClickKind::Plain, &order());
+      sel.clear();
+      assert!(sel.is_empty());
+      assert_eq!(sel.len(), 0);
+    }
+
+    #[test]
+    fn ordered_returns_queue_order_regardless_of_click_order() {
+      let mut sel = QueueSelection::default();
+      sel.apply(4, ClickKind::Toggle, &order());
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(3, ClickKind::Toggle, &order());
+      assert_eq!(sel.ordered(&order()), vec![1, 3, 4]);
+    }
+
+    #[test]
+    fn prune_drops_positions_that_left_the_queue() {
+      let mut sel = QueueSelection::default();
+      sel.apply(1, ClickKind::Toggle, &order());
+      sel.apply(4, ClickKind::Toggle, &order());
+      sel.prune(&[0, 1, 2]);
+      assert_eq!(sel.ordered(&[0, 1, 2]), vec![1]);
+    }
+  }
+
   mod queue_warnings {
     use pretty_assertions::assert_eq;
 
@@ -1164,15 +1180,15 @@ mod tests {
     }
 
     #[test]
-    fn it_surfaces_the_low_queue_warning_under_24h() {
-      let warnings = queue_warnings(&computed(23.0 * 3_600.0, 1), false);
+    fn it_does_not_warn_for_a_healthy_queue() {
+      let warnings = queue_warnings(&computed(48.0 * 3_600.0, 2), false);
 
-      assert_eq!(warnings, vec![QueueWarning::LowQueue]);
+      assert!(warnings.is_empty());
     }
 
     #[test]
-    fn it_does_not_warn_for_a_healthy_queue() {
-      let warnings = queue_warnings(&computed(48.0 * 3_600.0, 2), false);
+    fn it_never_warns_for_a_zero_duration_active_queue() {
+      let warnings = queue_warnings(&computed(0.0, 0), false);
 
       assert!(warnings.is_empty());
     }
@@ -1185,127 +1201,111 @@ mod tests {
     }
 
     #[test]
-    fn it_never_warns_for_a_zero_duration_active_queue() {
-      let warnings = queue_warnings(&computed(0.0, 0), false);
+    fn it_surfaces_the_low_queue_warning_under_24h() {
+      let warnings = queue_warnings(&computed(23.0 * 3_600.0, 1), false);
 
-      assert!(warnings.is_empty());
+      assert_eq!(warnings, vec![QueueWarning::LowQueue]);
     }
   }
 
-  async fn seed_character(db: &Database, id: i64) {
-    use crate::store::model::{Alliance, Bloodline, Character, Corporation, Gender, Race};
-
-    let corp_id = 90_000_001;
-    let alliance_id = 99_000_001;
-    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-    let race = Race::new(2, alliance_id, "A race.", "Caldari");
-    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-    corp.set_ceo_id(id);
-    corp.set_creator_id(id);
-    corp.set_member_count(1);
-    corp.set_tax_rate(0.0);
-    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Test Pilot");
-    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-      .await
-      .unwrap();
-  }
-
-  mod effective_attr_values {
+  mod resolve_skill_meta {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::model::{CharacterAttributes, CharacterImplant};
+    use crate::store::{
+      self,
+      model::{ItemCategory, ItemGroup, ItemType, SkillMetadata},
+      repo::{sde, skills},
+    };
 
-    fn attributes(character_id: i64) -> CharacterAttributes {
-      CharacterAttributes {
-        accrued_remap_cooldown_date: None,
-        bonus_remaps: 0,
-        character_id,
-        charisma: 19,
-        intelligence: 20,
-        last_remap_date: None,
-        memory: 21,
-        perception: 27,
-        unallocated_sp: 0,
-        willpower: 24,
+    fn skill_item_type(id: i64, group_id: i64, name: &str) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: Some("Test skill".to_owned()),
+        dogma_attributes: "[]".to_owned(),
+        group_id,
+        icon_id: None,
+        id,
+        market_group_id: None,
+        name: name.to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
       }
     }
 
-    #[tokio::test]
-    async fn it_defaults_to_zero_without_an_attributes_row() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let values = super::effective_attr_values(&db, 42).await;
-
-      assert_eq!(values, AttrValues::default());
+    async fn seed_skill(db: &Database, skill_id: i64, group_id: i64, group_name: &str, skill_name: &str) {
+      sde::upsert_item_category(
+        db,
+        &ItemCategory {
+          icon_id: None,
+          id: 16,
+          name: "Skill".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_group(
+        db,
+        &ItemGroup {
+          category_id: 16,
+          icon_id: None,
+          id: group_id,
+          name: group_name.to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_type(db, &skill_item_type(skill_id, group_id, skill_name))
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
-    async fn it_sums_base_and_implant_bonuses_per_attribute() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      character::upsert_attributes(&db, &attributes(42)).await.unwrap();
-      character::replace_implants(
+    async fn it_reads_rank_and_attributes_from_metadata_when_present() {
+      let db = store::open_test().await.unwrap();
+      seed_skill(&db, 3301, 255, "Gunnery", "Gunnery").await;
+      skills::upsert_skill_metadata(
         &db,
-        42,
-        &[CharacterImplant {
-          attribute_id: 167,
-          bonus: 5,
-          character_id: 42,
-        }],
+        &SkillMetadata {
+          primary_attribute: 165,
+          rank: 3,
+          secondary_attribute: 166,
+          skill_id: 3301,
+        },
       )
       .await
       .unwrap();
 
-      let values = super::effective_attr_values(&db, 42).await;
+      let queue = vec![entry(0, 3301, 1)];
+      let meta = super::resolve_skill_meta(&db, 42, &queue).await;
 
-      assert_eq!(values.perception, 32);
-      assert_eq!(values.willpower, 24);
-      assert_eq!(values.intelligence, 20);
-    }
-  }
-
-  mod load_computed_queue {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_yields_an_empty_model_for_a_character_with_no_queue() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let computed = super::load_computed_queue(&db, 42, now()).await;
-
-      assert!(computed.items.is_empty());
-      assert_eq!(computed.total_secs, 0.0);
+      let resolved = meta.get(&3301).expect("skill must be present");
+      assert_eq!(resolved.skill_name, "Gunnery");
+      assert_eq!(resolved.rank, 3);
+      assert_eq!(resolved.primary, Attr::Intelligence);
+      assert_eq!(resolved.secondary, Attr::Memory);
     }
 
     #[tokio::test]
-    async fn it_assembles_a_row_per_queue_entry() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_skill_ref(&db, 3300, 255, "Gunnery", "Small Hybrid Turret").await;
-      character::replace_skillqueue(
-        &db,
-        42,
-        &[CharacterSkillqueue {
-          character_id: 42,
-          finish_date: Some("2026-06-03T12:00:00Z".to_owned()),
-          finished_level: 5,
-          level_end_sp: None,
-          level_start_sp: None,
-          queue_position: 0,
-          skill_id: 3300,
-          start_date: Some("2026-05-30T12:00:00Z".to_owned()),
-          training_start_sp: None,
-        }],
-      )
-      .await
-      .unwrap();
+    async fn it_resolves_the_name_and_applies_defaults_when_metadata_is_absent() {
+      let db = store::open_test().await.unwrap();
+      seed_skill(&db, 3300, 255, "Gunnery", "Small Hybrid Turret").await;
 
-      let computed = super::load_computed_queue(&db, 42, now()).await;
+      let queue = vec![entry(0, 3300, 1)];
+      let meta = super::resolve_skill_meta(&db, 42, &queue).await;
 
-      assert_eq!(computed.items.len(), 1);
-      assert_eq!(computed.items[0].skill_name, "Small Hybrid Turret");
+      let resolved = meta.get(&3300).expect("skill must be present even without metadata");
+      assert_eq!(resolved.skill_name, "Small Hybrid Turret");
+      assert_eq!(resolved.group_name, "Gunnery");
+      assert_eq!(resolved.rank, 1);
+      assert_eq!(resolved.primary, Attr::Perception);
+      assert_eq!(resolved.secondary, Attr::Willpower);
+      assert_eq!(resolved.sp_base, 0);
     }
   }
 }

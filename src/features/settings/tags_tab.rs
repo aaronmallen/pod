@@ -1010,20 +1010,6 @@ mod tests {
     state.tags = infra::tag_all(&db).await.unwrap();
   }
 
-  #[test]
-  fn it_keeps_sort_modes_in_render_order() {
-    assert_eq!(SortMode::ALL, [SortMode::Manual, SortMode::Name, SortMode::Color]);
-  }
-
-  #[tokio::test]
-  async fn load_returns_an_empty_registry_on_a_fresh_install() {
-    let db = store::open_test().await.unwrap();
-
-    let tags = load_tags(db).await.unwrap();
-
-    assert!(tags.is_empty());
-  }
-
   #[tokio::test]
   async fn add_tag_dispatches_a_create_and_clears_the_field() {
     let mut state = state_with(&["Main"]).await;
@@ -1046,6 +1032,74 @@ mod tests {
     assert_eq!(state.tags.len(), 1);
   }
 
+  #[test]
+  fn badge_counts_colored_tags() {
+    let state = State::default();
+    assert_eq!(badge(&state), "0");
+  }
+
+  #[tokio::test]
+  async fn clear_color_drops_the_color() {
+    let db = store::open_test().await.unwrap();
+    let created = infra::create(&db, "PvE", None, Some("#D9B252")).await.unwrap();
+
+    infra::update(&db, created.id(), "PvE", None, None).await.unwrap();
+
+    let reloaded = infra::tag_all(&db).await.unwrap();
+    assert_eq!(reloaded[0].color().as_deref(), None);
+  }
+
+  #[tokio::test]
+  async fn delete_clears_a_dangling_picker_and_persists() {
+    let mut state = state_with(&["Doomed", "Kept"]).await;
+    let db = state.db.clone().unwrap();
+    let doomed = state.tags[0].id();
+    let _ = update(&mut state, Message::ToggleColorPicker(doomed));
+
+    let _ = update(&mut state, Message::RemoveTag(doomed));
+
+    assert!(state.picker.is_none(), "deleting a tag drops its open picker");
+    infra::tag_delete(&db, doomed).await.unwrap();
+    assert_eq!(order(&db).await, vec!["Kept"]);
+  }
+
+  #[test]
+  fn hex_to_color_parses_a_valid_hex_and_rejects_garbage() {
+    let parsed = hex_to_color("#FF8040").unwrap();
+    assert_eq!(parsed, Color::from_rgb8(255, 128, 64));
+
+    assert!(hex_to_color("not-a-color").is_none());
+  }
+
+  #[test]
+  fn it_keeps_sort_modes_in_render_order() {
+    assert_eq!(SortMode::ALL, [SortMode::Manual, SortMode::Name, SortMode::Color]);
+  }
+
+  #[tokio::test]
+  async fn load_returns_an_empty_registry_on_a_fresh_install() {
+    let db = store::open_test().await.unwrap();
+
+    let tags = load_tags(db).await.unwrap();
+
+    assert!(tags.is_empty());
+  }
+
+  #[tokio::test]
+  async fn opening_the_picker_anchors_at_the_tracked_cursor() {
+    let mut state = state_with(&["Main"]).await;
+    let first = state.tags[0].id();
+
+    let _ = update(&mut state, Message::CursorMoved(Point::new(120.0, 64.0)));
+    let _ = update(&mut state, Message::ToggleColorPicker(first));
+
+    assert_eq!(
+      state.picker.as_ref().map(|p| p.anchor),
+      Some(Point::new(120.0, 64.0)),
+      "the picker floats from the cursor anchor, not inline in the row"
+    );
+  }
+
   #[tokio::test]
   async fn recolor_closes_the_picker_and_the_repo_write_persists_the_color() {
     let mut state = state_with(&["PvP"]).await;
@@ -1065,17 +1119,6 @@ mod tests {
     infra::update(&db, tag_id, "PvP", None, Some("#5BB97E")).await.unwrap();
     reload(&mut state).await;
     assert_eq!(state.tags[0].color().as_deref(), Some("#5BB97E"));
-  }
-
-  #[tokio::test]
-  async fn clear_color_drops_the_color() {
-    let db = store::open_test().await.unwrap();
-    let created = infra::create(&db, "PvE", None, Some("#D9B252")).await.unwrap();
-
-    infra::update(&db, created.id(), "PvE", None, None).await.unwrap();
-
-    let reloaded = infra::tag_all(&db).await.unwrap();
-    assert_eq!(reloaded[0].color().as_deref(), None);
   }
 
   #[test]
@@ -1136,20 +1179,6 @@ mod tests {
     assert!(state.editing.is_none());
   }
 
-  #[tokio::test]
-  async fn delete_clears_a_dangling_picker_and_persists() {
-    let mut state = state_with(&["Doomed", "Kept"]).await;
-    let db = state.db.clone().unwrap();
-    let doomed = state.tags[0].id();
-    let _ = update(&mut state, Message::ToggleColorPicker(doomed));
-
-    let _ = update(&mut state, Message::RemoveTag(doomed));
-
-    assert!(state.picker.is_none(), "deleting a tag drops its open picker");
-    infra::tag_delete(&db, doomed).await.unwrap();
-    assert_eq!(order(&db).await, vec!["Kept"]);
-  }
-
   #[test]
   fn reorder_computes_the_drop_above_order() {
     let mut state = State {
@@ -1160,23 +1189,6 @@ mod tests {
     let (outcome, _task) = update(&mut state, Message::DropDragged);
     assert_eq!(outcome, Outcome::None);
     assert!(state.dragging.is_none(), "the drop consumes the drag");
-  }
-
-  #[tokio::test]
-  async fn reorder_moves_a_dragged_tag_above_the_drop_row() {
-    let mut state = state_with(&["A", "B", "C"]).await;
-    let db = state.db.clone().unwrap();
-    let c_id = state.tags[2].id();
-    let _ = update(&mut state, Message::PickUpTag(c_id));
-    let _ = update(&mut state, Message::HoverTagSlot(0));
-
-    let (_, _task) = update(&mut state, Message::DropDragged);
-
-    assert!(state.dragging.is_none(), "the drop consumes the drag");
-    infra::reorder(&db, &[c_id, state.tags[0].id(), state.tags[1].id()])
-      .await
-      .unwrap();
-    assert_eq!(order(&db).await, vec!["C", "A", "B"]);
   }
 
   #[test]
@@ -1199,67 +1211,21 @@ mod tests {
     assert!(!state.draggable());
   }
 
-  #[test]
-  fn badge_counts_colored_tags() {
-    let state = State::default();
-    assert_eq!(badge(&state), "0");
-  }
-
   #[tokio::test]
-  async fn visible_filters_and_sorts() {
-    let state = state_with(&["Zeta", "alpha", "Beta"]).await;
+  async fn reorder_moves_a_dragged_tag_above_the_drop_row() {
+    let mut state = state_with(&["A", "B", "C"]).await;
+    let db = state.db.clone().unwrap();
+    let c_id = state.tags[2].id();
+    let _ = update(&mut state, Message::PickUpTag(c_id));
+    let _ = update(&mut state, Message::HoverTagSlot(0));
 
-    assert_eq!(
-      state.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
-      ["Zeta", "alpha", "Beta"]
-    );
+    let (_, _task) = update(&mut state, Message::DropDragged);
 
-    let mut by_name = state_with(&["Zeta", "alpha", "Beta"]).await;
-    by_name.sort_mode = SortMode::Name;
-    assert_eq!(
-      by_name.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
-      ["alpha", "Beta", "Zeta"]
-    );
-
-    let mut filtered = state_with(&["Zeta", "alpha", "Beta"]).await;
-    filtered.query = "a".to_owned();
-    assert_eq!(
-      filtered.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
-      ["Zeta", "alpha", "Beta"]
-    );
-    filtered.query = "et".to_owned();
-    assert_eq!(
-      filtered.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
-      ["Zeta", "Beta"]
-    );
-  }
-
-  #[tokio::test]
-  async fn view_renders_each_state() {
-    let settings = Settings::default();
-
-    let empty = State::default();
-    let _el: Element<'_, Message> = view(&empty, &settings);
-
-    let mut state = state_with(&["Main", "Alt"]).await;
-    let first = state.tags[0].id();
-    let _ = update(&mut state, Message::ToggleColorPicker(first));
-    let _el: Element<'_, Message> = view(&state, &settings);
-  }
-
-  #[tokio::test]
-  async fn opening_the_picker_anchors_at_the_tracked_cursor() {
-    let mut state = state_with(&["Main"]).await;
-    let first = state.tags[0].id();
-
-    let _ = update(&mut state, Message::CursorMoved(Point::new(120.0, 64.0)));
-    let _ = update(&mut state, Message::ToggleColorPicker(first));
-
-    assert_eq!(
-      state.picker.as_ref().map(|p| p.anchor),
-      Some(Point::new(120.0, 64.0)),
-      "the picker floats from the cursor anchor, not inline in the row"
-    );
+    assert!(state.dragging.is_none(), "the drop consumes the drag");
+    infra::reorder(&db, &[c_id, state.tags[0].id(), state.tags[1].id()])
+      .await
+      .unwrap();
+    assert_eq!(order(&db).await, vec!["C", "A", "B"]);
   }
 
   #[test]
@@ -1285,14 +1251,6 @@ mod tests {
       tag_id: 1,
     });
     let _pick: iced::Subscription<Message> = subscription(&state);
-  }
-
-  #[test]
-  fn hex_to_color_parses_a_valid_hex_and_rejects_garbage() {
-    let parsed = hex_to_color("#FF8040").unwrap();
-    assert_eq!(parsed, Color::from_rgb8(255, 128, 64));
-
-    assert!(hex_to_color("not-a-color").is_none());
   }
 
   #[tokio::test]
@@ -1340,5 +1298,47 @@ mod tests {
     drive(&mut state, Message::Saved(Err("write failed".to_owned())));
     assert_eq!(state.load_error.as_deref(), Some("write failed"));
     drive(&mut state, Message::Saved(Ok(())));
+  }
+
+  #[tokio::test]
+  async fn view_renders_each_state() {
+    let settings = Settings::default();
+
+    let empty = State::default();
+    let _el: Element<'_, Message> = view(&empty, &settings);
+
+    let mut state = state_with(&["Main", "Alt"]).await;
+    let first = state.tags[0].id();
+    let _ = update(&mut state, Message::ToggleColorPicker(first));
+    let _el: Element<'_, Message> = view(&state, &settings);
+  }
+
+  #[tokio::test]
+  async fn visible_filters_and_sorts() {
+    let state = state_with(&["Zeta", "alpha", "Beta"]).await;
+
+    assert_eq!(
+      state.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+      ["Zeta", "alpha", "Beta"]
+    );
+
+    let mut by_name = state_with(&["Zeta", "alpha", "Beta"]).await;
+    by_name.sort_mode = SortMode::Name;
+    assert_eq!(
+      by_name.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+      ["alpha", "Beta", "Zeta"]
+    );
+
+    let mut filtered = state_with(&["Zeta", "alpha", "Beta"]).await;
+    filtered.query = "a".to_owned();
+    assert_eq!(
+      filtered.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+      ["Zeta", "alpha", "Beta"]
+    );
+    filtered.query = "et".to_owned();
+    assert_eq!(
+      filtered.visible().iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+      ["Zeta", "Beta"]
+    );
   }
 }

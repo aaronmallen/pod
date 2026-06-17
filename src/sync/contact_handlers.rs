@@ -295,56 +295,10 @@ mod tests {
     .to_string()
   }
 
-  #[test]
-  fn it_registers_the_three_contact_handlers() {
-    use pretty_assertions::assert_eq;
-
-    let registry = registry();
-
-    assert_eq!(
-      registry.handler(OutboxKind::ContactAdd).expect("add").kind(),
-      OutboxKind::ContactAdd
-    );
-    assert_eq!(
-      registry.handler(OutboxKind::ContactEdit).expect("edit").kind(),
-      OutboxKind::ContactEdit
-    );
-    assert_eq!(
-      registry.handler(OutboxKind::ContactRemove).expect("remove").kind(),
-      OutboxKind::ContactRemove
-    );
-  }
-
   mod add_handler {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_mirrors_the_new_contact_on_apply() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      AddHandler.apply(&db, &add_payload()).await.unwrap();
-
-      let row = contact_row(&db, 42, 95_001).await.expect("contact mirrored");
-      assert_eq!(row.contact_name(), "Trusted Pilot");
-      assert_eq!(row.standing(), 5.0);
-      assert!(row.is_watched());
-      assert_eq!(row.label_ids(), "[1,2]");
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent_against_a_full_replace_sync_on_apply() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      AddHandler.apply(&db, &add_payload()).await.unwrap();
-
-      AddHandler.apply(&db, &add_payload()).await.unwrap();
-
-      let rows = character::contacts(&db, 42).await.unwrap().contacts;
-      assert_eq!(rows.iter().filter(|c| c.contact_id() == 95_001).count(), 1);
-    }
 
     #[tokio::test]
     async fn it_drops_the_optimistic_row_on_compensate() {
@@ -364,6 +318,32 @@ mod tests {
       let result = AddHandler.apply(&db, "not json").await;
 
       assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_against_a_full_replace_sync_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      AddHandler.apply(&db, &add_payload()).await.unwrap();
+
+      AddHandler.apply(&db, &add_payload()).await.unwrap();
+
+      let rows = character::contacts(&db, 42).await.unwrap().contacts;
+      assert_eq!(rows.iter().filter(|c| c.contact_id() == 95_001).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_the_new_contact_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      AddHandler.apply(&db, &add_payload()).await.unwrap();
+
+      let row = contact_row(&db, 42, 95_001).await.expect("contact mirrored");
+      assert_eq!(row.contact_name(), "Trusted Pilot");
+      assert_eq!(row.standing(), 5.0);
+      assert!(row.is_watched());
+      assert_eq!(row.label_ids(), "[1,2]");
     }
   }
 
@@ -401,37 +381,6 @@ mod tests {
     }
   }
 
-  mod remove_handler {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_drops_the_contact_on_apply() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      AddHandler.apply(&db, &add_payload()).await.unwrap();
-
-      RemoveHandler.apply(&db, &remove_payload()).await.unwrap();
-
-      assert!(contact_row(&db, 42, 95_001).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_reinstates_the_contact_on_compensate() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      AddHandler.apply(&db, &add_payload()).await.unwrap();
-      RemoveHandler.apply(&db, &remove_payload()).await.unwrap();
-
-      RemoveHandler.compensate(&db, &remove_payload()).await.unwrap();
-
-      let row = contact_row(&db, 42, 95_001).await.expect("contact reinstated");
-      assert_eq!(row.standing(), 5.0);
-      assert_eq!(row.label_ids(), "[1]");
-    }
-  }
-
   mod execute {
     use wiremock::{
       Mock, MockServer, ResponseTemplate,
@@ -445,6 +394,25 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let http = http::Client::builder(http::Cache::new(db)).build();
       esi::Client::with_base_url(http, server.uri())
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_remove_from_esi() {
+      let server = MockServer::start().await;
+      Mock::given(method("DELETE"))
+        .and(path("/characters/42/contacts/"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      RemoveHandler
+        .execute(&db, &esi, &grant, &remove_payload())
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -480,25 +448,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_deletes_a_remove_from_esi() {
-      let server = MockServer::start().await;
-      Mock::given(method("DELETE"))
-        .and(path("/characters/42/contacts/"))
-        .respond_with(ResponseTemplate::new(204))
-        .expect(1)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let esi = esi_client(&server).await;
-      let grant = Grant::new_test("tok", 42);
-
-      RemoveHandler
-        .execute(&db, &esi, &grant, &remove_payload())
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
     async fn it_surfaces_an_esi_rejection_for_the_drainer_to_compensate() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
@@ -513,6 +462,57 @@ mod tests {
       let result = AddHandler.execute(&db, &esi, &grant, &add_payload()).await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+  }
+
+  #[test]
+  fn it_registers_the_three_contact_handlers() {
+    use pretty_assertions::assert_eq;
+
+    let registry = registry();
+
+    assert_eq!(
+      registry.handler(OutboxKind::ContactAdd).expect("add").kind(),
+      OutboxKind::ContactAdd
+    );
+    assert_eq!(
+      registry.handler(OutboxKind::ContactEdit).expect("edit").kind(),
+      OutboxKind::ContactEdit
+    );
+    assert_eq!(
+      registry.handler(OutboxKind::ContactRemove).expect("remove").kind(),
+      OutboxKind::ContactRemove
+    );
+  }
+
+  mod remove_handler {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_drops_the_contact_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      AddHandler.apply(&db, &add_payload()).await.unwrap();
+
+      RemoveHandler.apply(&db, &remove_payload()).await.unwrap();
+
+      assert!(contact_row(&db, 42, 95_001).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_reinstates_the_contact_on_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      AddHandler.apply(&db, &add_payload()).await.unwrap();
+      RemoveHandler.apply(&db, &remove_payload()).await.unwrap();
+
+      RemoveHandler.compensate(&db, &remove_payload()).await.unwrap();
+
+      let row = contact_row(&db, 42, 95_001).await.expect("contact reinstated");
+      assert_eq!(row.standing(), 5.0);
+      assert_eq!(row.label_ids(), "[1]");
     }
   }
 }

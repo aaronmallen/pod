@@ -303,32 +303,6 @@ mod tests {
     }
 
     #[test]
-    fn it_distinguishes_synced_empty_blocked_and_not_ready_outcomes() {
-      let mut status = SyncStatus::new();
-
-      status.apply(&finished(
-        key(1),
-        Outcome::Synced {
-          rows_touched: 3,
-        },
-      ));
-      status.apply(&finished(key(2), Outcome::Empty));
-      status.apply(&finished(
-        key(3),
-        Outcome::Blocked {
-          reason: "no scope".to_string(),
-        },
-      ));
-      status.apply(&finished(key(4), Outcome::NotReady));
-
-      assert_eq!(status.phase(&key(1)), Some(Phase::Done));
-      assert_eq!(status.phase(&key(2)), Some(Phase::Empty));
-      assert_eq!(status.phase(&key(3)), Some(Phase::Blocked));
-      assert_eq!(status.phase(&key(4)), Some(Phase::NotReady));
-      assert_eq!(status.reason(&key(3)), Some("no scope"));
-    }
-
-    #[test]
     fn it_counts_an_empty_outcome_as_a_benign_success_not_attention() {
       let mut status = SyncStatus::new();
 
@@ -358,6 +332,94 @@ mod tests {
     }
 
     #[test]
+    fn it_distinguishes_synced_empty_blocked_and_not_ready_outcomes() {
+      let mut status = SyncStatus::new();
+
+      status.apply(&finished(
+        key(1),
+        Outcome::Synced {
+          rows_touched: 3,
+        },
+      ));
+      status.apply(&finished(key(2), Outcome::Empty));
+      status.apply(&finished(
+        key(3),
+        Outcome::Blocked {
+          reason: "no scope".to_string(),
+        },
+      ));
+      status.apply(&finished(key(4), Outcome::NotReady));
+
+      assert_eq!(status.phase(&key(1)), Some(Phase::Done));
+      assert_eq!(status.phase(&key(2)), Some(Phase::Empty));
+      assert_eq!(status.phase(&key(3)), Some(Phase::Blocked));
+      assert_eq!(status.phase(&key(4)), Some(Phase::NotReady));
+      assert_eq!(status.reason(&key(3)), Some("no scope"));
+    }
+
+    #[test]
+    fn it_does_not_fabricate_a_done_task_for_an_unknown_scheduled_key() {
+      let mut status = SyncStatus::new();
+
+      status.apply(&Event::Scheduled {
+        key: key(1),
+        next_in_secs: 600,
+      });
+
+      assert_eq!(
+        status.total(),
+        0,
+        "a Scheduled event for a key with no started task must not invent a phantom Done task"
+      );
+      assert_eq!(status.done(), 0);
+      assert_eq!(status.next_in_secs(&key(1)), None);
+    }
+
+    #[test]
+    fn it_ignores_heartbeats() {
+      let mut status = SyncStatus::new();
+
+      status.apply(&Event::Heartbeat);
+
+      assert_eq!(status.total(), 0);
+      assert_eq!(status.percent(), 100);
+    }
+
+    #[test]
+    fn it_ignores_outbox_events() {
+      let mut status = SyncStatus::new();
+
+      status.apply(&Event::OutboxInflight {
+        id: 1,
+      });
+      status.apply(&Event::OutboxFailed {
+        id: 1,
+        reason: "boom".to_string(),
+      });
+
+      assert_eq!(status.total(), 0, "outbox rows do not enter the job-keyed aggregate");
+    }
+
+    #[test]
+    fn it_keeps_the_next_run_across_a_later_phase_change() {
+      let mut status = SyncStatus::new();
+
+      status.apply(&Event::Scheduled {
+        key: key(1),
+        next_in_secs: 600,
+      });
+      status.apply(&Event::Started {
+        key: key(1),
+      });
+
+      assert_eq!(
+        status.next_in_secs(&key(1)),
+        Some(600),
+        "a re-sync starting does not erase the engine-computed next-run"
+      );
+    }
+
+    #[test]
     fn it_maps_a_skipped_outcome_to_blocked_with_its_reason() {
       let mut status = SyncStatus::new();
 
@@ -370,27 +432,6 @@ mod tests {
 
       assert_eq!(status.phase(&key(1)), Some(Phase::Blocked));
       assert_eq!(status.reason(&key(1)), Some("feature off"));
-    }
-
-    #[test]
-    fn it_tracks_the_latest_phase_per_job() {
-      let mut status = SyncStatus::new();
-
-      status.apply(&Event::Started {
-        key: key(1),
-      });
-      status.apply(&Event::Started {
-        key: key(2),
-      });
-      status.apply(&Event::Finished {
-        key: key(1),
-        outcome: crate::sync::Outcome::synced(),
-      });
-
-      assert_eq!(status.active(), 1);
-      assert_eq!(status.done(), 1);
-      assert_eq!(status.total(), 2);
-      assert_eq!(status.percent(), 50);
     }
 
     #[test]
@@ -413,13 +454,24 @@ mod tests {
     }
 
     #[test]
-    fn it_ignores_heartbeats() {
+    fn it_records_the_next_run_from_a_scheduled_event() {
       let mut status = SyncStatus::new();
 
-      status.apply(&Event::Heartbeat);
+      status.apply(&Event::Finished {
+        key: key(1),
+        outcome: crate::sync::Outcome::synced(),
+      });
+      status.apply(&Event::Scheduled {
+        key: key(1),
+        next_in_secs: 2_520,
+      });
 
-      assert_eq!(status.total(), 0);
-      assert_eq!(status.percent(), 100);
+      assert_eq!(status.next_in_secs(&key(1)), Some(2_520));
+      assert_eq!(
+        status.phase(&key(1)),
+        Some(Phase::Done),
+        "the next-run update must not disturb the job's phase"
+      );
     }
 
     #[test]
@@ -453,76 +505,24 @@ mod tests {
     }
 
     #[test]
-    fn it_ignores_outbox_events() {
+    fn it_tracks_the_latest_phase_per_job() {
       let mut status = SyncStatus::new();
 
-      status.apply(&Event::OutboxInflight {
-        id: 1,
+      status.apply(&Event::Started {
+        key: key(1),
       });
-      status.apply(&Event::OutboxFailed {
-        id: 1,
-        reason: "boom".to_string(),
+      status.apply(&Event::Started {
+        key: key(2),
       });
-
-      assert_eq!(status.total(), 0, "outbox rows do not enter the job-keyed aggregate");
-    }
-
-    #[test]
-    fn it_records_the_next_run_from_a_scheduled_event() {
-      let mut status = SyncStatus::new();
-
       status.apply(&Event::Finished {
         key: key(1),
         outcome: crate::sync::Outcome::synced(),
       });
-      status.apply(&Event::Scheduled {
-        key: key(1),
-        next_in_secs: 2_520,
-      });
 
-      assert_eq!(status.next_in_secs(&key(1)), Some(2_520));
-      assert_eq!(
-        status.phase(&key(1)),
-        Some(Phase::Done),
-        "the next-run update must not disturb the job's phase"
-      );
-    }
-
-    #[test]
-    fn it_does_not_fabricate_a_done_task_for_an_unknown_scheduled_key() {
-      let mut status = SyncStatus::new();
-
-      status.apply(&Event::Scheduled {
-        key: key(1),
-        next_in_secs: 600,
-      });
-
-      assert_eq!(
-        status.total(),
-        0,
-        "a Scheduled event for a key with no started task must not invent a phantom Done task"
-      );
-      assert_eq!(status.done(), 0);
-      assert_eq!(status.next_in_secs(&key(1)), None);
-    }
-
-    #[test]
-    fn it_keeps_the_next_run_across_a_later_phase_change() {
-      let mut status = SyncStatus::new();
-
-      status.apply(&Event::Scheduled {
-        key: key(1),
-        next_in_secs: 600,
-      });
-      status.apply(&Event::Started {
-        key: key(1),
-      });
-
-      assert_eq!(
-        status.next_in_secs(&key(1)),
-        Some(600),
-        "a re-sync starting does not erase the engine-computed next-run"
-      );
+      assert_eq!(status.active(), 1);
+      assert_eq!(status.done(), 1);
+      assert_eq!(status.total(), 2);
+      assert_eq!(status.percent(), 50);
     }
   }
 
@@ -530,6 +530,22 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_clears_a_prior_error_when_a_row_recovers_to_done() {
+      let mut status = OutboxStatus::new();
+
+      status.apply(&Event::OutboxFailed {
+        id: 1,
+        reason: "transient".to_string(),
+      });
+      status.apply(&Event::OutboxDone {
+        id: 1,
+      });
+
+      assert_eq!(status.failed(), 0);
+      assert_eq!(status.last_error(1), None, "a recovered row reports no error");
+    }
 
     #[test]
     fn it_counts_inflight_and_retrying_rows_as_pending() {
@@ -565,6 +581,23 @@ mod tests {
     }
 
     #[test]
+    fn it_ignores_read_side_and_heartbeat_events() {
+      let mut status = OutboxStatus::new();
+
+      status.apply(&Event::Heartbeat);
+      status.apply(&Event::Started {
+        key: key(1),
+      });
+      status.apply(&Event::Finished {
+        key: key(1),
+        outcome: crate::sync::Outcome::synced(),
+      });
+
+      assert_eq!(status.pending(), 0);
+      assert_eq!(status.failed(), 0);
+    }
+
+    #[test]
     fn it_records_a_failed_rows_last_error_and_counts_it() {
       let mut status = OutboxStatus::new();
 
@@ -580,39 +613,6 @@ mod tests {
       assert_eq!(status.failed(), 1);
       assert_eq!(status.last_error(7), Some("403 Forbidden"));
       assert_eq!(status.last_error(999), None, "an unknown row has no error");
-    }
-
-    #[test]
-    fn it_clears_a_prior_error_when_a_row_recovers_to_done() {
-      let mut status = OutboxStatus::new();
-
-      status.apply(&Event::OutboxFailed {
-        id: 1,
-        reason: "transient".to_string(),
-      });
-      status.apply(&Event::OutboxDone {
-        id: 1,
-      });
-
-      assert_eq!(status.failed(), 0);
-      assert_eq!(status.last_error(1), None, "a recovered row reports no error");
-    }
-
-    #[test]
-    fn it_ignores_read_side_and_heartbeat_events() {
-      let mut status = OutboxStatus::new();
-
-      status.apply(&Event::Heartbeat);
-      status.apply(&Event::Started {
-        key: key(1),
-      });
-      status.apply(&Event::Finished {
-        key: key(1),
-        outcome: crate::sync::Outcome::synced(),
-      });
-
-      assert_eq!(status.pending(), 0);
-      assert_eq!(status.failed(), 0);
     }
   }
 }

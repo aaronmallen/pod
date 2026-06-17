@@ -154,41 +154,28 @@ fn github_link<'a>() -> Element<'a, Message> {
 mod tests {
   use super::*;
 
-  mod update {
-    use super::*;
-
-    #[test]
-    fn it_keeps_the_window_open_when_following_a_link() {
-      assert!(!update(Message::OpenGithub));
-    }
-  }
-
-  mod view {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_about_card() {
-      let _el: Element<'_, Message> = super::view();
-    }
-  }
-
   mod identity {
     use super::*;
-
-    #[test]
-    fn it_exposes_the_cargo_package_version() {
-      assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
-    }
 
     #[test]
     fn it_captures_a_build_date_and_git_sha_at_compile_time() {
       assert!(!BUILD_DATE.is_empty());
       assert!(!GIT_SHA.is_empty());
     }
+
+    #[test]
+    fn it_exposes_the_cargo_package_version() {
+      assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+    }
   }
 
   mod trademark {
     use super::*;
+
+    #[test]
+    fn the_copyright_line_names_fenris_creations() {
+      assert_eq!(TRADEMARK_COPYRIGHT, "\u{00a9} Fenris Creations. All rights reserved.");
+    }
 
     #[test]
     fn the_notice_reads_verbatim_without_whitespace_drift() {
@@ -207,10 +194,23 @@ mod tests {
         any damage arising from the use of this program."
       );
     }
+  }
+
+  mod update {
+    use super::*;
 
     #[test]
-    fn the_copyright_line_names_fenris_creations() {
-      assert_eq!(TRADEMARK_COPYRIGHT, "\u{00a9} Fenris Creations. All rights reserved.");
+    fn it_keeps_the_window_open_when_following_a_link() {
+      assert!(!update(Message::OpenGithub));
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_about_card() {
+      let _el: Element<'_, Message> = super::view();
     }
   }
 }

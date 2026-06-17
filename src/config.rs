@@ -665,310 +665,122 @@ mod tests {
     }
   }
 
-  mod resolve_data_dir {
+  mod load_from {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_uses_the_data_home_when_present() {
-      let resolved = resolve_data_dir(Some(PathBuf::from("/home/me/.local/share")), PathBuf::from("/tmp"));
+    fn it_defaults_every_feature_flag_to_enabled_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
 
-      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
+
+      assert_eq!(settings.features().enabled(), Feature::ALL.to_vec());
     }
 
     #[test]
-    fn it_falls_back_to_the_given_root_when_data_home_is_missing() {
-      let resolved = resolve_data_dir(None, PathBuf::from("/var/tmp"));
+    fn it_defaults_the_accessibility_table_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
 
-      assert_eq!(resolved, PathBuf::from("/var/tmp/pod"));
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
+      let accessibility = settings.accessibility();
+
+      assert_eq!(*accessibility.scale(), 100);
+      assert!(!accessibility.high_contrast());
     }
 
     #[test]
-    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
-      let resolved = resolve_data_dir(None, std::env::temp_dir());
+    fn it_defaults_the_storage_table_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
 
-      assert!(
-        resolved.is_absolute(),
-        "the fallback must not depend on the working directory"
-      );
-      assert_ne!(resolved, PathBuf::from("./pod"));
-    }
-  }
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
+      let storage = settings.storage();
 
-  mod resolve_log_dir {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uses_the_state_home_when_present() {
-      let resolved = resolve_log_dir(Some(PathBuf::from("/home/me/.local/state")), PathBuf::from("/tmp"));
-
-      assert_eq!(resolved, PathBuf::from("/home/me/.local/state/pod/logs"));
+      assert!(!storage.network());
+      assert_eq!(*storage.db_dir(), None);
+      assert_eq!(*storage.log_dir(), None);
+      assert_eq!(*storage.cache_dir(), None);
+      assert_eq!(*storage.machine_id(), None);
     }
 
     #[test]
-    fn it_falls_back_to_the_given_root_when_state_home_is_missing() {
-      let resolved = resolve_log_dir(None, PathBuf::from("/var/tmp"));
+    fn it_extracts_a_legacy_file_with_only_the_client_id() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, r#"eve_client_id = "byo-client-id""#).unwrap();
 
-      assert_eq!(resolved, PathBuf::from("/var/tmp/pod/logs"));
+      let settings = load_from(&path).unwrap();
+
+      assert_eq!(settings.eve_client_id(), "byo-client-id");
+      assert_eq!(settings.features(), &FeatureFlags::default());
+      assert_eq!(settings.storage(), &StorageConfig::default());
     }
 
     #[test]
-    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
-      let resolved = resolve_log_dir(None, std::env::temp_dir());
+    fn it_reads_a_partial_accessibility_table_and_defaults_the_rest() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[accessibility]\nscale = 125\n").unwrap();
 
-      assert!(
-        resolved.is_absolute(),
-        "the fallback must not depend on the working directory"
-      );
-      assert_ne!(resolved, PathBuf::from("./pod/logs"));
-    }
-  }
+      let accessibility = load_from(&path).unwrap().accessibility().to_owned();
 
-  mod select_resource_dir {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_selects_the_macos_resources_bundle() {
-      let exe_dir = PathBuf::from("/Applications/pod.app/Contents/MacOS");
-      let resources = exe_dir.join("../Resources");
-
-      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources);
-
-      assert_eq!(resolved, Some(resources));
+      assert_eq!(*accessibility.scale(), 125);
+      assert!(!accessibility.high_contrast());
     }
 
     #[test]
-    fn it_selects_the_linux_lib_dir_for_the_fhs_layout() {
-      let exe_dir = PathBuf::from("/usr/bin");
-      let lib_dir = exe_dir.join("../lib").join("pod");
+    fn it_reads_feature_overrides_and_keeps_unlisted_flags_enabled() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[features]\nwallet = false\nmail = false\n").unwrap();
 
-      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == lib_dir);
+      let features = load_from(&path).unwrap().features().to_owned();
 
-      assert_eq!(resolved, Some(PathBuf::from("/usr/bin/../lib/pod")));
+      assert!(!features.wallet());
+      assert!(!features.mail());
+      assert!(features.clone_monitoring());
+      assert!(features.is_enabled(Feature::Contacts));
+      assert!(!features.is_enabled(Feature::Wallet));
+      assert!(!features.enabled().contains(&Feature::Wallet));
     }
 
     #[test]
-    fn it_selects_the_exe_dir_for_the_windows_layout() {
-      let exe_dir = PathBuf::from("C:/Program Files/pod");
+    fn it_reads_overrides_from_the_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, r#"eve_client_id = "byo-client-id""#).unwrap();
 
-      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == exe_dir);
+      let settings = load_from(&path).unwrap();
 
-      assert_eq!(resolved, Some(exe_dir));
+      assert_eq!(settings.eve_client_id(), "byo-client-id");
     }
 
     #[test]
-    fn it_prefers_the_resources_bundle_over_the_exe_dir() {
-      let exe_dir = PathBuf::from("/opt/pod");
-      let resources = exe_dir.join("../Resources");
+    fn it_reads_storage_overrides_per_field() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(
+        &path,
+        "[storage]\nnetwork = true\ndb_dir = \"/var/pod/db\"\nlog_dir = \"/var/pod/log\"\ncache_dir = \"/var/pod/cache\"\n",
+      )
+      .unwrap();
 
-      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources || *path == exe_dir);
+      let storage = load_from(&path).unwrap().storage().to_owned();
 
-      assert_eq!(resolved, Some(resources));
+      assert!(storage.network());
+      assert_eq!(*storage.db_dir(), Some(PathBuf::from("/var/pod/db")));
+      assert_eq!(*storage.log_dir(), Some(PathBuf::from("/var/pod/log")));
+      assert_eq!(*storage.cache_dir(), Some(PathBuf::from("/var/pod/cache")));
     }
 
     #[test]
-    fn it_skips_the_linux_candidate_when_the_binary_name_is_unknown() {
-      let exe_dir = PathBuf::from("/usr/bin");
-      let lib_dir = exe_dir.join("../lib").join("pod");
+    fn it_returns_defaults_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
 
-      let resolved = select_resource_dir(&exe_dir, None, |path| *path == lib_dir);
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
 
-      assert_eq!(resolved, None);
-    }
-
-    #[test]
-    fn it_returns_none_when_no_candidate_holds_the_assets() {
-      let exe_dir = PathBuf::from("/usr/bin");
-
-      let resolved = select_resource_dir(&exe_dir, Some("pod"), |_| false);
-
-      assert_eq!(resolved, None);
-    }
-  }
-
-  mod resolved_paths {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uses_the_platform_default_database_path_with_no_override() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.resolved_database_path(), data_dir().join("pod.db"));
-    }
-
-    #[test]
-    fn it_uses_the_db_dir_override_for_the_database_path() {
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(PathBuf::from("/var/pod/db")));
-
-      assert_eq!(storage.resolved_db_dir(), PathBuf::from("/var/pod/db"));
-      assert_eq!(storage.resolved_database_path(), PathBuf::from("/var/pod/db/pod.db"));
-    }
-
-    #[test]
-    fn it_uses_the_state_home_default_log_dir_with_no_override() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.resolved_log_dir(), log_dir());
-    }
-
-    #[test]
-    fn it_resolves_the_log_override() {
-      let mut storage = StorageConfig::default();
-      storage.set_log_dir(Some(PathBuf::from("/var/pod/log")));
-
-      assert_eq!(storage.resolved_log_dir(), PathBuf::from("/var/pod/log"));
-    }
-
-    #[test]
-    fn it_uses_the_platform_default_cache_dir_with_no_override() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.resolved_cache_dir(), cache_dir());
-    }
-
-    #[test]
-    fn it_resolves_the_cache_override() {
-      let mut storage = StorageConfig::default();
-      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
-
-      assert_eq!(storage.resolved_cache_dir(), PathBuf::from("/var/pod/cache"));
-    }
-  }
-
-  mod storage_mode {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_direct_with_the_opt_in_flag_off() {
-      let storage = StorageConfig::default();
-
-      assert_eq!(storage.storage_mode(), StorageMode::Direct);
-    }
-
-    #[test]
-    fn it_stays_direct_for_a_network_db_dir_when_the_opt_in_flag_is_off() {
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
-
-      assert_eq!(
-        storage.storage_mode(),
-        StorageMode::Direct,
-        "a network FS no longer auto-flips Sync; entering Sync is opt-in only"
-      );
-    }
-
-    #[test]
-    fn it_is_sync_only_when_the_opt_in_flag_is_set() {
-      let mut storage = StorageConfig::default();
-      storage.set_network(true);
-
-      assert_eq!(storage.storage_mode(), StorageMode::Sync);
-    }
-  }
-
-  mod suggests_network_sync {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
-      move |_| kind
-    }
-
-    #[test]
-    fn it_suggests_sync_when_the_db_dir_is_on_a_network_fs_and_sync_is_off() {
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
-      let seen = std::cell::RefCell::new(None);
-
-      let suggests = storage.suggests_network_sync_with(|path| {
-        *seen.borrow_mut() = Some(path.to_path_buf());
-        FsKind::Network
-      });
-
-      assert!(suggests, "the advisory fires for a network db_dir while in Direct mode");
-      assert_eq!(seen.into_inner(), Some(PathBuf::from("/mnt/nas/pod")));
-    }
-
-    #[test]
-    fn it_does_not_suggest_when_sync_is_already_on() {
-      let mut storage = StorageConfig::default();
-      storage.set_network(true);
-
-      assert!(!storage.suggests_network_sync_with(always(FsKind::Network)));
-    }
-
-    #[test]
-    fn it_does_not_suggest_for_a_local_db_dir() {
-      let storage = StorageConfig::default();
-
-      assert!(!storage.suggests_network_sync_with(always(FsKind::Local)));
-    }
-  }
-
-  mod resolved_working_copy_path {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
-      move |_| kind
-    }
-
-    #[test]
-    fn it_stays_off_the_cache_dir_even_when_cache_points_at_a_network_path() {
-      let mut storage = StorageConfig::default();
-      storage.set_cache_dir(Some(PathBuf::from("/mnt/nas/cache")));
-
-      let path = storage.resolved_working_copy_path();
-
-      assert!(
-        !path.starts_with("/mnt/nas/cache"),
-        "the live working copy is never placed under the configurable (evictable, network-capable) cache_dir"
-      );
-      assert_eq!(path.file_name().unwrap(), "pod.db");
-    }
-
-    #[test]
-    fn it_redirects_to_a_local_fallback_when_the_base_is_on_a_network_fs() {
-      let mut storage = StorageConfig::default();
-      storage.set_working_copy_dir(Some(PathBuf::from("/mnt/nas/wc")));
-
-      let dir = storage.resolved_working_copy_dir(always(FsKind::Network));
-
-      assert_eq!(
-        dir,
-        local_working_copy_fallback(),
-        "a network working-copy base is rejected for the local fallback"
-      );
-    }
-
-    #[test]
-    fn it_keeps_a_local_base_in_place() {
-      let mut storage = StorageConfig::default();
-      storage.set_working_copy_dir(Some(PathBuf::from("/var/local/wc")));
-
-      let dir = storage.resolved_working_copy_dir(always(FsKind::Local));
-
-      assert_eq!(dir, PathBuf::from("/var/local/wc"));
-    }
-
-    #[test]
-    fn it_is_distinct_from_the_shared_db_path() {
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
-
-      assert_ne!(storage.resolved_working_copy_path(), storage.resolved_database_path());
+      assert_eq!(settings.eve_client_id(), EVE_CLIENT_ID);
     }
   }
 
@@ -1012,122 +824,293 @@ mod tests {
     }
   }
 
-  mod load_from {
+  mod resolve_data_dir {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_returns_defaults_when_the_file_is_absent() {
-      let dir = tempfile::tempdir().unwrap();
+    fn it_falls_back_to_the_given_root_when_data_home_is_missing() {
+      let resolved = resolve_data_dir(None, PathBuf::from("/var/tmp"));
 
-      let settings = load_from(&dir.path().join("config.toml")).unwrap();
-
-      assert_eq!(settings.eve_client_id(), EVE_CLIENT_ID);
+      assert_eq!(resolved, PathBuf::from("/var/tmp/pod"));
     }
 
     #[test]
-    fn it_defaults_every_feature_flag_to_enabled_when_the_file_is_absent() {
-      let dir = tempfile::tempdir().unwrap();
+    fn it_uses_the_data_home_when_present() {
+      let resolved = resolve_data_dir(Some(PathBuf::from("/home/me/.local/share")), PathBuf::from("/tmp"));
 
-      let settings = load_from(&dir.path().join("config.toml")).unwrap();
-
-      assert_eq!(settings.features().enabled(), Feature::ALL.to_vec());
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/share/pod"));
     }
 
     #[test]
-    fn it_defaults_the_storage_table_when_the_file_is_absent() {
-      let dir = tempfile::tempdir().unwrap();
+    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
+      let resolved = resolve_data_dir(None, std::env::temp_dir());
 
-      let settings = load_from(&dir.path().join("config.toml")).unwrap();
-      let storage = settings.storage();
+      assert!(
+        resolved.is_absolute(),
+        "the fallback must not depend on the working directory"
+      );
+      assert_ne!(resolved, PathBuf::from("./pod"));
+    }
+  }
 
-      assert!(!storage.network());
-      assert_eq!(*storage.db_dir(), None);
-      assert_eq!(*storage.log_dir(), None);
-      assert_eq!(*storage.cache_dir(), None);
-      assert_eq!(*storage.machine_id(), None);
+  mod resolve_log_dir {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_the_given_root_when_state_home_is_missing() {
+      let resolved = resolve_log_dir(None, PathBuf::from("/var/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/var/tmp/pod/logs"));
     }
 
     #[test]
-    fn it_extracts_a_legacy_file_with_only_the_client_id() {
+    fn it_uses_the_state_home_when_present() {
+      let resolved = resolve_log_dir(Some(PathBuf::from("/home/me/.local/state")), PathBuf::from("/tmp"));
+
+      assert_eq!(resolved, PathBuf::from("/home/me/.local/state/pod/logs"));
+    }
+
+    #[test]
+    fn its_fallback_is_absolute_and_not_relative_to_the_current_directory() {
+      let resolved = resolve_log_dir(None, std::env::temp_dir());
+
+      assert!(
+        resolved.is_absolute(),
+        "the fallback must not depend on the working directory"
+      );
+      assert_ne!(resolved, PathBuf::from("./pod/logs"));
+    }
+  }
+
+  mod resolved_paths {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_the_cache_override() {
+      let mut storage = StorageConfig::default();
+      storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+
+      assert_eq!(storage.resolved_cache_dir(), PathBuf::from("/var/pod/cache"));
+    }
+
+    #[test]
+    fn it_resolves_the_log_override() {
+      let mut storage = StorageConfig::default();
+      storage.set_log_dir(Some(PathBuf::from("/var/pod/log")));
+
+      assert_eq!(storage.resolved_log_dir(), PathBuf::from("/var/pod/log"));
+    }
+
+    #[test]
+    fn it_uses_the_db_dir_override_for_the_database_path() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/var/pod/db")));
+
+      assert_eq!(storage.resolved_db_dir(), PathBuf::from("/var/pod/db"));
+      assert_eq!(storage.resolved_database_path(), PathBuf::from("/var/pod/db/pod.db"));
+    }
+
+    #[test]
+    fn it_uses_the_platform_default_cache_dir_with_no_override() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.resolved_cache_dir(), cache_dir());
+    }
+
+    #[test]
+    fn it_uses_the_platform_default_database_path_with_no_override() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.resolved_database_path(), data_dir().join("pod.db"));
+    }
+
+    #[test]
+    fn it_uses_the_state_home_default_log_dir_with_no_override() {
+      let storage = StorageConfig::default();
+
+      assert_eq!(storage.resolved_log_dir(), log_dir());
+    }
+  }
+
+  mod resolved_working_copy_path {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
+      move |_| kind
+    }
+
+    #[test]
+    fn it_is_distinct_from_the_shared_db_path() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
+
+      assert_ne!(storage.resolved_working_copy_path(), storage.resolved_database_path());
+    }
+
+    #[test]
+    fn it_keeps_a_local_base_in_place() {
+      let mut storage = StorageConfig::default();
+      storage.set_working_copy_dir(Some(PathBuf::from("/var/local/wc")));
+
+      let dir = storage.resolved_working_copy_dir(always(FsKind::Local));
+
+      assert_eq!(dir, PathBuf::from("/var/local/wc"));
+    }
+
+    #[test]
+    fn it_redirects_to_a_local_fallback_when_the_base_is_on_a_network_fs() {
+      let mut storage = StorageConfig::default();
+      storage.set_working_copy_dir(Some(PathBuf::from("/mnt/nas/wc")));
+
+      let dir = storage.resolved_working_copy_dir(always(FsKind::Network));
+
+      assert_eq!(
+        dir,
+        local_working_copy_fallback(),
+        "a network working-copy base is rejected for the local fallback"
+      );
+    }
+
+    #[test]
+    fn it_stays_off_the_cache_dir_even_when_cache_points_at_a_network_path() {
+      let mut storage = StorageConfig::default();
+      storage.set_cache_dir(Some(PathBuf::from("/mnt/nas/cache")));
+
+      let path = storage.resolved_working_copy_path();
+
+      assert!(
+        !path.starts_with("/mnt/nas/cache"),
+        "the live working copy is never placed under the configurable (evictable, network-capable) cache_dir"
+      );
+      assert_eq!(path.file_name().unwrap(), "pod.db");
+    }
+  }
+
+  mod save_to {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_roundtrips_a_non_default_accessibility_table() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("config.toml");
-      std::fs::write(&path, r#"eve_client_id = "byo-client-id""#).unwrap();
+      let mut settings = Settings::default();
+      settings.accessibility_mut().set_scale(125);
+      settings.accessibility_mut().set_high_contrast(true);
 
-      let settings = load_from(&path).unwrap();
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
 
-      assert_eq!(settings.eve_client_id(), "byo-client-id");
-      assert_eq!(settings.features(), &FeatureFlags::default());
-      assert_eq!(settings.storage(), &StorageConfig::default());
+      assert_eq!(loaded.accessibility(), settings.accessibility());
+      assert_eq!(*loaded.accessibility().scale(), 125);
+      assert!(loaded.accessibility().high_contrast());
     }
 
     #[test]
-    fn it_reads_overrides_from_the_file() {
+    fn it_roundtrips_the_feature_and_storage_tables() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("config.toml");
-      std::fs::write(&path, r#"eve_client_id = "byo-client-id""#).unwrap();
+      let mut settings = Settings::default();
+      settings.features.wallet = false;
+      settings.features.combat_log = false;
+      settings.storage.network = true;
+      settings.storage.log_dir = Some(PathBuf::from("/tmp/pod-logs"));
 
-      let settings = load_from(&path).unwrap();
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
 
-      assert_eq!(settings.eve_client_id(), "byo-client-id");
+      assert_eq!(loaded.features(), settings.features());
+      assert_eq!(loaded.storage(), settings.storage());
+      assert!(!loaded.features().wallet());
+      assert!(loaded.storage().network());
+      assert_eq!(*loaded.storage().log_dir(), Some(PathBuf::from("/tmp/pod-logs")));
     }
 
     #[test]
-    fn it_reads_feature_overrides_and_keeps_unlisted_flags_enabled() {
+    fn it_roundtrips_through_the_file() {
       let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("config.toml");
-      std::fs::write(&path, "[features]\nwallet = false\nmail = false\n").unwrap();
+      let path = dir.path().join("nested").join("config.toml");
+      let settings = Settings {
+        eve_client_id: "byo-client-id".to_owned(),
+        ..Settings::default()
+      };
 
-      let features = load_from(&path).unwrap().features().to_owned();
+      save_to(&path, &settings).unwrap();
 
-      assert!(!features.wallet());
-      assert!(!features.mail());
-      assert!(features.clone_monitoring());
-      assert!(features.is_enabled(Feature::Contacts));
-      assert!(!features.is_enabled(Feature::Wallet));
-      assert!(!features.enabled().contains(&Feature::Wallet));
+      assert_eq!(load_from(&path).unwrap().eve_client_id(), "byo-client-id");
+    }
+  }
+
+  mod select_resource_dir {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_the_resources_bundle_over_the_exe_dir() {
+      let exe_dir = PathBuf::from("/opt/pod");
+      let resources = exe_dir.join("../Resources");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources || *path == exe_dir);
+
+      assert_eq!(resolved, Some(resources));
     }
 
     #[test]
-    fn it_reads_storage_overrides_per_field() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("config.toml");
-      std::fs::write(
-        &path,
-        "[storage]\nnetwork = true\ndb_dir = \"/var/pod/db\"\nlog_dir = \"/var/pod/log\"\ncache_dir = \"/var/pod/cache\"\n",
-      )
-      .unwrap();
+    fn it_returns_none_when_no_candidate_holds_the_assets() {
+      let exe_dir = PathBuf::from("/usr/bin");
 
-      let storage = load_from(&path).unwrap().storage().to_owned();
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |_| false);
 
-      assert!(storage.network());
-      assert_eq!(*storage.db_dir(), Some(PathBuf::from("/var/pod/db")));
-      assert_eq!(*storage.log_dir(), Some(PathBuf::from("/var/pod/log")));
-      assert_eq!(*storage.cache_dir(), Some(PathBuf::from("/var/pod/cache")));
+      assert_eq!(resolved, None);
     }
 
     #[test]
-    fn it_defaults_the_accessibility_table_when_the_file_is_absent() {
-      let dir = tempfile::tempdir().unwrap();
+    fn it_selects_the_exe_dir_for_the_windows_layout() {
+      let exe_dir = PathBuf::from("C:/Program Files/pod");
 
-      let settings = load_from(&dir.path().join("config.toml")).unwrap();
-      let accessibility = settings.accessibility();
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == exe_dir);
 
-      assert_eq!(*accessibility.scale(), 100);
-      assert!(!accessibility.high_contrast());
+      assert_eq!(resolved, Some(exe_dir));
     }
 
     #[test]
-    fn it_reads_a_partial_accessibility_table_and_defaults_the_rest() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("config.toml");
-      std::fs::write(&path, "[accessibility]\nscale = 125\n").unwrap();
+    fn it_selects_the_linux_lib_dir_for_the_fhs_layout() {
+      let exe_dir = PathBuf::from("/usr/bin");
+      let lib_dir = exe_dir.join("../lib").join("pod");
 
-      let accessibility = load_from(&path).unwrap().accessibility().to_owned();
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == lib_dir);
 
-      assert_eq!(*accessibility.scale(), 125);
-      assert!(!accessibility.high_contrast());
+      assert_eq!(resolved, Some(PathBuf::from("/usr/bin/../lib/pod")));
+    }
+
+    #[test]
+    fn it_selects_the_macos_resources_bundle() {
+      let exe_dir = PathBuf::from("/Applications/pod.app/Contents/MacOS");
+      let resources = exe_dir.join("../Resources");
+
+      let resolved = select_resource_dir(&exe_dir, Some("pod"), |path| *path == resources);
+
+      assert_eq!(resolved, Some(resources));
+    }
+
+    #[test]
+    fn it_skips_the_linux_candidate_when_the_binary_name_is_unknown() {
+      let exe_dir = PathBuf::from("/usr/bin");
+      let lib_dir = exe_dir.join("../lib").join("pod");
+
+      let resolved = select_resource_dir(&exe_dir, None, |path| *path == lib_dir);
+
+      assert_eq!(resolved, None);
     }
   }
 
@@ -1148,6 +1131,20 @@ mod tests {
     }
 
     #[test]
+    fn a_default_industry_config_serializes_without_any_keys() {
+      let toml = toml::to_string_pretty(&IndustryConfig::default()).unwrap();
+
+      assert!(
+        !toml.contains("manufacturing"),
+        "an unset manufacturing facility must not leak to disk: {toml}"
+      );
+      assert!(
+        !toml.contains("reactions"),
+        "an unset reactions facility must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
     fn a_default_settings_serializes_without_an_accessibility_table() {
       let toml = toml::to_string_pretty(&Settings::default()).unwrap();
 
@@ -1163,16 +1160,12 @@ mod tests {
     }
 
     #[test]
-    fn a_partially_customized_accessibility_config_only_writes_the_changed_keys() {
-      let mut accessibility = AccessibilityConfig::default();
-      accessibility.set_scale(125);
+    fn a_default_settings_serializes_without_an_industry_table() {
+      let toml = toml::to_string_pretty(&Settings::default()).unwrap();
 
-      let toml = toml::to_string_pretty(&accessibility).unwrap();
-
-      assert!(toml.contains("scale = 125"), "scale override must persist: {toml}");
       assert!(
-        !toml.contains("high_contrast"),
-        "a default high_contrast must not leak to disk: {toml}"
+        !toml.contains("[industry]"),
+        "a default industry table must not leak to disk: {toml}"
       );
     }
 
@@ -1203,26 +1196,31 @@ mod tests {
     }
 
     #[test]
-    fn a_default_industry_config_serializes_without_any_keys() {
-      let toml = toml::to_string_pretty(&IndustryConfig::default()).unwrap();
+    fn a_non_default_log_level_round_trips_through_toml() {
+      let mut storage = StorageConfig::default();
+      storage.set_log_level(LogLevel::Verbose);
+
+      let toml = toml::to_string_pretty(&storage).unwrap();
+      let restored: StorageConfig = toml::from_str(&toml).unwrap();
 
       assert!(
-        !toml.contains("manufacturing"),
-        "an unset manufacturing facility must not leak to disk: {toml}"
+        toml.contains("log_level = \"verbose\""),
+        "a non-default log_level must persist in snake_case: {toml}"
       );
-      assert!(
-        !toml.contains("reactions"),
-        "an unset reactions facility must not leak to disk: {toml}"
-      );
+      assert_eq!(restored.log_level(), &LogLevel::Verbose);
     }
 
     #[test]
-    fn a_default_settings_serializes_without_an_industry_table() {
-      let toml = toml::to_string_pretty(&Settings::default()).unwrap();
+    fn a_partially_customized_accessibility_config_only_writes_the_changed_keys() {
+      let mut accessibility = AccessibilityConfig::default();
+      accessibility.set_scale(125);
 
+      let toml = toml::to_string_pretty(&accessibility).unwrap();
+
+      assert!(toml.contains("scale = 125"), "scale override must persist: {toml}");
       assert!(
-        !toml.contains("[industry]"),
-        "a default industry table must not leak to disk: {toml}"
+        !toml.contains("high_contrast"),
+        "a default high_contrast must not leak to disk: {toml}"
       );
     }
 
@@ -1244,76 +1242,78 @@ mod tests {
       );
       assert_eq!(restored, industry);
     }
-
-    #[test]
-    fn a_non_default_log_level_round_trips_through_toml() {
-      let mut storage = StorageConfig::default();
-      storage.set_log_level(LogLevel::Verbose);
-
-      let toml = toml::to_string_pretty(&storage).unwrap();
-      let restored: StorageConfig = toml::from_str(&toml).unwrap();
-
-      assert!(
-        toml.contains("log_level = \"verbose\""),
-        "a non-default log_level must persist in snake_case: {toml}"
-      );
-      assert_eq!(restored.log_level(), &LogLevel::Verbose);
-    }
   }
 
-  mod save_to {
+  mod storage_mode {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_roundtrips_through_the_file() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("nested").join("config.toml");
-      let settings = Settings {
-        eve_client_id: "byo-client-id".to_owned(),
-        ..Settings::default()
-      };
+    fn it_is_direct_with_the_opt_in_flag_off() {
+      let storage = StorageConfig::default();
 
-      save_to(&path, &settings).unwrap();
-
-      assert_eq!(load_from(&path).unwrap().eve_client_id(), "byo-client-id");
+      assert_eq!(storage.storage_mode(), StorageMode::Direct);
     }
 
     #[test]
-    fn it_roundtrips_the_feature_and_storage_tables() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("config.toml");
-      let mut settings = Settings::default();
-      settings.features.wallet = false;
-      settings.features.combat_log = false;
-      settings.storage.network = true;
-      settings.storage.log_dir = Some(PathBuf::from("/tmp/pod-logs"));
+    fn it_is_sync_only_when_the_opt_in_flag_is_set() {
+      let mut storage = StorageConfig::default();
+      storage.set_network(true);
 
-      save_to(&path, &settings).unwrap();
-      let loaded = load_from(&path).unwrap();
-
-      assert_eq!(loaded.features(), settings.features());
-      assert_eq!(loaded.storage(), settings.storage());
-      assert!(!loaded.features().wallet());
-      assert!(loaded.storage().network());
-      assert_eq!(*loaded.storage().log_dir(), Some(PathBuf::from("/tmp/pod-logs")));
+      assert_eq!(storage.storage_mode(), StorageMode::Sync);
     }
 
     #[test]
-    fn it_roundtrips_a_non_default_accessibility_table() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("config.toml");
-      let mut settings = Settings::default();
-      settings.accessibility_mut().set_scale(125);
-      settings.accessibility_mut().set_high_contrast(true);
+    fn it_stays_direct_for_a_network_db_dir_when_the_opt_in_flag_is_off() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
 
-      save_to(&path, &settings).unwrap();
-      let loaded = load_from(&path).unwrap();
+      assert_eq!(
+        storage.storage_mode(),
+        StorageMode::Direct,
+        "a network FS no longer auto-flips Sync; entering Sync is opt-in only"
+      );
+    }
+  }
 
-      assert_eq!(loaded.accessibility(), settings.accessibility());
-      assert_eq!(*loaded.accessibility().scale(), 125);
-      assert!(loaded.accessibility().high_contrast());
+  mod suggests_network_sync {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn always(kind: FsKind) -> impl Fn(&Path) -> FsKind {
+      move |_| kind
+    }
+
+    #[test]
+    fn it_does_not_suggest_for_a_local_db_dir() {
+      let storage = StorageConfig::default();
+
+      assert!(!storage.suggests_network_sync_with(always(FsKind::Local)));
+    }
+
+    #[test]
+    fn it_does_not_suggest_when_sync_is_already_on() {
+      let mut storage = StorageConfig::default();
+      storage.set_network(true);
+
+      assert!(!storage.suggests_network_sync_with(always(FsKind::Network)));
+    }
+
+    #[test]
+    fn it_suggests_sync_when_the_db_dir_is_on_a_network_fs_and_sync_is_off() {
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(PathBuf::from("/mnt/nas/pod")));
+      let seen = std::cell::RefCell::new(None);
+
+      let suggests = storage.suggests_network_sync_with(|path| {
+        *seen.borrow_mut() = Some(path.to_path_buf());
+        FsKind::Network
+      });
+
+      assert!(suggests, "the advisory fires for a network db_dir while in Direct mode");
+      assert_eq!(seen.into_inner(), Some(PathBuf::from("/mnt/nas/pod")));
     }
   }
 }

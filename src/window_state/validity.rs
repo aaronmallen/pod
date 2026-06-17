@@ -102,10 +102,74 @@ mod tests {
     }
   }
 
+  mod is_in_range {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_accepts_an_in_range_position_with_no_monitor_required() {
+      assert_eq!(is_in_range(&geometry(100.0, 200.0)), true);
+    }
+
+    #[test]
+    fn it_rejects_a_non_finite_position() {
+      assert_eq!(is_in_range(&geometry(f32::NAN, 0.0)), false);
+      assert_eq!(is_in_range(&geometry(0.0, f32::INFINITY)), false);
+    }
+
+    #[test]
+    fn it_rejects_an_out_of_range_position() {
+      assert_eq!(is_in_range(&geometry(-1.0, 200.0)), false);
+      assert_eq!(is_in_range(&geometry(100.0, 16385.0)), false);
+    }
+  }
+
   mod is_position_valid {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_accepts_a_rect_fully_on_one_monitor() {
+      assert_eq!(is_position_valid(&geometry(100.0, 100.0), &[primary()]), true);
+    }
+
+    #[test]
+    fn it_accepts_a_rect_overlapping_a_monitor_by_exactly_the_margin() {
+      let window = WindowGeometry {
+        height: 800.0,
+        width: 1200.0,
+        x: 1920.0 - MIN_ON_SCREEN_MARGIN,
+        y: 100.0,
+      };
+      assert_eq!(is_position_valid(&window, &[primary()]), true);
+    }
+
+    #[test]
+    fn it_accepts_a_rect_reachable_on_a_secondary_monitor() {
+      let secondary = Rect {
+        height: 1080.0,
+        width: 1920.0,
+        x: 1920.0,
+        y: 0.0,
+      };
+      assert_eq!(
+        is_position_valid(&geometry(2000.0, 100.0), &[primary(), secondary]),
+        true
+      );
+    }
+
+    #[test]
+    fn it_accepts_boundary_value() {
+      let monitor = Rect {
+        height: 1080.0,
+        width: 1920.0,
+        x: 16000.0,
+        y: 16000.0,
+      };
+      assert_eq!(is_position_valid(&geometry(16384.0, 16384.0), &[monitor]), true);
+    }
 
     #[test]
     fn it_accepts_normal_coordinates() {
@@ -118,14 +182,38 @@ mod tests {
     }
 
     #[test]
-    fn it_accepts_boundary_value() {
-      let monitor = Rect {
-        height: 1080.0,
-        width: 1920.0,
-        x: 16000.0,
-        y: 16000.0,
-      };
-      assert_eq!(is_position_valid(&geometry(16384.0, 16384.0), &[monitor]), true);
+    fn it_rejects_a_rect_on_a_now_absent_monitor_with_no_present_overlap() {
+      assert_eq!(is_position_valid(&geometry(2000.0, 100.0), &[primary()]), false);
+    }
+
+    #[test]
+    fn it_rejects_a_rect_overlapping_a_monitor_by_less_than_the_margin() {
+      assert_eq!(is_position_valid(&geometry(1910.0, 100.0), &[primary()]), false);
+    }
+
+    #[test]
+    fn it_rejects_every_position_when_no_monitor_is_connected() {
+      assert_eq!(is_position_valid(&geometry(100.0, 100.0), &[]), false);
+    }
+
+    #[test]
+    fn it_rejects_infinite_x() {
+      assert_eq!(is_position_valid(&geometry(f32::INFINITY, 100.0), &[primary()]), false);
+    }
+
+    #[test]
+    fn it_rejects_infinite_y() {
+      assert_eq!(is_position_valid(&geometry(100.0, f32::INFINITY), &[primary()]), false);
+    }
+
+    #[test]
+    fn it_rejects_nan_x() {
+      assert_eq!(is_position_valid(&geometry(f32::NAN, 100.0), &[primary()]), false);
+    }
+
+    #[test]
+    fn it_rejects_nan_y() {
+      assert_eq!(is_position_valid(&geometry(100.0, f32::NAN), &[primary()]), false);
     }
 
     #[test]
@@ -149,96 +237,8 @@ mod tests {
     }
 
     #[test]
-    fn it_rejects_nan_x() {
-      assert_eq!(is_position_valid(&geometry(f32::NAN, 100.0), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_rejects_nan_y() {
-      assert_eq!(is_position_valid(&geometry(100.0, f32::NAN), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_rejects_infinite_x() {
-      assert_eq!(is_position_valid(&geometry(f32::INFINITY, 100.0), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_rejects_infinite_y() {
-      assert_eq!(is_position_valid(&geometry(100.0, f32::INFINITY), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_accepts_a_rect_fully_on_one_monitor() {
-      assert_eq!(is_position_valid(&geometry(100.0, 100.0), &[primary()]), true);
-    }
-
-    #[test]
-    fn it_rejects_a_rect_on_a_now_absent_monitor_with_no_present_overlap() {
-      assert_eq!(is_position_valid(&geometry(2000.0, 100.0), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_rejects_a_rect_overlapping_a_monitor_by_less_than_the_margin() {
-      assert_eq!(is_position_valid(&geometry(1910.0, 100.0), &[primary()]), false);
-    }
-
-    #[test]
-    fn it_accepts_a_rect_overlapping_a_monitor_by_exactly_the_margin() {
-      let window = WindowGeometry {
-        height: 800.0,
-        width: 1200.0,
-        x: 1920.0 - MIN_ON_SCREEN_MARGIN,
-        y: 100.0,
-      };
-      assert_eq!(is_position_valid(&window, &[primary()]), true);
-    }
-
-    #[test]
-    fn it_rejects_every_position_when_no_monitor_is_connected() {
-      assert_eq!(is_position_valid(&geometry(100.0, 100.0), &[]), false);
-    }
-
-    #[test]
-    fn it_accepts_a_rect_reachable_on_a_secondary_monitor() {
-      let secondary = Rect {
-        height: 1080.0,
-        width: 1920.0,
-        x: 1920.0,
-        y: 0.0,
-      };
-      assert_eq!(
-        is_position_valid(&geometry(2000.0, 100.0), &[primary(), secondary]),
-        true
-      );
-    }
-
-    #[test]
     fn it_requires_overlap_on_both_axes_not_just_one() {
       assert_eq!(is_position_valid(&geometry(100.0, 5000.0), &[primary()]), false);
-    }
-  }
-
-  mod is_in_range {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_accepts_an_in_range_position_with_no_monitor_required() {
-      assert_eq!(is_in_range(&geometry(100.0, 200.0)), true);
-    }
-
-    #[test]
-    fn it_rejects_an_out_of_range_position() {
-      assert_eq!(is_in_range(&geometry(-1.0, 200.0)), false);
-      assert_eq!(is_in_range(&geometry(100.0, 16385.0)), false);
-    }
-
-    #[test]
-    fn it_rejects_a_non_finite_position() {
-      assert_eq!(is_in_range(&geometry(f32::NAN, 0.0)), false);
-      assert_eq!(is_in_range(&geometry(0.0, f32::INFINITY)), false);
     }
   }
 
@@ -262,12 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn it_rejects_a_zero_dimension() {
-      assert_eq!(is_size_in_range(&sized(0.0, 800.0)), false);
-      assert_eq!(is_size_in_range(&sized(1200.0, 0.0)), false);
-    }
-
-    #[test]
     fn it_rejects_a_negative_dimension() {
       assert_eq!(is_size_in_range(&sized(-1200.0, 800.0)), false);
     }
@@ -276,6 +270,12 @@ mod tests {
     fn it_rejects_a_non_finite_dimension() {
       assert_eq!(is_size_in_range(&sized(f32::NAN, 800.0)), false);
       assert_eq!(is_size_in_range(&sized(1200.0, f32::INFINITY)), false);
+    }
+
+    #[test]
+    fn it_rejects_a_zero_dimension() {
+      assert_eq!(is_size_in_range(&sized(0.0, 800.0)), false);
+      assert_eq!(is_size_in_range(&sized(1200.0, 0.0)), false);
     }
 
     #[test]

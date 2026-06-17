@@ -151,100 +151,8 @@ mod tests {
     eve_sso::Client::new(http, "test-client")
   }
 
-  mod needs_refresh {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_false_when_well_before_expiry() {
-      assert_eq!(needs_refresh(1_000, 0, 60), false);
-    }
-
-    #[test]
-    fn it_is_true_within_the_skew_window() {
-      assert_eq!(needs_refresh(1_000, 950, 60), true);
-    }
-
-    #[test]
-    fn it_is_true_once_expired() {
-      assert_eq!(needs_refresh(1_000, 2_000, 60), true);
-    }
-  }
-
   mod fresh_token {
     use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_stored_token_when_not_near_expiry() {
-      let db = store::open_test().await.unwrap();
-      let sso = make_sso().await;
-      let far_future = Utc::now().timestamp() + 86_400;
-      infra::upsert(
-        &db,
-        42,
-        OwnerType::Character,
-        "stored-token",
-        "rt",
-        far_future,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-
-      let grant = fresh_token(&db, &sso, 42, OwnerType::Character).await.unwrap().unwrap();
-
-      assert_eq!(grant.access_token(), "stored-token");
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_when_no_credential_exists() {
-      let db = store::open_test().await.unwrap();
-      let sso = make_sso().await;
-
-      assert!(
-        fresh_token(&db, &sso, 999, OwnerType::Character)
-          .await
-          .unwrap()
-          .is_none()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_refreshes_and_persists_a_near_expiry_token() {
-      use base64::Engine as _;
-      use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{method, path},
-      };
-
-      let server = MockServer::start().await;
-      let encode = |raw: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
-      let access = format!(
-        "{}.{}.sig",
-        encode(r#"{"alg":"RS256","typ":"JWT"}"#),
-        encode(r#"{"sub":"CHARACTER:EVE:77","name":"Pilot","scp":[]}"#),
-      );
-      let body = format!(r#"{{"access_token":"{access}","expires_in":1200,"refresh_token":"rotated-rt"}}"#);
-      Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      infra::upsert(&db, 77, OwnerType::Character, "old-access", "old-rt", 0, None, None)
-        .await
-        .unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let sso = eve_sso::Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()));
-
-      let grant = fresh_token(&db, &sso, 77, OwnerType::Character).await.unwrap().unwrap();
-
-      assert_eq!(*grant.access_token(), access);
-      let stored = infra::get(&db, 77, OwnerType::Character).await.unwrap().unwrap();
-      assert_eq!(stored.refresh_token(), "rotated-rt");
-    }
 
     #[tokio::test]
     async fn it_preserves_the_authorizing_character_when_refreshing_a_corporation_credential() {
@@ -291,6 +199,98 @@ mod tests {
         Some(111),
         "a token refresh must not wipe the corporation's authorizing character"
       );
+    }
+
+    #[tokio::test]
+    async fn it_refreshes_and_persists_a_near_expiry_token() {
+      use base64::Engine as _;
+      use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+      };
+
+      let server = MockServer::start().await;
+      let encode = |raw: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+      let access = format!(
+        "{}.{}.sig",
+        encode(r#"{"alg":"RS256","typ":"JWT"}"#),
+        encode(r#"{"sub":"CHARACTER:EVE:77","name":"Pilot","scp":[]}"#),
+      );
+      let body = format!(r#"{{"access_token":"{access}","expires_in":1200,"refresh_token":"rotated-rt"}}"#);
+      Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(&db, 77, OwnerType::Character, "old-access", "old-rt", 0, None, None)
+        .await
+        .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let sso = eve_sso::Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()));
+
+      let grant = fresh_token(&db, &sso, 77, OwnerType::Character).await.unwrap().unwrap();
+
+      assert_eq!(*grant.access_token(), access);
+      let stored = infra::get(&db, 77, OwnerType::Character).await.unwrap().unwrap();
+      assert_eq!(stored.refresh_token(), "rotated-rt");
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_no_credential_exists() {
+      let db = store::open_test().await.unwrap();
+      let sso = make_sso().await;
+
+      assert!(
+        fresh_token(&db, &sso, 999, OwnerType::Character)
+          .await
+          .unwrap()
+          .is_none()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_stored_token_when_not_near_expiry() {
+      let db = store::open_test().await.unwrap();
+      let sso = make_sso().await;
+      let far_future = Utc::now().timestamp() + 86_400;
+      infra::upsert(
+        &db,
+        42,
+        OwnerType::Character,
+        "stored-token",
+        "rt",
+        far_future,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+
+      let grant = fresh_token(&db, &sso, 42, OwnerType::Character).await.unwrap().unwrap();
+
+      assert_eq!(grant.access_token(), "stored-token");
+    }
+  }
+
+  mod needs_refresh {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_well_before_expiry() {
+      assert_eq!(needs_refresh(1_000, 0, 60), false);
+    }
+
+    #[test]
+    fn it_is_true_once_expired() {
+      assert_eq!(needs_refresh(1_000, 2_000, 60), true);
+    }
+
+    #[test]
+    fn it_is_true_within_the_skew_window() {
+      assert_eq!(needs_refresh(1_000, 950, 60), true);
     }
   }
 

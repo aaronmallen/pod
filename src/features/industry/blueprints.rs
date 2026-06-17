@@ -706,6 +706,22 @@ mod tests {
     blueprints.iter().collect()
   }
 
+  mod counts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_counts_originals_and_copies() {
+      let data = sample();
+
+      let counts = Counts::of(&refs(&data));
+
+      assert_eq!(counts.originals, 1);
+      assert_eq!(counts.copies, 2);
+    }
+  }
+
   mod filter_and_sort {
     use pretty_assertions::assert_eq;
 
@@ -741,16 +757,6 @@ mod tests {
     }
 
     #[test]
-    fn it_sorts_originals_first_by_runs() {
-      let data = sample();
-
-      let sorted = super::super::filter_and_sort(&refs(&data), BlueprintKind::All, "", BlueprintSort::Runs);
-
-      // BPO (infinite) leads, then the 300-run copy, then the 12-run copy.
-      assert_eq!(sorted.iter().map(|bp| bp.item_id).collect::<Vec<_>>(), vec![1, 3, 2]);
-    }
-
-    #[test]
     fn it_sorts_by_material_efficiency_descending() {
       let data = sample();
 
@@ -774,21 +780,15 @@ mod tests {
         vec!["Cap Booster Blueprint", "Hobgoblin I Blueprint", "Rifter Blueprint"]
       );
     }
-  }
-
-  mod counts {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[test]
-    fn it_counts_originals_and_copies() {
+    fn it_sorts_originals_first_by_runs() {
       let data = sample();
 
-      let counts = Counts::of(&refs(&data));
+      let sorted = super::super::filter_and_sort(&refs(&data), BlueprintKind::All, "", BlueprintSort::Runs);
 
-      assert_eq!(counts.originals, 1);
-      assert_eq!(counts.copies, 2);
+      // BPO (infinite) leads, then the 300-run copy, then the 12-run copy.
+      assert_eq!(sorted.iter().map(|bp| bp.item_id).collect::<Vec<_>>(), vec![1, 3, 2]);
     }
   }
 

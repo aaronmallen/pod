@@ -435,15 +435,6 @@ mod credential_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_credentials_exist() {
-      let db = store::open_test().await.unwrap();
-
-      let result = all(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
-    }
-
-    #[tokio::test]
     async fn it_returns_all_stored_credentials() {
       let db = store::open_test().await.unwrap();
       upsert(&db, 111, OwnerType::Character, "tok1", "rt1", 1000, None, None)
@@ -465,6 +456,15 @@ mod credential_tests {
       let result = all(&db).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_credentials_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
     }
   }
 
@@ -538,89 +538,6 @@ mod credential_tests {
     }
   }
 
-  mod upsert {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_stores_a_new_credential() {
-      let db = store::open_test().await.unwrap();
-
-      upsert(
-        &db,
-        111,
-        OwnerType::Character,
-        "tok",
-        "rt",
-        1000,
-        None,
-        Some("esi-skills.read.v1"),
-      )
-      .await
-      .unwrap();
-
-      let result = get(&db, 111, OwnerType::Character).await.unwrap();
-      assert!(result.is_some());
-    }
-
-    #[tokio::test]
-    async fn it_updates_token_fields_without_changing_created_at() {
-      let db = store::open_test().await.unwrap();
-      upsert(&db, 111, OwnerType::Character, "old-tok", "old-rt", 1000, None, None)
-        .await
-        .unwrap();
-      let original = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
-
-      upsert(
-        &db,
-        111,
-        OwnerType::Character,
-        "new-tok",
-        "new-rt",
-        9999,
-        None,
-        Some("esi-skills.read.v1"),
-      )
-      .await
-      .unwrap();
-
-      let updated = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
-      assert_eq!(updated.created_at(), original.created_at());
-      assert_eq!(updated.access_token(), "new-tok");
-      assert_eq!(updated.refresh_token(), "new-rt");
-      assert_eq!(updated.expires_at(), 9999);
-      assert_eq!(updated.scopes().as_deref(), Some("esi-skills.read.v1"));
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_authorized_by_for_a_corporation_credential() {
-      let db = store::open_test().await.unwrap();
-
-      upsert(&db, 2000, OwnerType::Corporation, "tok", "rt", 1000, Some(111), None)
-        .await
-        .unwrap();
-
-      let cred = get(&db, 2000, OwnerType::Corporation).await.unwrap().unwrap();
-      assert_eq!(cred.authorized_by(), Some(111));
-    }
-
-    #[tokio::test]
-    async fn it_overwrites_authorized_by_on_a_re_add_by_another_director() {
-      let db = store::open_test().await.unwrap();
-      upsert(&db, 2000, OwnerType::Corporation, "tok", "rt", 1000, Some(111), None)
-        .await
-        .unwrap();
-
-      upsert(&db, 2000, OwnerType::Corporation, "tok2", "rt2", 2000, Some(222), None)
-        .await
-        .unwrap();
-
-      let cred = get(&db, 2000, OwnerType::Corporation).await.unwrap().unwrap();
-      assert_eq!(cred.authorized_by(), Some(222));
-    }
-  }
-
   mod needs_reauth {
     use pretty_assertions::assert_eq;
 
@@ -691,6 +608,89 @@ mod credential_tests {
       let corporation = get(&db, 111, OwnerType::Corporation).await.unwrap().unwrap();
       assert!(character.needs_reauth());
       assert!(!corporation.needs_reauth());
+    }
+  }
+
+  mod upsert {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_overwrites_authorized_by_on_a_re_add_by_another_director() {
+      let db = store::open_test().await.unwrap();
+      upsert(&db, 2000, OwnerType::Corporation, "tok", "rt", 1000, Some(111), None)
+        .await
+        .unwrap();
+
+      upsert(&db, 2000, OwnerType::Corporation, "tok2", "rt2", 2000, Some(222), None)
+        .await
+        .unwrap();
+
+      let cred = get(&db, 2000, OwnerType::Corporation).await.unwrap().unwrap();
+      assert_eq!(cred.authorized_by(), Some(222));
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_authorized_by_for_a_corporation_credential() {
+      let db = store::open_test().await.unwrap();
+
+      upsert(&db, 2000, OwnerType::Corporation, "tok", "rt", 1000, Some(111), None)
+        .await
+        .unwrap();
+
+      let cred = get(&db, 2000, OwnerType::Corporation).await.unwrap().unwrap();
+      assert_eq!(cred.authorized_by(), Some(111));
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_new_credential() {
+      let db = store::open_test().await.unwrap();
+
+      upsert(
+        &db,
+        111,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        1000,
+        None,
+        Some("esi-skills.read.v1"),
+      )
+      .await
+      .unwrap();
+
+      let result = get(&db, 111, OwnerType::Character).await.unwrap();
+      assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_updates_token_fields_without_changing_created_at() {
+      let db = store::open_test().await.unwrap();
+      upsert(&db, 111, OwnerType::Character, "old-tok", "old-rt", 1000, None, None)
+        .await
+        .unwrap();
+      let original = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+
+      upsert(
+        &db,
+        111,
+        OwnerType::Character,
+        "new-tok",
+        "new-rt",
+        9999,
+        None,
+        Some("esi-skills.read.v1"),
+      )
+      .await
+      .unwrap();
+
+      let updated = get(&db, 111, OwnerType::Character).await.unwrap().unwrap();
+      assert_eq!(updated.created_at(), original.created_at());
+      assert_eq!(updated.access_token(), "new-tok");
+      assert_eq!(updated.refresh_token(), "new-rt");
+      assert_eq!(updated.expires_at(), 9999);
+      assert_eq!(updated.scopes().as_deref(), Some("esi-skills.read.v1"));
     }
   }
 }
@@ -773,23 +773,6 @@ mod http_cache_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_keeps_rows_with_null_expires_at() {
-      let db = store::open_test().await.unwrap();
-      let entry = HttpCacheEntry::new(b"body".to_vec(), 0, "https://example.com/no-expiry");
-      http_cache_upsert(&db, &entry).await.unwrap();
-
-      let deleted = purge_expired(&db).await.unwrap();
-
-      assert_eq!(deleted, 0);
-      assert!(
-        http_cache_get(&db, "https://example.com/no-expiry")
-          .await
-          .unwrap()
-          .is_some()
-      );
-    }
-
-    #[tokio::test]
     async fn it_keeps_rows_that_have_not_yet_expired() {
       let db = store::open_test().await.unwrap();
       let mut entry = HttpCacheEntry::new(b"body".to_vec(), 0, "https://example.com/future");
@@ -801,6 +784,23 @@ mod http_cache_tests {
       assert_eq!(deleted, 0);
       assert!(
         http_cache_get(&db, "https://example.com/future")
+          .await
+          .unwrap()
+          .is_some()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_rows_with_null_expires_at() {
+      let db = store::open_test().await.unwrap();
+      let entry = HttpCacheEntry::new(b"body".to_vec(), 0, "https://example.com/no-expiry");
+      http_cache_upsert(&db, &entry).await.unwrap();
+
+      let deleted = purge_expired(&db).await.unwrap();
+
+      assert_eq!(deleted, 0);
+      assert!(
+        http_cache_get(&db, "https://example.com/no-expiry")
           .await
           .unwrap()
           .is_some()
@@ -877,9 +877,13 @@ mod migration_cascade_tests {
   };
 
   const ATTRIBUTES_COUNT: &str = "SELECT COUNT(*) FROM character_attributes WHERE character_id = ?";
+
   const IMPLANTS_COUNT: &str = "SELECT COUNT(*) FROM character_implants WHERE character_id = ?";
+
   const PLANS_COUNT: &str = "SELECT COUNT(*) FROM skill_plans WHERE character_id = ?";
+
   const ENTRIES_COUNT: &str = "SELECT COUNT(*) FROM skill_plan_entries WHERE plan_id = ?";
+
   const REMAP_POINTS_COUNT: &str = "SELECT COUNT(*) FROM skill_plan_remap_points WHERE plan_id = ?";
 
   async fn count(db: &Database, query: &'static str, character_id: i64) -> i64 {
@@ -1082,25 +1086,18 @@ mod outbox_tests {
     .unwrap()
   }
 
+  fn future() -> String {
+    "2999-01-01T00:00:00+00:00".to_string()
+  }
+
+  fn past() -> String {
+    "2000-01-01T00:00:00+00:00".to_string()
+  }
+
   mod append {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_inserts_a_pending_row_drainable_now() {
-      let db = store::open_test().await.unwrap();
-
-      let row = append_read(&db, Some("mail:1:read")).await;
-
-      assert_eq!(row.status(), "pending");
-      assert_eq!(row.attempts(), 0);
-      assert_eq!(row.subject_type(), OwnerType::Character);
-      assert_eq!(row.subject_id(), SUBJECT);
-      assert_eq!(row.kind(), "mail.set_read");
-      assert_eq!(row.last_error(), &None);
-      assert_eq!(row.created_at(), row.updated_at());
-    }
 
     #[tokio::test]
     async fn it_collapses_a_redundant_dedupable_mutation_onto_the_existing_row() {
@@ -1124,17 +1121,29 @@ mod outbox_tests {
     }
 
     #[tokio::test]
-    async fn it_reasserts_drainability_when_collapsing_onto_a_failed_retry_row() {
+    async fn it_does_not_collapse_onto_a_done_row() {
       let db = store::open_test().await.unwrap();
       let first = append_read(&db, Some("mail:1:read")).await;
-      reschedule(&db, first.id(), &future(), "boom").await.unwrap();
+      mark_done(&db, first.id()).await.unwrap();
 
-      let collapsed = append_read(&db, Some("mail:1:read")).await;
+      let second = append_read(&db, Some("mail:1:read")).await;
 
-      assert_eq!(collapsed.id(), first.id());
-      assert_eq!(collapsed.attempts(), 0);
-      assert_eq!(collapsed.status(), "pending");
-      assert_eq!(collapsed.last_error(), &None);
+      assert_ne!(second.id(), first.id());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_pending_row_drainable_now() {
+      let db = store::open_test().await.unwrap();
+
+      let row = append_read(&db, Some("mail:1:read")).await;
+
+      assert_eq!(row.status(), "pending");
+      assert_eq!(row.attempts(), 0);
+      assert_eq!(row.subject_type(), OwnerType::Character);
+      assert_eq!(row.subject_id(), SUBJECT);
+      assert_eq!(row.kind(), "mail.set_read");
+      assert_eq!(row.last_error(), &None);
+      assert_eq!(row.created_at(), row.updated_at());
     }
 
     #[tokio::test]
@@ -1167,14 +1176,17 @@ mod outbox_tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_collapse_onto_a_done_row() {
+    async fn it_reasserts_drainability_when_collapsing_onto_a_failed_retry_row() {
       let db = store::open_test().await.unwrap();
       let first = append_read(&db, Some("mail:1:read")).await;
-      mark_done(&db, first.id()).await.unwrap();
+      reschedule(&db, first.id(), &future(), "boom").await.unwrap();
 
-      let second = append_read(&db, Some("mail:1:read")).await;
+      let collapsed = append_read(&db, Some("mail:1:read")).await;
 
-      assert_ne!(second.id(), first.id());
+      assert_eq!(collapsed.id(), first.id());
+      assert_eq!(collapsed.attempts(), 0);
+      assert_eq!(collapsed.status(), "pending");
+      assert_eq!(collapsed.last_error(), &None);
     }
   }
 
@@ -1182,6 +1194,21 @@ mod outbox_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_excludes_done_and_failed_rows() {
+      let db = store::open_test().await.unwrap();
+      let done = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+        .await
+        .unwrap();
+      let failed = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+        .await
+        .unwrap();
+      mark_done(&db, done.id()).await.unwrap();
+      mark_failed(&db, failed.id(), "nope").await.unwrap();
+
+      assert!(claim_due(&db, &future(), 10).await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn it_flips_eligible_rows_to_inflight_in_created_at_order() {
@@ -1203,12 +1230,15 @@ mod outbox_tests {
     }
 
     #[tokio::test]
-    async fn it_skips_rows_not_yet_due() {
+    async fn it_honors_the_limit() {
       let db = store::open_test().await.unwrap();
-      let row = append_read(&db, Some("mail:1:read")).await;
-      reschedule(&db, row.id(), &future(), "later").await.unwrap();
+      for _ in 0..3 {
+        append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+          .await
+          .unwrap();
+      }
 
-      assert!(claim_due(&db, &past(), 10).await.unwrap().is_empty());
+      assert_eq!(claim_due(&db, &future(), 2).await.unwrap().len(), 2);
     }
 
     #[tokio::test]
@@ -1223,137 +1253,12 @@ mod outbox_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_done_and_failed_rows() {
-      let db = store::open_test().await.unwrap();
-      let done = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-        .await
-        .unwrap();
-      let failed = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-        .await
-        .unwrap();
-      mark_done(&db, done.id()).await.unwrap();
-      mark_failed(&db, failed.id(), "nope").await.unwrap();
-
-      assert!(claim_due(&db, &future(), 10).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_honors_the_limit() {
-      let db = store::open_test().await.unwrap();
-      for _ in 0..3 {
-        append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-          .await
-          .unwrap();
-      }
-
-      assert_eq!(claim_due(&db, &future(), 2).await.unwrap().len(), 2);
-    }
-  }
-
-  mod transitions {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn mark_done_clears_the_error() {
+    async fn it_skips_rows_not_yet_due() {
       let db = store::open_test().await.unwrap();
       let row = append_read(&db, Some("mail:1:read")).await;
-      mark_failed(&db, row.id(), "transient").await.unwrap();
+      reschedule(&db, row.id(), &future(), "later").await.unwrap();
 
-      mark_done(&db, row.id()).await.unwrap();
-
-      let after = reload(&db, row.id()).await;
-      assert_eq!(after.status(), "done");
-      assert_eq!(after.last_error(), &None);
-    }
-
-    #[tokio::test]
-    async fn mark_failed_records_the_error() {
-      let db = store::open_test().await.unwrap();
-      let row = append_read(&db, Some("mail:1:read")).await;
-
-      mark_failed(&db, row.id(), "403 forbidden").await.unwrap();
-
-      let after = reload(&db, row.id()).await;
-      assert_eq!(after.status(), "failed");
-      assert_eq!(after.last_error().as_deref(), Some("403 forbidden"));
-    }
-
-    #[tokio::test]
-    async fn reschedule_increments_attempts_and_keeps_the_row_drainable() {
-      let db = store::open_test().await.unwrap();
-      let row = append_read(&db, Some("mail:1:read")).await;
-
-      reschedule(&db, row.id(), &past(), "rate limited").await.unwrap();
-
-      let after = reload(&db, row.id()).await;
-      assert_eq!(after.status(), "pending");
-      assert_eq!(after.attempts(), 1);
-      assert_eq!(after.next_attempt_at(), &past());
-      assert_eq!(after.last_error().as_deref(), Some("rate limited"));
-      assert_eq!(claim_due(&db, &future(), 10).await.unwrap().len(), 1);
-    }
-  }
-
-  mod prune_done {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn count(db: &Database) -> i64 {
-      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
-        .fetch_one(&db.0)
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn it_removes_done_rows_older_than_the_cutoff() {
-      let db = store::open_test().await.unwrap();
-      let row = append_read(&db, Some("mail:1:read")).await;
-      mark_done(&db, row.id()).await.unwrap();
-
-      let pruned = prune_done(&db, &future()).await.unwrap();
-
-      assert_eq!(pruned, 1);
-      assert_eq!(count(&db).await, 0);
-    }
-
-    #[tokio::test]
-    async fn it_keeps_done_rows_at_or_after_the_cutoff() {
-      let db = store::open_test().await.unwrap();
-      let row = append_read(&db, Some("mail:1:read")).await;
-      mark_done(&db, row.id()).await.unwrap();
-
-      let pruned = prune_done(&db, &past()).await.unwrap();
-
-      assert_eq!(pruned, 0);
-      assert_eq!(count(&db).await, 1);
-    }
-
-    #[tokio::test]
-    async fn it_never_prunes_pending_inflight_or_failed_rows() {
-      let db = store::open_test().await.unwrap();
-      let inflight = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-        .await
-        .unwrap();
-      claim_due(&db, &future(), 10).await.unwrap();
-      let pending = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-        .await
-        .unwrap();
-      let failed = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
-        .await
-        .unwrap();
-      mark_failed(&db, failed.id(), "nope").await.unwrap();
-
-      let pruned = prune_done(&db, &future()).await.unwrap();
-
-      assert_eq!(pruned, 0);
-      assert_eq!(count(&db).await, 3);
-      assert_eq!(reload(&db, pending.id()).await.status(), "pending");
-      assert_eq!(reload(&db, inflight.id()).await.status(), "inflight");
-      assert_eq!(reload(&db, failed.id()).await.status(), "failed");
+      assert!(claim_due(&db, &past(), 10).await.unwrap().is_empty());
     }
   }
 
@@ -1415,12 +1320,111 @@ mod outbox_tests {
     }
   }
 
-  fn future() -> String {
-    "2999-01-01T00:00:00+00:00".to_string()
+  mod prune_done {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn count(db: &Database) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_keeps_done_rows_at_or_after_the_cutoff() {
+      let db = store::open_test().await.unwrap();
+      let row = append_read(&db, Some("mail:1:read")).await;
+      mark_done(&db, row.id()).await.unwrap();
+
+      let pruned = prune_done(&db, &past()).await.unwrap();
+
+      assert_eq!(pruned, 0);
+      assert_eq!(count(&db).await, 1);
+    }
+
+    #[tokio::test]
+    async fn it_never_prunes_pending_inflight_or_failed_rows() {
+      let db = store::open_test().await.unwrap();
+      let inflight = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+        .await
+        .unwrap();
+      claim_due(&db, &future(), 10).await.unwrap();
+      let pending = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+        .await
+        .unwrap();
+      let failed = append(&db, OwnerType::Character, SUBJECT, "mail.send", "{}", None)
+        .await
+        .unwrap();
+      mark_failed(&db, failed.id(), "nope").await.unwrap();
+
+      let pruned = prune_done(&db, &future()).await.unwrap();
+
+      assert_eq!(pruned, 0);
+      assert_eq!(count(&db).await, 3);
+      assert_eq!(reload(&db, pending.id()).await.status(), "pending");
+      assert_eq!(reload(&db, inflight.id()).await.status(), "inflight");
+      assert_eq!(reload(&db, failed.id()).await.status(), "failed");
+    }
+
+    #[tokio::test]
+    async fn it_removes_done_rows_older_than_the_cutoff() {
+      let db = store::open_test().await.unwrap();
+      let row = append_read(&db, Some("mail:1:read")).await;
+      mark_done(&db, row.id()).await.unwrap();
+
+      let pruned = prune_done(&db, &future()).await.unwrap();
+
+      assert_eq!(pruned, 1);
+      assert_eq!(count(&db).await, 0);
+    }
   }
 
-  fn past() -> String {
-    "2000-01-01T00:00:00+00:00".to_string()
+  mod transitions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn mark_done_clears_the_error() {
+      let db = store::open_test().await.unwrap();
+      let row = append_read(&db, Some("mail:1:read")).await;
+      mark_failed(&db, row.id(), "transient").await.unwrap();
+
+      mark_done(&db, row.id()).await.unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(after.status(), "done");
+      assert_eq!(after.last_error(), &None);
+    }
+
+    #[tokio::test]
+    async fn mark_failed_records_the_error() {
+      let db = store::open_test().await.unwrap();
+      let row = append_read(&db, Some("mail:1:read")).await;
+
+      mark_failed(&db, row.id(), "403 forbidden").await.unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(after.status(), "failed");
+      assert_eq!(after.last_error().as_deref(), Some("403 forbidden"));
+    }
+
+    #[tokio::test]
+    async fn reschedule_increments_attempts_and_keeps_the_row_drainable() {
+      let db = store::open_test().await.unwrap();
+      let row = append_read(&db, Some("mail:1:read")).await;
+
+      reschedule(&db, row.id(), &past(), "rate limited").await.unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(after.status(), "pending");
+      assert_eq!(after.attempts(), 1);
+      assert_eq!(after.next_attempt_at(), &past());
+      assert_eq!(after.last_error().as_deref(), Some("rate limited"));
+      assert_eq!(claim_due(&db, &future(), 10).await.unwrap().len(), 1);
+    }
   }
 }
 

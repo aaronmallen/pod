@@ -60,10 +60,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_maps_each_contact_type_to_its_avatar_kind() {
-      assert_eq!(image_kind("alliance"), ImageKind::AllianceLogo);
-      assert_eq!(image_kind("character"), ImageKind::CharacterPortrait);
-      assert_eq!(image_kind("corporation"), ImageKind::CorporationLogo);
+    fn it_falls_back_to_a_corporation_logo_for_unknown_types() {
+      assert_eq!(image_kind("faction"), ImageKind::CorporationLogo);
     }
 
     #[test]
@@ -73,8 +71,10 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_a_corporation_logo_for_unknown_types() {
-      assert_eq!(image_kind("faction"), ImageKind::CorporationLogo);
+    fn it_maps_each_contact_type_to_its_avatar_kind() {
+      assert_eq!(image_kind("alliance"), ImageKind::AllianceLogo);
+      assert_eq!(image_kind("character"), ImageKind::CharacterPortrait);
+      assert_eq!(image_kind("corporation"), ImageKind::CorporationLogo);
     }
   }
 

@@ -362,140 +362,37 @@ mod tests {
     (events, move |event: Event| sink.lock().unwrap().push(event))
   }
 
-  mod drain {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_drains_a_credentialed_subjects_row_to_done() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-
-      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(calls.executes(), 1, "the handler's ESI write should run once");
-      assert_eq!(calls.payloads(), ["{\"body\":\"hi\"}"]);
-      assert_eq!(status_of(&db, row.id()).await, "done");
-      assert_eq!(
-        outcome.error_limit_reset_secs, None,
-        "a clean pass requests no engine pause"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_leaves_an_uncredentialed_subjects_row_pending() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
-      let row = append_send(&db, 200).await;
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(calls.executes(), 0, "no ESI write may run without a grant");
-      assert_ne!(
-        status_of(&db, row.id()).await,
-        "done",
-        "an un-credentialed row must not be marked done"
-      );
-      assert_ne!(
-        status_of(&db, row.id()).await,
-        "failed",
-        "an un-credentialed row must not be failed"
-      );
-      let now = Utc::now().to_rfc3339();
-      let reclaimed = infra::claim_due(&db, &now, DRAIN_BATCH).await.unwrap();
-      assert_eq!(reclaimed.iter().map(|r| r.id()).collect::<Vec<_>>(), [row.id()]);
-    }
-
-    #[tokio::test]
-    async fn it_fails_a_row_whose_kind_has_no_handler() {
-      let db = store::open_test().await.unwrap();
-      let registry = Registry::new();
-      credential_for(&db, 300).await;
-      let row = append_send(&db, 300).await;
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      let after = reload(&db, row.id()).await;
-      assert_eq!(after.status(), "failed");
-      assert!(
-        after.last_error().is_some(),
-        "the unregistered-kind error should be recorded"
-      );
-    }
-  }
-
   mod classify {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_reschedules_a_rate_limited_row_with_a_bumped_attempt_and_future_retry() {
+    async fn it_drives_a_transiently_failing_then_succeeding_row_to_done() {
       let db = store::open_test().await.unwrap();
       credential_for(&db, 100).await;
       let row = append_send(&db, 100).await;
-      let registry = failing_registry(|| Error::RateLimit {
-        retry_after_secs: 30,
+
+      let throttled = failing_registry(|| Error::RateLimit {
+        retry_after_secs: 1,
       });
+      drain(&db, &esi_client(&db), &sso_client(&db), &throttled, &noop_emit())
+        .await
+        .unwrap();
+      assert_eq!(reload(&db, row.id()).await.status(), "pending");
 
-      let before = Utc::now();
-      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+      infra::reschedule(&db, row.id(), &Utc::now().to_rfc3339(), "transient")
+        .await
+        .unwrap();
+      let recovered = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
+      drain(&db, &esi_client(&db), &sso_client(&db), &recovered, &noop_emit())
         .await
         .unwrap();
 
-      let after = reload(&db, row.id()).await;
       assert_eq!(
-        after.status(),
-        "pending",
-        "a transient failure leaves the row drainable"
-      );
-      assert_eq!(after.attempts(), 1, "the retry bumps the attempt count");
-      assert!(after.last_error().is_some(), "the transient error is recorded");
-      let next: chrono::DateTime<Utc> = after.next_attempt_at().parse().unwrap();
-      assert!(
-        next >= before + ChronoDuration::seconds(30),
-        "next_attempt_at must wait out the full Retry-After"
-      );
-      assert_eq!(
-        outcome.error_limit_reset_secs, None,
-        "a plain rate-limit does not pause the whole engine"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_reschedules_a_5xx_row_on_the_backoff_curve() {
-      let db = store::open_test().await.unwrap();
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-      let registry = one_shot_failing_registry(http_error(503).await);
-
-      let before = Utc::now();
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      let after = reload(&db, row.id()).await;
-      assert_eq!(
-        after.status(),
-        "pending",
-        "a 5xx is transient and leaves the row drainable"
-      );
-      assert_eq!(after.attempts(), 1);
-      let next: chrono::DateTime<Utc> = after.next_attempt_at().parse().unwrap();
-      assert!(
-        next >= before + ChronoDuration::seconds(BACKOFF_BASE_SECS),
-        "the first curve retry waits at least one backoff base"
+        reload(&db, row.id()).await.status(),
+        "done",
+        "once ESI recovers the row drains to done unaided"
       );
     }
 
@@ -515,6 +412,32 @@ mod tests {
       assert!(
         after.last_error().is_some(),
         "the rejection is recorded for compensation"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_row_that_exhausts_the_max_attempts_cap() {
+      let db = store::open_test().await.unwrap();
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+      for _ in 0..MAX_ATTEMPTS {
+        infra::reschedule(&db, row.id(), &Utc::now().to_rfc3339(), "transient")
+          .await
+          .unwrap();
+      }
+      assert_eq!(reload(&db, row.id()).await.attempts(), MAX_ATTEMPTS);
+      let registry = failing_registry(|| Error::RateLimit {
+        retry_after_secs: 1,
+      });
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      assert_eq!(
+        reload(&db, row.id()).await.status(),
+        "failed",
+        "a transient failure past the cap terminalizes the row"
       );
     }
 
@@ -580,57 +503,364 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_fails_a_row_that_exhausts_the_max_attempts_cap() {
+    async fn it_reschedules_a_5xx_row_on_the_backoff_curve() {
       let db = store::open_test().await.unwrap();
       credential_for(&db, 100).await;
       let row = append_send(&db, 100).await;
-      for _ in 0..MAX_ATTEMPTS {
-        infra::reschedule(&db, row.id(), &Utc::now().to_rfc3339(), "transient")
-          .await
-          .unwrap();
-      }
-      assert_eq!(reload(&db, row.id()).await.attempts(), MAX_ATTEMPTS);
+      let registry = one_shot_failing_registry(http_error(503).await);
+
+      let before = Utc::now();
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(
+        after.status(),
+        "pending",
+        "a 5xx is transient and leaves the row drainable"
+      );
+      assert_eq!(after.attempts(), 1);
+      let next: chrono::DateTime<Utc> = after.next_attempt_at().parse().unwrap();
+      assert!(
+        next >= before + ChronoDuration::seconds(BACKOFF_BASE_SECS),
+        "the first curve retry waits at least one backoff base"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_reschedules_a_rate_limited_row_with_a_bumped_attempt_and_future_retry() {
+      let db = store::open_test().await.unwrap();
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
       let registry = failing_registry(|| Error::RateLimit {
-        retry_after_secs: 1,
+        retry_after_secs: 30,
       });
+
+      let before = Utc::now();
+      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(
+        after.status(),
+        "pending",
+        "a transient failure leaves the row drainable"
+      );
+      assert_eq!(after.attempts(), 1, "the retry bumps the attempt count");
+      assert!(after.last_error().is_some(), "the transient error is recorded");
+      let next: chrono::DateTime<Utc> = after.next_attempt_at().parse().unwrap();
+      assert!(
+        next >= before + ChronoDuration::seconds(30),
+        "next_attempt_at must wait out the full Retry-After"
+      );
+      assert_eq!(
+        outcome.error_limit_reset_secs, None,
+        "a plain rate-limit does not pause the whole engine"
+      );
+    }
+  }
+
+  mod drain {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_drains_a_credentialed_subjects_row_to_done() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+
+      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      assert_eq!(calls.executes(), 1, "the handler's ESI write should run once");
+      assert_eq!(calls.payloads(), ["{\"body\":\"hi\"}"]);
+      assert_eq!(status_of(&db, row.id()).await, "done");
+      assert_eq!(
+        outcome.error_limit_reset_secs, None,
+        "a clean pass requests no engine pause"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_row_whose_kind_has_no_handler() {
+      let db = store::open_test().await.unwrap();
+      let registry = Registry::new();
+      credential_for(&db, 300).await;
+      let row = append_send(&db, 300).await;
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      let after = reload(&db, row.id()).await;
+      assert_eq!(after.status(), "failed");
+      assert!(
+        after.last_error().is_some(),
+        "the unregistered-kind error should be recorded"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_an_uncredentialed_subjects_row_pending() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
+      let row = append_send(&db, 200).await;
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      assert_eq!(calls.executes(), 0, "no ESI write may run without a grant");
+      assert_ne!(
+        status_of(&db, row.id()).await,
+        "done",
+        "an un-credentialed row must not be marked done"
+      );
+      assert_ne!(
+        status_of(&db, row.id()).await,
+        "failed",
+        "an un-credentialed row must not be failed"
+      );
+      let now = Utc::now().to_rfc3339();
+      let reclaimed = infra::claim_due(&db, &now, DRAIN_BATCH).await.unwrap();
+      assert_eq!(reclaimed.iter().map(|r| r.id()).collect::<Vec<_>>(), [row.id()]);
+    }
+  }
+
+  mod events {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_does_not_emit_failed_when_terminalize_loses_the_cas() {
+      let db = store::open_test().await.unwrap();
+      let row = append_send(&db, 100).await;
+      assert_eq!(row.status(), "pending");
+      let handler = StubHandler::new(OutboxKind::MailSend, StubCalls::default());
+      let (events, emit) = recording_emit();
+
+      let outcome = terminalize(&db, &row, Some(&handler), "permanent", &emit).await;
+
+      assert_eq!(outcome, Outcome::Skipped);
+      assert!(
+        events.lock().unwrap().is_empty(),
+        "a lost-CAS terminalization emits no failure event"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_emits_failed_with_the_error_for_a_permanent_rejection() {
+      let db = store::open_test().await.unwrap();
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+      let registry = one_shot_failing_registry(http_error(403).await);
+      let (events, emit) = recording_emit();
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
+        .await
+        .unwrap();
+
+      let events = events.lock().unwrap();
+      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
+      let failed = events
+        .iter()
+        .find_map(|e| match e {
+          Event::OutboxFailed {
+            id,
+            reason,
+          } if *id == row.id() => Some(reason.clone()),
+          _ => None,
+        })
+        .expect("a permanent rejection emits OutboxFailed");
+      assert!(!failed.is_empty(), "the failure carries the recorded error message");
+    }
+
+    #[tokio::test]
+    async fn it_emits_inflight_then_done_for_a_drained_row() {
+      let db = store::open_test().await.unwrap();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+      let (events, emit) = recording_emit();
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
+        .await
+        .unwrap();
+
+      let events = events.lock().unwrap();
+      assert_eq!(events.len(), 2, "a clean drain emits inflight then done");
+      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
+      assert!(matches!(events[1], Event::OutboxDone { id } if id == row.id()));
+    }
+
+    #[tokio::test]
+    async fn it_emits_retrying_for_a_transient_failure() {
+      let db = store::open_test().await.unwrap();
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+      let registry = failing_registry(|| Error::RateLimit {
+        retry_after_secs: 30,
+      });
+      let (events, emit) = recording_emit();
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
+        .await
+        .unwrap();
+
+      let events = events.lock().unwrap();
+      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
+      assert!(matches!(
+        events[1],
+        Event::OutboxRetrying { id, retry_secs: 30 } if id == row.id()
+      ));
+      assert!(
+        !events
+          .iter()
+          .any(|e| matches!(e, Event::OutboxDone { .. } | Event::OutboxFailed { .. })),
+        "a rescheduled row is neither done nor failed"
+      );
+    }
+  }
+
+  mod idempotency {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn append_set_read(db: &Database, subject_id: i64, dedupe: Option<&str>) -> Outbox {
+      infra::append(
+        db,
+        OwnerType::Character,
+        subject_id,
+        "mail.set_read",
+        "{\"mail_id\":42,\"is_read\":true}",
+        dedupe,
+      )
+      .await
+      .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_applies_optimistically_before_any_esi_execute() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let handler = StubHandler::new(OutboxKind::MailSend, calls.clone());
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+
+      handler.apply(&db, row.payload()).await.unwrap();
+      assert_eq!(calls.applies(), 1, "the optimistic mirror apply ran at append time");
+      assert_eq!(
+        calls.executes(),
+        0,
+        "no ESI execute may fire before the drainer claims the row"
+      );
+
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      assert_eq!(calls.executes(), 1, "the ESI execute runs only on drain, after apply");
+      assert_eq!(status_of(&db, row.id()).await, "done");
+    }
+
+    #[tokio::test]
+    async fn it_does_not_re_execute_a_done_row_on_a_second_drain_pass() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+      assert_eq!(status_of(&db, row.id()).await, "done");
+      assert_eq!(calls.executes(), 1);
 
       drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
         .await
         .unwrap();
 
       assert_eq!(
-        reload(&db, row.id()).await.status(),
-        "failed",
-        "a transient failure past the cap terminalizes the row"
+        calls.executes(),
+        1,
+        "a done row must not be re-claimed or re-executed on a later drain pass"
       );
+      assert_eq!(status_of(&db, row.id()).await, "done");
     }
 
     #[tokio::test]
-    async fn it_drives_a_transiently_failing_then_succeeding_row_to_done() {
+    async fn it_drains_a_deduped_mutation_exactly_once() {
       let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSetRead, calls.clone())));
       credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
 
-      let throttled = failing_registry(|| Error::RateLimit {
-        retry_after_secs: 1,
-      });
-      drain(&db, &esi_client(&db), &sso_client(&db), &throttled, &noop_emit())
+      let first = append_set_read(&db, 100, Some("mail:42:read")).await;
+      let second = append_set_read(&db, 100, Some("mail:42:read")).await;
+      assert_eq!(
+        second.id(),
+        first.id(),
+        "the redundant mutation collapses onto the first row"
+      );
+
+      let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE subject_id = 100 AND kind = ?")
+        .bind("mail.set_read")
+        .fetch_one(&db.0)
         .await
         .unwrap();
-      assert_eq!(reload(&db, row.id()).await.status(), "pending");
+      assert_eq!(count, 1, "dedupe never creates a second outbox row");
 
-      infra::reschedule(&db, row.id(), &Utc::now().to_rfc3339(), "transient")
-        .await
-        .unwrap();
-      let recovered = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
-      drain(&db, &esi_client(&db), &sso_client(&db), &recovered, &noop_emit())
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
         .await
         .unwrap();
 
       assert_eq!(
-        reload(&db, row.id()).await.status(),
+        calls.executes(),
+        1,
+        "the single collapsed row drains with exactly one ESI write"
+      );
+      assert_eq!(status_of(&db, first.id()).await, "done");
+    }
+
+    #[tokio::test]
+    async fn it_redrains_a_row_left_inflight_by_a_crash() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
+      credential_for(&db, 100).await;
+      let row = append_send(&db, 100).await;
+      let claimed = infra::claim_due(&db, &Utc::now().to_rfc3339(), DRAIN_BATCH)
+        .await
+        .unwrap();
+      assert_eq!(claimed.len(), 1);
+      assert_eq!(claimed[0].status(), "inflight");
+      assert_eq!(calls.executes(), 0, "no write ran before the crash");
+
+      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
+
+      assert_eq!(
+        status_of(&db, row.id()).await,
         "done",
-        "once ESI recovers the row drains to done unaided"
+        "the abandoned inflight row is re-claimed and drained to done"
+      );
+      assert_eq!(
+        calls.executes(),
+        1,
+        "the re-drain performs the ESI write (at-least-once redelivery after a crash)"
       );
     }
   }
@@ -639,6 +869,27 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_compensates_once_when_it_still_owns_the_inflight_row() {
+      let db = store::open_test().await.unwrap();
+      let calls = StubCalls::default();
+      let row = append_send(&db, 100).await;
+      let claimed = infra::claim_due(&db, &Utc::now().to_rfc3339(), 1).await.unwrap();
+      assert_eq!(claimed.len(), 1);
+      assert_eq!(claimed[0].status(), "inflight");
+      let handler = StubHandler::new(OutboxKind::MailSend, calls.clone());
+
+      let outcome = terminalize(&db, &claimed[0], Some(&handler), "permanent", &noop_emit()).await;
+
+      assert_eq!(outcome, Outcome::Failed);
+      assert_eq!(reload(&db, row.id()).await.status(), "failed");
+      assert_eq!(
+        calls.compensates(),
+        1,
+        "the owned inflight change is compensated exactly once"
+      );
+    }
 
     #[tokio::test]
     async fn it_compensates_the_optimistic_change_on_a_permanent_failure() {
@@ -702,30 +953,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_leaves_an_unparseable_kind_failed_without_compensating() {
-      let db = store::open_test().await.unwrap();
-      credential_for(&db, 100).await;
-      let row = infra::append(&db, OwnerType::Character, 100, "mail.send", "{\"body\":\"hi\"}", None)
-        .await
-        .unwrap();
-      let registry = Registry::new();
-
-      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(
-        reload(&db, row.id()).await.status(),
-        "failed",
-        "an unhandled kind is terminalized"
-      );
-      assert_eq!(
-        outcome.error_limit_reset_secs, None,
-        "an unhandled-kind failure requests no engine pause"
-      );
-    }
-
-    #[tokio::test]
     async fn it_does_not_compensate_when_the_row_already_drained_off_inflight() {
       let db = store::open_test().await.unwrap();
       let calls = StubCalls::default();
@@ -753,29 +980,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_compensates_once_when_it_still_owns_the_inflight_row() {
+    async fn it_leaves_an_unparseable_kind_failed_without_compensating() {
       let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let row = append_send(&db, 100).await;
-      let claimed = infra::claim_due(&db, &Utc::now().to_rfc3339(), 1).await.unwrap();
-      assert_eq!(claimed.len(), 1);
-      assert_eq!(claimed[0].status(), "inflight");
-      let handler = StubHandler::new(OutboxKind::MailSend, calls.clone());
+      credential_for(&db, 100).await;
+      let row = infra::append(&db, OwnerType::Character, 100, "mail.send", "{\"body\":\"hi\"}", None)
+        .await
+        .unwrap();
+      let registry = Registry::new();
 
-      let outcome = terminalize(&db, &claimed[0], Some(&handler), "permanent", &noop_emit()).await;
+      let outcome = drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
+        .await
+        .unwrap();
 
-      assert_eq!(outcome, Outcome::Failed);
-      assert_eq!(reload(&db, row.id()).await.status(), "failed");
       assert_eq!(
-        calls.compensates(),
-        1,
-        "the owned inflight change is compensated exactly once"
+        reload(&db, row.id()).await.status(),
+        "failed",
+        "an unhandled kind is terminalized"
+      );
+      assert_eq!(
+        outcome.error_limit_reset_secs, None,
+        "an unhandled-kind failure requests no engine pause"
       );
     }
   }
 
   mod transience {
     use super::*;
+
+    #[tokio::test]
+    async fn it_makes_a_4xx_permanent() {
+      assert!(matches!(transience(&http_error(400).await), Transience::Permanent));
+      assert!(matches!(transience(&http_error(404).await), Transience::Permanent));
+    }
+
+    #[tokio::test]
+    async fn it_makes_a_5xx_a_curve_transient() {
+      assert!(matches!(
+        transience(&http_error(503).await),
+        Transience::Transient {
+          delay: Delay::Curve,
+          ..
+        }
+      ));
+    }
+
+    #[tokio::test]
+    async fn it_makes_a_non_http_application_error_permanent() {
+      assert!(matches!(
+        transience(&Error::Internal("bad payload".into())),
+        Transience::Permanent
+      ));
+    }
 
     #[tokio::test]
     async fn it_makes_a_rate_limit_or_error_limit_a_fixed_delay_transient() {
@@ -798,261 +1053,6 @@ mod tests {
           error_limit_reset_secs: None,
         }
       ));
-    }
-
-    #[tokio::test]
-    async fn it_makes_a_5xx_a_curve_transient() {
-      assert!(matches!(
-        transience(&http_error(503).await),
-        Transience::Transient {
-          delay: Delay::Curve,
-          ..
-        }
-      ));
-    }
-
-    #[tokio::test]
-    async fn it_makes_a_4xx_permanent() {
-      assert!(matches!(transience(&http_error(400).await), Transience::Permanent));
-      assert!(matches!(transience(&http_error(404).await), Transience::Permanent));
-    }
-
-    #[tokio::test]
-    async fn it_makes_a_non_http_application_error_permanent() {
-      assert!(matches!(
-        transience(&Error::Internal("bad payload".into())),
-        Transience::Permanent
-      ));
-    }
-  }
-
-  mod events {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_emits_inflight_then_done_for_a_drained_row() {
-      let db = store::open_test().await.unwrap();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-      let (events, emit) = recording_emit();
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
-        .await
-        .unwrap();
-
-      let events = events.lock().unwrap();
-      assert_eq!(events.len(), 2, "a clean drain emits inflight then done");
-      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
-      assert!(matches!(events[1], Event::OutboxDone { id } if id == row.id()));
-    }
-
-    #[tokio::test]
-    async fn it_emits_retrying_for_a_transient_failure() {
-      let db = store::open_test().await.unwrap();
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-      let registry = failing_registry(|| Error::RateLimit {
-        retry_after_secs: 30,
-      });
-      let (events, emit) = recording_emit();
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
-        .await
-        .unwrap();
-
-      let events = events.lock().unwrap();
-      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
-      assert!(matches!(
-        events[1],
-        Event::OutboxRetrying { id, retry_secs: 30 } if id == row.id()
-      ));
-      assert!(
-        !events
-          .iter()
-          .any(|e| matches!(e, Event::OutboxDone { .. } | Event::OutboxFailed { .. })),
-        "a rescheduled row is neither done nor failed"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_emits_failed_with_the_error_for_a_permanent_rejection() {
-      let db = store::open_test().await.unwrap();
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-      let registry = one_shot_failing_registry(http_error(403).await);
-      let (events, emit) = recording_emit();
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &emit)
-        .await
-        .unwrap();
-
-      let events = events.lock().unwrap();
-      assert!(matches!(events[0], Event::OutboxInflight { id } if id == row.id()));
-      let failed = events
-        .iter()
-        .find_map(|e| match e {
-          Event::OutboxFailed {
-            id,
-            reason,
-          } if *id == row.id() => Some(reason.clone()),
-          _ => None,
-        })
-        .expect("a permanent rejection emits OutboxFailed");
-      assert!(!failed.is_empty(), "the failure carries the recorded error message");
-    }
-
-    #[tokio::test]
-    async fn it_does_not_emit_failed_when_terminalize_loses_the_cas() {
-      let db = store::open_test().await.unwrap();
-      let row = append_send(&db, 100).await;
-      assert_eq!(row.status(), "pending");
-      let handler = StubHandler::new(OutboxKind::MailSend, StubCalls::default());
-      let (events, emit) = recording_emit();
-
-      let outcome = terminalize(&db, &row, Some(&handler), "permanent", &emit).await;
-
-      assert_eq!(outcome, Outcome::Skipped);
-      assert!(
-        events.lock().unwrap().is_empty(),
-        "a lost-CAS terminalization emits no failure event"
-      );
-    }
-  }
-
-  mod idempotency {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn append_set_read(db: &Database, subject_id: i64, dedupe: Option<&str>) -> Outbox {
-      infra::append(
-        db,
-        OwnerType::Character,
-        subject_id,
-        "mail.set_read",
-        "{\"mail_id\":42,\"is_read\":true}",
-        dedupe,
-      )
-      .await
-      .unwrap()
-    }
-
-    #[tokio::test]
-    async fn it_does_not_re_execute_a_done_row_on_a_second_drain_pass() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-      assert_eq!(status_of(&db, row.id()).await, "done");
-      assert_eq!(calls.executes(), 1);
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(
-        calls.executes(),
-        1,
-        "a done row must not be re-claimed or re-executed on a later drain pass"
-      );
-      assert_eq!(status_of(&db, row.id()).await, "done");
-    }
-
-    #[tokio::test]
-    async fn it_redrains_a_row_left_inflight_by_a_crash() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-      let claimed = infra::claim_due(&db, &Utc::now().to_rfc3339(), DRAIN_BATCH)
-        .await
-        .unwrap();
-      assert_eq!(claimed.len(), 1);
-      assert_eq!(claimed[0].status(), "inflight");
-      assert_eq!(calls.executes(), 0, "no write ran before the crash");
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(
-        status_of(&db, row.id()).await,
-        "done",
-        "the abandoned inflight row is re-claimed and drained to done"
-      );
-      assert_eq!(
-        calls.executes(),
-        1,
-        "the re-drain performs the ESI write (at-least-once redelivery after a crash)"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_drains_a_deduped_mutation_exactly_once() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSetRead, calls.clone())));
-      credential_for(&db, 100).await;
-
-      let first = append_set_read(&db, 100, Some("mail:42:read")).await;
-      let second = append_set_read(&db, 100, Some("mail:42:read")).await;
-      assert_eq!(
-        second.id(),
-        first.id(),
-        "the redundant mutation collapses onto the first row"
-      );
-
-      let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE subject_id = 100 AND kind = ?")
-        .bind("mail.set_read")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(count, 1, "dedupe never creates a second outbox row");
-
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(
-        calls.executes(),
-        1,
-        "the single collapsed row drains with exactly one ESI write"
-      );
-      assert_eq!(status_of(&db, first.id()).await, "done");
-    }
-
-    #[tokio::test]
-    async fn it_applies_optimistically_before_any_esi_execute() {
-      let db = store::open_test().await.unwrap();
-      let calls = StubCalls::default();
-      let handler = StubHandler::new(OutboxKind::MailSend, calls.clone());
-      credential_for(&db, 100).await;
-      let row = append_send(&db, 100).await;
-
-      handler.apply(&db, row.payload()).await.unwrap();
-      assert_eq!(calls.applies(), 1, "the optimistic mirror apply ran at append time");
-      assert_eq!(
-        calls.executes(),
-        0,
-        "no ESI execute may fire before the drainer claims the row"
-      );
-
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, calls.clone())));
-      drain(&db, &esi_client(&db), &sso_client(&db), &registry, &noop_emit())
-        .await
-        .unwrap();
-
-      assert_eq!(calls.executes(), 1, "the ESI execute runs only on drain, after apply");
-      assert_eq!(status_of(&db, row.id()).await, "done");
     }
   }
 }

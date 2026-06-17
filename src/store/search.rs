@@ -180,26 +180,30 @@ fn tokenize(input: &str) -> Vec<String> {
 mod tests {
   use super::*;
 
-  mod parse {
+  mod display_chips {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_returns_no_tokens_for_blank_input() {
-      assert_eq!(parse("   ").tokens, vec![]);
-    }
+    fn it_labels_key_value_negated_and_free_text_chips() {
+      let chips = parse("tag:pvp,cruiser -corp:hostile black").display_chips();
 
-    #[test]
-    fn it_treats_a_bare_word_as_free_text() {
       assert_eq!(
-        parse("pvp").tokens,
-        vec![FilterToken::FreeText {
-          negated: false,
-          text: "pvp".to_string()
-        }]
+        chips,
+        vec![
+          ("tag:pvp,cruiser".to_string(), ChipKind::KeyValue),
+          ("-corp:hostile".to_string(), ChipKind::Negated),
+          ("black".to_string(), ChipKind::FreeText),
+        ]
       );
     }
+  }
+
+  mod parse {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
     fn it_ands_multiple_tokens() {
@@ -223,52 +227,41 @@ mod tests {
     }
 
     #[test]
-    fn it_parses_each_recognized_key() {
-      for key in ["name", "corp", "loc", "status", "training", "tag"] {
-        let tokens = parse(&format!("{key}:value")).tokens;
-
-        assert_eq!(
-          tokens,
-          vec![FilterToken::KeyValue {
-            key: key.to_string(),
-            negated: false,
-            values: vec!["value".to_string()],
-          }]
-        );
-      }
-    }
-
-    #[test]
-    fn it_normalizes_the_corporation_and_location_aliases() {
-      let tokens = parse("corporation:a location:b").tokens;
+    fn it_degrades_an_empty_value_to_free_text() {
+      let tokens = parse("corp:").tokens;
 
       assert_eq!(
         tokens,
-        vec![
-          FilterToken::KeyValue {
-            key: "corp".to_string(),
-            negated: false,
-            values: vec!["a".to_string()]
-          },
-          FilterToken::KeyValue {
-            key: "loc".to_string(),
-            negated: false,
-            values: vec!["b".to_string()]
-          },
-        ]
+        vec![FilterToken::FreeText {
+          negated: false,
+          text: "corp:".to_string()
+        }]
       );
     }
 
     #[test]
-    fn it_splits_comma_values_as_or_within_a_key() {
-      let tokens = parse("tag:pvp,cruiser").tokens;
+    fn it_degrades_an_unrecognized_key_to_free_text() {
+      let tokens = parse("clone:omega").tokens;
+
+      assert_eq!(
+        tokens,
+        vec![FilterToken::FreeText {
+          negated: false,
+          text: "clone:omega".to_string()
+        }]
+      );
+    }
+
+    #[test]
+    fn it_lowercases_key_values() {
+      let tokens = parse("corp:CoBaLt").tokens;
 
       assert_eq!(
         tokens,
         vec![FilterToken::KeyValue {
-          key: "tag".to_string(),
+          key: "corp".to_string(),
           negated: false,
-          values: vec!["pvp".to_string(), "cruiser".to_string()],
+          values: vec!["cobalt".to_string()],
         }]
       );
     }
@@ -301,16 +294,23 @@ mod tests {
     }
 
     #[test]
-    fn it_parses_a_quoted_multi_word_value() {
-      let tokens = parse("loc:\"Jita IV\"").tokens;
+    fn it_normalizes_the_corporation_and_location_aliases() {
+      let tokens = parse("corporation:a location:b").tokens;
 
       assert_eq!(
         tokens,
-        vec![FilterToken::KeyValue {
-          key: "loc".to_string(),
-          negated: false,
-          values: vec!["jita iv".to_string()],
-        }]
+        vec![
+          FilterToken::KeyValue {
+            key: "corp".to_string(),
+            negated: false,
+            values: vec!["a".to_string()]
+          },
+          FilterToken::KeyValue {
+            key: "loc".to_string(),
+            negated: false,
+            values: vec!["b".to_string()]
+          },
+        ]
       );
     }
 
@@ -328,62 +328,62 @@ mod tests {
     }
 
     #[test]
-    fn it_lowercases_key_values() {
-      let tokens = parse("corp:CoBaLt").tokens;
+    fn it_parses_a_quoted_multi_word_value() {
+      let tokens = parse("loc:\"Jita IV\"").tokens;
 
       assert_eq!(
         tokens,
         vec![FilterToken::KeyValue {
-          key: "corp".to_string(),
+          key: "loc".to_string(),
           negated: false,
-          values: vec!["cobalt".to_string()],
+          values: vec!["jita iv".to_string()],
         }]
       );
     }
 
     #[test]
-    fn it_degrades_an_unrecognized_key_to_free_text() {
-      let tokens = parse("clone:omega").tokens;
+    fn it_parses_each_recognized_key() {
+      for key in ["name", "corp", "loc", "status", "training", "tag"] {
+        let tokens = parse(&format!("{key}:value")).tokens;
+
+        assert_eq!(
+          tokens,
+          vec![FilterToken::KeyValue {
+            key: key.to_string(),
+            negated: false,
+            values: vec!["value".to_string()],
+          }]
+        );
+      }
+    }
+
+    #[test]
+    fn it_returns_no_tokens_for_blank_input() {
+      assert_eq!(parse("   ").tokens, vec![]);
+    }
+
+    #[test]
+    fn it_splits_comma_values_as_or_within_a_key() {
+      let tokens = parse("tag:pvp,cruiser").tokens;
 
       assert_eq!(
         tokens,
-        vec![FilterToken::FreeText {
+        vec![FilterToken::KeyValue {
+          key: "tag".to_string(),
           negated: false,
-          text: "clone:omega".to_string()
+          values: vec!["pvp".to_string(), "cruiser".to_string()],
         }]
       );
     }
 
     #[test]
-    fn it_degrades_an_empty_value_to_free_text() {
-      let tokens = parse("corp:").tokens;
-
+    fn it_treats_a_bare_word_as_free_text() {
       assert_eq!(
-        tokens,
+        parse("pvp").tokens,
         vec![FilterToken::FreeText {
           negated: false,
-          text: "corp:".to_string()
+          text: "pvp".to_string()
         }]
-      );
-    }
-  }
-
-  mod display_chips {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_labels_key_value_negated_and_free_text_chips() {
-      let chips = parse("tag:pvp,cruiser -corp:hostile black").display_chips();
-
-      assert_eq!(
-        chips,
-        vec![
-          ("tag:pvp,cruiser".to_string(), ChipKind::KeyValue),
-          ("-corp:hostile".to_string(), ChipKind::Negated),
-          ("black".to_string(), ChipKind::FreeText),
-        ]
       );
     }
   }

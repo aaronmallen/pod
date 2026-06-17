@@ -136,15 +136,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_a_short_item_row_with_a_need_caption() {
-      let model = line(400, 1000, 0.4);
+    fn it_renders_a_satisfied_item_row() {
+      let model = line(1000, 1000, 1.0);
 
       let _el: Element<'_, Message> = view(&model);
     }
 
     #[test]
-    fn it_renders_a_satisfied_item_row() {
-      let model = line(1000, 1000, 1.0);
+    fn it_renders_a_short_item_row_with_a_need_caption() {
+      let model = line(400, 1000, 0.4);
 
       let _el: Element<'_, Message> = view(&model);
     }

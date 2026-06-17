@@ -1044,6 +1044,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_renders_a_heavy_kill_with_many_items() {
+      let mut heavy = detail();
+      heavy.slots = vec![SlotGroupView {
+        items: (0..43)
+          .map(|index| ItemView {
+            dropped: index % 2 == 0,
+            icon: images::IconResolution::Missing,
+            name: format!("Module {index}"),
+            quantity: 1,
+            value_isk: 1_000_000.0,
+          })
+          .collect(),
+        label: "High power",
+      }];
+
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &heavy, Msg::Close);
+    }
+
+    #[test]
     fn it_renders_a_kill_and_a_loss() {
       let kill = detail();
       let base: Element<'_, Msg> = Space::new().into();
@@ -1066,26 +1086,6 @@ mod tests {
       let base: Element<'_, Msg> = Space::new().into();
       let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
     }
-
-    #[test]
-    fn it_renders_a_heavy_kill_with_many_items() {
-      let mut heavy = detail();
-      heavy.slots = vec![SlotGroupView {
-        items: (0..43)
-          .map(|index| ItemView {
-            dropped: index % 2 == 0,
-            icon: images::IconResolution::Missing,
-            name: format!("Module {index}"),
-            quantity: 1,
-            value_isk: 1_000_000.0,
-          })
-          .collect(),
-        label: "High power",
-      }];
-
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &heavy, Msg::Close);
-    }
   }
 
   mod relative_time {
@@ -1094,15 +1094,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
-      assert_eq!(relative_time("not-a-date"), "not-a-date");
-    }
-
-    #[test]
     fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
       let label = relative_time("2000-01-01T00:00:00Z");
 
       assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
+      assert_eq!(relative_time("not-a-date"), "not-a-date");
     }
   }
 

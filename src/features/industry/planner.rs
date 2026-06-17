@@ -4186,8 +4186,11 @@ mod tests {
   };
 
   const COMPONENT: i64 = 11_000;
+
   const HULK: i64 = 22_544;
+
   const RETRIEVER: i64 = 17_478;
+
   const TRITANIUM: i64 = 34;
 
   fn facility(id: i64, solar_system_id: i64, name: &str, manufacturing_index: f64) -> PlannerFacility {
@@ -4296,6 +4299,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_ignores_a_breakdown_request_for_a_raw_material() {
+      let mut planner = planner();
+
+      planner.update(Message::NodeBrokenDown {
+        type_id: TRITANIUM,
+      });
+
+      assert!(!planner.is_built(TRITANIUM));
+    }
+
+    #[test]
     fn it_nests_a_buildable_child_with_runs_locked_to_parent_demand() {
       let mut planner = planner();
       planner.update(Message::MaterialEfficiencyChanged {
@@ -4313,17 +4327,6 @@ mod tests {
       assert_eq!(builds[0].type_id, RETRIEVER);
       assert_eq!(builds[0].needed_qty, 2);
       assert_eq!(builds[0].runs, 2);
-    }
-
-    #[test]
-    fn it_ignores_a_breakdown_request_for_a_raw_material() {
-      let mut planner = planner();
-
-      planner.update(Message::NodeBrokenDown {
-        type_id: TRITANIUM,
-      });
-
-      assert!(!planner.is_built(TRITANIUM));
     }
 
     #[test]
@@ -4355,34 +4358,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_recursively_breaks_down_every_buildable_input_to_raw() {
-      let mut planner = planner();
-
-      planner.update(Message::BreakDownAll);
-
-      // The buildable RETRIEVER input is built in-house; raw TRITANIUM is left to buy.
-      assert!(planner.is_built(RETRIEVER));
-      assert!(!planner.is_built(TRITANIUM));
-      // The derived tree builds RETRIEVER but leaves its raw TRITANIUM to buy.
-      let root = planner.plan().unwrap().root;
-      assert!(root.children.contains_key(&RETRIEVER));
-      assert!(root.children[&RETRIEVER].children.is_empty());
-    }
-
-    #[test]
-    fn it_is_idempotent_and_keeps_existing_breakdowns() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      let before = planner.plan();
-
-      planner.update(Message::BreakDownAll);
-
-      assert_eq!(planner.plan(), before);
-    }
-
-    #[test]
     fn it_breaks_down_a_reaction_input() {
       const FUEL: i64 = 4051;
       const COMPOSITE: i64 = 16_670;
@@ -4412,6 +4387,34 @@ mod tests {
     }
 
     #[test]
+    fn it_is_idempotent_and_keeps_existing_breakdowns() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      let before = planner.plan();
+
+      planner.update(Message::BreakDownAll);
+
+      assert_eq!(planner.plan(), before);
+    }
+
+    #[test]
+    fn it_recursively_breaks_down_every_buildable_input_to_raw() {
+      let mut planner = planner();
+
+      planner.update(Message::BreakDownAll);
+
+      // The buildable RETRIEVER input is built in-house; raw TRITANIUM is left to buy.
+      assert!(planner.is_built(RETRIEVER));
+      assert!(!planner.is_built(TRITANIUM));
+      // The derived tree builds RETRIEVER but leaves its raw TRITANIUM to buy.
+      let root = planner.plan().unwrap().root;
+      assert!(root.children.contains_key(&RETRIEVER));
+      assert!(root.children[&RETRIEVER].children.is_empty());
+    }
+
+    #[test]
     fn it_reports_buildable_inputs_only_when_present() {
       let planner = planner();
       assert!(planner.has_buildable_inputs());
@@ -4430,201 +4433,7 @@ mod tests {
     }
   }
 
-  mod seed_from_blueprint {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_seeds_the_product_a_blueprint_makes() {
-      let mut planner = planner();
-      planner.update(Message::ProductPicked(RETRIEVER));
-
-      // The Hulk blueprint type is HULK + 1 (see the `planner()` recipe helper).
-      let seeded = planner.seed_from_blueprint(HULK + 1);
-
-      assert!(seeded);
-      assert_eq!(planner.product(), Some(HULK));
-      assert!(!planner.is_built(RETRIEVER));
-    }
-
-    #[test]
-    fn it_reports_no_seed_for_an_unknown_blueprint() {
-      let mut planner = planner();
-
-      assert!(!planner.seed_from_blueprint(123_456));
-    }
-
-    #[test]
-    fn it_applies_a_queued_seed_once_data_loads() {
-      let mut planner = Planner::new();
-      planner.queue_blueprint_seed(HULK + 1);
-
-      let mut data = PlannerData::default();
-      data
-        .recipes
-        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
-      data.names.insert(HULK, "Hulk".to_owned());
-      data.catalog.push(CatalogEntry {
-        category: Category::Ship,
-        group_name: "Mining Barge".to_owned(),
-        is_reaction: false,
-        name: "Hulk".to_owned(),
-        type_id: HULK,
-        volume: 3_750.0,
-      });
-      planner.apply_data(data);
-
-      assert_eq!(planner.product(), Some(HULK));
-    }
-  }
-
-  mod select_product {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn planner_with_defaults(defaults: FacilityDefaults) -> Planner {
-      const SULFURIC: i64 = 16_011;
-      let mut data = PlannerData::default();
-      data
-        .recipes
-        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
-      data.recipes.insert(
-        SULFURIC,
-        recipe(SULFURIC + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
-      );
-      data.names.insert(HULK, "Hulk".to_owned());
-      data.names.insert(SULFURIC, "Sulfuric Acid".to_owned());
-      data.facilities = vec![
-        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
-        facility(1_021_000_000_009, 30_000_142, "Reaction Fortizar", 0.03),
-      ];
-
-      let mut planner = Planner::new();
-      planner.set_facility_defaults(defaults);
-      planner.apply_data(data);
-      planner
-    }
-
-    #[test]
-    fn it_seeds_the_root_facility_from_the_manufacturing_default() {
-      let mut planner = planner_with_defaults(FacilityDefaults {
-        manufacturing: Some(60_000_002),
-        reactions: None,
-      });
-
-      planner.update(Message::ProductPicked(HULK));
-
-      assert_eq!(planner.settings_for(HULK).facility_system, Some(30_002_187));
-    }
-
-    #[test]
-    fn it_seeds_the_root_facility_from_the_reaction_default_for_a_reaction_product() {
-      const SULFURIC: i64 = 16_011;
-      let mut planner = planner_with_defaults(FacilityDefaults {
-        manufacturing: Some(60_000_002),
-        reactions: Some(1_021_000_000_009),
-      });
-
-      planner.update(Message::ProductPicked(SULFURIC));
-
-      assert_eq!(planner.settings_for(SULFURIC).facility_system, Some(30_000_142));
-    }
-
-    #[test]
-    fn it_seeds_a_reaction_with_the_reactions_default_and_manufacturing_with_its_own() {
-      const SULFURIC: i64 = 16_011;
-      let mut reaction_planner = planner_with_defaults(FacilityDefaults {
-        manufacturing: Some(60_000_002),
-        reactions: Some(1_021_000_000_009),
-      });
-      let mut manufacturing_planner = planner_with_defaults(FacilityDefaults {
-        manufacturing: Some(60_000_002),
-        reactions: Some(1_021_000_000_009),
-      });
-
-      reaction_planner.update(Message::ProductPicked(SULFURIC));
-      manufacturing_planner.update(Message::ProductPicked(HULK));
-
-      // A reaction picks the reactions structure id, a manufacturing product picks the manufacturing one —
-      // the install structure (not just its system) must differ per activity.
-      assert_eq!(
-        reaction_planner.settings_for(SULFURIC).facility_structure,
-        Some(1_021_000_000_009)
-      );
-      assert_eq!(
-        manufacturing_planner.settings_for(HULK).facility_structure,
-        Some(60_000_002)
-      );
-    }
-
-    #[test]
-    fn it_leaves_the_root_facility_unset_when_no_default_is_configured() {
-      let mut planner = planner_with_defaults(FacilityDefaults::default());
-
-      planner.update(Message::ProductPicked(HULK));
-
-      assert_eq!(planner.settings_for(HULK).facility_system, None);
-    }
-
-    #[test]
-    fn it_leaves_the_root_facility_unset_when_the_default_is_absent_from_data() {
-      let mut planner = planner_with_defaults(FacilityDefaults {
-        manufacturing: Some(70_000_000),
-        reactions: None,
-      });
-
-      planner.update(Message::ProductPicked(HULK));
-
-      assert_eq!(planner.settings_for(HULK).facility_system, None);
-    }
-
-    #[test]
-    fn it_seeds_every_sub_build_from_the_per_activity_default() {
-      const WIDGET: i64 = 50_001;
-      const REACTED: i64 = 50_002;
-      let mut data = PlannerData::default();
-      data
-        .recipes
-        .insert(WIDGET, recipe(WIDGET + 1, 1, false, vec![Material::new(REACTED, 10)]));
-      data.recipes.insert(
-        REACTED,
-        recipe(REACTED + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
-      );
-      data.names.insert(WIDGET, "Widget".to_owned());
-      data.names.insert(REACTED, "Reacted Goo".to_owned());
-      data.facilities = vec![
-        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
-        facility(60_000_003, 30_000_142, "Reaction Hub", 0.03),
-      ];
-      let mut planner = Planner::new();
-      planner.set_facility_defaults(FacilityDefaults {
-        manufacturing: Some(60_000_002),
-        reactions: Some(60_000_003),
-      });
-      planner.apply_data(data);
-
-      planner.update(Message::ProductPicked(WIDGET));
-      planner.update(Message::NodeBrokenDown {
-        type_id: REACTED,
-      });
-
-      assert_eq!(
-        planner.settings_for(WIDGET).facility_system,
-        Some(30_002_187),
-        "the root manufacturing job seeds the manufacturing default"
-      );
-      assert_eq!(
-        planner.settings_for(REACTED).facility_system,
-        Some(30_000_142),
-        "the reaction sub-build seeds the reaction default, not the cheapest fallback"
-      );
-    }
-  }
-
   mod collapse {
-
     use super::*;
 
     #[test]
@@ -4643,82 +4452,58 @@ mod tests {
     }
   }
 
-  mod row_collapse {
-    use iced::advanced::widget::Tree;
+  mod detail_pane {
+    use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::window_state::UiState;
+
+    const HOST: f32 = 1_200.0;
 
     #[test]
-    fn it_starts_expanded_for_a_built_row() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
+    fn it_clamps_a_stored_width_below_the_minimum() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.01);
 
-      assert!(!planner.is_row_collapsed(RETRIEVER));
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
+
+      assert_eq!(planner.detail_pane_width(), DETAIL_PANE_MIN_WIDTH);
     }
 
     #[test]
-    fn it_toggles_a_built_rows_subtree_collapsed_and_expanded() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
+    fn it_restores_the_detail_pane_width_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.3);
 
-      planner.update(Message::RowCollapseToggled {
-        type_id: RETRIEVER,
-      });
-      assert!(planner.is_row_collapsed(RETRIEVER));
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
 
-      planner.update(Message::RowCollapseToggled {
-        type_id: RETRIEVER,
-      });
-      assert!(!planner.is_row_collapsed(RETRIEVER));
+      assert_eq!(planner.detail_pane_width(), 360.0);
     }
 
     #[test]
-    fn it_keeps_a_collapsed_row_built_and_in_the_raw_totals() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
+    fn it_settles_and_round_trips_a_dragged_width_through_the_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert("main".to_owned(), HOST);
+      let mut planner = Planner::new().with_restored_panes(&ui);
+      planner.set_pane_host_width(HOST);
 
-      planner.update(Message::RowCollapseToggled {
-        type_id: RETRIEVER,
-      });
+      // The handle sits on the left edge of a right-anchored pane: dragging left grows it.
+      planner.update(Message::PaneDragStart);
+      planner.update(Message::PaneDrag(800.0));
+      planner.update(Message::PaneDrag(760.0));
+      planner.update(Message::PaneDragEnd);
+      let settled = planner.detail_pane_width();
+      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), planner.detail_pane_ratio());
 
-      // Collapsing only hides nested rows in the table; the type stays built and its raw inputs still roll up.
-      assert!(planner.is_built(RETRIEVER));
-      let totals = planner.plan().unwrap().raw_totals();
-      assert!(totals.iter().all(|total| total.type_id != RETRIEVER));
-    }
+      let mut restored = Planner::new().with_restored_panes(&ui);
+      restored.set_pane_host_width(HOST);
 
-    #[test]
-    fn it_resets_collapsed_rows_when_a_new_product_is_picked() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      planner.update(Message::RowCollapseToggled {
-        type_id: RETRIEVER,
-      });
-
-      planner.update(Message::ProductPicked(RETRIEVER));
-
-      assert!(!planner.is_row_collapsed(RETRIEVER));
-    }
-
-    #[test]
-    fn it_renders_a_collapsed_built_row_without_its_children() {
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      planner.update(Message::RowCollapseToggled {
-        type_id: RETRIEVER,
-      });
-
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+      assert_eq!(settled, 380.0);
+      assert_eq!(restored.detail_pane_width(), settled);
     }
   }
 
@@ -4726,18 +4511,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_recomputes_revenue_material_cost_and_profit() {
-      let planner = planner();
-
-      let eco = planner.economics().unwrap();
-
-      assert_eq!(eco.revenue, 200_000_000.0);
-      assert_eq!(eco.material_cost, 60_000_025.0);
-      assert_eq!(eco.profit, eco.revenue - eco.material_cost - eco.install_fee);
-      assert!(eco.profitable());
-    }
 
     #[test]
     fn it_prices_material_cost_as_the_rolled_up_acquisition_total_plus_sub_build_fees() {
@@ -4764,6 +4537,18 @@ mod tests {
     }
 
     #[test]
+    fn it_recomputes_revenue_material_cost_and_profit() {
+      let planner = planner();
+
+      let eco = planner.economics().unwrap();
+
+      assert_eq!(eco.revenue, 200_000_000.0);
+      assert_eq!(eco.material_cost, 60_000_025.0);
+      assert_eq!(eco.profit, eco.revenue - eco.material_cost - eco.install_fee);
+      assert!(eco.profitable());
+    }
+
+    #[test]
     fn it_reports_zero_isk_per_hour_when_build_time_is_zero() {
       let mut data = PlannerData::default();
       data.recipes.insert(
@@ -4783,390 +4568,10 @@ mod tests {
     }
   }
 
-  mod memoization {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_refreshes_the_cached_plan_after_a_plan_affecting_update() {
-      let mut planner = planner();
-      let before = planner.merged_build_order().len();
-
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-
-      // Building RETRIEVER in-house adds a job to the merged order, and the memoized accessors must reflect
-      // it without a fresh recompute in view().
-      assert!(planner.merged_build_order().len() > before);
-      assert_eq!(
-        planner.merged_build_order(),
-        planner.plan().unwrap().merged_build_order().as_slice()
-      );
-      assert_eq!(planner.raw_totals(), planner.plan().unwrap().raw_totals().as_slice());
-    }
-
-    #[test]
-    fn it_reflects_a_runs_change_in_the_cached_raw_totals() {
-      let mut planner = planner();
-      let one_run = planner.raw_totals().to_vec();
-
-      planner.update(Message::RunsChanged(3));
-
-      let three_runs = planner.raw_totals();
-      assert_eq!(three_runs, planner.plan().unwrap().raw_totals().as_slice());
-      assert_ne!(three_runs, one_run.as_slice());
-    }
-
-    #[test]
-    fn it_leaves_the_cached_plan_untouched_on_a_cursor_move() {
-      let mut planner = planner();
-      let before = planner.plan();
-
-      planner.update(Message::CursorMoved(Point::new(10.0, 20.0)));
-
-      assert_eq!(planner.plan(), before);
-    }
-
-    #[test]
-    fn it_refreshes_the_cached_allocation_when_on_hand_loads() {
-      let mut planner = planner();
-      let site = 60_000_002;
-      // Opt the root's raw Tritanium into stock; the pool is empty at toggle time, so nothing is drawn yet.
-      planner.update(Message::StockSelectionToggled {
-        site,
-        type_id: TRITANIUM,
-      });
-      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 0);
-
-      // Loading on-hand stock must re-run the allocation against the now-available pool.
-      planner.set_on_hand(HashMap::from([((site, TRITANIUM), 3)]));
-
-      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 3);
-    }
-  }
-
-  mod view {
-    use iced::advanced::widget::Tree;
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_keeps_a_stable_root_tree_shape_whether_or_not_an_overlay_is_open() {
-      let mut planner = planner();
-      let idle_children = {
-        let idle = super::super::view(&planner, Scope::All);
-        Tree::new(idle.as_widget()).children.len()
-      };
-
-      planner.update(Message::CursorMoved(iced::Point::new(20.0, 40.0)));
-      planner.update(Message::MaterialRightPressed {
-        type_id: RETRIEVER,
-      });
-
-      // The root Stack must carry the same number of direct children open or closed so the Material
-      // Plan scrollable keeps a stable widget identity and never resets its offset on right-click.
-      assert!(planner.menu().is_some());
-      let with_menu = super::super::view(&planner, Scope::All);
-      assert_eq!(Tree::new(with_menu.as_widget()).children.len(), idle_children);
-    }
-
-    #[test]
-    fn it_renders_the_product_picker_windowed_to_a_deep_scroll_offset() {
-      let mut planner = planner();
-      for type_id in 1_000..1_500 {
-        planner.data.catalog.push(CatalogEntry {
-          category: Category::Module,
-          group_name: "Filler".to_owned(),
-          is_reaction: false,
-          name: format!("Filler {type_id}"),
-          type_id,
-          volume: 1.0,
-        });
-        planner.data.prices.insert(type_id, 1.0);
-        planner.data.names.insert(type_id, format!("Filler {type_id}"));
-      }
-      // Open the picker on a query that matches the whole filler block, then scroll far past the first window.
-      planner.update(Message::SearchChanged("filler".to_owned()));
-      planner.update(Message::PickerScrolled {
-        absolute: 4_000.0,
-      });
-
-      // The picker materializes the windowed rows for the recorded offset rather than only the first screenful.
-      let rendered = super::super::view(&planner, Scope::All);
-      let _ = Tree::new(rendered.as_widget());
-      assert_eq!(planner.picker_scroll_offset(), 4_000.0);
-    }
-
-    #[test]
-    fn it_renders_the_product_picker_across_empty_and_populated_result_states() {
-      // Picker open with no query — the seeded catalog (Hulk) yields a populated result list.
-      let mut populated = planner();
-      populated.update(Message::PickerToggled);
-      let _ = Tree::new(super::super::view(&populated, Scope::All).as_widget());
-
-      // A query that matches nothing renders the "No products match <query>" empty state.
-      let mut no_match = planner();
-      no_match.update(Message::SearchChanged("zzzznomatch".to_owned()));
-      let _ = Tree::new(super::super::view(&no_match, Scope::All).as_widget());
-
-      // A fresh planner with the picker open and no recent products renders the bare empty state.
-      let mut empty = Planner::new();
-      empty.update(Message::PickerToggled);
-      let _ = Tree::new(super::super::view(&empty, Scope::All).as_widget());
-
-      // No catalog matches under the chosen category, but a recently picked product backfills the list.
-      let mut recent = planner();
-      recent.update(Message::PickerToggled);
-      recent.update(Message::CategorySelected(Category::Module));
-      let _ = Tree::new(super::super::view(&recent, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_facility_picker_panel_across_match_states() {
-      // Open the facility picker on the root node — renders a row per eligible seeded facility.
-      let mut root = planner();
-      root.update(Message::CursorMoved(Point::new(120.0, 80.0)));
-      root.update(Message::FacilityPickerToggled {
-        type_id: HULK,
-      });
-      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
-
-      // A query that matches no facility renders the "No facilities match." empty state.
-      root.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "zzzznomatch".to_owned(),
-      });
-      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
-
-      // Opening the picker on a sub-node resolves the reaction flag from the node's own recipe.
-      let mut nested = planner();
-      nested.update(Message::CursorMoved(Point::new(120.0, 80.0)));
-      nested.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      nested.update(Message::FacilityPickerToggled {
-        type_id: RETRIEVER,
-      });
-      let _ = Tree::new(super::super::view(&nested, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_needed_blueprints_section_across_owned_and_missing_states() {
-      // No owned blueprints — every needed blueprint shows the amber BUY / INVENT pill, all rows tinted.
-      let mut missing = planner();
-      missing.update(Message::BreakDownAll);
-      let _ = Tree::new(super::super::view(&missing, Scope::All).as_widget());
-
-      // Mark the in-house RETRIEVER blueprint as owned in-scope; its row reuses the owned BPO/ME badge.
-      let mut owned = planner();
-      owned.update(Message::BreakDownAll);
-      owned.data.owned.insert(
-        RETRIEVER,
-        OwnedSummary {
-          in_scope: true,
-          is_original: false,
-          material_efficiency: 8,
-          time_efficiency: 16,
-        },
-      );
-      owned.data.owned.insert(
-        HULK,
-        OwnedSummary {
-          in_scope: false,
-          is_original: true,
-          material_efficiency: 0,
-          time_efficiency: 0,
-        },
-      );
-      let _ = Tree::new(super::super::view(&owned, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_merged_build_order_with_a_multi_consumer_subline() {
-      // Root SHIP consumes two buildable sub-assemblies (LEFT, RIGHT), each of which consumes the same
-      // buildable PLATE — so the merged build order collapses PLATE into one row fed by two jobs.
-      const SHIP: i64 = 90_000;
-      const LEFT: i64 = 90_001;
-      const RIGHT: i64 = 90_002;
-      const PLATE: i64 = 90_003;
-      const ORE: i64 = 90_004;
-
-      let mut data = PlannerData::default();
-      data.recipes.insert(
-        SHIP,
-        recipe(
-          SHIP + 1,
-          1,
-          false,
-          vec![Material::new(LEFT, 1), Material::new(RIGHT, 1)],
-        ),
-      );
-      data
-        .recipes
-        .insert(LEFT, recipe(LEFT + 1, 1, false, vec![Material::new(PLATE, 3)]));
-      data
-        .recipes
-        .insert(RIGHT, recipe(RIGHT + 1, 1, false, vec![Material::new(PLATE, 4)]));
-      data
-        .recipes
-        .insert(PLATE, recipe(PLATE + 1, 1, false, vec![Material::new(ORE, 5)]));
-      for (id, name) in [
-        (SHIP, "Ship"),
-        (LEFT, "Left"),
-        (RIGHT, "Right"),
-        (PLATE, "Plate"),
-        (ORE, "Ore"),
-      ] {
-        data.names.insert(id, name.to_owned());
-        data.prices.insert(id, 1.0);
-      }
-      data.catalog.push(CatalogEntry {
-        category: Category::Ship,
-        group_name: "Test".to_owned(),
-        is_reaction: false,
-        name: "Ship".to_owned(),
-        type_id: SHIP,
-        volume: 1.0,
-      });
-
-      let mut planner = Planner::new();
-      planner.apply_data(data);
-      planner.update(Message::ProductPicked(SHIP));
-      planner.update(Message::RunsChanged(1));
-      planner.update(Message::BreakDownAll);
-
-      // PLATE merges to a single job consumed by both LEFT and RIGHT.
-      let merged = planner.plan().unwrap().merged_build_order();
-      let plate = merged.iter().find(|job| job.type_id == PLATE).unwrap();
-      assert_eq!(plate.consumers.len(), 2);
-
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_material_plan_grid_across_raw_and_buildable_rows() {
-      // The always-visible material plan on the HULK root emits the grid header plus a raw Tritanium row and a
-      // buildable Retriever row carrying the inline breakdown affordance.
-      let planner = planner();
-
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_material_plan_with_a_nested_building_row() {
-      // Breaking down the buildable Retriever recurses the material plan into its own materials, so the row
-      // renders the BUILDING badge, the per-row collapse chevron, and the nested depth-tinted children.
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
-    }
-
-    #[test]
-    fn it_renders_the_material_plan_with_stock_affordances_and_a_used_chip() {
-      const SITE: i64 = 60_000_001;
-      const SITE_SYSTEM: i64 = 30_000_142;
-
-      // Pin the root to a site holding Tritanium stock: the material row first shows the "Use Stock" button,
-      // then the active "STOCK" chip and from-stock split once the line is opted in.
-      let mut planner = planner();
-      planner.update(Message::FacilitySelected {
-        facility_structure: SITE,
-        pin: None,
-        solar_system_id: SITE_SYSTEM,
-        type_id: HULK,
-      });
-      planner.set_on_hand(std::collections::HashMap::from([((SITE, TRITANIUM), 4)]));
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
-
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-      assert!(planner.is_stock_selected(SITE, TRITANIUM));
-
-      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
-    }
-  }
-
   mod facility_picker {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_defaults_a_node_to_the_cheapest_eligible_facility() {
-      let planner = planner();
-
-      let facility = planner.selected_facility(HULK, false).unwrap();
-
-      assert_eq!(facility.name, "Cheap Citadel");
-      assert_eq!(facility.solar_system_id, 30_002_187);
-    }
-
-    #[test]
-    fn it_resolves_the_exact_picked_structure_when_a_system_hosts_several() {
-      // A second facility in the same system as "Pricey Station", sorted after it. Picking the second by
-      // structure id must win over system-based resolution (which returns the system's first facility) — the
-      // bug that made reactions and manual picks silently display the wrong same-system facility.
-      let mut planner = planner();
-      planner
-        .data
-        .facilities
-        .push(facility(60_000_003, 30_000_142, "Reaction Array", 0.5));
-      planner.update(Message::FacilitySelected {
-        facility_structure: 60_000_003,
-        pin: None,
-        solar_system_id: 30_000_142,
-        type_id: HULK,
-      });
-
-      let facility = planner.selected_facility(HULK, false).unwrap();
-
-      assert_eq!(facility.id, 60_000_003);
-      assert_eq!(facility.name, "Reaction Array");
-    }
-
-    #[test]
-    fn it_applies_a_picked_facility_to_only_that_types_settings() {
-      // Break down the buildable RETRIEVER, then pick a distinct facility on its sub-build card. The pick must
-      // write to RETRIEVER's per-type settings only, leaving the root HULK card on its own default.
-      let mut planner = planner();
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-
-      planner.update(Message::FacilitySelected {
-        facility_structure: 60_000_001,
-        pin: None,
-        solar_system_id: 30_000_142,
-        type_id: RETRIEVER,
-      });
-
-      assert_eq!(planner.settings_for(RETRIEVER).facility_structure, Some(60_000_001));
-      assert_eq!(planner.settings_for(RETRIEVER).facility_system, Some(30_000_142));
-      assert_eq!(planner.settings_for(HULK).facility_structure, None);
-    }
-
-    #[test]
-    fn it_toggles_a_per_node_picker_open_and_closed() {
-      let mut planner = planner();
-
-      planner.update(Message::FacilityPickerToggled {
-        type_id: HULK,
-      });
-      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
-
-      planner.update(Message::FacilityPickerToggled {
-        type_id: HULK,
-      });
-      assert!(planner.facility_picker().is_none());
-    }
 
     #[test]
     fn it_anchors_the_popover_at_the_cursor_when_the_picker_opens() {
@@ -5200,6 +4605,153 @@ mod tests {
     }
 
     #[test]
+    fn it_applies_a_picked_facility_to_only_that_types_settings() {
+      // Break down the buildable RETRIEVER, then pick a distinct facility on its sub-build card. The pick must
+      // write to RETRIEVER's per-type settings only, leaving the root HULK card on its own default.
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::FacilitySelected {
+        facility_structure: 60_000_001,
+        pin: None,
+        solar_system_id: 30_000_142,
+        type_id: RETRIEVER,
+      });
+
+      assert_eq!(planner.settings_for(RETRIEVER).facility_structure, Some(60_000_001));
+      assert_eq!(planner.settings_for(RETRIEVER).facility_system, Some(30_000_142));
+      assert_eq!(planner.settings_for(HULK).facility_structure, None);
+    }
+
+    #[test]
+    fn it_applies_live_results_for_the_current_generation() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        type_id: HULK,
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert_eq!(state.results.len(), 1);
+      assert_eq!(state.results[0].name, "Jita Keepstar");
+      assert!(!state.searching);
+    }
+
+    #[test]
+    fn it_bumps_the_search_generation_and_flags_searching_at_three_chars() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      let before = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jita".to_owned(),
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert_eq!(state.search_generation, before + 1);
+      assert!(state.searching);
+    }
+
+    #[test]
+    fn it_defaults_a_node_to_the_cheapest_eligible_facility() {
+      let planner = planner();
+
+      let facility = planner.selected_facility(HULK, false).unwrap();
+
+      assert_eq!(facility.name, "Cheap Citadel");
+      assert_eq!(facility.solar_system_id, 30_002_187);
+    }
+
+    #[test]
+    fn it_drops_results_routed_to_a_different_node() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        type_id: RETRIEVER,
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Wrong Node", 0.04)],
+      });
+
+      assert!(planner.facility_picker().unwrap().results.is_empty());
+    }
+
+    #[test]
+    fn it_drops_results_stamped_with_a_stale_generation() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jita".to_owned(),
+      });
+      let stale = planner.facility_picker().unwrap().search_generation;
+      // A second keystroke supersedes the first query's generation.
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jitan".to_owned(),
+      });
+
+      planner.update(Message::FacilitySearchResults {
+        generation: stale,
+        type_id: HULK,
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Stale Hit", 0.04)],
+      });
+
+      assert!(planner.facility_picker().unwrap().results.is_empty());
+    }
+
+    #[test]
+    fn it_falls_back_to_local_and_clears_results_below_three_chars() {
+      let mut planner = planner();
+      planner.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Jita".to_owned(),
+      });
+      let generation = planner.facility_picker().unwrap().search_generation;
+      planner.update(Message::FacilitySearchResults {
+        generation,
+        type_id: HULK,
+        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
+      });
+
+      planner.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "Ji".to_owned(),
+      });
+
+      let state = planner.facility_picker().unwrap();
+      assert!(state.results.is_empty());
+      assert!(!state.searching);
+    }
+
+    #[test]
     fn it_only_keeps_one_node_picker_open_at_a_time() {
       let mut planner = planner();
       planner.update(Message::NodeBrokenDown {
@@ -5214,24 +4766,6 @@ mod tests {
       });
 
       assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(RETRIEVER));
-    }
-
-    #[test]
-    fn it_records_the_search_query_for_the_open_node() {
-      let mut planner = planner();
-      planner.update(Message::FacilityPickerToggled {
-        type_id: HULK,
-      });
-
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "cheap".to_owned(),
-      });
-
-      assert_eq!(
-        planner.facility_picker().map(|state| state.query.clone()),
-        Some("cheap".to_owned())
-      );
     }
 
     #[test]
@@ -5278,119 +4812,59 @@ mod tests {
     }
 
     #[test]
-    fn it_bumps_the_search_generation_and_flags_searching_at_three_chars() {
+    fn it_records_the_search_query_for_the_open_node() {
       let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
         type_id: HULK,
       });
-      let before = planner.facility_picker().unwrap().search_generation;
 
       planner.update(Message::FacilitySearchChanged {
         type_id: HULK,
-        query: "Jita".to_owned(),
+        query: "cheap".to_owned(),
       });
 
-      let state = planner.facility_picker().unwrap();
-      assert_eq!(state.search_generation, before + 1);
-      assert!(state.searching);
+      assert_eq!(
+        planner.facility_picker().map(|state| state.query.clone()),
+        Some("cheap".to_owned())
+      );
     }
 
     #[test]
-    fn it_falls_back_to_local_and_clears_results_below_three_chars() {
+    fn it_resolves_the_exact_picked_structure_when_a_system_hosts_several() {
+      // A second facility in the same system as "Pricey Station", sorted after it. Picking the second by
+      // structure id must win over system-based resolution (which returns the system's first facility) — the
+      // bug that made reactions and manual picks silently display the wrong same-system facility.
       let mut planner = planner();
-      planner.update(Message::FacilityPickerToggled {
+      planner
+        .data
+        .facilities
+        .push(facility(60_000_003, 30_000_142, "Reaction Array", 0.5));
+      planner.update(Message::FacilitySelected {
+        facility_structure: 60_000_003,
+        pin: None,
+        solar_system_id: 30_000_142,
         type_id: HULK,
-      });
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Jita".to_owned(),
-      });
-      let generation = planner.facility_picker().unwrap().search_generation;
-      planner.update(Message::FacilitySearchResults {
-        generation,
-        type_id: HULK,
-        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
       });
 
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Ji".to_owned(),
-      });
+      let facility = planner.selected_facility(HULK, false).unwrap();
 
-      let state = planner.facility_picker().unwrap();
-      assert!(state.results.is_empty());
-      assert!(!state.searching);
+      assert_eq!(facility.id, 60_000_003);
+      assert_eq!(facility.name, "Reaction Array");
     }
 
     #[test]
-    fn it_applies_live_results_for_the_current_generation() {
+    fn it_toggles_a_per_node_picker_open_and_closed() {
       let mut planner = planner();
+
       planner.update(Message::FacilityPickerToggled {
         type_id: HULK,
       });
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Jita".to_owned(),
-      });
-      let generation = planner.facility_picker().unwrap().search_generation;
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
 
-      planner.update(Message::FacilitySearchResults {
-        generation,
-        type_id: HULK,
-        results: vec![facility(1_021_000_000_001, 30_000_142, "Jita Keepstar", 0.04)],
-      });
-
-      let state = planner.facility_picker().unwrap();
-      assert_eq!(state.results.len(), 1);
-      assert_eq!(state.results[0].name, "Jita Keepstar");
-      assert!(!state.searching);
-    }
-
-    #[test]
-    fn it_drops_results_stamped_with_a_stale_generation() {
-      let mut planner = planner();
       planner.update(Message::FacilityPickerToggled {
         type_id: HULK,
       });
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Jita".to_owned(),
-      });
-      let stale = planner.facility_picker().unwrap().search_generation;
-      // A second keystroke supersedes the first query's generation.
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Jitan".to_owned(),
-      });
-
-      planner.update(Message::FacilitySearchResults {
-        generation: stale,
-        type_id: HULK,
-        results: vec![facility(1_021_000_000_001, 30_000_142, "Stale Hit", 0.04)],
-      });
-
-      assert!(planner.facility_picker().unwrap().results.is_empty());
-    }
-
-    #[test]
-    fn it_drops_results_routed_to_a_different_node() {
-      let mut planner = planner();
-      planner.update(Message::FacilityPickerToggled {
-        type_id: HULK,
-      });
-      planner.update(Message::FacilitySearchChanged {
-        type_id: HULK,
-        query: "Jita".to_owned(),
-      });
-      let generation = planner.facility_picker().unwrap().search_generation;
-
-      planner.update(Message::FacilitySearchResults {
-        generation,
-        type_id: RETRIEVER,
-        results: vec![facility(1_021_000_000_001, 30_000_142, "Wrong Node", 0.04)],
-      });
-
-      assert!(planner.facility_picker().unwrap().results.is_empty());
+      assert!(planner.facility_picker().is_none());
     }
   }
 
@@ -5435,58 +4909,67 @@ mod tests {
     }
   }
 
-  mod detail_pane {
+  mod memoization {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::window_state::UiState;
-
-    const HOST: f32 = 1_200.0;
 
     #[test]
-    fn it_restores_the_detail_pane_width_from_the_keyed_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
-      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.3);
+    fn it_leaves_the_cached_plan_untouched_on_a_cursor_move() {
+      let mut planner = planner();
+      let before = planner.plan();
 
-      let mut planner = Planner::new().with_restored_panes(&ui);
-      planner.set_pane_host_width(HOST);
+      planner.update(Message::CursorMoved(Point::new(10.0, 20.0)));
 
-      assert_eq!(planner.detail_pane_width(), 360.0);
+      assert_eq!(planner.plan(), before);
     }
 
     #[test]
-    fn it_settles_and_round_trips_a_dragged_width_through_the_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
-      let mut planner = Planner::new().with_restored_panes(&ui);
-      planner.set_pane_host_width(HOST);
+    fn it_reflects_a_runs_change_in_the_cached_raw_totals() {
+      let mut planner = planner();
+      let one_run = planner.raw_totals().to_vec();
 
-      // The handle sits on the left edge of a right-anchored pane: dragging left grows it.
-      planner.update(Message::PaneDragStart);
-      planner.update(Message::PaneDrag(800.0));
-      planner.update(Message::PaneDrag(760.0));
-      planner.update(Message::PaneDragEnd);
-      let settled = planner.detail_pane_width();
-      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), planner.detail_pane_ratio());
+      planner.update(Message::RunsChanged(3));
 
-      let mut restored = Planner::new().with_restored_panes(&ui);
-      restored.set_pane_host_width(HOST);
-
-      assert_eq!(settled, 380.0);
-      assert_eq!(restored.detail_pane_width(), settled);
+      let three_runs = planner.raw_totals();
+      assert_eq!(three_runs, planner.plan().unwrap().raw_totals().as_slice());
+      assert_ne!(three_runs, one_run.as_slice());
     }
 
     #[test]
-    fn it_clamps_a_stored_width_below_the_minimum() {
-      let mut ui = UiState::default();
-      ui.panes.insert("main".to_owned(), HOST);
-      ui.panes.insert(DETAIL_PANE_KEY.to_owned(), 0.01);
+    fn it_refreshes_the_cached_allocation_when_on_hand_loads() {
+      let mut planner = planner();
+      let site = 60_000_002;
+      // Opt the root's raw Tritanium into stock; the pool is empty at toggle time, so nothing is drawn yet.
+      planner.update(Message::StockSelectionToggled {
+        site,
+        type_id: TRITANIUM,
+      });
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 0);
 
-      let mut planner = Planner::new().with_restored_panes(&ui);
-      planner.set_pane_host_width(HOST);
+      // Loading on-hand stock must re-run the allocation against the now-available pool.
+      planner.set_on_hand(HashMap::from([((site, TRITANIUM), 3)]));
 
-      assert_eq!(planner.detail_pane_width(), DETAIL_PANE_MIN_WIDTH);
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 3);
+    }
+
+    #[test]
+    fn it_refreshes_the_cached_plan_after_a_plan_affecting_update() {
+      let mut planner = planner();
+      let before = planner.merged_build_order().len();
+
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      // Building RETRIEVER in-house adds a job to the merged order, and the memoized accessors must reflect
+      // it without a fresh recompute in view().
+      assert!(planner.merged_build_order().len() > before);
+      assert_eq!(
+        planner.merged_build_order(),
+        planner.plan().unwrap().merged_build_order().as_slice()
+      );
+      assert_eq!(planner.raw_totals(), planner.plan().unwrap().raw_totals().as_slice());
     }
   }
 
@@ -5507,18 +4990,6 @@ mod tests {
     }
 
     #[test]
-    fn it_resets_the_scroll_offset_when_the_search_query_changes() {
-      let mut planner = planner();
-      planner.update(Message::PickerScrolled {
-        absolute: 640.0,
-      });
-
-      planner.update(Message::SearchChanged("hulk".to_owned()));
-
-      assert_eq!(planner.picker_scroll_offset(), 0.0);
-    }
-
-    #[test]
     fn it_resets_the_scroll_offset_when_the_category_changes() {
       let mut planner = planner();
       planner.update(Message::PickerScrolled {
@@ -5529,12 +5000,112 @@ mod tests {
 
       assert_eq!(planner.picker_scroll_offset(), 0.0);
     }
+
+    #[test]
+    fn it_resets_the_scroll_offset_when_the_search_query_changes() {
+      let mut planner = planner();
+      planner.update(Message::PickerScrolled {
+        absolute: 640.0,
+      });
+
+      planner.update(Message::SearchChanged("hulk".to_owned()));
+
+      assert_eq!(planner.picker_scroll_offset(), 0.0);
+    }
+  }
+
+  mod row_collapse {
+    use iced::advanced::widget::Tree;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_collapsed_row_built_and_in_the_raw_totals() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      // Collapsing only hides nested rows in the table; the type stays built and its raw inputs still roll up.
+      assert!(planner.is_built(RETRIEVER));
+      let totals = planner.plan().unwrap().raw_totals();
+      assert!(totals.iter().all(|total| total.type_id != RETRIEVER));
+    }
+
+    #[test]
+    fn it_renders_a_collapsed_built_row_without_its_children() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_resets_collapsed_rows_when_a_new_product_is_picked() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::ProductPicked(RETRIEVER));
+
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
+
+    #[test]
+    fn it_starts_expanded_for_a_built_row() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
+
+    #[test]
+    fn it_toggles_a_built_rows_subtree_collapsed_and_expanded() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+      assert!(planner.is_row_collapsed(RETRIEVER));
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
   }
 
   mod runs_changed {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_clamps_an_edited_runs_field_to_the_maximum() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged("99999".to_owned()));
+
+      assert_eq!(planner.runs(), RUNS_MAX);
+    }
 
     #[test]
     fn it_clamps_runs_to_the_valid_range_and_recomputes_output() {
@@ -5545,6 +5116,30 @@ mod tests {
 
       planner.update(Message::RunsChanged(50));
       assert_eq!(planner.economics().unwrap().output_qty, 50);
+    }
+
+    #[test]
+    fn it_holds_at_one_run_for_an_empty_or_zero_runs_field() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged(String::new()));
+      assert_eq!(planner.runs(), 1);
+      assert_eq!(planner.runs_input(), "");
+
+      planner.update(Message::RunsInputChanged("0".to_owned()));
+      assert_eq!(planner.runs(), 1);
+      assert_eq!(planner.runs_input(), "0");
+    }
+
+    #[test]
+    fn it_keeps_only_digits_and_reflows_from_an_edited_runs_field() {
+      let mut planner = planner();
+
+      planner.update(Message::RunsInputChanged("4x2".to_owned()));
+
+      assert_eq!(planner.runs(), 42);
+      assert_eq!(planner.runs_input(), "42");
+      assert_eq!(planner.economics().unwrap().output_qty, 42);
     }
 
     #[test]
@@ -5572,39 +5167,6 @@ mod tests {
 
       assert_eq!(planner.runs(), 7);
       assert_eq!(planner.runs_input(), "7");
-    }
-
-    #[test]
-    fn it_keeps_only_digits_and_reflows_from_an_edited_runs_field() {
-      let mut planner = planner();
-
-      planner.update(Message::RunsInputChanged("4x2".to_owned()));
-
-      assert_eq!(planner.runs(), 42);
-      assert_eq!(planner.runs_input(), "42");
-      assert_eq!(planner.economics().unwrap().output_qty, 42);
-    }
-
-    #[test]
-    fn it_holds_at_one_run_for_an_empty_or_zero_runs_field() {
-      let mut planner = planner();
-
-      planner.update(Message::RunsInputChanged(String::new()));
-      assert_eq!(planner.runs(), 1);
-      assert_eq!(planner.runs_input(), "");
-
-      planner.update(Message::RunsInputChanged("0".to_owned()));
-      assert_eq!(planner.runs(), 1);
-      assert_eq!(planner.runs_input(), "0");
-    }
-
-    #[test]
-    fn it_clamps_an_edited_runs_field_to_the_maximum() {
-      let mut planner = planner();
-
-      planner.update(Message::RunsInputChanged("99999".to_owned()));
-
-      assert_eq!(planner.runs(), RUNS_MAX);
     }
   }
 
@@ -5674,22 +5236,214 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_reports_the_buildable_catalog_size() {
-      let planner = planner();
-
-      assert_eq!(planner.search_placeholder(), "Search 1 buildable products\u{2026}");
-    }
-
-    #[test]
     fn it_falls_back_when_no_catalog_is_loaded() {
       let planner = Planner::new();
 
       assert_eq!(planner.search_placeholder(), "Search buildable products\u{2026}");
     }
+
+    #[test]
+    fn it_reports_the_buildable_catalog_size() {
+      let planner = planner();
+
+      assert_eq!(planner.search_placeholder(), "Search 1 buildable products\u{2026}");
+    }
+  }
+
+  mod seed_from_blueprint {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_applies_a_queued_seed_once_data_loads() {
+      let mut planner = Planner::new();
+      planner.queue_blueprint_seed(HULK + 1);
+
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
+      data.names.insert(HULK, "Hulk".to_owned());
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Mining Barge".to_owned(),
+        is_reaction: false,
+        name: "Hulk".to_owned(),
+        type_id: HULK,
+        volume: 3_750.0,
+      });
+      planner.apply_data(data);
+
+      assert_eq!(planner.product(), Some(HULK));
+    }
+
+    #[test]
+    fn it_reports_no_seed_for_an_unknown_blueprint() {
+      let mut planner = planner();
+
+      assert!(!planner.seed_from_blueprint(123_456));
+    }
+
+    #[test]
+    fn it_seeds_the_product_a_blueprint_makes() {
+      let mut planner = planner();
+      planner.update(Message::ProductPicked(RETRIEVER));
+
+      // The Hulk blueprint type is HULK + 1 (see the `planner()` recipe helper).
+      let seeded = planner.seed_from_blueprint(HULK + 1);
+
+      assert!(seeded);
+      assert_eq!(planner.product(), Some(HULK));
+      assert!(!planner.is_built(RETRIEVER));
+    }
+  }
+
+  mod select_product {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn planner_with_defaults(defaults: FacilityDefaults) -> Planner {
+      const SULFURIC: i64 = 16_011;
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(HULK, recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 5)]));
+      data.recipes.insert(
+        SULFURIC,
+        recipe(SULFURIC + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
+      );
+      data.names.insert(HULK, "Hulk".to_owned());
+      data.names.insert(SULFURIC, "Sulfuric Acid".to_owned());
+      data.facilities = vec![
+        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
+        facility(1_021_000_000_009, 30_000_142, "Reaction Fortizar", 0.03),
+      ];
+
+      let mut planner = Planner::new();
+      planner.set_facility_defaults(defaults);
+      planner.apply_data(data);
+      planner
+    }
+
+    #[test]
+    fn it_leaves_the_root_facility_unset_when_no_default_is_configured() {
+      let mut planner = planner_with_defaults(FacilityDefaults::default());
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.settings_for(HULK).facility_system, None);
+    }
+
+    #[test]
+    fn it_leaves_the_root_facility_unset_when_the_default_is_absent_from_data() {
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(70_000_000),
+        reactions: None,
+      });
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.settings_for(HULK).facility_system, None);
+    }
+
+    #[test]
+    fn it_seeds_a_reaction_with_the_reactions_default_and_manufacturing_with_its_own() {
+      const SULFURIC: i64 = 16_011;
+      let mut reaction_planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+      let mut manufacturing_planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+
+      reaction_planner.update(Message::ProductPicked(SULFURIC));
+      manufacturing_planner.update(Message::ProductPicked(HULK));
+
+      // A reaction picks the reactions structure id, a manufacturing product picks the manufacturing one —
+      // the install structure (not just its system) must differ per activity.
+      assert_eq!(
+        reaction_planner.settings_for(SULFURIC).facility_structure,
+        Some(1_021_000_000_009)
+      );
+      assert_eq!(
+        manufacturing_planner.settings_for(HULK).facility_structure,
+        Some(60_000_002)
+      );
+    }
+
+    #[test]
+    fn it_seeds_every_sub_build_from_the_per_activity_default() {
+      const WIDGET: i64 = 50_001;
+      const REACTED: i64 = 50_002;
+      let mut data = PlannerData::default();
+      data
+        .recipes
+        .insert(WIDGET, recipe(WIDGET + 1, 1, false, vec![Material::new(REACTED, 10)]));
+      data.recipes.insert(
+        REACTED,
+        recipe(REACTED + 1, 100, true, vec![Material::new(TRITANIUM, 5)]),
+      );
+      data.names.insert(WIDGET, "Widget".to_owned());
+      data.names.insert(REACTED, "Reacted Goo".to_owned());
+      data.facilities = vec![
+        facility(60_000_002, 30_002_187, "Manufacturing Hub", 0.02),
+        facility(60_000_003, 30_000_142, "Reaction Hub", 0.03),
+      ];
+      let mut planner = Planner::new();
+      planner.set_facility_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(60_000_003),
+      });
+      planner.apply_data(data);
+
+      planner.update(Message::ProductPicked(WIDGET));
+      planner.update(Message::NodeBrokenDown {
+        type_id: REACTED,
+      });
+
+      assert_eq!(
+        planner.settings_for(WIDGET).facility_system,
+        Some(30_002_187),
+        "the root manufacturing job seeds the manufacturing default"
+      );
+      assert_eq!(
+        planner.settings_for(REACTED).facility_system,
+        Some(30_000_142),
+        "the reaction sub-build seeds the reaction default, not the cheapest fallback"
+      );
+    }
+
+    #[test]
+    fn it_seeds_the_root_facility_from_the_manufacturing_default() {
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: None,
+      });
+
+      planner.update(Message::ProductPicked(HULK));
+
+      assert_eq!(planner.settings_for(HULK).facility_system, Some(30_002_187));
+    }
+
+    #[test]
+    fn it_seeds_the_root_facility_from_the_reaction_default_for_a_reaction_product() {
+      const SULFURIC: i64 = 16_011;
+      let mut planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+
+      planner.update(Message::ProductPicked(SULFURIC));
+
+      assert_eq!(planner.settings_for(SULFURIC).facility_system, Some(30_000_142));
+    }
   }
 
   mod shopping_list {
-
     use super::*;
 
     #[test]
@@ -5711,169 +5465,6 @@ mod tests {
 
       assert!(list.contains("25\tTritanium"));
       assert!(!list.contains("Retriever"));
-    }
-  }
-
-  mod stock_selection {
-    use std::collections::HashMap;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const SITE: i64 = 60_000_001;
-    const SITE_SYSTEM: i64 = 30_000_142;
-
-    /// A planner whose HULK root is pinned to `SITE`, with `on_hand` stock keyed by `(SITE, type)`.
-    fn sited_planner(on_hand: HashMap<(i64, i64), i64>) -> Planner {
-      let mut planner = planner();
-      planner.update(Message::FacilitySelected {
-        facility_structure: SITE,
-        pin: None,
-        solar_system_id: SITE_SYSTEM,
-        type_id: HULK,
-      });
-      planner.set_on_hand(on_hand);
-      planner
-    }
-
-    #[test]
-    fn it_reports_the_picked_build_site() {
-      let planner = sited_planner(HashMap::new());
-
-      assert_eq!(planner.build_sites(), vec![SITE]);
-    }
-
-    #[test]
-    fn it_shows_a_remaining_pool_for_a_material_with_site_stock() {
-      let planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
-
-      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 4);
-      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
-    }
-
-    #[test]
-    fn it_shows_no_pool_for_a_material_without_site_stock() {
-      let planner = sited_planner(HashMap::new());
-
-      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
-    }
-
-    #[test]
-    fn it_toggling_adds_then_removes_the_selection() {
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
-
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-      assert!(planner.is_stock_selected(SITE, TRITANIUM));
-
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
-    }
-
-    #[test]
-    fn it_drains_the_pool_when_a_material_is_opted_into_stock() {
-      // HULK root consumes 5 Tritanium directly; 4 on hand draws all 4, leaving the pool empty.
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
-
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-
-      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
-      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 4);
-    }
-
-    #[test]
-    fn it_nets_drawn_stock_off_the_bill_of_materials() {
-      // 5 Tritanium needed, 4 drawn from stock leaves 1 to buy.
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-
-      let netted = planner
-        .plan()
-        .unwrap()
-        .raw_totals_after_stock(&planner.stock_allocation());
-
-      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
-      assert_eq!(trit.qty, 1);
-    }
-
-    #[test]
-    fn it_hides_the_button_for_a_later_consumer_once_the_shared_pool_is_drained() {
-      // Both the HULK row and the broken-down RETRIEVER row consume Tritanium at the same site/pool. Opting
-      // the first into stock drains the 6-unit pool, so the shared pool is empty for the second consumer.
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      assert!(planner.remaining_pool(SITE, TRITANIUM) > 0);
-
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-
-      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
-    }
-
-    #[test]
-    fn it_recomputes_drawn_stock_live_after_a_snapshot_restore() {
-      // HULK root pinned to SITE consumes 5 Tritanium; 4 sit in SITE's hangar and are opted into stock. After
-      // snapshot -> restore -> on-hand reload, the live allocation re-derives all 4 drawn units from the
-      // current tree and assets — no frozen quantity is persisted.
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-      let snapshot = planner.snapshot().unwrap();
-
-      let mut restored = self::planner();
-      restored.restore(&snapshot);
-      restored.set_on_hand(HashMap::from([((SITE, TRITANIUM), 4)]));
-
-      assert!(restored.is_stock_selected(SITE, TRITANIUM));
-      assert_eq!(restored.stock_allocation().drawn_for_type(TRITANIUM), 4);
-    }
-
-    #[test]
-    fn it_composes_stock_with_a_breakdown_on_the_remainder() {
-      // Break RETRIEVER down so the plan rolls up to 25 Tritanium (5 direct + 2*10), draw 6 from stock,
-      // leaving 19 to buy: the breakdown deepens the tree, the netting subtracts the drawn stock.
-      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
-      planner.update(Message::MaterialEfficiencyChanged {
-        me: 0,
-        type_id: HULK,
-      });
-      planner.update(Message::NodeBrokenDown {
-        type_id: RETRIEVER,
-      });
-      planner.update(Message::MaterialEfficiencyChanged {
-        me: 0,
-        type_id: RETRIEVER,
-      });
-      planner.update(Message::StockSelectionToggled {
-        site: SITE,
-        type_id: TRITANIUM,
-      });
-
-      let netted = planner
-        .plan()
-        .unwrap()
-        .raw_totals_after_stock(&planner.stock_allocation());
-
-      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
-      assert_eq!(trit.qty, 19);
     }
   }
 
@@ -5916,13 +5507,6 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_none_without_a_selected_product() {
-      let planner = Planner::new();
-
-      assert_eq!(planner.snapshot(), None);
-    }
-
-    #[test]
     fn it_captures_the_root_and_per_type_configuration() {
       let snapshot = configured_planner().snapshot().unwrap();
 
@@ -5939,29 +5523,6 @@ mod tests {
         (child.me, child.facility_system, child.facility_structure, child.built),
         (4, Some(30_002_187), Some(60_000_002), true)
       );
-    }
-
-    #[test]
-    fn it_threads_the_picked_structure_onto_the_derived_tree() {
-      let planner = configured_planner();
-
-      let plan = planner.plan().unwrap();
-
-      assert_eq!(plan.root.facility_structure, Some(60_000_001));
-      let retriever = plan.root.children.get(&RETRIEVER).unwrap();
-      assert_eq!(retriever.facility_structure, Some(60_000_002));
-    }
-
-    #[test]
-    fn it_round_trips_through_snapshot_and_restore() {
-      let original = configured_planner();
-      let snapshot = original.snapshot().unwrap();
-
-      let mut restored = planner();
-      restored.restore(&snapshot);
-
-      assert_eq!(restored.snapshot(), Some(snapshot));
-      assert_eq!(restored.plan(), original.plan());
     }
 
     #[test]
@@ -5993,6 +5554,447 @@ mod tests {
       restored.restore(&snapshot);
 
       assert!(restored.is_stock_selected(60_000_001, TRITANIUM));
+    }
+
+    #[test]
+    fn it_returns_none_without_a_selected_product() {
+      let planner = Planner::new();
+
+      assert_eq!(planner.snapshot(), None);
+    }
+
+    #[test]
+    fn it_round_trips_through_snapshot_and_restore() {
+      let original = configured_planner();
+      let snapshot = original.snapshot().unwrap();
+
+      let mut restored = planner();
+      restored.restore(&snapshot);
+
+      assert_eq!(restored.snapshot(), Some(snapshot));
+      assert_eq!(restored.plan(), original.plan());
+    }
+
+    #[test]
+    fn it_threads_the_picked_structure_onto_the_derived_tree() {
+      let planner = configured_planner();
+
+      let plan = planner.plan().unwrap();
+
+      assert_eq!(plan.root.facility_structure, Some(60_000_001));
+      let retriever = plan.root.children.get(&RETRIEVER).unwrap();
+      assert_eq!(retriever.facility_structure, Some(60_000_002));
+    }
+  }
+
+  mod stock_selection {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const SITE: i64 = 60_000_001;
+
+    const SITE_SYSTEM: i64 = 30_000_142;
+
+    /// A planner whose HULK root is pinned to `SITE`, with `on_hand` stock keyed by `(SITE, type)`.
+    fn sited_planner(on_hand: HashMap<(i64, i64), i64>) -> Planner {
+      let mut planner = planner();
+      planner.update(Message::FacilitySelected {
+        facility_structure: SITE,
+        pin: None,
+        solar_system_id: SITE_SYSTEM,
+        type_id: HULK,
+      });
+      planner.set_on_hand(on_hand);
+      planner
+    }
+
+    #[test]
+    fn it_composes_stock_with_a_breakdown_on_the_remainder() {
+      // Break RETRIEVER down so the plan rolls up to 25 Tritanium (5 direct + 2*10), draw 6 from stock,
+      // leaving 19 to buy: the breakdown deepens the tree, the netting subtracts the drawn stock.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 0,
+        type_id: HULK,
+      });
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::MaterialEfficiencyChanged {
+        me: 0,
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      let netted = planner
+        .plan()
+        .unwrap()
+        .raw_totals_after_stock(&planner.stock_allocation());
+
+      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
+      assert_eq!(trit.qty, 19);
+    }
+
+    #[test]
+    fn it_drains_the_pool_when_a_material_is_opted_into_stock() {
+      // HULK root consumes 5 Tritanium directly; 4 on hand draws all 4, leaving the pool empty.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 4);
+    }
+
+    #[test]
+    fn it_hides_the_button_for_a_later_consumer_once_the_shared_pool_is_drained() {
+      // Both the HULK row and the broken-down RETRIEVER row consume Tritanium at the same site/pool. Opting
+      // the first into stock drains the 6-unit pool, so the shared pool is empty for the second consumer.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 6)]));
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      assert!(planner.remaining_pool(SITE, TRITANIUM) > 0);
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+    }
+
+    #[test]
+    fn it_nets_drawn_stock_off_the_bill_of_materials() {
+      // 5 Tritanium needed, 4 drawn from stock leaves 1 to buy.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+
+      let netted = planner
+        .plan()
+        .unwrap()
+        .raw_totals_after_stock(&planner.stock_allocation());
+
+      let trit = netted.iter().find(|total| total.type_id == TRITANIUM).unwrap();
+      assert_eq!(trit.qty, 1);
+    }
+
+    #[test]
+    fn it_recomputes_drawn_stock_live_after_a_snapshot_restore() {
+      // HULK root pinned to SITE consumes 5 Tritanium; 4 sit in SITE's hangar and are opted into stock. After
+      // snapshot -> restore -> on-hand reload, the live allocation re-derives all 4 drawn units from the
+      // current tree and assets — no frozen quantity is persisted.
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      let snapshot = planner.snapshot().unwrap();
+
+      let mut restored = self::planner();
+      restored.restore(&snapshot);
+      restored.set_on_hand(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      assert!(restored.is_stock_selected(SITE, TRITANIUM));
+      assert_eq!(restored.stock_allocation().drawn_for_type(TRITANIUM), 4);
+    }
+
+    #[test]
+    fn it_reports_the_picked_build_site() {
+      let planner = sited_planner(HashMap::new());
+
+      assert_eq!(planner.build_sites(), vec![SITE]);
+    }
+
+    #[test]
+    fn it_shows_a_remaining_pool_for_a_material_with_site_stock() {
+      let planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 4);
+      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
+    }
+
+    #[test]
+    fn it_shows_no_pool_for_a_material_without_site_stock() {
+      let planner = sited_planner(HashMap::new());
+
+      assert_eq!(planner.remaining_pool(SITE, TRITANIUM), 0);
+    }
+
+    #[test]
+    fn it_toggling_adds_then_removes_the_selection() {
+      let mut planner = sited_planner(HashMap::from([((SITE, TRITANIUM), 4)]));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(planner.is_stock_selected(SITE, TRITANIUM));
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(!planner.is_stock_selected(SITE, TRITANIUM));
+    }
+  }
+
+  mod view {
+    use iced::advanced::widget::Tree;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_stable_root_tree_shape_whether_or_not_an_overlay_is_open() {
+      let mut planner = planner();
+      let idle_children = {
+        let idle = super::super::view(&planner, Scope::All);
+        Tree::new(idle.as_widget()).children.len()
+      };
+
+      planner.update(Message::CursorMoved(iced::Point::new(20.0, 40.0)));
+      planner.update(Message::MaterialRightPressed {
+        type_id: RETRIEVER,
+      });
+
+      // The root Stack must carry the same number of direct children open or closed so the Material
+      // Plan scrollable keeps a stable widget identity and never resets its offset on right-click.
+      assert!(planner.menu().is_some());
+      let with_menu = super::super::view(&planner, Scope::All);
+      assert_eq!(Tree::new(with_menu.as_widget()).children.len(), idle_children);
+    }
+
+    #[test]
+    fn it_renders_the_facility_picker_panel_across_match_states() {
+      // Open the facility picker on the root node — renders a row per eligible seeded facility.
+      let mut root = planner();
+      root.update(Message::CursorMoved(Point::new(120.0, 80.0)));
+      root.update(Message::FacilityPickerToggled {
+        type_id: HULK,
+      });
+      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
+
+      // A query that matches no facility renders the "No facilities match." empty state.
+      root.update(Message::FacilitySearchChanged {
+        type_id: HULK,
+        query: "zzzznomatch".to_owned(),
+      });
+      let _ = Tree::new(super::super::view(&root, Scope::All).as_widget());
+
+      // Opening the picker on a sub-node resolves the reaction flag from the node's own recipe.
+      let mut nested = planner();
+      nested.update(Message::CursorMoved(Point::new(120.0, 80.0)));
+      nested.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      nested.update(Message::FacilityPickerToggled {
+        type_id: RETRIEVER,
+      });
+      let _ = Tree::new(super::super::view(&nested, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_material_plan_grid_across_raw_and_buildable_rows() {
+      // The always-visible material plan on the HULK root emits the grid header plus a raw Tritanium row and a
+      // buildable Retriever row carrying the inline breakdown affordance.
+      let planner = planner();
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_material_plan_with_a_nested_building_row() {
+      // Breaking down the buildable Retriever recurses the material plan into its own materials, so the row
+      // renders the BUILDING badge, the per-row collapse chevron, and the nested depth-tinted children.
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_material_plan_with_stock_affordances_and_a_used_chip() {
+      const SITE: i64 = 60_000_001;
+      const SITE_SYSTEM: i64 = 30_000_142;
+
+      // Pin the root to a site holding Tritanium stock: the material row first shows the "Use Stock" button,
+      // then the active "STOCK" chip and from-stock split once the line is opted in.
+      let mut planner = planner();
+      planner.update(Message::FacilitySelected {
+        facility_structure: SITE,
+        pin: None,
+        solar_system_id: SITE_SYSTEM,
+        type_id: HULK,
+      });
+      planner.set_on_hand(std::collections::HashMap::from([((SITE, TRITANIUM), 4)]));
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+
+      planner.update(Message::StockSelectionToggled {
+        site: SITE,
+        type_id: TRITANIUM,
+      });
+      assert!(planner.is_stock_selected(SITE, TRITANIUM));
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_merged_build_order_with_a_multi_consumer_subline() {
+      // Root SHIP consumes two buildable sub-assemblies (LEFT, RIGHT), each of which consumes the same
+      // buildable PLATE — so the merged build order collapses PLATE into one row fed by two jobs.
+      const SHIP: i64 = 90_000;
+      const LEFT: i64 = 90_001;
+      const RIGHT: i64 = 90_002;
+      const PLATE: i64 = 90_003;
+      const ORE: i64 = 90_004;
+
+      let mut data = PlannerData::default();
+      data.recipes.insert(
+        SHIP,
+        recipe(
+          SHIP + 1,
+          1,
+          false,
+          vec![Material::new(LEFT, 1), Material::new(RIGHT, 1)],
+        ),
+      );
+      data
+        .recipes
+        .insert(LEFT, recipe(LEFT + 1, 1, false, vec![Material::new(PLATE, 3)]));
+      data
+        .recipes
+        .insert(RIGHT, recipe(RIGHT + 1, 1, false, vec![Material::new(PLATE, 4)]));
+      data
+        .recipes
+        .insert(PLATE, recipe(PLATE + 1, 1, false, vec![Material::new(ORE, 5)]));
+      for (id, name) in [
+        (SHIP, "Ship"),
+        (LEFT, "Left"),
+        (RIGHT, "Right"),
+        (PLATE, "Plate"),
+        (ORE, "Ore"),
+      ] {
+        data.names.insert(id, name.to_owned());
+        data.prices.insert(id, 1.0);
+      }
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Test".to_owned(),
+        is_reaction: false,
+        name: "Ship".to_owned(),
+        type_id: SHIP,
+        volume: 1.0,
+      });
+
+      let mut planner = Planner::new();
+      planner.apply_data(data);
+      planner.update(Message::ProductPicked(SHIP));
+      planner.update(Message::RunsChanged(1));
+      planner.update(Message::BreakDownAll);
+
+      // PLATE merges to a single job consumed by both LEFT and RIGHT.
+      let merged = planner.plan().unwrap().merged_build_order();
+      let plate = merged.iter().find(|job| job.type_id == PLATE).unwrap();
+      assert_eq!(plate.consumers.len(), 2);
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_needed_blueprints_section_across_owned_and_missing_states() {
+      // No owned blueprints — every needed blueprint shows the amber BUY / INVENT pill, all rows tinted.
+      let mut missing = planner();
+      missing.update(Message::BreakDownAll);
+      let _ = Tree::new(super::super::view(&missing, Scope::All).as_widget());
+
+      // Mark the in-house RETRIEVER blueprint as owned in-scope; its row reuses the owned BPO/ME badge.
+      let mut owned = planner();
+      owned.update(Message::BreakDownAll);
+      owned.data.owned.insert(
+        RETRIEVER,
+        OwnedSummary {
+          in_scope: true,
+          is_original: false,
+          material_efficiency: 8,
+          time_efficiency: 16,
+        },
+      );
+      owned.data.owned.insert(
+        HULK,
+        OwnedSummary {
+          in_scope: false,
+          is_original: true,
+          material_efficiency: 0,
+          time_efficiency: 0,
+        },
+      );
+      let _ = Tree::new(super::super::view(&owned, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_product_picker_across_empty_and_populated_result_states() {
+      // Picker open with no query — the seeded catalog (Hulk) yields a populated result list.
+      let mut populated = planner();
+      populated.update(Message::PickerToggled);
+      let _ = Tree::new(super::super::view(&populated, Scope::All).as_widget());
+
+      // A query that matches nothing renders the "No products match <query>" empty state.
+      let mut no_match = planner();
+      no_match.update(Message::SearchChanged("zzzznomatch".to_owned()));
+      let _ = Tree::new(super::super::view(&no_match, Scope::All).as_widget());
+
+      // A fresh planner with the picker open and no recent products renders the bare empty state.
+      let mut empty = Planner::new();
+      empty.update(Message::PickerToggled);
+      let _ = Tree::new(super::super::view(&empty, Scope::All).as_widget());
+
+      // No catalog matches under the chosen category, but a recently picked product backfills the list.
+      let mut recent = planner();
+      recent.update(Message::PickerToggled);
+      recent.update(Message::CategorySelected(Category::Module));
+      let _ = Tree::new(super::super::view(&recent, Scope::All).as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_product_picker_windowed_to_a_deep_scroll_offset() {
+      let mut planner = planner();
+      for type_id in 1_000..1_500 {
+        planner.data.catalog.push(CatalogEntry {
+          category: Category::Module,
+          group_name: "Filler".to_owned(),
+          is_reaction: false,
+          name: format!("Filler {type_id}"),
+          type_id,
+          volume: 1.0,
+        });
+        planner.data.prices.insert(type_id, 1.0);
+        planner.data.names.insert(type_id, format!("Filler {type_id}"));
+      }
+      // Open the picker on a query that matches the whole filler block, then scroll far past the first window.
+      planner.update(Message::SearchChanged("filler".to_owned()));
+      planner.update(Message::PickerScrolled {
+        absolute: 4_000.0,
+      });
+
+      // The picker materializes the windowed rows for the recorded offset rather than only the first screenful.
+      let rendered = super::super::view(&planner, Scope::All);
+      let _ = Tree::new(rendered.as_widget());
+      assert_eq!(planner.picker_scroll_offset(), 4_000.0);
     }
   }
 }

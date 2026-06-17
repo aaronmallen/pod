@@ -268,39 +268,6 @@ mod tests {
     }
   }
 
-  mod range_for_preset {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_spans_a_rolling_hour_for_last_hour() {
-      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
-
-      let (start, end) = range_for_preset(RangePreset::LastHour, now);
-
-      assert_eq!(end - start, Duration::hours(1));
-    }
-
-    #[test]
-    fn it_spans_a_rolling_week_for_last_seven_days() {
-      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
-
-      let (start, end) = range_for_preset(RangePreset::Last7Days, now);
-
-      assert_eq!(end - start, Duration::days(7));
-    }
-
-    #[test]
-    fn it_starts_at_local_midnight_for_today() {
-      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
-
-      let (start, end) = range_for_preset(RangePreset::Today, now);
-
-      assert_eq!(end - start, Duration::hours(15) + Duration::minutes(30));
-    }
-  }
-
   mod build_zip {
     use pretty_assertions::assert_eq;
 
@@ -374,6 +341,39 @@ mod tests {
       let name = default_file_name(utc(2026, 6, 9, 6), utc(2026, 6, 11, 0));
 
       assert_eq!(name, "pod-logs-20260609T060000Z-20260611T000000Z.zip");
+    }
+  }
+
+  mod range_for_preset {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_spans_a_rolling_hour_for_last_hour() {
+      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
+
+      let (start, end) = range_for_preset(RangePreset::LastHour, now);
+
+      assert_eq!(end - start, Duration::hours(1));
+    }
+
+    #[test]
+    fn it_spans_a_rolling_week_for_last_seven_days() {
+      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
+
+      let (start, end) = range_for_preset(RangePreset::Last7Days, now);
+
+      assert_eq!(end - start, Duration::days(7));
+    }
+
+    #[test]
+    fn it_starts_at_local_midnight_for_today() {
+      let now = Local.with_ymd_and_hms(2026, 6, 10, 15, 30, 0).unwrap();
+
+      let (start, end) = range_for_preset(RangePreset::Today, now);
+
+      assert_eq!(end - start, Duration::hours(15) + Duration::minutes(30));
     }
   }
 }

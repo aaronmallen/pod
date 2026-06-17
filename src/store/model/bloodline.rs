@@ -96,6 +96,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_leaves_ship_type_none_when_the_bloodline_has_no_ship() {
+      let bloodline = Bloodline {
+        bloodline_id: 1,
+        charisma: 6,
+        corporation_id: 1_000_006,
+        description: "The Deteis.".to_owned(),
+        intelligence: 7,
+        memory: 7,
+        name: "Deteis".to_owned(),
+        perception: 5,
+        race_id: 1,
+        ship_type_id: None,
+        willpower: 5,
+      };
+
+      let model = Model::from(bloodline);
+
+      assert_eq!(model.ship_type_id(), None);
+    }
+
+    #[test]
     fn it_widens_ids_and_sets_ship_type() {
       let bloodline = Bloodline {
         bloodline_id: 1,
@@ -116,27 +137,6 @@ mod tests {
       assert_eq!(model.id(), 1);
       assert_eq!(model.race_id(), 1);
       assert_eq!(model.ship_type_id(), Some(601));
-    }
-
-    #[test]
-    fn it_leaves_ship_type_none_when_the_bloodline_has_no_ship() {
-      let bloodline = Bloodline {
-        bloodline_id: 1,
-        charisma: 6,
-        corporation_id: 1_000_006,
-        description: "The Deteis.".to_owned(),
-        intelligence: 7,
-        memory: 7,
-        name: "Deteis".to_owned(),
-        perception: 5,
-        race_id: 1,
-        ship_type_id: None,
-        willpower: 5,
-      };
-
-      let model = Model::from(bloodline);
-
-      assert_eq!(model.ship_type_id(), None);
     }
   }
 }

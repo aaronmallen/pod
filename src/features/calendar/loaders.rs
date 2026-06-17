@@ -549,45 +549,6 @@ mod tests {
     }
   }
 
-  mod start {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_parses_an_rfc3339_timestamp() {
-      let parsed = event("2026-06-20T19:00:00Z", 0);
-
-      assert!(parsed.start().is_some());
-    }
-
-    #[test]
-    fn it_is_none_for_an_unparseable_timestamp() {
-      let parsed = event("not-a-date", 0);
-
-      assert!(parsed.start().is_none());
-    }
-
-    #[test]
-    fn it_adds_the_duration_to_compute_the_end() {
-      let parsed = event("2026-06-20T19:00:00Z", 90);
-
-      let span = parsed.end().unwrap() - parsed.start().unwrap();
-
-      assert_eq!(span.num_minutes(), 90);
-    }
-  }
-
-  mod is_all_day {
-    use super::*;
-
-    #[test]
-    fn it_treats_a_full_day_span_as_all_day() {
-      assert!(event("2026-06-20T00:00:00Z", 1440).is_all_day());
-      assert!(!event("2026-06-20T00:00:00Z", 90).is_all_day());
-    }
-  }
-
   mod group_thousands {
     use pretty_assertions::assert_eq;
 
@@ -607,52 +568,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_title_cases_an_underscored_type() {
-      assert_eq!(humanize("item_exchange"), "Item Exchange");
-    }
-
-    #[test]
     fn it_falls_back_for_an_empty_type() {
       assert_eq!(humanize(""), "Contract");
     }
-  }
-
-  mod synthetic_id {
-    use pretty_assertions::{assert_eq, assert_ne};
-
-    use super::*;
 
     #[test]
-    fn it_is_negative_so_it_cannot_collide_with_an_esi_event_id() {
-      assert!(synthetic_id(SOURCE_SKILL, 3300) < 0);
-      assert!(synthetic_id(SOURCE_MARKET, 1001) < 0);
-      assert!(synthetic_id(SOURCE_CONTRACT, 42) < 0);
-      assert!(synthetic_id(SOURCE_INDUSTRY, 5) < 0);
-      assert!(synthetic_id(SOURCE_INDUSTRY_CORP, 5) < 0);
-    }
-
-    #[test]
-    fn it_keeps_sources_in_disjoint_ranges() {
-      assert_ne!(synthetic_id(SOURCE_SKILL, 7), synthetic_id(SOURCE_MARKET, 7));
-      assert_ne!(synthetic_id(SOURCE_MARKET, 7), synthetic_id(SOURCE_CONTRACT, 7));
-      assert_ne!(synthetic_id(SOURCE_CONTRACT, 7), synthetic_id(SOURCE_INDUSTRY, 7));
-      assert_ne!(synthetic_id(SOURCE_INDUSTRY, 7), synthetic_id(SOURCE_INDUSTRY_CORP, 7));
-    }
-
-    #[test]
-    fn it_keeps_character_and_corporation_industry_jobs_distinct_for_the_same_job_id() {
-      assert_ne!(
-        synthetic_id(SOURCE_INDUSTRY, 99),
-        synthetic_id(SOURCE_INDUSTRY_CORP, 99)
-      );
-    }
-
-    #[test]
-    fn it_is_stable_across_reloads() {
-      assert_eq!(
-        synthetic_id(SOURCE_INDUSTRY, 12_345),
-        synthetic_id(SOURCE_INDUSTRY, 12_345)
-      );
+    fn it_title_cases_an_underscored_type() {
+      assert_eq!(humanize("item_exchange"), "Item Exchange");
     }
   }
 
@@ -660,26 +582,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_maps_running_jobs_to_completes() {
-      assert_eq!(industry_verb("active", None, None), "completes");
-    }
-
-    #[test]
-    fn it_maps_delivered_jobs_to_delivered() {
-      assert_eq!(industry_verb("delivered", None, None), "delivered");
-    }
-
-    #[test]
-    fn it_maps_cancelled_jobs_to_cancelled() {
-      assert_eq!(industry_verb("cancelled", None, None), "cancelled");
-    }
-
-    #[test]
-    fn it_maps_paused_jobs_to_paused() {
-      assert_eq!(industry_verb("paused", None, None), "paused");
-    }
 
     #[test]
     fn it_falls_back_to_completed_date_when_status_is_unknown() {
@@ -692,6 +594,36 @@ mod tests {
     #[test]
     fn it_falls_back_to_pause_date_when_status_is_unknown() {
       assert_eq!(industry_verb("mystery", None, Some("2026-06-19T00:00:00Z")), "paused");
+    }
+
+    #[test]
+    fn it_maps_cancelled_jobs_to_cancelled() {
+      assert_eq!(industry_verb("cancelled", None, None), "cancelled");
+    }
+
+    #[test]
+    fn it_maps_delivered_jobs_to_delivered() {
+      assert_eq!(industry_verb("delivered", None, None), "delivered");
+    }
+
+    #[test]
+    fn it_maps_paused_jobs_to_paused() {
+      assert_eq!(industry_verb("paused", None, None), "paused");
+    }
+
+    #[test]
+    fn it_maps_running_jobs_to_completes() {
+      assert_eq!(industry_verb("active", None, None), "completes");
+    }
+  }
+
+  mod is_all_day {
+    use super::*;
+
+    #[test]
+    fn it_treats_a_full_day_span_as_all_day() {
+      assert!(event("2026-06-20T00:00:00Z", 1440).is_all_day());
+      assert!(!event("2026-06-20T00:00:00Z", 90).is_all_day());
     }
   }
 
@@ -980,6 +912,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_derives_nothing_when_all_overlay_features_are_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_sources(&db, 42).await;
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+      features.set_enabled(Feature::Industry, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_derives_one_overlay_per_source_when_both_features_are_enabled() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -993,30 +940,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_tags_each_overlay_with_a_resolved_title_and_source() {
+    async fn it_drops_market_and_contract_overlays_when_wallet_is_disabled() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_sources(&db, 42).await;
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::Wallet, false);
 
-      let overlays = super::super::load_overlays(&db, &[42], FeatureFlags::default()).await;
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
 
-      let skill = overlays
-        .iter()
-        .find(|e| e.source.as_deref() == Some(SOURCE_SKILL))
-        .unwrap();
-      assert_eq!(skill.title, "Capacitor Management V completes");
-
-      let market = overlays
-        .iter()
-        .find(|e| e.source.as_deref() == Some(SOURCE_MARKET))
-        .unwrap();
-      assert_eq!(market.title, "Sell order expires \u{2014} Tritanium \u{00D7}5,000");
-
-      let contract = overlays
-        .iter()
-        .find(|e| e.source.as_deref() == Some(SOURCE_CONTRACT))
-        .unwrap();
-      assert_eq!(contract.title, "Contract expires \u{2014} Item Exchange");
+      assert_eq!(overlays.len(), 1);
+      assert_eq!(overlays[0].source.as_deref(), Some(SOURCE_SKILL));
     }
 
     #[tokio::test]
@@ -1038,24 +972,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_drops_market_and_contract_overlays_when_wallet_is_disabled() {
+    async fn it_falls_back_to_the_blueprint_name_for_a_null_product() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_sources(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 1, 5, None, "active")])
+        .await
+        .unwrap();
       let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
       features.set_enabled(Feature::Wallet, false);
 
       let overlays = super::super::load_overlays(&db, &[42], features).await;
 
       assert_eq!(overlays.len(), 1);
-      assert_eq!(overlays[0].source.as_deref(), Some(SOURCE_SKILL));
+      assert_eq!(
+        overlays[0].title,
+        "Ibis Blueprint \u{00D7}10 completes \u{2014} Copying"
+      );
     }
 
     #[tokio::test]
-    async fn it_derives_nothing_when_all_overlay_features_are_disabled() {
+    async fn it_falls_back_to_the_moon_id_when_the_moon_is_not_in_the_sde() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_sources(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(
+        overlays
+          .iter()
+          .any(|event| event.title == "Moon 40000999 \u{2014} chunk arrival")
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_character_and_corporation_job_ids_disjoint() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      seed_item(&db, 34, "Tritanium").await;
+      own_corporation(&db, 90_000_001, 42).await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 5, 1, Some(587), "active")])
+        .await
+        .unwrap();
+      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 5)])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
+      assert_eq!(overlays.len(), 2);
+      assert_ne!(ids[0], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_extraction_arrival_and_decay_synthetic_ids_disjoint() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
+      assert_eq!(overlays.len(), 2);
+      assert_ne!(ids[0], ids[1]);
+    }
+
+    #[tokio::test]
+    async fn it_removes_extraction_overlays_when_the_industry_feature_is_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      org::replace_extractions_for_corporation(
+        &db,
+        90_000_001,
+        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+      )
+      .await
+      .unwrap();
       let mut features = FeatureFlags::default();
       features.set_enabled(Feature::SkillMonitoring, false);
       features.set_enabled(Feature::Wallet, false);
@@ -1064,6 +1085,49 @@ mod tests {
       let overlays = super::super::load_overlays(&db, &[42], features).await;
 
       assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_removes_industry_overlays_when_the_feature_is_disabled() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      own_corporation(&db, 90_000_001, 42).await;
+      industry::replace_for_character(&db, 42, &[character_job(42, 1, 1, Some(587), "active")])
+        .await
+        .unwrap();
+      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 7)])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+      features.set_enabled(Feature::Industry, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert!(overlays.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_skips_extraction_events_with_a_missing_timestamp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      own_corporation(&db, 90_000_001, 42).await;
+      let mut without_decay = extraction(90_000_001, 1_021_000_000_001, 40_000_999);
+      without_decay.natural_decay_time = None;
+      org::replace_extractions_for_corporation(&db, 90_000_001, &[without_decay])
+        .await
+        .unwrap();
+      let mut features = FeatureFlags::default();
+      features.set_enabled(Feature::SkillMonitoring, false);
+      features.set_enabled(Feature::Wallet, false);
+
+      let overlays = super::super::load_overlays(&db, &[42], features).await;
+
+      assert_eq!(overlays.len(), 1);
+      assert!(overlays[0].title.ends_with("chunk arrival"));
     }
 
     #[tokio::test]
@@ -1115,111 +1179,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_surfaces_jobs_of_every_status() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item(&db, 962, "Ibis Blueprint").await;
-      seed_item(&db, 587, "Rifter").await;
-      industry::replace_for_character(
-        &db,
-        42,
-        &[
-          character_job(42, 1, 1, Some(587), "active"),
-          character_job(42, 2, 1, Some(587), "delivered"),
-          character_job(42, 3, 1, Some(587), "cancelled"),
-          character_job(42, 4, 1, Some(587), "paused"),
-        ],
-      )
-      .await
-      .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      let verbs: Vec<&str> = overlays
-        .iter()
-        .filter_map(|event| event.title.split(" \u{2014} ").next())
-        .filter_map(|head| head.rsplit(' ').next())
-        .collect();
-      assert_eq!(overlays.len(), 4);
-      assert!(verbs.contains(&"completes"));
-      assert!(verbs.contains(&"delivered"));
-      assert!(verbs.contains(&"cancelled"));
-      assert!(verbs.contains(&"paused"));
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_blueprint_name_for_a_null_product() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item(&db, 962, "Ibis Blueprint").await;
-      industry::replace_for_character(&db, 42, &[character_job(42, 1, 5, None, "active")])
-        .await
-        .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      assert_eq!(overlays.len(), 1);
-      assert_eq!(
-        overlays[0].title,
-        "Ibis Blueprint \u{00D7}10 completes \u{2014} Copying"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_removes_industry_overlays_when_the_feature_is_disabled() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item(&db, 962, "Ibis Blueprint").await;
-      seed_item(&db, 587, "Rifter").await;
-      own_corporation(&db, 90_000_001, 42).await;
-      industry::replace_for_character(&db, 42, &[character_job(42, 1, 1, Some(587), "active")])
-        .await
-        .unwrap();
-      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 7)])
-        .await
-        .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-      features.set_enabled(Feature::Industry, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      assert!(overlays.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_keeps_character_and_corporation_job_ids_disjoint() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item(&db, 962, "Ibis Blueprint").await;
-      seed_item(&db, 587, "Rifter").await;
-      seed_item(&db, 34, "Tritanium").await;
-      own_corporation(&db, 90_000_001, 42).await;
-      industry::replace_for_character(&db, 42, &[character_job(42, 5, 1, Some(587), "active")])
-        .await
-        .unwrap();
-      industry::replace_for_corporation(&db, 90_000_001, &[corporation_job(90_000_001, 42, 5)])
-        .await
-        .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
-      assert_eq!(overlays.len(), 2);
-      assert_ne!(ids[0], ids[1]);
-    }
-
-    #[tokio::test]
     async fn it_surfaces_a_mining_extraction_as_arrival_and_decay_events() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -1257,14 +1216,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_keeps_extraction_arrival_and_decay_synthetic_ids_disjoint() {
+    async fn it_surfaces_jobs_of_every_status() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      own_corporation(&db, 90_000_001, 42).await;
-      org::replace_extractions_for_corporation(
+      seed_item(&db, 962, "Ibis Blueprint").await;
+      seed_item(&db, 587, "Rifter").await;
+      industry::replace_for_character(
         &db,
-        90_000_001,
-        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
+        42,
+        &[
+          character_job(42, 1, 1, Some(587), "active"),
+          character_job(42, 2, 1, Some(587), "delivered"),
+          character_job(42, 3, 1, Some(587), "cancelled"),
+          character_job(42, 4, 1, Some(587), "paused"),
+        ],
       )
       .await
       .unwrap();
@@ -1274,76 +1239,111 @@ mod tests {
 
       let overlays = super::super::load_overlays(&db, &[42], features).await;
 
-      let ids: Vec<i64> = overlays.iter().map(|event| event.event_id).collect();
-      assert_eq!(overlays.len(), 2);
-      assert_ne!(ids[0], ids[1]);
+      let verbs: Vec<&str> = overlays
+        .iter()
+        .filter_map(|event| event.title.split(" \u{2014} ").next())
+        .filter_map(|head| head.rsplit(' ').next())
+        .collect();
+      assert_eq!(overlays.len(), 4);
+      assert!(verbs.contains(&"completes"));
+      assert!(verbs.contains(&"delivered"));
+      assert!(verbs.contains(&"cancelled"));
+      assert!(verbs.contains(&"paused"));
     }
 
     #[tokio::test]
-    async fn it_falls_back_to_the_moon_id_when_the_moon_is_not_in_the_sde() {
+    async fn it_tags_each_overlay_with_a_resolved_title_and_source() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      own_corporation(&db, 90_000_001, 42).await;
-      org::replace_extractions_for_corporation(
-        &db,
-        90_000_001,
-        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
-      )
-      .await
-      .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
+      seed_sources(&db, 42).await;
 
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
+      let overlays = super::super::load_overlays(&db, &[42], FeatureFlags::default()).await;
 
-      assert!(
-        overlays
-          .iter()
-          .any(|event| event.title == "Moon 40000999 \u{2014} chunk arrival")
+      let skill = overlays
+        .iter()
+        .find(|e| e.source.as_deref() == Some(SOURCE_SKILL))
+        .unwrap();
+      assert_eq!(skill.title, "Capacitor Management V completes");
+
+      let market = overlays
+        .iter()
+        .find(|e| e.source.as_deref() == Some(SOURCE_MARKET))
+        .unwrap();
+      assert_eq!(market.title, "Sell order expires \u{2014} Tritanium \u{00D7}5,000");
+
+      let contract = overlays
+        .iter()
+        .find(|e| e.source.as_deref() == Some(SOURCE_CONTRACT))
+        .unwrap();
+      assert_eq!(contract.title, "Contract expires \u{2014} Item Exchange");
+    }
+  }
+
+  mod start {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_adds_the_duration_to_compute_the_end() {
+      let parsed = event("2026-06-20T19:00:00Z", 90);
+
+      let span = parsed.end().unwrap() - parsed.start().unwrap();
+
+      assert_eq!(span.num_minutes(), 90);
+    }
+
+    #[test]
+    fn it_is_none_for_an_unparseable_timestamp() {
+      let parsed = event("not-a-date", 0);
+
+      assert!(parsed.start().is_none());
+    }
+
+    #[test]
+    fn it_parses_an_rfc3339_timestamp() {
+      let parsed = event("2026-06-20T19:00:00Z", 0);
+
+      assert!(parsed.start().is_some());
+    }
+  }
+
+  mod synthetic_id {
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    use super::*;
+
+    #[test]
+    fn it_is_negative_so_it_cannot_collide_with_an_esi_event_id() {
+      assert!(synthetic_id(SOURCE_SKILL, 3300) < 0);
+      assert!(synthetic_id(SOURCE_MARKET, 1001) < 0);
+      assert!(synthetic_id(SOURCE_CONTRACT, 42) < 0);
+      assert!(synthetic_id(SOURCE_INDUSTRY, 5) < 0);
+      assert!(synthetic_id(SOURCE_INDUSTRY_CORP, 5) < 0);
+    }
+
+    #[test]
+    fn it_is_stable_across_reloads() {
+      assert_eq!(
+        synthetic_id(SOURCE_INDUSTRY, 12_345),
+        synthetic_id(SOURCE_INDUSTRY, 12_345)
       );
     }
 
-    #[tokio::test]
-    async fn it_skips_extraction_events_with_a_missing_timestamp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      own_corporation(&db, 90_000_001, 42).await;
-      let mut without_decay = extraction(90_000_001, 1_021_000_000_001, 40_000_999);
-      without_decay.natural_decay_time = None;
-      org::replace_extractions_for_corporation(&db, 90_000_001, &[without_decay])
-        .await
-        .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      assert_eq!(overlays.len(), 1);
-      assert!(overlays[0].title.ends_with("chunk arrival"));
+    #[test]
+    fn it_keeps_character_and_corporation_industry_jobs_distinct_for_the_same_job_id() {
+      assert_ne!(
+        synthetic_id(SOURCE_INDUSTRY, 99),
+        synthetic_id(SOURCE_INDUSTRY_CORP, 99)
+      );
     }
 
-    #[tokio::test]
-    async fn it_removes_extraction_overlays_when_the_industry_feature_is_disabled() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      own_corporation(&db, 90_000_001, 42).await;
-      org::replace_extractions_for_corporation(
-        &db,
-        90_000_001,
-        &[extraction(90_000_001, 1_021_000_000_001, 40_000_999)],
-      )
-      .await
-      .unwrap();
-      let mut features = FeatureFlags::default();
-      features.set_enabled(Feature::SkillMonitoring, false);
-      features.set_enabled(Feature::Wallet, false);
-      features.set_enabled(Feature::Industry, false);
-
-      let overlays = super::super::load_overlays(&db, &[42], features).await;
-
-      assert!(overlays.is_empty());
+    #[test]
+    fn it_keeps_sources_in_disjoint_ranges() {
+      assert_ne!(synthetic_id(SOURCE_SKILL, 7), synthetic_id(SOURCE_MARKET, 7));
+      assert_ne!(synthetic_id(SOURCE_MARKET, 7), synthetic_id(SOURCE_CONTRACT, 7));
+      assert_ne!(synthetic_id(SOURCE_CONTRACT, 7), synthetic_id(SOURCE_INDUSTRY, 7));
+      assert_ne!(synthetic_id(SOURCE_INDUSTRY, 7), synthetic_id(SOURCE_INDUSTRY_CORP, 7));
     }
   }
 }

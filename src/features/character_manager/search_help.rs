@@ -394,15 +394,17 @@ fn tag_chip_style(_theme: &iced::Theme, status: button::Status) -> button::Style
 mod tests {
   use super::*;
 
-  mod search_bar {
+  mod popover {
     use super::*;
 
     #[test]
-    fn it_renders_without_a_clear_control_when_the_query_is_empty() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = search_bar(&state);
+    fn it_renders_the_help_popover() {
+      let _el: Element<'_, Message> = popover(&[]);
     }
+  }
+
+  mod search_bar {
+    use super::*;
 
     #[test]
     fn it_renders_the_clear_control_and_active_help_toggle_with_a_query() {
@@ -412,14 +414,12 @@ mod tests {
 
       let _el: Element<'_, Message> = search_bar(&state);
     }
-  }
-
-  mod popover {
-    use super::*;
 
     #[test]
-    fn it_renders_the_help_popover() {
-      let _el: Element<'_, Message> = popover(&[]);
+    fn it_renders_without_a_clear_control_when_the_query_is_empty() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = search_bar(&state);
     }
   }
 }

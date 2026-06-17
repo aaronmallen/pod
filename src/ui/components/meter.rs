@@ -94,8 +94,8 @@ mod tests {
     use crate::ui::style::color;
 
     #[test]
-    fn it_renders_a_positive_value() {
-      let _el: Element<'_, ()> = diverging(7.0, 10.0, color::status::ONLINE, 160.0, 6.0);
+    fn it_handles_a_zero_max() {
+      let _el: Element<'_, ()> = diverging(5.0, 0.0, color::status::ONLINE, 160.0, 6.0);
     }
 
     #[test]
@@ -104,8 +104,8 @@ mod tests {
     }
 
     #[test]
-    fn it_handles_a_zero_max() {
-      let _el: Element<'_, ()> = diverging(5.0, 0.0, color::status::ONLINE, 160.0, 6.0);
+    fn it_renders_a_positive_value() {
+      let _el: Element<'_, ()> = diverging(7.0, 10.0, color::status::ONLINE, 160.0, 6.0);
     }
   }
 
@@ -114,13 +114,13 @@ mod tests {
     use crate::ui::style::color;
 
     #[test]
-    fn it_renders_a_partial_fill() {
-      let _el: Element<'_, ()> = single_ended(0.6, color::accent::PLASMA, 8.0);
+    fn it_clamps_out_of_range_fractions() {
+      let _el: Element<'_, ()> = single_ended(1.5, color::accent::PLASMA, 8.0);
     }
 
     #[test]
-    fn it_clamps_out_of_range_fractions() {
-      let _el: Element<'_, ()> = single_ended(1.5, color::accent::PLASMA, 8.0);
+    fn it_renders_a_partial_fill() {
+      let _el: Element<'_, ()> = single_ended(0.6, color::accent::PLASMA, 8.0);
     }
   }
 }

@@ -71,20 +71,6 @@ mod tests {
   #[derive(Clone, Debug)]
   enum Message {}
 
-  mod section_header {
-    use super::*;
-
-    #[test]
-    fn it_builds_an_eyebrow_without_right_meta() {
-      let _el: Element<'_, Message> = section_header("Overview", None);
-    }
-
-    #[test]
-    fn it_builds_an_eyebrow_with_right_meta() {
-      let _el: Element<'_, Message> = section_header("Overview", Some("3 items"));
-    }
-  }
-
   mod column_headers {
     use super::*;
 
@@ -96,6 +82,20 @@ mod tests {
     #[test]
     fn it_builds_mixed_alignment_columns() {
       let _el: Element<'_, Message> = column_headers(&[("Item", false), ("Qty", true), ("Value", true)]);
+    }
+  }
+
+  mod section_header {
+    use super::*;
+
+    #[test]
+    fn it_builds_an_eyebrow_with_right_meta() {
+      let _el: Element<'_, Message> = section_header("Overview", Some("3 items"));
+    }
+
+    #[test]
+    fn it_builds_an_eyebrow_without_right_meta() {
+      let _el: Element<'_, Message> = section_header("Overview", None);
     }
   }
 }

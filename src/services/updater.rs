@@ -280,76 +280,6 @@ mod tests {
     (engine, state_rx)
   }
 
-  #[test]
-  fn state_defaults_to_idle() {
-    assert_eq!(State::default(), State::Idle);
-  }
-
-  #[tokio::test]
-  async fn shutdown_sends_the_loop_breaking_command() {
-    let (commands, mut rx) = mpsc::channel(4);
-    let (_state_tx, state) = watch::channel(State::Idle);
-    let handle = Handle {
-      commands,
-      state,
-    };
-
-    handle.shutdown();
-
-    assert!(
-      matches!(rx.recv().await, Some(Command::Shutdown)),
-      "shutdown sends the Shutdown command that breaks the updater run loop"
-    );
-  }
-
-  #[test]
-  fn state_exposes_target_version_only_when_relevant() {
-    assert_eq!(State::Idle.version(), None);
-    assert_eq!(
-      State::Error {
-        message: "boom".to_owned()
-      }
-      .version(),
-      None
-    );
-    assert_eq!(
-      State::UpdateAvailable {
-        version: "1.2.3".to_owned()
-      }
-      .version(),
-      Some("1.2.3")
-    );
-    assert_eq!(
-      State::Downloading {
-        version: "1.2.3".to_owned()
-      }
-      .version(),
-      Some("1.2.3")
-    );
-    assert_eq!(
-      State::ReadyToRestart {
-        version: "1.2.3".to_owned()
-      }
-      .version(),
-      Some("1.2.3")
-    );
-  }
-
-  #[test]
-  fn set_publishes_state_to_watchers() {
-    let (engine, mut rx) = engine();
-    engine.set(State::UpdateAvailable {
-      version: "9.9.9".to_owned(),
-    });
-    assert!(rx.has_changed().unwrap());
-    assert_eq!(
-      *rx.borrow_and_update(),
-      State::UpdateAvailable {
-        version: "9.9.9".to_owned()
-      }
-    );
-  }
-
   #[tokio::test]
   async fn apply_without_pending_update_is_a_no_op() {
     let (mut engine, rx) = engine();
@@ -358,12 +288,6 @@ mod tests {
       !rx.has_changed().unwrap(),
       "apply with no pending update must not transition state"
     );
-  }
-
-  #[tokio::test]
-  async fn restart_does_nothing_when_not_ready() {
-    let (engine, _rx) = engine();
-    engine.restart();
   }
 
   #[tokio::test]
@@ -402,5 +326,81 @@ mod tests {
     handle.check();
     handle.apply();
     handle.restart();
+  }
+
+  #[tokio::test]
+  async fn restart_does_nothing_when_not_ready() {
+    let (engine, _rx) = engine();
+    engine.restart();
+  }
+
+  #[test]
+  fn set_publishes_state_to_watchers() {
+    let (engine, mut rx) = engine();
+    engine.set(State::UpdateAvailable {
+      version: "9.9.9".to_owned(),
+    });
+    assert!(rx.has_changed().unwrap());
+    assert_eq!(
+      *rx.borrow_and_update(),
+      State::UpdateAvailable {
+        version: "9.9.9".to_owned()
+      }
+    );
+  }
+
+  #[tokio::test]
+  async fn shutdown_sends_the_loop_breaking_command() {
+    let (commands, mut rx) = mpsc::channel(4);
+    let (_state_tx, state) = watch::channel(State::Idle);
+    let handle = Handle {
+      commands,
+      state,
+    };
+
+    handle.shutdown();
+
+    assert!(
+      matches!(rx.recv().await, Some(Command::Shutdown)),
+      "shutdown sends the Shutdown command that breaks the updater run loop"
+    );
+  }
+
+  #[test]
+  fn state_defaults_to_idle() {
+    assert_eq!(State::default(), State::Idle);
+  }
+
+  #[test]
+  fn state_exposes_target_version_only_when_relevant() {
+    assert_eq!(State::Idle.version(), None);
+    assert_eq!(
+      State::Error {
+        message: "boom".to_owned()
+      }
+      .version(),
+      None
+    );
+    assert_eq!(
+      State::UpdateAvailable {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
+    assert_eq!(
+      State::Downloading {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
+    assert_eq!(
+      State::ReadyToRestart {
+        version: "1.2.3".to_owned()
+      }
+      .version(),
+      Some("1.2.3")
+    );
   }
 }

@@ -204,6 +204,31 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_aborts_without_writing_when_the_contacts_fetch_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/2000/contacts/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 2000).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 2000);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(fetch_contacts(&db, 2000).await.is_empty());
+      assert!(fetch_labels(&db, 2000).await.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_is_empty_when_the_corporation_has_no_contacts() {
       let server = MockServer::start().await;
       mount_json(&server, "/corporations/2000/contacts/", serde_json::json!([])).await;
@@ -318,31 +343,6 @@ mod tests {
       let contacts = fetch_contacts(&db, 2000).await;
       assert_eq!(contacts[0].contact_name(), "Amarr Empire");
       assert!(sde::get_faction(&db, 500_003).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_contacts_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/corporations/2000/contacts/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db, 2000).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 2000);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(fetch_contacts(&db, 2000).await.is_empty());
-      assert!(fetch_labels(&db, 2000).await.is_empty());
     }
 
     #[tokio::test]

@@ -637,18 +637,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_grouped_sections_in_the_default_view() {
-      let rows = vec![
-        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
-        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
-        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
-      ];
-      let catalog = LoadState::Loaded(rows);
-
-      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, false, 600.0, 0.0);
-    }
-
-    #[test]
     fn it_renders_each_facet_filter() {
       let rows = vec![
         row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
@@ -670,6 +658,18 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_grouped_sections_in_the_default_view() {
+      let rows = vec![
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
+      ];
+      let catalog = LoadState::Loaded(rows);
+
+      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, false, 600.0, 0.0);
+    }
+
+    #[test]
     fn it_renders_the_loading_and_error_and_empty_states() {
       let loading: LoadState<Vec<StandingsRow>> = LoadState::Loading;
       let error: LoadState<Vec<StandingsRow>> = LoadState::Error("boom".to_owned());
@@ -681,25 +681,43 @@ mod tests {
     }
   }
 
-  mod header {
+  mod filter {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
-    #[test]
-    fn it_renders_the_search_bar_and_filter() {
-      let _el: Element<'_, Message> = header("faction:caldari", StandingsFilter::All, true);
+    fn catalog() -> Vec<StandingsRow> {
+      vec![
+        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
+        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
+        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
+        agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
+        agent(3_000_002, "Rogue Agent", None, Some(false)),
+      ]
     }
-  }
 
-  mod row_view {
-    use super::*;
+    fn matched(filter: StandingsFilter) -> usize {
+      catalog().iter().filter(|row| filter.matches(row)).count()
+    }
 
     #[test]
-    fn it_renders_a_plain_row_and_an_agent_row() {
-      let plain = row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0);
-      let agent_row = agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true));
+    fn it_keeps_only_the_other_bucket() {
+      assert_eq!(matched(StandingsFilter::Other), 2);
+    }
 
-      let _plain: Element<'_, Message> = super::super::row_view(&plain, false);
-      let _agent: Element<'_, Message> = super::super::row_view(&agent_row, true);
+    #[test]
+    fn it_passes_everything_for_all() {
+      assert_eq!(matched(StandingsFilter::All), 5);
+    }
+
+    #[test]
+    fn it_surfaces_agents_only_for_all_and_agents() {
+      assert!(StandingsFilter::All.surfaces_agents());
+      assert!(StandingsFilter::Agents.surfaces_agents());
+
+      assert!(!StandingsFilter::Factions.surfaces_agents());
+      assert!(!StandingsFilter::Corps.surfaces_agents());
+      assert!(!StandingsFilter::Other.surfaces_agents());
     }
   }
 
@@ -738,43 +756,12 @@ mod tests {
     }
   }
 
-  mod filter {
-    use pretty_assertions::assert_eq;
-
+  mod header {
     use super::*;
 
-    fn catalog() -> Vec<StandingsRow> {
-      vec![
-        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
-        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
-        row(1_000_100, StandingKind::Corporation, "Doomheim", None, 0.0),
-        agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
-        agent(3_000_002, "Rogue Agent", None, Some(false)),
-      ]
-    }
-
-    fn matched(filter: StandingsFilter) -> usize {
-      catalog().iter().filter(|row| filter.matches(row)).count()
-    }
-
     #[test]
-    fn it_surfaces_agents_only_for_all_and_agents() {
-      assert!(StandingsFilter::All.surfaces_agents());
-      assert!(StandingsFilter::Agents.surfaces_agents());
-
-      assert!(!StandingsFilter::Factions.surfaces_agents());
-      assert!(!StandingsFilter::Corps.surfaces_agents());
-      assert!(!StandingsFilter::Other.surfaces_agents());
-    }
-
-    #[test]
-    fn it_passes_everything_for_all() {
-      assert_eq!(matched(StandingsFilter::All), 5);
-    }
-
-    #[test]
-    fn it_keeps_only_the_other_bucket() {
-      assert_eq!(matched(StandingsFilter::Other), 2);
+    fn it_renders_the_search_bar_and_filter() {
+      let _el: Element<'_, Message> = header("faction:caldari", StandingsFilter::All, true);
     }
   }
 
@@ -786,6 +773,19 @@ mod tests {
       for kind in [ChipKind::Negated, ChipKind::KeyValue, ChipKind::FreeText] {
         let _el: Element<'_, Message> = super::super::preview_chip("label", &kind);
       }
+    }
+  }
+
+  mod row_view {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_plain_row_and_an_agent_row() {
+      let plain = row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0);
+      let agent_row = agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true));
+
+      let _plain: Element<'_, Message> = super::super::row_view(&plain, false);
+      let _agent: Element<'_, Message> = super::super::row_view(&agent_row, true);
     }
   }
 }

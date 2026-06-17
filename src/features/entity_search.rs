@@ -190,23 +190,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_round_trips_through_the_esi_category_string() {
-      for category in [
-        EntityCategory::Alliance,
-        EntityCategory::Character,
-        EntityCategory::Corporation,
-      ] {
-        assert_eq!(EntityCategory::from_esi(category.esi_category()), Some(category));
-      }
-    }
-
-    #[test]
-    fn it_rejects_unsupported_esi_categories() {
-      assert_eq!(EntityCategory::from_esi("solar_system"), None);
-      assert_eq!(EntityCategory::from_esi(""), None);
-    }
-
-    #[test]
     fn it_maps_each_category_to_its_image_kind() {
       assert_eq!(EntityCategory::Alliance.image_kind(), images::ImageKind::AllianceLogo);
       assert_eq!(
@@ -217,6 +200,23 @@ mod tests {
         EntityCategory::Corporation.image_kind(),
         images::ImageKind::CorporationLogo
       );
+    }
+
+    #[test]
+    fn it_rejects_unsupported_esi_categories() {
+      assert_eq!(EntityCategory::from_esi("solar_system"), None);
+      assert_eq!(EntityCategory::from_esi(""), None);
+    }
+
+    #[test]
+    fn it_round_trips_through_the_esi_category_string() {
+      for category in [
+        EntityCategory::Alliance,
+        EntityCategory::Character,
+        EntityCategory::Corporation,
+      ] {
+        assert_eq!(EntityCategory::from_esi(category.esi_category()), Some(category));
+      }
     }
   }
 
@@ -272,6 +272,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_passes_through_only_the_requested_categories() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/search/"))
+        .and(query_param("categories", "character"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[95]}"#, "application/json"))
+        .mount(&server)
+        .await;
+      Mock::given(method("POST"))
+        .and(path("/universe/names/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"[{"id":95,"name":"Vex Voronova","category":"character"}]"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let (db, esi, eve_image, sso) = make_clients(&server.uri()).await;
+      seed_owned_character(&db).await;
+
+      let results = search_entities(
+        db,
+        esi,
+        eve_image,
+        sso,
+        vec![EntityCategory::Character],
+        "Vex".to_owned(),
+      )
+      .await;
+
+      assert_eq!(results.len(), 1);
+      assert_eq!(results[0].category, EntityCategory::Character);
+    }
+
+    #[tokio::test]
     async fn it_resolves_results_across_the_caller_specified_categories_with_their_category() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -319,40 +353,6 @@ mod tests {
           },
         ]
       );
-    }
-
-    #[tokio::test]
-    async fn it_passes_through_only_the_requested_categories() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/search/"))
-        .and(query_param("categories", "character"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[95]}"#, "application/json"))
-        .mount(&server)
-        .await;
-      Mock::given(method("POST"))
-        .and(path("/universe/names/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-          r#"[{"id":95,"name":"Vex Voronova","category":"character"}]"#,
-          "application/json",
-        ))
-        .mount(&server)
-        .await;
-      let (db, esi, eve_image, sso) = make_clients(&server.uri()).await;
-      seed_owned_character(&db).await;
-
-      let results = search_entities(
-        db,
-        esi,
-        eve_image,
-        sso,
-        vec![EntityCategory::Character],
-        "Vex".to_owned(),
-      )
-      .await;
-
-      assert_eq!(results.len(), 1);
-      assert_eq!(results[0].category, EntityCategory::Character);
     }
 
     #[tokio::test]

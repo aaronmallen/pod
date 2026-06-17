@@ -995,44 +995,6 @@ mod tests {
     }
   }
 
-  mod enum_defaults {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_preserves_the_segmented_control_defaults_after_alphabetizing() {
-      assert_eq!(Filter::default(), Filter::All);
-      assert_eq!(BlueprintKind::default(), BlueprintKind::All);
-      assert_eq!(BlueprintSort::default(), BlueprintSort::Name);
-    }
-  }
-
-  mod facility_defaults {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_an_industry_config_to_per_activity_defaults() {
-      let mut config = crate::config::IndustryConfig::default();
-      config.set_manufacturing(Some(60_003_760));
-      config.set_reactions(Some(1_021_000_000_009));
-
-      let defaults = FacilityDefaults::from(&config);
-
-      assert_eq!(defaults.manufacturing, Some(60_003_760));
-      assert_eq!(defaults.reactions, Some(1_021_000_000_009));
-    }
-
-    #[test]
-    fn it_maps_an_unset_config_to_no_defaults() {
-      let defaults = FacilityDefaults::from(&crate::config::IndustryConfig::default());
-
-      assert_eq!(defaults, FacilityDefaults::default());
-    }
-  }
-
   mod blueprints_state {
     use pretty_assertions::assert_eq;
 
@@ -1047,23 +1009,6 @@ mod tests {
       // corporation remain.
       assert_eq!(visible.len(), 3);
       assert!(visible.iter().all(|bp| bp.owner != Owner::Character(2)));
-    }
-
-    #[tokio::test]
-    async fn it_stores_the_blueprint_scroll_offset() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = populated();
-
-      let _ = update(
-        &mut state,
-        Message::BlueprintScrolled {
-          absolute: 512.0,
-        },
-        &db,
-        now(),
-      );
-
-      assert_eq!(state.blueprint_scroll_offset(), 512.0);
     }
 
     #[tokio::test]
@@ -1089,190 +1034,22 @@ mod tests {
       assert_eq!(state.blueprint_search(), "rifter");
       assert_eq!(state.blueprint_scroll_offset(), 0.0);
     }
-  }
 
-  mod rendering {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_combined_view() {
-      let state = populated();
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_each_group_by() {
+    #[tokio::test]
+    async fn it_stores_the_blueprint_scroll_offset() {
+      let db = crate::store::open_test().await.unwrap();
       let mut state = populated();
-      for group_by in [GroupBy::None, GroupBy::Owner, GroupBy::Activity, GroupBy::Facility] {
-        state.group_by = group_by;
-        let _el: Element<'_, Message> = view(&state, &required(), now());
-      }
-    }
 
-    #[test]
-    fn it_renders_each_filter() {
-      let mut state = populated();
-      for filter in [Filter::All, Filter::Active, Filter::Ready] {
-        state.filter = filter;
-        let _el: Element<'_, Message> = view(&state, &required(), now());
-      }
-    }
-
-    #[test]
-    fn it_renders_the_blueprints_tab_for_each_kind_and_sort() {
-      let mut state = populated();
-      state.tab = Tab::Blueprints;
-      for kind in [BlueprintKind::All, BlueprintKind::Originals, BlueprintKind::Copies] {
-        state.blueprint_kind = kind;
-        for sort in [
-          BlueprintSort::Name,
-          BlueprintSort::MaterialEfficiency,
-          BlueprintSort::Runs,
-        ] {
-          state.blueprint_sort = sort;
-          let _el: Element<'_, Message> = view(&state, &required(), now());
-        }
-      }
-    }
-
-    #[test]
-    fn it_renders_the_extractions_tab() {
-      let mut state = populated();
-      state.tab = Tab::Extractions;
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_an_empty_extractions_tab() {
-      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
-      state.tab = Tab::Extractions;
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_an_empty_blueprints_tab() {
-      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
-      state.tab = Tab::Blueprints;
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_the_planner_tab_loading_and_loaded() {
-      use planner_loaders::{CatalogEntry, Category, PlannerData, Recipe};
-      use planner_model::Material;
-
-      let mut state = populated();
-      state.tab = Tab::Planner;
-
-      {
-        let _loading: Element<'_, Message> = view(&state, &required(), now());
-      }
-
-      let mut data = PlannerData::default();
-      data.recipes.insert(
-        22_544,
-        Recipe {
-          activity_id: 1,
-          blueprint_type_id: 22_545,
-          is_reaction: false,
-          materials: vec![Material::new(17_478, 2), Material::new(34, 100)],
-          output_per_run: 1,
-          time_per_run: 3_600,
+      let _ = update(
+        &mut state,
+        Message::BlueprintScrolled {
+          absolute: 512.0,
         },
+        &db,
+        now(),
       );
-      data.recipes.insert(
-        17_478,
-        Recipe {
-          activity_id: 1,
-          blueprint_type_id: 17_479,
-          is_reaction: false,
-          materials: vec![Material::new(34, 50)],
-          output_per_run: 1,
-          time_per_run: 600,
-        },
-      );
-      data.names.insert(22_544, "Hulk".to_owned());
-      data.names.insert(17_478, "Retriever".to_owned());
-      data.names.insert(34, "Tritanium".to_owned());
-      data.prices.insert(22_544, 200_000_000.0);
-      data.prices.insert(17_478, 30_000_000.0);
-      data.prices.insert(34, 5.0);
-      data.catalog.push(CatalogEntry {
-        category: Category::Ship,
-        group_name: "Mining Barge".to_owned(),
-        is_reaction: false,
-        name: "Hulk".to_owned(),
-        type_id: 22_544,
-        volume: 3_750.0,
-      });
-      state.planner.apply_data(data);
-      // Cold open no longer auto-selects a product; pick one explicitly to exercise the loaded body.
-      state.planner.update(planner::Message::ProductPicked(22_544));
 
-      // Exercise the loaded body, a breakdown, the Plans stub, and a context menu.
-      {
-        let _loaded: Element<'_, Message> = view(&state, &required(), now());
-      }
-      state.planner.update(planner::Message::NodeBrokenDown {
-        type_id: 17_478,
-      });
-      state
-        .planner
-        .update(planner::Message::RightTabSelected(planner::RightTab::Plans));
-      {
-        let _empty_plans: Element<'_, Message> = view(&state, &required(), now());
-      }
-      // A listed plan exercises the populated Plans pane: name, recomputed economics, load/delete actions.
-      let tree = state.planner.snapshot().unwrap();
-      state
-        .planner
-        .update(planner::Message::PlansListed(vec![planner::SavedPlanData {
-          id: 1,
-          name: "Hulk run".to_owned(),
-          tree,
-        }]));
-      {
-        let _saved_plans: Element<'_, Message> = view(&state, &required(), now());
-      }
-      state
-        .planner
-        .update(planner::Message::RightTabSelected(planner::RightTab::Detail));
-      state
-        .planner
-        .update(planner::Message::CursorMoved(iced::Point::new(20.0, 40.0)));
-      state.planner.update(planner::Message::MaterialRightPressed {
-        type_id: 34,
-      });
-      {
-        let _menu: Element<'_, Message> = view(&state, &required(), now());
-      }
-    }
-
-    #[test]
-    fn it_renders_the_scope_picker_overlay() {
-      let mut state = populated();
-      state.picker_open = true;
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_the_forbidden_gate_for_an_unauthorized_pilot() {
-      let mut state = populated();
-      state.active = Scope::Char(2);
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
-    }
-
-    #[test]
-    fn it_renders_an_empty_state() {
-      let state = state_with(Scope::All, Vec::new(), Vec::new());
-
-      let _el: Element<'_, Message> = view(&state, &required(), now());
+      assert_eq!(state.blueprint_scroll_offset(), 512.0);
     }
   }
 
@@ -1435,103 +1212,41 @@ mod tests {
     }
   }
 
-  mod list_saved_plans {
-    use pretty_assertions::assert_eq;
-
-    use crate::store::repo::industry::{self as industry_repo, PlanTree, PlanType};
-
-    fn sample_tree() -> PlanTree {
-      PlanTree {
-        product_type_id: 22_544,
-        root_facility_system: None,
-        runs: 1,
-        types: vec![PlanType {
-          built: false,
-          facility_structure: None,
-          facility_system: None,
-          me: 10,
-          te: 20,
-          type_id: 22_544,
-          use_stock: false,
-        }],
-      }
-    }
-
-    #[tokio::test]
-    async fn it_returns_each_saved_plan_with_its_tree_newest_first() {
-      let db = crate::store::open_test().await.unwrap();
-      industry_repo::create_plan(&db, "First", &sample_tree()).await.unwrap();
-      industry_repo::create_plan(&db, "Second", &sample_tree()).await.unwrap();
-
-      let listed = super::list_saved_plans(&db).await;
-
-      assert_eq!(listed.len(), 2);
-      assert_eq!(listed[0].tree, sample_tree());
-    }
-
-    #[tokio::test]
-    async fn it_drops_a_plan_once_deleted() {
-      let db = crate::store::open_test().await.unwrap();
-      let plan = industry_repo::create_plan(&db, "Doomed", &sample_tree()).await.unwrap();
-
-      industry_repo::delete_plan(&db, plan.id()).await.unwrap();
-
-      assert!(super::list_saved_plans(&db).await.is_empty());
-    }
-  }
-
-  mod scope_gate {
-    use super::*;
-
-    #[test]
-    fn it_gates_a_char_scope_missing_the_required_scope() {
-      let state = state_with(Scope::Char(1), vec![character_owner(1, None)], Vec::new());
-
-      assert!(state.scope_gate().is_some());
-    }
-
-    #[test]
-    fn it_does_not_gate_an_authorized_char_scope() {
-      let granted = granted();
-      let state = state_with(Scope::Char(1), vec![character_owner(1, Some(&granted))], Vec::new());
-
-      assert!(state.scope_gate().is_none());
-    }
-
-    #[test]
-    fn it_never_gates_the_combined_scope() {
-      let state = state_with(Scope::All, vec![character_owner(1, None)], Vec::new());
-
-      assert!(state.scope_gate().is_none());
-    }
-  }
-
-  mod visible_jobs {
+  mod enum_defaults {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_drops_unauthorized_characters_but_keeps_corporations() {
-      let granted = granted();
-      let state = state_with(
-        Scope::All,
-        vec![
-          character_owner(1, Some(&granted)),
-          character_owner(2, None),
-          corporation_owner(98),
-        ],
-        vec![
-          job(Owner::Character(1), 10, Activity::Manufacturing, "2026-06-13T14:00:00Z"),
-          job(Owner::Character(2), 11, Activity::Manufacturing, "2026-06-13T14:00:00Z"),
-          job(Owner::Corporation(98), 12, Activity::Reactions, "2026-06-13T14:00:00Z"),
-        ],
-      );
+    fn it_preserves_the_segmented_control_defaults_after_alphabetizing() {
+      assert_eq!(Filter::default(), Filter::All);
+      assert_eq!(BlueprintKind::default(), BlueprintKind::All);
+      assert_eq!(BlueprintSort::default(), BlueprintSort::Name);
+    }
+  }
 
-      let visible = state.visible_jobs();
+  mod facility_defaults {
+    use pretty_assertions::assert_eq;
 
-      assert_eq!(visible.len(), 2);
-      assert!(visible.iter().all(|job| job.owner != Owner::Character(2)));
+    use super::*;
+
+    #[test]
+    fn it_maps_an_industry_config_to_per_activity_defaults() {
+      let mut config = crate::config::IndustryConfig::default();
+      config.set_manufacturing(Some(60_003_760));
+      config.set_reactions(Some(1_021_000_000_009));
+
+      let defaults = FacilityDefaults::from(&config);
+
+      assert_eq!(defaults.manufacturing, Some(60_003_760));
+      assert_eq!(defaults.reactions, Some(1_021_000_000_009));
+    }
+
+    #[test]
+    fn it_maps_an_unset_config_to_no_defaults() {
+      let defaults = FacilityDefaults::from(&crate::config::IndustryConfig::default());
+
+      assert_eq!(defaults, FacilityDefaults::default());
     }
   }
 
@@ -1553,19 +1268,6 @@ mod tests {
     }
 
     #[test]
-    fn it_orders_ready_jobs_first_then_by_end_time() {
-      let state = populated();
-
-      // Job 11 ends at 11:30 and is ready at the 12:00 clock, so it sorts ahead of the running jobs,
-      // which then order by end time (10 at 14:00 before 13 at 16:00). Job 12 belongs to the
-      // unauthorized pilot and is dropped.
-      assert_eq!(job_ids(&state), vec![11, 10, 13]);
-      assert_eq!(state.job_view().counts.total, 3);
-      assert_eq!(state.job_view().counts.ready, 1);
-      assert_eq!(state.job_view().counts.active, 2);
-    }
-
-    #[test]
     fn it_drops_unauthorized_characters_from_the_memoized_set() {
       let state = populated();
 
@@ -1576,16 +1278,6 @@ mod tests {
           .iter()
           .all(|row| !matches!(row, JobRowItem::Job(index) if state.jobs()[*index].owner == Owner::Character(2)))
       );
-    }
-
-    #[tokio::test]
-    async fn it_filters_to_ready_jobs_only() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = populated();
-
-      let _ = update(&mut state, Message::FilterSelected(Filter::Ready), &db, now());
-
-      assert_eq!(job_ids(&state), vec![11]);
     }
 
     #[tokio::test]
@@ -1610,6 +1302,306 @@ mod tests {
 
       assert!(headers >= 1);
       assert_eq!(jobs, 3);
+    }
+
+    #[tokio::test]
+    async fn it_filters_to_ready_jobs_only() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = populated();
+
+      let _ = update(&mut state, Message::FilterSelected(Filter::Ready), &db, now());
+
+      assert_eq!(job_ids(&state), vec![11]);
+    }
+
+    #[test]
+    fn it_orders_ready_jobs_first_then_by_end_time() {
+      let state = populated();
+
+      // Job 11 ends at 11:30 and is ready at the 12:00 clock, so it sorts ahead of the running jobs,
+      // which then order by end time (10 at 14:00 before 13 at 16:00). Job 12 belongs to the
+      // unauthorized pilot and is dropped.
+      assert_eq!(job_ids(&state), vec![11, 10, 13]);
+      assert_eq!(state.job_view().counts.total, 3);
+      assert_eq!(state.job_view().counts.ready, 1);
+      assert_eq!(state.job_view().counts.active, 2);
+    }
+  }
+
+  mod list_saved_plans {
+    use pretty_assertions::assert_eq;
+
+    use crate::store::repo::industry::{self as industry_repo, PlanTree, PlanType};
+
+    fn sample_tree() -> PlanTree {
+      PlanTree {
+        product_type_id: 22_544,
+        root_facility_system: None,
+        runs: 1,
+        types: vec![PlanType {
+          built: false,
+          facility_structure: None,
+          facility_system: None,
+          me: 10,
+          te: 20,
+          type_id: 22_544,
+          use_stock: false,
+        }],
+      }
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_plan_once_deleted() {
+      let db = crate::store::open_test().await.unwrap();
+      let plan = industry_repo::create_plan(&db, "Doomed", &sample_tree()).await.unwrap();
+
+      industry_repo::delete_plan(&db, plan.id()).await.unwrap();
+
+      assert!(super::list_saved_plans(&db).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_each_saved_plan_with_its_tree_newest_first() {
+      let db = crate::store::open_test().await.unwrap();
+      industry_repo::create_plan(&db, "First", &sample_tree()).await.unwrap();
+      industry_repo::create_plan(&db, "Second", &sample_tree()).await.unwrap();
+
+      let listed = super::list_saved_plans(&db).await;
+
+      assert_eq!(listed.len(), 2);
+      assert_eq!(listed[0].tree, sample_tree());
+    }
+  }
+
+  mod rendering {
+    use super::*;
+
+    #[test]
+    fn it_renders_an_empty_blueprints_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.tab = Tab::Blueprints;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_an_empty_extractions_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.tab = Tab::Extractions;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_an_empty_state() {
+      let state = state_with(Scope::All, Vec::new(), Vec::new());
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_each_filter() {
+      let mut state = populated();
+      for filter in [Filter::All, Filter::Active, Filter::Ready] {
+        state.filter = filter;
+        let _el: Element<'_, Message> = view(&state, &required(), now());
+      }
+    }
+
+    #[test]
+    fn it_renders_each_group_by() {
+      let mut state = populated();
+      for group_by in [GroupBy::None, GroupBy::Owner, GroupBy::Activity, GroupBy::Facility] {
+        state.group_by = group_by;
+        let _el: Element<'_, Message> = view(&state, &required(), now());
+      }
+    }
+
+    #[test]
+    fn it_renders_the_blueprints_tab_for_each_kind_and_sort() {
+      let mut state = populated();
+      state.tab = Tab::Blueprints;
+      for kind in [BlueprintKind::All, BlueprintKind::Originals, BlueprintKind::Copies] {
+        state.blueprint_kind = kind;
+        for sort in [
+          BlueprintSort::Name,
+          BlueprintSort::MaterialEfficiency,
+          BlueprintSort::Runs,
+        ] {
+          state.blueprint_sort = sort;
+          let _el: Element<'_, Message> = view(&state, &required(), now());
+        }
+      }
+    }
+
+    #[test]
+    fn it_renders_the_combined_view() {
+      let state = populated();
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_the_extractions_tab() {
+      let mut state = populated();
+      state.tab = Tab::Extractions;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_the_forbidden_gate_for_an_unauthorized_pilot() {
+      let mut state = populated();
+      state.active = Scope::Char(2);
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+
+    #[test]
+    fn it_renders_the_planner_tab_loading_and_loaded() {
+      use planner_loaders::{CatalogEntry, Category, PlannerData, Recipe};
+      use planner_model::Material;
+
+      let mut state = populated();
+      state.tab = Tab::Planner;
+
+      {
+        let _loading: Element<'_, Message> = view(&state, &required(), now());
+      }
+
+      let mut data = PlannerData::default();
+      data.recipes.insert(
+        22_544,
+        Recipe {
+          activity_id: 1,
+          blueprint_type_id: 22_545,
+          is_reaction: false,
+          materials: vec![Material::new(17_478, 2), Material::new(34, 100)],
+          output_per_run: 1,
+          time_per_run: 3_600,
+        },
+      );
+      data.recipes.insert(
+        17_478,
+        Recipe {
+          activity_id: 1,
+          blueprint_type_id: 17_479,
+          is_reaction: false,
+          materials: vec![Material::new(34, 50)],
+          output_per_run: 1,
+          time_per_run: 600,
+        },
+      );
+      data.names.insert(22_544, "Hulk".to_owned());
+      data.names.insert(17_478, "Retriever".to_owned());
+      data.names.insert(34, "Tritanium".to_owned());
+      data.prices.insert(22_544, 200_000_000.0);
+      data.prices.insert(17_478, 30_000_000.0);
+      data.prices.insert(34, 5.0);
+      data.catalog.push(CatalogEntry {
+        category: Category::Ship,
+        group_name: "Mining Barge".to_owned(),
+        is_reaction: false,
+        name: "Hulk".to_owned(),
+        type_id: 22_544,
+        volume: 3_750.0,
+      });
+      state.planner.apply_data(data);
+      // Cold open no longer auto-selects a product; pick one explicitly to exercise the loaded body.
+      state.planner.update(planner::Message::ProductPicked(22_544));
+
+      // Exercise the loaded body, a breakdown, the Plans stub, and a context menu.
+      {
+        let _loaded: Element<'_, Message> = view(&state, &required(), now());
+      }
+      state.planner.update(planner::Message::NodeBrokenDown {
+        type_id: 17_478,
+      });
+      state
+        .planner
+        .update(planner::Message::RightTabSelected(planner::RightTab::Plans));
+      {
+        let _empty_plans: Element<'_, Message> = view(&state, &required(), now());
+      }
+      // A listed plan exercises the populated Plans pane: name, recomputed economics, load/delete actions.
+      let tree = state.planner.snapshot().unwrap();
+      state
+        .planner
+        .update(planner::Message::PlansListed(vec![planner::SavedPlanData {
+          id: 1,
+          name: "Hulk run".to_owned(),
+          tree,
+        }]));
+      {
+        let _saved_plans: Element<'_, Message> = view(&state, &required(), now());
+      }
+      state
+        .planner
+        .update(planner::Message::RightTabSelected(planner::RightTab::Detail));
+      state
+        .planner
+        .update(planner::Message::CursorMoved(iced::Point::new(20.0, 40.0)));
+      state.planner.update(planner::Message::MaterialRightPressed {
+        type_id: 34,
+      });
+      {
+        let _menu: Element<'_, Message> = view(&state, &required(), now());
+      }
+    }
+
+    #[test]
+    fn it_renders_the_scope_picker_overlay() {
+      let mut state = populated();
+      state.picker_open = true;
+
+      let _el: Element<'_, Message> = view(&state, &required(), now());
+    }
+  }
+
+  mod scope_gate {
+    use super::*;
+
+    #[test]
+    fn it_does_not_gate_an_authorized_char_scope() {
+      let granted = granted();
+      let state = state_with(Scope::Char(1), vec![character_owner(1, Some(&granted))], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_gates_a_char_scope_missing_the_required_scope() {
+      let state = state_with(Scope::Char(1), vec![character_owner(1, None)], Vec::new());
+
+      assert!(state.scope_gate().is_some());
+    }
+
+    #[test]
+    fn it_never_gates_the_combined_scope() {
+      let state = state_with(Scope::All, vec![character_owner(1, None)], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+    }
+  }
+
+  mod unauthorized_characters {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_names_characters_missing_the_industry_scope() {
+      let granted = granted();
+      let state = state_with(
+        Scope::All,
+        vec![character_owner(1, Some(&granted)), character_owner(2, None)],
+        Vec::new(),
+      );
+
+      let unauthorized = state.unauthorized_characters();
+
+      assert_eq!(unauthorized.len(), 1);
+      assert_eq!(unauthorized[0].id, 2);
     }
   }
 
@@ -1641,15 +1633,6 @@ mod tests {
     }
 
     #[test]
-    fn it_shows_every_corporation_in_the_combined_scope() {
-      let (roster, extractions) = roster_and_extractions();
-      let mut state = state_with(Scope::All, roster, Vec::new());
-      state.extractions = extractions;
-
-      assert_eq!(state.visible_extractions().len(), 2);
-    }
-
-    #[test]
     fn it_filters_to_one_corporation_in_a_corp_scope() {
       let (roster, extractions) = roster_and_extractions();
       let mut state = state_with(Scope::Corp(98), roster, Vec::new());
@@ -1672,26 +1655,43 @@ mod tests {
       assert_eq!(visible.len(), 1);
       assert_eq!(visible[0].corporation_id, 98);
     }
+
+    #[test]
+    fn it_shows_every_corporation_in_the_combined_scope() {
+      let (roster, extractions) = roster_and_extractions();
+      let mut state = state_with(Scope::All, roster, Vec::new());
+      state.extractions = extractions;
+
+      assert_eq!(state.visible_extractions().len(), 2);
+    }
   }
 
-  mod unauthorized_characters {
+  mod visible_jobs {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_names_characters_missing_the_industry_scope() {
+    fn it_drops_unauthorized_characters_but_keeps_corporations() {
       let granted = granted();
       let state = state_with(
         Scope::All,
-        vec![character_owner(1, Some(&granted)), character_owner(2, None)],
-        Vec::new(),
+        vec![
+          character_owner(1, Some(&granted)),
+          character_owner(2, None),
+          corporation_owner(98),
+        ],
+        vec![
+          job(Owner::Character(1), 10, Activity::Manufacturing, "2026-06-13T14:00:00Z"),
+          job(Owner::Character(2), 11, Activity::Manufacturing, "2026-06-13T14:00:00Z"),
+          job(Owner::Corporation(98), 12, Activity::Reactions, "2026-06-13T14:00:00Z"),
+        ],
       );
 
-      let unauthorized = state.unauthorized_characters();
+      let visible = state.visible_jobs();
 
-      assert_eq!(unauthorized.len(), 1);
-      assert_eq!(unauthorized[0].id, 2);
+      assert_eq!(visible.len(), 2);
+      assert!(visible.iter().all(|job| job.owner != Owner::Character(2)));
     }
   }
 }

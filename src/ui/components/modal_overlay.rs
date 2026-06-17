@@ -33,21 +33,21 @@ mod tests {
     }
 
     #[test]
-    fn it_stacks_a_backdrop_between_base_and_content() {
-      let el = modal_overlay(space(), Some(()), space());
-      let mut tree = iced::advanced::widget::Tree::new(&el);
-      tree.diff(&el);
-
-      assert_eq!(tree.children.len(), 3);
-    }
-
-    #[test]
     fn it_omits_the_backdrop_when_none() {
       let el = modal_overlay(space(), None, space());
       let mut tree = iced::advanced::widget::Tree::new(&el);
       tree.diff(&el);
 
       assert_eq!(tree.children.len(), 2);
+    }
+
+    #[test]
+    fn it_stacks_a_backdrop_between_base_and_content() {
+      let el = modal_overlay(space(), Some(()), space());
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+
+      assert_eq!(tree.children.len(), 3);
     }
   }
 }

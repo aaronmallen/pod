@@ -81,18 +81,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_skips_when_the_stored_command_already_matches() {
-      let command = handler_command(&std::path::PathBuf::from(r"C:\Pod\pod.exe"));
-
-      assert!(!should_write(Some(&command), &command));
-    }
-
-    #[test]
     fn it_rewrites_when_the_stored_command_points_at_a_different_path() {
       let desired = handler_command(&std::path::PathBuf::from(r"C:\New\pod.exe"));
       let stored = handler_command(&std::path::PathBuf::from(r"C:\Old\pod.exe"));
 
       assert!(should_write(Some(&stored), &desired));
+    }
+
+    #[test]
+    fn it_skips_when_the_stored_command_already_matches() {
+      let command = handler_command(&std::path::PathBuf::from(r"C:\Pod\pod.exe"));
+
+      assert!(!should_write(Some(&command), &command));
     }
 
     #[test]

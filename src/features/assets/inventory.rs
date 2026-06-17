@@ -940,6 +940,49 @@ mod tests {
     }
   }
 
+  mod custom_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn named_row(name: Option<&str>) -> InventoryRow {
+      InventoryRow {
+        name: name.map(str::to_owned),
+        ..sample_row(1, "Giant Secure Container", "ship", 7, 1_000.0)
+      }
+    }
+
+    #[test]
+    fn it_renders_a_renamed_item_with_its_type_subtitle() {
+      let row = named_row(Some("Loot Run"));
+      let _el: Element<'_, Message> = name_cell(&row);
+    }
+
+    #[test]
+    fn it_renders_an_unnamed_item_as_the_type_name_alone() {
+      let row = named_row(None);
+      let _el: Element<'_, Message> = name_cell(&row);
+    }
+
+    #[test]
+    fn it_returns_none_when_the_name_is_absent() {
+      assert_eq!(super::super::custom_name(&named_row(None)), None);
+    }
+
+    #[test]
+    fn it_returns_the_custom_name_when_present() {
+      assert_eq!(
+        super::super::custom_name(&named_row(Some("Loot Run"))),
+        Some("Loot Run")
+      );
+    }
+
+    #[test]
+    fn it_treats_an_empty_name_as_absent() {
+      assert_eq!(super::super::custom_name(&named_row(Some(""))), None);
+    }
+  }
+
   mod help_copy {
     use pretty_assertions::assert_eq;
 
@@ -979,14 +1022,45 @@ mod tests {
     }
   }
 
+  mod owner_cell {
+    use super::*;
+
+    fn corp(id: i64, name: &str) -> RosterCorp {
+      RosterCorp {
+        id,
+        logo: images::ImageState::Stale {
+          id,
+          kind: images::ImageKind::CorporationLogo,
+        },
+        name: name.to_owned(),
+        ticker: "TC".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_a_corporation_owner() {
+      let _el: Element<'_, Message> = super::super::owner_cell(2_000, &[], &[corp(2_000, "Test Corp")]);
+    }
+
+    #[test]
+    fn it_renders_a_pilot_owner() {
+      let _el: Element<'_, Message> = super::super::owner_cell(7, &[pilot(7, "Vex")], &[]);
+    }
+
+    #[test]
+    fn it_renders_an_unknown_owner_without_a_portrait() {
+      let _el: Element<'_, Message> = super::super::owner_cell(99, &[], &[]);
+    }
+  }
+
   mod owner_label {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_resolves_a_known_owner_to_its_name() {
-      assert_eq!(owner_label(7, &[pilot(7, "Vex")], &[]), "Vex");
+    fn it_falls_back_to_the_id_for_an_unknown_owner() {
+      assert_eq!(owner_label(99, &[], &[]), "Owner 99");
     }
 
     #[test]
@@ -1004,78 +1078,8 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_the_id_for_an_unknown_owner() {
-      assert_eq!(owner_label(99, &[], &[]), "Owner 99");
-    }
-  }
-
-  mod owner_cell {
-    use super::*;
-
-    fn corp(id: i64, name: &str) -> RosterCorp {
-      RosterCorp {
-        id,
-        logo: images::ImageState::Stale {
-          id,
-          kind: images::ImageKind::CorporationLogo,
-        },
-        name: name.to_owned(),
-        ticker: "TC".to_owned(),
-      }
-    }
-
-    #[test]
-    fn it_renders_a_pilot_owner() {
-      let _el: Element<'_, Message> = super::super::owner_cell(7, &[pilot(7, "Vex")], &[]);
-    }
-
-    #[test]
-    fn it_renders_a_corporation_owner() {
-      let _el: Element<'_, Message> = super::super::owner_cell(2_000, &[], &[corp(2_000, "Test Corp")]);
-    }
-
-    #[test]
-    fn it_renders_an_unknown_owner_without_a_portrait() {
-      let _el: Element<'_, Message> = super::super::owner_cell(99, &[], &[]);
-    }
-  }
-
-  mod row_icon {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::images::IconVariant;
-
-    #[test]
-    fn it_selects_the_bpo_variant_for_a_blueprint_original() {
-      let mut row = sample_row(1, "Rifter Blueprint", "blueprint", 7, 1_000.0);
-      row.is_blueprint_copy = Some(false);
-
-      assert_eq!(
-        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
-        IconVariant::Bpo
-      );
-    }
-
-    #[test]
-    fn it_selects_the_bpc_variant_for_a_blueprint_copy() {
-      let mut row = sample_row(1, "Rifter Blueprint", "blueprint", 7, 1_000.0);
-      row.is_blueprint_copy = Some(true);
-
-      assert_eq!(
-        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
-        IconVariant::Bpc
-      );
-    }
-
-    #[test]
-    fn it_selects_the_plain_icon_for_a_non_blueprint() {
-      let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
-
-      assert_eq!(
-        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
-        IconVariant::Icon
-      );
+    fn it_resolves_a_known_owner_to_its_name() {
+      assert_eq!(owner_label(7, &[pilot(7, "Vex")], &[]), "Vex");
     }
   }
 
@@ -1128,8 +1132,11 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_help_popover() {
-      let _el: Element<'_, Message> = help_popover();
+    fn it_renders_the_column_header_in_both_sort_directions() {
+      let _ascending: Element<'_, Message> = column_header(SortColumn::Name, SortDirection::Ascending);
+      let _descending: Element<'_, Message> = column_header(SortColumn::Value, SortDirection::Descending);
+      let _unsortable: Element<'_, Message> =
+        header_cell("Location", None, false, SortColumn::Name, SortDirection::Ascending);
     }
 
     #[test]
@@ -1139,54 +1146,47 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_column_header_in_both_sort_directions() {
-      let _ascending: Element<'_, Message> = column_header(SortColumn::Name, SortDirection::Ascending);
-      let _descending: Element<'_, Message> = column_header(SortColumn::Value, SortDirection::Descending);
-      let _unsortable: Element<'_, Message> =
-        header_cell("Location", None, false, SortColumn::Name, SortDirection::Ascending);
+    fn it_renders_the_help_popover() {
+      let _el: Element<'_, Message> = help_popover();
     }
   }
 
-  mod custom_name {
+  mod row_icon {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    fn named_row(name: Option<&str>) -> InventoryRow {
-      InventoryRow {
-        name: name.map(str::to_owned),
-        ..sample_row(1, "Giant Secure Container", "ship", 7, 1_000.0)
-      }
-    }
+    use crate::store::images::IconVariant;
 
     #[test]
-    fn it_returns_the_custom_name_when_present() {
+    fn it_selects_the_bpc_variant_for_a_blueprint_copy() {
+      let mut row = sample_row(1, "Rifter Blueprint", "blueprint", 7, 1_000.0);
+      row.is_blueprint_copy = Some(true);
+
       assert_eq!(
-        super::super::custom_name(&named_row(Some("Loot Run"))),
-        Some("Loot Run")
+        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
+        IconVariant::Bpc
       );
     }
 
     #[test]
-    fn it_returns_none_when_the_name_is_absent() {
-      assert_eq!(super::super::custom_name(&named_row(None)), None);
+    fn it_selects_the_bpo_variant_for_a_blueprint_original() {
+      let mut row = sample_row(1, "Rifter Blueprint", "blueprint", 7, 1_000.0);
+      row.is_blueprint_copy = Some(false);
+
+      assert_eq!(
+        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
+        IconVariant::Bpo
+      );
     }
 
     #[test]
-    fn it_treats_an_empty_name_as_absent() {
-      assert_eq!(super::super::custom_name(&named_row(Some(""))), None);
-    }
+    fn it_selects_the_plain_icon_for_a_non_blueprint() {
+      let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
 
-    #[test]
-    fn it_renders_a_renamed_item_with_its_type_subtitle() {
-      let row = named_row(Some("Loot Run"));
-      let _el: Element<'_, Message> = name_cell(&row);
-    }
-
-    #[test]
-    fn it_renders_an_unnamed_item_as_the_type_name_alone() {
-      let row = named_row(None);
-      let _el: Element<'_, Message> = name_cell(&row);
+      assert_eq!(
+        IconVariant::from_blueprint_copy(row.is_blueprint_copy),
+        IconVariant::Icon
+      );
     }
   }
 }

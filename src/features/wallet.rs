@@ -1433,22 +1433,6 @@ mod tests {
     }
   }
 
-  mod loads_data {
-    use super::*;
-
-    #[test]
-    fn it_flags_a_load_message_for_an_image_recheck() {
-      assert!(Message::Loaded(Box::new(load_wallet_for_test())).loads_data());
-    }
-
-    #[test]
-    fn it_does_not_flag_an_interaction_message() {
-      assert!(!Message::TabSelected(Tab::Market).loads_data());
-      assert!(!Message::SearchChanged("rifter".to_owned()).loads_data());
-      assert!(!Message::ChartHovered(Some(0.5)).loads_data());
-    }
-  }
-
   fn load_wallet_for_test() -> Loaded {
     Loaded {
       contract_total: 0,
@@ -1464,799 +1448,6 @@ mod tests {
       periods: Vec::new(),
       right_rail_width: 280.0,
       roster: Vec::new(),
-    }
-  }
-
-  mod mark_dirty {
-    use super::*;
-
-    #[test]
-    fn it_marks_the_wallet_dirty_for_a_ledger_kind() {
-      let mut state = State::new();
-
-      state.mark_dirty(JobKind::CharacterWallet);
-
-      assert!(state.is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_a_kind_the_wallet_does_not_render() {
-      let mut state = State::new();
-
-      state.mark_dirty(JobKind::AssetSync);
-
-      assert!(!state.is_dirty());
-    }
-  }
-
-  mod reload_kind {
-    use super::*;
-
-    #[test]
-    fn it_feeds_the_wallet_for_every_ledger_and_derive_kind() {
-      assert!(reload_kind(JobKind::CharacterWallet));
-      assert!(reload_kind(JobKind::CorporationWallet));
-      assert!(reload_kind(JobKind::MarketPrices));
-      assert!(reload_kind(JobKind::NetWorthSnapshot));
-    }
-
-    #[test]
-    fn it_ignores_kinds_the_wallet_does_not_render() {
-      assert!(!reload_kind(JobKind::AssetSync));
-      assert!(!reload_kind(JobKind::CharacterSkills));
-      assert!(!reload_kind(JobKind::CharacterProfile));
-    }
-  }
-
-  mod scope_gate {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_gates_a_character_scope_missing_the_wallet_scopes() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.active = Scope::Character(1);
-
-      let gate = state.scope_gate().expect("missing scope should gate");
-
-      assert_eq!(gate.0, 1);
-      assert!(!gate.2.is_empty());
-    }
-
-    #[test]
-    fn it_does_not_gate_a_character_with_the_wallet_scopes() {
-      let granted = crate::features::registry::descriptor(crate::config::Feature::Wallet)
-        .scopes
-        .join(" ");
-      let mut granted_pilot = pilot(1, None);
-      granted_pilot.granted_scopes = Some(granted);
-      let mut state = State::new();
-      state.roster = vec![granted_pilot];
-      state.active = Scope::Character(1);
-
-      assert!(state.scope_gate().is_none());
-    }
-
-    #[test]
-    fn it_does_not_gate_the_all_or_corporation_scopes() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.active = Scope::All;
-
-      assert!(state.scope_gate().is_none());
-
-      state.active = Scope::Corporation(99);
-
-      assert!(state.scope_gate().is_none());
-    }
-  }
-
-  mod scope_ids {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_every_pilot_for_all_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.active = Scope::All;
-
-      assert_eq!(state.scope_ids(), vec![1, 2]);
-    }
-
-    #[test]
-    fn it_returns_the_single_id_for_a_character_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.active = Scope::Character(2);
-
-      assert_eq!(state.scope_ids(), vec![2]);
-    }
-
-    #[test]
-    fn it_returns_no_character_ids_for_a_corp_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.active = Scope::Corporation(98_000_001);
-
-      assert!(state.scope_ids().is_empty());
-    }
-  }
-
-  mod stale_images {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn fresh_portrait() -> images::ImageState {
-      images::ImageState::Fresh(std::path::PathBuf::from("/cache/characters/1.jpg"))
-    }
-
-    #[test]
-    fn it_is_empty_when_every_model_image_is_fresh() {
-      let mut state = State::new();
-      state.roster = vec![RosterPilot {
-        corp: "TST".to_owned(),
-        granted_scopes: None,
-        id: 1,
-        liquid: None,
-        name: "Pilot 1".to_owned(),
-        portrait: fresh_portrait(),
-      }];
-      state.corporations = vec![RosterCorp {
-        id: 98_000_001,
-        liquid: None,
-        logo: images::ImageState::Fresh(std::path::PathBuf::from("/cache/corporations/98000001.png")),
-        name: "Corp".to_owned(),
-        ticker: "TSTC".to_owned(),
-      }];
-
-      assert!(state.stale_images().is_empty());
-    }
-
-    #[test]
-    fn it_collects_the_stale_portrait_and_logo_keys() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.corporations = vec![corp(98_000_001, "Corp")];
-
-      let keys = state.stale_images();
-
-      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 1)));
-      assert!(keys.contains(&(images::ImageKind::CorporationLogo, 98_000_001)));
-    }
-
-    #[test]
-    fn it_deduplicates_repeated_keys() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(1, None)];
-
-      assert_eq!(state.stale_images(), vec![(images::ImageKind::CharacterPortrait, 1)]);
-    }
-  }
-
-  mod load_more {
-    use super::*;
-
-    async fn ready_state(tab: Tab) -> State {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.active = Scope::All;
-      state.tab = tab;
-      state
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_while_a_page_is_already_loading() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Journal).await;
-      state.loading_more = true;
-
-      let _ = super::load_more(&mut state, &db);
-
-      assert!(state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_when_the_tab_is_exhausted() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Journal).await;
-      state.tab_exhausted = true;
-
-      let _ = super::load_more(&mut state, &db);
-
-      assert!(!state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_for_a_corporation_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Journal).await;
-      state.active = Scope::Corporation(98_000_001);
-
-      let _ = super::load_more(&mut state, &db);
-
-      assert!(!state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_when_no_characters_are_in_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active = Scope::All;
-      state.tab = Tab::Journal;
-
-      let _ = super::load_more(&mut state, &db);
-
-      assert!(!state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_page_load_for_each_tab() {
-      let db = crate::store::open_test().await.unwrap();
-
-      for tab in [Tab::Journal, Tab::Market, Tab::Contracts] {
-        let mut state = ready_state(tab).await;
-
-        let _task = super::load_more(&mut state, &db);
-
-        assert!(state.loading_more, "starting a {tab:?} page marks the state loading");
-      }
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_page_load_from_the_last_entry_cursor_for_each_tab() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let mut journal = ready_state(Tab::Journal).await;
-      journal.journal = vec![journal_entry(1, Some(1.0), "player_trading", "trade")];
-      let _journal_task = super::load_more(&mut journal, &db);
-      assert!(journal.loading_more);
-
-      let mut market = ready_state(Tab::Market).await;
-      market.market = vec![market_entry(1, true, "Tritanium", "Jita")];
-      let _market_task = super::load_more(&mut market, &db);
-      assert!(market.loading_more);
-
-      let mut contracts = ready_state(Tab::Contracts).await;
-      contracts.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
-      let _contracts_task = super::load_more(&mut contracts, &db);
-      assert!(contracts.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_corp_contracts_page_load() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Contracts).await;
-      state.active = Scope::Corporation(98_000_001);
-
-      let _task = super::load_more(&mut state, &db);
-
-      assert!(state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_corp_contracts_page_load_from_the_last_entry_cursor() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Contracts).await;
-      state.active = Scope::Corporation(98_000_001);
-      state.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
-
-      let _task = super::load_more(&mut state, &db);
-
-      assert!(state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_for_a_corporation_scope_on_a_non_contract_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = ready_state(Tab::Market).await;
-      state.active = Scope::Corporation(98_000_001);
-
-      let _ = super::load_more(&mut state, &db);
-
-      assert!(!state.loading_more);
-    }
-  }
-
-  mod corp_balance_total {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sums_the_synced_division_balances() {
-      let mut state = State::new();
-      state.active = Scope::Corporation(98_000_001);
-      state.corp_divisions = vec![
-        corp_division(1, Some("Master"), Some(1_000.0)),
-        corp_division(2, None, Some(250.0)),
-        corp_division(3, None, None),
-      ];
-
-      assert_eq!(state.corp_balance_total(), Some(1_250.0));
-    }
-
-    #[test]
-    fn it_is_none_when_no_division_has_a_balance() {
-      let mut state = State::new();
-      state.active = Scope::Corporation(98_000_001);
-      state.corp_divisions = vec![corp_division(1, Some("Master"), None)];
-
-      assert_eq!(state.corp_balance_total(), None);
-    }
-  }
-
-  mod corp_division_label {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uses_the_synced_name_when_present() {
-      assert_eq!(corp_division(2, Some("Trading"), None).label(), "Trading");
-    }
-
-    #[test]
-    fn it_falls_back_to_a_division_number_label_when_unnamed() {
-      assert_eq!(corp_division(4, None, None).label(), "Division 4");
-    }
-  }
-
-  mod scope_liquid {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sums_liquid_across_the_in_scope_characters() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
-      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
-      state.active = Scope::All;
-
-      assert_eq!(super::scope_liquid(&state), Some(150.0));
-    }
-
-    #[test]
-    fn it_excludes_out_of_scope_characters() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
-      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
-      state.active = Scope::Character(1);
-
-      assert_eq!(super::scope_liquid(&state), Some(100.0));
-    }
-
-    #[test]
-    fn it_uses_summed_division_balances_for_a_corp_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0))];
-      state.financials = vec![financials(1, Some(100.0))];
-      state.active = Scope::Corporation(98_000_001);
-      state.corp_divisions = vec![
-        corp_division(1, Some("Master"), Some(500.0)),
-        corp_division(2, None, Some(200.0)),
-      ];
-
-      assert_eq!(super::scope_liquid(&state), Some(700.0));
-    }
-
-    #[test]
-    fn it_returns_none_when_no_in_scope_character_has_a_synced_balance() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.financials = vec![financials(1, None)];
-      state.active = Scope::All;
-
-      assert_eq!(super::scope_liquid(&state), None);
-    }
-
-    #[test]
-    fn it_adds_owned_corporation_balances_under_the_all_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0))];
-      state.financials = vec![financials(1, Some(100.0))];
-      state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
-      state.active = Scope::All;
-
-      assert_eq!(super::scope_liquid(&state), Some(800.0));
-    }
-
-    #[test]
-    fn it_includes_corporation_balances_even_when_no_character_has_liquid() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.financials = vec![financials(1, None)];
-      state.corporations = vec![corp_with_liquid(98_000_001, Some(250.0))];
-      state.active = Scope::All;
-
-      assert_eq!(super::scope_liquid(&state), Some(250.0));
-    }
-
-    #[test]
-    fn it_excludes_corporation_balances_under_a_character_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0))];
-      state.financials = vec![financials(1, Some(100.0))];
-      state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
-      state.active = Scope::Character(1);
-
-      assert_eq!(super::scope_liquid(&state), Some(100.0));
-    }
-  }
-
-  mod load_roster {
-    #[tokio::test]
-    async fn it_yields_an_empty_roster_against_a_bare_store() {
-      let db = crate::store::open_test().await.unwrap();
-
-      assert!(super::super::load_roster(&db).await.is_empty());
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_records_the_loaded_roster_and_ledgers() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(Loaded {
-          contract_total: 0,
-          contracts: vec![],
-          corp_divisions: vec![],
-          corporations: vec![],
-          financials: vec![financials(7, Some(10.0))],
-          journal: vec![],
-          journal_total: 0,
-          market: vec![],
-          market_total: 0,
-          net_worth_series: vec![],
-          periods: vec![],
-          right_rail_width: 280.0,
-          roster: vec![pilot(7, Some(10.0))],
-        })),
-        &db,
-      );
-
-      assert_eq!(state.roster, vec![pilot(7, Some(10.0))]);
-      assert_eq!(state.financials.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_picker_open_and_closed() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open);
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_selected_scope_and_closes_the_picker() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.picker_open = true;
-
-      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
-
-      assert_eq!(state.active, Scope::Character(42));
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_closes_the_contract_detail_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(
-        &mut state,
-        Message::ContractDetailLoaded(Box::new(Some(contract_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_contract.is_some());
-
-      let _ = update(&mut state, Message::CloseContractDetail, &db);
-      assert!(state.selected_contract.is_none());
-    }
-
-    #[tokio::test]
-    async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
-
-      let _ = update(&mut state, Message::ContractSelected(12_345), &db);
-
-      assert!(state.selected_contract.is_none());
-    }
-
-    #[tokio::test]
-    async fn selecting_an_unknown_contract_row_is_a_no_op() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::ContractSelected(999), &db);
-
-      assert!(state.selected_contract.is_none());
-    }
-
-    #[tokio::test]
-    async fn selecting_a_corp_scope_resets_the_active_division_to_the_master() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active = Scope::Corporation(1);
-      state.active_division = 5;
-      state.corp_divisions = vec![corp_division(5, None, Some(1.0))];
-
-      let _ = update(&mut state, Message::ScopeSelected(Scope::Corporation(98_000_001)), &db);
-
-      assert_eq!(state.active, Scope::Corporation(98_000_001));
-      assert_eq!(state.active_division, DEFAULT_DIVISION);
-      assert!(state.corp_divisions.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_records_the_selected_division_in_corp_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active = Scope::Corporation(98_000_001);
-
-      let _ = update(&mut state, Message::DivisionSelected(3), &db);
-
-      assert_eq!(state.active_division, 3);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_division_selection_outside_corp_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active = Scope::All;
-
-      let _ = update(&mut state, Message::DivisionSelected(3), &db);
-
-      assert_eq!(state.active_division, DEFAULT_DIVISION);
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
-      assert_eq!(state.tab, Tab::Journal);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_search_and_sign_filter() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
-      assert_eq!(state.search, "tritanium");
-
-      let _ = update(&mut state, Message::SignFilterChanged(SignFilter::In), &db);
-      assert_eq!(state.sign_filter, SignFilter::In);
-    }
-
-    #[tokio::test]
-    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(
-        &mut state,
-        Message::TabScrolled {
-          absolute: 1_234.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert_eq!(
-        state.tab_scroll_offset(),
-        1_234.0,
-        "the pixel offset is stored so the virtual list can window the ledger"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_loads_the_next_page_when_scrolled_near_the_bottom() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.active = Scope::All;
-
-      let _ = update(
-        &mut state,
-        Message::TabScrolled {
-          absolute: 9_000.0,
-          relative: 0.9,
-        },
-        &db,
-      );
-
-      assert!(state.loading_more, "a deep scroll starts the next cursor page");
-    }
-
-    #[tokio::test]
-    async fn it_does_not_load_a_page_for_a_shallow_scroll() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.active = Scope::All;
-
-      let _ = update(
-        &mut state,
-        Message::TabScrolled {
-          absolute: 100.0,
-          relative: 0.2,
-        },
-        &db,
-      );
-
-      assert!(!state.loading_more, "a shallow scroll does not page");
-    }
-
-    #[tokio::test]
-    async fn it_resets_the_scroll_offset_when_the_tab_changes() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.tab_scroll_offset = 4_200.0;
-
-      let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
-      assert_eq!(state.tab_scroll_offset(), 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_resizes_the_right_rail_through_a_drag() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      let start = state.right_rail.width();
-
-      let _ = update(&mut state, Message::RailDragStart, &db);
-      let _ = update(&mut state, Message::RailDragged(500.0), &db);
-      let _ = update(&mut state, Message::RailDragged(540.0), &db);
-      let _ = update(&mut state, Message::RailDragEnd, &db);
-
-      assert_eq!(state.right_rail.width(), start - 40.0);
-    }
-
-    #[tokio::test]
-    async fn it_appends_a_more_page_matching_the_active_scope_and_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.loading_more = true;
-      let (tab, scope) = (state.tab, state.active);
-
-      let _ = update(
-        &mut state,
-        Message::MoreLoaded(Box::new(MorePage {
-          contracts: vec![],
-          journal: vec![journal_entry(7, Some(5.0), "bounty", "kill")],
-          market: vec![],
-          tab,
-          scope,
-        })),
-        &db,
-      );
-
-      assert_eq!(state.journal.len(), 1);
-      assert!(!state.loading_more);
-      assert!(!state.tab_exhausted);
-    }
-
-    #[tokio::test]
-    async fn it_marks_the_tab_exhausted_when_a_more_page_is_empty() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.loading_more = true;
-      let (tab, scope) = (state.tab, state.active);
-
-      let _ = update(
-        &mut state,
-        Message::MoreLoaded(Box::new(MorePage {
-          contracts: vec![],
-          journal: vec![],
-          market: vec![],
-          tab,
-          scope,
-        })),
-        &db,
-      );
-
-      assert!(state.tab_exhausted);
-    }
-
-    #[tokio::test]
-    async fn it_drops_a_more_page_for_a_stale_scope_or_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.loading_more = true;
-      let tab = state.tab;
-
-      let _ = update(
-        &mut state,
-        Message::MoreLoaded(Box::new(MorePage {
-          contracts: vec![],
-          journal: vec![journal_entry(7, Some(5.0), "bounty", "kill")],
-          market: vec![],
-          tab,
-          scope: Scope::Character(99),
-        })),
-        &db,
-      );
-
-      assert!(state.journal.is_empty());
-      assert!(!state.loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_when_the_selected_scope_is_already_active() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.picker_open = true;
-      let active = state.active;
-
-      let _ = update(&mut state, Message::ScopeSelected(active), &db);
-
-      assert!(!state.picker_open);
-      assert_eq!(state.active, active);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_side_filter() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SideFilterChanged(Side::Buy), &db);
-
-      assert_eq!(state.side_filter, Side::Buy);
-      assert_eq!(state.tab_scroll_offset(), 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_selects_a_timeframe_and_clears_the_chart_hover() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.chart_hover = Some(0.5);
-
-      let _ = update(&mut state, Message::TimeframeSelected(Timeframe::Year), &db);
-
-      assert_eq!(state.timeframe, Timeframe::Year);
-      assert_eq!(state.chart_hover, None);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_chart_hover_fraction() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::ChartHovered(Some(0.25)), &db);
-
-      assert_eq!(state.chart_hover, Some(0.25));
-    }
-
-    #[tokio::test]
-    async fn it_no_ops_on_a_settled_pane() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 320.0), &db);
-
-      assert!(!state.right_rail.is_active());
     }
   }
 
@@ -2363,127 +1554,70 @@ mod tests {
     }
   }
 
-  mod sliced_series {
-    use chrono::NaiveDate;
+  mod category_flows {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn day(date: &str) -> NaiveDate {
-      NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
-    }
-
     #[test]
-    fn it_keeps_only_points_within_the_timeframe_window() {
-      let mut state = State::new();
-      state.net_worth_series = (1..=20)
-        .map(|d| nw_point(&format!("2026-06-{d:02}"), d as f64))
-        .collect();
-      state.timeframe = Timeframe::Week;
-
-      let sliced = super::sliced_series(&state, day("2026-06-20"));
-
-      assert_eq!(sliced.len(), 7);
-      assert_eq!(sliced[0].net_worth, 14.0);
-      assert_eq!(sliced[6].net_worth, 20.0);
-    }
-
-    #[test]
-    fn it_returns_the_whole_series_when_it_fits_inside_the_window() {
-      let mut state = State::new();
-      state.net_worth_series = vec![nw_point("2026-06-01", 1.0), nw_point("2026-06-02", 2.0)];
-      state.timeframe = Timeframe::Year;
-
-      assert_eq!(super::sliced_series(&state, day("2026-06-02")).len(), 2);
-    }
-
-    #[test]
-    fn it_does_not_widen_the_window_when_points_are_sparse() {
-      let mut state = State::new();
-      state.net_worth_series = vec![
-        nw_point("2026-01-01", 1.0),
-        nw_point("2026-05-30", 2.0),
-        nw_point("2026-06-09", 3.0),
+    fn it_drops_categories_with_no_signed_movement() {
+      let entries = [
+        journal_entry(1, None, "unknown", "No amount"),
+        journal_entry(1, Some(0.0), "unknown", "Zero"),
+        journal_entry(1, Some(75.0), "bounty_prizes", "Bounty"),
       ];
-      state.timeframe = Timeframe::Week;
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
 
-      let sliced = super::sliced_series(&state, day("2026-06-09"));
+      let flows = super::category_flows(&refs);
 
-      assert_eq!(sliced.len(), 1);
-      assert_eq!(sliced[0].net_worth, 3.0);
-    }
-  }
-
-  mod series_change {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_last_minus_first() {
-      let series = [nw_point("a", 100.0), nw_point("b", 130.0), nw_point("c", 160.0)];
-
-      assert_eq!(super::series_change(&series), 60.0);
+      assert_eq!(flows.len(), 1);
+      assert_eq!(flows[0].ref_type, "bounty_prizes");
     }
 
     #[test]
-    fn it_is_zero_for_a_single_point_or_empty_series() {
-      assert_eq!(super::series_change(&[nw_point("a", 5.0)]), 0.0);
-      assert_eq!(super::series_change(&[]), 0.0);
-    }
-
-    #[test]
-    fn it_is_negative_when_net_worth_falls() {
-      let series = [nw_point("a", 200.0), nw_point("b", 150.0)];
-
-      assert_eq!(super::series_change(&series), -50.0);
-    }
-  }
-
-  mod scope_composition {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn financials_full(character_id: i64, liquid: f64, assets: f64, escrow: f64) -> CharacterFinancials {
-      CharacterFinancials {
-        character_id,
-        liquid: Some(liquid),
-        asset_value: Some(assets),
-        escrow: Some(escrow),
-        net_worth: Some(liquid + assets + escrow),
-      }
-    }
-
-    #[test]
-    fn it_sums_each_figure_across_the_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.financials = vec![
-        financials_full(1, 100.0, 50.0, 10.0),
-        financials_full(2, 200.0, 25.0, 5.0),
+    fn it_groups_by_ref_type_and_orders_by_combined_magnitude() {
+      let entries = [
+        journal_entry(1, Some(100.0), "bounty_prizes", "Bounty"),
+        journal_entry(1, Some(50.0), "bounty_prizes", "Bounty"),
+        journal_entry(1, Some(-1_000.0), "market_transaction", "Buy"),
       ];
-      state.active = Scope::All;
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
 
-      let composition = super::scope_composition(&state);
+      let flows = super::category_flows(&refs);
 
-      assert_eq!(composition.liquid, Some(300.0));
-      assert_eq!(composition.asset_value, Some(75.0));
-      assert_eq!(composition.escrow, Some(15.0));
+      assert_eq!(flows.len(), 2);
+      assert_eq!(flows[0].ref_type, "market_transaction");
+      assert_eq!(flows[0].spend, 1_000.0);
+      assert_eq!(flows[0].income, 0.0);
+      assert_eq!(flows[1].ref_type, "bounty_prizes");
+      assert_eq!(flows[1].income, 150.0);
+      assert_eq!(flows[1].total(), 150.0);
     }
 
     #[test]
-    fn it_is_none_per_figure_when_no_in_scope_character_has_it() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.financials = vec![financials(1, None)];
-      state.active = Scope::All;
+    fn it_humanizes_the_ref_type_label() {
+      let entries = [journal_entry(1, Some(10.0), "agent_mission_reward", "Mission")];
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
 
-      let composition = super::scope_composition(&state);
+      let flows = super::category_flows(&refs);
 
-      assert_eq!(composition.liquid, None);
-      assert_eq!(composition.asset_value, None);
-      assert_eq!(composition.escrow, None);
+      assert_eq!(flows[0].label(), "Agent Mission Reward");
+    }
+
+    #[test]
+    fn it_splits_a_single_category_into_in_and_out() {
+      let entries = [
+        journal_entry(1, Some(300.0), "corporation_account_withdrawal", "In"),
+        journal_entry(1, Some(-100.0), "corporation_account_withdrawal", "Out"),
+      ];
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
+
+      let flows = super::category_flows(&refs);
+
+      assert_eq!(flows.len(), 1);
+      assert_eq!(flows[0].income, 300.0);
+      assert_eq!(flows[0].spend, 100.0);
+      assert_eq!(flows[0].total(), 400.0);
     }
   }
 
@@ -2500,22 +1634,6 @@ mod tests {
         escrow: None,
         net_worth,
       }
-    }
-
-    #[test]
-    fn it_orders_characters_by_net_worth_descending() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None), pilot(3, None)];
-      state.financials = vec![
-        financials_nw(1, Some(100.0)),
-        financials_nw(2, Some(300.0)),
-        financials_nw(3, Some(200.0)),
-      ];
-      state.active = Scope::All;
-
-      let stack = super::composition_stack(&state);
-
-      assert_eq!(stack.iter().map(|s| s.id).collect::<Vec<_>>(), vec![2, 3, 1]);
     }
 
     #[test]
@@ -2540,137 +1658,69 @@ mod tests {
 
       assert!(super::composition_stack(&state).is_empty());
     }
+
+    #[test]
+    fn it_orders_characters_by_net_worth_descending() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None), pilot(3, None)];
+      state.financials = vec![
+        financials_nw(1, Some(100.0)),
+        financials_nw(2, Some(300.0)),
+        financials_nw(3, Some(200.0)),
+      ];
+      state.active = Scope::All;
+
+      let stack = super::composition_stack(&state);
+
+      assert_eq!(stack.iter().map(|s| s.id).collect::<Vec<_>>(), vec![2, 3, 1]);
+    }
   }
 
-  mod period_totals {
+  mod contract_loader_target {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_sums_income_and_spend_across_the_in_scope_characters() {
+    fn it_is_none_when_no_row_matches() {
+      let state = State::new();
+
+      assert_eq!(super::contract_loader_target(&state, 999), None);
+    }
+
+    #[test]
+    fn it_targets_the_active_corporation_under_a_corp_scope() {
       let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.periods = vec![period(1, 100.0, 40.0), period(1, 50.0, 10.0), period(2, 200.0, 80.0)];
-      state.active = Scope::All;
+      state.active = Scope::Corporation(98_000_001);
 
-      let totals = super::period_totals(&state);
-
-      assert_eq!(totals.income, 350.0);
-      assert_eq!(totals.spend, 130.0);
-      assert_eq!(totals.net, 220.0);
-    }
-
-    #[test]
-    fn it_reflects_only_the_selected_character_in_single_scope() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None), pilot(2, None)];
-      state.periods = vec![period(1, 100.0, 40.0), period(2, 200.0, 80.0)];
-      state.active = Scope::Character(1);
-
-      let totals = super::period_totals(&state);
-
-      assert_eq!(totals.income, 100.0);
-      assert_eq!(totals.spend, 40.0);
-      assert_eq!(totals.net, 60.0);
-    }
-
-    #[test]
-    fn it_is_zero_when_no_in_scope_character_has_period_rows() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, None)];
-      state.periods = vec![period(9, 100.0, 40.0)];
-      state.active = Scope::All;
-
-      let totals = super::period_totals(&state);
-
-      assert_eq!(totals, PeriodTotals::default());
-    }
-  }
-
-  mod journal_matches {
-    use super::*;
-
-    #[test]
-    fn it_keeps_income_for_the_in_sign_and_drops_spend() {
-      let income = journal_entry(1, Some(100.0), "bounty_prizes", "Bounty");
-      let spend = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
-
-      assert!(super::journal_matches(&income, SignFilter::In, ""));
-      assert!(!super::journal_matches(&spend, SignFilter::In, ""));
-    }
-
-    #[test]
-    fn it_keeps_spend_for_the_out_sign_and_drops_income() {
-      let income = journal_entry(1, Some(100.0), "bounty_prizes", "Bounty");
-      let spend = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
-
-      assert!(!super::journal_matches(&income, SignFilter::Out, ""));
-      assert!(super::journal_matches(&spend, SignFilter::Out, ""));
-    }
-
-    #[test]
-    fn it_matches_the_query_against_ref_type_and_description() {
-      let entry = journal_entry(
-        1,
-        Some(1.0),
-        "agent_mission_reward",
-        "Distribution run for Sister Alitura",
+      assert_eq!(
+        super::contract_loader_target(&state, 12_345),
+        Some(ContractLoad::Corporation(98_000_001))
       );
-
-      assert!(super::journal_matches(&entry, SignFilter::All, "alitura"));
-      assert!(super::journal_matches(&entry, SignFilter::All, "mission"));
-      assert!(!super::journal_matches(&entry, SignFilter::All, "tritanium"));
     }
 
     #[test]
-    fn it_composes_sign_and_query() {
-      let entry = journal_entry(1, Some(500.0), "bounty_prizes", "Serpentis bounty");
+    fn it_targets_the_owning_character_under_an_all_scope() {
+      let mut state = State::new();
+      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
 
-      assert!(super::journal_matches(&entry, SignFilter::In, "serpentis"));
-      assert!(!super::journal_matches(&entry, SignFilter::Out, "serpentis"));
-    }
-  }
-
-  mod market_matches {
-    use super::*;
-
-    #[test]
-    fn it_keeps_sells_for_in_and_buys_for_out() {
-      let buy = market_entry(1, true, "Tritanium", "Jita");
-      let sell = market_entry(1, false, "Tritanium", "Jita");
-
-      assert!(super::market_matches(&sell, SignFilter::In, Side::All, ""));
-      assert!(!super::market_matches(&buy, SignFilter::In, Side::All, ""));
-      assert!(super::market_matches(&buy, SignFilter::Out, Side::All, ""));
-      assert!(!super::market_matches(&sell, SignFilter::Out, Side::All, ""));
-    }
-
-    #[test]
-    fn it_filters_by_side() {
-      let buy = market_entry(1, true, "Tritanium", "Jita");
-      let sell = market_entry(1, false, "Tritanium", "Jita");
-
-      assert!(super::market_matches(&buy, SignFilter::All, Side::Buy, ""));
-      assert!(!super::market_matches(&sell, SignFilter::All, Side::Buy, ""));
-      assert!(super::market_matches(&sell, SignFilter::All, Side::Sell, ""));
-      assert!(!super::market_matches(&buy, SignFilter::All, Side::Sell, ""));
-      assert!(super::market_matches(&buy, SignFilter::All, Side::All, ""));
-      assert!(super::market_matches(&sell, SignFilter::All, Side::All, ""));
-    }
-
-    #[test]
-    fn it_matches_the_query_against_item_and_location() {
-      let entry = market_entry(1, false, "Tritanium", "Jita IV - Moon 4");
-
-      assert!(super::market_matches(&entry, SignFilter::All, Side::All, "trit"));
-      assert!(super::market_matches(&entry, SignFilter::All, Side::All, "jita"));
-      assert!(!super::market_matches(&entry, SignFilter::All, Side::All, "veldspar"));
+      assert_eq!(
+        super::contract_loader_target(&state, 12_345),
+        Some(ContractLoad::Character(7))
+      );
     }
   }
 
   mod contract_matches {
     use super::*;
+
+    #[test]
+    fn it_composes_side_and_query() {
+      let sell = contract_entry(1, false, "outstanding", "item_exchange");
+
+      assert!(super::contract_matches(&sell, Side::Sell, "exchange"));
+      assert!(!super::contract_matches(&sell, Side::Buy, "exchange"));
+    }
 
     #[test]
     fn it_filters_by_side() {
@@ -2696,13 +1746,49 @@ mod tests {
       assert!(super::contract_matches(&entry, Side::All, "12345"));
       assert!(!super::contract_matches(&entry, Side::All, "courier"));
     }
+  }
+
+  mod corp_balance_total {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
-    fn it_composes_side_and_query() {
-      let sell = contract_entry(1, false, "outstanding", "item_exchange");
+    fn it_is_none_when_no_division_has_a_balance() {
+      let mut state = State::new();
+      state.active = Scope::Corporation(98_000_001);
+      state.corp_divisions = vec![corp_division(1, Some("Master"), None)];
 
-      assert!(super::contract_matches(&sell, Side::Sell, "exchange"));
-      assert!(!super::contract_matches(&sell, Side::Buy, "exchange"));
+      assert_eq!(state.corp_balance_total(), None);
+    }
+
+    #[test]
+    fn it_sums_the_synced_division_balances() {
+      let mut state = State::new();
+      state.active = Scope::Corporation(98_000_001);
+      state.corp_divisions = vec![
+        corp_division(1, Some("Master"), Some(1_000.0)),
+        corp_division(2, None, Some(250.0)),
+        corp_division(3, None, None),
+      ];
+
+      assert_eq!(state.corp_balance_total(), Some(1_250.0));
+    }
+  }
+
+  mod corp_division_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_a_division_number_label_when_unnamed() {
+      assert_eq!(corp_division(4, None, None).label(), "Division 4");
+    }
+
+    #[test]
+    fn it_uses_the_synced_name_when_present() {
+      assert_eq!(corp_division(2, Some("Trading"), None).label(), "Trading");
     }
   }
 
@@ -2740,394 +1826,6 @@ mod tests {
 
       assert!(super::filtered_contracts(&state).is_empty());
       assert!(!state.has_contracts());
-    }
-  }
-
-  mod contract_loader_target {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_targets_the_active_corporation_under_a_corp_scope() {
-      let mut state = State::new();
-      state.active = Scope::Corporation(98_000_001);
-
-      assert_eq!(
-        super::contract_loader_target(&state, 12_345),
-        Some(ContractLoad::Corporation(98_000_001))
-      );
-    }
-
-    #[test]
-    fn it_targets_the_owning_character_under_an_all_scope() {
-      let mut state = State::new();
-      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
-
-      assert_eq!(
-        super::contract_loader_target(&state, 12_345),
-        Some(ContractLoad::Character(7))
-      );
-    }
-
-    #[test]
-    fn it_is_none_when_no_row_matches() {
-      let state = State::new();
-
-      assert_eq!(super::contract_loader_target(&state, 999), None);
-    }
-  }
-
-  mod journal_flow {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sums_income_and_spend_and_nets_them() {
-      let entries = [
-        journal_entry(1, Some(1_000.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(250.0), "agent_mission_reward", "Mission"),
-        journal_entry(1, Some(-400.0), "market_transaction", "Buy"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flow = super::journal_flow(&refs);
-
-      assert_eq!(flow.income, 1_250.0);
-      assert_eq!(flow.spend, 400.0);
-      assert_eq!(flow.net, 850.0);
-    }
-
-    #[test]
-    fn it_ignores_null_and_zero_amounts() {
-      let entries = [
-        journal_entry(1, None, "unknown", "No amount"),
-        journal_entry(1, Some(0.0), "zero", "Zero"),
-        journal_entry(1, Some(-100.0), "tax", "Tax"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flow = super::journal_flow(&refs);
-
-      assert_eq!(flow.income, 0.0);
-      assert_eq!(flow.spend, 100.0);
-      assert_eq!(flow.net, -100.0);
-    }
-
-    #[test]
-    fn it_is_zero_for_an_empty_page() {
-      assert_eq!(super::journal_flow(&[]), JournalFlow::default());
-    }
-  }
-
-  mod category_flows {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_groups_by_ref_type_and_orders_by_combined_magnitude() {
-      let entries = [
-        journal_entry(1, Some(100.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(50.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(-1_000.0), "market_transaction", "Buy"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 2);
-      assert_eq!(flows[0].ref_type, "market_transaction");
-      assert_eq!(flows[0].spend, 1_000.0);
-      assert_eq!(flows[0].income, 0.0);
-      assert_eq!(flows[1].ref_type, "bounty_prizes");
-      assert_eq!(flows[1].income, 150.0);
-      assert_eq!(flows[1].total(), 150.0);
-    }
-
-    #[test]
-    fn it_splits_a_single_category_into_in_and_out() {
-      let entries = [
-        journal_entry(1, Some(300.0), "corporation_account_withdrawal", "In"),
-        journal_entry(1, Some(-100.0), "corporation_account_withdrawal", "Out"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 1);
-      assert_eq!(flows[0].income, 300.0);
-      assert_eq!(flows[0].spend, 100.0);
-      assert_eq!(flows[0].total(), 400.0);
-    }
-
-    #[test]
-    fn it_drops_categories_with_no_signed_movement() {
-      let entries = [
-        journal_entry(1, None, "unknown", "No amount"),
-        journal_entry(1, Some(0.0), "unknown", "Zero"),
-        journal_entry(1, Some(75.0), "bounty_prizes", "Bounty"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 1);
-      assert_eq!(flows[0].ref_type, "bounty_prizes");
-    }
-
-    #[test]
-    fn it_humanizes_the_ref_type_label() {
-      let entries = [journal_entry(1, Some(10.0), "agent_mission_reward", "Mission")];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows[0].label(), "Agent Mission Reward");
-    }
-  }
-
-  mod journal_type_glyph {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::ui::components::glyph_badge::{GLYPH_EXPENSE, GLYPH_INCOME};
-
-    #[test]
-    fn it_reads_a_positive_amount_as_income() {
-      let entry = journal_entry(1, Some(1_000.0), "player_donation", "Gift");
-
-      assert_eq!(super::journal_type_glyph(&entry), (GLYPH_INCOME, true));
-    }
-
-    #[test]
-    fn it_reads_a_negative_amount_as_expense() {
-      let entry = journal_entry(1, Some(-400.0), "market_transaction", "Buy");
-
-      assert_eq!(super::journal_type_glyph(&entry), (GLYPH_EXPENSE, false));
-    }
-
-    #[test]
-    fn it_falls_back_to_the_ref_type_when_the_amount_is_absent() {
-      let income = journal_entry(1, None, "bounty_prizes", "Bounty");
-      let expense = journal_entry(1, None, "brokers_fee", "Fee");
-
-      assert_eq!(super::journal_type_glyph(&income), (GLYPH_INCOME, true));
-      assert_eq!(super::journal_type_glyph(&expense), (GLYPH_EXPENSE, false));
-    }
-
-    #[test]
-    fn it_classifies_fee_tax_and_cost_ref_types_as_expense() {
-      for ref_type in [
-        "brokers_fee",
-        "transaction_tax",
-        "reprocessing_tax",
-        "jump_clone_activation_cost",
-      ] {
-        let entry = journal_entry(1, None, ref_type, "Charge");
-
-        assert_eq!(
-          super::journal_type_glyph(&entry),
-          (GLYPH_EXPENSE, false),
-          "{ref_type} should read as an expense"
-        );
-      }
-    }
-  }
-
-  mod view {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_empty_state_before_any_load() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-
-    #[test]
-    fn it_renders_a_loaded_state() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0))];
-      state.financials = vec![financials(1, Some(100.0))];
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-
-    #[test]
-    fn it_renders_the_hero_graph_with_a_net_worth_series() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
-      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
-      state.net_worth_series = (0..40).map(|i| nw_point("2026-06-01", 100.0 + i as f64)).collect();
-      state.chart_hover = Some(0.5);
-      state.timeframe = Timeframe::Month;
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-
-    #[test]
-    fn it_renders_a_corp_scope_with_divisions() {
-      let mut state = State::new();
-      state.corporations = vec![corp(98_000_001, "Test Corp")];
-      state.active = Scope::Corporation(98_000_001);
-      state.corp_divisions = vec![
-        corp_division(1, Some("Master Wallet"), Some(1_000.0)),
-        corp_division(2, None, Some(250.0)),
-      ];
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-
-    #[test]
-    fn it_renders_a_corp_scope_with_no_divisions_synced() {
-      let mut state = State::new();
-      state.corporations = vec![corp(98_000_001, "Test Corp")];
-      state.active = Scope::Corporation(98_000_001);
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-  }
-
-  mod resolve_scope_ids {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_every_pilot_id_for_all_scope() {
-      let roster = [pilot(1, None), pilot(2, None)];
-
-      assert_eq!(super::resolve_scope_ids(Scope::All, &roster, &[]), vec![1, 2]);
-    }
-
-    #[test]
-    fn it_returns_the_single_id_for_a_character_scope() {
-      let roster = [pilot(1, None), pilot(2, None)];
-
-      assert_eq!(super::resolve_scope_ids(Scope::Character(2), &roster, &[]), vec![2]);
-    }
-
-    #[test]
-    fn it_returns_no_character_ids_for_a_corp_scope() {
-      let roster = [pilot(1, None)];
-
-      assert!(super::resolve_scope_ids(Scope::Corporation(98_000_001), &roster, &[]).is_empty());
-    }
-  }
-
-  mod load_net_worth_series {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn seed_character(db: &Database, id: i64) {
-      use crate::store::{
-        model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
-        repo::character::insert_with_org,
-      };
-
-      let corp_id = 90_000_001;
-      let alliance_id = 99_000_001;
-      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-      let race = Race::new(2, alliance_id, "A race.", "Caldari");
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-      corp.set_ceo_id(id);
-      corp.set_creator_id(id);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Test Pilot");
-      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_a_corp_scope() {
-      let db = crate::store::open_test().await.unwrap();
-
-      assert!(
-        super::load_net_worth_series(&db, Scope::Corporation(1), &[], &[])
-          .await
-          .is_empty()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_every_scope_without_snapshots() {
-      let db = crate::store::open_test().await.unwrap();
-
-      assert!(super::load_net_worth_series(&db, Scope::All, &[], &[]).await.is_empty());
-      assert!(
-        super::load_net_worth_series(&db, Scope::Character(42), &[42], &[])
-          .await
-          .is_empty()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_maps_a_characters_recent_snapshots() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let today = Utc::now().format("%Y-%m-%d").to_string();
-      crate::store::repo::finance::upsert(&db, 42, &today, 100.0, None, None, 175.0)
-        .await
-        .unwrap();
-
-      let series = super::load_net_worth_series(&db, Scope::Character(42), &[42], &[]).await;
-
-      assert_eq!(series.len(), 1);
-      assert_eq!(series[0].net_worth, 175.0);
-    }
-
-    #[tokio::test]
-    async fn it_maps_a_corporations_recent_snapshots() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let today = Utc::now().format("%Y-%m-%d").to_string();
-      sqlx::query(
-        "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) VALUES (?, ?, ?, ?)",
-      )
-      .bind(90_000_001_i64)
-      .bind(&today)
-      .bind(1_250.0)
-      .bind(1_250.0)
-      .execute(&db.0)
-      .await
-      .unwrap();
-
-      let series = super::load_net_worth_series(&db, Scope::Corporation(90_000_001), &[], &[]).await;
-
-      assert_eq!(series.len(), 1);
-      assert_eq!(series[0].net_worth, 1_250.0);
-    }
-
-    #[tokio::test]
-    async fn it_adds_owned_corp_net_worth_into_the_all_wallets_series() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let today = Utc::now().format("%Y-%m-%d").to_string();
-      crate::store::repo::finance::upsert(&db, 42, &today, 100.0, None, None, 175.0)
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) VALUES (?, ?, ?, ?)",
-      )
-      .bind(90_000_001_i64)
-      .bind(&today)
-      .bind(1_250.0)
-      .bind(1_250.0)
-      .execute(&db.0)
-      .await
-      .unwrap();
-
-      let corporations = vec![corp(90_000_001, "Test Corp")];
-      let series = super::load_net_worth_series(&db, Scope::All, &[42], &corporations).await;
-
-      assert_eq!(series.len(), 1);
-      assert_eq!(series[0].net_worth, 175.0 + 1_250.0);
     }
   }
 
@@ -3189,6 +1887,1308 @@ mod tests {
         state.active = scope;
         let _el: Element<'_, Message> = view(&state, Utc::now());
       }
+    }
+  }
+
+  mod journal_flow {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_ignores_null_and_zero_amounts() {
+      let entries = [
+        journal_entry(1, None, "unknown", "No amount"),
+        journal_entry(1, Some(0.0), "zero", "Zero"),
+        journal_entry(1, Some(-100.0), "tax", "Tax"),
+      ];
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
+
+      let flow = super::journal_flow(&refs);
+
+      assert_eq!(flow.income, 0.0);
+      assert_eq!(flow.spend, 100.0);
+      assert_eq!(flow.net, -100.0);
+    }
+
+    #[test]
+    fn it_is_zero_for_an_empty_page() {
+      assert_eq!(super::journal_flow(&[]), JournalFlow::default());
+    }
+
+    #[test]
+    fn it_sums_income_and_spend_and_nets_them() {
+      let entries = [
+        journal_entry(1, Some(1_000.0), "bounty_prizes", "Bounty"),
+        journal_entry(1, Some(250.0), "agent_mission_reward", "Mission"),
+        journal_entry(1, Some(-400.0), "market_transaction", "Buy"),
+      ];
+      let refs: Vec<&JournalEntry> = entries.iter().collect();
+
+      let flow = super::journal_flow(&refs);
+
+      assert_eq!(flow.income, 1_250.0);
+      assert_eq!(flow.spend, 400.0);
+      assert_eq!(flow.net, 850.0);
+    }
+  }
+
+  mod journal_matches {
+    use super::*;
+
+    #[test]
+    fn it_composes_sign_and_query() {
+      let entry = journal_entry(1, Some(500.0), "bounty_prizes", "Serpentis bounty");
+
+      assert!(super::journal_matches(&entry, SignFilter::In, "serpentis"));
+      assert!(!super::journal_matches(&entry, SignFilter::Out, "serpentis"));
+    }
+
+    #[test]
+    fn it_keeps_income_for_the_in_sign_and_drops_spend() {
+      let income = journal_entry(1, Some(100.0), "bounty_prizes", "Bounty");
+      let spend = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
+
+      assert!(super::journal_matches(&income, SignFilter::In, ""));
+      assert!(!super::journal_matches(&spend, SignFilter::In, ""));
+    }
+
+    #[test]
+    fn it_keeps_spend_for_the_out_sign_and_drops_income() {
+      let income = journal_entry(1, Some(100.0), "bounty_prizes", "Bounty");
+      let spend = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
+
+      assert!(!super::journal_matches(&income, SignFilter::Out, ""));
+      assert!(super::journal_matches(&spend, SignFilter::Out, ""));
+    }
+
+    #[test]
+    fn it_matches_the_query_against_ref_type_and_description() {
+      let entry = journal_entry(
+        1,
+        Some(1.0),
+        "agent_mission_reward",
+        "Distribution run for Sister Alitura",
+      );
+
+      assert!(super::journal_matches(&entry, SignFilter::All, "alitura"));
+      assert!(super::journal_matches(&entry, SignFilter::All, "mission"));
+      assert!(!super::journal_matches(&entry, SignFilter::All, "tritanium"));
+    }
+  }
+
+  mod journal_type_glyph {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::ui::components::glyph_badge::{GLYPH_EXPENSE, GLYPH_INCOME};
+
+    #[test]
+    fn it_classifies_fee_tax_and_cost_ref_types_as_expense() {
+      for ref_type in [
+        "brokers_fee",
+        "transaction_tax",
+        "reprocessing_tax",
+        "jump_clone_activation_cost",
+      ] {
+        let entry = journal_entry(1, None, ref_type, "Charge");
+
+        assert_eq!(
+          super::journal_type_glyph(&entry),
+          (GLYPH_EXPENSE, false),
+          "{ref_type} should read as an expense"
+        );
+      }
+    }
+
+    #[test]
+    fn it_falls_back_to_the_ref_type_when_the_amount_is_absent() {
+      let income = journal_entry(1, None, "bounty_prizes", "Bounty");
+      let expense = journal_entry(1, None, "brokers_fee", "Fee");
+
+      assert_eq!(super::journal_type_glyph(&income), (GLYPH_INCOME, true));
+      assert_eq!(super::journal_type_glyph(&expense), (GLYPH_EXPENSE, false));
+    }
+
+    #[test]
+    fn it_reads_a_negative_amount_as_expense() {
+      let entry = journal_entry(1, Some(-400.0), "market_transaction", "Buy");
+
+      assert_eq!(super::journal_type_glyph(&entry), (GLYPH_EXPENSE, false));
+    }
+
+    #[test]
+    fn it_reads_a_positive_amount_as_income() {
+      let entry = journal_entry(1, Some(1_000.0), "player_donation", "Gift");
+
+      assert_eq!(super::journal_type_glyph(&entry), (GLYPH_INCOME, true));
+    }
+  }
+
+  mod load_more {
+    use super::*;
+
+    async fn ready_state(tab: Tab) -> State {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+      state.tab = tab;
+      state
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_for_a_corporation_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Journal).await;
+      state.active = Scope::Corporation(98_000_001);
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(!state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_for_a_corporation_scope_on_a_non_contract_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Market).await;
+      state.active = Scope::Corporation(98_000_001);
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(!state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_when_no_characters_are_in_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::All;
+      state.tab = Tab::Journal;
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(!state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_when_the_tab_is_exhausted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Journal).await;
+      state.tab_exhausted = true;
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(!state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_while_a_page_is_already_loading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Journal).await;
+      state.loading_more = true;
+
+      let _ = super::load_more(&mut state, &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_corp_contracts_page_load() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Contracts).await;
+      state.active = Scope::Corporation(98_000_001);
+
+      let _task = super::load_more(&mut state, &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_corp_contracts_page_load_from_the_last_entry_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = ready_state(Tab::Contracts).await;
+      state.active = Scope::Corporation(98_000_001);
+      state.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
+
+      let _task = super::load_more(&mut state, &db);
+
+      assert!(state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_page_load_for_each_tab() {
+      let db = crate::store::open_test().await.unwrap();
+
+      for tab in [Tab::Journal, Tab::Market, Tab::Contracts] {
+        let mut state = ready_state(tab).await;
+
+        let _task = super::load_more(&mut state, &db);
+
+        assert!(state.loading_more, "starting a {tab:?} page marks the state loading");
+      }
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_page_load_from_the_last_entry_cursor_for_each_tab() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let mut journal = ready_state(Tab::Journal).await;
+      journal.journal = vec![journal_entry(1, Some(1.0), "player_trading", "trade")];
+      let _journal_task = super::load_more(&mut journal, &db);
+      assert!(journal.loading_more);
+
+      let mut market = ready_state(Tab::Market).await;
+      market.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+      let _market_task = super::load_more(&mut market, &db);
+      assert!(market.loading_more);
+
+      let mut contracts = ready_state(Tab::Contracts).await;
+      contracts.contracts = vec![contract_entry(1, false, "finished", "item_exchange")];
+      let _contracts_task = super::load_more(&mut contracts, &db);
+      assert!(contracts.loading_more);
+    }
+  }
+
+  mod load_net_worth_series {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_character(db: &Database, id: i64) {
+      use crate::store::{
+        model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+        repo::character::insert_with_org,
+      };
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Test Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_adds_owned_corp_net_worth_into_the_all_wallets_series() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let today = Utc::now().format("%Y-%m-%d").to_string();
+      crate::store::repo::finance::upsert(&db, 42, &today, 100.0, None, None, 175.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) VALUES (?, ?, ?, ?)",
+      )
+      .bind(90_000_001_i64)
+      .bind(&today)
+      .bind(1_250.0)
+      .bind(1_250.0)
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      let corporations = vec![corp(90_000_001, "Test Corp")];
+      let series = super::load_net_worth_series(&db, Scope::All, &[42], &corporations).await;
+
+      assert_eq!(series.len(), 1);
+      assert_eq!(series[0].net_worth, 175.0 + 1_250.0);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_a_corp_scope() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert!(
+        super::load_net_worth_series(&db, Scope::Corporation(1), &[], &[])
+          .await
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_every_scope_without_snapshots() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert!(super::load_net_worth_series(&db, Scope::All, &[], &[]).await.is_empty());
+      assert!(
+        super::load_net_worth_series(&db, Scope::Character(42), &[42], &[])
+          .await
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_maps_a_characters_recent_snapshots() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let today = Utc::now().format("%Y-%m-%d").to_string();
+      crate::store::repo::finance::upsert(&db, 42, &today, 100.0, None, None, 175.0)
+        .await
+        .unwrap();
+
+      let series = super::load_net_worth_series(&db, Scope::Character(42), &[42], &[]).await;
+
+      assert_eq!(series.len(), 1);
+      assert_eq!(series[0].net_worth, 175.0);
+    }
+
+    #[tokio::test]
+    async fn it_maps_a_corporations_recent_snapshots() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let today = Utc::now().format("%Y-%m-%d").to_string();
+      sqlx::query(
+        "INSERT INTO corporation_net_worth_snapshot (corporation_id, date, liquid, net_worth) VALUES (?, ?, ?, ?)",
+      )
+      .bind(90_000_001_i64)
+      .bind(&today)
+      .bind(1_250.0)
+      .bind(1_250.0)
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      let series = super::load_net_worth_series(&db, Scope::Corporation(90_000_001), &[], &[]).await;
+
+      assert_eq!(series.len(), 1);
+      assert_eq!(series[0].net_worth, 1_250.0);
+    }
+  }
+
+  mod load_roster {
+    #[tokio::test]
+    async fn it_yields_an_empty_roster_against_a_bare_store() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert!(super::super::load_roster(&db).await.is_empty());
+    }
+  }
+
+  mod loads_data {
+    use super::*;
+
+    #[test]
+    fn it_does_not_flag_an_interaction_message() {
+      assert!(!Message::TabSelected(Tab::Market).loads_data());
+      assert!(!Message::SearchChanged("rifter".to_owned()).loads_data());
+      assert!(!Message::ChartHovered(Some(0.5)).loads_data());
+    }
+
+    #[test]
+    fn it_flags_a_load_message_for_an_image_recheck() {
+      assert!(Message::Loaded(Box::new(load_wallet_for_test())).loads_data());
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    #[test]
+    fn it_ignores_a_kind_the_wallet_does_not_render() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::AssetSync);
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_marks_the_wallet_dirty_for_a_ledger_kind() {
+      let mut state = State::new();
+
+      state.mark_dirty(JobKind::CharacterWallet);
+
+      assert!(state.is_dirty());
+    }
+  }
+
+  mod market_matches {
+    use super::*;
+
+    #[test]
+    fn it_filters_by_side() {
+      let buy = market_entry(1, true, "Tritanium", "Jita");
+      let sell = market_entry(1, false, "Tritanium", "Jita");
+
+      assert!(super::market_matches(&buy, SignFilter::All, Side::Buy, ""));
+      assert!(!super::market_matches(&sell, SignFilter::All, Side::Buy, ""));
+      assert!(super::market_matches(&sell, SignFilter::All, Side::Sell, ""));
+      assert!(!super::market_matches(&buy, SignFilter::All, Side::Sell, ""));
+      assert!(super::market_matches(&buy, SignFilter::All, Side::All, ""));
+      assert!(super::market_matches(&sell, SignFilter::All, Side::All, ""));
+    }
+
+    #[test]
+    fn it_keeps_sells_for_in_and_buys_for_out() {
+      let buy = market_entry(1, true, "Tritanium", "Jita");
+      let sell = market_entry(1, false, "Tritanium", "Jita");
+
+      assert!(super::market_matches(&sell, SignFilter::In, Side::All, ""));
+      assert!(!super::market_matches(&buy, SignFilter::In, Side::All, ""));
+      assert!(super::market_matches(&buy, SignFilter::Out, Side::All, ""));
+      assert!(!super::market_matches(&sell, SignFilter::Out, Side::All, ""));
+    }
+
+    #[test]
+    fn it_matches_the_query_against_item_and_location() {
+      let entry = market_entry(1, false, "Tritanium", "Jita IV - Moon 4");
+
+      assert!(super::market_matches(&entry, SignFilter::All, Side::All, "trit"));
+      assert!(super::market_matches(&entry, SignFilter::All, Side::All, "jita"));
+      assert!(!super::market_matches(&entry, SignFilter::All, Side::All, "veldspar"));
+    }
+  }
+
+  mod period_totals {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_zero_when_no_in_scope_character_has_period_rows() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.periods = vec![period(9, 100.0, 40.0)];
+      state.active = Scope::All;
+
+      let totals = super::period_totals(&state);
+
+      assert_eq!(totals, PeriodTotals::default());
+    }
+
+    #[test]
+    fn it_reflects_only_the_selected_character_in_single_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.periods = vec![period(1, 100.0, 40.0), period(2, 200.0, 80.0)];
+      state.active = Scope::Character(1);
+
+      let totals = super::period_totals(&state);
+
+      assert_eq!(totals.income, 100.0);
+      assert_eq!(totals.spend, 40.0);
+      assert_eq!(totals.net, 60.0);
+    }
+
+    #[test]
+    fn it_sums_income_and_spend_across_the_in_scope_characters() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.periods = vec![period(1, 100.0, 40.0), period(1, 50.0, 10.0), period(2, 200.0, 80.0)];
+      state.active = Scope::All;
+
+      let totals = super::period_totals(&state);
+
+      assert_eq!(totals.income, 350.0);
+      assert_eq!(totals.spend, 130.0);
+      assert_eq!(totals.net, 220.0);
+    }
+  }
+
+  mod reload_kind {
+    use super::*;
+
+    #[test]
+    fn it_feeds_the_wallet_for_every_ledger_and_derive_kind() {
+      assert!(reload_kind(JobKind::CharacterWallet));
+      assert!(reload_kind(JobKind::CorporationWallet));
+      assert!(reload_kind(JobKind::MarketPrices));
+      assert!(reload_kind(JobKind::NetWorthSnapshot));
+    }
+
+    #[test]
+    fn it_ignores_kinds_the_wallet_does_not_render() {
+      assert!(!reload_kind(JobKind::AssetSync));
+      assert!(!reload_kind(JobKind::CharacterSkills));
+      assert!(!reload_kind(JobKind::CharacterProfile));
+    }
+  }
+
+  mod resolve_scope_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_every_pilot_id_for_all_scope() {
+      let roster = [pilot(1, None), pilot(2, None)];
+
+      assert_eq!(super::resolve_scope_ids(Scope::All, &roster, &[]), vec![1, 2]);
+    }
+
+    #[test]
+    fn it_returns_no_character_ids_for_a_corp_scope() {
+      let roster = [pilot(1, None)];
+
+      assert!(super::resolve_scope_ids(Scope::Corporation(98_000_001), &roster, &[]).is_empty());
+    }
+
+    #[test]
+    fn it_returns_the_single_id_for_a_character_scope() {
+      let roster = [pilot(1, None), pilot(2, None)];
+
+      assert_eq!(super::resolve_scope_ids(Scope::Character(2), &roster, &[]), vec![2]);
+    }
+  }
+
+  mod scope_composition {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn financials_full(character_id: i64, liquid: f64, assets: f64, escrow: f64) -> CharacterFinancials {
+      CharacterFinancials {
+        character_id,
+        liquid: Some(liquid),
+        asset_value: Some(assets),
+        escrow: Some(escrow),
+        net_worth: Some(liquid + assets + escrow),
+      }
+    }
+
+    #[test]
+    fn it_is_none_per_figure_when_no_in_scope_character_has_it() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.financials = vec![financials(1, None)];
+      state.active = Scope::All;
+
+      let composition = super::scope_composition(&state);
+
+      assert_eq!(composition.liquid, None);
+      assert_eq!(composition.asset_value, None);
+      assert_eq!(composition.escrow, None);
+    }
+
+    #[test]
+    fn it_sums_each_figure_across_the_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.financials = vec![
+        financials_full(1, 100.0, 50.0, 10.0),
+        financials_full(2, 200.0, 25.0, 5.0),
+      ];
+      state.active = Scope::All;
+
+      let composition = super::scope_composition(&state);
+
+      assert_eq!(composition.liquid, Some(300.0));
+      assert_eq!(composition.asset_value, Some(75.0));
+      assert_eq!(composition.escrow, Some(15.0));
+    }
+  }
+
+  mod scope_gate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_does_not_gate_a_character_with_the_wallet_scopes() {
+      let granted = crate::features::registry::descriptor(crate::config::Feature::Wallet)
+        .scopes
+        .join(" ");
+      let mut granted_pilot = pilot(1, None);
+      granted_pilot.granted_scopes = Some(granted);
+      let mut state = State::new();
+      state.roster = vec![granted_pilot];
+      state.active = Scope::Character(1);
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_the_all_or_corporation_scopes() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+
+      assert!(state.scope_gate().is_none());
+
+      state.active = Scope::Corporation(99);
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_gates_a_character_scope_missing_the_wallet_scopes() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::Character(1);
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 1);
+      assert!(!gate.2.is_empty());
+    }
+  }
+
+  mod scope_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_every_pilot_for_all_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.active = Scope::All;
+
+      assert_eq!(state.scope_ids(), vec![1, 2]);
+    }
+
+    #[test]
+    fn it_returns_no_character_ids_for_a_corp_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.active = Scope::Corporation(98_000_001);
+
+      assert!(state.scope_ids().is_empty());
+    }
+
+    #[test]
+    fn it_returns_the_single_id_for_a_character_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(2, None)];
+      state.active = Scope::Character(2);
+
+      assert_eq!(state.scope_ids(), vec![2]);
+    }
+  }
+
+  mod scope_liquid {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_adds_owned_corporation_balances_under_the_all_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0))];
+      state.financials = vec![financials(1, Some(100.0))];
+      state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
+      state.active = Scope::All;
+
+      assert_eq!(super::scope_liquid(&state), Some(800.0));
+    }
+
+    #[test]
+    fn it_excludes_corporation_balances_under_a_character_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0))];
+      state.financials = vec![financials(1, Some(100.0))];
+      state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
+      state.active = Scope::Character(1);
+
+      assert_eq!(super::scope_liquid(&state), Some(100.0));
+    }
+
+    #[test]
+    fn it_excludes_out_of_scope_characters() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
+      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
+      state.active = Scope::Character(1);
+
+      assert_eq!(super::scope_liquid(&state), Some(100.0));
+    }
+
+    #[test]
+    fn it_includes_corporation_balances_even_when_no_character_has_liquid() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.financials = vec![financials(1, None)];
+      state.corporations = vec![corp_with_liquid(98_000_001, Some(250.0))];
+      state.active = Scope::All;
+
+      assert_eq!(super::scope_liquid(&state), Some(250.0));
+    }
+
+    #[test]
+    fn it_returns_none_when_no_in_scope_character_has_a_synced_balance() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.financials = vec![financials(1, None)];
+      state.active = Scope::All;
+
+      assert_eq!(super::scope_liquid(&state), None);
+    }
+
+    #[test]
+    fn it_sums_liquid_across_the_in_scope_characters() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
+      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
+      state.active = Scope::All;
+
+      assert_eq!(super::scope_liquid(&state), Some(150.0));
+    }
+
+    #[test]
+    fn it_uses_summed_division_balances_for_a_corp_scope() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0))];
+      state.financials = vec![financials(1, Some(100.0))];
+      state.active = Scope::Corporation(98_000_001);
+      state.corp_divisions = vec![
+        corp_division(1, Some("Master"), Some(500.0)),
+        corp_division(2, None, Some(200.0)),
+      ];
+
+      assert_eq!(super::scope_liquid(&state), Some(700.0));
+    }
+  }
+
+  mod series_change {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_last_minus_first() {
+      let series = [nw_point("a", 100.0), nw_point("b", 130.0), nw_point("c", 160.0)];
+
+      assert_eq!(super::series_change(&series), 60.0);
+    }
+
+    #[test]
+    fn it_is_negative_when_net_worth_falls() {
+      let series = [nw_point("a", 200.0), nw_point("b", 150.0)];
+
+      assert_eq!(super::series_change(&series), -50.0);
+    }
+
+    #[test]
+    fn it_is_zero_for_a_single_point_or_empty_series() {
+      assert_eq!(super::series_change(&[nw_point("a", 5.0)]), 0.0);
+      assert_eq!(super::series_change(&[]), 0.0);
+    }
+  }
+
+  mod sliced_series {
+    use chrono::NaiveDate;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn day(date: &str) -> NaiveDate {
+      NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap()
+    }
+
+    #[test]
+    fn it_does_not_widen_the_window_when_points_are_sparse() {
+      let mut state = State::new();
+      state.net_worth_series = vec![
+        nw_point("2026-01-01", 1.0),
+        nw_point("2026-05-30", 2.0),
+        nw_point("2026-06-09", 3.0),
+      ];
+      state.timeframe = Timeframe::Week;
+
+      let sliced = super::sliced_series(&state, day("2026-06-09"));
+
+      assert_eq!(sliced.len(), 1);
+      assert_eq!(sliced[0].net_worth, 3.0);
+    }
+
+    #[test]
+    fn it_keeps_only_points_within_the_timeframe_window() {
+      let mut state = State::new();
+      state.net_worth_series = (1..=20)
+        .map(|d| nw_point(&format!("2026-06-{d:02}"), d as f64))
+        .collect();
+      state.timeframe = Timeframe::Week;
+
+      let sliced = super::sliced_series(&state, day("2026-06-20"));
+
+      assert_eq!(sliced.len(), 7);
+      assert_eq!(sliced[0].net_worth, 14.0);
+      assert_eq!(sliced[6].net_worth, 20.0);
+    }
+
+    #[test]
+    fn it_returns_the_whole_series_when_it_fits_inside_the_window() {
+      let mut state = State::new();
+      state.net_worth_series = vec![nw_point("2026-06-01", 1.0), nw_point("2026-06-02", 2.0)];
+      state.timeframe = Timeframe::Year;
+
+      assert_eq!(super::sliced_series(&state, day("2026-06-02")).len(), 2);
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fresh_portrait() -> images::ImageState {
+      images::ImageState::Fresh(std::path::PathBuf::from("/cache/characters/1.jpg"))
+    }
+
+    #[test]
+    fn it_collects_the_stale_portrait_and_logo_keys() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.corporations = vec![corp(98_000_001, "Corp")];
+
+      let keys = state.stale_images();
+
+      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 1)));
+      assert!(keys.contains(&(images::ImageKind::CorporationLogo, 98_000_001)));
+    }
+
+    #[test]
+    fn it_deduplicates_repeated_keys() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None), pilot(1, None)];
+
+      assert_eq!(state.stale_images(), vec![(images::ImageKind::CharacterPortrait, 1)]);
+    }
+
+    #[test]
+    fn it_is_empty_when_every_model_image_is_fresh() {
+      let mut state = State::new();
+      state.roster = vec![RosterPilot {
+        corp: "TST".to_owned(),
+        granted_scopes: None,
+        id: 1,
+        liquid: None,
+        name: "Pilot 1".to_owned(),
+        portrait: fresh_portrait(),
+      }];
+      state.corporations = vec![RosterCorp {
+        id: 98_000_001,
+        liquid: None,
+        logo: images::ImageState::Fresh(std::path::PathBuf::from("/cache/corporations/98000001.png")),
+        name: "Corp".to_owned(),
+        ticker: "TSTC".to_owned(),
+      }];
+
+      assert!(state.stale_images().is_empty());
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_a_more_page_matching_the_active_scope_and_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.loading_more = true;
+      let (tab, scope) = (state.tab, state.active);
+
+      let _ = update(
+        &mut state,
+        Message::MoreLoaded(Box::new(MorePage {
+          contracts: vec![],
+          journal: vec![journal_entry(7, Some(5.0), "bounty", "kill")],
+          market: vec![],
+          tab,
+          scope,
+        })),
+        &db,
+      );
+
+      assert_eq!(state.journal.len(), 1);
+      assert!(!state.loading_more);
+      assert!(!state.tab_exhausted);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_load_a_page_for_a_shallow_scroll() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 100.0,
+          relative: 0.2,
+        },
+        &db,
+      );
+
+      assert!(!state.loading_more, "a shallow scroll does not page");
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_more_page_for_a_stale_scope_or_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.loading_more = true;
+      let tab = state.tab;
+
+      let _ = update(
+        &mut state,
+        Message::MoreLoaded(Box::new(MorePage {
+          contracts: vec![],
+          journal: vec![journal_entry(7, Some(5.0), "bounty", "kill")],
+          market: vec![],
+          tab,
+          scope: Scope::Character(99),
+        })),
+        &db,
+      );
+
+      assert!(state.journal.is_empty());
+      assert!(!state.loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_division_selection_outside_corp_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::All;
+
+      let _ = update(&mut state, Message::DivisionSelected(3), &db);
+
+      assert_eq!(state.active_division, DEFAULT_DIVISION);
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_next_page_when_scrolled_near_the_bottom() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.roster = vec![pilot(1, None)];
+      state.active = Scope::All;
+
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 9_000.0,
+          relative: 0.9,
+        },
+        &db,
+      );
+
+      assert!(state.loading_more, "a deep scroll starts the next cursor page");
+    }
+
+    #[tokio::test]
+    async fn it_marks_the_tab_exhausted_when_a_more_page_is_empty() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.loading_more = true;
+      let (tab, scope) = (state.tab, state.active);
+
+      let _ = update(
+        &mut state,
+        Message::MoreLoaded(Box::new(MorePage {
+          contracts: vec![],
+          journal: vec![],
+          market: vec![],
+          tab,
+          scope,
+        })),
+        &db,
+      );
+
+      assert!(state.tab_exhausted);
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_on_a_settled_pane() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 320.0), &db);
+
+      assert!(!state.right_rail.is_active());
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_when_the_selected_scope_is_already_active() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.picker_open = true;
+      let active = state.active;
+
+      let _ = update(&mut state, Message::ScopeSelected(active), &db);
+
+      assert!(!state.picker_open);
+      assert_eq!(state.active, active);
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_contract_detail_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::ContractDetailLoaded(Box::new(Some(contract_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_contract.is_some());
+
+      let _ = update(&mut state, Message::CloseContractDetail, &db);
+      assert!(state.selected_contract.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_records_the_chart_hover_fraction() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::ChartHovered(Some(0.25)), &db);
+
+      assert_eq!(state.chart_hover, Some(0.25));
+    }
+
+    #[tokio::test]
+    async fn it_records_the_loaded_roster_and_ledgers() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Loaded {
+          contract_total: 0,
+          contracts: vec![],
+          corp_divisions: vec![],
+          corporations: vec![],
+          financials: vec![financials(7, Some(10.0))],
+          journal: vec![],
+          journal_total: 0,
+          market: vec![],
+          market_total: 0,
+          net_worth_series: vec![],
+          periods: vec![],
+          right_rail_width: 280.0,
+          roster: vec![pilot(7, Some(10.0))],
+        })),
+        &db,
+      );
+
+      assert_eq!(state.roster, vec![pilot(7, Some(10.0))]);
+      assert_eq!(state.financials.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_search_and_sign_filter() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
+      assert_eq!(state.search, "tritanium");
+
+      let _ = update(&mut state, Message::SignFilterChanged(SignFilter::In), &db);
+      assert_eq!(state.sign_filter, SignFilter::In);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_selected_division_in_corp_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::Corporation(98_000_001);
+
+      let _ = update(&mut state, Message::DivisionSelected(3), &db);
+
+      assert_eq!(state.active_division, 3);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_selected_scope_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.picker_open = true;
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
+
+      assert_eq!(state.active, Scope::Character(42));
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_side_filter() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SideFilterChanged(Side::Buy), &db);
+
+      assert_eq!(state.side_filter, Side::Buy);
+      assert_eq!(state.tab_scroll_offset(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_resets_the_scroll_offset_when_the_tab_changes() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.tab_scroll_offset = 4_200.0;
+
+      let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
+      assert_eq!(state.tab_scroll_offset(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_resizes_the_right_rail_through_a_drag() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let start = state.right_rail.width();
+
+      let _ = update(&mut state, Message::RailDragStart, &db);
+      let _ = update(&mut state, Message::RailDragged(500.0), &db);
+      let _ = update(&mut state, Message::RailDragged(540.0), &db);
+      let _ = update(&mut state, Message::RailDragEnd, &db);
+
+      assert_eq!(state.right_rail.width(), start - 40.0);
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_timeframe_and_clears_the_chart_hover() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.chart_hover = Some(0.5);
+
+      let _ = update(&mut state, Message::TimeframeSelected(Timeframe::Year), &db);
+
+      assert_eq!(state.timeframe, Timeframe::Year);
+      assert_eq!(state.chart_hover, None);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
+      assert_eq!(state.tab, Tab::Journal);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_picker_open_and_closed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 1_234.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.tab_scroll_offset(),
+        1_234.0,
+        "the pixel offset is stored so the virtual list can window the ledger"
+      );
+    }
+
+    #[tokio::test]
+    async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
+
+      let _ = update(&mut state, Message::ContractSelected(12_345), &db);
+
+      assert!(state.selected_contract.is_none());
+    }
+
+    #[tokio::test]
+    async fn selecting_a_corp_scope_resets_the_active_division_to_the_master() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::Corporation(1);
+      state.active_division = 5;
+      state.corp_divisions = vec![corp_division(5, None, Some(1.0))];
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Corporation(98_000_001)), &db);
+
+      assert_eq!(state.active, Scope::Corporation(98_000_001));
+      assert_eq!(state.active_division, DEFAULT_DIVISION);
+      assert!(state.corp_divisions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn selecting_an_unknown_contract_row_is_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::ContractSelected(999), &db);
+
+      assert!(state.selected_contract.is_none());
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_corp_scope_with_divisions() {
+      let mut state = State::new();
+      state.corporations = vec![corp(98_000_001, "Test Corp")];
+      state.active = Scope::Corporation(98_000_001);
+      state.corp_divisions = vec![
+        corp_division(1, Some("Master Wallet"), Some(1_000.0)),
+        corp_division(2, None, Some(250.0)),
+      ];
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_a_corp_scope_with_no_divisions_synced() {
+      let mut state = State::new();
+      state.corporations = vec![corp(98_000_001, "Test Corp")];
+      state.active = Scope::Corporation(98_000_001);
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_a_loaded_state() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0))];
+      state.financials = vec![financials(1, Some(100.0))];
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_before_any_load() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_the_hero_graph_with_a_net_worth_series() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
+      state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
+      state.net_worth_series = (0..40).map(|i| nw_point("2026-06-01", 100.0 + i as f64)).collect();
+      state.chart_hover = Some(0.5);
+      state.timeframe = Timeframe::Month;
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
     }
   }
 }

@@ -483,25 +483,6 @@ mod tests {
     }
   }
 
-  mod parse_dogma {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_parses_the_attribute_value_pairs() {
-      let map = parse_dogma(r#"[{"attribute_id": 50, "value": 41.0}, {"attribute_id": 51, "value": 7.1}]"#);
-      assert_eq!(map.get(&50), Some(&41.0));
-      assert_eq!(map.get(&51), Some(&7.1));
-    }
-
-    #[test]
-    fn it_yields_an_empty_map_for_a_malformed_blob() {
-      assert!(parse_dogma("not json").is_empty());
-      assert!(parse_dogma("[]").is_empty());
-    }
-  }
-
   mod delta_pct {
     use pretty_assertions::assert_eq;
 
@@ -530,25 +511,6 @@ mod tests {
       assert_eq!(format_stat_value(1_500.0, " HP"), "1500 HP");
       assert_eq!(format_stat_value(25.5, " tf"), "25.5 tf");
       assert_eq!(format_stat_value(4.75, " GJ"), "4.75 GJ");
-    }
-  }
-
-  mod unit_suffix_for_id {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_known_unit_ids_to_their_suffix() {
-      assert_eq!(unit_suffix_for_id(Some(71)), " GJ");
-      assert_eq!(unit_suffix_for_id(Some(124)), "%");
-      assert_eq!(unit_suffix_for_id(Some(121)), " m\u{00b3}");
-    }
-
-    #[test]
-    fn it_yields_an_empty_suffix_for_unknown_or_missing_unit_ids() {
-      assert_eq!(unit_suffix_for_id(Some(99_999)), "");
-      assert_eq!(unit_suffix_for_id(None), "");
     }
   }
 
@@ -617,8 +579,32 @@ mod tests {
     }
   }
 
+  mod parse_dogma {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_the_attribute_value_pairs() {
+      let map = parse_dogma(r#"[{"attribute_id": 50, "value": 41.0}, {"attribute_id": 51, "value": 7.1}]"#);
+      assert_eq!(map.get(&50), Some(&41.0));
+      assert_eq!(map.get(&51), Some(&7.1));
+    }
+
+    #[test]
+    fn it_yields_an_empty_map_for_a_malformed_blob() {
+      assert!(parse_dogma("not json").is_empty());
+      assert!(parse_dogma("[]").is_empty());
+    }
+  }
+
   mod render {
     use super::*;
+
+    #[test]
+    fn it_renders_the_empty_state() {
+      let _el: Element<'_, Message> = body(Vec::new(), false, 0.0);
+    }
 
     #[test]
     fn it_renders_the_grouped_card_grid() {
@@ -629,10 +615,24 @@ mod tests {
       let refs: Vec<&AbyssalCard> = cards.iter().collect();
       let _el: Element<'_, Message> = body(refs, true, 0.0);
     }
+  }
+
+  mod unit_suffix_for_id {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
-    fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(Vec::new(), false, 0.0);
+    fn it_maps_known_unit_ids_to_their_suffix() {
+      assert_eq!(unit_suffix_for_id(Some(71)), " GJ");
+      assert_eq!(unit_suffix_for_id(Some(124)), "%");
+      assert_eq!(unit_suffix_for_id(Some(121)), " m\u{00b3}");
+    }
+
+    #[test]
+    fn it_yields_an_empty_suffix_for_unknown_or_missing_unit_ids() {
+      assert_eq!(unit_suffix_for_id(Some(99_999)), "");
+      assert_eq!(unit_suffix_for_id(None), "");
     }
   }
 }

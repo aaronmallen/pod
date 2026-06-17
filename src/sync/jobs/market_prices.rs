@@ -69,17 +69,13 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_upserts_every_returned_row_without_a_grant() {
+    async fn it_errors_and_persists_nothing_when_the_fetch_fails() {
       let server = MockServer::start().await;
-      mount_prices(
-        &server,
-        serde_json::json!([
-          { "adjusted_price": 5.5, "type_id": 34 },
-          { "average_price": 6.25, "type_id": 35 },
-          { "adjusted_price": 7.0, "average_price": 8.0, "type_id": 36 },
-        ]),
-      )
-      .await;
+      Mock::given(method("GET"))
+        .and(path("/markets/prices/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
       let db = store::open_test().await.unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
@@ -88,16 +84,10 @@ mod tests {
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let ctx = ctx(&db, &esi, &image, &image_store);
 
-      run(&ctx).await.unwrap();
+      let result = run(&ctx).await;
 
-      let rows = finance::market_prices_all(&db).await.unwrap();
-      assert_eq!(rows.iter().map(MarketPrice::type_id).collect::<Vec<_>>(), [34, 35, 36]);
-      assert_eq!(rows[0].adjusted_price(), Some(5.5));
-      assert_eq!(rows[0].average_price(), None);
-      assert_eq!(rows[1].adjusted_price(), None);
-      assert_eq!(rows[1].average_price(), Some(6.25));
-      assert_eq!(rows[2].adjusted_price(), Some(7.0));
-      assert_eq!(rows[2].average_price(), Some(8.0));
+      assert!(result.is_err());
+      assert!(finance::market_prices_all(&db).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -135,13 +125,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_errors_and_persists_nothing_when_the_fetch_fails() {
+    async fn it_upserts_every_returned_row_without_a_grant() {
       let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/markets/prices/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
+      mount_prices(
+        &server,
+        serde_json::json!([
+          { "adjusted_price": 5.5, "type_id": 34 },
+          { "average_price": 6.25, "type_id": 35 },
+          { "adjusted_price": 7.0, "average_price": 8.0, "type_id": 36 },
+        ]),
+      )
+      .await;
       let db = store::open_test().await.unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
@@ -150,10 +144,16 @@ mod tests {
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let ctx = ctx(&db, &esi, &image, &image_store);
 
-      let result = run(&ctx).await;
+      run(&ctx).await.unwrap();
 
-      assert!(result.is_err());
-      assert!(finance::market_prices_all(&db).await.unwrap().is_empty());
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      assert_eq!(rows.iter().map(MarketPrice::type_id).collect::<Vec<_>>(), [34, 35, 36]);
+      assert_eq!(rows[0].adjusted_price(), Some(5.5));
+      assert_eq!(rows[0].average_price(), None);
+      assert_eq!(rows[1].adjusted_price(), None);
+      assert_eq!(rows[1].average_price(), Some(6.25));
+      assert_eq!(rows[2].adjusted_price(), Some(7.0));
+      assert_eq!(rows[2].average_price(), Some(8.0));
     }
   }
 }

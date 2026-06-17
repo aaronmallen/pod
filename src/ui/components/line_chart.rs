@@ -559,30 +559,6 @@ mod tests {
     LineChart::new(points, window(), color::status::ONLINE, |v| format!("{v}"), |f| f).hover(hover)
   }
 
-  mod time_ago_label {
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn it_labels_long_spans_in_months() {
-      assert_eq!(super::super::time_ago_label(60, 365), "2mo ago");
-    }
-
-    #[test]
-    fn it_labels_medium_spans_in_weeks() {
-      assert_eq!(super::super::time_ago_label(21, 90), "3w ago");
-    }
-
-    #[test]
-    fn it_labels_short_spans_in_days() {
-      assert_eq!(super::super::time_ago_label(5, 30), "5d ago");
-    }
-
-    #[test]
-    fn it_labels_the_present_as_today() {
-      assert_eq!(super::super::time_ago_label(0, 90), "today");
-    }
-  }
-
   mod date_fraction {
     use super::*;
 
@@ -615,6 +591,54 @@ mod tests {
     fn it_marks_gains_green_and_losses_red() {
       assert_eq!(super::delta_style(5.0), ("+", color::status::ONLINE));
       assert_eq!(super::delta_style(-5.0), ("-", color::status::DANGER));
+    }
+  }
+
+  mod has_liquid {
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_every_point_has_zero_or_no_liquid() {
+      let points = vec![point(100.0), point(200.0)];
+
+      assert!(!chart(points, None).has_liquid());
+    }
+
+    #[test]
+    fn it_is_true_when_any_point_has_liquid() {
+      let points = vec![
+        ChartPoint {
+          date: "2026-06-01".to_owned(),
+          liquid: Some(25.0),
+          value: 200.0,
+        },
+        point(100.0),
+      ];
+
+      assert!(chart(points, None).has_liquid());
+    }
+  }
+
+  mod marker_index {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_resolves_the_hovered_index_only_while_hovering() {
+      let points = vec![
+        dated("2026-06-01", 1.0),
+        dated("2026-06-03", 2.0),
+        dated("2026-06-05", 3.0),
+      ];
+
+      let idle = chart(points.clone(), None);
+      assert_eq!(idle.hovered(), None);
+      assert_eq!(idle.marker_index(), 2);
+
+      let hovering = chart(points, Some(0.0));
+      assert_eq!(hovering.hovered(), Some(0));
+      assert_eq!(hovering.marker_index(), 0);
     }
   }
 
@@ -670,6 +694,30 @@ mod tests {
     }
   }
 
+  mod time_ago_label {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_labels_long_spans_in_months() {
+      assert_eq!(super::super::time_ago_label(60, 365), "2mo ago");
+    }
+
+    #[test]
+    fn it_labels_medium_spans_in_weeks() {
+      assert_eq!(super::super::time_ago_label(21, 90), "3w ago");
+    }
+
+    #[test]
+    fn it_labels_short_spans_in_days() {
+      assert_eq!(super::super::time_ago_label(5, 30), "5d ago");
+    }
+
+    #[test]
+    fn it_labels_the_present_as_today() {
+      assert_eq!(super::super::time_ago_label(0, 90), "today");
+    }
+  }
+
   mod tooltip_card_height {
     use pretty_assertions::assert_eq;
 
@@ -679,77 +727,6 @@ mod tests {
       assert_eq!(super::super::tooltip_card_height(false, true), 56.0);
       assert_eq!(super::super::tooltip_card_height(true, false), 56.0);
       assert_eq!(super::super::tooltip_card_height(true, true), 72.0);
-    }
-  }
-
-  mod has_liquid {
-    use super::*;
-
-    #[test]
-    fn it_is_false_when_every_point_has_zero_or_no_liquid() {
-      let points = vec![point(100.0), point(200.0)];
-
-      assert!(!chart(points, None).has_liquid());
-    }
-
-    #[test]
-    fn it_is_true_when_any_point_has_liquid() {
-      let points = vec![
-        ChartPoint {
-          date: "2026-06-01".to_owned(),
-          liquid: Some(25.0),
-          value: 200.0,
-        },
-        point(100.0),
-      ];
-
-      assert!(chart(points, None).has_liquid());
-    }
-  }
-
-  mod value_range {
-    use super::*;
-
-    #[test]
-    fn it_pads_a_non_flat_series() {
-      let points = vec![point(100.0), point(200.0)];
-
-      let (min, max) = chart(points, None).value_range();
-
-      assert!(min < 100.0);
-      assert!(max > 200.0);
-    }
-
-    #[test]
-    fn it_returns_a_non_degenerate_range_for_a_flat_series() {
-      let points = vec![point(50.0), point(50.0)];
-
-      let (min, max) = chart(points, None).value_range();
-
-      assert!(max > min);
-    }
-  }
-
-  mod marker_index {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_resolves_the_hovered_index_only_while_hovering() {
-      let points = vec![
-        dated("2026-06-01", 1.0),
-        dated("2026-06-03", 2.0),
-        dated("2026-06-05", 3.0),
-      ];
-
-      let idle = chart(points.clone(), None);
-      assert_eq!(idle.hovered(), None);
-      assert_eq!(idle.marker_index(), 2);
-
-      let hovering = chart(points, Some(0.0));
-      assert_eq!(hovering.hovered(), Some(0));
-      assert_eq!(hovering.marker_index(), 0);
     }
   }
 
@@ -830,6 +807,29 @@ mod tests {
         Some(Some(fraction)) => assert!((fraction - 0.5).abs() < 1e-6),
         other => panic!("expected Some(Some(0.5)), got {other:?}"),
       }
+    }
+  }
+
+  mod value_range {
+    use super::*;
+
+    #[test]
+    fn it_pads_a_non_flat_series() {
+      let points = vec![point(100.0), point(200.0)];
+
+      let (min, max) = chart(points, None).value_range();
+
+      assert!(min < 100.0);
+      assert!(max > 200.0);
+    }
+
+    #[test]
+    fn it_returns_a_non_degenerate_range_for_a_flat_series() {
+      let points = vec![point(50.0), point(50.0)];
+
+      let (min, max) = chart(points, None).value_range();
+
+      assert!(max > min);
     }
   }
 }

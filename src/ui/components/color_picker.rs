@@ -555,6 +555,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_expands_three_digit_shorthand() {
+      assert_eq!(normalize_hex("#abc"), Some("#AABBCC".to_string()));
+      assert_eq!(normalize_hex("abc"), Some("#AABBCC".to_string()));
+    }
+
+    #[test]
     fn it_normalizes_a_six_digit_hex_with_hash() {
       assert_eq!(normalize_hex("#3fb8db"), Some("#3FB8DB".to_string()));
     }
@@ -565,21 +571,16 @@ mod tests {
     }
 
     #[test]
-    fn it_expands_three_digit_shorthand() {
-      assert_eq!(normalize_hex("#abc"), Some("#AABBCC".to_string()));
-      assert_eq!(normalize_hex("abc"), Some("#AABBCC".to_string()));
-    }
-
-    #[test]
-    fn it_trims_surrounding_whitespace() {
-      assert_eq!(normalize_hex("  #3fb8db  "), Some("#3FB8DB".to_string()));
-    }
-
-    #[test]
     fn it_rejects_empty_input() {
       assert_eq!(normalize_hex(""), None);
       assert_eq!(normalize_hex("   "), None);
       assert_eq!(normalize_hex("#"), None);
+    }
+
+    #[test]
+    fn it_rejects_non_hex_characters() {
+      assert_eq!(normalize_hex("zzzzzz"), None);
+      assert_eq!(normalize_hex("#12345g"), None);
     }
 
     #[test]
@@ -589,9 +590,8 @@ mod tests {
     }
 
     #[test]
-    fn it_rejects_non_hex_characters() {
-      assert_eq!(normalize_hex("zzzzzz"), None);
-      assert_eq!(normalize_hex("#12345g"), None);
+    fn it_trims_surrounding_whitespace() {
+      assert_eq!(normalize_hex("  #3fb8db  "), Some("#3FB8DB".to_string()));
     }
   }
 
@@ -599,15 +599,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_holds_the_eleven_design_presets_plasma_first_slate_last() {
-      assert_eq!(PALETTE.len(), 11);
-      assert_eq!(PALETTE[0].name, "Plasma");
-      assert_eq!(PALETTE[0].hex, "#3FB8DB");
-      assert_eq!(PALETTE[10].name, "Slate");
-      assert_eq!(PALETTE[10].hex, "#8A95A6");
-    }
 
     #[test]
     fn every_preset_hex_parses_to_a_color() {
@@ -620,35 +611,30 @@ mod tests {
         );
       }
     }
+
+    #[test]
+    fn it_holds_the_eleven_design_presets_plasma_first_slate_last() {
+      assert_eq!(PALETTE.len(), 11);
+      assert_eq!(PALETTE[0].name, "Plasma");
+      assert_eq!(PALETTE[0].hex, "#3FB8DB");
+      assert_eq!(PALETTE[10].name, "Slate");
+      assert_eq!(PALETTE[10].hex, "#8A95A6");
+    }
   }
 
   mod render {
     use super::*;
 
     #[test]
-    fn it_renders_the_swatch_with_a_selected_color_and_caption() {
-      let _swatch: Element<'_, ()> = color_swatch(Some("#3FB8DB"), ());
-    }
-
-    #[test]
-    fn it_renders_the_swatch_with_no_color() {
-      let _swatch: Element<'_, ()> = color_swatch(None, ());
-    }
-
-    #[test]
-    fn it_renders_the_popover_with_the_selected_ring() {
-      let el: Element<'_, ()> = color_popover(Some("#3FB8DB"), "#3FB8DB", false, |_| (), |_| (), ());
+    fn it_floats_a_popover_at_an_anchor_without_panicking() {
+      let popover: Element<'_, ()> = color_popover(Some("#3FB8DB"), "#3FB8DB", false, |_| (), |_| (), ());
+      let el: Element<'_, ()> = floating(popover, Point::new(42.0, 96.0));
       let mut tree = iced::advanced::widget::Tree::new(&el);
       tree.diff(&el);
       assert!(
         !tree.children.is_empty(),
-        "the popover should build a non-empty widget tree"
+        "the floating layer should build a widget tree"
       );
-    }
-
-    #[test]
-    fn it_renders_the_popover_with_a_hex_error_and_no_selection() {
-      let _el: Element<'_, ()> = color_popover(None, "nothex", true, |_| (), |_| (), ());
     }
 
     #[test]
@@ -679,15 +665,29 @@ mod tests {
     }
 
     #[test]
-    fn it_floats_a_popover_at_an_anchor_without_panicking() {
-      let popover: Element<'_, ()> = color_popover(Some("#3FB8DB"), "#3FB8DB", false, |_| (), |_| (), ());
-      let el: Element<'_, ()> = floating(popover, Point::new(42.0, 96.0));
+    fn it_renders_the_popover_with_a_hex_error_and_no_selection() {
+      let _el: Element<'_, ()> = color_popover(None, "nothex", true, |_| (), |_| (), ());
+    }
+
+    #[test]
+    fn it_renders_the_popover_with_the_selected_ring() {
+      let el: Element<'_, ()> = color_popover(Some("#3FB8DB"), "#3FB8DB", false, |_| (), |_| (), ());
       let mut tree = iced::advanced::widget::Tree::new(&el);
       tree.diff(&el);
       assert!(
         !tree.children.is_empty(),
-        "the floating layer should build a widget tree"
+        "the popover should build a non-empty widget tree"
       );
+    }
+
+    #[test]
+    fn it_renders_the_swatch_with_a_selected_color_and_caption() {
+      let _swatch: Element<'_, ()> = color_swatch(Some("#3FB8DB"), ());
+    }
+
+    #[test]
+    fn it_renders_the_swatch_with_no_color() {
+      let _swatch: Element<'_, ()> = color_swatch(None, ());
     }
   }
 }

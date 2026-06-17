@@ -359,6 +359,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_returns_empty_without_a_credentialed_character() {
+      let server = MockServer::start().await;
+      let (db, esi, sso) = make_clients(&server.uri()).await;
+
+      let results = search_facilities(db, esi, sso, "Jita".to_owned()).await;
+
+      assert!(results.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_skips_a_structure_the_character_cannot_dock_at() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -390,16 +400,6 @@ mod tests {
       assert_eq!(results.len(), 1);
       assert_eq!(results[0].id, 1_021_000_000_002);
       assert_eq!(results[0].name, "Allied Fortizar");
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_without_a_credentialed_character() {
-      let server = MockServer::start().await;
-      let (db, esi, sso) = make_clients(&server.uri()).await;
-
-      let results = search_facilities(db, esi, sso, "Jita".to_owned()).await;
-
-      assert!(results.is_empty());
     }
   }
 }

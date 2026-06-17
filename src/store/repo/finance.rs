@@ -1276,30 +1276,24 @@ mod contract_tests {
     }
   }
 
-  mod count_contracts_for_character {
+  mod contracts_page {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_counts_only_the_given_characters_contracts() {
+    async fn it_breaks_ties_on_contract_id_within_the_same_issue_date() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      seed_contract(&db, 42, 1, "finished", "2026-01-01T00:00:00Z", Some(100.0), None).await;
-      seed_contract(&db, 42, 2, "outstanding", "2026-02-01T00:00:00Z", Some(200.0), None).await;
-      seed_contract(&db, 43, 3, "finished", "2026-03-01T00:00:00Z", Some(300.0), None).await;
+      seed_contract(&db, 42, 10, "finished", "2026-03-01T00:00:00Z", Some(1.0), None).await;
+      seed_contract(&db, 42, 20, "finished", "2026-03-01T00:00:00Z", Some(1.0), None).await;
 
-      assert_eq!(super::count_contracts_for_character(&db, 42).await.unwrap(), 2);
-      assert_eq!(super::count_contracts_for_character(&db, 43).await.unwrap(), 1);
-      assert_eq!(super::count_contracts_for_character(&db, 99).await.unwrap(), 0);
+      let page = super::contracts_page(&db, 42, Some(("2026-03-01T00:00:00Z", 20)), 5)
+        .await
+        .unwrap();
+
+      assert_eq!(page.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [10]);
     }
-  }
-
-  mod contracts_page {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
     async fn it_returns_the_first_page_newest_first_when_no_cursor_is_given() {
@@ -1328,19 +1322,25 @@ mod contract_tests {
 
       assert_eq!(page.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2, 1]);
     }
+  }
+
+  mod count_contracts_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
-    async fn it_breaks_ties_on_contract_id_within_the_same_issue_date() {
+    async fn it_counts_only_the_given_characters_contracts() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_contract(&db, 42, 10, "finished", "2026-03-01T00:00:00Z", Some(1.0), None).await;
-      seed_contract(&db, 42, 20, "finished", "2026-03-01T00:00:00Z", Some(1.0), None).await;
+      seed_character(&db, 43).await;
+      seed_contract(&db, 42, 1, "finished", "2026-01-01T00:00:00Z", Some(100.0), None).await;
+      seed_contract(&db, 42, 2, "outstanding", "2026-02-01T00:00:00Z", Some(200.0), None).await;
+      seed_contract(&db, 43, 3, "finished", "2026-03-01T00:00:00Z", Some(300.0), None).await;
 
-      let page = super::contracts_page(&db, 42, Some(("2026-03-01T00:00:00Z", 20)), 5)
-        .await
-        .unwrap();
-
-      assert_eq!(page.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [10]);
+      assert_eq!(super::count_contracts_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_contracts_for_character(&db, 43).await.unwrap(), 1);
+      assert_eq!(super::count_contracts_for_character(&db, 99).await.unwrap(), 0);
     }
   }
 
@@ -1438,6 +1438,17 @@ mod contract_tests {
     }
 
     #[tokio::test]
+    async fn it_clears_existing_rows_when_given_an_empty_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_contract(&db, 42, 1, "outstanding", "2026-01-01T00:00:00Z", Some(1.0), Some(1.0)).await;
+
+      super::replace_for_character(&db, 42, &[]).await.unwrap();
+
+      assert!(super::contracts(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_replaces_contracts_atomically_and_feeds_the_escrow_view() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -1459,17 +1470,6 @@ mod contract_tests {
       assert!(result.iter().all(|c| c.contract_id() != 999));
       let escrow = super::escrow(&db, 42).await.unwrap().unwrap();
       assert!((escrow.escrow() - 5000.0).abs() < f64::EPSILON);
-    }
-
-    #[tokio::test]
-    async fn it_clears_existing_rows_when_given_an_empty_set() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_contract(&db, 42, 1, "outstanding", "2026-01-01T00:00:00Z", Some(1.0), Some(1.0)).await;
-
-      super::replace_for_character(&db, 42, &[]).await.unwrap();
-
-      assert!(super::contracts(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1547,27 +1547,6 @@ mod corporation_net_worth_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_sums_each_divisions_last_balance_per_utc_day() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db, CORP).await;
-      insert_journal(&db, 1, CORP, 1, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, CORP, 1, "2026-06-01T21:00:00Z", Some(150.0)).await;
-      insert_journal(&db, 3, CORP, 2, "2026-06-01T10:00:00Z", Some(40.0)).await;
-      insert_journal(&db, 4, CORP, 1, "2026-06-02T09:00:00Z", Some(220.0)).await;
-
-      corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
-
-      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
-
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].date(), "2026-06-01");
-      assert_eq!(rows[0].liquid(), 190.0);
-      assert_eq!(rows[0].net_worth(), 190.0);
-      assert_eq!(rows[1].date(), "2026-06-02");
-      assert_eq!(rows[1].liquid(), 220.0);
-    }
-
-    #[tokio::test]
     async fn it_breaks_same_timestamp_ties_with_the_highest_id() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db, CORP).await;
@@ -1583,11 +1562,12 @@ mod corporation_net_worth_tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_entries_without_a_balance() {
+    async fn it_excludes_other_corporations() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db, CORP).await;
+      seed_corp(&db, 90_000_002).await;
       insert_journal(&db, 1, CORP, 1, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, CORP, 1, "2026-06-01T21:00:00Z", None).await;
+      insert_journal(&db, 2, 90_000_002, 1, "2026-06-01T03:00:00Z", Some(900.0)).await;
 
       corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
 
@@ -1598,12 +1578,11 @@ mod corporation_net_worth_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_other_corporations() {
+    async fn it_ignores_entries_without_a_balance() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db, CORP).await;
-      seed_corp(&db, 90_000_002).await;
       insert_journal(&db, 1, CORP, 1, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, 90_000_002, 1, "2026-06-01T03:00:00Z", Some(900.0)).await;
+      insert_journal(&db, 2, CORP, 1, "2026-06-01T21:00:00Z", None).await;
 
       corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
 
@@ -1627,12 +1606,49 @@ mod corporation_net_worth_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].liquid(), 100.0);
     }
+
+    #[tokio::test]
+    async fn it_sums_each_divisions_last_balance_per_utc_day() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_journal(&db, 1, CORP, 1, "2026-06-01T03:00:00Z", Some(100.0)).await;
+      insert_journal(&db, 2, CORP, 1, "2026-06-01T21:00:00Z", Some(150.0)).await;
+      insert_journal(&db, 3, CORP, 2, "2026-06-01T10:00:00Z", Some(40.0)).await;
+      insert_journal(&db, 4, CORP, 1, "2026-06-02T09:00:00Z", Some(220.0)).await;
+
+      corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
+
+      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].date(), "2026-06-01");
+      assert_eq!(rows[0].liquid(), 190.0);
+      assert_eq!(rows[0].net_worth(), 190.0);
+      assert_eq!(rows[1].date(), "2026-06-02");
+      assert_eq!(rows[1].liquid(), 220.0);
+    }
   }
 
   mod record_today {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_overwrites_an_existing_today_row_from_backfill() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db, CORP).await;
+      insert_journal(&db, 1, CORP, 1, "2026-06-05T03:00:00Z", Some(100.0)).await;
+      insert_division(&db, CORP, 1, 999.0).await;
+
+      corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
+      record_today(&db, CORP, "2026-06-05").await.unwrap();
+
+      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].liquid(), 999.0);
+    }
 
     #[tokio::test]
     async fn it_sums_current_division_balances_into_todays_row() {
@@ -1661,22 +1677,6 @@ mod corporation_net_worth_tests {
       let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
 
       assert!(rows.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_overwrites_an_existing_today_row_from_backfill() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db, CORP).await;
-      insert_journal(&db, 1, CORP, 1, "2026-06-05T03:00:00Z", Some(100.0)).await;
-      insert_division(&db, CORP, 1, 999.0).await;
-
-      corporation_backfill_liquid_from_journal(&db, CORP).await.unwrap();
-      record_today(&db, CORP, "2026-06-05").await.unwrap();
-
-      let rows = for_corporation_since(&db, CORP, "2026-01-01").await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].liquid(), 999.0);
     }
   }
 }
@@ -1754,27 +1754,47 @@ mod corporation_wallet_tests {
     }
   }
 
-  mod upsert_divisions {
+  mod count_journal_for_corporation {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_round_trips_divisions_ordered_by_division() {
+    async fn it_counts_only_the_given_division() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db).await;
-
-      upsert_divisions(&db, &[division_with_balance(2, 200.0), division_with_balance(1, 100.0)])
+      append_corporation_wallet_journal(&db, &[journal_entry(1, 1), journal_entry(2, 1), journal_entry(3, 2)])
         .await
         .unwrap();
 
-      let rows = divisions(&db, CORP).await.unwrap();
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].division(), 1);
-      assert_eq!(rows[0].balance(), Some(100.0));
-      assert_eq!(rows[1].division(), 2);
-      assert_eq!(rows[1].balance(), Some(200.0));
+      assert_eq!(count_journal_for_corporation(&db, CORP, 1).await.unwrap(), 2);
+      assert_eq!(count_journal_for_corporation(&db, CORP, 2).await.unwrap(), 1);
+      assert_eq!(count_journal_for_corporation(&db, CORP, 3).await.unwrap(), 0);
     }
+  }
+
+  mod count_transactions_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      append_corporation_wallet_transaction(&db, &[transaction(1, 1), transaction(2, 1), transaction(3, 2)])
+        .await
+        .unwrap();
+
+      assert_eq!(count_transactions_for_corporation(&db, CORP, 1).await.unwrap(), 2);
+      assert_eq!(count_transactions_for_corporation(&db, CORP, 2).await.unwrap(), 1);
+    }
+  }
+
+  mod upsert_divisions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
     async fn it_merges_name_and_balance_writes_without_clobbering() {
@@ -1799,6 +1819,23 @@ mod corporation_wallet_tests {
       seed_corp(&db).await;
 
       assert_eq!(division(&db, CORP, 7).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_divisions_ordered_by_division() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      upsert_divisions(&db, &[division_with_balance(2, 200.0), division_with_balance(1, 100.0)])
+        .await
+        .unwrap();
+
+      let rows = divisions(&db, CORP).await.unwrap();
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].division(), 1);
+      assert_eq!(rows[0].balance(), Some(100.0));
+      assert_eq!(rows[1].division(), 2);
+      assert_eq!(rows[1].balance(), Some(200.0));
     }
   }
 
@@ -1879,43 +1916,6 @@ mod corporation_wallet_tests {
         .unwrap();
 
       assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
-    }
-  }
-
-  mod count_journal_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_counts_only_the_given_division() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      append_corporation_wallet_journal(&db, &[journal_entry(1, 1), journal_entry(2, 1), journal_entry(3, 2)])
-        .await
-        .unwrap();
-
-      assert_eq!(count_journal_for_corporation(&db, CORP, 1).await.unwrap(), 2);
-      assert_eq!(count_journal_for_corporation(&db, CORP, 2).await.unwrap(), 1);
-      assert_eq!(count_journal_for_corporation(&db, CORP, 3).await.unwrap(), 0);
-    }
-  }
-
-  mod count_transactions_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_counts_only_the_given_division() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      append_corporation_wallet_transaction(&db, &[transaction(1, 1), transaction(2, 1), transaction(3, 2)])
-        .await
-        .unwrap();
-
-      assert_eq!(count_transactions_for_corporation(&db, CORP, 1).await.unwrap(), 2);
-      assert_eq!(count_transactions_for_corporation(&db, CORP, 2).await.unwrap(), 1);
     }
   }
 }
@@ -2062,38 +2062,27 @@ mod financials_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_none_for_an_unknown_character() {
-      let db = store::open_test().await.unwrap();
-      assert!(financials_get(&db, 999).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_returns_all_nulls_for_a_fully_unsynced_character() {
+    async fn it_counts_order_escrow_alone_when_no_contracts_exist() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
+      insert_order(&db, 1, 1, 80.0, "open").await;
 
       let row = financials_get(&db, 1).await.unwrap().unwrap();
 
-      assert_eq!(row.character_id, 1);
+      assert_eq!(row.escrow, Some(80.0));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_other_characters_figures() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_character(&db, 2).await;
+      insert_journal(&db, 1, 2, 500.0, 500.0).await;
+
+      let row = financials_get(&db, 1).await.unwrap().unwrap();
+
       assert_eq!(row.liquid, None);
-      assert_eq!(row.asset_value, None);
-      assert_eq!(row.escrow, None);
       assert_eq!(row.net_worth, None);
-    }
-
-    #[tokio::test]
-    async fn it_reuses_the_character_state_wallet_balance_for_liquid() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, 100.0, 100.0).await;
-      insert_journal(&db, 2, 1, 50.0, 150.0).await;
-
-      let row = financials_get(&db, 1).await.unwrap().unwrap();
-
-      assert_eq!(row.liquid, Some(150.0));
-      assert_eq!(row.asset_value, None);
-      assert_eq!(row.escrow, None);
-      assert_eq!(row.net_worth, Some(150.0));
     }
 
     #[tokio::test]
@@ -2112,42 +2101,38 @@ mod financials_tests {
     }
 
     #[tokio::test]
-    async fn it_treats_an_unpriced_asset_type_as_zero_without_nulling_the_sum() {
+    async fn it_returns_all_nulls_for_a_fully_unsynced_character() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      insert_asset(&db, 1, 1, 100, 3).await;
-      insert_asset(&db, 2, 1, 999, 5).await;
-      insert_price(&db, 100, Some(10.0), None).await;
 
       let row = financials_get(&db, 1).await.unwrap().unwrap();
 
-      assert_eq!(row.asset_value, Some(30.0));
+      assert_eq!(row.character_id, 1);
+      assert_eq!(row.liquid, None);
+      assert_eq!(row.asset_value, None);
+      assert_eq!(row.escrow, None);
+      assert_eq!(row.net_worth, None);
     }
 
     #[tokio::test]
-    async fn it_sums_open_order_escrow_and_outstanding_contract_collateral() {
+    async fn it_returns_none_for_an_unknown_character() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_order(&db, 1, 1, 80.0, "open").await;
-      insert_order(&db, 2, 1, 999.0, "cancelled").await;
-      insert_contract(&db, 1, 1, 20.0, "outstanding").await;
-      insert_contract(&db, 2, 1, 999.0, "finished").await;
-
-      let row = financials_get(&db, 1).await.unwrap().unwrap();
-
-      assert_eq!(row.escrow, Some(100.0));
-      assert_eq!(row.net_worth, Some(100.0));
+      assert!(financials_get(&db, 999).await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn it_counts_order_escrow_alone_when_no_contracts_exist() {
+    async fn it_reuses_the_character_state_wallet_balance_for_liquid() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      insert_order(&db, 1, 1, 80.0, "open").await;
+      insert_journal(&db, 1, 1, 100.0, 100.0).await;
+      insert_journal(&db, 2, 1, 50.0, 150.0).await;
 
       let row = financials_get(&db, 1).await.unwrap().unwrap();
 
-      assert_eq!(row.escrow, Some(80.0));
+      assert_eq!(row.liquid, Some(150.0));
+      assert_eq!(row.asset_value, None);
+      assert_eq!(row.escrow, None);
+      assert_eq!(row.net_worth, Some(150.0));
     }
 
     #[tokio::test]
@@ -2169,16 +2154,31 @@ mod financials_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_other_characters_figures() {
+    async fn it_sums_open_order_escrow_and_outstanding_contract_collateral() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      seed_character(&db, 2).await;
-      insert_journal(&db, 1, 2, 500.0, 500.0).await;
+      insert_order(&db, 1, 1, 80.0, "open").await;
+      insert_order(&db, 2, 1, 999.0, "cancelled").await;
+      insert_contract(&db, 1, 1, 20.0, "outstanding").await;
+      insert_contract(&db, 2, 1, 999.0, "finished").await;
 
       let row = financials_get(&db, 1).await.unwrap().unwrap();
 
-      assert_eq!(row.liquid, None);
-      assert_eq!(row.net_worth, None);
+      assert_eq!(row.escrow, Some(100.0));
+      assert_eq!(row.net_worth, Some(100.0));
+    }
+
+    #[tokio::test]
+    async fn it_treats_an_unpriced_asset_type_as_zero_without_nulling_the_sum() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_asset(&db, 1, 1, 100, 3).await;
+      insert_asset(&db, 2, 1, 999, 5).await;
+      insert_price(&db, 100, Some(10.0), None).await;
+
+      let row = financials_get(&db, 1).await.unwrap().unwrap();
+
+      assert_eq!(row.asset_value, Some(30.0));
     }
   }
 
@@ -2205,6 +2205,84 @@ mod financials_tests {
         .await
         .unwrap();
       true
+    }
+
+    #[tokio::test]
+    async fn it_composes_snapshots_across_characters_into_the_combined_series() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_character(&db, 2).await;
+
+      insert_journal(&db, 1, 1, 100.0, 100.0).await;
+      insert_asset(&db, 1, 1, 100, 5).await;
+      insert_price(&db, 100, Some(10.0), None).await;
+      insert_order(&db, 1, 2, 40.0, "open").await;
+
+      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
+      assert!(snapshot_financials(&db, 2, "2026-06-03").await);
+
+      let combined = finance::series_since(&db, Scope::Combined, Timeframe::Week, date("2026-06-03"))
+        .await
+        .unwrap();
+      assert_eq!(combined.len(), 1);
+      assert_eq!(combined[0].date, "2026-06-03");
+      assert_eq!(combined[0].liquid, Some(100.0));
+      assert_eq!(combined[0].asset_value, Some(50.0));
+      assert_eq!(combined[0].escrow, Some(40.0));
+      assert_eq!(combined[0].net_worth, Some(190.0));
+    }
+
+    #[tokio::test]
+    async fn it_counts_escrow_orders_only_until_contracts_are_present_then_adds_collateral() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_order(&db, 1, 1, 80.0, "open").await;
+
+      let before = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(before.escrow, Some(80.0));
+      assert_eq!(before.net_worth, Some(80.0));
+
+      insert_contract(&db, 1, 1, 25.0, "outstanding").await;
+      let after = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(after.escrow, Some(105.0));
+      assert_eq!(after.net_worth, Some(105.0));
+    }
+
+    #[tokio::test]
+    async fn it_degrades_a_null_priced_asset_to_zero_value_and_carries_it_through_the_whole_chain() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_journal(&db, 1, 1, 1_000.0, 1_000.0).await;
+      insert_asset(&db, 1, 1, 100, 2).await;
+      insert_asset(&db, 2, 1, 777, 9).await;
+      insert_price(&db, 100, Some(10.0), None).await;
+
+      let fin = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(fin.asset_value, Some(20.0));
+      assert_eq!(fin.net_worth, Some(1_020.0));
+
+      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
+      let latest = finance::latest(&db, Scope::Character(1)).await.unwrap().unwrap();
+      assert_eq!(latest.asset_value, Some(20.0));
+      assert_eq!(latest.net_worth, Some(1_020.0));
+    }
+
+    #[tokio::test]
+    async fn it_derives_the_period_summary_from_the_same_money_the_journal_feeds_the_financials_view() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_journal(&db, 1, 1, 200.0, 200.0).await;
+      insert_journal(&db, 2, 1, -50.0, 150.0).await;
+
+      let fin = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(fin.liquid, Some(150.0));
+
+      let periods = finance::wallet_period_summaries_get(&db, 1).await.unwrap();
+      assert_eq!(periods.len(), 1);
+      assert_eq!(periods[0].period, "2026-01");
+      assert_eq!(periods[0].income, 200.0);
+      assert_eq!(periods[0].spend, 50.0);
+      assert_eq!(periods[0].net, 150.0);
     }
 
     #[tokio::test]
@@ -2252,73 +2330,6 @@ mod financials_tests {
     }
 
     #[tokio::test]
-    async fn it_degrades_a_null_priced_asset_to_zero_value_and_carries_it_through_the_whole_chain() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, 1_000.0, 1_000.0).await;
-      insert_asset(&db, 1, 1, 100, 2).await;
-      insert_asset(&db, 2, 1, 777, 9).await;
-      insert_price(&db, 100, Some(10.0), None).await;
-
-      let fin = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(fin.asset_value, Some(20.0));
-      assert_eq!(fin.net_worth, Some(1_020.0));
-
-      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
-      let latest = finance::latest(&db, Scope::Character(1)).await.unwrap().unwrap();
-      assert_eq!(latest.asset_value, Some(20.0));
-      assert_eq!(latest.net_worth, Some(1_020.0));
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_asset_term_with_the_presence_of_asset_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, 500.0, 500.0).await;
-      insert_price(&db, 100, Some(10.0), None).await;
-
-      let before = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(before.asset_value, None);
-      assert_eq!(before.net_worth, Some(500.0));
-
-      insert_asset(&db, 1, 1, 100, 3).await;
-      let after = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(after.asset_value, Some(30.0));
-      assert_eq!(after.net_worth, Some(530.0));
-    }
-
-    #[tokio::test]
-    async fn it_counts_escrow_orders_only_until_contracts_are_present_then_adds_collateral() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_order(&db, 1, 1, 80.0, "open").await;
-
-      let before = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(before.escrow, Some(80.0));
-      assert_eq!(before.net_worth, Some(80.0));
-
-      insert_contract(&db, 1, 1, 25.0, "outstanding").await;
-      let after = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(after.escrow, Some(105.0));
-      assert_eq!(after.net_worth, Some(105.0));
-    }
-
-    #[tokio::test]
-    async fn it_yields_a_real_zero_escrow_not_an_em_dash_for_a_zero_collateral_outstanding_contract() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_contract(&db, 1, 1, 0.0, "outstanding").await;
-
-      let fin = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(fin.escrow, Some(0.0));
-      assert_eq!(fin.net_worth, Some(0.0));
-
-      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
-      let latest = finance::latest(&db, Scope::Character(1)).await.unwrap().unwrap();
-      assert_eq!(latest.net_worth, Some(0.0));
-    }
-
-    #[tokio::test]
     async fn it_keeps_a_fully_unsynced_character_an_em_dash_all_the_way_down_and_never_snapshots_zero() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
@@ -2335,31 +2346,6 @@ mod financials_tests {
         .await
         .unwrap();
       assert!(series.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_composes_snapshots_across_characters_into_the_combined_series() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_character(&db, 2).await;
-
-      insert_journal(&db, 1, 1, 100.0, 100.0).await;
-      insert_asset(&db, 1, 1, 100, 5).await;
-      insert_price(&db, 100, Some(10.0), None).await;
-      insert_order(&db, 1, 2, 40.0, "open").await;
-
-      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
-      assert!(snapshot_financials(&db, 2, "2026-06-03").await);
-
-      let combined = finance::series_since(&db, Scope::Combined, Timeframe::Week, date("2026-06-03"))
-        .await
-        .unwrap();
-      assert_eq!(combined.len(), 1);
-      assert_eq!(combined[0].date, "2026-06-03");
-      assert_eq!(combined[0].liquid, Some(100.0));
-      assert_eq!(combined[0].asset_value, Some(50.0));
-      assert_eq!(combined[0].escrow, Some(40.0));
-      assert_eq!(combined[0].net_worth, Some(190.0));
     }
 
     #[tokio::test]
@@ -2392,21 +2378,35 @@ mod financials_tests {
     }
 
     #[tokio::test]
-    async fn it_derives_the_period_summary_from_the_same_money_the_journal_feeds_the_financials_view() {
+    async fn it_toggles_the_asset_term_with_the_presence_of_asset_rows() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, 200.0, 200.0).await;
-      insert_journal(&db, 2, 1, -50.0, 150.0).await;
+      insert_journal(&db, 1, 1, 500.0, 500.0).await;
+      insert_price(&db, 100, Some(10.0), None).await;
+
+      let before = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(before.asset_value, None);
+      assert_eq!(before.net_worth, Some(500.0));
+
+      insert_asset(&db, 1, 1, 100, 3).await;
+      let after = financials_get(&db, 1).await.unwrap().unwrap();
+      assert_eq!(after.asset_value, Some(30.0));
+      assert_eq!(after.net_worth, Some(530.0));
+    }
+
+    #[tokio::test]
+    async fn it_yields_a_real_zero_escrow_not_an_em_dash_for_a_zero_collateral_outstanding_contract() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_contract(&db, 1, 1, 0.0, "outstanding").await;
 
       let fin = financials_get(&db, 1).await.unwrap().unwrap();
-      assert_eq!(fin.liquid, Some(150.0));
+      assert_eq!(fin.escrow, Some(0.0));
+      assert_eq!(fin.net_worth, Some(0.0));
 
-      let periods = finance::wallet_period_summaries_get(&db, 1).await.unwrap();
-      assert_eq!(periods.len(), 1);
-      assert_eq!(periods[0].period, "2026-01");
-      assert_eq!(periods[0].income, 200.0);
-      assert_eq!(periods[0].spend, 50.0);
-      assert_eq!(periods[0].net, 150.0);
+      assert!(snapshot_financials(&db, 1, "2026-06-03").await);
+      let latest = finance::latest(&db, Scope::Character(1)).await.unwrap().unwrap();
+      assert_eq!(latest.net_worth, Some(0.0));
     }
   }
 }
@@ -2464,6 +2464,39 @@ mod market_tests {
     }
   }
 
+  mod all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_preserves_independently_null_prices() {
+      let db = store::open_test().await.unwrap();
+      market_prices_upsert_many(&db, &[price(34, None, Some(6.0)), price(35, Some(11.0), None)])
+        .await
+        .unwrap();
+
+      let result = market_prices_all(&db).await.unwrap();
+
+      assert_eq!(result[0].adjusted_price(), None);
+      assert_eq!(result[0].average_price(), Some(6.0));
+      assert_eq!(result[1].adjusted_price(), Some(11.0));
+      assert_eq!(result[1].average_price(), None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_stored_rows_in_type_id_order() {
+      let db = store::open_test().await.unwrap();
+      market_prices_upsert_many(&db, &[price(34, Some(5.5), Some(6.0)), price(35, Some(11.0), None)])
+        .await
+        .unwrap();
+
+      let result = market_prices_all(&db).await.unwrap();
+
+      assert_eq!(result.iter().map(MarketPrice::type_id).collect::<Vec<_>>(), [34, 35]);
+    }
+  }
+
   mod for_character {
     use pretty_assertions::assert_eq;
 
@@ -2484,46 +2517,6 @@ mod market_tests {
       let result = for_character(&db, 42).await.unwrap();
 
       assert_eq!(result.iter().map(MarketOrder::order_id).collect::<Vec<_>>(), [100, 200]);
-    }
-  }
-
-  mod replace {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_yields_the_current_set_not_duplicates_on_re_replace() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace(
-        &db,
-        42,
-        &[order(42, 100, 50.0, STATE_OPEN), order(42, 200, 75.0, STATE_OPEN)],
-      )
-      .await
-      .unwrap();
-
-      replace(&db, 42, &[order(42, 200, 80.0, STATE_OPEN)]).await.unwrap();
-
-      let result = for_character(&db, 42).await.unwrap();
-
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].order_id(), 200);
-      assert_eq!(result[0].escrow(), 80.0);
-    }
-
-    #[tokio::test]
-    async fn it_leaves_other_characters_untouched() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      replace(&db, 42, &[order(42, 100, 50.0, STATE_OPEN)]).await.unwrap();
-      replace(&db, 43, &[order(43, 300, 60.0, STATE_OPEN)]).await.unwrap();
-
-      replace(&db, 42, &[]).await.unwrap();
-
-      assert_eq!(for_character(&db, 43).await.unwrap().len(), 1);
     }
   }
 
@@ -2560,36 +2553,43 @@ mod market_tests {
     }
   }
 
-  mod all {
+  mod replace {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_the_stored_rows_in_type_id_order() {
+    async fn it_leaves_other_characters_untouched() {
       let db = store::open_test().await.unwrap();
-      market_prices_upsert_many(&db, &[price(34, Some(5.5), Some(6.0)), price(35, Some(11.0), None)])
-        .await
-        .unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace(&db, 42, &[order(42, 100, 50.0, STATE_OPEN)]).await.unwrap();
+      replace(&db, 43, &[order(43, 300, 60.0, STATE_OPEN)]).await.unwrap();
 
-      let result = market_prices_all(&db).await.unwrap();
+      replace(&db, 42, &[]).await.unwrap();
 
-      assert_eq!(result.iter().map(MarketPrice::type_id).collect::<Vec<_>>(), [34, 35]);
+      assert_eq!(for_character(&db, 43).await.unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn it_preserves_independently_null_prices() {
+    async fn it_yields_the_current_set_not_duplicates_on_re_replace() {
       let db = store::open_test().await.unwrap();
-      market_prices_upsert_many(&db, &[price(34, None, Some(6.0)), price(35, Some(11.0), None)])
-        .await
-        .unwrap();
+      seed_character(&db, 42).await;
+      replace(
+        &db,
+        42,
+        &[order(42, 100, 50.0, STATE_OPEN), order(42, 200, 75.0, STATE_OPEN)],
+      )
+      .await
+      .unwrap();
 
-      let result = market_prices_all(&db).await.unwrap();
+      replace(&db, 42, &[order(42, 200, 80.0, STATE_OPEN)]).await.unwrap();
 
-      assert_eq!(result[0].adjusted_price(), None);
-      assert_eq!(result[0].average_price(), Some(6.0));
-      assert_eq!(result[1].adjusted_price(), Some(11.0));
-      assert_eq!(result[1].average_price(), None);
+      let result = for_character(&db, 42).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].order_id(), 200);
+      assert_eq!(result[0].escrow(), 80.0);
     }
   }
 
@@ -2671,28 +2671,6 @@ mod net_worth_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_writes_one_liquid_only_point_per_utc_day_using_the_last_balance() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      insert_journal(&db, 1, 42, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, 42, "2026-06-01T21:00:00Z", Some(150.0)).await;
-      insert_journal(&db, 3, 42, "2026-06-02T09:00:00Z", Some(220.0)).await;
-
-      backfill_liquid_from_journal(&db, 42).await.unwrap();
-
-      let rows = for_character_since(&db, 42, "2026-01-01").await.unwrap();
-
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].date(), "2026-06-01");
-      assert_eq!(rows[0].liquid(), 150.0);
-      assert_eq!(rows[0].net_worth(), 150.0);
-      assert_eq!(rows[0].asset_value(), None);
-      assert_eq!(rows[0].escrow(), None);
-      assert_eq!(rows[1].date(), "2026-06-02");
-      assert_eq!(rows[1].liquid(), 220.0);
-    }
-
-    #[tokio::test]
     async fn it_breaks_same_timestamp_ties_with_the_highest_id() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -2708,11 +2686,12 @@ mod net_worth_tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_entries_without_a_balance() {
+    async fn it_excludes_other_characters() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
       insert_journal(&db, 1, 42, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, 42, "2026-06-01T21:00:00Z", None).await;
+      insert_journal(&db, 2, 43, "2026-06-01T03:00:00Z", Some(900.0)).await;
 
       backfill_liquid_from_journal(&db, 42).await.unwrap();
 
@@ -2723,12 +2702,11 @@ mod net_worth_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_other_characters() {
+    async fn it_ignores_entries_without_a_balance() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
       insert_journal(&db, 1, 42, "2026-06-01T03:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, 43, "2026-06-01T03:00:00Z", Some(900.0)).await;
+      insert_journal(&db, 2, 42, "2026-06-01T21:00:00Z", None).await;
 
       backfill_liquid_from_journal(&db, 42).await.unwrap();
 
@@ -2771,6 +2749,28 @@ mod net_worth_tests {
       assert_eq!(rows[0].asset_value(), Some(40.0));
       assert_eq!(rows[0].escrow(), Some(8.0));
       assert_eq!(rows[0].net_worth(), 178.0);
+    }
+
+    #[tokio::test]
+    async fn it_writes_one_liquid_only_point_per_utc_day_using_the_last_balance() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_journal(&db, 1, 42, "2026-06-01T03:00:00Z", Some(100.0)).await;
+      insert_journal(&db, 2, 42, "2026-06-01T21:00:00Z", Some(150.0)).await;
+      insert_journal(&db, 3, 42, "2026-06-02T09:00:00Z", Some(220.0)).await;
+
+      backfill_liquid_from_journal(&db, 42).await.unwrap();
+
+      let rows = for_character_since(&db, 42, "2026-01-01").await.unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].date(), "2026-06-01");
+      assert_eq!(rows[0].liquid(), 150.0);
+      assert_eq!(rows[0].net_worth(), 150.0);
+      assert_eq!(rows[0].asset_value(), None);
+      assert_eq!(rows[0].escrow(), None);
+      assert_eq!(rows[1].date(), "2026-06-02");
+      assert_eq!(rows[1].liquid(), 220.0);
     }
   }
 
@@ -3098,53 +3098,6 @@ mod price_history_tests {
     }
   }
 
-  mod series {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_type_series_in_chronological_order() {
-      let db = store::open_test().await.unwrap();
-      price_history_upsert_many(
-        &db,
-        &[
-          history(34, "2026-06-03", 5.0, 6.0, 4.0, 5.5),
-          history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5),
-          history(34, "2026-06-02", 2.0, 3.0, 1.0, 2.5),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let result = series(&db, 34).await.unwrap();
-
-      assert_eq!(
-        result.iter().map(TypePriceHistory::date).cloned().collect::<Vec<_>>(),
-        ["2026-06-01", "2026-06-02", "2026-06-03"]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_only_the_requested_type() {
-      let db = store::open_test().await.unwrap();
-      price_history_upsert_many(
-        &db,
-        &[
-          history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5),
-          history(35, "2026-06-01", 10.0, 12.0, 9.0, 11.0),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let result = series(&db, 35).await.unwrap();
-
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].close(), 11.0);
-    }
-  }
-
   mod close_as_of {
     use pretty_assertions::assert_eq;
 
@@ -3176,74 +3129,6 @@ mod price_history_tests {
 
       assert_eq!(close_as_of(&db, 34, "2026-06-04").await.unwrap(), Some(3.5));
       assert_eq!(close_as_of(&db, 34, "2026-06-05").await.unwrap(), Some(5.5));
-    }
-  }
-
-  mod upsert_many {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_rolls_a_same_day_sample_into_the_existing_ohlc_without_duplicating() {
-      let db = store::open_test().await.unwrap();
-      price_history_upsert_many(&db, &[history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5)])
-        .await
-        .unwrap();
-
-      price_history_upsert_many(&db, &[history(34, "2026-06-01", 7.25, 7.25, 7.25, 7.25)])
-        .await
-        .unwrap();
-
-      let result = series(&db, 34).await.unwrap();
-
-      assert_eq!(result.len(), 1, "the same day stays a single bucket");
-      assert_eq!(result[0].open(), 1.0, "open holds the first sample of the day");
-      assert_eq!(result[0].high(), 7.25, "high widens to the running max");
-      assert_eq!(result[0].low(), 0.5, "low holds the running min");
-      assert_eq!(result[0].close(), 7.25, "close adopts the latest sample");
-    }
-
-    #[tokio::test]
-    async fn it_accumulates_a_correct_ohlc_across_several_same_day_samples() {
-      let db = store::open_test().await.unwrap();
-      let samples = [5.0_f64, 8.0, 3.0, 6.0];
-      for price in samples {
-        price_history_upsert_many(&db, &[history(34, "2026-06-01", price, price, price, price)])
-          .await
-          .unwrap();
-      }
-
-      let result = series(&db, 34).await.unwrap();
-
-      assert_eq!(result.len(), 1);
-      assert_eq!(result[0].open(), 5.0, "open is the first sample");
-      assert_eq!(result[0].high(), 8.0, "high is the max sample");
-      assert_eq!(result[0].low(), 3.0, "low is the min sample");
-      assert_eq!(result[0].close(), 6.0, "close is the last sample");
-    }
-
-    #[tokio::test]
-    async fn it_is_idempotent_when_the_same_sample_is_replayed() {
-      let db = store::open_test().await.unwrap();
-      price_history_upsert_many(
-        &db,
-        &[
-          history(34, "2026-06-01", 5.0, 5.0, 5.0, 5.0),
-          history(34, "2026-06-01", 8.0, 8.0, 8.0, 8.0),
-          history(34, "2026-06-01", 6.0, 6.0, 6.0, 6.0),
-        ],
-      )
-      .await
-      .unwrap();
-      let before = series(&db, 34).await.unwrap();
-
-      price_history_upsert_many(&db, &[history(34, "2026-06-01", 6.0, 6.0, 6.0, 6.0)])
-        .await
-        .unwrap();
-
-      let after = series(&db, 34).await.unwrap();
-      assert_eq!(after, before, "replaying the same close yields the same row");
     }
   }
 
@@ -3300,6 +3185,121 @@ mod price_history_tests {
         0,
         "nothing left to prune"
       );
+    }
+  }
+
+  mod series {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_type() {
+      let db = store::open_test().await.unwrap();
+      price_history_upsert_many(
+        &db,
+        &[
+          history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5),
+          history(35, "2026-06-01", 10.0, 12.0, 9.0, 11.0),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = series(&db, 35).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].close(), 11.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_type_series_in_chronological_order() {
+      let db = store::open_test().await.unwrap();
+      price_history_upsert_many(
+        &db,
+        &[
+          history(34, "2026-06-03", 5.0, 6.0, 4.0, 5.5),
+          history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5),
+          history(34, "2026-06-02", 2.0, 3.0, 1.0, 2.5),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let result = series(&db, 34).await.unwrap();
+
+      assert_eq!(
+        result.iter().map(TypePriceHistory::date).cloned().collect::<Vec<_>>(),
+        ["2026-06-01", "2026-06-02", "2026-06-03"]
+      );
+    }
+  }
+
+  mod upsert_many {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_accumulates_a_correct_ohlc_across_several_same_day_samples() {
+      let db = store::open_test().await.unwrap();
+      let samples = [5.0_f64, 8.0, 3.0, 6.0];
+      for price in samples {
+        price_history_upsert_many(&db, &[history(34, "2026-06-01", price, price, price, price)])
+          .await
+          .unwrap();
+      }
+
+      let result = series(&db, 34).await.unwrap();
+
+      assert_eq!(result.len(), 1);
+      assert_eq!(result[0].open(), 5.0, "open is the first sample");
+      assert_eq!(result[0].high(), 8.0, "high is the max sample");
+      assert_eq!(result[0].low(), 3.0, "low is the min sample");
+      assert_eq!(result[0].close(), 6.0, "close is the last sample");
+    }
+
+    #[tokio::test]
+    async fn it_is_idempotent_when_the_same_sample_is_replayed() {
+      let db = store::open_test().await.unwrap();
+      price_history_upsert_many(
+        &db,
+        &[
+          history(34, "2026-06-01", 5.0, 5.0, 5.0, 5.0),
+          history(34, "2026-06-01", 8.0, 8.0, 8.0, 8.0),
+          history(34, "2026-06-01", 6.0, 6.0, 6.0, 6.0),
+        ],
+      )
+      .await
+      .unwrap();
+      let before = series(&db, 34).await.unwrap();
+
+      price_history_upsert_many(&db, &[history(34, "2026-06-01", 6.0, 6.0, 6.0, 6.0)])
+        .await
+        .unwrap();
+
+      let after = series(&db, 34).await.unwrap();
+      assert_eq!(after, before, "replaying the same close yields the same row");
+    }
+
+    #[tokio::test]
+    async fn it_rolls_a_same_day_sample_into_the_existing_ohlc_without_duplicating() {
+      let db = store::open_test().await.unwrap();
+      price_history_upsert_many(&db, &[history(34, "2026-06-01", 1.0, 2.0, 0.5, 1.5)])
+        .await
+        .unwrap();
+
+      price_history_upsert_many(&db, &[history(34, "2026-06-01", 7.25, 7.25, 7.25, 7.25)])
+        .await
+        .unwrap();
+
+      let result = series(&db, 34).await.unwrap();
+
+      assert_eq!(result.len(), 1, "the same day stays a single bucket");
+      assert_eq!(result[0].open(), 1.0, "open holds the first sample of the day");
+      assert_eq!(result[0].high(), 7.25, "high widens to the running max");
+      assert_eq!(result[0].low(), 0.5, "low holds the running min");
+      assert_eq!(result[0].close(), 7.25, "close adopts the latest sample");
     }
   }
 }
@@ -3379,59 +3379,6 @@ mod wallet_tests {
       .unwrap();
   }
 
-  mod count_journal_for_character {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_counts_only_the_given_characters_journal_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::append_wallet_journal(
-        &db,
-        &[
-          make_entry(42, 1, Some(10.0), Some(110.0)),
-          make_entry(42, 2, Some(20.0), Some(130.0)),
-          make_entry(43, 3, Some(5.0), Some(5.0)),
-        ],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(super::count_journal_for_character(&db, 42).await.unwrap(), 2);
-      assert_eq!(super::count_journal_for_character(&db, 43).await.unwrap(), 1);
-      assert_eq!(super::count_journal_for_character(&db, 99).await.unwrap(), 0);
-    }
-  }
-
-  mod count_transactions_for_character {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_counts_only_the_given_characters_transactions() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::append_wallet_transaction(
-        &db,
-        &[
-          make_transaction(42, 1, 5.0),
-          make_transaction(42, 2, 6.0),
-          make_transaction(43, 3, 7.0),
-        ],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(super::count_transactions_for_character(&db, 42).await.unwrap(), 2);
-      assert_eq!(super::count_transactions_for_character(&db, 43).await.unwrap(), 1);
-    }
-  }
-
   mod append_wallet_journal {
     use pretty_assertions::assert_eq;
 
@@ -3485,6 +3432,190 @@ mod wallet_tests {
     }
   }
 
+  mod append_wallet_transaction {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_idempotent_on_re_appending_the_same_batch() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let batch = [make_transaction(42, 1, 5.0), make_transaction(42, 2, 6.0)];
+
+      super::append_wallet_transaction(&db, &batch).await.unwrap();
+      super::append_wallet_transaction(&db, &batch).await.unwrap();
+
+      assert_eq!(wallet_transactions(&db, 42).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_original_row_on_id_conflict() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::append_wallet_transaction(&db, &[make_transaction(42, 1, 5.0)])
+        .await
+        .unwrap();
+
+      super::append_wallet_transaction(&db, &[make_transaction(42, 1, 99.0)])
+        .await
+        .unwrap();
+
+      let rows = wallet_transactions(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].unit_price(), 5.0);
+    }
+  }
+
+  mod count_journal_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_characters_journal_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::append_wallet_journal(
+        &db,
+        &[
+          make_entry(42, 1, Some(10.0), Some(110.0)),
+          make_entry(42, 2, Some(20.0), Some(130.0)),
+          make_entry(43, 3, Some(5.0), Some(5.0)),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::count_journal_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_journal_for_character(&db, 43).await.unwrap(), 1);
+      assert_eq!(super::count_journal_for_character(&db, 99).await.unwrap(), 0);
+    }
+  }
+
+  mod count_transactions_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_only_the_given_characters_transactions() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::append_wallet_transaction(
+        &db,
+        &[
+          make_transaction(42, 1, 5.0),
+          make_transaction(42, 2, 6.0),
+          make_transaction(43, 3, 7.0),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::count_transactions_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(super::count_transactions_for_character(&db, 43).await.unwrap(), 1);
+    }
+  }
+
+  mod period_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_orders_by_character_then_period() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_character(&db, 2).await;
+      insert_journal(&db, 1, 2, "2026-02-01T00:00:00Z", Some(10.0)).await;
+      insert_journal(&db, 2, 1, "2026-03-01T00:00:00Z", Some(10.0)).await;
+      insert_journal(&db, 3, 1, "2026-01-01T00:00:00Z", Some(10.0)).await;
+
+      let rows = wallet_period_summaries_all(&db).await.unwrap();
+
+      let keys: Vec<_> = rows.iter().map(|r| (r.character_id, r.period.as_str())).collect();
+      assert_eq!(keys, [(1, "2026-01"), (1, "2026-03"), (2, "2026-02")]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_journal_rows_exist() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      assert!(wallet_period_summaries_all(&db).await.unwrap().is_empty());
+    }
+  }
+
+  mod period_get {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_buckets_rows_by_calendar_month() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_journal(&db, 1, 1, "2026-01-05T00:00:00Z", Some(100.0)).await;
+      insert_journal(&db, 2, 1, "2026-01-25T00:00:00Z", Some(50.0)).await;
+      insert_journal(&db, 3, 1, "2026-02-10T00:00:00Z", Some(7.0)).await;
+
+      let rows = wallet_period_summaries_get(&db, 1).await.unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].period, "2026-01");
+      assert_eq!(rows[0].income, 150.0);
+      assert_eq!(rows[1].period, "2026-02");
+      assert_eq!(rows[1].income, 7.0);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_other_characters_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_character(&db, 2).await;
+      insert_journal(&db, 1, 2, "2026-01-01T00:00:00Z", Some(500.0)).await;
+
+      assert!(wallet_period_summaries_get(&db, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_a_character_with_no_journal_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      assert!(wallet_period_summaries_get(&db, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_splits_positive_amounts_into_income_and_negative_into_spend() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_journal(&db, 1, 1, "2026-01-01T00:00:00Z", Some(1_000.0)).await;
+      insert_journal(&db, 2, 1, "2026-01-02T00:00:00Z", Some(-400.0)).await;
+
+      let row = &wallet_period_summaries_get(&db, 1).await.unwrap()[0];
+
+      assert_eq!(row.income, 1_000.0);
+      assert_eq!(row.spend, 400.0);
+      assert_eq!(row.net, 600.0);
+    }
+
+    #[tokio::test]
+    async fn it_treats_a_null_amount_as_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_journal(&db, 1, 1, "2026-01-01T00:00:00Z", None).await;
+      insert_journal(&db, 2, 1, "2026-01-02T00:00:00Z", Some(25.0)).await;
+
+      let row = &wallet_period_summaries_get(&db, 1).await.unwrap()[0];
+
+      assert_eq!(row.income, 25.0);
+      assert_eq!(row.spend, 0.0);
+      assert_eq!(row.net, 25.0);
+    }
+  }
+
   mod wallet_journal {
     use pretty_assertions::assert_eq;
 
@@ -3515,6 +3646,22 @@ mod wallet_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_returns_an_empty_page_past_the_last_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      append_wallet_journal(&db, &[make_entry(42, 1, Some(10.0), Some(110.0))])
+        .await
+        .unwrap();
+
+      assert!(
+        super::wallet_journal_page(&db, 42, Some(1), 5)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
 
     #[tokio::test]
     async fn it_returns_the_first_page_newest_first_when_no_cursor_is_given() {
@@ -3554,57 +3701,6 @@ mod wallet_tests {
       let page = super::wallet_journal_page(&db, 42, Some(3), 2).await.unwrap();
 
       assert_eq!(page.iter().map(|e| e.id()).collect::<Vec<_>>(), [2, 1]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_an_empty_page_past_the_last_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      append_wallet_journal(&db, &[make_entry(42, 1, Some(10.0), Some(110.0))])
-        .await
-        .unwrap();
-
-      assert!(
-        super::wallet_journal_page(&db, 42, Some(1), 5)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-  }
-
-  mod append_wallet_transaction {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_is_idempotent_on_re_appending_the_same_batch() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let batch = [make_transaction(42, 1, 5.0), make_transaction(42, 2, 6.0)];
-
-      super::append_wallet_transaction(&db, &batch).await.unwrap();
-      super::append_wallet_transaction(&db, &batch).await.unwrap();
-
-      assert_eq!(wallet_transactions(&db, 42).await.unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_keeps_the_original_row_on_id_conflict() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::append_wallet_transaction(&db, &[make_transaction(42, 1, 5.0)])
-        .await
-        .unwrap();
-
-      super::append_wallet_transaction(&db, &[make_transaction(42, 1, 99.0)])
-        .await
-        .unwrap();
-
-      let rows = wallet_transactions(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].unit_price(), 5.0);
     }
   }
 
@@ -3679,100 +3775,6 @@ mod wallet_tests {
       assert_eq!(page.iter().map(|t| t.transaction_id()).collect::<Vec<_>>(), [2, 1]);
     }
   }
-
-  mod period_all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    #[tokio::test]
-    async fn it_returns_empty_when_no_journal_rows_exist() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      assert!(wallet_period_summaries_all(&db).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_orders_by_character_then_period() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_character(&db, 2).await;
-      insert_journal(&db, 1, 2, "2026-02-01T00:00:00Z", Some(10.0)).await;
-      insert_journal(&db, 2, 1, "2026-03-01T00:00:00Z", Some(10.0)).await;
-      insert_journal(&db, 3, 1, "2026-01-01T00:00:00Z", Some(10.0)).await;
-
-      let rows = wallet_period_summaries_all(&db).await.unwrap();
-
-      let keys: Vec<_> = rows.iter().map(|r| (r.character_id, r.period.as_str())).collect();
-      assert_eq!(keys, [(1, "2026-01"), (1, "2026-03"), (2, "2026-02")]);
-    }
-  }
-
-  mod period_get {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    #[tokio::test]
-    async fn it_returns_empty_for_a_character_with_no_journal_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      assert!(wallet_period_summaries_get(&db, 1).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_buckets_rows_by_calendar_month() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, "2026-01-05T00:00:00Z", Some(100.0)).await;
-      insert_journal(&db, 2, 1, "2026-01-25T00:00:00Z", Some(50.0)).await;
-      insert_journal(&db, 3, 1, "2026-02-10T00:00:00Z", Some(7.0)).await;
-
-      let rows = wallet_period_summaries_get(&db, 1).await.unwrap();
-
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].period, "2026-01");
-      assert_eq!(rows[0].income, 150.0);
-      assert_eq!(rows[1].period, "2026-02");
-      assert_eq!(rows[1].income, 7.0);
-    }
-
-    #[tokio::test]
-    async fn it_splits_positive_amounts_into_income_and_negative_into_spend() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, "2026-01-01T00:00:00Z", Some(1_000.0)).await;
-      insert_journal(&db, 2, 1, "2026-01-02T00:00:00Z", Some(-400.0)).await;
-
-      let row = &wallet_period_summaries_get(&db, 1).await.unwrap()[0];
-
-      assert_eq!(row.income, 1_000.0);
-      assert_eq!(row.spend, 400.0);
-      assert_eq!(row.net, 600.0);
-    }
-
-    #[tokio::test]
-    async fn it_treats_a_null_amount_as_zero() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      insert_journal(&db, 1, 1, "2026-01-01T00:00:00Z", None).await;
-      insert_journal(&db, 2, 1, "2026-01-02T00:00:00Z", Some(25.0)).await;
-
-      let row = &wallet_period_summaries_get(&db, 1).await.unwrap()[0];
-
-      assert_eq!(row.income, 25.0);
-      assert_eq!(row.spend, 0.0);
-      assert_eq!(row.net, 25.0);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_other_characters_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_character(&db, 2).await;
-      insert_journal(&db, 1, 2, "2026-01-01T00:00:00Z", Some(500.0)).await;
-
-      assert!(wallet_period_summaries_get(&db, 1).await.unwrap().is_empty());
-    }
-  }
 }
 
 #[cfg(test)]
@@ -3840,56 +3842,6 @@ mod contract_detail_tests {
       title: Some("Haul to Jita".to_owned()),
       r#type: "courier".to_owned(),
       volume: Some(1000.0),
-    }
-  }
-
-  mod replace_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_round_trips_all_header_fields() {
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db, 98_000_002).await;
-
-      super::replace_for_corporation(
-        &db,
-        98_000_002,
-        &[corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
-      assert_eq!(
-        result,
-        vec![corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_replaces_existing_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db, 98_000_002).await;
-      super::replace_for_corporation(
-        &db,
-        98_000_002,
-        &[corp_contract(98_000_002, 1, "finished", "2025-01-01T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      super::replace_for_corporation(
-        &db,
-        98_000_002,
-        &[corp_contract(98_000_002, 2, "outstanding", "2026-01-01T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
-      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2]);
     }
   }
 
@@ -3966,6 +3918,69 @@ mod contract_detail_tests {
     }
   }
 
+  mod replace_contract_bids_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn bid(character_id: i64, contract_id: i64, bid_id: i64) -> CharacterContractBid {
+      CharacterContractBid {
+        amount: 1500.0,
+        bid_id,
+        bidder_id: 95_010,
+        character_id,
+        contract_id,
+        date_bid: "2026-03-01T00:00:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_bids_and_replaces_per_contract() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 10), bid(42, 1, 11)])
+        .await
+        .unwrap();
+
+      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 20)])
+        .await
+        .unwrap();
+
+      let result = super::contract_bids(&db, 42, 1).await.unwrap();
+      assert_eq!(result, vec![bid(42, 1, 20)]);
+    }
+  }
+
+  mod replace_contract_bids_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn bid(corporation_id: i64, contract_id: i64, bid_id: i64) -> CorporationContractBid {
+      CorporationContractBid {
+        amount: 2500.0,
+        bid_id,
+        bidder_id: 95_010,
+        contract_id,
+        corporation_id,
+        date_bid: "2026-03-01T00:00:00Z".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_bids() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+
+      super::replace_contract_bids_for_corporation(&db, 98_000_002, 1, &[bid(98_000_002, 1, 10)])
+        .await
+        .unwrap();
+
+      let result = super::corporation_contract_bids(&db, 98_000_002, 1).await.unwrap();
+      assert_eq!(result, vec![bid(98_000_002, 1, 10)]);
+    }
+  }
+
   mod replace_contract_items_for_character {
     use pretty_assertions::assert_eq;
 
@@ -4035,66 +4050,53 @@ mod contract_detail_tests {
     }
   }
 
-  mod replace_contract_bids_for_character {
+  mod replace_for_corporation {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn bid(character_id: i64, contract_id: i64, bid_id: i64) -> CharacterContractBid {
-      CharacterContractBid {
-        amount: 1500.0,
-        bid_id,
-        bidder_id: 95_010,
-        character_id,
-        contract_id,
-        date_bid: "2026-03-01T00:00:00Z".to_owned(),
-      }
-    }
-
     #[tokio::test]
-    async fn it_round_trips_bids_and_replaces_per_contract() {
+    async fn it_replaces_existing_rows() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 10), bid(42, 1, 11)])
-        .await
-        .unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 1, "finished", "2025-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
 
-      super::replace_contract_bids_for_character(&db, 42, 1, &[bid(42, 1, 20)])
-        .await
-        .unwrap();
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 2, "outstanding", "2026-01-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
 
-      let result = super::contract_bids(&db, 42, 1).await.unwrap();
-      assert_eq!(result, vec![bid(42, 1, 20)]);
-    }
-  }
-
-  mod replace_contract_bids_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn bid(corporation_id: i64, contract_id: i64, bid_id: i64) -> CorporationContractBid {
-      CorporationContractBid {
-        amount: 2500.0,
-        bid_id,
-        bidder_id: 95_010,
-        contract_id,
-        corporation_id,
-        date_bid: "2026-03-01T00:00:00Z".to_owned(),
-      }
+      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
+      assert_eq!(result.iter().map(|c| c.contract_id()).collect::<Vec<_>>(), [2]);
     }
 
     #[tokio::test]
-    async fn it_round_trips_bids() {
+    async fn it_round_trips_all_header_fields() {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 98_000_002).await;
 
-      super::replace_contract_bids_for_corporation(&db, 98_000_002, 1, &[bid(98_000_002, 1, 10)])
-        .await
-        .unwrap();
+      super::replace_for_corporation(
+        &db,
+        98_000_002,
+        &[corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")],
+      )
+      .await
+      .unwrap();
 
-      let result = super::corporation_contract_bids(&db, 98_000_002, 1).await.unwrap();
-      assert_eq!(result, vec![bid(98_000_002, 1, 10)]);
+      let result = super::corporation_contracts(&db, 98_000_002).await.unwrap();
+      assert_eq!(
+        result,
+        vec![corp_contract(98_000_002, 7, "outstanding", "2026-03-01T00:00:00Z")]
+      );
     }
   }
 }

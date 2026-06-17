@@ -407,6 +407,75 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_adds_a_rostered_pilot_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2), pilot(3)]);
+      let _ = update(&mut state, Message::PickerToggled, &db);
+
+      let _ = update(&mut state, Message::PilotAdded(3), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2, 3]);
+      assert!(!state.picker_open());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_query_when_the_picker_closes() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open());
+      assert_eq!(state.picker_query(), "alt");
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open());
+      assert_eq!(state.picker_query(), "");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_adding_a_pilot_outside_the_roster() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PilotAdded(99), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_adding_an_already_selected_pilot() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PilotAdded(2), &db);
+
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_picker_query() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
+
+      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
+
+      assert_eq!(state.picker_query(), "alt");
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_pilot_only_when_more_than_two_remain() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(vec![1, 2, 3], vec![pilot(1), pilot(2), pilot(3)]);
+
+      let _ = update(&mut state, Message::PilotRemoved(3), &db);
+      assert_eq!(state.selected_ids(), &[1, 2]);
+
+      let _ = update(&mut state, Message::PilotRemoved(2), &db);
+      assert_eq!(state.selected_ids(), &[1, 2]);
+    }
+
+    #[tokio::test]
     async fn it_stores_the_loaded_catalog_and_models_and_clears_loading() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
@@ -436,75 +505,6 @@ mod tests {
 
       let _ = update(&mut state, Message::GroupToggled(1), &db);
       assert!(!state.is_expanded(1));
-    }
-
-    #[tokio::test]
-    async fn it_records_the_picker_query() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
-
-      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
-
-      assert_eq!(state.picker_query(), "alt");
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_query_when_the_picker_closes() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
-      let _ = update(&mut state, Message::PickerQueryChanged("alt".to_owned()), &db);
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open());
-      assert_eq!(state.picker_query(), "alt");
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open());
-      assert_eq!(state.picker_query(), "");
-    }
-
-    #[tokio::test]
-    async fn it_adds_a_rostered_pilot_and_closes_the_picker() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2), pilot(3)]);
-      let _ = update(&mut state, Message::PickerToggled, &db);
-
-      let _ = update(&mut state, Message::PilotAdded(3), &db);
-
-      assert_eq!(state.selected_ids(), &[1, 2, 3]);
-      assert!(!state.picker_open());
-    }
-
-    #[tokio::test]
-    async fn it_ignores_adding_an_already_selected_pilot() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
-
-      let _ = update(&mut state, Message::PilotAdded(2), &db);
-
-      assert_eq!(state.selected_ids(), &[1, 2]);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_adding_a_pilot_outside_the_roster() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2], vec![pilot(1), pilot(2)]);
-
-      let _ = update(&mut state, Message::PilotAdded(99), &db);
-
-      assert_eq!(state.selected_ids(), &[1, 2]);
-    }
-
-    #[tokio::test]
-    async fn it_removes_a_pilot_only_when_more_than_two_remain() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(vec![1, 2, 3], vec![pilot(1), pilot(2), pilot(3)]);
-
-      let _ = update(&mut state, Message::PilotRemoved(3), &db);
-      assert_eq!(state.selected_ids(), &[1, 2]);
-
-      let _ = update(&mut state, Message::PilotRemoved(2), &db);
-      assert_eq!(state.selected_ids(), &[1, 2]);
     }
 
     #[tokio::test]
@@ -538,13 +538,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_renders_the_collapsed_matrix() {
-      let (state, _db) = populated().await;
-
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[tokio::test]
     async fn it_renders_an_expanded_group() {
       let (mut state, db) = populated().await;
       let _ = update(&mut state, Message::GroupToggled(1), &db);
@@ -553,9 +546,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_renders_the_picker_with_an_available_pilot() {
-      let (mut state, db) = populated().await;
-      let _ = update(&mut state, Message::PickerToggled, &db);
+    async fn it_renders_the_collapsed_matrix() {
+      let (state, _db) = populated().await;
 
       let _el: Element<'_, Message> = view(&state);
     }
@@ -565,6 +557,14 @@ mod tests {
       let (mut state, db) = populated().await;
       let _ = update(&mut state, Message::PickerToggled, &db);
       let _ = update(&mut state, Message::PickerQueryChanged("zzzz".to_owned()), &db);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_picker_with_an_available_pilot() {
+      let (mut state, db) = populated().await;
+      let _ = update(&mut state, Message::PickerToggled, &db);
 
       let _el: Element<'_, Message> = view(&state);
     }

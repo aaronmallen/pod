@@ -601,22 +601,6 @@ fn url_path(url: &str) -> &str {
 mod tests {
   use super::*;
 
-  mod client_builder {
-    use super::*;
-
-    mod build {
-      use super::*;
-
-      #[tokio::test]
-      async fn it_succeeds_with_no_rate_limits() {
-        let db = store::open_test().await.unwrap();
-        let cache = Cache::new(db);
-
-        let _client = Client::builder(cache).build();
-      }
-    }
-  }
-
   mod client {
     use wiremock::{
       Mock, MockServer, ResponseTemplate,
@@ -789,25 +773,6 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_sends_the_compatibility_date_header_when_provided() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/resource"))
-          .and(header("X-Compatibility-Date", "2026-06-08"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[1]".to_vec(), "application/json"))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result: Vec<i32> = client
-          .get_json(&format!("{}/resource", server.uri()), None, Some("2026-06-08"))
-          .await
-          .unwrap();
-
-        assert_eq!(result, vec![1]);
-      }
-
-      #[tokio::test]
       async fn it_returns_cached_body_on_304() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -825,6 +790,26 @@ mod tests {
         let result: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
 
         assert_eq!(result, vec![7, 8, 9]);
+      }
+
+      #[tokio::test]
+      async fn it_returns_error_limited_on_420() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .respond_with(ResponseTemplate::new(420).insert_header("X-ESI-Error-Limit-Reset", "8"))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None, None).await;
+
+        assert!(matches!(
+          result,
+          Err(Error::ErrorLimited {
+            reset_secs: 8
+          })
+        ));
       }
 
       #[tokio::test]
@@ -863,26 +848,6 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_returns_error_limited_on_420() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/resource"))
-          .respond_with(ResponseTemplate::new(420).insert_header("X-ESI-Error-Limit-Reset", "8"))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result: Result<Vec<i32>, _> = client.get_json(&format!("{}/resource", server.uri()), None, None).await;
-
-        assert!(matches!(
-          result,
-          Err(Error::ErrorLimited {
-            reset_secs: 8
-          })
-        ));
-      }
-
-      #[tokio::test]
       async fn it_sends_if_none_match_when_etag_is_cached() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -899,6 +864,25 @@ mod tests {
         let client = Client::builder(Cache::new(db)).build();
 
         let result: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
+
+        assert_eq!(result, vec![1]);
+      }
+
+      #[tokio::test]
+      async fn it_sends_the_compatibility_date_header_when_provided() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .and(header("X-Compatibility-Date", "2026-06-08"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[1]".to_vec(), "application/json"))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Vec<i32> = client
+          .get_json(&format!("{}/resource", server.uri()), None, Some("2026-06-08"))
+          .await
+          .unwrap();
 
         assert_eq!(result, vec![1]);
       }
@@ -931,6 +915,34 @@ mod tests {
       use pretty_assertions::assert_eq;
 
       use super::*;
+
+      #[tokio::test]
+      async fn it_fails_fast_when_a_later_page_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(b"[1]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "2"))
+          .respond_with(ResponseTemplate::new(500))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Result<Vec<i32>, _> = client
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
+          .await;
+
+        assert!(matches!(result, Err(Error::Http(_))));
+      }
 
       #[tokio::test]
       async fn it_fetches_and_merges_all_pages() {
@@ -977,57 +989,6 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_returns_single_page_without_fanning_out() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/list"))
-          .and(query_param("page", "1"))
-          .respond_with(
-            ResponseTemplate::new(200)
-              .insert_header("X-Pages", "1")
-              .set_body_raw(b"[9]".to_vec(), "application/json"),
-          )
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result: Vec<i32> = client
-          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
-          .await
-          .unwrap();
-
-        assert_eq!(result, vec![9]);
-      }
-
-      #[tokio::test]
-      async fn it_fails_fast_when_a_later_page_errors() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/list"))
-          .and(query_param("page", "1"))
-          .respond_with(
-            ResponseTemplate::new(200)
-              .insert_header("X-Pages", "2")
-              .set_body_raw(b"[1]".to_vec(), "application/json"),
-          )
-          .mount(&server)
-          .await;
-        Mock::given(method("GET"))
-          .and(path("/list"))
-          .and(query_param("page", "2"))
-          .respond_with(ResponseTemplate::new(500))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result: Result<Vec<i32>, _> = client
-          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
-          .await;
-
-        assert!(matches!(result, Err(Error::Http(_))));
-      }
-
-      #[tokio::test]
       async fn it_returns_rate_limit_error_when_the_first_page_is_429() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1048,6 +1009,29 @@ mod tests {
             retry_after_secs: 12
           })
         ));
+      }
+
+      #[tokio::test]
+      async fn it_returns_single_page_without_fanning_out() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/list"))
+          .and(query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "1")
+              .set_body_raw(b"[9]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result: Vec<i32> = client
+          .get_json_paginated(&format!("{}/list", server.uri()), None, None)
+          .await
+          .unwrap();
+
+        assert_eq!(result, vec![9]);
       }
     }
 
@@ -1294,51 +1278,6 @@ mod tests {
       use super::*;
 
       #[tokio::test]
-      async fn it_returns_ok_on_2xx() {
-        let server = MockServer::start().await;
-        Mock::given(method("PUT"))
-          .and(path("/things/1"))
-          .respond_with(ResponseTemplate::new(204))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result = client
-          .put_empty(
-            &format!("{}/things/1", server.uri()),
-            &serde_json::json!({"read": true}),
-            "token",
-            None,
-          )
-          .await;
-
-        assert!(result.is_ok());
-      }
-
-      #[tokio::test]
-      async fn it_sends_the_bearer_token() {
-        let server = MockServer::start().await;
-        Mock::given(method("PUT"))
-          .and(path("/things/1"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .respond_with(ResponseTemplate::new(204))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result = client
-          .put_empty(
-            &format!("{}/things/1", server.uri()),
-            &serde_json::json!({"read": true}),
-            "secret-token",
-            None,
-          )
-          .await;
-
-        assert!(result.is_ok());
-      }
-
-      #[tokio::test]
       async fn it_returns_http_error_on_4xx() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
@@ -1358,6 +1297,28 @@ mod tests {
           .await;
 
         assert!(matches!(result, Err(Error::Http(_))));
+      }
+
+      #[tokio::test]
+      async fn it_returns_ok_on_2xx() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/things/1"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result = client
+          .put_empty(
+            &format!("{}/things/1", server.uri()),
+            &serde_json::json!({"read": true}),
+            "token",
+            None,
+          )
+          .await;
+
+        assert!(result.is_ok());
       }
 
       #[tokio::test]
@@ -1386,6 +1347,45 @@ mod tests {
           })
         ));
       }
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/things/1"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let (client, _db) = make_test_client().await;
+
+        let result = client
+          .put_empty(
+            &format!("{}/things/1", server.uri()),
+            &serde_json::json!({"read": true}),
+            "secret-token",
+            None,
+          )
+          .await;
+
+        assert!(result.is_ok());
+      }
+    }
+  }
+
+  mod client_builder {
+    use super::*;
+
+    mod build {
+      use super::*;
+
+      #[tokio::test]
+      async fn it_succeeds_with_no_rate_limits() {
+        let db = store::open_test().await.unwrap();
+        let cache = Cache::new(db);
+
+        let _client = Client::builder(cache).build();
+      }
     }
   }
 
@@ -1406,6 +1406,19 @@ mod tests {
     }
 
     #[test]
+    fn it_derives_remaining_from_used_when_remaining_is_absent() {
+      let map = headers(&[
+        ("X-Ratelimit-Group", "killmails"),
+        ("X-Ratelimit-Limit", "150/15m"),
+        ("X-Ratelimit-Used", "110"),
+      ]);
+
+      let parsed = parse_rate_headers(&map).unwrap();
+
+      assert_eq!(parsed.remaining, 40);
+    }
+
+    #[test]
     fn it_parses_all_fields() {
       let map = headers(&[
         ("X-Ratelimit-Group", "killmails"),
@@ -1423,19 +1436,6 @@ mod tests {
     }
 
     #[test]
-    fn it_derives_remaining_from_used_when_remaining_is_absent() {
-      let map = headers(&[
-        ("X-Ratelimit-Group", "killmails"),
-        ("X-Ratelimit-Limit", "150/15m"),
-        ("X-Ratelimit-Used", "110"),
-      ]);
-
-      let parsed = parse_rate_headers(&map).unwrap();
-
-      assert_eq!(parsed.remaining, 40);
-    }
-
-    #[test]
     fn it_returns_none_without_a_group() {
       let map = headers(&[("X-Ratelimit-Limit", "150/15m")]);
 
@@ -1449,19 +1449,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_parses_minutes() {
-      let (limit, window) = parse_rate_limit_spec("150/15m").unwrap();
-
-      assert_eq!(limit, 150);
-      assert_eq!(window, Duration::from_secs(900));
-    }
-
-    #[test]
     fn it_parses_hours() {
       let (limit, window) = parse_rate_limit_spec("60/1h").unwrap();
 
       assert_eq!(limit, 60);
       assert_eq!(window, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn it_parses_minutes() {
+      let (limit, window) = parse_rate_limit_spec("150/15m").unwrap();
+
+      assert_eq!(limit, 150);
+      assert_eq!(window, Duration::from_secs(900));
     }
 
     #[test]
@@ -1548,8 +1548,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_replaces_numeric_id_segments() {
-      assert_eq!(route_key("/characters/12345/assets/"), "/characters/{}/assets/");
+    fn it_leaves_short_words_intact() {
+      assert_eq!(route_key("/status/"), "/status/");
     }
 
     #[test]
@@ -1561,8 +1561,8 @@ mod tests {
     }
 
     #[test]
-    fn it_leaves_short_words_intact() {
-      assert_eq!(route_key("/status/"), "/status/");
+    fn it_replaces_numeric_id_segments() {
+      assert_eq!(route_key("/characters/12345/assets/"), "/characters/{}/assets/");
     }
   }
 }

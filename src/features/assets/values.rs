@@ -579,6 +579,83 @@ mod tests {
     }
   }
 
+  mod by_location {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_leaves_the_label_absent_when_no_row_carries_one() {
+      let rows = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
+
+      let out = super::super::by_location(&rows);
+
+      assert_eq!(out[0].label, None);
+    }
+
+    #[test]
+    fn it_threads_the_location_label_onto_each_value() {
+      let rows = vec![labeled_row(
+        "Rifter",
+        "ship",
+        7,
+        60_003_760,
+        Some("Jita IV - Moon 4"),
+        1,
+        1_000.0,
+      )];
+
+      let out = super::super::by_location(&rows);
+
+      assert_eq!(out[0].location_id, 60_003_760);
+      assert_eq!(out[0].label.as_deref(), Some("Jita IV - Moon 4"));
+    }
+  }
+
+  mod matrix_locations {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_carries_the_label_and_id_for_each_column() {
+      let rows = vec![
+        labeled_row("Rifter", "ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1, 1_000.0),
+        labeled_row("Rupture", "ship", 8, 60_008_494, None, 1, 2_000.0),
+      ];
+
+      let out = super::super::matrix_locations(&rows);
+
+      assert_eq!(out[0].location_id, 60_008_494);
+      assert_eq!(out[0].label, None);
+      assert_eq!(out[1].location_id, 60_003_760);
+      assert_eq!(out[1].label.as_deref(), Some("Jita IV - Moon 4"));
+    }
+  }
+
+  mod render {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_empty_values_body() {
+      let summary = ValueSummary::default();
+      let _el: Element<'_, Message> = body(&summary);
+    }
+
+    #[test]
+    fn it_renders_the_values_body_from_a_sample_summary() {
+      let summary = summarize(
+        &[
+          row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0),
+          row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
+        ],
+        &[pilot(7, "Vex"), pilot(8, "Korren")],
+        &[],
+      );
+      let _el: Element<'_, Message> = body(&summary);
+    }
+  }
+
   mod summarize {
     use pretty_assertions::assert_eq;
 
@@ -621,83 +698,6 @@ mod tests {
     fn it_yields_an_empty_summary_for_no_rows() {
       let summary = summarize(&[], &[], &[]);
       assert_eq!(summary, ValueSummary::default());
-    }
-  }
-
-  mod by_location {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_threads_the_location_label_onto_each_value() {
-      let rows = vec![labeled_row(
-        "Rifter",
-        "ship",
-        7,
-        60_003_760,
-        Some("Jita IV - Moon 4"),
-        1,
-        1_000.0,
-      )];
-
-      let out = super::super::by_location(&rows);
-
-      assert_eq!(out[0].location_id, 60_003_760);
-      assert_eq!(out[0].label.as_deref(), Some("Jita IV - Moon 4"));
-    }
-
-    #[test]
-    fn it_leaves_the_label_absent_when_no_row_carries_one() {
-      let rows = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
-
-      let out = super::super::by_location(&rows);
-
-      assert_eq!(out[0].label, None);
-    }
-  }
-
-  mod matrix_locations {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_carries_the_label_and_id_for_each_column() {
-      let rows = vec![
-        labeled_row("Rifter", "ship", 7, 60_003_760, Some("Jita IV - Moon 4"), 1, 1_000.0),
-        labeled_row("Rupture", "ship", 8, 60_008_494, None, 1, 2_000.0),
-      ];
-
-      let out = super::super::matrix_locations(&rows);
-
-      assert_eq!(out[0].location_id, 60_008_494);
-      assert_eq!(out[0].label, None);
-      assert_eq!(out[1].location_id, 60_003_760);
-      assert_eq!(out[1].label.as_deref(), Some("Jita IV - Moon 4"));
-    }
-  }
-
-  mod render {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_values_body_from_a_sample_summary() {
-      let summary = summarize(
-        &[
-          row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0),
-          row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
-        ],
-        &[pilot(7, "Vex"), pilot(8, "Korren")],
-        &[],
-      );
-      let _el: Element<'_, Message> = body(&summary);
-    }
-
-    #[test]
-    fn it_renders_the_empty_values_body() {
-      let summary = ValueSummary::default();
-      let _el: Element<'_, Message> = body(&summary);
     }
   }
 }

@@ -470,46 +470,24 @@ mod tests {
     }
   }
 
-  mod filter {
-    use super::*;
-
-    #[test]
-    fn it_passes_everything_for_all() {
-      let n = [notification(1, "KillReportFinalBlow", true)];
-      assert!(NotificationsFilter::All.matches(&n[0]));
-    }
-
-    #[test]
-    fn it_matches_unread_only() {
-      let read = notification(1, "KillReportFinalBlow", true);
-      let unread = notification(2, "KillReportFinalBlow", false);
-      assert!(!NotificationsFilter::Unread.matches(&read));
-      assert!(NotificationsFilter::Unread.matches(&unread));
-    }
-
-    #[test]
-    fn it_matches_by_derived_category() {
-      let combat = notification(1, "KillReportFinalBlow", false);
-      let war = notification(2, "WarDeclared", false);
-      assert!(NotificationsFilter::Combat.matches(&combat));
-      assert!(!NotificationsFilter::Combat.matches(&war));
-      assert!(NotificationsFilter::War.matches(&war));
-    }
-  }
-
-  mod unread_count {
+  mod body_snippet {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_counts_only_unread() {
-      let entries = vec![
-        notification(1, "A", false),
-        notification(2, "B", true),
-        notification(3, "C", false),
-      ];
-      assert_eq!(unread_count(&entries), 2);
+    fn it_is_none_for_missing_or_blank_text() {
+      let mut n = notification(1, "A", false);
+      n.text = None;
+      assert_eq!(body_snippet(&n), None);
+      n.text = Some("   \n".to_owned());
+      assert_eq!(body_snippet(&n), None);
+    }
+
+    #[test]
+    fn it_takes_the_first_non_empty_line() {
+      let n = notification(1, "A", false);
+      assert_eq!(body_snippet(&n).as_deref(), Some("First line"));
     }
   }
 
@@ -519,12 +497,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_buckets_known_type_prefixes() {
-      assert_eq!(category("WarDeclared"), "war");
-      assert_eq!(category("KillReportFinalBlow"), "combat");
-      assert_eq!(category("StructureUnderAttack"), "structure");
-      assert_eq!(category("CorpAppNewMsg"), "corp");
-      assert_eq!(category("SomethingUnknown"), "system");
+    fn every_override_target_is_a_known_category() {
+      for (_, cat) in TYPE_OVERRIDES {
+        let _icon = category_icon(cat);
+        let _color = category_color(cat);
+        assert_ne!(*cat, "");
+      }
+    }
+
+    #[test]
+    fn fw_types_win_over_the_generic_war_rule() {
+      assert_eq!(category("FacWarCorpJoinRequestMsg"), "fw");
+      assert_eq!(category("CorpFwStandingLoss"), "fw");
+      assert_eq!(category("FactionWarStalemate"), "fw");
     }
 
     #[test]
@@ -553,6 +538,15 @@ mod tests {
     }
 
     #[test]
+    fn it_buckets_known_type_prefixes() {
+      assert_eq!(category("WarDeclared"), "war");
+      assert_eq!(category("KillReportFinalBlow"), "combat");
+      assert_eq!(category("StructureUnderAttack"), "structure");
+      assert_eq!(category("CorpAppNewMsg"), "corp");
+      assert_eq!(category("SomethingUnknown"), "system");
+    }
+
+    #[test]
     fn it_buckets_the_expanded_category_families() {
       assert_eq!(category("FacWarLPPayoutEvent"), "fw");
       assert_eq!(category("FactionWarCampaignOver"), "fw");
@@ -570,13 +564,6 @@ mod tests {
     }
 
     #[test]
-    fn fw_types_win_over_the_generic_war_rule() {
-      assert_eq!(category("FacWarCorpJoinRequestMsg"), "fw");
-      assert_eq!(category("CorpFwStandingLoss"), "fw");
-      assert_eq!(category("FactionWarStalemate"), "fw");
-    }
-
-    #[test]
     fn override_map_fixes_clone_standing_and_mission_edge_cases() {
       assert_eq!(category("JumpCloneDeletedMsg1"), "clone");
       assert_eq!(category("JumpCloneDeletedMsg2"), "clone");
@@ -591,15 +578,6 @@ mod tests {
     fn override_map_is_consulted_before_substring_fallback() {
       assert_eq!(category("CorpBecameWarEligible"), "war");
       assert_eq!(category("CorpNoLongerWarEligible"), "war");
-    }
-
-    #[test]
-    fn every_override_target_is_a_known_category() {
-      for (_, cat) in TYPE_OVERRIDES {
-        let _icon = category_icon(cat);
-        let _color = category_color(cat);
-        assert_ne!(*cat, "");
-      }
     }
   }
 
@@ -634,6 +612,33 @@ mod tests {
     }
   }
 
+  mod filter {
+    use super::*;
+
+    #[test]
+    fn it_matches_by_derived_category() {
+      let combat = notification(1, "KillReportFinalBlow", false);
+      let war = notification(2, "WarDeclared", false);
+      assert!(NotificationsFilter::Combat.matches(&combat));
+      assert!(!NotificationsFilter::Combat.matches(&war));
+      assert!(NotificationsFilter::War.matches(&war));
+    }
+
+    #[test]
+    fn it_matches_unread_only() {
+      let read = notification(1, "KillReportFinalBlow", true);
+      let unread = notification(2, "KillReportFinalBlow", false);
+      assert!(!NotificationsFilter::Unread.matches(&read));
+      assert!(NotificationsFilter::Unread.matches(&unread));
+    }
+
+    #[test]
+    fn it_passes_everything_for_all() {
+      let n = [notification(1, "KillReportFinalBlow", true)];
+      assert!(NotificationsFilter::All.matches(&n[0]));
+    }
+  }
+
   mod humanise_type {
     use pretty_assertions::assert_eq;
 
@@ -646,24 +651,19 @@ mod tests {
     }
   }
 
-  mod body_snippet {
+  mod unread_count {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_takes_the_first_non_empty_line() {
-      let n = notification(1, "A", false);
-      assert_eq!(body_snippet(&n).as_deref(), Some("First line"));
-    }
-
-    #[test]
-    fn it_is_none_for_missing_or_blank_text() {
-      let mut n = notification(1, "A", false);
-      n.text = None;
-      assert_eq!(body_snippet(&n), None);
-      n.text = Some("   \n".to_owned());
-      assert_eq!(body_snippet(&n), None);
+    fn it_counts_only_unread() {
+      let entries = vec![
+        notification(1, "A", false),
+        notification(2, "B", true),
+        notification(3, "C", false),
+      ];
+      assert_eq!(unread_count(&entries), 2);
     }
   }
 }

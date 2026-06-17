@@ -717,118 +717,15 @@ mod tests {
     )
   }
 
-  mod header {
-    use super::*;
-
-    #[test]
-    fn it_renders_each_filter() {
-      let state = LoadState::Loaded(loaded());
-
-      for filter in [
-        ContactFilter::All,
-        ContactFilter::Character,
-        ContactFilter::Corp,
-        ContactFilter::Alliance,
-      ] {
-        let _el: Element<'_, Message> = super::super::header(&state, filter, "", false);
-      }
-    }
-
-    #[test]
-    fn it_keeps_the_filter_segments_in_render_order() {
-      assert_eq!(
-        ContactFilter::SEGMENTS,
-        [
-          (ContactFilter::All, "All"),
-          (ContactFilter::Character, "Characters"),
-          (ContactFilter::Corp, "Corps"),
-          (ContactFilter::Alliance, "Alliances"),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_renders_the_add_button_when_writes_are_enabled() {
-      let state = LoadState::Loaded(loaded());
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", true);
-    }
-
-    #[test]
-    fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
-      let state = LoadState::Loaded(loaded());
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing", false);
-    }
-
-    #[test]
-    fn it_renders_the_more_pages_count_suffix() {
-      let page = ContactsPage::for_test(
-        vec![contact_row(100, "character", 1.0, false, "[]", "Pilot")],
-        Vec::new(),
-        true,
-      );
-      let state = LoadState::Loaded(page);
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", false);
-    }
-
-    #[test]
-    fn it_renders_a_zero_count_in_the_loading_state() {
-      let loading: LoadState<ContactsPage> = LoadState::Loading;
-
-      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "", false);
-    }
-  }
-
-  mod contact_row {
-    use super::*;
-
-    #[test]
-    fn it_renders_a_watched_contact_with_labels() {
-      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
-      let image = ImageState::Stale {
-        id: 100,
-        kind: crate::store::images::ImageKind::CharacterPortrait,
-      };
-      let mut labels = HashMap::new();
-      labels.insert(1, "Fleet");
-      labels.insert(2, "Trusted");
-
-      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false, false);
-    }
-
-    #[test]
-    fn it_renders_the_edit_and_delete_actions_when_writes_are_enabled() {
-      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
-      let labels: HashMap<i64, &str> = HashMap::new();
-
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true, false);
-    }
-
-    #[test]
-    fn it_renders_an_unwatched_negative_standing_last_row() {
-      let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
-      let labels: HashMap<i64, &str> = HashMap::new();
-
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, false, true);
-    }
-  }
-
-  mod sortable_label {
-    use super::*;
-
-    #[test]
-    fn it_renders_active_and_inactive_columns_on_both_sides() {
-      let sort = ContactSort::default();
-
-      let _active: Element<'_, Message> = super::super::sortable_label("Standing", true, SortColumn::Standing, sort);
-      let _inactive: Element<'_, Message> = super::super::sortable_label("Entity", false, SortColumn::Entity, sort);
-    }
-  }
-
   mod body {
     use super::*;
+
+    #[test]
+    fn it_renders_an_empty_page_as_a_no_match_panel() {
+      let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), false, 600.0, 0.0);
+    }
 
     #[test]
     fn it_renders_each_sort_column_and_direction() {
@@ -858,12 +755,39 @@ mod tests {
       let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), false, 600.0, 0.0);
       let _error: Element<'_, Message> = body(&error, ContactSort::default(), false, 600.0, 0.0);
     }
+  }
+
+  mod contact_row {
+    use super::*;
 
     #[test]
-    fn it_renders_an_empty_page_as_a_no_match_panel() {
-      let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+    fn it_renders_a_watched_contact_with_labels() {
+      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
+      let image = ImageState::Stale {
+        id: 100,
+        kind: crate::store::images::ImageKind::CharacterPortrait,
+      };
+      let mut labels = HashMap::new();
+      labels.insert(1, "Fleet");
+      labels.insert(2, "Trusted");
 
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), false, 600.0, 0.0);
+      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false, false);
+    }
+
+    #[test]
+    fn it_renders_an_unwatched_negative_standing_last_row() {
+      let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
+      let labels: HashMap<i64, &str> = HashMap::new();
+
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, false, true);
+    }
+
+    #[test]
+    fn it_renders_the_edit_and_delete_actions_when_writes_are_enabled() {
+      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
+      let labels: HashMap<i64, &str> = HashMap::new();
+
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true, false);
     }
   }
 
@@ -881,6 +805,99 @@ mod tests {
     }
   }
 
+  mod header {
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_filter_segments_in_render_order() {
+      assert_eq!(
+        ContactFilter::SEGMENTS,
+        [
+          (ContactFilter::All, "All"),
+          (ContactFilter::Character, "Characters"),
+          (ContactFilter::Corp, "Corps"),
+          (ContactFilter::Alliance, "Alliances"),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_renders_a_zero_count_in_the_loading_state() {
+      let loading: LoadState<ContactsPage> = LoadState::Loading;
+
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "", false);
+    }
+
+    #[test]
+    fn it_renders_each_filter() {
+      let state = LoadState::Loaded(loaded());
+
+      for filter in [
+        ContactFilter::All,
+        ContactFilter::Character,
+        ContactFilter::Corp,
+        ContactFilter::Alliance,
+      ] {
+        let _el: Element<'_, Message> = super::super::header(&state, filter, "", false);
+      }
+    }
+
+    #[test]
+    fn it_renders_the_add_button_when_writes_are_enabled() {
+      let state = LoadState::Loaded(loaded());
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", true);
+    }
+
+    #[test]
+    fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
+      let state = LoadState::Loaded(loaded());
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing", false);
+    }
+
+    #[test]
+    fn it_renders_the_more_pages_count_suffix() {
+      let page = ContactsPage::for_test(
+        vec![contact_row(100, "character", 1.0, false, "[]", "Pilot")],
+        Vec::new(),
+        true,
+      );
+      let state = LoadState::Loaded(page);
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", false);
+    }
+  }
+
+  mod label_note {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_empty_for_no_labels_or_unknown_ids() {
+      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet")]);
+
+      assert_eq!(label_note(&contact(1, "character", 0.0, false, "[]", "A"), &labels), "");
+      assert_eq!(
+        label_note(&contact(2, "character", 0.0, false, "[99]", "B"), &labels),
+        ""
+      );
+      assert_eq!(
+        label_note(&contact(3, "character", 0.0, false, "not-json", "C"), &labels),
+        ""
+      );
+    }
+
+    #[test]
+    fn it_joins_resolved_label_names() {
+      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet"), (2, "Trusted")]);
+      let c = contact(100, "character", 0.0, false, "[1,2]", "Wingmate");
+
+      assert_eq!(label_note(&c, &labels), "Fleet, Trusted");
+    }
+  }
+
   mod sort {
     use pretty_assertions::assert_eq;
 
@@ -890,16 +907,6 @@ mod tests {
     fn it_defaults_to_strongest_standing_first() {
       assert_eq!(ContactSort::default().column, SortColumn::Standing);
       assert_eq!(ContactSort::default().direction, SortDirection::Descending);
-    }
-
-    #[test]
-    fn it_starts_a_fresh_column_on_its_natural_direction() {
-      let sort = ContactSort::default().toggled(SortColumn::Entity);
-      assert_eq!(sort.column, SortColumn::Entity);
-      assert_eq!(sort.direction, SortDirection::Ascending);
-
-      let sort = ContactSort::default().toggled(SortColumn::Type);
-      assert_eq!(sort.direction, SortDirection::Ascending);
     }
 
     #[test]
@@ -927,34 +934,27 @@ mod tests {
       assert!(sort.caret(SortColumn::Entity).is_none());
       assert!(sort.caret(SortColumn::Type).is_none());
     }
+
+    #[test]
+    fn it_starts_a_fresh_column_on_its_natural_direction() {
+      let sort = ContactSort::default().toggled(SortColumn::Entity);
+      assert_eq!(sort.column, SortColumn::Entity);
+      assert_eq!(sort.direction, SortDirection::Ascending);
+
+      let sort = ContactSort::default().toggled(SortColumn::Type);
+      assert_eq!(sort.direction, SortDirection::Ascending);
+    }
   }
 
-  mod label_note {
-    use pretty_assertions::assert_eq;
-
+  mod sortable_label {
     use super::*;
 
     #[test]
-    fn it_joins_resolved_label_names() {
-      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet"), (2, "Trusted")]);
-      let c = contact(100, "character", 0.0, false, "[1,2]", "Wingmate");
+    fn it_renders_active_and_inactive_columns_on_both_sides() {
+      let sort = ContactSort::default();
 
-      assert_eq!(label_note(&c, &labels), "Fleet, Trusted");
-    }
-
-    #[test]
-    fn it_is_empty_for_no_labels_or_unknown_ids() {
-      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet")]);
-
-      assert_eq!(label_note(&contact(1, "character", 0.0, false, "[]", "A"), &labels), "");
-      assert_eq!(
-        label_note(&contact(2, "character", 0.0, false, "[99]", "B"), &labels),
-        ""
-      );
-      assert_eq!(
-        label_note(&contact(3, "character", 0.0, false, "not-json", "C"), &labels),
-        ""
-      );
+      let _active: Element<'_, Message> = super::super::sortable_label("Standing", true, SortColumn::Standing, sort);
+      let _inactive: Element<'_, Message> = super::super::sortable_label("Entity", false, SortColumn::Entity, sort);
     }
   }
 }

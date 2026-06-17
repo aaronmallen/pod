@@ -198,8 +198,53 @@ mod tests {
   }
 
   #[test]
+  fn it_centers_and_fills_for_the_centered_layout() {
+    assert_eq!(TabLayout::Centered.align_x(), Horizontal::Center);
+    assert_eq!(TabLayout::Centered.cell_width(), Length::Fill);
+  }
+
+  #[test]
+  fn it_defaults_to_the_start_layout() {
+    assert_eq!(TabLayout::default(), TabLayout::Start);
+  }
+
+  #[test]
+  fn it_fills_equal_width_cells_for_the_fill_layout() {
+    assert_eq!(TabLayout::Fill.align_x(), Horizontal::Left);
+    assert_eq!(TabLayout::Fill.cell_width(), Length::Fill);
+  }
+
+  #[test]
+  fn it_keeps_the_start_layout_left_aligned_and_intrinsic_width() {
+    assert_eq!(TabLayout::Start.align_x(), Horizontal::Left);
+    assert_eq!(TabLayout::Start.cell_width(), Length::Shrink);
+  }
+
+  #[test]
+  fn it_renders_a_centered_tab_select() {
+    let _el: Element<'_, ()> = tab_select_with(
+      vec![characters_tab(true, None), characters_tab(false, Some(()))],
+      TabLayout::Centered,
+    );
+  }
+
+  #[test]
   fn it_renders_a_clickable_unselected_tab() {
     let _el: Element<'_, ()> = tab(characters_tab(false, Some(())), TabLayout::default());
+  }
+
+  #[test]
+  fn it_renders_a_fill_layout_selected_tab_with_an_underline() {
+    let el: Element<'_, ()> = tab(characters_tab(true, Some(())), TabLayout::Fill);
+    let mut tree = iced::advanced::widget::Tree::new(&el);
+    tree.diff(&el);
+
+    assert!(tree.children.len() >= 2, "selected fill tab should stack the underline");
+  }
+
+  #[test]
+  fn it_renders_a_presentational_tab_with_a_count() {
+    let _el: Element<'_, ()> = tab_select_with(vec![characters_tab(true, None)], TabLayout::default());
   }
 
   #[test]
@@ -227,11 +272,6 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_a_presentational_tab_with_a_count() {
-    let _el: Element<'_, ()> = tab_select_with(vec![characters_tab(true, None)], TabLayout::default());
-  }
-
-  #[test]
   fn it_renders_multiple_tabs_in_order() {
     let _el: Element<'_, ()> = tab_select_with(
       vec![characters_tab(true, None), characters_tab(false, Some(()))],
@@ -242,45 +282,5 @@ mod tests {
   #[test]
   fn it_renders_with_no_tabs() {
     let _el: Element<'_, ()> = tab_select_with(vec![], TabLayout::default());
-  }
-
-  #[test]
-  fn it_defaults_to_the_start_layout() {
-    assert_eq!(TabLayout::default(), TabLayout::Start);
-  }
-
-  #[test]
-  fn it_keeps_the_start_layout_left_aligned_and_intrinsic_width() {
-    assert_eq!(TabLayout::Start.align_x(), Horizontal::Left);
-    assert_eq!(TabLayout::Start.cell_width(), Length::Shrink);
-  }
-
-  #[test]
-  fn it_fills_equal_width_cells_for_the_fill_layout() {
-    assert_eq!(TabLayout::Fill.align_x(), Horizontal::Left);
-    assert_eq!(TabLayout::Fill.cell_width(), Length::Fill);
-  }
-
-  #[test]
-  fn it_centers_and_fills_for_the_centered_layout() {
-    assert_eq!(TabLayout::Centered.align_x(), Horizontal::Center);
-    assert_eq!(TabLayout::Centered.cell_width(), Length::Fill);
-  }
-
-  #[test]
-  fn it_renders_a_fill_layout_selected_tab_with_an_underline() {
-    let el: Element<'_, ()> = tab(characters_tab(true, Some(())), TabLayout::Fill);
-    let mut tree = iced::advanced::widget::Tree::new(&el);
-    tree.diff(&el);
-
-    assert!(tree.children.len() >= 2, "selected fill tab should stack the underline");
-  }
-
-  #[test]
-  fn it_renders_a_centered_tab_select() {
-    let _el: Element<'_, ()> = tab_select_with(
-      vec![characters_tab(true, None), characters_tab(false, Some(()))],
-      TabLayout::Centered,
-    );
   }
 }

@@ -59,16 +59,30 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_toggles_star_without_clobbering_pin() {
+  async fn it_archives_as_a_pure_local_move_with_no_outbox_write() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
-    mail::set_triage(&db, 42, 7, false, true).await.unwrap();
+
+    archive(db.clone(), 42, 7).await;
+
+    assert_eq!(mail::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "archive");
+    let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+    assert_eq!(outbox, 0);
+  }
+
+  #[tokio::test]
+  async fn it_clears_the_triage_row_when_both_flags_drop_to_false() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    mail::set_triage(&db, 42, 7, true, false).await.unwrap();
 
     toggle_star(db.clone(), 42, 7).await;
 
-    let row = mail::triage(&db, 42, 7).await.unwrap().unwrap();
-    assert!(row.star());
-    assert!(row.pin(), "pin is preserved when toggling star");
+    assert!(mail::triage(&db, 42, 7).await.unwrap().is_none());
+    assert!(mail::starred_mail_ids(&db, 42).await.unwrap().is_empty());
   }
 
   #[tokio::test]
@@ -85,30 +99,16 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_clears_the_triage_row_when_both_flags_drop_to_false() {
+  async fn it_toggles_star_without_clobbering_pin() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
-    mail::set_triage(&db, 42, 7, true, false).await.unwrap();
+    mail::set_triage(&db, 42, 7, false, true).await.unwrap();
 
     toggle_star(db.clone(), 42, 7).await;
 
-    assert!(mail::triage(&db, 42, 7).await.unwrap().is_none());
-    assert!(mail::starred_mail_ids(&db, 42).await.unwrap().is_empty());
-  }
-
-  #[tokio::test]
-  async fn it_archives_as_a_pure_local_move_with_no_outbox_write() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-
-    archive(db.clone(), 42, 7).await;
-
-    assert_eq!(mail::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "archive");
-    let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
-      .fetch_one(&db.0)
-      .await
-      .unwrap();
-    assert_eq!(outbox, 0);
+    let row = mail::triage(&db, 42, 7).await.unwrap().unwrap();
+    assert!(row.star());
+    assert!(row.pin(), "pin is preserved when toggling star");
   }
 
   #[tokio::test]

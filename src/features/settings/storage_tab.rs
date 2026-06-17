@@ -1261,13 +1261,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_is_default_with_no_overrides() {
-      let settings = Settings::default();
-
-      assert_eq!(badge(&settings), "default");
-    }
-
-    #[test]
     fn it_counts_each_directory_override() {
       let mut settings = Settings::default();
       settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
@@ -1280,6 +1273,13 @@ mod tests {
     }
 
     #[test]
+    fn it_is_default_with_no_overrides() {
+      let settings = Settings::default();
+
+      assert_eq!(badge(&settings), "default");
+    }
+
+    #[test]
     fn the_network_toggle_does_not_move_the_count() {
       let mut settings = Settings::default();
       settings.storage_mut().set_network(true);
@@ -1288,279 +1288,8 @@ mod tests {
     }
   }
 
-  mod sync_toggle {
-    use super::*;
-
-    #[test]
-    fn it_persists_the_sync_override() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::SyncToggled(true), &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert!(settings.storage().network());
-    }
-
-    #[test]
-    fn toggling_off_clears_the_sync_override() {
-      let mut state = state();
-      let mut settings = Settings::default();
-      settings.storage_mut().set_network(true);
-
-      let outcome = update(&mut state, Message::SyncToggled(false), &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert!(!settings.storage().network());
-    }
-
-    #[test]
-    fn dismissing_the_network_suggestion_sets_the_flag_without_persisting() {
-      let mut state = state();
-
-      let outcome = update(&mut state, Message::SyncSuggestionDismissed, &mut Settings::default());
-
-      assert_eq!(outcome, Outcome::None);
-      assert!(
-        state.sync_suggestion_dismissed,
-        "the advisory stays dismissed for this session"
-      );
-    }
-  }
-
-  mod sync_actions {
-    use super::*;
-
-    #[test]
-    fn sync_now_routes_an_outcome_without_touching_disk() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::SyncNow, &mut settings);
-
-      assert_eq!(outcome, Outcome::SyncNow);
-    }
-
-    #[test]
-    fn release_lock_routes_an_outcome_without_touching_disk() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::ReleaseLock, &mut settings);
-
-      assert_eq!(outcome, Outcome::ReleaseLock);
-    }
-
-    #[test]
-    fn set_sync_status_records_the_holder_and_last_synced() {
-      let mut state = state();
-      let at = Utc::now();
-
-      state.set_sync_status(Some("nas-mac".to_owned()), Some(at));
-
-      assert_eq!(state.sync.holder.as_deref(), Some("nas-mac"));
-      assert_eq!(state.sync.last_synced, Some(at));
-    }
-
-    #[test]
-    fn it_covers_the_simple_storage_message_branches() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      state.error = Some("stale".to_owned());
-      assert_eq!(update(&mut state, Message::DismissError, &mut settings), Outcome::None);
-      assert!(state.error.is_none());
-
-      state.export_pending = true;
-      assert_eq!(
-        update(&mut state, Message::ExportFinished(Ok(None)), &mut settings),
-        Outcome::None
-      );
-      assert!(!state.export_pending);
-
-      assert_eq!(
-        update(
-          &mut state,
-          Message::ExportFinished(Err("disk full".to_owned())),
-          &mut settings
-        ),
-        Outcome::None
-      );
-      assert_eq!(state.error.as_deref(), Some("disk full"));
-
-      assert!(matches!(
-        update(&mut state, Message::ExportLogs(RangePreset::LastHour), &mut settings),
-        Outcome::ExportLogs { .. }
-      ));
-      assert!(state.export_pending);
-
-      assert_eq!(update(&mut state, Message::CancelMove, &mut settings), Outcome::None);
-      assert_eq!(update(&mut state, Message::ConfirmMove, &mut settings), Outcome::None);
-      assert_eq!(update(&mut state, Message::SkipMove, &mut settings), Outcome::None);
-    }
-  }
-
-  mod labels {
-    use super::*;
-
-    #[test]
-    fn the_database_field_is_labelled_for_the_shared_location() {
-      assert_eq!(PathKind::Database.label(), "Shared data location");
-    }
-
-    #[test]
-    fn the_database_description_drops_journal_mode_wording() {
-      let description = PathKind::Database.description().to_lowercase();
-
-      assert!(!description.contains("wal"), "WAL framing must be gone");
-      assert!(!description.contains("journal"), "journal-mode framing must be gone");
-    }
-  }
-
-  mod log_level {
-    use super::*;
-
-    #[test]
-    fn changing_the_level_records_it_and_routes_the_outcome() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::Verbose), &mut settings);
-
-      assert_eq!(outcome, Outcome::SetLogLevel(LogLevel::Verbose));
-      assert_eq!(settings.storage().log_level(), &LogLevel::Verbose);
-    }
-
-    #[test]
-    fn reselecting_the_active_level_is_a_no_op() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::default()), &mut settings);
-
-      assert_eq!(outcome, Outcome::None);
-      assert_eq!(settings.storage().log_level(), &LogLevel::default());
-    }
-  }
-
-  mod manual_entry {
-    use super::*;
-
-    #[test]
-    fn editing_a_path_stores_a_draft_without_persisting() {
-      let mut state = state();
-      let mut settings = Settings::default();
-
-      let outcome = update(
-        &mut state,
-        Message::PathEdited(PathKind::Database, "/var/pod/db".to_owned()),
-        &mut settings,
-      );
-
-      assert_eq!(outcome, Outcome::None);
-      assert_eq!(
-        state.drafts.get(&PathKind::Database).map(String::as_str),
-        Some("/var/pod/db")
-      );
-    }
-
-    #[test]
-    fn submitting_a_typed_path_applies_it() {
-      let empty = tempdir().unwrap();
-      let dest = empty.path().join("typed");
-      let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
-      let mut state = state();
-      state.drafts.insert(PathKind::Database, dest.display().to_string());
-
-      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert_eq!(*settings.storage().db_dir(), Some(dest));
-    }
-
-    #[test]
-    fn submitting_a_typed_cache_path_applies_it() {
-      let empty = tempdir().unwrap();
-      let dest = empty.path().join("typed-cache");
-      let mut settings = Settings::default();
-      settings.storage_mut().set_cache_dir(Some(empty.path().to_path_buf()));
-      let mut state = state();
-      state.drafts.insert(PathKind::Cache, dest.display().to_string());
-
-      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Cache), &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert_eq!(*settings.storage().cache_dir(), Some(dest));
-    }
-
-    #[test]
-    fn submitting_a_blank_path_is_a_no_op() {
-      let mut state = state();
-      state.drafts.insert(PathKind::Database, "   ".to_owned());
-      let mut settings = Settings::default();
-      let before = settings.storage().db_dir().clone();
-
-      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
-
-      assert_eq!(outcome, Outcome::None);
-      assert_eq!(*settings.storage().db_dir(), before);
-    }
-  }
-
-  mod decide {
-    use super::*;
-
-    #[test]
-    fn the_same_path_is_a_no_change() {
-      let dir = tempdir().unwrap();
-
-      assert_eq!(decide(dir.path(), dir.path()), Decision::NoChange);
-    }
-
-    #[test]
-    fn an_empty_source_repoints_without_a_prompt() {
-      let from = tempdir().unwrap();
-      let to = tempdir().unwrap();
-
-      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Repoint);
-    }
-
-    #[test]
-    fn a_missing_source_repoints_without_a_prompt() {
-      let to = tempdir().unwrap();
-
-      assert_eq!(
-        decide(Path::new("/no/such/pod/source"), &to.path().join("new")),
-        Decision::Repoint
-      );
-    }
-
-    #[test]
-    fn a_populated_source_asks_to_confirm() {
-      let from = tempdir().unwrap();
-      fs::write(from.path().join("pod.db"), b"data").unwrap();
-      let to = tempdir().unwrap();
-
-      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Confirm);
-    }
-  }
-
   mod begin_change {
     use super::*;
-
-    #[test]
-    fn an_empty_source_commits_the_override_straight_through() {
-      let data = tempdir().unwrap();
-      let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(data.path().to_path_buf()));
-      let to = data.path().join("relocated");
-
-      let pending = begin_change(PathKind::Database, to.clone(), &mut settings).unwrap();
-
-      assert_eq!(pending, None, "an empty source needs no confirmation");
-      assert_eq!(*settings.storage().db_dir(), Some(to));
-    }
 
     #[test]
     fn a_populated_source_returns_a_pending_move_without_committing() {
@@ -1579,74 +1308,47 @@ mod tests {
       assert_eq!(pending.to, dest);
       assert_eq!(*settings.storage().db_dir(), Some(from.path().to_path_buf()));
     }
+
+    #[test]
+    fn an_empty_source_commits_the_override_straight_through() {
+      let data = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(data.path().to_path_buf()));
+      let to = data.path().join("relocated");
+
+      let pending = begin_change(PathKind::Database, to.clone(), &mut settings).unwrap();
+
+      assert_eq!(pending, None, "an empty source needs no confirmation");
+      assert_eq!(*settings.storage().db_dir(), Some(to));
+    }
   }
 
-  mod move_flow {
+  mod copy_dir_all {
     use super::*;
 
-    // Drives the confirm/skip/cancel UX against the Log kind, whose move is a plain synchronous
-    // directory relocate. The Database kind defers its file work to the async layout migration and
-    // is exercised separately in `database_migration`.
-    fn populated_pending() -> (State, Settings, tempfile::TempDir, tempfile::TempDir, PathBuf) {
-      let from = tempdir().unwrap();
-      fs::write(from.path().join("pod.log"), b"data").unwrap();
-      let mut settings = Settings::default();
-      settings.storage_mut().set_log_dir(Some(from.path().to_path_buf()));
-      let dest_root = tempdir().unwrap();
-      let dest = dest_root.path().join("relocated");
+    #[test]
+    fn a_missing_source_is_an_error() {
+      let dst = tempdir().unwrap();
 
-      let mut state = state();
-      let outcome = apply_destination(&mut state, PathKind::Log, dest.clone(), &mut settings);
+      let result = super::super::copy_dir_all(&PathBuf::from("/no/such/source/dir"), dst.path());
 
-      assert_eq!(outcome, Outcome::None, "raising the confirm does not persist yet");
-      assert!(state.pending.is_some());
-      (state, settings, from, dest_root, dest)
+      assert!(result.is_err());
     }
 
     #[test]
-    fn confirm_move_relocates_the_files_and_commits() {
-      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
+    fn it_copies_files_and_nested_directories() {
+      let src = tempdir().unwrap();
+      fs::write(src.path().join("top.txt"), b"top").unwrap();
+      fs::create_dir(src.path().join("nested")).unwrap();
+      fs::write(src.path().join("nested").join("inner.txt"), b"inner").unwrap();
+      let dst_root = tempdir().unwrap();
+      let dst = dst_root.path().join("copy");
 
-      let outcome = update(&mut state, Message::ConfirmMove, &mut settings);
+      super::super::copy_dir_all(src.path(), &dst).unwrap();
 
-      assert_eq!(outcome, Outcome::Persist);
-      assert!(state.pending.is_none());
-      assert!(dest.join("pod.log").exists(), "files moved to the destination");
-      assert!(!from.path().join("pod.log").exists(), "source emptied");
-      assert_eq!(*settings.storage().log_dir(), Some(dest));
-    }
-
-    #[test]
-    fn skip_move_repoints_without_moving_files() {
-      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
-
-      let outcome = update(&mut state, Message::SkipMove, &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert!(state.pending.is_none());
-      assert!(
-        from.path().join("pod.log").exists(),
-        "skip leaves the old files in place"
-      );
-      assert!(!dest.join("pod.log").exists(), "skip moves nothing");
-      assert_eq!(*settings.storage().log_dir(), Some(dest));
-    }
-
-    #[test]
-    fn cancel_move_aborts_with_no_change() {
-      let (mut state, mut settings, from, _dest_root, _dest) = populated_pending();
-      let before = settings.storage().log_dir().clone();
-
-      let outcome = update(&mut state, Message::CancelMove, &mut settings);
-
-      assert_eq!(outcome, Outcome::None);
-      assert!(state.pending.is_none());
-      assert!(from.path().join("pod.log").exists(), "cancel touches nothing");
-      assert_eq!(
-        *settings.storage().log_dir(),
-        before,
-        "cancel leaves the override untouched"
-      );
+      assert_eq!(fs::read(dst.join("top.txt")).unwrap(), b"top");
+      assert_eq!(fs::read(dst.join("nested").join("inner.txt")).unwrap(), b"inner");
+      assert!(src.path().exists(), "the source tree is left in place");
     }
   }
 
@@ -1703,111 +1405,41 @@ mod tests {
     }
   }
 
-  mod reveal_log_dir {
+  mod decide {
     use super::*;
 
     #[test]
-    fn it_does_not_persist_or_raise_a_pending_move() {
-      let dir = tempdir().unwrap();
-      let mut settings = Settings::default();
-      settings.storage_mut().set_log_dir(Some(dir.path().to_path_buf()));
-      let mut state = state();
+    fn a_missing_source_repoints_without_a_prompt() {
+      let to = tempdir().unwrap();
 
-      let outcome = update(&mut state, Message::RevealLogDir, &mut settings);
-
-      assert_eq!(outcome, Outcome::None);
-      assert!(state.pending.is_none());
-      assert_eq!(*settings.storage().log_dir(), Some(dir.path().to_path_buf()));
-    }
-  }
-
-  mod reset {
-    use super::*;
-
-    #[test]
-    fn reset_clears_the_override_when_the_source_is_empty() {
-      let empty = tempdir().unwrap();
-      let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
-      let mut state = state();
-
-      let outcome = update(&mut state, Message::ResetToDefault(PathKind::Database), &mut settings);
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert_eq!(*settings.storage().db_dir(), None, "reset clears the override");
-    }
-
-    #[test]
-    fn commit_override_clears_when_the_destination_is_the_default() {
-      let mut settings = Settings::default();
-      settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
-
-      commit_override(PathKind::Database, PathKind::Database.default_dir(), &mut settings);
-
-      assert_eq!(*settings.storage().db_dir(), None);
-    }
-
-    #[test]
-    fn commit_override_pins_a_custom_destination() {
-      let mut settings = Settings::default();
-
-      commit_override(PathKind::Log, PathBuf::from("/var/pod/log"), &mut settings);
-
-      assert_eq!(*settings.storage().log_dir(), Some(PathBuf::from("/var/pod/log")));
-    }
-  }
-
-  mod relocate {
-    use super::*;
-
-    #[test]
-    fn it_moves_a_populated_tree_with_subdirectories() {
-      let from = tempdir().unwrap();
-      fs::write(from.path().join("pod.db"), b"db").unwrap();
-      fs::write(from.path().join("pod.db-wal"), b"wal").unwrap();
-      fs::create_dir(from.path().join("images")).unwrap();
-      fs::write(from.path().join("images").join("1.png"), b"img").unwrap();
-      let dest_root = tempdir().unwrap();
-      let dest = dest_root.path().join("moved");
-
-      relocate(from.path(), &dest).unwrap();
-
-      assert!(dest.join("pod.db").exists());
-      assert!(dest.join("pod.db-wal").exists());
-      assert_eq!(fs::read(dest.join("images").join("1.png")).unwrap(), b"img");
-      assert!(
-        !from.path().exists(),
-        "the source tree is removed after a successful move"
+      assert_eq!(
+        decide(Path::new("/no/such/pod/source"), &to.path().join("new")),
+        Decision::Repoint
       );
     }
-  }
-
-  mod copy_dir_all {
-    use super::*;
 
     #[test]
-    fn it_copies_files_and_nested_directories() {
-      let src = tempdir().unwrap();
-      fs::write(src.path().join("top.txt"), b"top").unwrap();
-      fs::create_dir(src.path().join("nested")).unwrap();
-      fs::write(src.path().join("nested").join("inner.txt"), b"inner").unwrap();
-      let dst_root = tempdir().unwrap();
-      let dst = dst_root.path().join("copy");
+    fn a_populated_source_asks_to_confirm() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"data").unwrap();
+      let to = tempdir().unwrap();
 
-      super::super::copy_dir_all(src.path(), &dst).unwrap();
-
-      assert_eq!(fs::read(dst.join("top.txt")).unwrap(), b"top");
-      assert_eq!(fs::read(dst.join("nested").join("inner.txt")).unwrap(), b"inner");
-      assert!(src.path().exists(), "the source tree is left in place");
+      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Confirm);
     }
 
     #[test]
-    fn a_missing_source_is_an_error() {
-      let dst = tempdir().unwrap();
+    fn an_empty_source_repoints_without_a_prompt() {
+      let from = tempdir().unwrap();
+      let to = tempdir().unwrap();
 
-      let result = super::super::copy_dir_all(&PathBuf::from("/no/such/source/dir"), dst.path());
+      assert_eq!(decide(from.path(), &to.path().join("new")), Decision::Repoint);
+    }
 
-      assert!(result.is_err());
+    #[test]
+    fn the_same_path_is_a_no_change() {
+      let dir = tempdir().unwrap();
+
+      assert_eq!(decide(dir.path(), dir.path()), Decision::NoChange);
     }
   }
 
@@ -1851,12 +1483,385 @@ mod tests {
     }
   }
 
+  mod labels {
+    use super::*;
+
+    #[test]
+    fn the_database_description_drops_journal_mode_wording() {
+      let description = PathKind::Database.description().to_lowercase();
+
+      assert!(!description.contains("wal"), "WAL framing must be gone");
+      assert!(!description.contains("journal"), "journal-mode framing must be gone");
+    }
+
+    #[test]
+    fn the_database_field_is_labelled_for_the_shared_location() {
+      assert_eq!(PathKind::Database.label(), "Shared data location");
+    }
+  }
+
+  mod log_level {
+    use super::*;
+
+    #[test]
+    fn changing_the_level_records_it_and_routes_the_outcome() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::Verbose), &mut settings);
+
+      assert_eq!(outcome, Outcome::SetLogLevel(LogLevel::Verbose));
+      assert_eq!(settings.storage().log_level(), &LogLevel::Verbose);
+    }
+
+    #[test]
+    fn reselecting_the_active_level_is_a_no_op() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LogLevelChanged(LogLevel::default()), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(settings.storage().log_level(), &LogLevel::default());
+    }
+  }
+
+  mod manual_entry {
+    use super::*;
+
+    #[test]
+    fn editing_a_path_stores_a_draft_without_persisting() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(
+        &mut state,
+        Message::PathEdited(PathKind::Database, "/var/pod/db".to_owned()),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(
+        state.drafts.get(&PathKind::Database).map(String::as_str),
+        Some("/var/pod/db")
+      );
+    }
+
+    #[test]
+    fn submitting_a_blank_path_is_a_no_op() {
+      let mut state = state();
+      state.drafts.insert(PathKind::Database, "   ".to_owned());
+      let mut settings = Settings::default();
+      let before = settings.storage().db_dir().clone();
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(*settings.storage().db_dir(), before);
+    }
+
+    #[test]
+    fn submitting_a_typed_cache_path_applies_it() {
+      let empty = tempdir().unwrap();
+      let dest = empty.path().join("typed-cache");
+      let mut settings = Settings::default();
+      settings.storage_mut().set_cache_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+      state.drafts.insert(PathKind::Cache, dest.display().to_string());
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Cache), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().cache_dir(), Some(dest));
+    }
+
+    #[test]
+    fn submitting_a_typed_path_applies_it() {
+      let empty = tempdir().unwrap();
+      let dest = empty.path().join("typed");
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+      state.drafts.insert(PathKind::Database, dest.display().to_string());
+
+      let outcome = update(&mut state, Message::PathSubmitted(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().db_dir(), Some(dest));
+    }
+  }
+
+  mod move_flow {
+    use super::*;
+
+    // Drives the confirm/skip/cancel UX against the Log kind, whose move is a plain synchronous
+    // directory relocate. The Database kind defers its file work to the async layout migration and
+    // is exercised separately in `database_migration`.
+    fn populated_pending() -> (State, Settings, tempfile::TempDir, tempfile::TempDir, PathBuf) {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.log"), b"data").unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_log_dir(Some(from.path().to_path_buf()));
+      let dest_root = tempdir().unwrap();
+      let dest = dest_root.path().join("relocated");
+
+      let mut state = state();
+      let outcome = apply_destination(&mut state, PathKind::Log, dest.clone(), &mut settings);
+
+      assert_eq!(outcome, Outcome::None, "raising the confirm does not persist yet");
+      assert!(state.pending.is_some());
+      (state, settings, from, dest_root, dest)
+    }
+
+    #[test]
+    fn cancel_move_aborts_with_no_change() {
+      let (mut state, mut settings, from, _dest_root, _dest) = populated_pending();
+      let before = settings.storage().log_dir().clone();
+
+      let outcome = update(&mut state, Message::CancelMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending.is_none());
+      assert!(from.path().join("pod.log").exists(), "cancel touches nothing");
+      assert_eq!(
+        *settings.storage().log_dir(),
+        before,
+        "cancel leaves the override untouched"
+      );
+    }
+
+    #[test]
+    fn confirm_move_relocates_the_files_and_commits() {
+      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
+
+      let outcome = update(&mut state, Message::ConfirmMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(state.pending.is_none());
+      assert!(dest.join("pod.log").exists(), "files moved to the destination");
+      assert!(!from.path().join("pod.log").exists(), "source emptied");
+      assert_eq!(*settings.storage().log_dir(), Some(dest));
+    }
+
+    #[test]
+    fn skip_move_repoints_without_moving_files() {
+      let (mut state, mut settings, from, _dest_root, dest) = populated_pending();
+
+      let outcome = update(&mut state, Message::SkipMove, &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(state.pending.is_none());
+      assert!(
+        from.path().join("pod.log").exists(),
+        "skip leaves the old files in place"
+      );
+      assert!(!dest.join("pod.log").exists(), "skip moves nothing");
+      assert_eq!(*settings.storage().log_dir(), Some(dest));
+    }
+  }
+
+  mod relocate {
+    use super::*;
+
+    #[test]
+    fn it_moves_a_populated_tree_with_subdirectories() {
+      let from = tempdir().unwrap();
+      fs::write(from.path().join("pod.db"), b"db").unwrap();
+      fs::write(from.path().join("pod.db-wal"), b"wal").unwrap();
+      fs::create_dir(from.path().join("images")).unwrap();
+      fs::write(from.path().join("images").join("1.png"), b"img").unwrap();
+      let dest_root = tempdir().unwrap();
+      let dest = dest_root.path().join("moved");
+
+      relocate(from.path(), &dest).unwrap();
+
+      assert!(dest.join("pod.db").exists());
+      assert!(dest.join("pod.db-wal").exists());
+      assert_eq!(fs::read(dest.join("images").join("1.png")).unwrap(), b"img");
+      assert!(
+        !from.path().exists(),
+        "the source tree is removed after a successful move"
+      );
+    }
+  }
+
+  mod reset {
+    use super::*;
+
+    #[test]
+    fn commit_override_clears_when_the_destination_is_the_default() {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(PathBuf::from("/var/pod/db")));
+
+      commit_override(PathKind::Database, PathKind::Database.default_dir(), &mut settings);
+
+      assert_eq!(*settings.storage().db_dir(), None);
+    }
+
+    #[test]
+    fn commit_override_pins_a_custom_destination() {
+      let mut settings = Settings::default();
+
+      commit_override(PathKind::Log, PathBuf::from("/var/pod/log"), &mut settings);
+
+      assert_eq!(*settings.storage().log_dir(), Some(PathBuf::from("/var/pod/log")));
+    }
+
+    #[test]
+    fn reset_clears_the_override_when_the_source_is_empty() {
+      let empty = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(empty.path().to_path_buf()));
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::ResetToDefault(PathKind::Database), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.storage().db_dir(), None, "reset clears the override");
+    }
+  }
+
+  mod reveal_log_dir {
+    use super::*;
+
+    #[test]
+    fn it_does_not_persist_or_raise_a_pending_move() {
+      let dir = tempdir().unwrap();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_log_dir(Some(dir.path().to_path_buf()));
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::RevealLogDir, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending.is_none());
+      assert_eq!(*settings.storage().log_dir(), Some(dir.path().to_path_buf()));
+    }
+  }
+
+  mod sync_actions {
+    use super::*;
+
+    #[test]
+    fn it_covers_the_simple_storage_message_branches() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      state.error = Some("stale".to_owned());
+      assert_eq!(update(&mut state, Message::DismissError, &mut settings), Outcome::None);
+      assert!(state.error.is_none());
+
+      state.export_pending = true;
+      assert_eq!(
+        update(&mut state, Message::ExportFinished(Ok(None)), &mut settings),
+        Outcome::None
+      );
+      assert!(!state.export_pending);
+
+      assert_eq!(
+        update(
+          &mut state,
+          Message::ExportFinished(Err("disk full".to_owned())),
+          &mut settings
+        ),
+        Outcome::None
+      );
+      assert_eq!(state.error.as_deref(), Some("disk full"));
+
+      assert!(matches!(
+        update(&mut state, Message::ExportLogs(RangePreset::LastHour), &mut settings),
+        Outcome::ExportLogs { .. }
+      ));
+      assert!(state.export_pending);
+
+      assert_eq!(update(&mut state, Message::CancelMove, &mut settings), Outcome::None);
+      assert_eq!(update(&mut state, Message::ConfirmMove, &mut settings), Outcome::None);
+      assert_eq!(update(&mut state, Message::SkipMove, &mut settings), Outcome::None);
+    }
+
+    #[test]
+    fn release_lock_routes_an_outcome_without_touching_disk() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::ReleaseLock, &mut settings);
+
+      assert_eq!(outcome, Outcome::ReleaseLock);
+    }
+
+    #[test]
+    fn set_sync_status_records_the_holder_and_last_synced() {
+      let mut state = state();
+      let at = Utc::now();
+
+      state.set_sync_status(Some("nas-mac".to_owned()), Some(at));
+
+      assert_eq!(state.sync.holder.as_deref(), Some("nas-mac"));
+      assert_eq!(state.sync.last_synced, Some(at));
+    }
+
+    #[test]
+    fn sync_now_routes_an_outcome_without_touching_disk() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::SyncNow, &mut settings);
+
+      assert_eq!(outcome, Outcome::SyncNow);
+    }
+  }
+
+  mod sync_toggle {
+    use super::*;
+
+    #[test]
+    fn dismissing_the_network_suggestion_sets_the_flag_without_persisting() {
+      let mut state = state();
+
+      let outcome = update(&mut state, Message::SyncSuggestionDismissed, &mut Settings::default());
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(
+        state.sync_suggestion_dismissed,
+        "the advisory stays dismissed for this session"
+      );
+    }
+
+    #[test]
+    fn it_persists_the_sync_override() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::SyncToggled(true), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(settings.storage().network());
+    }
+
+    #[test]
+    fn toggling_off_clears_the_sync_override() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      settings.storage_mut().set_network(true);
+
+      let outcome = update(&mut state, Message::SyncToggled(false), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(!settings.storage().network());
+    }
+  }
+
   mod view {
     use super::*;
 
     #[test]
-    fn it_renders_the_default_panel() {
+    fn direct_mode_omits_the_sync_lease_controls() {
       let settings = Settings::default();
+      assert_eq!(
+        settings.storage().storage_mode(),
+        StorageMode::Direct,
+        "a local path defaults to direct mode, so the working-copy and lease rows stay hidden"
+      );
       let state = state();
 
       let _el: Element<'_, Message> = view(&state, &settings);
@@ -1879,19 +1884,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_mode_omits_the_sync_lease_controls() {
-      let settings = Settings::default();
-      assert_eq!(
-        settings.storage().storage_mode(),
-        StorageMode::Direct,
-        "a local path defaults to direct mode, so the working-copy and lease rows stay hidden"
-      );
-      let state = state();
-
-      let _el: Element<'_, Message> = view(&state, &settings);
-    }
-
-    #[test]
     fn it_renders_the_confirm_move_modal_when_pending() {
       let settings = Settings::default();
       let mut state = state();
@@ -1900,6 +1892,14 @@ mod tests {
         from: PathBuf::from("/old/pod"),
         to: PathBuf::from("/new/pod"),
       });
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_default_panel() {
+      let settings = Settings::default();
+      let state = state();
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

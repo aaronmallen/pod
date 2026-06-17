@@ -483,11 +483,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_marks_the_single_highest_average() {
-      assert_eq!(avg_leaders(&[1.5, 3.2, 2.0]), vec![false, true, false]);
-    }
-
-    #[test]
     fn it_marks_every_column_tied_for_the_top() {
       assert_eq!(avg_leaders(&[2.5, 2.5, 1.0]), vec![true, true, false]);
     }
@@ -495,6 +490,11 @@ mod tests {
     #[test]
     fn it_marks_no_column_when_every_average_is_zero() {
       assert_eq!(avg_leaders(&[0.0, 0.0]), vec![false, false]);
+    }
+
+    #[test]
+    fn it_marks_the_single_highest_average() {
+      assert_eq!(avg_leaders(&[1.5, 3.2, 2.0]), vec![false, true, false]);
     }
   }
 
@@ -504,8 +504,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_marks_the_single_highest_level() {
-      assert_eq!(level_leaders(&[3, 5, 4]), vec![false, true, false]);
+    fn it_marks_all_columns_when_levels_are_unanimous() {
+      assert_eq!(level_leaders(&[4, 4, 4]), vec![true, true, true]);
     }
 
     #[test]
@@ -514,13 +514,13 @@ mod tests {
     }
 
     #[test]
-    fn it_marks_all_columns_when_levels_are_unanimous() {
-      assert_eq!(level_leaders(&[4, 4, 4]), vec![true, true, true]);
+    fn it_marks_no_column_when_all_levels_are_zero() {
+      assert_eq!(level_leaders(&[0, 0]), vec![false, false]);
     }
 
     #[test]
-    fn it_marks_no_column_when_all_levels_are_zero() {
-      assert_eq!(level_leaders(&[0, 0]), vec![false, false]);
+    fn it_marks_the_single_highest_level() {
+      assert_eq!(level_leaders(&[3, 5, 4]), vec![false, true, false]);
     }
   }
 }

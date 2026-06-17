@@ -313,20 +313,15 @@ mod tests {
       use super::*;
 
       #[tokio::test]
-      async fn it_returns_grant_with_character_data() {
+      async fn it_returns_error_for_invalid_jwt() {
         let client = make_test_client().await;
-        let token = make_jwt("CHARACTER:EVE:99887766", "Eve Char");
         let resp = TokenResponse {
-          access_token: token,
+          access_token: "not-a-jwt".into(),
           expires_in: 1200,
-          refresh_token: "rt-abc".into(),
+          refresh_token: "rt".into(),
         };
 
-        let grant = client.build_grant(resp).unwrap();
-
-        assert_eq!(*grant.character_id(), 99887766i64);
-        assert_eq!(grant.character_name(), "Eve Char");
-        assert_eq!(grant.refresh_token(), "rt-abc");
+        assert!(client.build_grant(resp).is_err());
       }
 
       #[tokio::test]
@@ -349,15 +344,20 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_returns_error_for_invalid_jwt() {
+      async fn it_returns_grant_with_character_data() {
         let client = make_test_client().await;
+        let token = make_jwt("CHARACTER:EVE:99887766", "Eve Char");
         let resp = TokenResponse {
-          access_token: "not-a-jwt".into(),
+          access_token: token,
           expires_in: 1200,
-          refresh_token: "rt".into(),
+          refresh_token: "rt-abc".into(),
         };
 
-        assert!(client.build_grant(resp).is_err());
+        let grant = client.build_grant(resp).unwrap();
+
+        assert_eq!(*grant.character_id(), 99887766i64);
+        assert_eq!(grant.character_name(), "Eve Char");
+        assert_eq!(grant.refresh_token(), "rt-abc");
       }
     }
 
@@ -450,6 +450,21 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_returns_error_when_token_endpoint_rejects() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/token"))
+          .respond_with(ResponseTemplate::new(400))
+          .mount(&server)
+          .await;
+        let db = crate::store::open_test().await.unwrap();
+        let http = http::Client::builder(http::Cache::new(db)).build();
+        let client = Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()));
+
+        assert!(client.refresh_with_token("dead-rt").await.is_err());
+      }
+
+      #[tokio::test]
       async fn it_rotates_tokens_from_a_raw_refresh_token() {
         let server = MockServer::start().await;
         let access = make_jwt("CHARACTER:EVE:42", "Refreshed");
@@ -469,21 +484,6 @@ mod tests {
 
         assert_eq!(*grant.character_id(), 42);
         assert_eq!(grant.refresh_token(), "new-rt");
-      }
-
-      #[tokio::test]
-      async fn it_returns_error_when_token_endpoint_rejects() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/token"))
-          .respond_with(ResponseTemplate::new(400))
-          .mount(&server)
-          .await;
-        let db = crate::store::open_test().await.unwrap();
-        let http = http::Client::builder(http::Cache::new(db)).build();
-        let client = Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()));
-
-        assert!(client.refresh_with_token("dead-rt").await.is_err());
       }
     }
 

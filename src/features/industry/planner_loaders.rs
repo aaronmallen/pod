@@ -606,10 +606,15 @@ mod tests {
   };
 
   const CHARACTER_ID: i64 = 42;
+
   const CORPORATION_ID: i64 = 90_000_001;
+
   const DIRECTOR_ID: i64 = 100;
+
   const HULK: i64 = 22_544;
+
   const HULK_BLUEPRINT: i64 = 22_545;
+
   const TRITANIUM: i64 = 34;
 
   async fn seed_character(db: &Database, id: i64) {
@@ -739,149 +744,30 @@ mod tests {
     }
   }
 
-  mod rank_best_owned {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_none_when_no_blueprint_is_owned() {
-      assert_eq!(super::rank_best_owned(Vec::new()), None);
-    }
-
-    #[test]
-    fn it_prefers_an_in_scope_blueprint_over_an_out_of_scope_one() {
-      let pool = vec![owned(false, 1, -1, 10), owned(true, 2, 30, 0)];
-
-      let best = super::rank_best_owned(pool).unwrap();
-
-      assert_eq!(best.item_id, 2);
-    }
-
-    #[test]
-    fn it_prefers_a_bpo_over_a_bpc_within_the_same_scope() {
-      let pool = vec![owned(true, 1, 30, 10), owned(true, 2, -1, 0)];
-
-      let best = super::rank_best_owned(pool).unwrap();
-
-      assert_eq!(best.item_id, 2);
-    }
-
-    #[test]
-    fn it_prefers_higher_material_efficiency_to_break_a_tie() {
-      let pool = vec![owned(true, 1, -1, 8), owned(true, 2, -1, 10)];
-
-      let best = super::rank_best_owned(pool).unwrap();
-
-      assert_eq!(best.item_id, 2);
-    }
-
-    #[test]
-    fn it_orders_scope_before_originality_before_material_efficiency() {
-      let pool = vec![owned(false, 1, -1, 10), owned(true, 2, 30, 0), owned(true, 3, -1, 5)];
-
-      let best = super::rank_best_owned(pool).unwrap();
-
-      assert_eq!(best.item_id, 3);
-    }
-  }
-
-  mod reverse_lookup {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_resolves_a_manufacturing_blueprint_for_a_product() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
-
-      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
-
-      assert_eq!(recipe.blueprint_type_id, HULK_BLUEPRINT);
-      assert_eq!(recipe.activity_id, MANUFACTURING_ACTIVITY_ID);
-      assert!(!recipe.is_reaction);
-      assert_eq!(recipe.output_per_run, 1);
-    }
-
-    #[tokio::test]
-    async fn it_prefers_manufacturing_over_a_reaction_for_the_same_product() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
-      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 1).await;
-
-      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
-
-      assert_eq!(recipe.blueprint_type_id, HULK_BLUEPRINT);
-      assert!(!recipe.is_reaction);
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_a_reaction_when_no_manufacturing_blueprint_exists() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 200).await;
-
-      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
-
-      assert_eq!(recipe.activity_id, REACTION_ACTIVITY_ID);
-      assert!(recipe.is_reaction);
-      assert_eq!(recipe.output_per_run, 200);
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_for_an_unbuildable_product() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(super::reverse_lookup(&db, HULK).await, None);
-    }
-  }
-
-  mod materials_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_recipe_materials_ordered_by_type_id() {
-      let db = store::open_test().await.unwrap();
-      insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, 35, 200).await;
-      insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
-
-      let materials = super::materials_for(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID).await;
-
-      assert_eq!(materials, vec![Material::new(TRITANIUM, 100), Material::new(35, 200)]);
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_an_activity_with_no_materials() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(
-        super::materials_for(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID)
-          .await
-          .is_empty()
-      );
-    }
-  }
-
-  mod output_per_run {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_product_quantity_per_run() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 200).await;
-
-      assert_eq!(super::output_per_run(&db, 999, REACTION_ACTIVITY_ID).await, Some(200));
-    }
-  }
-
   mod best_owned_blueprint {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_falls_back_to_an_out_of_scope_blueprint_when_none_in_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      blueprints::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_blueprint(CHARACTER_ID, 1, HULK_BLUEPRINT, 30, 5)],
+      )
+      .await
+      .unwrap();
+
+      let best = super::best_owned_blueprint(&db, HULK_BLUEPRINT, Scope::Char(DIRECTOR_ID))
+        .await
+        .unwrap();
+
+      assert_eq!(best.item_id, 1);
+      assert!(!best.in_scope);
+    }
 
     #[tokio::test]
     async fn it_picks_the_in_scope_blueprint_for_a_character_scope() {
@@ -913,26 +799,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_falls_back_to_an_out_of_scope_blueprint_when_none_in_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      blueprints::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[character_blueprint(CHARACTER_ID, 1, HULK_BLUEPRINT, 30, 5)],
-      )
-      .await
-      .unwrap();
-
-      let best = super::best_owned_blueprint(&db, HULK_BLUEPRINT, Scope::Char(DIRECTOR_ID))
-        .await
-        .unwrap();
-
-      assert_eq!(best.item_id, 1);
-      assert!(!best.in_scope);
-    }
-
-    #[tokio::test]
     async fn it_returns_none_when_no_blueprint_is_owned() {
       let db = store::open_test().await.unwrap();
 
@@ -954,13 +820,6 @@ mod tests {
     }
 
     #[test]
-    fn it_maps_named_categories_to_picker_facets() {
-      assert_eq!(Category::classify("Ship", "Mining Barge", false), Category::Ship);
-      assert_eq!(Category::classify("Module", "Mining Laser", false), Category::Module);
-      assert_eq!(Category::classify("Charge", "Mining Crystal", false), Category::Ammo);
-    }
-
-    #[test]
     fn it_falls_back_to_group_hints_for_fuel_and_components() {
       assert_eq!(Category::classify("Commodity", "Fuel Block", false), Category::Fuel);
       assert_eq!(
@@ -968,31 +827,12 @@ mod tests {
         Category::Component
       );
     }
-  }
-
-  mod owned_rank {
-
-    use super::*;
-
-    fn summary(in_scope: bool, is_original: bool, me: i64) -> OwnedSummary {
-      OwnedSummary {
-        in_scope,
-        is_original,
-        material_efficiency: me,
-        time_efficiency: 0,
-      }
-    }
 
     #[test]
-    fn it_orders_scope_then_originality_then_efficiency() {
-      let in_scope_bpc = summary(true, false, 0);
-      let out_scope_bpo = summary(false, true, 10);
-      let in_scope_bpo_low = summary(true, true, 5);
-      let in_scope_bpo_high = summary(true, true, 8);
-
-      assert!(super::owned_rank(&in_scope_bpc) > super::owned_rank(&out_scope_bpo));
-      assert!(super::owned_rank(&in_scope_bpo_low) > super::owned_rank(&in_scope_bpc));
-      assert!(super::owned_rank(&in_scope_bpo_high) > super::owned_rank(&in_scope_bpo_low));
+    fn it_maps_named_categories_to_picker_facets() {
+      assert_eq!(Category::classify("Ship", "Mining Barge", false), Category::Ship);
+      assert_eq!(Category::classify("Module", "Mining Laser", false), Category::Module);
+      assert_eq!(Category::classify("Charge", "Mining Crystal", false), Category::Ammo);
     }
   }
 
@@ -1047,6 +887,73 @@ mod tests {
     }
   }
 
+  mod materials_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_empty_for_an_activity_with_no_materials() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(
+        super::materials_for(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID)
+          .await
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_recipe_materials_ordered_by_type_id() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, 35, 200).await;
+      insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
+
+      let materials = super::materials_for(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID).await;
+
+      assert_eq!(materials, vec![Material::new(TRITANIUM, 100), Material::new(35, 200)]);
+    }
+  }
+
+  mod output_per_run {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_product_quantity_per_run() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 200).await;
+
+      assert_eq!(super::output_per_run(&db, 999, REACTION_ACTIVITY_ID).await, Some(200));
+    }
+  }
+
+  mod owned_rank {
+    use super::*;
+
+    fn summary(in_scope: bool, is_original: bool, me: i64) -> OwnedSummary {
+      OwnedSummary {
+        in_scope,
+        is_original,
+        material_efficiency: me,
+        time_efficiency: 0,
+      }
+    }
+
+    #[test]
+    fn it_orders_scope_then_originality_then_efficiency() {
+      let in_scope_bpc = summary(true, false, 0);
+      let out_scope_bpo = summary(false, true, 10);
+      let in_scope_bpo_low = summary(true, true, 5);
+      let in_scope_bpo_high = summary(true, true, 8);
+
+      assert!(super::owned_rank(&in_scope_bpc) > super::owned_rank(&out_scope_bpo));
+      assert!(super::owned_rank(&in_scope_bpo_low) > super::owned_rank(&in_scope_bpc));
+      assert!(super::owned_rank(&in_scope_bpo_high) > super::owned_rank(&in_scope_bpo_low));
+    }
+  }
+
   mod planner_facilities {
     use pretty_assertions::assert_eq;
 
@@ -1054,9 +961,13 @@ mod tests {
     use crate::store::model::IndustryCostIndex;
 
     const CHEAP_STATION: i64 = 60_000_002;
+
     const CHEAP_SYSTEM: i64 = 30_002_187;
+
     const PRICEY_STATION: i64 = 60_000_001;
+
     const PRICEY_SYSTEM: i64 = 30_000_142;
+
     const STATION_TYPE_ID: i64 = 54;
 
     async fn seed_station(db: &Database, id: i64, solar_system_id: i64, name: &str) {
@@ -1146,6 +1057,103 @@ mod tests {
       assert_eq!(facilities[0].manufacturing_index, Some(0.02));
       assert_eq!(facilities[0].reaction_index, Some(0.01));
       assert_eq!(facilities[1].name, "Pricey Station");
+    }
+  }
+
+  mod rank_best_owned {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_orders_scope_before_originality_before_material_efficiency() {
+      let pool = vec![owned(false, 1, -1, 10), owned(true, 2, 30, 0), owned(true, 3, -1, 5)];
+
+      let best = super::rank_best_owned(pool).unwrap();
+
+      assert_eq!(best.item_id, 3);
+    }
+
+    #[test]
+    fn it_prefers_a_bpo_over_a_bpc_within_the_same_scope() {
+      let pool = vec![owned(true, 1, 30, 10), owned(true, 2, -1, 0)];
+
+      let best = super::rank_best_owned(pool).unwrap();
+
+      assert_eq!(best.item_id, 2);
+    }
+
+    #[test]
+    fn it_prefers_an_in_scope_blueprint_over_an_out_of_scope_one() {
+      let pool = vec![owned(false, 1, -1, 10), owned(true, 2, 30, 0)];
+
+      let best = super::rank_best_owned(pool).unwrap();
+
+      assert_eq!(best.item_id, 2);
+    }
+
+    #[test]
+    fn it_prefers_higher_material_efficiency_to_break_a_tie() {
+      let pool = vec![owned(true, 1, -1, 8), owned(true, 2, -1, 10)];
+
+      let best = super::rank_best_owned(pool).unwrap();
+
+      assert_eq!(best.item_id, 2);
+    }
+
+    #[test]
+    fn it_returns_none_when_no_blueprint_is_owned() {
+      assert_eq!(super::rank_best_owned(Vec::new()), None);
+    }
+  }
+
+  mod reverse_lookup {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_falls_back_to_a_reaction_when_no_manufacturing_blueprint_exists() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 200).await;
+
+      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
+
+      assert_eq!(recipe.activity_id, REACTION_ACTIVITY_ID);
+      assert!(recipe.is_reaction);
+      assert_eq!(recipe.output_per_run, 200);
+    }
+
+    #[tokio::test]
+    async fn it_prefers_manufacturing_over_a_reaction_for_the_same_product() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
+      insert_product(&db, 999, REACTION_ACTIVITY_ID, HULK, 1).await;
+
+      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
+
+      assert_eq!(recipe.blueprint_type_id, HULK_BLUEPRINT);
+      assert!(!recipe.is_reaction);
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_manufacturing_blueprint_for_a_product() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
+
+      let recipe = super::reverse_lookup(&db, HULK).await.unwrap();
+
+      assert_eq!(recipe.blueprint_type_id, HULK_BLUEPRINT);
+      assert_eq!(recipe.activity_id, MANUFACTURING_ACTIVITY_ID);
+      assert!(!recipe.is_reaction);
+      assert_eq!(recipe.output_per_run, 1);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unbuildable_product() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::reverse_lookup(&db, HULK).await, None);
     }
   }
 }

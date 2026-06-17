@@ -642,14 +642,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_passes_everything_for_all() {
-      let entries = [entry(1, true, 1.0), entry(2, false, 1.0)];
-      let matched = entries.iter().filter(|e| KilllogFilter::All.matches(e)).count();
-
-      assert_eq!(matched, 2);
-    }
-
-    #[test]
     fn it_filters_kills_and_losses() {
       let entries = [entry(1, true, 1.0), entry(2, false, 1.0), entry(3, true, 1.0)];
       let kills = entries.iter().filter(|e| KilllogFilter::Kills.matches(e)).count();
@@ -657,6 +649,14 @@ mod tests {
 
       assert_eq!(kills, 2);
       assert_eq!(losses, 1);
+    }
+
+    #[test]
+    fn it_passes_everything_for_all() {
+      let entries = [entry(1, true, 1.0), entry(2, false, 1.0)];
+      let matched = entries.iter().filter(|e| KilllogFilter::All.matches(e)).count();
+
+      assert_eq!(matched, 2);
     }
   }
 

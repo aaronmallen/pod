@@ -297,6 +297,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_drops_gated_tabs_whose_feature_is_disabled() {
+      let tabs = enabled_tabs(&[Feature::Standings]);
+
+      assert_eq!(tabs, vec![Tab::Standings]);
+    }
+
+    #[test]
     fn it_keeps_strip_order_with_all_features_enabled() {
       let tabs = enabled_tabs(&Feature::ALL);
 
@@ -313,65 +320,8 @@ mod tests {
     }
 
     #[test]
-    fn it_drops_gated_tabs_whose_feature_is_disabled() {
-      let tabs = enabled_tabs(&[Feature::Standings]);
-
-      assert_eq!(tabs, vec![Tab::Standings]);
-    }
-
-    #[test]
     fn it_leaves_no_tabs_with_no_features() {
       assert_eq!(enabled_tabs(&[]), Vec::<Tab>::new());
-    }
-  }
-
-  mod resolve_first_tab {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_picks_clones_first_when_all_enabled() {
-      assert_eq!(resolve_first_tab(&enabled_tabs(&Feature::ALL)), Tab::Clones);
-    }
-
-    #[test]
-    fn it_picks_the_first_enabled_gated_tab() {
-      assert_eq!(resolve_first_tab(&enabled_tabs(&[Feature::Standings])), Tab::Standings);
-    }
-
-    #[test]
-    fn it_falls_back_to_clones_for_an_empty_list() {
-      assert_eq!(resolve_first_tab(&[]), Tab::Clones);
-    }
-  }
-
-  mod required_scopes {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_each_gated_tab_to_its_esi_scope() {
-      assert_eq!(Tab::Clones.required_scopes(), &[scopes::CHARACTER_CLONES]);
-      assert_eq!(
-        Tab::Contacts.required_scopes(),
-        &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE]
-      );
-      assert_eq!(Tab::Killlog.required_scopes(), &[scopes::CHARACTER_KILLMAILS]);
-      assert_eq!(Tab::Notifications.required_scopes(), &[scopes::CHARACTER_NOTIFICATIONS]);
-      assert_eq!(Tab::Standings.required_scopes(), &[scopes::CHARACTER_STANDINGS]);
-    }
-
-    #[test]
-    fn every_tab_requires_at_least_one_scope() {
-      for tab in Tab::ORDER {
-        assert!(
-          !tab.required_scopes().is_empty(),
-          "{:?} must gate on a scope",
-          tab.label()
-        );
-      }
     }
   }
 
@@ -388,6 +338,56 @@ mod tests {
     #[test]
     fn it_keeps_read_only_tabs_unchanged() {
       assert_eq!(Tab::Standings.read_scopes(), vec![scopes::CHARACTER_STANDINGS]);
+    }
+  }
+
+  mod required_scopes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn every_tab_requires_at_least_one_scope() {
+      for tab in Tab::ORDER {
+        assert!(
+          !tab.required_scopes().is_empty(),
+          "{:?} must gate on a scope",
+          tab.label()
+        );
+      }
+    }
+
+    #[test]
+    fn it_maps_each_gated_tab_to_its_esi_scope() {
+      assert_eq!(Tab::Clones.required_scopes(), &[scopes::CHARACTER_CLONES]);
+      assert_eq!(
+        Tab::Contacts.required_scopes(),
+        &[scopes::CHARACTER_CONTACTS, scopes::CHARACTER_CONTACTS_WRITE]
+      );
+      assert_eq!(Tab::Killlog.required_scopes(), &[scopes::CHARACTER_KILLMAILS]);
+      assert_eq!(Tab::Notifications.required_scopes(), &[scopes::CHARACTER_NOTIFICATIONS]);
+      assert_eq!(Tab::Standings.required_scopes(), &[scopes::CHARACTER_STANDINGS]);
+    }
+  }
+
+  mod resolve_first_tab {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_clones_for_an_empty_list() {
+      assert_eq!(resolve_first_tab(&[]), Tab::Clones);
+    }
+
+    #[test]
+    fn it_picks_clones_first_when_all_enabled() {
+      assert_eq!(resolve_first_tab(&enabled_tabs(&Feature::ALL)), Tab::Clones);
+    }
+
+    #[test]
+    fn it_picks_the_first_enabled_gated_tab() {
+      assert_eq!(resolve_first_tab(&enabled_tabs(&[Feature::Standings])), Tab::Standings);
     }
   }
 
@@ -424,12 +424,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_the_scope_missing_state_when_the_tab_scope_is_not_granted() {
+    fn it_renders_the_content_branch_when_the_scope_is_granted() {
       let mut state = State::new(42, &Feature::ALL);
-      state.granted_scopes = None;
+      state.granted_scopes = Some(scopes::CHARACTER_STANDINGS.to_owned());
       state.active_tab = Tab::Standings;
 
-      assert!(forbidden::is_scope_missing(
+      assert!(!forbidden::is_scope_missing(
         state.granted_scopes(),
         Tab::Standings.required_scopes()
       ));
@@ -437,12 +437,12 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_content_branch_when_the_scope_is_granted() {
+    fn it_renders_the_scope_missing_state_when_the_tab_scope_is_not_granted() {
       let mut state = State::new(42, &Feature::ALL);
-      state.granted_scopes = Some(scopes::CHARACTER_STANDINGS.to_owned());
+      state.granted_scopes = None;
       state.active_tab = Tab::Standings;
 
-      assert!(!forbidden::is_scope_missing(
+      assert!(forbidden::is_scope_missing(
         state.granted_scopes(),
         Tab::Standings.required_scopes()
       ));

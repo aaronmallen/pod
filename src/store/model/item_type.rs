@@ -84,19 +84,6 @@ mod tests {
     }
 
     #[test]
-    fn it_wraps_description_and_widens_ids() {
-      let model = Model::from(make_item_type());
-
-      assert_eq!(model.id(), 34);
-      assert_eq!(model.group_id(), 18);
-      assert_eq!(
-        model.description().as_deref(),
-        Some("Tritanium is the basic building block.")
-      );
-      assert_eq!(model.dogma_attributes(), "[]");
-    }
-
-    #[test]
     fn it_serializes_dogma_attributes_to_a_json_blob() {
       let mut item_type = make_item_type();
       item_type.dogma_attributes = vec![
@@ -128,6 +115,19 @@ mod tests {
 
       assert_eq!(model.market_group_id(), Some(1857));
       assert_eq!(model.icon_id(), Some(22));
+    }
+
+    #[test]
+    fn it_wraps_description_and_widens_ids() {
+      let model = Model::from(make_item_type());
+
+      assert_eq!(model.id(), 34);
+      assert_eq!(model.group_id(), 18);
+      assert_eq!(
+        model.description().as_deref(),
+        Some("Tritanium is the basic building block.")
+      );
+      assert_eq!(model.dogma_attributes(), "[]");
     }
   }
 }

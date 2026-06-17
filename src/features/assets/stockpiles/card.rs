@@ -306,6 +306,28 @@ mod tests {
     }
   }
 
+  mod location_caption {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_for_an_unresolved_or_unscoped_location() {
+      let (unresolved, _) = super::super::location_caption(&card_model(None, Some(1)));
+      let (unscoped, _) = super::super::location_caption(&card_model(None, None));
+
+      assert_eq!(unresolved, "UNKNOWN LOCATION");
+      assert_eq!(unscoped, "ANY LOCATION");
+    }
+
+    #[test]
+    fn it_uppercases_a_resolved_name() {
+      let (caption, _) = super::super::location_caption(&card_model(Some("Jita IV"), Some(1)));
+
+      assert_eq!(caption, "JITA IV");
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -324,15 +346,19 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_an_unscoped_card() {
-      let model = card_model(None, None);
+    fn it_renders_a_collapsed_and_an_expanded_item_list() {
+      let model = card_with_items(8);
 
-      let _el: Element<'_, Message> = view(&model, &HashSet::new());
+      let _collapsed: Element<'_, Message> = view(&model, &HashSet::new());
+
+      let mut expanded = HashSet::new();
+      expanded.insert(model.id);
+      let _expanded: Element<'_, Message> = view(&model, &expanded);
     }
 
     #[test]
-    fn it_renders_the_short_status_strip() {
-      let model = card_model(Some("Jita IV"), Some(1));
+    fn it_renders_an_unscoped_card() {
+      let model = card_model(None, None);
 
       let _el: Element<'_, Message> = view(&model, &HashSet::new());
     }
@@ -347,36 +373,10 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_a_collapsed_and_an_expanded_item_list() {
-      let model = card_with_items(8);
+    fn it_renders_the_short_status_strip() {
+      let model = card_model(Some("Jita IV"), Some(1));
 
-      let _collapsed: Element<'_, Message> = view(&model, &HashSet::new());
-
-      let mut expanded = HashSet::new();
-      expanded.insert(model.id);
-      let _expanded: Element<'_, Message> = view(&model, &expanded);
-    }
-  }
-
-  mod location_caption {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uppercases_a_resolved_name() {
-      let (caption, _) = super::super::location_caption(&card_model(Some("Jita IV"), Some(1)));
-
-      assert_eq!(caption, "JITA IV");
-    }
-
-    #[test]
-    fn it_falls_back_for_an_unresolved_or_unscoped_location() {
-      let (unresolved, _) = super::super::location_caption(&card_model(None, Some(1)));
-      let (unscoped, _) = super::super::location_caption(&card_model(None, None));
-
-      assert_eq!(unresolved, "UNKNOWN LOCATION");
-      assert_eq!(unscoped, "ANY LOCATION");
+      let _el: Element<'_, Message> = view(&model, &HashSet::new());
     }
   }
 }

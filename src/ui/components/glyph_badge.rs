@@ -65,13 +65,13 @@ mod tests {
     use super::super::*;
 
     #[test]
-    fn it_builds_an_income_badge() {
-      let _el: iced::Element<'_, ()> = GlyphBadge::new(GLYPH_INCOME, true).render();
+    fn it_builds_an_expense_badge() {
+      let _el: iced::Element<'_, ()> = GlyphBadge::new(GLYPH_EXPENSE, false).render();
     }
 
     #[test]
-    fn it_builds_an_expense_badge() {
-      let _el: iced::Element<'_, ()> = GlyphBadge::new(GLYPH_EXPENSE, false).render();
+    fn it_builds_an_income_badge() {
+      let _el: iced::Element<'_, ()> = GlyphBadge::new(GLYPH_INCOME, true).render();
     }
   }
 }

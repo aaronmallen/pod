@@ -207,7 +207,9 @@ mod tests {
   };
 
   const CHARACTER_ID: i64 = 42;
+
   const CORP: i64 = 90_000_001;
+
   const DIRECTOR: i64 = 100;
 
   async fn seed_character(db: &store::Database, id: i64) {
@@ -498,6 +500,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/roles/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("corp-token", CORP);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Corporation(CORP));
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+    }
+
+    #[tokio::test]
     async fn it_skips_honestly_when_the_authorizing_character_lacks_the_role() {
       let server = MockServer::start().await;
       mount_roles(
@@ -577,28 +601,6 @@ mod tests {
       assert!(
         matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
         "expected a re-authentication error, got {result:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{CORP}/roles/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
-      let grant = Grant::new_test("corp-token", CORP);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Corporation(CORP));
-
-      let result = run(&ctx).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
     }
   }

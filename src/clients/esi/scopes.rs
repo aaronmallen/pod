@@ -75,13 +75,13 @@ mod tests {
     use super::super::*;
 
     #[test]
-    fn it_requests_divisions_so_corp_wallet_sync_does_not_401() {
-      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_DIVISIONS));
+    fn it_keeps_members_for_the_corp_card_member_section() {
+      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_MEMBERS));
     }
 
     #[test]
-    fn it_keeps_members_for_the_corp_card_member_section() {
-      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_MEMBERS));
+    fn it_requests_divisions_so_corp_wallet_sync_does_not_401() {
+      assert!(BASELINE_CORP_SCOPES.contains(&CORPORATION_DIVISIONS));
     }
   }
 

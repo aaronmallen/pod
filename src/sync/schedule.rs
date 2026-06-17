@@ -237,6 +237,7 @@ mod tests {
   use super::*;
 
   const CHARACTER: Subject = Subject::Character(42);
+
   const KEY: JobKey = JobKey {
     kind: JobKind::CharacterProfile,
     subject: CHARACTER,
@@ -248,15 +249,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_clamps_at_the_cap() {
+      assert_eq!(backoff_delay(100), Duration::from_secs(300));
+    }
+
+    #[test]
     fn it_doubles_from_the_base() {
       assert_eq!(backoff_delay(1), Duration::from_secs(2));
       assert_eq!(backoff_delay(2), Duration::from_secs(4));
       assert_eq!(backoff_delay(3), Duration::from_secs(8));
-    }
-
-    #[test]
-    fn it_clamps_at_the_cap() {
-      assert_eq!(backoff_delay(100), Duration::from_secs(300));
     }
   }
 
@@ -264,56 +265,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_enrolls_a_subject_due_immediately() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-
-      schedule.enroll(CHARACTER, now);
-
-      assert!(schedule.due(now).contains(&KEY));
-    }
-
-    #[tokio::test]
-    async fn it_does_not_duplicate_or_reset_on_re_enroll() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-      schedule.reschedule_success(KEY, now);
-
-      schedule.enroll(CHARACTER, now + Duration::from_secs(10));
-
-      assert!(!schedule.due(now + Duration::from_secs(20)).contains(&KEY));
-    }
-
-    #[tokio::test]
-    async fn it_excludes_in_flight_and_future_jobs_from_due() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now + Duration::from_secs(60));
-
-      assert_eq!(schedule.due(now), vec![]);
-
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-      schedule.mark_in_flight(KEY);
-
-      assert!(!schedule.due(now).contains(&KEY));
-    }
-
-    #[tokio::test]
-    async fn it_reschedules_success_one_interval_out() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-      schedule.mark_in_flight(KEY);
-
-      schedule.reschedule_success(KEY, now);
-
-      assert!(!schedule.due(now).contains(&KEY));
-      assert!(schedule.due(now + JobKind::CharacterProfile.interval()).contains(&KEY));
-    }
 
     #[tokio::test]
     async fn it_backs_off_exponentially_on_repeated_failures() {
@@ -331,45 +282,148 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_parks_a_permanently_failed_job_far_into_the_future() {
+    async fn it_does_not_duplicate_or_reset_on_re_enroll() {
       let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+      schedule.reschedule_success(KEY, now);
+
+      schedule.enroll(CHARACTER, now + Duration::from_secs(10));
+
+      assert!(!schedule.due(now + Duration::from_secs(20)).contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_re_enroll_already_enrolled_jobs() {
+      let now = Instant::now();
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      let mut schedule = Schedule::with_features(flags_wallet_off);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      schedule.reconcile_features(flags_all_on);
+      schedule.reschedule_success(wallet_key, now);
+
+      schedule.reconcile_features(flags_wallet_off);
+      schedule.reconcile_features(flags_all_on);
+
+      let due = schedule.due(now);
+      assert!(
+        due
+          .iter()
+          .filter(|k| k.kind == JobKind::CharacterWallet && k.subject == CHARACTER)
+          .count()
+          <= 1,
+        "wallet job appears at most once after re-enabling multiple times, got {due:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_schedule_a_job_whose_feature_is_disabled() {
+      use crate::config::FeatureFlags;
+
+      let now = Instant::now();
+      let flags: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      let mut schedule = Schedule::with_features(flags);
+
+      schedule.enroll(CHARACTER, now);
+      let due = schedule.due(now);
+
+      let wallet = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      assert!(
+        !due.contains(&wallet),
+        "a disabled feature's job must not be scheduled, got {due:?}"
+      );
+      assert!(JobKind::for_subject(CHARACTER).contains(&JobKind::CharacterWallet));
+      assert!(due.contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_drops_pending_jobs_when_a_feature_is_disabled() {
+      let now = Instant::now();
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      let mut schedule = Schedule::with_features(flags_all_on);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      assert!(schedule.due(now).contains(&wallet_key), "wallet job is due initially");
+
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      schedule.reconcile_features(flags_wallet_off);
+
+      let due_after = schedule.due(now);
+      assert!(
+        !due_after.contains(&wallet_key),
+        "wallet job is dropped when wallet is disabled, got {due_after:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_enrolls_a_subject_due_immediately() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+
+      schedule.enroll(CHARACTER, now);
+
+      assert!(schedule.due(now).contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_enrolls_an_undeferred_kind_due_now() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+
+      schedule.enroll_kinds_deferred(
+        CHARACTER,
+        JobKind::for_subject(CHARACTER),
+        now,
+        &HashMap::new(),
+        &HashSet::new(),
+      );
+
+      assert!(
+        schedule.due(now).contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
+        "with nothing deferred, every enrolled kind is due now"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_enrolls_newly_enabled_features_for_tracked_subjects() {
+      let now = Instant::now();
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      let mut schedule = Schedule::with_features(flags_wallet_off);
+
+      schedule.enroll(CHARACTER, now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      assert!(
+        !schedule.due(now).contains(&wallet_key),
+        "wallet job is not scheduled when wallet is off"
+      );
+
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      schedule.reconcile_features(flags_all_on);
+
+      assert!(
+        schedule.due(now).contains(&wallet_key),
+        "wallet job is scheduled when wallet is re-enabled"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_in_flight_and_future_jobs_from_due() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now + Duration::from_secs(60));
+
+      assert_eq!(schedule.due(now), vec![]);
+
       let mut schedule = Schedule::new();
       schedule.enroll(CHARACTER, now);
       schedule.mark_in_flight(KEY);
 
-      schedule.reschedule_permanent(KEY, now);
-
-      assert!(
-        !schedule.due(now + Duration::from_secs(24 * 60 * 60)).contains(&KEY),
-        "a permanently parked job must not become due again on the normal cadence"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_revives_a_parked_job_on_run_now() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-      schedule.reschedule_permanent(KEY, now);
-
-      schedule.run_now(CHARACTER, now);
-
-      assert!(
-        schedule.due(now).contains(&KEY),
-        "re-authentication via run_now must revive a parked job"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_reschedules_a_throttle_without_escalating() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-
-      schedule.reschedule_throttle(KEY, now, Duration::from_secs(90));
-
-      assert!(!schedule.due(now + Duration::from_secs(89)).contains(&KEY));
-      assert!(schedule.due(now + Duration::from_secs(90)).contains(&KEY));
+      assert!(!schedule.due(now).contains(&KEY));
     }
 
     #[tokio::test]
@@ -397,59 +451,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_makes_every_entry_of_a_kind_due_now_across_subjects() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      let other = Subject::Character(43);
-      schedule.enroll(CHARACTER, now);
-      schedule.enroll(other, now);
-      schedule.reschedule_success(KEY, now);
-      schedule.reschedule_success(JobKey::new(JobKind::CharacterProfile, other), now);
-
-      schedule.make_due_now(JobKind::CharacterProfile, now);
-
-      let due = schedule.due(now);
-      assert!(due.contains(&KEY));
-      assert!(due.contains(&JobKey::new(JobKind::CharacterProfile, other)));
-    }
-
-    #[tokio::test]
-    async fn it_withdraws_a_subject() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-
-      schedule.withdraw(CHARACTER);
-
-      assert_eq!(schedule.due(now), vec![]);
-      assert_eq!(schedule.next_deadline(), None);
-    }
-
-    #[tokio::test]
-    async fn it_reports_the_earliest_deadline() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now + Duration::from_secs(30));
-
-      assert_eq!(schedule.next_deadline(), Some(now + Duration::from_secs(30)));
-    }
-
-    #[tokio::test]
-    async fn it_reports_the_remaining_time_until_a_keys_next_run() {
-      let now = Instant::now();
-      let mut schedule = Schedule::new();
-      schedule.enroll(CHARACTER, now);
-      schedule.reschedule_success(KEY, now);
-
-      assert_eq!(schedule.next_in(KEY, now), Some(JobKind::CharacterProfile.interval()));
-      assert_eq!(
-        schedule.next_in(JobKey::new(JobKind::CharacterProfile, Subject::Character(999)), now),
-        None,
-        "an unknown key has no scheduled next run"
-      );
-    }
-
-    #[tokio::test]
     async fn it_makes_a_kind_due_now_for_a_single_subject_only() {
       let now = Instant::now();
       let mut schedule = Schedule::new();
@@ -467,6 +468,23 @@ mod tests {
         !due.contains(&JobKey::new(JobKind::AssetSync, other)),
         "a profile landing for one subject must not re-fire another subject's gather"
       );
+    }
+
+    #[tokio::test]
+    async fn it_makes_every_entry_of_a_kind_due_now_across_subjects() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      let other = Subject::Character(43);
+      schedule.enroll(CHARACTER, now);
+      schedule.enroll(other, now);
+      schedule.reschedule_success(KEY, now);
+      schedule.reschedule_success(JobKey::new(JobKind::CharacterProfile, other), now);
+
+      schedule.make_due_now(JobKind::CharacterProfile, now);
+
+      let due = schedule.due(now);
+      assert!(due.contains(&KEY));
+      assert!(due.contains(&JobKey::new(JobKind::CharacterProfile, other)));
     }
 
     #[tokio::test]
@@ -502,42 +520,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_enrolls_an_undeferred_kind_due_now() {
+    async fn it_parks_a_permanently_failed_job_far_into_the_future() {
       let now = Instant::now();
       let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+      schedule.mark_in_flight(KEY);
 
-      schedule.enroll_kinds_deferred(
-        CHARACTER,
-        JobKind::for_subject(CHARACTER),
-        now,
-        &HashMap::new(),
-        &HashSet::new(),
-      );
+      schedule.reschedule_permanent(KEY, now);
 
       assert!(
-        schedule.due(now).contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
-        "with nothing deferred, every enrolled kind is due now"
+        !schedule.due(now + Duration::from_secs(24 * 60 * 60)).contains(&KEY),
+        "a permanently parked job must not become due again on the normal cadence"
       );
     }
 
     #[tokio::test]
-    async fn it_does_not_schedule_a_job_whose_feature_is_disabled() {
-      use crate::config::FeatureFlags;
-
+    async fn it_preserves_in_flight_jobs_when_a_feature_is_disabled() {
       let now = Instant::now();
-      let flags: FeatureFlags = toml::from_str("wallet = false").unwrap();
-      let mut schedule = Schedule::with_features(flags);
+      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
+      let mut schedule = Schedule::with_features(flags_all_on);
 
       schedule.enroll(CHARACTER, now);
-      let due = schedule.due(now);
+      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      schedule.mark_in_flight(wallet_key);
 
-      let wallet = JobKey::new(JobKind::CharacterWallet, CHARACTER);
+      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      schedule.reconcile_features(flags_wallet_off);
+
       assert!(
-        !due.contains(&wallet),
-        "a disabled feature's job must not be scheduled, got {due:?}"
+        schedule.next_in(wallet_key, now).is_some(),
+        "in-flight wallet job is preserved despite feature being disabled"
       );
-      assert!(JobKind::for_subject(CHARACTER).contains(&JobKind::CharacterWallet));
-      assert!(due.contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_reports_the_earliest_deadline() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now + Duration::from_secs(30));
+
+      assert_eq!(schedule.next_deadline(), Some(now + Duration::from_secs(30)));
+    }
+
+    #[tokio::test]
+    async fn it_reports_the_remaining_time_until_a_keys_next_run() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+      schedule.reschedule_success(KEY, now);
+
+      assert_eq!(schedule.next_in(KEY, now), Some(JobKind::CharacterProfile.interval()));
+      assert_eq!(
+        schedule.next_in(JobKey::new(JobKind::CharacterProfile, Subject::Character(999)), now),
+        None,
+        "an unknown key has no scheduled next run"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_reschedules_a_throttle_without_escalating() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+
+      schedule.reschedule_throttle(KEY, now, Duration::from_secs(90));
+
+      assert!(!schedule.due(now + Duration::from_secs(89)).contains(&KEY));
+      assert!(schedule.due(now + Duration::from_secs(90)).contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_reschedules_success_one_interval_out() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+      schedule.mark_in_flight(KEY);
+
+      schedule.reschedule_success(KEY, now);
+
+      assert!(!schedule.due(now).contains(&KEY));
+      assert!(schedule.due(now + JobKind::CharacterProfile.interval()).contains(&KEY));
+    }
+
+    #[tokio::test]
+    async fn it_revives_a_parked_job_on_run_now() {
+      let now = Instant::now();
+      let mut schedule = Schedule::new();
+      schedule.enroll(CHARACTER, now);
+      schedule.reschedule_permanent(KEY, now);
+
+      schedule.run_now(CHARACTER, now);
+
+      assert!(
+        schedule.due(now).contains(&KEY),
+        "re-authentication via run_now must revive a parked job"
+      );
     }
 
     #[tokio::test]
@@ -562,91 +639,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_drops_pending_jobs_when_a_feature_is_disabled() {
+    async fn it_withdraws_a_subject() {
       let now = Instant::now();
-      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
-      let mut schedule = Schedule::with_features(flags_all_on);
-
+      let mut schedule = Schedule::new();
       schedule.enroll(CHARACTER, now);
-      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
-      assert!(schedule.due(now).contains(&wallet_key), "wallet job is due initially");
 
-      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
-      schedule.reconcile_features(flags_wallet_off);
+      schedule.withdraw(CHARACTER);
 
-      let due_after = schedule.due(now);
-      assert!(
-        !due_after.contains(&wallet_key),
-        "wallet job is dropped when wallet is disabled, got {due_after:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_preserves_in_flight_jobs_when_a_feature_is_disabled() {
-      let now = Instant::now();
-      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
-      let mut schedule = Schedule::with_features(flags_all_on);
-
-      schedule.enroll(CHARACTER, now);
-      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
-      schedule.mark_in_flight(wallet_key);
-
-      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
-      schedule.reconcile_features(flags_wallet_off);
-
-      assert!(
-        schedule.next_in(wallet_key, now).is_some(),
-        "in-flight wallet job is preserved despite feature being disabled"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_enrolls_newly_enabled_features_for_tracked_subjects() {
-      let now = Instant::now();
-      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
-      let mut schedule = Schedule::with_features(flags_wallet_off);
-
-      schedule.enroll(CHARACTER, now);
-      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
-      assert!(
-        !schedule.due(now).contains(&wallet_key),
-        "wallet job is not scheduled when wallet is off"
-      );
-
-      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
-      schedule.reconcile_features(flags_all_on);
-
-      assert!(
-        schedule.due(now).contains(&wallet_key),
-        "wallet job is scheduled when wallet is re-enabled"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_does_not_re_enroll_already_enrolled_jobs() {
-      let now = Instant::now();
-      let flags_wallet_off: FeatureFlags = toml::from_str("wallet = false").unwrap();
-      let mut schedule = Schedule::with_features(flags_wallet_off);
-
-      schedule.enroll(CHARACTER, now);
-      let wallet_key = JobKey::new(JobKind::CharacterWallet, CHARACTER);
-
-      let flags_all_on: FeatureFlags = toml::from_str("").unwrap();
-      schedule.reconcile_features(flags_all_on);
-      schedule.reschedule_success(wallet_key, now);
-
-      schedule.reconcile_features(flags_wallet_off);
-      schedule.reconcile_features(flags_all_on);
-
-      let due = schedule.due(now);
-      assert!(
-        due
-          .iter()
-          .filter(|k| k.kind == JobKind::CharacterWallet && k.subject == CHARACTER)
-          .count()
-          <= 1,
-        "wallet job appears at most once after re-enabling multiple times, got {due:?}"
-      );
+      assert_eq!(schedule.due(now), vec![]);
+      assert_eq!(schedule.next_deadline(), None);
     }
   }
 }

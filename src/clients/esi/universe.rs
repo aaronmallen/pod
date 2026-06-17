@@ -115,6 +115,25 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_defaults_missing_buckets_to_empty() {
+      let server = MockServer::start().await;
+      let body = r#"{"characters":[{"id":42,"name":"Solo"}]}"#;
+      Mock::given(method("POST"))
+        .and(path("/universe/ids/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let resolved = esi.universe().ids(&["Solo".to_owned()]).await.unwrap();
+
+      assert_eq!(resolved.characters.len(), 1);
+      assert!(resolved.corporations.is_empty());
+      assert!(resolved.alliances.is_empty());
+      assert!(resolved.inventory_types.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_posts_names_and_returns_bucketed_ids() {
       let server = MockServer::start().await;
       let body = r#"{"characters":[{"id":95465499,"name":"CCP Bartender"}],"corporations":[{"id":98356193,"name":"Test Corp"}],"alliances":[{"id":99005338,"name":"Test Alliance"}]}"#;
@@ -139,25 +158,6 @@ mod tests {
       assert_eq!(resolved.characters[0].id, 95465499);
       assert_eq!(resolved.corporations[0].name, "Test Corp");
       assert_eq!(resolved.alliances[0].id, 99005338);
-    }
-
-    #[tokio::test]
-    async fn it_defaults_missing_buckets_to_empty() {
-      let server = MockServer::start().await;
-      let body = r#"{"characters":[{"id":42,"name":"Solo"}]}"#;
-      Mock::given(method("POST"))
-        .and(path("/universe/ids/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-
-      let resolved = esi.universe().ids(&["Solo".to_owned()]).await.unwrap();
-
-      assert_eq!(resolved.characters.len(), 1);
-      assert!(resolved.corporations.is_empty());
-      assert!(resolved.alliances.is_empty());
-      assert!(resolved.inventory_types.is_empty());
     }
 
     #[tokio::test]
@@ -191,6 +191,7 @@ mod tests {
     use super::*;
 
     const TYPE_3300_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_3300.json");
+
     const TYPE_9899_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_9899.json");
 
     fn attr_value(item: &ItemType, attribute_id: i32) -> Option<f64> {
@@ -202,22 +203,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_returns_item_type_with_optional_fields() {
+    async fn it_deserializes_real_attribute_implant_dogma() {
       let server = MockServer::start().await;
-      let body = r#"{"capacity":0.0,"description":"Tritanium.","group_id":18,"mass":0.0,"name":"Tritanium","packaged_volume":0.01,"portion_size":1,"published":true,"radius":1.0,"type_id":34,"volume":0.01}"#;
       Mock::given(method("GET"))
-        .and(path("/universe/types/34/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .and(path("/universe/types/9899/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(TYPE_9899_FIXTURE, "application/json"))
         .mount(&server)
         .await;
       let esi = make_esi(&server.uri()).await;
 
-      let item = esi.universe().item_type(34).await.unwrap();
+      let item = esi.universe().item_type(9899).await.unwrap();
 
-      assert_eq!(item.name, "Tritanium");
-      assert_eq!(item.group_id, 18);
-      assert_eq!(item.market_group_id, None);
-      assert!(item.dogma_attributes.is_empty());
+      assert_eq!(item.name, "Memory Augmentation - Basic");
+      assert_eq!(attr_value(&item, 177), Some(3.0));
     }
 
     #[tokio::test]
@@ -239,19 +237,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_deserializes_real_attribute_implant_dogma() {
+    async fn it_returns_item_type_with_optional_fields() {
       let server = MockServer::start().await;
+      let body = r#"{"capacity":0.0,"description":"Tritanium.","group_id":18,"mass":0.0,"name":"Tritanium","packaged_volume":0.01,"portion_size":1,"published":true,"radius":1.0,"type_id":34,"volume":0.01}"#;
       Mock::given(method("GET"))
-        .and(path("/universe/types/9899/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(TYPE_9899_FIXTURE, "application/json"))
+        .and(path("/universe/types/34/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
         .mount(&server)
         .await;
       let esi = make_esi(&server.uri()).await;
 
-      let item = esi.universe().item_type(9899).await.unwrap();
+      let item = esi.universe().item_type(34).await.unwrap();
 
-      assert_eq!(item.name, "Memory Augmentation - Basic");
-      assert_eq!(attr_value(&item, 177), Some(3.0));
+      assert_eq!(item.name, "Tritanium");
+      assert_eq!(item.group_id, 18);
+      assert_eq!(item.market_group_id, None);
+      assert!(item.dogma_attributes.is_empty());
     }
   }
 
@@ -302,6 +303,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_returns_http_error_on_4xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/regions/10000002/"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let result = esi.universe().region(10000002).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
     async fn it_returns_region() {
       let server = MockServer::start().await;
       let body =
@@ -318,27 +334,86 @@ mod tests {
       assert_eq!(region.name, "The Forge");
       assert_eq!(region.constellations.len(), 2);
     }
-
-    #[tokio::test]
-    async fn it_returns_http_error_on_4xx() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/regions/10000002/"))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-
-      let result = esi.universe().region(10000002).await;
-
-      assert!(matches!(result, Err(clients::Error::Http(_))));
-    }
   }
 
   mod search {
     use wiremock::matchers::query_param;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_defaults_missing_categories_to_empty() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/search/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[1]}"#, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("search-token", 42);
+
+      let result = esi
+        .universe()
+        .search_with_categories("Sol", &["character", "corporation", "alliance"], &grant)
+        .await
+        .unwrap();
+
+      assert_eq!(result.character, vec![1]);
+      assert!(result.corporation.is_empty());
+      assert!(result.alliance.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_searches_inventory_type_category_and_returns_type_ids() {
+      let server = MockServer::start().await;
+      let body = r#"{"inventory_type":[34,35]}"#;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/search/"))
+        .and(query_param("categories", "inventory_type"))
+        .and(query_param("search", "Trit"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("search-token", 42);
+
+      let result = esi
+        .universe()
+        .search_with_categories("Trit", &["inventory_type"], &grant)
+        .await
+        .unwrap();
+
+      assert_eq!(result.inventory_type, vec![34, 35]);
+      assert!(result.station.is_empty());
+      assert!(result.character.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_searches_location_categories_and_returns_station_structure_system_ids() {
+      let server = MockServer::start().await;
+      let body = r#"{"solar_system":[30000142],"station":[60003760],"structure":[1234567890]}"#;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/search/"))
+        .and(query_param("categories", "station,structure,solar_system"))
+        .and(query_param("search", "Jita"))
+        .and(header("Authorization", "Bearer search-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+      let grant = Grant::new_test("search-token", 42);
+
+      let result = esi
+        .universe()
+        .search_with_categories("Jita", &["station", "structure", "solar_system"], &grant)
+        .await
+        .unwrap();
+
+      assert_eq!(result.station, vec![60003760]);
+      assert_eq!(result.structure, vec![1234567890]);
+      assert_eq!(result.solar_system, vec![30000142]);
+      assert!(result.inventory_type.is_empty());
+    }
 
     #[tokio::test]
     async fn it_searches_with_categories_and_query_and_bearer_token() {
@@ -385,80 +460,6 @@ mod tests {
         .unwrap();
 
       assert_eq!(result.character, vec![95465499]);
-    }
-
-    #[tokio::test]
-    async fn it_defaults_missing_categories_to_empty() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/search/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"character":[1]}"#, "application/json"))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-      let grant = Grant::new_test("search-token", 42);
-
-      let result = esi
-        .universe()
-        .search_with_categories("Sol", &["character", "corporation", "alliance"], &grant)
-        .await
-        .unwrap();
-
-      assert_eq!(result.character, vec![1]);
-      assert!(result.corporation.is_empty());
-      assert!(result.alliance.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_searches_location_categories_and_returns_station_structure_system_ids() {
-      let server = MockServer::start().await;
-      let body = r#"{"solar_system":[30000142],"station":[60003760],"structure":[1234567890]}"#;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/search/"))
-        .and(query_param("categories", "station,structure,solar_system"))
-        .and(query_param("search", "Jita"))
-        .and(header("Authorization", "Bearer search-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-      let grant = Grant::new_test("search-token", 42);
-
-      let result = esi
-        .universe()
-        .search_with_categories("Jita", &["station", "structure", "solar_system"], &grant)
-        .await
-        .unwrap();
-
-      assert_eq!(result.station, vec![60003760]);
-      assert_eq!(result.structure, vec![1234567890]);
-      assert_eq!(result.solar_system, vec![30000142]);
-      assert!(result.inventory_type.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_searches_inventory_type_category_and_returns_type_ids() {
-      let server = MockServer::start().await;
-      let body = r#"{"inventory_type":[34,35]}"#;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/search/"))
-        .and(query_param("categories", "inventory_type"))
-        .and(query_param("search", "Trit"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-      let grant = Grant::new_test("search-token", 42);
-
-      let result = esi
-        .universe()
-        .search_with_categories("Trit", &["inventory_type"], &grant)
-        .await
-        .unwrap();
-
-      assert_eq!(result.inventory_type, vec![34, 35]);
-      assert!(result.station.is_empty());
-      assert!(result.character.is_empty());
     }
   }
 

@@ -326,6 +326,61 @@ mod tests {
     }
 
     #[test]
+    fn it_falls_back_to_overscan_for_a_huge_finite_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(1e30)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_nan_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(f32::NAN)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_negative_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(-400.0)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_a_zero_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(0.0)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
+    fn it_falls_back_to_overscan_for_an_infinite_viewport() {
+      let window = VirtualListConfig::new(1_000, 40.0)
+        .viewport_height(f32::INFINITY)
+        .overscan(8)
+        .window();
+
+      assert_eq!(window.first_row, 0);
+      assert_eq!(window.end_row, 16);
+    }
+
+    #[test]
     fn it_groups_items_into_rows_for_a_grid() {
       // 100 cards, 4 per row = 25 rows.
       let window = VirtualListConfig::new(100, 120.0)
@@ -374,61 +429,6 @@ mod tests {
       let window = VirtualListConfig::new(10, 0.0).viewport_height(100.0).window();
 
       assert!(window.end_row <= 10);
-    }
-
-    #[test]
-    fn it_falls_back_to_overscan_for_an_infinite_viewport() {
-      let window = VirtualListConfig::new(1_000, 40.0)
-        .viewport_height(f32::INFINITY)
-        .overscan(8)
-        .window();
-
-      assert_eq!(window.first_row, 0);
-      assert_eq!(window.end_row, 16);
-    }
-
-    #[test]
-    fn it_falls_back_to_overscan_for_a_nan_viewport() {
-      let window = VirtualListConfig::new(1_000, 40.0)
-        .viewport_height(f32::NAN)
-        .overscan(8)
-        .window();
-
-      assert_eq!(window.first_row, 0);
-      assert_eq!(window.end_row, 16);
-    }
-
-    #[test]
-    fn it_falls_back_to_overscan_for_a_huge_finite_viewport() {
-      let window = VirtualListConfig::new(1_000, 40.0)
-        .viewport_height(1e30)
-        .overscan(8)
-        .window();
-
-      assert_eq!(window.first_row, 0);
-      assert_eq!(window.end_row, 16);
-    }
-
-    #[test]
-    fn it_falls_back_to_overscan_for_a_zero_viewport() {
-      let window = VirtualListConfig::new(1_000, 40.0)
-        .viewport_height(0.0)
-        .overscan(8)
-        .window();
-
-      assert_eq!(window.first_row, 0);
-      assert_eq!(window.end_row, 16);
-    }
-
-    #[test]
-    fn it_falls_back_to_overscan_for_a_negative_viewport() {
-      let window = VirtualListConfig::new(1_000, 40.0)
-        .viewport_height(-400.0)
-        .overscan(8)
-        .window();
-
-      assert_eq!(window.first_row, 0);
-      assert_eq!(window.end_row, 16);
     }
 
     #[test]

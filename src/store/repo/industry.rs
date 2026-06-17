@@ -523,7 +523,9 @@ mod tests {
   };
 
   const CHARACTER_ID: i64 = 42;
+
   const CORPORATION_ID: i64 = 90_000_001;
+
   const DIRECTOR_ID: i64 = 100;
 
   async fn seed_character(db: &Database, id: i64) {
@@ -625,225 +627,6 @@ mod tests {
     }
   }
 
-  mod replace_for_character {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_inserts_the_full_job_set() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-
-      super::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[
-          character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z"),
-          character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
-      assert_eq!(
-        jobs.iter().map(CharacterIndustryJob::job_id).collect::<Vec<_>>(),
-        [1, 2]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_prunes_stale_jobs_on_re_sync() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      super::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[
-          character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z"),
-          character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      super::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
-      assert_eq!(jobs.iter().map(CharacterIndustryJob::job_id).collect::<Vec<_>>(), [2]);
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_every_field() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      let job = character_job(CHARACTER_ID, 7, "2026-06-14T00:00:00Z");
-
-      super::replace_for_character(&db, CHARACTER_ID, std::slice::from_ref(&job))
-        .await
-        .unwrap();
-
-      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
-      assert_eq!(jobs, vec![job]);
-    }
-
-    #[tokio::test]
-    async fn it_cascades_when_the_character_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      super::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      sqlx::query("DELETE FROM characters WHERE id = ?")
-        .bind(CHARACTER_ID)
-        .execute(&db.0)
-        .await
-        .unwrap();
-
-      assert!(super::list_for_character(&db, CHARACTER_ID).await.unwrap().is_empty());
-    }
-  }
-
-  mod replace_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_inserts_then_prunes_for_an_authorized_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation(&db).await;
-
-      super::replace_for_corporation(
-        &db,
-        CORPORATION_ID,
-        &[
-          corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z"),
-          corporation_job(CORPORATION_ID, 11, "2026-06-15T00:00:00Z"),
-        ],
-      )
-      .await
-      .unwrap();
-      super::replace_for_corporation(
-        &db,
-        CORPORATION_ID,
-        &[corporation_job(CORPORATION_ID, 11, "2026-06-15T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let jobs = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
-      assert_eq!(
-        jobs.iter().map(CorporationIndustryJob::job_id).collect::<Vec<_>>(),
-        [11]
-      );
-    }
-  }
-
-  mod list_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_jobs_for_an_authorized_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation(&db).await;
-      super::replace_for_corporation(
-        &db,
-        CORPORATION_ID,
-        &[corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let jobs = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
-
-      assert_eq!(jobs.len(), 1);
-      assert_eq!(jobs[0].job_id(), 10);
-    }
-
-    #[tokio::test]
-    async fn it_hides_jobs_for_an_unauthorized_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      super::replace_for_corporation(
-        &db,
-        CORPORATION_ID,
-        &[corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      assert!(
-        super::list_for_corporation(&db, CORPORATION_ID)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-  }
-
-  mod list_all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_both_character_and_corporation_jobs() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      seed_character(&db, DIRECTOR_ID).await;
-      super::replace_for_character(
-        &db,
-        CHARACTER_ID,
-        &[character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-      super::replace_for_corporation(
-        &db,
-        CORPORATION_ID,
-        &[corporation_job(CORPORATION_ID, 10, "2026-06-15T00:00:00Z")],
-      )
-      .await
-      .unwrap();
-
-      let all = super::list_all(&db).await.unwrap();
-
-      assert_eq!(
-        all
-          .character_jobs
-          .iter()
-          .map(CharacterIndustryJob::job_id)
-          .collect::<Vec<_>>(),
-        [1]
-      );
-      assert_eq!(
-        all
-          .corporation_jobs
-          .iter()
-          .map(CorporationIndustryJob::job_id)
-          .collect::<Vec<_>>(),
-        [10]
-      );
-    }
-  }
-
   fn cost_index(solar_system_id: i64, manufacturing: f64, reaction: f64) -> IndustryCostIndex {
     IndustryCostIndex {
       copying: None,
@@ -856,268 +639,15 @@ mod tests {
     }
   }
 
-  mod cost_index_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_indexed_activity_for_a_known_system() {
-      let db = store::open_test().await.unwrap();
-      super::replace_cost_indices(&db, &[cost_index(30_000_142, 0.05, 0.01)])
-        .await
-        .unwrap();
-
-      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), Some(0.05));
-      assert_eq!(super::cost_index_for(&db, 30_000_142, 9).await.unwrap(), Some(0.01));
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_for_an_unknown_system() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), None);
-    }
-  }
-
-  mod replace_cost_indices {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_round_trips_every_system() {
-      let db = store::open_test().await.unwrap();
-
-      super::replace_cost_indices(
-        &db,
-        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(
-        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
-        Some(cost_index(30_000_142, 0.05, 0.01))
-      );
-      assert_eq!(
-        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
-        Some(cost_index(30_002_187, 0.06, 0.02))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_wholesale_replaces_dropping_systems_absent_from_the_new_set() {
-      let db = store::open_test().await.unwrap();
-      super::replace_cost_indices(
-        &db,
-        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
-      )
-      .await
-      .unwrap();
-
-      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.09, 0.03)])
-        .await
-        .unwrap();
-
-      assert_eq!(super::cost_indices_for_system(&db, 30_000_142).await.unwrap(), None);
-      assert_eq!(
-        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
-        Some(cost_index(30_002_187, 0.09, 0.03))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_leaves_existing_rows_intact_when_the_new_set_is_empty() {
-      let db = store::open_test().await.unwrap();
-      super::replace_cost_indices(
-        &db,
-        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
-      )
-      .await
-      .unwrap();
-
-      super::replace_cost_indices(&db, &[]).await.unwrap();
-
-      assert_eq!(
-        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
-        Some(cost_index(30_000_142, 0.05, 0.01))
-      );
-      assert_eq!(
-        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
-        Some(cost_index(30_002_187, 0.06, 0.02))
-      );
-    }
-  }
-
-  mod plans {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn sample_tree() -> PlanTree {
-      PlanTree {
-        product_type_id: 22_544,
-        root_facility_system: Some(30_000_142),
-        runs: 7,
-        types: vec![
-          PlanType {
-            built: false,
-            facility_structure: Some(60_003_760),
-            facility_system: Some(30_000_142),
-            me: 10,
-            te: 20,
-            type_id: 22_544,
-            use_stock: false,
-          },
-          PlanType {
-            built: true,
-            facility_structure: None,
-            facility_system: None,
-            me: 8,
-            te: 16,
-            type_id: 17_478,
-            use_stock: false,
-          },
-          PlanType {
-            built: true,
-            facility_structure: Some(1_021_000_000_001),
-            facility_system: Some(30_002_187),
-            me: 5,
-            te: 0,
-            type_id: 34,
-            use_stock: true,
-          },
-          PlanType {
-            built: false,
-            facility_structure: None,
-            facility_system: None,
-            me: 9,
-            te: 18,
-            type_id: 11_399,
-            use_stock: false,
-          },
-        ],
-      }
-    }
-
-    fn sorted_by_type(mut tree: PlanTree) -> PlanTree {
-      tree.types.sort_by_key(|kind| kind.type_id);
-      tree
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_a_saved_tree() {
-      let db = store::open_test().await.unwrap();
-      let tree = sample_tree();
-
-      let plan = create_plan(&db, "Hulk run", &tree).await.unwrap();
-      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
-
-      assert_eq!(sorted_by_type(loaded), sorted_by_type(tree));
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_the_per_type_built_flag() {
-      let db = store::open_test().await.unwrap();
-
-      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
-      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
-
-      let built: Vec<i64> = loaded
-        .types
-        .iter()
-        .filter(|kind| kind.built)
-        .map(|kind| kind.type_id)
-        .collect();
-      assert_eq!(built, vec![34, 17_478]);
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_the_per_type_facility_structure() {
-      let db = store::open_test().await.unwrap();
-
-      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
-      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
-
-      let root = loaded.types.iter().find(|kind| kind.type_id == 22_544).unwrap();
-      let component = loaded.types.iter().find(|kind| kind.type_id == 34).unwrap();
-      let unset = loaded.types.iter().find(|kind| kind.type_id == 17_478).unwrap();
-      assert_eq!(root.facility_structure, Some(60_003_760));
-      assert_eq!(component.facility_structure, Some(1_021_000_000_001));
-      assert_eq!(unset.facility_structure, None);
-    }
-
-    #[tokio::test]
-    async fn it_round_trips_the_per_type_use_stock_intent() {
-      let db = store::open_test().await.unwrap();
-
-      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
-      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
-
-      let use_stock: Vec<i64> = loaded
-        .types
-        .iter()
-        .filter(|kind| kind.use_stock)
-        .map(|kind| kind.type_id)
-        .collect();
-      assert_eq!(use_stock, vec![34]);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_parent_metadata() {
-      let db = store::open_test().await.unwrap();
-
-      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
-
-      assert_eq!(plan.name(), "Hulk run");
-      assert_eq!(plan.product_type_id(), 22_544);
-      assert_eq!(plan.runs(), 7);
-      assert_eq!(plan.root_facility_system(), Some(30_000_142));
-    }
-
-    #[tokio::test]
-    async fn it_lists_saved_plans() {
-      let db = store::open_test().await.unwrap();
-      create_plan(&db, "First", &sample_tree()).await.unwrap();
-      create_plan(&db, "Second", &sample_tree()).await.unwrap();
-
-      let plans = list_plans(&db).await.unwrap();
-
-      assert_eq!(plans.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_loading_a_missing_plan() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(load_plan(&db, 404).await.unwrap(), None);
-    }
-
-    #[tokio::test]
-    async fn it_deletes_a_plan_and_cascades_its_types() {
-      let db = store::open_test().await.unwrap();
-      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
-
-      delete_plan(&db, plan.id()).await.unwrap();
-
-      assert!(load_plan(&db, plan.id()).await.unwrap().is_none());
-      let type_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_types WHERE plan_id = ?")
-        .bind(plan.id())
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(type_count, 0);
-    }
-  }
-
   mod accessible_facilities {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     const REGION_ID: i64 = 10_000_001;
+
     const CONSTELLATION_ID: i64 = 20_000_001;
+
     const STATION_TYPE_ID: i64 = 54;
 
     async fn seed_solar_system(db: &Database, id: i64) {
@@ -1218,26 +748,60 @@ mod tests {
       .unwrap();
     }
 
+    async fn authorize_corporation_with_role(db: &Database, role: &str) {
+      infra::upsert(
+        db,
+        CORPORATION_ID,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(DIRECTOR_ID),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        db,
+        CORPORATION_ID,
+        &[CorporationMemberRole::from((
+          CORPORATION_ID,
+          DIRECTOR_ID,
+          role.to_owned(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
     #[tokio::test]
-    async fn it_unions_stations_and_accessible_structures_with_their_systems() {
+    async fn it_attaches_the_cost_index_to_a_pinned_structure_system() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation(&db).await;
-      seed_station(&db, 60_000_001, 30_000_142, "Jita IV - Moon 4").await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Amarr Citadel").await;
+      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
+      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.04, 0.0)])
+        .await
+        .unwrap();
 
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
-      let ids = facilities.iter().map(Facility::id).collect::<Vec<_>>();
-      assert_eq!(ids.len(), 2);
-      assert!(ids.contains(&60_000_001));
-      assert!(ids.contains(&1_021_000_000_001));
-      let structure = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
-      assert_eq!(structure.solar_system_id(), 30_002_187);
-      assert_eq!(structure.owner_id(), Some(CORPORATION_ID));
-      let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
-      assert_eq!(station.solar_system_id(), 30_000_142);
-      assert_eq!(station.owner_id(), None);
+      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
+      assert_eq!(pinned.manufacturing_index(), Some(0.04));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_duplicate_a_structure_that_is_both_pinned_and_corp_owned() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Shared Citadel").await;
+      pin_structure(&db, 1_021_000_000_001, 30_002_187, "Shared Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      let matching = facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count();
+      assert_eq!(matching, 1);
+      let facility = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
+      assert_eq!(facility.owner_id(), Some(CORPORATION_ID));
     }
 
     #[tokio::test]
@@ -1250,6 +814,77 @@ mod tests {
       let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
       assert_eq!(station.security_status(), Some(1.0));
       assert_eq!(station.region(), &Some("Test Region".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_inaccessible_structures() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Reachable").await;
+      seed_structure(&db, 1_021_000_000_002, CORPORATION_ID, 30_002_187, "Unreachable").await;
+      mark_inaccessible(&db, 1_021_000_000_002, CORPORATION_ID).await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_001]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_structures_owned_by_an_unauthorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Locked Out").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert!(facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_excludes_structures_when_the_authorizer_holds_only_factory_manager() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation_with_role(&db, "Factory_Manager").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Factory").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert!(facilities.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_includes_a_pinned_structure_with_no_owned_corp() {
+      let db = store::open_test().await.unwrap();
+      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_009]
+      );
+      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
+      assert_eq!(pinned.solar_system_id(), 30_002_187);
+      assert_eq!(pinned.owner_id(), None);
+    }
+
+    #[tokio::test]
+    async fn it_includes_structures_when_the_authorizer_holds_station_manager() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation_with_role(&db, "Station_Manager").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Citadel").await;
+
+      let facilities = super::accessible_facilities(&db).await.unwrap();
+
+      assert_eq!(
+        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
+        [1_021_000_000_001]
+      );
     }
 
     #[tokio::test]
@@ -1293,130 +928,499 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_inaccessible_structures() {
+    async fn it_unions_stations_and_accessible_structures_with_their_systems() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, DIRECTOR_ID).await;
       authorize_corporation(&db).await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Reachable").await;
-      seed_structure(&db, 1_021_000_000_002, CORPORATION_ID, 30_002_187, "Unreachable").await;
-      mark_inaccessible(&db, 1_021_000_000_002, CORPORATION_ID).await;
+      seed_station(&db, 60_000_001, 30_000_142, "Jita IV - Moon 4").await;
+      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Amarr Citadel").await;
 
       let facilities = super::accessible_facilities(&db).await.unwrap();
 
-      assert_eq!(
-        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
-        [1_021_000_000_001]
-      );
+      let ids = facilities.iter().map(Facility::id).collect::<Vec<_>>();
+      assert_eq!(ids.len(), 2);
+      assert!(ids.contains(&60_000_001));
+      assert!(ids.contains(&1_021_000_000_001));
+      let structure = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
+      assert_eq!(structure.solar_system_id(), 30_002_187);
+      assert_eq!(structure.owner_id(), Some(CORPORATION_ID));
+      let station = facilities.iter().find(|f| f.id() == 60_000_001).unwrap();
+      assert_eq!(station.solar_system_id(), 30_000_142);
+      assert_eq!(station.owner_id(), None);
+    }
+  }
+
+  mod cost_index_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_system() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn it_excludes_structures_owned_by_an_unauthorized_corp() {
+    async fn it_returns_the_indexed_activity_for_a_known_system() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Locked Out").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      assert!(facilities.is_empty());
-    }
-
-    async fn authorize_corporation_with_role(db: &Database, role: &str) {
-      infra::upsert(
-        db,
-        CORPORATION_ID,
-        OwnerType::Corporation,
-        "tok",
-        "rt",
-        4_102_444_800,
-        Some(DIRECTOR_ID),
-        None,
-      )
-      .await
-      .unwrap();
-      org::replace_for_corporation(
-        db,
-        CORPORATION_ID,
-        &[CorporationMemberRole::from((
-          CORPORATION_ID,
-          DIRECTOR_ID,
-          role.to_owned(),
-        ))],
-      )
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_includes_structures_when_the_authorizer_holds_station_manager() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation_with_role(&db, "Station_Manager").await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Citadel").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      assert_eq!(
-        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
-        [1_021_000_000_001]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_excludes_structures_when_the_authorizer_holds_only_factory_manager() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation_with_role(&db, "Factory_Manager").await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Factory").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      assert!(facilities.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_includes_a_pinned_structure_with_no_owned_corp() {
-      let db = store::open_test().await.unwrap();
-      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
-
-      let facilities = super::accessible_facilities(&db).await.unwrap();
-
-      assert_eq!(
-        facilities.iter().map(Facility::id).collect::<Vec<_>>(),
-        [1_021_000_000_009]
-      );
-      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
-      assert_eq!(pinned.solar_system_id(), 30_002_187);
-      assert_eq!(pinned.owner_id(), None);
-    }
-
-    #[tokio::test]
-    async fn it_attaches_the_cost_index_to_a_pinned_structure_system() {
-      let db = store::open_test().await.unwrap();
-      pin_structure(&db, 1_021_000_000_009, 30_002_187, "Allied Fortizar").await;
-      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.04, 0.0)])
+      super::replace_cost_indices(&db, &[cost_index(30_000_142, 0.05, 0.01)])
         .await
         .unwrap();
 
-      let facilities = super::accessible_facilities(&db).await.unwrap();
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 1).await.unwrap(), Some(0.05));
+      assert_eq!(super::cost_index_for(&db, 30_000_142, 9).await.unwrap(), Some(0.01));
+    }
+  }
 
-      let pinned = facilities.iter().find(|f| f.id() == 1_021_000_000_009).unwrap();
-      assert_eq!(pinned.manufacturing_index(), Some(0.04));
+  mod list_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_both_character_and_corporation_jobs() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      seed_character(&db, DIRECTOR_ID).await;
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+      super::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[corporation_job(CORPORATION_ID, 10, "2026-06-15T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let all = super::list_all(&db).await.unwrap();
+
+      assert_eq!(
+        all
+          .character_jobs
+          .iter()
+          .map(CharacterIndustryJob::job_id)
+          .collect::<Vec<_>>(),
+        [1]
+      );
+      assert_eq!(
+        all
+          .corporation_jobs
+          .iter()
+          .map(CorporationIndustryJob::job_id)
+          .collect::<Vec<_>>(),
+        [10]
+      );
+    }
+  }
+
+  mod list_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_hides_jobs_for_an_unauthorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      super::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      assert!(
+        super::list_for_corporation(&db, CORPORATION_ID)
+          .await
+          .unwrap()
+          .is_empty()
+      );
     }
 
     #[tokio::test]
-    async fn it_does_not_duplicate_a_structure_that_is_both_pinned_and_corp_owned() {
+    async fn it_returns_jobs_for_an_authorized_corp() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, DIRECTOR_ID).await;
       authorize_corporation(&db).await;
-      seed_structure(&db, 1_021_000_000_001, CORPORATION_ID, 30_002_187, "Shared Citadel").await;
-      pin_structure(&db, 1_021_000_000_001, 30_002_187, "Shared Citadel").await;
+      super::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z")],
+      )
+      .await
+      .unwrap();
 
-      let facilities = super::accessible_facilities(&db).await.unwrap();
+      let jobs = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
 
-      let matching = facilities.iter().filter(|f| f.id() == 1_021_000_000_001).count();
-      assert_eq!(matching, 1);
-      let facility = facilities.iter().find(|f| f.id() == 1_021_000_000_001).unwrap();
-      assert_eq!(facility.owner_id(), Some(CORPORATION_ID));
+      assert_eq!(jobs.len(), 1);
+      assert_eq!(jobs[0].job_id(), 10);
+    }
+  }
+
+  mod plans {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn sample_tree() -> PlanTree {
+      PlanTree {
+        product_type_id: 22_544,
+        root_facility_system: Some(30_000_142),
+        runs: 7,
+        types: vec![
+          PlanType {
+            built: false,
+            facility_structure: Some(60_003_760),
+            facility_system: Some(30_000_142),
+            me: 10,
+            te: 20,
+            type_id: 22_544,
+            use_stock: false,
+          },
+          PlanType {
+            built: true,
+            facility_structure: None,
+            facility_system: None,
+            me: 8,
+            te: 16,
+            type_id: 17_478,
+            use_stock: false,
+          },
+          PlanType {
+            built: true,
+            facility_structure: Some(1_021_000_000_001),
+            facility_system: Some(30_002_187),
+            me: 5,
+            te: 0,
+            type_id: 34,
+            use_stock: true,
+          },
+          PlanType {
+            built: false,
+            facility_structure: None,
+            facility_system: None,
+            me: 9,
+            te: 18,
+            type_id: 11_399,
+            use_stock: false,
+          },
+        ],
+      }
+    }
+
+    fn sorted_by_type(mut tree: PlanTree) -> PlanTree {
+      tree.types.sort_by_key(|kind| kind.type_id);
+      tree
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_plan_and_cascades_its_types() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      delete_plan(&db, plan.id()).await.unwrap();
+
+      assert!(load_plan(&db, plan.id()).await.unwrap().is_none());
+      let type_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_types WHERE plan_id = ?")
+        .bind(plan.id())
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(type_count, 0);
+    }
+
+    #[tokio::test]
+    async fn it_lists_saved_plans() {
+      let db = store::open_test().await.unwrap();
+      create_plan(&db, "First", &sample_tree()).await.unwrap();
+      create_plan(&db, "Second", &sample_tree()).await.unwrap();
+
+      let plans = list_plans(&db).await.unwrap();
+
+      assert_eq!(plans.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_parent_metadata() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      assert_eq!(plan.name(), "Hulk run");
+      assert_eq!(plan.product_type_id(), 22_544);
+      assert_eq!(plan.runs(), 7);
+      assert_eq!(plan.root_facility_system(), Some(30_000_142));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_loading_a_missing_plan() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(load_plan(&db, 404).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_saved_tree() {
+      let db = store::open_test().await.unwrap();
+      let tree = sample_tree();
+
+      let plan = create_plan(&db, "Hulk run", &tree).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      assert_eq!(sorted_by_type(loaded), sorted_by_type(tree));
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_built_flag() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let built: Vec<i64> = loaded
+        .types
+        .iter()
+        .filter(|kind| kind.built)
+        .map(|kind| kind.type_id)
+        .collect();
+      assert_eq!(built, vec![34, 17_478]);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_facility_structure() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let root = loaded.types.iter().find(|kind| kind.type_id == 22_544).unwrap();
+      let component = loaded.types.iter().find(|kind| kind.type_id == 34).unwrap();
+      let unset = loaded.types.iter().find(|kind| kind.type_id == 17_478).unwrap();
+      assert_eq!(root.facility_structure, Some(60_003_760));
+      assert_eq!(component.facility_structure, Some(1_021_000_000_001));
+      assert_eq!(unset.facility_structure, None);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_the_per_type_use_stock_intent() {
+      let db = store::open_test().await.unwrap();
+
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      let loaded = load_plan(&db, plan.id()).await.unwrap().unwrap();
+
+      let use_stock: Vec<i64> = loaded
+        .types
+        .iter()
+        .filter(|kind| kind.use_stock)
+        .map(|kind| kind.type_id)
+        .collect();
+      assert_eq!(use_stock, vec![34]);
+    }
+  }
+
+  mod replace_cost_indices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_leaves_existing_rows_intact_when_the_new_set_is_empty() {
+      let db = store::open_test().await.unwrap();
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      super::replace_cost_indices(&db, &[]).await.unwrap();
+
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
+        Some(cost_index(30_000_142, 0.05, 0.01))
+      );
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.06, 0.02))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_every_system() {
+      let db = store::open_test().await.unwrap();
+
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_000_142).await.unwrap(),
+        Some(cost_index(30_000_142, 0.05, 0.01))
+      );
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.06, 0.02))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_wholesale_replaces_dropping_systems_absent_from_the_new_set() {
+      let db = store::open_test().await.unwrap();
+      super::replace_cost_indices(
+        &db,
+        &[cost_index(30_000_142, 0.05, 0.01), cost_index(30_002_187, 0.06, 0.02)],
+      )
+      .await
+      .unwrap();
+
+      super::replace_cost_indices(&db, &[cost_index(30_002_187, 0.09, 0.03)])
+        .await
+        .unwrap();
+
+      assert_eq!(super::cost_indices_for_system(&db, 30_000_142).await.unwrap(), None);
+      assert_eq!(
+        super::cost_indices_for_system(&db, 30_002_187).await.unwrap(),
+        Some(cost_index(30_002_187, 0.09, 0.03))
+      );
+    }
+  }
+
+  mod replace_for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_cascades_when_the_character_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      sqlx::query("DELETE FROM characters WHERE id = ?")
+        .bind(CHARACTER_ID)
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      assert!(super::list_for_character(&db, CHARACTER_ID).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_the_full_job_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[
+          character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z"),
+          character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
+      assert_eq!(
+        jobs.iter().map(CharacterIndustryJob::job_id).collect::<Vec<_>>(),
+        [1, 2]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_prunes_stale_jobs_on_re_sync() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[
+          character_job(CHARACTER_ID, 1, "2026-06-14T00:00:00Z"),
+          character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      super::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_job(CHARACTER_ID, 2, "2026-06-15T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
+      assert_eq!(jobs.iter().map(CharacterIndustryJob::job_id).collect::<Vec<_>>(), [2]);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_every_field() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      let job = character_job(CHARACTER_ID, 7, "2026-06-14T00:00:00Z");
+
+      super::replace_for_character(&db, CHARACTER_ID, std::slice::from_ref(&job))
+        .await
+        .unwrap();
+
+      let jobs = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
+      assert_eq!(jobs, vec![job]);
+    }
+  }
+
+  mod replace_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_inserts_then_prunes_for_an_authorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+
+      super::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[
+          corporation_job(CORPORATION_ID, 10, "2026-06-14T00:00:00Z"),
+          corporation_job(CORPORATION_ID, 11, "2026-06-15T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      super::replace_for_corporation(
+        &db,
+        CORPORATION_ID,
+        &[corporation_job(CORPORATION_ID, 11, "2026-06-15T00:00:00Z")],
+      )
+      .await
+      .unwrap();
+
+      let jobs = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
+      assert_eq!(
+        jobs.iter().map(CorporationIndustryJob::job_id).collect::<Vec<_>>(),
+        [11]
+      );
     }
   }
 

@@ -1097,111 +1097,21 @@ mod tests {
     Utc::now()
   }
 
-  mod shell {
+  mod contract_status_cell {
     use super::*;
 
     #[test]
-    fn it_renders_the_all_wallets_body() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-    }
-
-    #[tokio::test]
-    async fn it_renders_with_the_picker_open() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = crate::features::wallet::update(&mut state, Message::PickerToggled, &db);
-      let _el: Element<'_, Message> = shell(&state, now());
-    }
-  }
-
-  mod pinned_header {
-    use super::*;
-
-    #[test]
-    fn it_pins_a_header_for_market_and_contracts_but_not_journal() {
-      let mut state = State::new();
-
-      state.tab = Tab::Market;
-      assert!(super::super::pinned_header(&state).is_some());
-
-      state.tab = Tab::Contracts;
-      assert!(super::super::pinned_header(&state).is_some());
-
-      state.tab = Tab::Journal;
-      assert!(super::super::pinned_header(&state).is_none());
-    }
-  }
-
-  mod journal_tab {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn journal_entry(amount: Option<f64>, ref_type: &str) -> JournalEntry {
-      JournalEntry {
-        amount,
-        balance: Some(5_000.0),
-        character_id: 1,
-        date: "2026-05-30T12:00:00Z".to_owned(),
-        description: "Bounty payout".to_owned(),
-        id: 1,
-        ref_type: ref_type.to_owned(),
+    fn it_renders_each_status() {
+      for status in [
+        "outstanding",
+        "in_progress",
+        "finished",
+        "expired",
+        "outbid",
+        "cancelled",
+      ] {
+        let _el: Element<'_, Message> = super::super::contract_status_cell(status, Length::FillPortion(2));
       }
-    }
-
-    fn state_on_journal() -> State {
-      let mut state = State::new();
-      state.tab = Tab::Journal;
-      state
-    }
-
-    #[test]
-    fn it_renders_the_empty_state_when_no_entries_match() {
-      let state = state_on_journal();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-      assert!(crate::features::wallet::filtered_journal(&state).is_empty());
-    }
-
-    #[test]
-    fn it_renders_a_glyph_badge_card_list() {
-      let mut state = state_on_journal();
-      state.journal = vec![
-        journal_entry(Some(1_000.0), "bounty_prizes"),
-        journal_entry(Some(-400.0), "brokers_fee"),
-      ];
-      state.recompute_derived();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-      assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2);
-    }
-
-    #[test]
-    fn it_renders_a_row_for_an_amountless_entry_via_ref_type_direction() {
-      let mut state = state_on_journal();
-      state.journal = vec![journal_entry(None, "agent_mission_reward")];
-      state.recompute_derived();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-    }
-
-    #[test]
-    fn it_windows_a_large_ledger_with_a_scroll_offset_without_materializing_every_row() {
-      let mut state = state_on_journal();
-      state.journal = (0..2_000)
-        .map(|index| {
-          let mut entry = journal_entry(Some(index as f64), "bounty_prizes");
-          entry.id = index;
-          entry
-        })
-        .collect();
-      state.tab_scroll_offset = 30_000.0;
-      state.recompute_derived();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-      assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
     }
   }
 
@@ -1238,20 +1148,23 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_not_synced_state_when_no_contracts_exist() {
-      let state = state_on_contracts();
-
-      let _el: Element<'_, Message> = shell(&state, now());
-      assert!(!state.has_contracts());
-    }
-
-    #[test]
     fn it_renders_a_populated_contract_list() {
       let mut state = state_on_contracts();
       state.contracts = vec![
         contract(true, "outstanding", "courier"),
         contract(false, "finished", "item_exchange"),
       ];
+      state.recompute_derived();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert!(state.has_contracts());
+    }
+
+    #[test]
+    fn it_renders_corporation_contracts_in_the_table() {
+      let mut state = state_on_contracts();
+      state.active = Scope::Corporation(98_000_001);
+      state.contracts = vec![contract(false, "finished", "item_exchange")];
       state.recompute_derived();
 
       let _el: Element<'_, Message> = shell(&state, now());
@@ -1270,32 +1183,119 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_corporation_contracts_in_the_table() {
-      let mut state = state_on_contracts();
-      state.active = Scope::Corporation(98_000_001);
-      state.contracts = vec![contract(false, "finished", "item_exchange")];
-      state.recompute_derived();
+    fn it_renders_the_not_synced_state_when_no_contracts_exist() {
+      let state = state_on_contracts();
 
       let _el: Element<'_, Message> = shell(&state, now());
-      assert!(state.has_contracts());
+      assert!(!state.has_contracts());
     }
   }
 
-  mod contract_status_cell {
+  mod journal_tab {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn journal_entry(amount: Option<f64>, ref_type: &str) -> JournalEntry {
+      JournalEntry {
+        amount,
+        balance: Some(5_000.0),
+        character_id: 1,
+        date: "2026-05-30T12:00:00Z".to_owned(),
+        description: "Bounty payout".to_owned(),
+        id: 1,
+        ref_type: ref_type.to_owned(),
+      }
+    }
+
+    fn state_on_journal() -> State {
+      let mut state = State::new();
+      state.tab = Tab::Journal;
+      state
+    }
+
+    #[test]
+    fn it_renders_a_glyph_badge_card_list() {
+      let mut state = state_on_journal();
+      state.journal = vec![
+        journal_entry(Some(1_000.0), "bounty_prizes"),
+        journal_entry(Some(-400.0), "brokers_fee"),
+      ];
+      state.recompute_derived();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2);
+    }
+
+    #[test]
+    fn it_renders_a_row_for_an_amountless_entry_via_ref_type_direction() {
+      let mut state = state_on_journal();
+      state.journal = vec![journal_entry(None, "agent_mission_reward")];
+      state.recompute_derived();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_when_no_entries_match() {
+      let state = state_on_journal();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert!(crate::features::wallet::filtered_journal(&state).is_empty());
+    }
+
+    #[test]
+    fn it_windows_a_large_ledger_with_a_scroll_offset_without_materializing_every_row() {
+      let mut state = state_on_journal();
+      state.journal = (0..2_000)
+        .map(|index| {
+          let mut entry = journal_entry(Some(index as f64), "bounty_prizes");
+          entry.id = index;
+          entry
+        })
+        .collect();
+      state.tab_scroll_offset = 30_000.0;
+      state.recompute_derived();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
+    }
+  }
+
+  mod pinned_header {
     use super::*;
 
     #[test]
-    fn it_renders_each_status() {
-      for status in [
-        "outstanding",
-        "in_progress",
-        "finished",
-        "expired",
-        "outbid",
-        "cancelled",
-      ] {
-        let _el: Element<'_, Message> = super::super::contract_status_cell(status, Length::FillPortion(2));
-      }
+    fn it_pins_a_header_for_market_and_contracts_but_not_journal() {
+      let mut state = State::new();
+
+      state.tab = Tab::Market;
+      assert!(super::super::pinned_header(&state).is_some());
+
+      state.tab = Tab::Contracts;
+      assert!(super::super::pinned_header(&state).is_some());
+
+      state.tab = Tab::Journal;
+      assert!(super::super::pinned_header(&state).is_none());
+    }
+  }
+
+  mod shell {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_all_wallets_body() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+    }
+
+    #[tokio::test]
+    async fn it_renders_with_the_picker_open() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = crate::features::wallet::update(&mut state, Message::PickerToggled, &db);
+      let _el: Element<'_, Message> = shell(&state, now());
     }
   }
 }

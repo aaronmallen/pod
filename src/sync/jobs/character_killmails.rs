@@ -570,57 +570,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_takes_the_zkill_value_when_the_kill_is_present_on_zkill() {
-      let esi_server = MockServer::start().await;
-      mount_paginated(
-        &esi_server,
-        "/characters/42/killmails/recent/",
-        serde_json::json!([{"killmail_id": 200, "killmail_hash": "losshash"}]),
-      )
-      .await;
-      mount_json(
-        &esi_server,
-        "/killmails/200/losshash/",
-        serde_json::json!({
-          "killmail_id": 200,
-          "killmail_time": "2024-02-01T00:00:00Z",
-          "solar_system_id": 30000142,
-          "victim": {"character_id": 42, "corporation_id": 90000001, "ship_type_id": 670},
-          "attackers": [{"character_id": 999, "final_blow": true}]
-        }),
-      )
-      .await;
-
-      let zkill_server = MockServer::start().await;
-      mount_json(
-        &zkill_server,
-        "/killID/200/",
-        serde_json::json!([{"killmail_id": 200, "zkb": {"hash": "losshash", "totalValue": 9876.5}}]),
-      )
-      .await;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
-
-      run_with_zkill(&ctx, &zkill).await.unwrap();
-
-      let rows = character::killmails(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      let loss = &rows[0];
-      assert!(!loss.is_kill());
-      assert_eq!(loss.value_source(), "zkill");
-      assert_eq!(loss.value_isk(), 9876.5);
-    }
-
-    #[tokio::test]
     async fn it_falls_back_to_the_zkill_feed_when_the_killmails_scope_is_missing() {
       let esi_server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -679,159 +628,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_reports_a_skipped_outcome_when_every_discovered_killmail_fails_to_assemble() {
-      let esi_server = MockServer::start().await;
-      mount_paginated(
-        &esi_server,
-        "/characters/42/killmails/recent/",
-        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
-      )
-      .await;
-      mount_json(
-        &esi_server,
-        "/killmails/100/killhash/",
-        serde_json::json!({
-          "killmail_id": 100,
-          "solar_system_id": 30000142,
-          "victim": {"ship_type_id": 587},
-          "attackers": []
-        }),
-      )
-      .await;
-
-      let zkill_server = MockServer::start().await;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
-
-      let outcome = run_with_zkill(&ctx, &zkill).await.unwrap();
-
-      assert_eq!(
-        outcome,
-        Outcome::Skipped {
-          reason: "1 killmail(s) failed to assemble".to_owned()
-        }
-      );
-      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_skips_already_stored_killmails_without_refetching_detail() {
-      let esi_server = MockServer::start().await;
-      mount_paginated(
-        &esi_server,
-        "/characters/42/killmails/recent/",
-        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
-      )
-      .await;
-      Mock::given(method("GET"))
-        .and(path("/killmails/100/killhash/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "killmail_id": 100,
-          "killmail_time": "2024-01-01T00:00:00Z",
-          "solar_system_id": 30000142,
-          "victim": {"ship_type_id": 587},
-          "attackers": []
-        })))
-        .expect(0)
-        .mount(&esi_server)
-        .await;
-
-      let zkill_server = MockServer::start().await;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      character::upsert_killmail(
-        &db,
-        &CharacterKillEntry {
-          attacker_count: 1,
-          character_id: 42,
-          final_blow: true,
-          is_kill: true,
-          kill_hash: "killhash".to_owned(),
-          kill_time: "2024-01-01T00:00:00Z".to_owned(),
-          killmail_id: 100,
-          ship_type_id: 587,
-          synced_at: "2024-01-01T00:00:00Z".to_owned(),
-          system_id: 30000142,
-          value_destroyed_isk: 0.0,
-          value_final: false,
-          value_isk: 1.0,
-          value_recheck_count: 0,
-          value_source: "local".to_owned(),
-          victim_alliance_id: None,
-          victim_corp_id: None,
-          victim_damage_taken: 0,
-          victim_id: None,
-        },
-      )
-      .await
-      .unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
-
-      run_with_zkill(&ctx, &zkill).await.unwrap();
-
-      assert_eq!(character::killmails(&db, 42).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_skips_corp_discovery_when_the_character_lacks_director_role() {
-      let esi_server = MockServer::start().await;
-      mount_paginated(&esi_server, "/characters/42/killmails/recent/", serde_json::json!([])).await;
-      mount_json(
-        &esi_server,
-        "/corporations/90000001/roles/",
-        serde_json::json!([{"character_id": 42, "roles": ["Accountant"]}]),
-      )
-      .await;
-      Mock::given(method("GET"))
-        .and(path("/corporations/90000001/killmails/recent/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&esi_server)
-        .await;
-
-      let zkill_server = MockServer::start().await;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes(
-        "token",
-        42,
-        vec![
-          scopes::CHARACTER_KILLMAILS.to_owned(),
-          scopes::CORPORATION_KILLMAILS.to_owned(),
-        ],
-      );
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
-
-      run_with_zkill(&ctx, &zkill).await.unwrap();
-
-      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn it_includes_corp_killmails_when_the_character_is_a_director() {
       let esi_server = MockServer::start().await;
       mount_paginated(&esi_server, "/characters/42/killmails/recent/", serde_json::json!([])).await;
@@ -887,36 +683,6 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].killmail_id(), 500);
       assert!(rows[0].is_kill());
-    }
-
-    #[tokio::test]
-    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
-      let esi_server = MockServer::start().await;
-      let zkill_server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/killmails/recent/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&esi_server)
-        .await;
-
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
-      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
-
-      let result = run_with_zkill(&ctx, &zkill).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
-      );
-      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1009,6 +775,51 @@ mod tests {
       assert_eq!(items[0].value_isk(), 100.0);
       assert_eq!(items[1].type_id(), 99);
       assert_eq!(items[1].value_isk(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_skipped_outcome_when_every_discovered_killmail_fails_to_assemble() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/killmails/100/killhash/",
+        serde_json::json!({
+          "killmail_id": 100,
+          "solar_system_id": 30000142,
+          "victim": {"ship_type_id": 587},
+          "attackers": []
+        }),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      let outcome = run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Skipped {
+          reason: "1 killmail(s) failed to assemble".to_owned()
+        }
+      );
+      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1127,6 +938,195 @@ mod tests {
           .map(|a| a.name().to_owned()),
         Some("Enemy Alliance".to_owned())
       );
+    }
+
+    #[tokio::test]
+    async fn it_skips_already_stored_killmails_without_refetching_detail() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 100, "killmail_hash": "killhash"}]),
+      )
+      .await;
+      Mock::given(method("GET"))
+        .and(path("/killmails/100/killhash/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "killmail_id": 100,
+          "killmail_time": "2024-01-01T00:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"ship_type_id": 587},
+          "attackers": []
+        })))
+        .expect(0)
+        .mount(&esi_server)
+        .await;
+
+      let zkill_server = MockServer::start().await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      character::upsert_killmail(
+        &db,
+        &CharacterKillEntry {
+          attacker_count: 1,
+          character_id: 42,
+          final_blow: true,
+          is_kill: true,
+          kill_hash: "killhash".to_owned(),
+          kill_time: "2024-01-01T00:00:00Z".to_owned(),
+          killmail_id: 100,
+          ship_type_id: 587,
+          synced_at: "2024-01-01T00:00:00Z".to_owned(),
+          system_id: 30000142,
+          value_destroyed_isk: 0.0,
+          value_final: false,
+          value_isk: 1.0,
+          value_recheck_count: 0,
+          value_source: "local".to_owned(),
+          victim_alliance_id: None,
+          victim_corp_id: None,
+          victim_damage_taken: 0,
+          victim_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert_eq!(character::killmails(&db, 42).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_skips_corp_discovery_when_the_character_lacks_director_role() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(&esi_server, "/characters/42/killmails/recent/", serde_json::json!([])).await;
+      mount_json(
+        &esi_server,
+        "/corporations/90000001/roles/",
+        serde_json::json!([{"character_id": 42, "roles": ["Accountant"]}]),
+      )
+      .await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/90000001/killmails/recent/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&esi_server)
+        .await;
+
+      let zkill_server = MockServer::start().await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes(
+        "token",
+        42,
+        vec![
+          scopes::CHARACTER_KILLMAILS.to_owned(),
+          scopes::CORPORATION_KILLMAILS.to_owned(),
+        ],
+      );
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
+      let esi_server = MockServer::start().await;
+      let zkill_server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/killmails/recent/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&esi_server)
+        .await;
+
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      let result = run_with_zkill(&ctx, &zkill).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_takes_the_zkill_value_when_the_kill_is_present_on_zkill() {
+      let esi_server = MockServer::start().await;
+      mount_paginated(
+        &esi_server,
+        "/characters/42/killmails/recent/",
+        serde_json::json!([{"killmail_id": 200, "killmail_hash": "losshash"}]),
+      )
+      .await;
+      mount_json(
+        &esi_server,
+        "/killmails/200/losshash/",
+        serde_json::json!({
+          "killmail_id": 200,
+          "killmail_time": "2024-02-01T00:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"character_id": 42, "corporation_id": 90000001, "ship_type_id": 670},
+          "attackers": [{"character_id": 999, "final_blow": true}]
+        }),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+      mount_json(
+        &zkill_server,
+        "/killID/200/",
+        serde_json::json!([{"killmail_id": 200, "zkb": {"hash": "losshash", "totalValue": 9876.5}}]),
+      )
+      .await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::CHARACTER_KILLMAILS.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = character::killmails(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      let loss = &rows[0];
+      assert!(!loss.is_kill());
+      assert_eq!(loss.value_source(), "zkill");
+      assert_eq!(loss.value_isk(), 9876.5);
     }
   }
 }

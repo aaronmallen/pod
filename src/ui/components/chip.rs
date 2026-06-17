@@ -222,11 +222,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_a_removable_variant() {
-      let _removable: Element<'_, i32> = Chip::new("Wormhole", None).on_remove(7).view();
-    }
-
-    #[test]
     fn it_renders_a_colored_removable_variant() {
       let _removable: Element<'_, i32> = Chip::new("Nullsec", Some(color::text::secondary())).on_remove(1).view();
     }
@@ -234,6 +229,11 @@ mod tests {
     #[test]
     fn it_renders_a_pressable_variant() {
       let _pressable: Element<'_, i32> = Chip::new("Highsec", None).on_press(2).view();
+    }
+
+    #[test]
+    fn it_renders_a_removable_variant() {
+      let _removable: Element<'_, i32> = Chip::new("Wormhole", None).on_remove(7).view();
     }
 
     #[test]

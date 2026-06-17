@@ -313,12 +313,6 @@ mod tests {
   use super::*;
 
   #[test]
-  fn nav_item_renders_active_and_inactive() {
-    let _active: Element<'_, ()> = nav_item(CHARACTERS_ICON, true, ());
-    let _inactive: Element<'_, ()> = nav_item(CHARACTERS_ICON, false, ());
-  }
-
-  #[test]
   fn nav_item_badged_renders_with_and_without_a_badge() {
     let _with: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, true, ());
     let _without: Element<'_, ()> = nav_item_badged(MAIL_ICON, false, false, ());
@@ -326,15 +320,36 @@ mod tests {
   }
 
   #[test]
-  fn rail_renders_with_characters_active() {
-    let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &all_features, |destination| destination);
+  fn nav_item_renders_active_and_inactive() {
+    let _active: Element<'_, ()> = nav_item(CHARACTERS_ICON, true, ());
+    let _inactive: Element<'_, ()> = nav_item(CHARACTERS_ICON, false, ());
   }
 
   #[test]
-  fn rail_renders_with_skills_active() {
+  fn rail_hides_disabled_feature_icons_but_always_shows_characters_and_settings() {
+    let no_features: Vec<Feature> = vec![];
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &no_features, |destination| destination);
+
+    let mail_only = vec![Feature::Mail];
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &mail_only, |destination| destination);
+  }
+
+  #[test]
+  fn rail_renders_with_assets_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, 0, &all_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, 0, &all_features, |destination| destination);
+  }
+
+  #[test]
+  fn rail_renders_with_calendar_active_and_attention_badge() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Calendar, 0, 2, &all_features, |destination| destination);
+  }
+
+  #[test]
+  fn rail_renders_with_characters_active() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
@@ -350,35 +365,20 @@ mod tests {
   }
 
   #[test]
-  fn rail_renders_with_calendar_active_and_attention_badge() {
-    let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Calendar, 0, 2, &all_features, |destination| destination);
-  }
-
-  #[test]
-  fn rail_renders_with_wallet_active() {
-    let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, 0, &all_features, |destination| destination);
-  }
-
-  #[test]
-  fn rail_renders_with_assets_active() {
-    let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, 0, &all_features, |destination| destination);
-  }
-
-  #[test]
   fn rail_renders_with_settings_active() {
     let all_features = Feature::ALL;
     let _el: Element<'_, Destination> = rail(Destination::Settings, 0, 0, &all_features, |destination| destination);
   }
 
   #[test]
-  fn rail_hides_disabled_feature_icons_but_always_shows_characters_and_settings() {
-    let no_features: Vec<Feature> = vec![];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &no_features, |destination| destination);
+  fn rail_renders_with_skills_active() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, 0, &all_features, |destination| destination);
+  }
 
-    let mail_only = vec![Feature::Mail];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &mail_only, |destination| destination);
+  #[test]
+  fn rail_renders_with_wallet_active() {
+    let all_features = Feature::ALL;
+    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, 0, &all_features, |destination| destination);
   }
 }

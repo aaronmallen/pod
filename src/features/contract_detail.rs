@@ -1662,82 +1662,6 @@ mod tests {
     }
   }
 
-  mod overlay {
-    use super::*;
-
-    #[test]
-    fn it_renders_an_item_trade() {
-      let detail = item_trade();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
-    }
-
-    #[test]
-    fn it_renders_a_courier_with_a_route() {
-      let detail = courier();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
-    }
-
-    #[test]
-    fn it_renders_an_auction_with_bids() {
-      let detail = auction();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
-    }
-
-    #[test]
-    fn it_renders_without_items_or_an_acceptor() {
-      let mut bare = item_trade();
-      bare.acceptor = None;
-      bare.items = Vec::new();
-
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
-    }
-  }
-
-  mod relative_time {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
-      assert_eq!(relative_time("not-a-date"), "not-a-date");
-    }
-
-    #[test]
-    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
-      let label = relative_time("2000-01-01T00:00:00Z");
-
-      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
-    }
-  }
-
-  mod stale_images {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_collects_stale_party_portraits() {
-      let keys = item_trade().stale_images();
-
-      assert_eq!(keys.len(), 2);
-      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 3)));
-      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 5)));
-    }
-
-    #[test]
-    fn it_skips_fresh_portraits() {
-      let mut detail = courier();
-      detail.acceptor = None;
-
-      assert!(detail.stale_images().is_empty());
-    }
-  }
-
   mod load_for_character {
     use pretty_assertions::assert_eq;
 
@@ -1763,45 +1687,6 @@ mod tests {
       character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
         .await
         .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_for_a_missing_contract() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      assert!(super::super::load_for_character(&db, 42, 999).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_uses_the_corp_logo_for_a_for_corporation_issuer() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      sqlx::query(
-        "INSERT INTO character_contracts \
-          (character_id, contract_id, type, status, issuer_id, issuer_name, issuer_corporation_id, price, reward, \
-          collateral, volume, for_corporation, date_issued, days_to_complete, start_location_id, end_location_id, \
-          availability) \
-        VALUES (?, ?, 'item_exchange', 'outstanding', ?, 'Issuer Pilot', ?, ?, NULL, NULL, NULL, 1, ?, NULL, NULL, \
-          NULL, 'public')",
-      )
-      .bind(42_i64)
-      .bind(7_i64)
-      .bind(42_i64)
-      .bind(90_000_001_i64)
-      .bind(10_000_000.0_f64)
-      .bind("2024-01-01T00:00:00Z")
-      .execute(&db.0)
-      .await
-      .unwrap();
-
-      let detail = super::super::load_for_character(&db, 42, 7).await.unwrap();
-
-      assert_eq!(detail.issuer.name, "Test Corp");
-      assert_eq!(
-        detail.issuer.portrait.stale_key(),
-        Some((images::ImageKind::CorporationLogo, 90_000_001))
-      );
     }
 
     #[tokio::test]
@@ -1851,6 +1736,121 @@ mod tests {
       assert_eq!(detail.route.as_ref().unwrap().start, "Structure 60003760");
       assert_eq!(detail.items.len(), 1);
       assert_eq!(detail.items[0].name, "Type 34");
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_a_missing_contract() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert!(super::super::load_for_character(&db, 42, 999).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_uses_the_corp_logo_for_a_for_corporation_issuer() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      sqlx::query(
+        "INSERT INTO character_contracts \
+          (character_id, contract_id, type, status, issuer_id, issuer_name, issuer_corporation_id, price, reward, \
+          collateral, volume, for_corporation, date_issued, days_to_complete, start_location_id, end_location_id, \
+          availability) \
+        VALUES (?, ?, 'item_exchange', 'outstanding', ?, 'Issuer Pilot', ?, ?, NULL, NULL, NULL, 1, ?, NULL, NULL, \
+          NULL, 'public')",
+      )
+      .bind(42_i64)
+      .bind(7_i64)
+      .bind(42_i64)
+      .bind(90_000_001_i64)
+      .bind(10_000_000.0_f64)
+      .bind("2024-01-01T00:00:00Z")
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      let detail = super::super::load_for_character(&db, 42, 7).await.unwrap();
+
+      assert_eq!(detail.issuer.name, "Test Corp");
+      assert_eq!(
+        detail.issuer.portrait.stale_key(),
+        Some((images::ImageKind::CorporationLogo, 90_000_001))
+      );
+    }
+  }
+
+  mod overlay {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_courier_with_a_route() {
+      let detail = courier();
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+    }
+
+    #[test]
+    fn it_renders_an_auction_with_bids() {
+      let detail = auction();
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+    }
+
+    #[test]
+    fn it_renders_an_item_trade() {
+      let detail = item_trade();
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+    }
+
+    #[test]
+    fn it_renders_without_items_or_an_acceptor() {
+      let mut bare = item_trade();
+      bare.acceptor = None;
+      bare.items = Vec::new();
+
+      let base: Element<'_, Msg> = Space::new().into();
+      let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
+    }
+  }
+
+  mod relative_time {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
+      let label = relative_time("2000-01-01T00:00:00Z");
+
+      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
+      assert_eq!(relative_time("not-a-date"), "not-a-date");
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_stale_party_portraits() {
+      let keys = item_trade().stale_images();
+
+      assert_eq!(keys.len(), 2);
+      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 3)));
+      assert!(keys.contains(&(images::ImageKind::CharacterPortrait, 5)));
+    }
+
+    #[test]
+    fn it_skips_fresh_portraits() {
+      let mut detail = courier();
+      detail.acceptor = None;
+
+      assert!(detail.stale_images().is_empty());
     }
   }
 }

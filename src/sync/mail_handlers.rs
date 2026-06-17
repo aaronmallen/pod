@@ -423,75 +423,6 @@ mod tests {
     format!("{{\"character_id\":{character_id},\"mail_id\":{mail_id},\"read\":{read}}}")
   }
 
-  #[test]
-  fn it_registers_the_set_read_handler() {
-    let registry = registry();
-
-    let handler = registry.handler(OutboxKind::MailSetRead).expect("registered");
-
-    assert_eq!(handler.kind(), OutboxKind::MailSetRead);
-  }
-
-  #[test]
-  fn it_registers_the_send_handler() {
-    let registry = registry();
-
-    let handler = registry.handler(OutboxKind::MailSend).expect("registered");
-
-    assert_eq!(handler.kind(), OutboxKind::MailSend);
-  }
-
-  #[tokio::test]
-  async fn it_accepts_a_well_formed_send_payload_on_apply() {
-    let db = store::open_test().await.unwrap();
-    let payload = r#"{"from_character_id":42,"recipients":[{"name":"Vex","id":95000001,"recipient_type":"character"}],"subject":"Hi","body":"There"}"#;
-
-    SendHandler.apply(&db, payload).await.unwrap();
-  }
-
-  #[tokio::test]
-  async fn it_fails_a_malformed_send_payload() {
-    let db = store::open_test().await.unwrap();
-
-    let result = SendHandler.apply(&db, "not json").await;
-
-    assert!(matches!(result, Err(clients::Error::Json(_))));
-  }
-
-  #[tokio::test]
-  async fn it_optimistically_flips_the_mirror_on_apply() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    store_unread(&db, 42, 7).await;
-
-    SetReadHandler.apply(&db, &payload(42, 7, true)).await.unwrap();
-
-    let headers = mail::headers(&db, 42).await.unwrap();
-    assert!(headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
-  }
-
-  #[tokio::test]
-  async fn it_reverts_the_optimistic_flip_on_compensate() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    store_unread(&db, 42, 7).await;
-    SetReadHandler.apply(&db, &payload(42, 7, true)).await.unwrap();
-
-    SetReadHandler.compensate(&db, &payload(42, 7, true)).await.unwrap();
-
-    let headers = mail::headers(&db, 42).await.unwrap();
-    assert!(!headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
-  }
-
-  #[tokio::test]
-  async fn it_fails_a_malformed_payload() {
-    let db = store::open_test().await.unwrap();
-
-    let result = SetReadHandler.apply(&db, "not json").await;
-
-    assert!(matches!(result, Err(clients::Error::Json(_))));
-  }
-
   mod create_label {
     use pretty_assertions::assert_eq;
     use wiremock::{
@@ -512,13 +443,13 @@ mod tests {
       format!("{{\"character_id\":{character_id},\"label_id\":{label_id},\"name\":\"{name}\",\"color\":\"{color}\"}}")
     }
 
-    #[test]
-    fn it_is_registered() {
-      let registry = registry();
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
 
-      let handler = registry.handler(OutboxKind::MailCreateLabel).expect("registered");
+      let result = CreateLabelHandler.apply(&db, "not json").await;
 
-      assert_eq!(handler.kind(), OutboxKind::MailCreateLabel);
+      assert!(matches!(result, Err(clients::Error::Json(_))));
     }
 
     #[tokio::test]
@@ -536,6 +467,15 @@ mod tests {
       assert_eq!(labels[0].label_id(), -1);
       assert_eq!(labels[0].name(), "Bills");
       assert_eq!(labels[0].color().as_deref(), Some("#ffffcd"));
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailCreateLabel).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailCreateLabel);
     }
 
     #[tokio::test]
@@ -603,15 +543,6 @@ mod tests {
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
     }
-
-    #[tokio::test]
-    async fn it_fails_a_malformed_payload() {
-      let db = store::open_test().await.unwrap();
-
-      let result = CreateLabelHandler.apply(&db, "not json").await;
-
-      assert!(matches!(result, Err(clients::Error::Json(_))));
-    }
   }
 
   mod delete_label {
@@ -644,27 +575,11 @@ mod tests {
       format!("{{\"character_id\":{character_id},\"label_id\":{label_id}}}")
     }
 
-    #[test]
-    fn it_is_registered() {
-      let registry = registry();
-
-      let handler = registry.handler(OutboxKind::MailDeleteLabel).expect("registered");
-
-      assert_eq!(handler.kind(), OutboxKind::MailDeleteLabel);
-    }
-
     #[tokio::test]
-    async fn it_deletes_the_label_and_its_membership_on_apply() {
+    async fn it_compensates_as_a_no_op() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      store_unread(&db, 42, 7).await;
-      seed_label(&db, 42, 17).await;
-      mail::add_membership(&db, 42, 7, 17).await.unwrap();
 
-      DeleteLabelHandler.apply(&db, &payload(42, 17)).await.unwrap();
-
-      assert!(mail::labels(&db, 42).await.unwrap().is_empty());
-      assert!(mail::membership(&db, 42, 7).await.unwrap().is_empty());
+      DeleteLabelHandler.compensate(&db, &payload(42, 17)).await.unwrap();
     }
 
     #[tokio::test]
@@ -687,6 +602,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_deletes_the_label_and_its_membership_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 17).await;
+      mail::add_membership(&db, 42, 7, 17).await.unwrap();
+
+      DeleteLabelHandler.apply(&db, &payload(42, 17)).await.unwrap();
+
+      assert!(mail::labels(&db, 42).await.unwrap().is_empty());
+      assert!(mail::membership(&db, 42, 7).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
+
+      let result = DeleteLabelHandler.apply(&db, "not json").await;
+
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailDeleteLabel).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailDeleteLabel);
+    }
+
+    #[tokio::test]
     async fn it_surfaces_an_esi_rejection_for_the_drainer() {
       let db = store::open_test().await.unwrap();
       let server = MockServer::start().await;
@@ -702,21 +649,181 @@ mod tests {
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
     }
+  }
 
-    #[tokio::test]
-    async fn it_compensates_as_a_no_op() {
+  #[tokio::test]
+  async fn it_accepts_a_well_formed_send_payload_on_apply() {
+    let db = store::open_test().await.unwrap();
+    let payload = r#"{"from_character_id":42,"recipients":[{"name":"Vex","id":95000001,"recipient_type":"character"}],"subject":"Hi","body":"There"}"#;
+
+    SendHandler.apply(&db, payload).await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn it_fails_a_malformed_payload() {
+    let db = store::open_test().await.unwrap();
+
+    let result = SetReadHandler.apply(&db, "not json").await;
+
+    assert!(matches!(result, Err(clients::Error::Json(_))));
+  }
+
+  #[tokio::test]
+  async fn it_fails_a_malformed_send_payload() {
+    let db = store::open_test().await.unwrap();
+
+    let result = SendHandler.apply(&db, "not json").await;
+
+    assert!(matches!(result, Err(clients::Error::Json(_))));
+  }
+
+  #[tokio::test]
+  async fn it_optimistically_flips_the_mirror_on_apply() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_unread(&db, 42, 7).await;
+
+    SetReadHandler.apply(&db, &payload(42, 7, true)).await.unwrap();
+
+    let headers = mail::headers(&db, 42).await.unwrap();
+    assert!(headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
+  }
+
+  #[test]
+  fn it_registers_the_send_handler() {
+    let registry = registry();
+
+    let handler = registry.handler(OutboxKind::MailSend).expect("registered");
+
+    assert_eq!(handler.kind(), OutboxKind::MailSend);
+  }
+
+  #[test]
+  fn it_registers_the_set_read_handler() {
+    let registry = registry();
+
+    let handler = registry.handler(OutboxKind::MailSetRead).expect("registered");
+
+    assert_eq!(handler.kind(), OutboxKind::MailSetRead);
+  }
+
+  #[tokio::test]
+  async fn it_reverts_the_optimistic_flip_on_compensate() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_unread(&db, 42, 7).await;
+    SetReadHandler.apply(&db, &payload(42, 7, true)).await.unwrap();
+
+    SetReadHandler.compensate(&db, &payload(42, 7, true)).await.unwrap();
+
+    let headers = mail::headers(&db, 42).await.unwrap();
+    assert!(!headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
+  }
+
+  mod resolve_recipients {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::{esi, http};
+
+    async fn esi_client(server: &MockServer) -> esi::Client {
       let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      esi::Client::with_base_url(http, server.uri())
+    }
 
-      DeleteLabelHandler.compensate(&db, &payload(42, 17)).await.unwrap();
+    fn recipient(name: &str, id: Option<i64>, kind: Option<&str>) -> SendRecipient {
+      SendRecipient {
+        name: name.to_owned(),
+        id,
+        recipient_type: kind.map(ToOwned::to_owned),
+      }
     }
 
     #[tokio::test]
-    async fn it_fails_a_malformed_payload() {
-      let db = store::open_test().await.unwrap();
+    async fn it_defaults_a_typeless_id_carrying_recipient_to_character() {
+      let server = MockServer::start().await;
+      let esi = esi_client(&server).await;
+      let recipients = [recipient("Vex", Some(95_000_001), None)];
 
-      let result = DeleteLabelHandler.apply(&db, "not json").await;
+      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
 
-      assert!(matches!(result, Err(clients::Error::Json(_))));
+      assert_eq!(resolved[0].recipient_type, "character");
+    }
+
+    #[tokio::test]
+    async fn it_errors_when_no_recipient_resolves() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/universe/ids/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let recipients = [recipient("Unknown Pilot", None, None)];
+
+      let result = SendHandler::resolve_recipients(&esi, &recipients).await;
+
+      assert!(matches!(result, Err(clients::Error::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn it_passes_through_already_resolved_recipients_without_fetching() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/universe/ids/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let recipients = [recipient("Vex", Some(95_000_001), Some("character"))];
+
+      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
+
+      assert_eq!(resolved.len(), 1);
+      assert_eq!(resolved[0].recipient_id, 95_000_001);
+      assert_eq!(resolved[0].recipient_type, "character");
+    }
+
+    #[tokio::test]
+    async fn it_resolves_id_less_names_into_their_entity_buckets() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/universe/ids/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "alliances": [{ "id": 99_000_001, "name": "An Alliance" }],
+          "characters": [{ "id": 95_000_001, "name": "A Pilot" }],
+          "corporations": [{ "id": 98_000_001, "name": "A Corp" }],
+        })))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let recipients = [
+        recipient("A Pilot", None, None),
+        recipient("A Corp", None, None),
+        recipient("An Alliance", None, None),
+      ];
+
+      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
+
+      let mut kinds: Vec<(i64, &str)> = resolved
+        .iter()
+        .map(|r| (r.recipient_id, r.recipient_type.as_str()))
+        .collect();
+      kinds.sort_unstable();
+      assert_eq!(
+        kinds,
+        [
+          (95_000_001, "character"),
+          (98_000_001, "corporation"),
+          (99_000_001, "alliance"),
+        ]
+      );
     }
   }
 
@@ -755,15 +862,6 @@ mod tests {
       )
     }
 
-    #[test]
-    fn it_is_registered() {
-      let registry = registry();
-
-      let handler = registry.handler(OutboxKind::MailSetLabels).expect("registered");
-
-      assert_eq!(handler.kind(), OutboxKind::MailSetLabels);
-    }
-
     #[tokio::test]
     async fn it_adds_one_label_while_preserving_the_rest_on_apply() {
       let db = store::open_test().await.unwrap();
@@ -782,21 +880,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_removes_one_label_while_preserving_the_rest_on_apply() {
+    async fn it_fails_a_malformed_payload() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      store_unread(&db, 42, 7).await;
-      seed_label(&db, 42, 10).await;
-      seed_label(&db, 42, 20).await;
-      mail::add_membership(&db, 42, 7, 10).await.unwrap();
-      mail::add_membership(&db, 42, 7, 20).await.unwrap();
 
-      SetLabelsHandler
-        .apply(&db, &payload(42, 7, &[10], &[10, 20]))
-        .await
-        .unwrap();
+      let result = SetLabelsHandler.apply(&db, "not json").await;
 
-      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [10]);
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailSetLabels).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailSetLabels);
     }
 
     #[tokio::test]
@@ -816,6 +914,24 @@ mod tests {
         .execute(&db, &esi, &grant, &payload(42, 7, &[10, 20], &[10]))
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_removes_one_label_while_preserving_the_rest_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_label(&db, 42, 10).await;
+      seed_label(&db, 42, 20).await;
+      mail::add_membership(&db, 42, 7, 10).await.unwrap();
+      mail::add_membership(&db, 42, 7, 20).await.unwrap();
+
+      SetLabelsHandler
+        .apply(&db, &payload(42, 7, &[10], &[10, 20]))
+        .await
+        .unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [10]);
     }
 
     #[tokio::test]
@@ -856,122 +972,6 @@ mod tests {
         .await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
-    }
-
-    #[tokio::test]
-    async fn it_fails_a_malformed_payload() {
-      let db = store::open_test().await.unwrap();
-
-      let result = SetLabelsHandler.apply(&db, "not json").await;
-
-      assert!(matches!(result, Err(clients::Error::Json(_))));
-    }
-  }
-
-  mod resolve_recipients {
-    use pretty_assertions::assert_eq;
-    use wiremock::{
-      Mock, MockServer, ResponseTemplate,
-      matchers::{method, path},
-    };
-
-    use super::*;
-    use crate::clients::{esi, http};
-
-    async fn esi_client(server: &MockServer) -> esi::Client {
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db)).build();
-      esi::Client::with_base_url(http, server.uri())
-    }
-
-    fn recipient(name: &str, id: Option<i64>, kind: Option<&str>) -> SendRecipient {
-      SendRecipient {
-        name: name.to_owned(),
-        id,
-        recipient_type: kind.map(ToOwned::to_owned),
-      }
-    }
-
-    #[tokio::test]
-    async fn it_passes_through_already_resolved_recipients_without_fetching() {
-      let server = MockServer::start().await;
-      Mock::given(method("POST"))
-        .and(path("/universe/ids/"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let esi = esi_client(&server).await;
-      let recipients = [recipient("Vex", Some(95_000_001), Some("character"))];
-
-      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
-
-      assert_eq!(resolved.len(), 1);
-      assert_eq!(resolved[0].recipient_id, 95_000_001);
-      assert_eq!(resolved[0].recipient_type, "character");
-    }
-
-    #[tokio::test]
-    async fn it_defaults_a_typeless_id_carrying_recipient_to_character() {
-      let server = MockServer::start().await;
-      let esi = esi_client(&server).await;
-      let recipients = [recipient("Vex", Some(95_000_001), None)];
-
-      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
-
-      assert_eq!(resolved[0].recipient_type, "character");
-    }
-
-    #[tokio::test]
-    async fn it_resolves_id_less_names_into_their_entity_buckets() {
-      let server = MockServer::start().await;
-      Mock::given(method("POST"))
-        .and(path("/universe/ids/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "alliances": [{ "id": 99_000_001, "name": "An Alliance" }],
-          "characters": [{ "id": 95_000_001, "name": "A Pilot" }],
-          "corporations": [{ "id": 98_000_001, "name": "A Corp" }],
-        })))
-        .mount(&server)
-        .await;
-      let esi = esi_client(&server).await;
-      let recipients = [
-        recipient("A Pilot", None, None),
-        recipient("A Corp", None, None),
-        recipient("An Alliance", None, None),
-      ];
-
-      let resolved = SendHandler::resolve_recipients(&esi, &recipients).await.unwrap();
-
-      let mut kinds: Vec<(i64, &str)> = resolved
-        .iter()
-        .map(|r| (r.recipient_id, r.recipient_type.as_str()))
-        .collect();
-      kinds.sort_unstable();
-      assert_eq!(
-        kinds,
-        [
-          (95_000_001, "character"),
-          (98_000_001, "corporation"),
-          (99_000_001, "alliance"),
-        ]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_no_recipient_resolves() {
-      let server = MockServer::start().await;
-      Mock::given(method("POST"))
-        .and(path("/universe/ids/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
-        .mount(&server)
-        .await;
-      let esi = esi_client(&server).await;
-      let recipients = [recipient("Unknown Pilot", None, None)];
-
-      let result = SendHandler::resolve_recipients(&esi, &recipients).await;
-
-      assert!(matches!(result, Err(clients::Error::Internal(_))));
     }
   }
 }

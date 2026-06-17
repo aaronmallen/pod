@@ -228,6 +228,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_renders_stopped_and_read_only_lifecycle_states() {
+      let stopped = State {
+        syncing: false,
+        done: 3,
+        total: 10,
+        percent: 30,
+        errors: 0,
+        attention: 0,
+        last_synced_secs: Some(42),
+        lifecycle: Lifecycle::Stopped,
+        pulse_on: false,
+      };
+      let _stopped: Element<'_, ()> = sync_chip(stopped);
+
+      let read_only = State {
+        syncing: false,
+        done: 0,
+        total: 10,
+        percent: 0,
+        errors: 0,
+        attention: 0,
+        last_synced_secs: None,
+        lifecycle: Lifecycle::ReadOnly {
+          hostname: Some("nebula".to_owned()),
+        },
+        pulse_on: false,
+      };
+      let _read_only: Element<'_, ()> = sync_chip(read_only);
+    }
+
+    #[test]
     fn it_renders_syncing_idle_error_and_attention_states() {
       let syncing = State {
         syncing: true,
@@ -280,37 +311,6 @@ mod tests {
         pulse_on: false,
       };
       let _attention: Element<'_, ()> = sync_chip(attention);
-    }
-
-    #[test]
-    fn it_renders_stopped_and_read_only_lifecycle_states() {
-      let stopped = State {
-        syncing: false,
-        done: 3,
-        total: 10,
-        percent: 30,
-        errors: 0,
-        attention: 0,
-        last_synced_secs: Some(42),
-        lifecycle: Lifecycle::Stopped,
-        pulse_on: false,
-      };
-      let _stopped: Element<'_, ()> = sync_chip(stopped);
-
-      let read_only = State {
-        syncing: false,
-        done: 0,
-        total: 10,
-        percent: 0,
-        errors: 0,
-        attention: 0,
-        last_synced_secs: None,
-        lifecycle: Lifecycle::ReadOnly {
-          hostname: Some("nebula".to_owned()),
-        },
-        pulse_on: false,
-      };
-      let _read_only: Element<'_, ()> = sync_chip(read_only);
     }
   }
 }

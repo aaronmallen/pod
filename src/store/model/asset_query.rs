@@ -498,6 +498,25 @@ mod tests {
     }
 
     #[test]
+    fn it_buckets_a_location_with_no_resolvable_system_as_an_orphan() {
+      let mut orphan = nested(1_022_000_000_000, "Inaccessible Structure", "structure", 1, 10.0);
+      orphan.constellation_id = None;
+      orphan.constellation_name = None;
+      orphan.region_id = None;
+      orphan.region_name = None;
+      orphan.system_id = None;
+      orphan.system_name = None;
+      let rows = vec![nested(60_003_760, "Jita IV - Moon 4", "station", 2, 100.0), orphan];
+
+      let tree = GeoTree::from_locations(&rows);
+
+      assert_eq!(tree.regions.len(), 1, "the resolvable station nests under its region");
+      assert_eq!(tree.orphans.len(), 1);
+      assert_eq!(tree.orphans[0].location_id, 1_022_000_000_000);
+      assert_eq!(tree.orphans[0].value, 10.0);
+    }
+
+    #[test]
     fn it_rolls_value_and_count_up_from_locations_to_the_region() {
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 2, 100.0),
@@ -546,25 +565,6 @@ mod tests {
         ["Amarr", "Jita"],
         "systems sort by name"
       );
-    }
-
-    #[test]
-    fn it_buckets_a_location_with_no_resolvable_system_as_an_orphan() {
-      let mut orphan = nested(1_022_000_000_000, "Inaccessible Structure", "structure", 1, 10.0);
-      orphan.constellation_id = None;
-      orphan.constellation_name = None;
-      orphan.region_id = None;
-      orphan.region_name = None;
-      orphan.system_id = None;
-      orphan.system_name = None;
-      let rows = vec![nested(60_003_760, "Jita IV - Moon 4", "station", 2, 100.0), orphan];
-
-      let tree = GeoTree::from_locations(&rows);
-
-      assert_eq!(tree.regions.len(), 1, "the resolvable station nests under its region");
-      assert_eq!(tree.orphans.len(), 1);
-      assert_eq!(tree.orphans[0].location_id, 1_022_000_000_000);
-      assert_eq!(tree.orphans[0].value, 10.0);
     }
 
     #[test]

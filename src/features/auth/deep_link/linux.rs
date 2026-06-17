@@ -110,13 +110,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_uses_an_absolute_exec_with_a_url_placeholder() {
-      let entry = desktop_entry(&PathBuf::from("/opt/pod/pod"));
-
-      assert!(entry.contains("Exec=/opt/pod/pod %u"));
-    }
-
-    #[test]
     fn it_declares_the_scheme_handler_mime_type_from_the_scheme_constant() {
       let entry = desktop_entry(&PathBuf::from("/opt/pod/pod"));
 
@@ -130,6 +123,13 @@ mod tests {
 
       assert_eq!(desktop_entry(&exec), desktop_entry(&exec));
     }
+
+    #[test]
+    fn it_uses_an_absolute_exec_with_a_url_placeholder() {
+      let entry = desktop_entry(&PathBuf::from("/opt/pod/pod"));
+
+      assert!(entry.contains("Exec=/opt/pod/pod %u"));
+    }
   }
 
   mod resolve_handler_exec {
@@ -140,10 +140,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_prefers_the_appimage_path_when_set() {
-      let resolved = resolve_handler_exec(Some(OsString::from("/home/me/Pod.AppImage")));
-
-      assert_eq!(resolved, Some(PathBuf::from("/home/me/Pod.AppImage")));
+    fn it_falls_back_to_current_exe_when_appimage_is_empty() {
+      assert_eq!(resolve_handler_exec(Some(OsString::new())), None);
     }
 
     #[test]
@@ -152,8 +150,10 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_current_exe_when_appimage_is_empty() {
-      assert_eq!(resolve_handler_exec(Some(OsString::new())), None);
+    fn it_prefers_the_appimage_path_when_set() {
+      let resolved = resolve_handler_exec(Some(OsString::from("/home/me/Pod.AppImage")));
+
+      assert_eq!(resolved, Some(PathBuf::from("/home/me/Pod.AppImage")));
     }
   }
 

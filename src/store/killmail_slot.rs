@@ -83,18 +83,6 @@ mod tests {
       use super::*;
 
       #[test]
-      fn it_lists_every_group_once() {
-        let order = SlotGroup::display_order();
-
-        let mut unique: Vec<SlotGroup> = order.to_vec();
-        unique.sort_by_key(|group| group.label());
-        unique.dedup();
-
-        assert_eq!(order.len(), 9);
-        assert_eq!(unique.len(), 9);
-      }
-
-      #[test]
       fn it_follows_the_modal_fitting_grouping_with_other_last() {
         let order = SlotGroup::display_order();
 
@@ -113,12 +101,38 @@ mod tests {
           ]
         );
       }
+
+      #[test]
+      fn it_lists_every_group_once() {
+        let order = SlotGroup::display_order();
+
+        let mut unique: Vec<SlotGroup> = order.to_vec();
+        unique.sort_by_key(|group| group.label());
+        unique.dedup();
+
+        assert_eq!(order.len(), 9);
+        assert_eq!(unique.len(), 9);
+      }
     }
 
     mod from_flag {
       use pretty_assertions::assert_eq;
 
       use super::*;
+
+      #[test]
+      fn it_falls_back_to_other_below_the_first_range() {
+        assert_eq!(SlotGroup::from_flag(4), SlotGroup::Other);
+        assert_eq!(SlotGroup::from_flag(10), SlotGroup::Other);
+      }
+
+      #[test]
+      fn it_falls_back_to_other_in_the_gaps_between_ranges() {
+        assert_eq!(SlotGroup::from_flag(0), SlotGroup::Other);
+        assert_eq!(SlotGroup::from_flag(88), SlotGroup::Other);
+        assert_eq!(SlotGroup::from_flag(133), SlotGroup::Other);
+        assert_eq!(SlotGroup::from_flag(-1), SlotGroup::Other);
+      }
 
       #[test]
       fn it_maps_a_representative_flag_from_each_group() {
@@ -130,6 +144,12 @@ mod tests {
         assert_eq!(SlotGroup::from_flag(89), SlotGroup::Implant);
         assert_eq!(SlotGroup::from_flag(95), SlotGroup::Rig);
         assert_eq!(SlotGroup::from_flag(128), SlotGroup::Subsystem);
+      }
+
+      #[test]
+      fn it_maps_the_high_slot_boundary_flags() {
+        assert_eq!(SlotGroup::from_flag(27), SlotGroup::High);
+        assert_eq!(SlotGroup::from_flag(34), SlotGroup::High);
       }
 
       #[test]
@@ -145,12 +165,6 @@ mod tests {
       }
 
       #[test]
-      fn it_maps_the_high_slot_boundary_flags() {
-        assert_eq!(SlotGroup::from_flag(27), SlotGroup::High);
-        assert_eq!(SlotGroup::from_flag(34), SlotGroup::High);
-      }
-
-      #[test]
       fn it_maps_the_rig_slot_boundary_flags() {
         assert_eq!(SlotGroup::from_flag(92), SlotGroup::Rig);
         assert_eq!(SlotGroup::from_flag(99), SlotGroup::Rig);
@@ -160,20 +174,6 @@ mod tests {
       fn it_maps_the_subsystem_slot_boundary_flags() {
         assert_eq!(SlotGroup::from_flag(125), SlotGroup::Subsystem);
         assert_eq!(SlotGroup::from_flag(132), SlotGroup::Subsystem);
-      }
-
-      #[test]
-      fn it_falls_back_to_other_below_the_first_range() {
-        assert_eq!(SlotGroup::from_flag(4), SlotGroup::Other);
-        assert_eq!(SlotGroup::from_flag(10), SlotGroup::Other);
-      }
-
-      #[test]
-      fn it_falls_back_to_other_in_the_gaps_between_ranges() {
-        assert_eq!(SlotGroup::from_flag(0), SlotGroup::Other);
-        assert_eq!(SlotGroup::from_flag(88), SlotGroup::Other);
-        assert_eq!(SlotGroup::from_flag(133), SlotGroup::Other);
-        assert_eq!(SlotGroup::from_flag(-1), SlotGroup::Other);
       }
     }
 

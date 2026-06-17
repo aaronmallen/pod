@@ -116,54 +116,23 @@ mod tests {
   use super::*;
   use crate::store::share_meta::{read_generation, write_generation};
 
-  mod resolve_direct {
+  mod generation_marker {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_opens_the_canonical_path_in_place_and_creates_no_working_copy() {
-      let dir = tempdir().unwrap();
-      let canonical = dir.path().join("data").join("pod.db");
-      let working_copy = dir.path().join("cache").join("db").join("pod.db");
-      fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-      fs::write(&canonical, b"live").unwrap();
+    fn it_appends_the_generation_suffix_beside_the_database() {
+      let marker = generation_marker(Path::new("/data/pod.db"));
 
-      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
-
-      assert_eq!(resolved, canonical);
-      assert!(!working_copy.exists(), "direct mode never creates a working copy");
-      assert_eq!(fs::read(&canonical).unwrap(), b"live");
+      assert_eq!(marker, PathBuf::from("/data/pod.db.generation"));
     }
+  }
 
-    #[test]
-    fn it_creates_the_canonical_parent_for_a_fresh_install() {
-      let dir = tempdir().unwrap();
-      let canonical = dir.path().join("data").join("pod.db");
-      let working_copy = dir.path().join("cache").join("db").join("pod.db");
+  mod resolve_direct {
+    use pretty_assertions::assert_eq;
 
-      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
-
-      assert_eq!(resolved, canonical);
-      assert!(canonical.parent().unwrap().is_dir());
-    }
-
-    #[test]
-    fn it_moves_a_lingering_working_copy_into_place_when_the_canonical_is_absent() {
-      let dir = tempdir().unwrap();
-      let canonical = dir.path().join("data").join("pod.db");
-      let working_copy = dir.path().join("cache").join("db").join("pod.db");
-      fs::create_dir_all(working_copy.parent().unwrap()).unwrap();
-      fs::write(&working_copy, b"recovered").unwrap();
-      write_generation(&generation_marker(&working_copy), 4).unwrap();
-
-      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
-
-      assert_eq!(resolved, canonical);
-      assert_eq!(fs::read(&canonical).unwrap(), b"recovered");
-      assert!(!working_copy.exists(), "the working copy is moved, not duplicated");
-      assert!(!generation_marker(&working_copy).exists(), "its marker is cleaned up");
-    }
+    use super::*;
 
     #[test]
     fn it_carries_the_wal_sidecars_alongside_a_relocated_working_copy() {
@@ -186,6 +155,18 @@ mod tests {
     }
 
     #[test]
+    fn it_creates_the_canonical_parent_for_a_fresh_install() {
+      let dir = tempdir().unwrap();
+      let canonical = dir.path().join("data").join("pod.db");
+      let working_copy = dir.path().join("cache").join("db").join("pod.db");
+
+      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
+
+      assert_eq!(resolved, canonical);
+      assert!(canonical.parent().unwrap().is_dir());
+    }
+
+    #[test]
     fn it_leaves_a_stale_working_copy_untouched_when_the_canonical_already_exists() {
       let dir = tempdir().unwrap();
       let canonical = dir.path().join("data").join("pod.db");
@@ -198,6 +179,38 @@ mod tests {
       resolve_direct(&canonical, &working_copy).unwrap();
 
       assert_eq!(fs::read(&canonical).unwrap(), b"live", "the live file wins");
+    }
+
+    #[test]
+    fn it_moves_a_lingering_working_copy_into_place_when_the_canonical_is_absent() {
+      let dir = tempdir().unwrap();
+      let canonical = dir.path().join("data").join("pod.db");
+      let working_copy = dir.path().join("cache").join("db").join("pod.db");
+      fs::create_dir_all(working_copy.parent().unwrap()).unwrap();
+      fs::write(&working_copy, b"recovered").unwrap();
+      write_generation(&generation_marker(&working_copy), 4).unwrap();
+
+      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
+
+      assert_eq!(resolved, canonical);
+      assert_eq!(fs::read(&canonical).unwrap(), b"recovered");
+      assert!(!working_copy.exists(), "the working copy is moved, not duplicated");
+      assert!(!generation_marker(&working_copy).exists(), "its marker is cleaned up");
+    }
+
+    #[test]
+    fn it_opens_the_canonical_path_in_place_and_creates_no_working_copy() {
+      let dir = tempdir().unwrap();
+      let canonical = dir.path().join("data").join("pod.db");
+      let working_copy = dir.path().join("cache").join("db").join("pod.db");
+      fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+      fs::write(&canonical, b"live").unwrap();
+
+      let resolved = resolve_direct(&canonical, &working_copy).unwrap();
+
+      assert_eq!(resolved, canonical);
+      assert!(!working_copy.exists(), "direct mode never creates a working copy");
+      assert_eq!(fs::read(&canonical).unwrap(), b"live");
     }
   }
 
@@ -242,19 +255,6 @@ mod tests {
         b"local bytes",
         "a same-machine relaunch performs no download"
       );
-    }
-  }
-
-  mod generation_marker {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_appends_the_generation_suffix_beside_the_database() {
-      let marker = generation_marker(Path::new("/data/pod.db"));
-
-      assert_eq!(marker, PathBuf::from("/data/pod.db.generation"));
     }
   }
 }

@@ -198,11 +198,17 @@ mod tests {
   };
 
   const CORP: i64 = 90_000_001;
+
   const DIRECTOR: i64 = 100;
+
   const SYSTEM_ID: i64 = 30_000_142;
+
   const CONSTELLATION_ID: i64 = 20_000_020;
+
   const REGION_ID: i64 = 10_000_002;
+
   const TYPE_ID: i64 = 35_833;
+
   const STRUCTURE_ID: i64 = 1_021_000_000_001;
 
   async fn seed_character(db: &store::Database, id: i64) {
@@ -426,6 +432,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_records_a_structure_with_unresolvable_references_as_inaccessible() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Station_Manager"] }]),
+      )
+      .await;
+      mount_structures(&server, serde_json::json!([structure_json(STRUCTURE_ID)])).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/systems/{SYSTEM_ID}/")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      authorize(&db, "Station_Manager").await;
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("corp-token", CORP);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant);
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert_eq!(outcome, Outcome::Empty);
+      assert!(
+        sde::is_structure_inaccessible(&db, CORP, OwnerType::Corporation, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "a structure whose references 404 is recorded inaccessible, not re-hammered"
+      );
+      assert!(sde::get_structure(&db, STRUCTURE_ID).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/roles/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("corp-token", CORP);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant);
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+    }
+
+    #[tokio::test]
     async fn it_skips_honestly_when_the_authorizing_character_lacks_the_role() {
       let server = MockServer::start().await;
       mount_roles(
@@ -505,60 +565,6 @@ mod tests {
       assert!(
         matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
         "expected a re-authentication error, got {result:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_records_a_structure_with_unresolvable_references_as_inaccessible() {
-      let server = MockServer::start().await;
-      mount_roles(
-        &server,
-        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Station_Manager"] }]),
-      )
-      .await;
-      mount_structures(&server, serde_json::json!([structure_json(STRUCTURE_ID)])).await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/systems/{SYSTEM_ID}/")))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      authorize(&db, "Station_Manager").await;
-      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
-      let grant = Grant::new_test("corp-token", CORP);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant);
-
-      let outcome = run(&ctx).await.unwrap();
-
-      assert_eq!(outcome, Outcome::Empty);
-      assert!(
-        sde::is_structure_inaccessible(&db, CORP, OwnerType::Corporation, STRUCTURE_ID)
-          .await
-          .unwrap(),
-        "a structure whose references 404 is recorded inaccessible, not re-hammered"
-      );
-      assert!(sde::get_structure(&db, STRUCTURE_ID).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{CORP}/roles/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
-      let grant = Grant::new_test("corp-token", CORP);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant);
-
-      let result = run(&ctx).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
     }
   }

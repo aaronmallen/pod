@@ -104,26 +104,6 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_flips_the_local_mirror_and_enqueues_the_outbox_write_on_open() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    store_unread(&db, 42, 7).await;
-
-    mark_read_on_open(db.clone(), 42, 7).await;
-
-    let headers = mail::headers(&db, 42).await.unwrap();
-    assert!(headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
-
-    let pending = sqlx::query_scalar::<_, i64>(
-      "SELECT COUNT(*) FROM outbox WHERE kind = 'mail.set_read' AND status IN ('pending', 'inflight')",
-    )
-    .fetch_one(&db.0)
-    .await
-    .unwrap();
-    assert_eq!(pending, 1);
-  }
-
-  #[tokio::test]
   async fn it_collapses_a_repeated_open_onto_one_outbox_row() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
@@ -159,28 +139,6 @@ mod tests {
     let indicator = dismiss_outbox(db.clone(), row.id()).await;
 
     assert!(indicator.failed.is_empty());
-  }
-
-  #[tokio::test]
-  async fn it_retries_a_failed_row_back_to_drainable() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    let row = infra::append(
-      &db,
-      OwnerType::Character,
-      42,
-      "mail.set_read",
-      &set_read_payload(42, 7),
-      Some(&set_read_dedupe(7)),
-    )
-    .await
-    .unwrap();
-    infra::mark_failed(&db, row.id(), "boom").await.unwrap();
-
-    let indicator = retry_outbox(db.clone(), row.id()).await;
-
-    assert!(indicator.failed.is_empty());
-    assert_eq!(indicator.pending, 1);
   }
 
   #[tokio::test]
@@ -245,5 +203,47 @@ mod tests {
       1,
       "waking the snooze restores the count"
     );
+  }
+
+  #[tokio::test]
+  async fn it_flips_the_local_mirror_and_enqueues_the_outbox_write_on_open() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_unread(&db, 42, 7).await;
+
+    mark_read_on_open(db.clone(), 42, 7).await;
+
+    let headers = mail::headers(&db, 42).await.unwrap();
+    assert!(headers.iter().find(|h| h.mail_id() == 7).unwrap().is_read());
+
+    let pending = sqlx::query_scalar::<_, i64>(
+      "SELECT COUNT(*) FROM outbox WHERE kind = 'mail.set_read' AND status IN ('pending', 'inflight')",
+    )
+    .fetch_one(&db.0)
+    .await
+    .unwrap();
+    assert_eq!(pending, 1);
+  }
+
+  #[tokio::test]
+  async fn it_retries_a_failed_row_back_to_drainable() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    let row = infra::append(
+      &db,
+      OwnerType::Character,
+      42,
+      "mail.set_read",
+      &set_read_payload(42, 7),
+      Some(&set_read_dedupe(7)),
+    )
+    .await
+    .unwrap();
+    infra::mark_failed(&db, row.id(), "boom").await.unwrap();
+
+    let indicator = retry_outbox(db.clone(), row.id()).await;
+
+    assert!(indicator.failed.is_empty());
+    assert_eq!(indicator.pending, 1);
   }
 }

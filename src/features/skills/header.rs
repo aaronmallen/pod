@@ -203,32 +203,6 @@ mod tests {
     }
   }
 
-  mod is_low_queue {
-    use super::*;
-
-    #[test]
-    fn it_flags_an_empty_queue() {
-      assert!(is_low_queue(0, None));
-      assert!(is_low_queue(0, Some(0)));
-    }
-
-    #[test]
-    fn it_flags_a_single_short_entry() {
-      assert!(is_low_queue(1, Some(3_600)));
-    }
-
-    #[test]
-    fn it_does_not_flag_a_single_long_entry() {
-      let two_days = 2 * 86_400;
-      assert!(!is_low_queue(1, Some(two_days)));
-    }
-
-    #[test]
-    fn it_does_not_flag_a_multi_skill_queue() {
-      assert!(!is_low_queue(3, Some(3_600)));
-    }
-  }
-
   mod header {
     use super::*;
 
@@ -247,6 +221,32 @@ mod tests {
       state.picker_open = true;
 
       let _el: Element<'_, Message> = header(&state, now());
+    }
+  }
+
+  mod is_low_queue {
+    use super::*;
+
+    #[test]
+    fn it_does_not_flag_a_multi_skill_queue() {
+      assert!(!is_low_queue(3, Some(3_600)));
+    }
+
+    #[test]
+    fn it_does_not_flag_a_single_long_entry() {
+      let two_days = 2 * 86_400;
+      assert!(!is_low_queue(1, Some(two_days)));
+    }
+
+    #[test]
+    fn it_flags_a_single_short_entry() {
+      assert!(is_low_queue(1, Some(3_600)));
+    }
+
+    #[test]
+    fn it_flags_an_empty_queue() {
+      assert!(is_low_queue(0, None));
+      assert!(is_low_queue(0, Some(0)));
     }
   }
 }

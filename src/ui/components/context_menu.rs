@@ -268,6 +268,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_danger_row_uses_the_danger_text_color() {
+      let danger = row_style(Tone::Danger, button::Status::Active);
+      let normal = row_style(Tone::Default, button::Status::Active);
+
+      assert_eq!(danger.text_color, color::status::DANGER);
+      assert_eq!(normal.text_color, color::text::PRIMARY);
+    }
+
+    #[test]
     fn a_hovered_row_washes_its_background_and_an_idle_row_has_none() {
       let hovered = row_style(Tone::Default, button::Status::Hovered);
       let pressed = row_style(Tone::Default, button::Status::Pressed);
@@ -276,15 +285,6 @@ mod tests {
       assert!(hovered.background.is_some());
       assert!(pressed.background.is_some());
       assert!(idle.background.is_none());
-    }
-
-    #[test]
-    fn a_danger_row_uses_the_danger_text_color() {
-      let danger = row_style(Tone::Danger, button::Status::Active);
-      let normal = row_style(Tone::Default, button::Status::Active);
-
-      assert_eq!(danger.text_color, color::status::DANGER);
-      assert_eq!(normal.text_color, color::text::PRIMARY);
     }
 
     #[test]

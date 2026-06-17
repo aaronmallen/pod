@@ -205,40 +205,6 @@ mod tests {
     }
   }
 
-  mod from_config {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_yields_no_session_in_direct_mode() {
-      let dir = tempfile::tempdir().unwrap();
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(dir.path().to_path_buf()));
-
-      assert!(SyncSession::from_config(&storage, "machine-a".to_owned()).is_none());
-    }
-
-    #[test]
-    fn it_seeds_the_lease_db_generation_from_the_share_sidecar() {
-      let dir = tempfile::tempdir().unwrap();
-      let share = dir.path().join("share");
-      fs::create_dir_all(&share).unwrap();
-      write_generation(&with_suffix(&share.join("pod.db"), GENERATION_SUFFIX), 12).unwrap();
-      let mut storage = StorageConfig::default();
-      storage.set_db_dir(Some(share));
-      storage.set_cache_dir(Some(dir.path().join("cache")));
-      storage.set_working_copy_dir(Some(dir.path().join("working-copy")));
-      storage.set_network(true);
-
-      let session = SyncSession::from_config(&storage, "machine-a".to_owned()).unwrap();
-      session.acquire(Utc::now()).unwrap();
-
-      let lease = crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&session.share)).unwrap();
-      assert_eq!(lease.db_generation, 12);
-    }
-  }
-
   mod acquire {
     use pretty_assertions::assert_eq;
 
@@ -286,139 +252,6 @@ mod tests {
     }
   }
 
-  mod has_unsynced_changes {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_reports_unsynced_when_the_local_marker_is_ahead_of_the_share() {
-      let fixture = Fixture::new();
-      write_generation(&fixture.marker, 9).unwrap();
-      write_generation(&fixture.sidecar, 7).unwrap();
-
-      assert_eq!(fixture.session.has_unsynced_changes(), true);
-    }
-
-    #[test]
-    fn it_reports_in_sync_when_the_generations_match() {
-      let fixture = Fixture::new();
-      write_generation(&fixture.marker, 7).unwrap();
-      write_generation(&fixture.sidecar, 7).unwrap();
-
-      assert_eq!(fixture.session.has_unsynced_changes(), false);
-    }
-
-    #[test]
-    fn it_reports_in_sync_when_the_share_is_ahead() {
-      let fixture = Fixture::new();
-      write_generation(&fixture.marker, 3).unwrap();
-      write_generation(&fixture.sidecar, 8).unwrap();
-
-      assert_eq!(fixture.session.has_unsynced_changes(), false);
-    }
-  }
-
-  mod is_dirty_since {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_clean_when_nothing_has_been_written_since_the_mark() {
-      let fixture = Fixture::new();
-      fs::write(&fixture.working_copy, b"db").unwrap();
-      let mark = fixture.session.last_write();
-
-      assert_eq!(fixture.session.is_dirty_since(mark), false);
-    }
-
-    #[test]
-    fn it_is_dirty_when_the_wal_was_touched_after_the_mark() {
-      let fixture = Fixture::new();
-      fs::write(&fixture.working_copy, b"db").unwrap();
-      let mark = fixture.session.last_write();
-
-      std::thread::sleep(Duration::from_millis(20));
-      fs::write(with_suffix(&fixture.working_copy, WAL_SUFFIX), b"wal").unwrap();
-
-      assert_eq!(fixture.session.is_dirty_since(mark), true);
-    }
-
-    #[test]
-    fn it_is_dirty_on_the_first_push_when_there_is_no_mark_yet() {
-      let fixture = Fixture::new();
-      fs::write(&fixture.working_copy, b"db").unwrap();
-
-      assert_eq!(fixture.session.is_dirty_since(None), true);
-    }
-
-    #[test]
-    fn it_is_clean_when_the_working_copy_does_not_exist() {
-      let fixture = Fixture::new();
-
-      assert_eq!(fixture.session.is_dirty_since(None), false);
-    }
-  }
-
-  mod share_advanced {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_true_when_the_share_generation_outruns_the_local_marker() {
-      let fixture = Fixture::new();
-      write_generation(&fixture.sidecar, 5).unwrap();
-      write_generation(&fixture.marker, 3).unwrap();
-
-      assert_eq!(fixture.session.share_advanced(), true);
-    }
-
-    #[test]
-    fn it_is_false_when_the_generations_are_in_step() {
-      let fixture = Fixture::new();
-      write_generation(&fixture.sidecar, 4).unwrap();
-      write_generation(&fixture.marker, 4).unwrap();
-
-      assert_eq!(fixture.session.share_advanced(), false);
-    }
-  }
-
-  mod pull {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_applies_the_newer_share_copy_to_the_working_copy() {
-      let fixture = Fixture::new();
-      fs::write(&fixture.canonical, b"share data").unwrap();
-      write_generation(&fixture.sidecar, 7).unwrap();
-      write_generation(&fixture.marker, 2).unwrap();
-
-      let pulled = fixture.session.pull().unwrap();
-
-      assert_eq!(pulled, true);
-      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"share data");
-      assert_eq!(read_generation(&fixture.marker), 7);
-    }
-
-    #[test]
-    fn it_pulls_nothing_when_the_generations_are_in_step() {
-      let fixture = Fixture::new();
-      fs::write(&fixture.canonical, b"share data").unwrap();
-      fs::write(&fixture.working_copy, b"local data").unwrap();
-      write_generation(&fixture.sidecar, 3).unwrap();
-      write_generation(&fixture.marker, 3).unwrap();
-
-      let pulled = fixture.session.pull().unwrap();
-
-      assert_eq!(pulled, false);
-      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"local data");
-    }
-  }
-
   mod force_take_over {
     use pretty_assertions::assert_eq;
 
@@ -462,10 +295,241 @@ mod tests {
     }
   }
 
+  mod from_config {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_seeds_the_lease_db_generation_from_the_share_sidecar() {
+      let dir = tempfile::tempdir().unwrap();
+      let share = dir.path().join("share");
+      fs::create_dir_all(&share).unwrap();
+      write_generation(&with_suffix(&share.join("pod.db"), GENERATION_SUFFIX), 12).unwrap();
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(share));
+      storage.set_cache_dir(Some(dir.path().join("cache")));
+      storage.set_working_copy_dir(Some(dir.path().join("working-copy")));
+      storage.set_network(true);
+
+      let session = SyncSession::from_config(&storage, "machine-a".to_owned()).unwrap();
+      session.acquire(Utc::now()).unwrap();
+
+      let lease = crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&session.share)).unwrap();
+      assert_eq!(lease.db_generation, 12);
+    }
+
+    #[test]
+    fn it_yields_no_session_in_direct_mode() {
+      let dir = tempfile::tempdir().unwrap();
+      let mut storage = StorageConfig::default();
+      storage.set_db_dir(Some(dir.path().to_path_buf()));
+
+      assert!(SyncSession::from_config(&storage, "machine-a".to_owned()).is_none());
+    }
+  }
+
+  mod has_unsynced_changes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reports_in_sync_when_the_generations_match() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.marker, 7).unwrap();
+      write_generation(&fixture.sidecar, 7).unwrap();
+
+      assert_eq!(fixture.session.has_unsynced_changes(), false);
+    }
+
+    #[test]
+    fn it_reports_in_sync_when_the_share_is_ahead() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.marker, 3).unwrap();
+      write_generation(&fixture.sidecar, 8).unwrap();
+
+      assert_eq!(fixture.session.has_unsynced_changes(), false);
+    }
+
+    #[test]
+    fn it_reports_unsynced_when_the_local_marker_is_ahead_of_the_share() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.marker, 9).unwrap();
+      write_generation(&fixture.sidecar, 7).unwrap();
+
+      assert_eq!(fixture.session.has_unsynced_changes(), true);
+    }
+  }
+
+  mod hostname {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_a_machine_id_label_when_the_os_name_is_blank() {
+      assert_eq!(host_label("   ", "abcd1234efgh"), "machine-abcd1234");
+    }
+
+    #[test]
+    fn it_keeps_the_real_os_hostname_when_present() {
+      assert_eq!(host_label("studio-mac", "abcd1234efgh"), "studio-mac");
+    }
+
+    #[test]
+    fn it_resolves_a_non_empty_name() {
+      assert!(!super::super::hostname("abcd1234efgh").is_empty());
+    }
+
+    #[test]
+    fn it_trims_surrounding_whitespace_from_the_os_hostname() {
+      assert_eq!(host_label("  studio-mac \n", "abcd1234efgh"), "studio-mac");
+    }
+  }
+
+  mod is_dirty_since {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_clean_when_nothing_has_been_written_since_the_mark() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.working_copy, b"db").unwrap();
+      let mark = fixture.session.last_write();
+
+      assert_eq!(fixture.session.is_dirty_since(mark), false);
+    }
+
+    #[test]
+    fn it_is_clean_when_the_working_copy_does_not_exist() {
+      let fixture = Fixture::new();
+
+      assert_eq!(fixture.session.is_dirty_since(None), false);
+    }
+
+    #[test]
+    fn it_is_dirty_on_the_first_push_when_there_is_no_mark_yet() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.working_copy, b"db").unwrap();
+
+      assert_eq!(fixture.session.is_dirty_since(None), true);
+    }
+
+    #[test]
+    fn it_is_dirty_when_the_wal_was_touched_after_the_mark() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.working_copy, b"db").unwrap();
+      let mark = fixture.session.last_write();
+
+      std::thread::sleep(Duration::from_millis(20));
+      fs::write(with_suffix(&fixture.working_copy, WAL_SUFFIX), b"wal").unwrap();
+
+      assert_eq!(fixture.session.is_dirty_since(mark), true);
+    }
+  }
+
+  mod pull {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_applies_the_newer_share_copy_to_the_working_copy() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.canonical, b"share data").unwrap();
+      write_generation(&fixture.sidecar, 7).unwrap();
+      write_generation(&fixture.marker, 2).unwrap();
+
+      let pulled = fixture.session.pull().unwrap();
+
+      assert_eq!(pulled, true);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"share data");
+      assert_eq!(read_generation(&fixture.marker), 7);
+    }
+
+    #[test]
+    fn it_pulls_nothing_when_the_generations_are_in_step() {
+      let fixture = Fixture::new();
+      fs::write(&fixture.canonical, b"share data").unwrap();
+      fs::write(&fixture.working_copy, b"local data").unwrap();
+      write_generation(&fixture.sidecar, 3).unwrap();
+      write_generation(&fixture.marker, 3).unwrap();
+
+      let pulled = fixture.session.pull().unwrap();
+
+      assert_eq!(pulled, false);
+      assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"local data");
+    }
+  }
+
+  mod release {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clears_our_own_lease() {
+      let fixture = Fixture::new();
+      fixture.session.acquire(Utc::now()).unwrap();
+
+      fixture.session.release().unwrap();
+
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share)),
+        None
+      );
+    }
+  }
+
+  mod share_advanced {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_the_generations_are_in_step() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.sidecar, 4).unwrap();
+      write_generation(&fixture.marker, 4).unwrap();
+
+      assert_eq!(fixture.session.share_advanced(), false);
+    }
+
+    #[test]
+    fn it_is_true_when_the_share_generation_outruns_the_local_marker() {
+      let fixture = Fixture::new();
+      write_generation(&fixture.sidecar, 5).unwrap();
+      write_generation(&fixture.marker, 3).unwrap();
+
+      assert_eq!(fixture.session.share_advanced(), true);
+    }
+  }
+
   mod take_over {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_claims_a_stale_foreign_lease() {
+      let fixture = Fixture::new();
+      let now = Utc::now();
+      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
+        .heartbeat(&fixture.session.share, now - chrono::Duration::seconds(31))
+        .unwrap();
+
+      let outcome = fixture.session.take_over(now).unwrap();
+
+      assert_eq!(outcome, Outcome::Acquired);
+      assert_eq!(
+        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
+          .unwrap()
+          .machine_id,
+        "machine-a"
+      );
+    }
 
     #[test]
     fn it_declines_a_still_fresh_foreign_lease_without_writing() {
@@ -498,25 +562,6 @@ mod tests {
     }
 
     #[test]
-    fn it_claims_a_stale_foreign_lease() {
-      let fixture = Fixture::new();
-      let now = Utc::now();
-      LeaseManager::new("machine-b".to_owned(), "host-b".to_owned(), 99, 0)
-        .heartbeat(&fixture.session.share, now - chrono::Duration::seconds(31))
-        .unwrap();
-
-      let outcome = fixture.session.take_over(now).unwrap();
-
-      assert_eq!(outcome, Outcome::Acquired);
-      assert_eq!(
-        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share))
-          .unwrap()
-          .machine_id,
-        "machine-a"
-      );
-    }
-
-    #[test]
     fn it_pulls_the_newer_canonical_copy_when_claiming() {
       let fixture = Fixture::new();
       fs::write(&fixture.canonical, b"newer canonical").unwrap();
@@ -528,51 +573,6 @@ mod tests {
       assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(fs::read(&fixture.working_copy).unwrap(), b"newer canonical");
       assert_eq!(read_generation(&fixture.marker), 9);
-    }
-  }
-
-  mod release {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_clears_our_own_lease() {
-      let fixture = Fixture::new();
-      fixture.session.acquire(Utc::now()).unwrap();
-
-      fixture.session.release().unwrap();
-
-      assert_eq!(
-        crate::store::share_meta::Lease::read(&LeaseManager::lease_path(&fixture.session.share)),
-        None
-      );
-    }
-  }
-
-  mod hostname {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_resolves_a_non_empty_name() {
-      assert!(!super::super::hostname("abcd1234efgh").is_empty());
-    }
-
-    #[test]
-    fn it_keeps_the_real_os_hostname_when_present() {
-      assert_eq!(host_label("studio-mac", "abcd1234efgh"), "studio-mac");
-    }
-
-    #[test]
-    fn it_trims_surrounding_whitespace_from_the_os_hostname() {
-      assert_eq!(host_label("  studio-mac \n", "abcd1234efgh"), "studio-mac");
-    }
-
-    #[test]
-    fn it_falls_back_to_a_machine_id_label_when_the_os_name_is_blank() {
-      assert_eq!(host_label("   ", "abcd1234efgh"), "machine-abcd1234");
     }
   }
 }

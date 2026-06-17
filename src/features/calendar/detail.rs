@@ -539,8 +539,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_an_all_day_event() {
-      assert_eq!(when_value(&event(1440, "accepted"), false), "All day \u{00B7} EVE");
+    fn it_appends_local_time_when_enabled() {
+      let value = when_value(&event(0, "accepted"), true);
+
+      assert!(value.contains("LT"));
     }
 
     #[test]
@@ -549,10 +551,8 @@ mod tests {
     }
 
     #[test]
-    fn it_appends_local_time_when_enabled() {
-      let value = when_value(&event(0, "accepted"), true);
-
-      assert!(value.contains("LT"));
+    fn it_renders_an_all_day_event() {
+      assert_eq!(when_value(&event(1440, "accepted"), false), "All day \u{00B7} EVE");
     }
   }
 }

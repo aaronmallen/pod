@@ -394,28 +394,6 @@ mod tests {
     Arc::new(eve_sso::Client::new(http, "test-client"))
   }
 
-  #[test]
-  fn view_renders_each_status_without_panicking() {
-    let idle = State::default();
-    let waiting = State::waiting();
-    let completing = State::completing();
-    let corp_waiting = State::waiting_for(Kind::AddCorporation);
-    let failed = State {
-      flow: Some(Flow {
-        kind: Kind::SignIn,
-        pending: pending(),
-        status: Status::Failed("nope".to_owned()),
-        features: Vec::new(),
-      }),
-    };
-
-    let _idle = view(&idle);
-    let _waiting = view(&waiting);
-    let _completing = view(&completing);
-    let _corp_waiting = view(&corp_waiting);
-    let _failed = view(&failed);
-  }
-
   mod add_corporation {
     use base64::Engine as _;
     use pretty_assertions::assert_eq;
@@ -428,6 +406,7 @@ mod tests {
     use crate::store;
 
     const CHARACTER_ID: i64 = 42;
+
     const CORPORATION_ID: i64 = 2000;
 
     fn jwt(sub: &str) -> String {
@@ -523,6 +502,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_short_circuits_on_a_mismatched_state_before_reaching_esi() {
+      let server = MockServer::start().await;
+      let (sso, esi) = clients_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &session::redirect_uri());
+      let callback = session::Callback {
+        code: "code".to_owned(),
+        state: "tampered".to_owned(),
+      };
+
+      let result = add_corporation(&sso, &esi, &db, &pending, &callback).await;
+
+      assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn it_short_circuits_without_persisting_when_the_character_is_ineligible() {
       let server = MockServer::start().await;
       mount_token(&server).await;
@@ -545,21 +540,73 @@ mod tests {
         "an ineligible character must not persist any corporation credential"
       );
     }
+  }
 
-    #[tokio::test]
-    async fn it_short_circuits_on_a_mismatched_state_before_reaching_esi() {
-      let server = MockServer::start().await;
-      let (sso, esi) = clients_for(&server).await;
-      let db = store::open_test().await.unwrap();
-      let pending = sso.sign_in(&["esi-characters.read_corporation_roles.v1"], &session::redirect_uri());
-      let callback = session::Callback {
-        code: "code".to_owned(),
-        state: "tampered".to_owned(),
-      };
+  mod corp_scopes_for {
+    use super::*;
 
-      let result = add_corporation(&sso, &esi, &db, &pending, &callback).await;
+    #[test]
+    fn it_always_requests_the_baseline_companions() {
+      let requested = corp_scopes_for(&[]);
 
-      assert!(result.is_err());
+      assert!(requested.contains(&scopes::CORPORATION_DIVISIONS));
+      assert!(requested.contains(&scopes::CORPORATION_MEMBERS));
+      assert!(requested.contains(&scopes::CORPORATION_ROLES));
+    }
+
+    #[test]
+    fn it_derives_corp_asset_and_wallet_scopes_from_their_features() {
+      let requested = corp_scopes_for(&[Feature::AssetTracking, Feature::Wallet]);
+
+      assert!(requested.contains(&scopes::CORPORATION_ASSETS));
+      assert!(requested.contains(&scopes::CORPORATION_WALLET));
+    }
+
+    #[test]
+    fn it_derives_corp_contracts_when_wallet_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Wallet]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_CONTRACTS),
+        "an enabled Wallet feature must request the corp contracts scope, got {requested:?}"
+      );
+    }
+
+    #[test]
+    fn it_derives_corp_industry_jobs_when_industry_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Industry]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_INDUSTRY_JOBS),
+        "an enabled Industry feature must request the corp industry jobs scope, got {requested:?}"
+      );
+    }
+
+    #[test]
+    fn it_derives_corp_mining_extractions_when_industry_is_enabled() {
+      let requested = corp_scopes_for(&[Feature::Industry]);
+
+      assert!(
+        requested.contains(&scopes::CORPORATION_MINING_EXTRACTIONS),
+        "an enabled Industry feature must request the corp mining extractions scope, got {requested:?}"
+      );
+    }
+
+    #[test]
+    fn it_omits_a_disabled_features_corp_scope() {
+      let without_industry = corp_scopes_for(&[Feature::Wallet]);
+
+      assert!(!without_industry.contains(&scopes::CORPORATION_INDUSTRY_JOBS));
+    }
+
+    #[test]
+    fn the_union_is_deduplicated_and_sorted() {
+      let requested = corp_scopes_for(&Feature::ALL);
+      let mut sorted = requested.clone();
+      sorted.sort_unstable();
+      sorted.dedup();
+
+      assert_eq!(requested, sorted, "the union must be deduplicated and ordered");
     }
   }
 
@@ -581,33 +628,6 @@ mod tests {
       scopes::CHARACTER_WALLET,
       scopes::UNIVERSE_STRUCTURES,
     ];
-
-    #[test]
-    fn no_features_requests_no_scopes() {
-      assert!(scopes_for(&[]).is_empty());
-    }
-
-    #[test]
-    fn all_features_on_is_a_superset_of_the_legacy_set() {
-      let requested: BTreeSet<&str> = scopes_for(&Feature::ALL).into_iter().collect();
-
-      for scope in LEGACY_SIGN_IN_SCOPES {
-        assert!(
-          requested.contains(scope),
-          "all-features union must still request {scope}"
-        );
-      }
-    }
-
-    #[test]
-    fn the_union_is_deduplicated_and_sorted() {
-      let requested = scopes_for(&Feature::ALL);
-      let mut sorted = requested.clone();
-      sorted.sort_unstable();
-      sorted.dedup();
-
-      assert_eq!(requested, sorted, "the union must be deduplicated and ordered");
-    }
 
     #[test]
     fn a_representative_config_requests_exactly_its_features_union() {
@@ -639,6 +659,18 @@ mod tests {
     }
 
     #[test]
+    fn all_features_on_is_a_superset_of_the_legacy_set() {
+      let requested: BTreeSet<&str> = scopes_for(&Feature::ALL).into_iter().collect();
+
+      for scope in LEGACY_SIGN_IN_SCOPES {
+        assert!(
+          requested.contains(scope),
+          "all-features union must still request {scope}"
+        );
+      }
+    }
+
+    #[test]
     fn disabling_a_feature_drops_its_scopes() {
       let with_mail = scopes_for(&[Feature::Mail, Feature::Wallet]);
       let without_mail = scopes_for(&[Feature::Wallet]);
@@ -646,6 +678,23 @@ mod tests {
       assert!(with_mail.contains(&scopes::CHARACTER_MAIL));
       assert!(!without_mail.contains(&scopes::CHARACTER_MAIL));
       assert!(without_mail.contains(&scopes::CHARACTER_WALLET));
+    }
+
+    #[test]
+    fn each_feature_maps_to_a_nonempty_scope_set() {
+      for feature in Feature::ALL {
+        assert!(
+          !feature_scopes(feature).is_empty(),
+          "{feature:?} must map to at least one scope"
+        );
+      }
+    }
+
+    #[test]
+    fn mail_requests_the_search_scope_for_recipient_lookup() {
+      let mail = scopes_for(&[Feature::Mail]);
+
+      assert!(mail.contains(&scopes::CHARACTER_SEARCH));
     }
 
     #[test]
@@ -658,83 +707,13 @@ mod tests {
     }
 
     #[test]
-    fn mail_requests_the_search_scope_for_recipient_lookup() {
-      let mail = scopes_for(&[Feature::Mail]);
-
-      assert!(mail.contains(&scopes::CHARACTER_SEARCH));
-    }
-
-    #[test]
-    fn each_feature_maps_to_a_nonempty_scope_set() {
-      for feature in Feature::ALL {
-        assert!(
-          !feature_scopes(feature).is_empty(),
-          "{feature:?} must map to at least one scope"
-        );
-      }
-    }
-  }
-
-  mod corp_scopes_for {
-    use super::*;
-
-    #[test]
-    fn it_derives_corp_industry_jobs_when_industry_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Industry]);
-
-      assert!(
-        requested.contains(&scopes::CORPORATION_INDUSTRY_JOBS),
-        "an enabled Industry feature must request the corp industry jobs scope, got {requested:?}"
-      );
-    }
-
-    #[test]
-    fn it_derives_corp_mining_extractions_when_industry_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Industry]);
-
-      assert!(
-        requested.contains(&scopes::CORPORATION_MINING_EXTRACTIONS),
-        "an enabled Industry feature must request the corp mining extractions scope, got {requested:?}"
-      );
-    }
-
-    #[test]
-    fn it_always_requests_the_baseline_companions() {
-      let requested = corp_scopes_for(&[]);
-
-      assert!(requested.contains(&scopes::CORPORATION_DIVISIONS));
-      assert!(requested.contains(&scopes::CORPORATION_MEMBERS));
-      assert!(requested.contains(&scopes::CORPORATION_ROLES));
-    }
-
-    #[test]
-    fn it_derives_corp_contracts_when_wallet_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Wallet]);
-
-      assert!(
-        requested.contains(&scopes::CORPORATION_CONTRACTS),
-        "an enabled Wallet feature must request the corp contracts scope, got {requested:?}"
-      );
-    }
-
-    #[test]
-    fn it_derives_corp_asset_and_wallet_scopes_from_their_features() {
-      let requested = corp_scopes_for(&[Feature::AssetTracking, Feature::Wallet]);
-
-      assert!(requested.contains(&scopes::CORPORATION_ASSETS));
-      assert!(requested.contains(&scopes::CORPORATION_WALLET));
-    }
-
-    #[test]
-    fn it_omits_a_disabled_features_corp_scope() {
-      let without_industry = corp_scopes_for(&[Feature::Wallet]);
-
-      assert!(!without_industry.contains(&scopes::CORPORATION_INDUSTRY_JOBS));
+    fn no_features_requests_no_scopes() {
+      assert!(scopes_for(&[]).is_empty());
     }
 
     #[test]
     fn the_union_is_deduplicated_and_sorted() {
-      let requested = corp_scopes_for(&Feature::ALL);
+      let requested = scopes_for(&Feature::ALL);
       let mut sorted = requested.clone();
       sorted.sort_unstable();
       sorted.dedup();
@@ -747,55 +726,28 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn start_add_corporation_records_the_supplied_features() {
-      let mut state = State::default();
+    async fn a_valid_add_corporation_callback_moves_the_flow_to_completing() {
+      let mut state = State::waiting_for(Kind::AddCorporation);
       let sso = dummy_sso().await;
       let esi = dummy_esi().await;
       let db = crate::store::open_test().await.unwrap();
 
       let (_task, event) = update(
         &mut state,
-        Message::StartAddCorporation(vec![Feature::Industry]),
+        Message::CallbackReceived("eveauth-pod://callback?code=abc&state=test-state".to_owned()),
         &sso,
         &esi,
         &db,
       );
 
-      let flow = state.flow.as_ref().expect("a corp flow should be active");
-      assert_eq!(flow.kind, Kind::AddCorporation);
-      assert_eq!(flow.features, vec![Feature::Industry]);
-      assert!(event.is_none());
-    }
-
-    #[tokio::test]
-    async fn cancel_clears_the_flow() {
-      let mut state = State::waiting();
-      let sso = dummy_sso().await;
-      let esi = dummy_esi().await;
-      let db = crate::store::open_test().await.unwrap();
-
-      let (_task, event) = update(&mut state, Message::Cancel, &sso, &esi, &db);
-
-      assert!(!state.is_active());
-      assert!(event.is_none());
-    }
-
-    #[tokio::test]
-    async fn callback_without_a_flow_is_a_noop() {
-      let mut state = State::default();
-      let sso = dummy_sso().await;
-      let esi = dummy_esi().await;
-      let db = crate::store::open_test().await.unwrap();
-
-      let (_task, event) = update(
-        &mut state,
-        Message::CallbackReceived("eveauth-pod://callback?code=a&state=b".to_owned()),
-        &sso,
-        &esi,
-        &db,
-      );
-
-      assert!(!state.is_active());
+      assert!(matches!(
+        &state.flow,
+        Some(Flow {
+          kind: Kind::AddCorporation,
+          status: Status::Completing,
+          ..
+        })
+      ));
       assert!(event.is_none());
     }
 
@@ -817,32 +769,6 @@ mod tests {
       assert!(matches!(
         &state.flow,
         Some(Flow {
-          status: Status::Completing,
-          ..
-        })
-      ));
-      assert!(event.is_none());
-    }
-
-    #[tokio::test]
-    async fn a_valid_add_corporation_callback_moves_the_flow_to_completing() {
-      let mut state = State::waiting_for(Kind::AddCorporation);
-      let sso = dummy_sso().await;
-      let esi = dummy_esi().await;
-      let db = crate::store::open_test().await.unwrap();
-
-      let (_task, event) = update(
-        &mut state,
-        Message::CallbackReceived("eveauth-pod://callback?code=abc&state=test-state".to_owned()),
-        &sso,
-        &esi,
-        &db,
-      );
-
-      assert!(matches!(
-        &state.flow,
-        Some(Flow {
-          kind: Kind::AddCorporation,
           status: Status::Completing,
           ..
         })
@@ -876,20 +802,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_ok_emits_signed_in_and_clears_the_flow() {
-      let mut state = State::completing();
+    async fn callback_without_a_flow_is_a_noop() {
+      let mut state = State::default();
       let sso = dummy_sso().await;
       let esi = dummy_esi().await;
       let db = crate::store::open_test().await.unwrap();
-      let signed = SignedIn {
-        character_id: 42,
-        character_name: "Pilot".to_owned(),
-      };
 
-      let (_task, event) = update(&mut state, Message::Completed(Ok(signed)), &sso, &esi, &db);
+      let (_task, event) = update(
+        &mut state,
+        Message::CallbackReceived("eveauth-pod://callback?code=a&state=b".to_owned()),
+        &sso,
+        &esi,
+        &db,
+      );
 
       assert!(!state.is_active());
-      assert!(matches!(event, Some(Event::SignedIn(s)) if s.character_id == 42));
+      assert!(event.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancel_clears_the_flow() {
+      let mut state = State::waiting();
+      let sso = dummy_sso().await;
+      let esi = dummy_esi().await;
+      let db = crate::store::open_test().await.unwrap();
+
+      let (_task, event) = update(&mut state, Message::Cancel, &sso, &esi, &db);
+
+      assert!(!state.is_active());
+      assert!(event.is_none());
     }
 
     #[tokio::test]
@@ -925,21 +866,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn corporation_completed_ok_emits_corporation_added_and_clears_the_flow() {
-      let mut state = State::waiting_for(Kind::AddCorporation);
-      state.flow.as_mut().unwrap().status = Status::Completing;
+    async fn completed_ok_emits_signed_in_and_clears_the_flow() {
+      let mut state = State::completing();
       let sso = dummy_sso().await;
       let esi = dummy_esi().await;
       let db = crate::store::open_test().await.unwrap();
-      let added = CorporationAdded {
-        authorizing_character_id: 42,
-        corporation_id: 2000,
+      let signed = SignedIn {
+        character_id: 42,
+        character_name: "Pilot".to_owned(),
       };
 
-      let (_task, event) = update(&mut state, Message::CorporationCompleted(Ok(added)), &sso, &esi, &db);
+      let (_task, event) = update(&mut state, Message::Completed(Ok(signed)), &sso, &esi, &db);
 
       assert!(!state.is_active());
-      assert!(matches!(event, Some(Event::CorporationAdded(c)) if c.corporation_id == 2000));
+      assert!(matches!(event, Some(Event::SignedIn(s)) if s.character_id == 42));
     }
 
     #[tokio::test]
@@ -967,5 +907,66 @@ mod tests {
       ));
       assert!(event.is_none());
     }
+
+    #[tokio::test]
+    async fn corporation_completed_ok_emits_corporation_added_and_clears_the_flow() {
+      let mut state = State::waiting_for(Kind::AddCorporation);
+      state.flow.as_mut().unwrap().status = Status::Completing;
+      let sso = dummy_sso().await;
+      let esi = dummy_esi().await;
+      let db = crate::store::open_test().await.unwrap();
+      let added = CorporationAdded {
+        authorizing_character_id: 42,
+        corporation_id: 2000,
+      };
+
+      let (_task, event) = update(&mut state, Message::CorporationCompleted(Ok(added)), &sso, &esi, &db);
+
+      assert!(!state.is_active());
+      assert!(matches!(event, Some(Event::CorporationAdded(c)) if c.corporation_id == 2000));
+    }
+
+    #[tokio::test]
+    async fn start_add_corporation_records_the_supplied_features() {
+      let mut state = State::default();
+      let sso = dummy_sso().await;
+      let esi = dummy_esi().await;
+      let db = crate::store::open_test().await.unwrap();
+
+      let (_task, event) = update(
+        &mut state,
+        Message::StartAddCorporation(vec![Feature::Industry]),
+        &sso,
+        &esi,
+        &db,
+      );
+
+      let flow = state.flow.as_ref().expect("a corp flow should be active");
+      assert_eq!(flow.kind, Kind::AddCorporation);
+      assert_eq!(flow.features, vec![Feature::Industry]);
+      assert!(event.is_none());
+    }
+  }
+
+  #[test]
+  fn view_renders_each_status_without_panicking() {
+    let idle = State::default();
+    let waiting = State::waiting();
+    let completing = State::completing();
+    let corp_waiting = State::waiting_for(Kind::AddCorporation);
+    let failed = State {
+      flow: Some(Flow {
+        kind: Kind::SignIn,
+        pending: pending(),
+        status: Status::Failed("nope".to_owned()),
+        features: Vec::new(),
+      }),
+    };
+
+    let _idle = view(&idle);
+    let _waiting = view(&waiting);
+    let _completing = view(&completing);
+    let _corp_waiting = view(&corp_waiting);
+    let _failed = view(&failed);
   }
 }

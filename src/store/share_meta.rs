@@ -96,35 +96,53 @@ mod tests {
       }
     }
 
+    mod is_stale {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_reports_held_exactly_at_the_threshold() {
+        let now = Utc::now();
+        let lease = sample(now - chrono::Duration::seconds(30));
+
+        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+      }
+
+      #[test]
+      fn it_reports_held_for_a_fresh_heartbeat() {
+        let now = Utc::now();
+        let lease = sample(now - chrono::Duration::seconds(5));
+
+        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+      }
+
+      #[test]
+      fn it_reports_held_for_a_future_heartbeat() {
+        let now = Utc::now();
+        let lease = sample(now + chrono::Duration::seconds(10));
+
+        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+      }
+
+      #[test]
+      fn it_reports_stale_past_the_threshold() {
+        let now = Utc::now();
+        let lease = sample(now - chrono::Duration::seconds(31));
+
+        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), true);
+      }
+    }
+
     mod read {
       use pretty_assertions::assert_eq;
 
       use super::*;
 
       #[test]
-      fn it_round_trips_through_a_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lease.json");
-        let lease = sample(Utc.timestamp_millis_opt(1_700_000_000_123).unwrap());
-
-        lease.write(&path).unwrap();
-
-        assert_eq!(Lease::read(&path), Some(lease));
-      }
-
-      #[test]
       fn it_returns_none_for_a_missing_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("absent.json");
-
-        assert_eq!(Lease::read(&path), None);
-      }
-
-      #[test]
-      fn it_returns_none_for_garbage_input() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lease.json");
-        fs::write(&path, b"\x00\xff not json at all").unwrap();
 
         assert_eq!(Lease::read(&path), None);
       }
@@ -139,43 +157,25 @@ mod tests {
 
         assert_eq!(Lease::read(&path), None);
       }
-    }
-
-    mod is_stale {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
 
       #[test]
-      fn it_reports_held_for_a_fresh_heartbeat() {
-        let now = Utc::now();
-        let lease = sample(now - chrono::Duration::seconds(5));
+      fn it_returns_none_for_garbage_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lease.json");
+        fs::write(&path, b"\x00\xff not json at all").unwrap();
 
-        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+        assert_eq!(Lease::read(&path), None);
       }
 
       #[test]
-      fn it_reports_stale_past_the_threshold() {
-        let now = Utc::now();
-        let lease = sample(now - chrono::Duration::seconds(31));
+      fn it_round_trips_through_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lease.json");
+        let lease = sample(Utc.timestamp_millis_opt(1_700_000_000_123).unwrap());
 
-        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), true);
-      }
+        lease.write(&path).unwrap();
 
-      #[test]
-      fn it_reports_held_exactly_at_the_threshold() {
-        let now = Utc::now();
-        let lease = sample(now - chrono::Duration::seconds(30));
-
-        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
-      }
-
-      #[test]
-      fn it_reports_held_for_a_future_heartbeat() {
-        let now = Utc::now();
-        let lease = sample(now + chrono::Duration::seconds(10));
-
-        assert_eq!(lease.is_stale(DEFAULT_STALE_THRESHOLD, now), false);
+        assert_eq!(Lease::read(&path), Some(lease));
       }
     }
   }
@@ -184,6 +184,23 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_reads_zero_for_a_missing_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("absent");
+
+      assert_eq!(read_generation(&path), 0);
+    }
+
+    #[test]
+    fn it_reads_zero_for_garbage_input() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("gen");
+      fs::write(&path, b"\x00not a number").unwrap();
+
+      assert_eq!(read_generation(&path), 0);
+    }
 
     #[test]
     fn it_round_trips_a_counter() {
@@ -196,29 +213,12 @@ mod tests {
     }
 
     #[test]
-    fn it_reads_zero_for_a_missing_file() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("absent");
-
-      assert_eq!(read_generation(&path), 0);
-    }
-
-    #[test]
     fn it_tolerates_surrounding_whitespace() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("gen");
       fs::write(&path, "  18\n").unwrap();
 
       assert_eq!(read_generation(&path), 18);
-    }
-
-    #[test]
-    fn it_reads_zero_for_garbage_input() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("gen");
-      fs::write(&path, b"\x00not a number").unwrap();
-
-      assert_eq!(read_generation(&path), 0);
     }
   }
 }

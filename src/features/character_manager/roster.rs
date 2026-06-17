@@ -887,108 +887,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_the_empty_state() {
-      let state = State::new();
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_a_squad_group_and_the_unassigned_bucket() {
-      let mut state = State::new();
-      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
-      state.unassigned = vec![card_model(2)];
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_the_flat_filtered_grid_bypassing_the_squad_layout() {
-      let mut state = State::new();
-      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
-      state.filtered = Some(Filtered::Loaded(vec![
-        card_model(2),
-        card_model(3),
-        card_model(4),
-        card_model(5),
-      ]));
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_the_no_matches_state_for_an_empty_filter() {
-      let mut state = State::new();
-      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
-      state.filtered = Some(Filtered::Loaded(vec![]));
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_the_loading_filter_state() {
-      let mut state = State::new();
-      state.filtered = Some(Filtered::Loading);
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_the_error_filter_state() {
-      let mut state = State::new();
-      state.filtered = Some(Filtered::Error("boom".to_owned()));
-      let sync = SyncStatus::new();
-
-      let _el: Element<'_, Message> = body(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_a_squad_group_as_the_squad_bar() {
-      let group = squad_group(1, "Supers", vec![card_model(1), card_model(2)]);
-
-      let _bar: Element<'_, Message> = squad_bar(&group, false, false);
-      let _name_block: Element<'_, Message> = squad_name_block(&group);
-      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
-    }
-
-    #[test]
-    fn it_renders_a_squad_bar_without_a_description() {
-      let mut group = squad_group(1, "Solo", vec![card_model(1)]);
-      group.description = None;
-      {
-        let _bar: Element<'_, Message> = squad_bar(&group, false, false);
-      }
-
-      group.description = Some("   ".to_owned());
-      let _blank: Element<'_, Message> = squad_bar(&group, false, false);
-    }
-
-    #[test]
-    fn it_renders_an_empty_squad_with_the_dashed_drop_affordance() {
-      use iced::advanced::widget::Tree;
+    fn it_declares_the_fixed_card_height_for_empty_cells() {
+      use iced::advanced::Widget;
       use pretty_assertions::assert_eq;
 
-      let group = squad_group(2, "Reserves", Vec::new());
-
-      let drop: Element<'_, Message> = empty_drop(
-        "No pilots in Reserves yet — drag a pilot here to assign them.",
-        2,
-        no_drag(),
+      let cell = empty_cell(false);
+      assert_eq!(
+        Widget::<Message, _, _>::size(cell.as_widget()).height,
+        Length::Fixed(spacing::layout::CARD_HEIGHT),
       );
-      assert_eq!(Tree::new(drop.as_widget()).children.len(), 2);
 
-      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
-    }
-
-    #[test]
-    fn it_renders_the_unassigned_bucket_with_the_lighter_header() {
-      let cards = [card_model(1)];
-      let _section: Element<'_, Message> = unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag());
+      let spacer = empty_spacer();
+      assert_eq!(
+        Widget::<Message, _, _>::size(spacer.as_widget()).height,
+        Length::Fixed(spacing::layout::CARD_HEIGHT),
+      );
     }
 
     #[test]
@@ -1006,23 +919,18 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_both_cards_when_two_share_a_position() {
-      use pretty_assertions::assert_eq;
+    fn it_renders_a_card_with_a_sync_error() {
+      use crate::sync::{Event, JobKey, JobKind, Subject};
 
-      let cards = [card_model_at(1, 0), card_model_at(2, 0)];
+      let mut state = State::new();
+      state.unassigned = vec![card_model(7)];
+      let mut sync = SyncStatus::new();
+      sync.apply(&Event::Failed {
+        key: JobKey::new(JobKind::CharacterWallet, Subject::Character(7)),
+        reason: "boom".to_owned(),
+      });
 
-      let slots = resolve_slots(&cards);
-
-      assert_eq!(slots.len(), 2);
-      assert_eq!(slots[&0].character_id, 1);
-      assert_eq!(slots[&1].character_id, 2);
-    }
-
-    #[test]
-    fn it_renders_a_card_with_an_absurd_position_without_overflowing() {
-      let cards = [card_model_at(1, 0), card_model_at(2, i64::MAX)];
-
-      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
+      let _el: Element<'_, Message> = body(&state, &sync);
     }
 
     #[test]
@@ -1037,6 +945,13 @@ mod tests {
       };
 
       let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), drag);
+    }
+
+    #[test]
+    fn it_renders_a_card_with_an_absurd_position_without_overflowing() {
+      let cards = [card_model_at(1, 0), card_model_at(2, i64::MAX)];
+
+      let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), no_drag());
     }
 
     #[test]
@@ -1089,36 +1004,64 @@ mod tests {
     }
 
     #[test]
-    fn it_declares_the_fixed_card_height_for_empty_cells() {
-      use iced::advanced::Widget;
-      use pretty_assertions::assert_eq;
+    fn it_renders_a_squad_bar_without_a_description() {
+      let mut group = squad_group(1, "Solo", vec![card_model(1)]);
+      group.description = None;
+      {
+        let _bar: Element<'_, Message> = squad_bar(&group, false, false);
+      }
 
-      let cell = empty_cell(false);
-      assert_eq!(
-        Widget::<Message, _, _>::size(cell.as_widget()).height,
-        Length::Fixed(spacing::layout::CARD_HEIGHT),
-      );
-
-      let spacer = empty_spacer();
-      assert_eq!(
-        Widget::<Message, _, _>::size(spacer.as_widget()).height,
-        Length::Fixed(spacing::layout::CARD_HEIGHT),
-      );
+      group.description = Some("   ".to_owned());
+      let _blank: Element<'_, Message> = squad_bar(&group, false, false);
     }
 
     #[test]
-    fn it_renders_a_card_with_a_sync_error() {
-      use crate::sync::{Event, JobKey, JobKind, Subject};
-
+    fn it_renders_a_squad_group_and_the_unassigned_bucket() {
       let mut state = State::new();
-      state.unassigned = vec![card_model(7)];
-      let mut sync = SyncStatus::new();
-      sync.apply(&Event::Failed {
-        key: JobKey::new(JobKind::CharacterWallet, Subject::Character(7)),
-        reason: "boom".to_owned(),
-      });
+      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
+      state.unassigned = vec![card_model(2)];
+      let sync = SyncStatus::new();
 
       let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_a_squad_group_as_the_squad_bar() {
+      let group = squad_group(1, "Supers", vec![card_model(1), card_model(2)]);
+
+      let _bar: Element<'_, Message> = squad_bar(&group, false, false);
+      let _name_block: Element<'_, Message> = squad_name_block(&group);
+      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
+    }
+
+    #[test]
+    fn it_renders_an_empty_squad_with_the_dashed_drop_affordance() {
+      use iced::advanced::widget::Tree;
+      use pretty_assertions::assert_eq;
+
+      let group = squad_group(2, "Reserves", Vec::new());
+
+      let drop: Element<'_, Message> = empty_drop(
+        "No pilots in Reserves yet — drag a pilot here to assign them.",
+        2,
+        no_drag(),
+      );
+      assert_eq!(Tree::new(drop.as_widget()).children.len(), 2);
+
+      let _section: Element<'_, Message> = squad_section(&group, 0, false, &SyncStatus::new(), no_drag());
+    }
+
+    #[test]
+    fn it_renders_both_cards_when_two_share_a_position() {
+      use pretty_assertions::assert_eq;
+
+      let cards = [card_model_at(1, 0), card_model_at(2, 0)];
+
+      let slots = resolve_slots(&cards);
+
+      assert_eq!(slots.len(), 2);
+      assert_eq!(slots[&0].character_id, 1);
+      assert_eq!(slots[&1].character_id, 2);
     }
 
     #[test]
@@ -1133,6 +1076,57 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_empty_state() {
+      let state = State::new();
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_error_filter_state() {
+      let mut state = State::new();
+      state.filtered = Some(Filtered::Error("boom".to_owned()));
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_flat_filtered_grid_bypassing_the_squad_layout() {
+      let mut state = State::new();
+      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
+      state.filtered = Some(Filtered::Loaded(vec![
+        card_model(2),
+        card_model(3),
+        card_model(4),
+        card_model(5),
+      ]));
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_loading_filter_state() {
+      let mut state = State::new();
+      state.filtered = Some(Filtered::Loading);
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_no_matches_state_for_an_empty_filter() {
+      let mut state = State::new();
+      state.groups = vec![squad_group(1, "Supers", vec![card_model(1)])];
+      state.filtered = Some(Filtered::Loaded(vec![]));
+      let sync = SyncStatus::new();
+
+      let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
     fn it_renders_the_tracked_body_before_the_first_cursor_move() {
       let mut state = State::new();
       state.unassigned = vec![card_model(1)];
@@ -1140,6 +1134,12 @@ mod tests {
       let sync = SyncStatus::new();
 
       let _el: Element<'_, Message> = body(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_unassigned_bucket_with_the_lighter_header() {
+      let cards = [card_model(1)];
+      let _section: Element<'_, Message> = unassigned_section(&cards, 99, true, &SyncStatus::new(), no_drag());
     }
   }
 

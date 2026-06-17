@@ -421,16 +421,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_returns_the_placeholder_for_an_unknown_count() {
+      assert_eq!(format_members(None), PLACEHOLDER);
+    }
+
+    #[test]
     fn it_uses_millions_thin_space_thousands_and_raw_figures() {
       assert_eq!(format_members(Some(2_400_000)), "2.4M");
       assert_eq!(format_members(Some(12_400)), "12\u{2009}400");
       assert_eq!(format_members(Some(1_247)), "1\u{2009}247");
       assert_eq!(format_members(Some(89)), "89");
-    }
-
-    #[test]
-    fn it_returns_the_placeholder_for_an_unknown_count() {
-      assert_eq!(format_members(None), PLACEHOLDER);
     }
   }
 
@@ -453,6 +453,14 @@ mod tests {
 
   mod render {
     use super::*;
+
+    #[test]
+    fn it_renders_a_needs_reauth_badge_on_a_flagged_corp_without_a_sync_failure() {
+      let mut model = base_model();
+      model.needs_reauth = true;
+
+      let _el: Element<'_, Message> = corp_card(&model, None);
+    }
 
     #[test]
     fn it_renders_a_player_corp_card() {
@@ -481,14 +489,6 @@ mod tests {
       for failure in [Phase::Failed, Phase::BackingOff] {
         let _el: Element<'_, Message> = corp_card(&model, Some(failure));
       }
-    }
-
-    #[test]
-    fn it_renders_a_needs_reauth_badge_on_a_flagged_corp_without_a_sync_failure() {
-      let mut model = base_model();
-      model.needs_reauth = true;
-
-      let _el: Element<'_, Message> = corp_card(&model, None);
     }
 
     #[test]

@@ -870,136 +870,6 @@ mod tests {
     }
   }
 
-  #[test]
-  fn it_keeps_a_short_body_as_the_full_snippet_preview() {
-    assert_eq!(snippet_preview("Form up at Jita."), "Form up at Jita.");
-  }
-
-  #[test]
-  fn it_truncates_a_long_snippet_on_a_word_boundary_with_an_ellipsis() {
-    let body = "alpha ".repeat(40);
-
-    let preview = snippet_preview(&body);
-
-    assert!(preview.ends_with('\u{2026}'));
-    assert!(preview.chars().count() <= SNIPPET_MAX_CHARS + 1);
-  }
-
-  #[test]
-  fn it_classifies_sender_kind_from_flags() {
-    assert_eq!(SenderKind::from_flags(false, false), SenderKind::Character);
-    assert_eq!(SenderKind::from_flags(true, false), SenderKind::Corp);
-    assert_eq!(SenderKind::from_flags(false, true), SenderKind::System);
-    assert_eq!(SenderKind::from_flags(true, true), SenderKind::System);
-  }
-
-  #[test]
-  fn it_shows_sender_kind_icon_only_for_corp_and_system() {
-    assert!(sender_kind_icon(SenderKind::Character).is_none());
-    assert!(sender_kind_icon(SenderKind::Corp).is_some());
-    assert!(sender_kind_icon(SenderKind::System).is_some());
-  }
-
-  mod message_row {
-    use super::*;
-
-    #[allow(clippy::too_many_arguments)]
-    fn full_row(
-      mail_id: i64,
-      sender_kind: SenderKind,
-      is_read: bool,
-      is_pinned: bool,
-      is_starred: bool,
-      important: bool,
-      has_attachment: bool,
-      labels: &[&str],
-    ) -> MessageRow {
-      MessageRow {
-        bucket: DayBucket::Today,
-        character_id: 42,
-        has_attachment,
-        important,
-        is_pinned,
-        is_read,
-        is_starred,
-        label_ids: Vec::new(),
-        labels: labels
-          .iter()
-          .map(|name| MessageLabel {
-            color: Some("#ff6600".to_owned()),
-            name: (*name).to_owned(),
-          })
-          .collect(),
-        mail_id,
-        sender: "Vex Voronova".to_owned(),
-        sender_id: 95_000_001,
-        sender_kind,
-        sender_portrait: images::ImageState::Stale {
-          id: 95_000_001,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-        snippet: "Form up at Jita.".to_owned(),
-        subject: "CTA tonight".to_owned(),
-        time: "10:00".to_owned(),
-        timestamp: "2026-06-01T10:00:00Z".to_owned(),
-      }
-    }
-
-    #[test]
-    fn it_renders_an_unread_pinned_important_selected_row_with_labels() {
-      let row = full_row(
-        1,
-        SenderKind::Character,
-        false,
-        true,
-        false,
-        true,
-        true,
-        &["Fleet", "Ops"],
-      );
-      let _el: Element<'_, Message> = super::super::message_row(&row, true);
-    }
-
-    #[test]
-    fn it_renders_a_read_starred_corp_row_unselected() {
-      let row = full_row(2, SenderKind::Corp, true, false, true, false, false, &[]);
-      let _el: Element<'_, Message> = super::super::message_row(&row, false);
-    }
-
-    #[test]
-    fn it_renders_a_read_system_row() {
-      let row = full_row(3, SenderKind::System, true, false, false, false, false, &[]);
-      let _el: Element<'_, Message> = super::super::message_row(&row, false);
-    }
-  }
-
-  #[test]
-  fn it_buckets_by_calendar_day() {
-    let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
-
-    assert_eq!(day_bucket("2026-06-15T09:00:00Z", now), DayBucket::Today);
-    assert_eq!(day_bucket("2026-06-14T23:00:00Z", now), DayBucket::Yesterday);
-    assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::Earlier);
-    assert_eq!(day_bucket("not-a-date", now), DayBucket::Earlier);
-  }
-
-  #[test]
-  fn it_orders_day_buckets_chronologically_with_today_first() {
-    assert!(DayBucket::Today < DayBucket::Yesterday);
-    assert!(DayBucket::Yesterday < DayBucket::Earlier);
-
-    let mut buckets = [DayBucket::Earlier, DayBucket::Today, DayBucket::Yesterday];
-    buckets.sort();
-
-    assert_eq!(buckets, [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier]);
-  }
-
-  #[test]
-  fn it_formats_the_clock_label() {
-    assert_eq!(time_label("2026-06-15T09:07:00Z"), "09:07");
-    assert_eq!(time_label("2026-06-15T22:45:00Z"), "22:45");
-  }
-
   mod flatten {
     use pretty_assertions::assert_eq;
 
@@ -1036,17 +906,8 @@ mod tests {
     }
 
     #[test]
-    fn it_puts_the_pinned_head_ahead_of_the_day_buckets() {
-      let pinned = vec![row(9, DayBucket::Earlier, true, "p", "s", "x")];
-      let tail = vec![row(1, DayBucket::Today, false, "a", "s", "x")];
-
-      let flat = flatten_rows(&pinned, &tail);
-
-      assert_eq!(
-        shape(&flat),
-        ["#Pinned", "9", "#Today", "1"],
-        "the pinned row keeps its own head and is not re-bucketed by its timestamp"
-      );
+    fn it_is_empty_for_an_empty_listing() {
+      assert!(flatten_rows(&[], &[]).is_empty());
     }
 
     #[test]
@@ -1059,15 +920,81 @@ mod tests {
     }
 
     #[test]
-    fn it_is_empty_for_an_empty_listing() {
-      assert!(flatten_rows(&[], &[]).is_empty());
+    fn it_puts_the_pinned_head_ahead_of_the_day_buckets() {
+      let pinned = vec![row(9, DayBucket::Earlier, true, "p", "s", "x")];
+      let tail = vec![row(1, DayBucket::Today, false, "a", "s", "x")];
+
+      let flat = flatten_rows(&pinned, &tail);
+
+      assert_eq!(
+        shape(&flat),
+        ["#Pinned", "9", "#Today", "1"],
+        "the pinned row keeps its own head and is not re-bucketed by its timestamp"
+      );
     }
+  }
+
+  #[test]
+  fn it_buckets_by_calendar_day() {
+    let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
+
+    assert_eq!(day_bucket("2026-06-15T09:00:00Z", now), DayBucket::Today);
+    assert_eq!(day_bucket("2026-06-14T23:00:00Z", now), DayBucket::Yesterday);
+    assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::Earlier);
+    assert_eq!(day_bucket("not-a-date", now), DayBucket::Earlier);
+  }
+
+  #[test]
+  fn it_classifies_sender_kind_from_flags() {
+    assert_eq!(SenderKind::from_flags(false, false), SenderKind::Character);
+    assert_eq!(SenderKind::from_flags(true, false), SenderKind::Corp);
+    assert_eq!(SenderKind::from_flags(false, true), SenderKind::System);
+    assert_eq!(SenderKind::from_flags(true, true), SenderKind::System);
+  }
+
+  #[test]
+  fn it_formats_the_clock_label() {
+    assert_eq!(time_label("2026-06-15T09:07:00Z"), "09:07");
+    assert_eq!(time_label("2026-06-15T22:45:00Z"), "22:45");
+  }
+
+  #[test]
+  fn it_keeps_a_short_body_as_the_full_snippet_preview() {
+    assert_eq!(snippet_preview("Form up at Jita."), "Form up at Jita.");
+  }
+
+  #[test]
+  fn it_orders_day_buckets_chronologically_with_today_first() {
+    assert!(DayBucket::Today < DayBucket::Yesterday);
+    assert!(DayBucket::Yesterday < DayBucket::Earlier);
+
+    let mut buckets = [DayBucket::Earlier, DayBucket::Today, DayBucket::Yesterday];
+    buckets.sort();
+
+    assert_eq!(buckets, [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier]);
   }
 
   #[test]
   fn it_resolves_an_unfetched_sender_portrait_to_a_path_less_stale_state() {
     assert!(super::super::loaders::resolve_sender_portrait(0).path().is_none());
     assert!(super::super::loaders::resolve_sender_portrait(-1).path().is_none());
+  }
+
+  #[test]
+  fn it_shows_sender_kind_icon_only_for_corp_and_system() {
+    assert!(sender_kind_icon(SenderKind::Character).is_none());
+    assert!(sender_kind_icon(SenderKind::Corp).is_some());
+    assert!(sender_kind_icon(SenderKind::System).is_some());
+  }
+
+  #[test]
+  fn it_truncates_a_long_snippet_on_a_word_boundary_with_an_ellipsis() {
+    let body = "alpha ".repeat(40);
+
+    let preview = snippet_preview(&body);
+
+    assert!(preview.ends_with('\u{2026}'));
+    assert!(preview.chars().count() <= SNIPPET_MAX_CHARS + 1);
   }
 
   mod load {
@@ -1084,6 +1011,7 @@ mod tests {
     };
 
     const CHAR: i64 = 42;
+
     const LABEL: i64 = 5000;
 
     /// The full first-page listing as a flat, pinned-first Vec.
@@ -1167,32 +1095,6 @@ mod tests {
       mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
     }
 
-    #[tokio::test]
-    async fn it_carries_the_header_indicator_flags_onto_the_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHAR).await;
-
-      store_flagged_mail(&db, 10, 95_000_001, false, false, false, false).await;
-      store_flagged_mail(&db, 11, 95_000_001, true, true, false, false).await;
-      store_flagged_mail(&db, 12, 95_000_001, false, false, true, false).await;
-      store_flagged_mail(&db, 13, 95_000_001, false, false, false, true).await;
-
-      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Standard(StandardFolder::Inbox)).await;
-      let by_id = |id: i64| rows.iter().find(|r| r.mail_id == id).unwrap();
-
-      let plain = by_id(10);
-      assert!(!plain.has_attachment);
-      assert!(!plain.important);
-      assert_eq!(plain.sender_kind, SenderKind::Character);
-
-      let flagged = by_id(11);
-      assert!(flagged.has_attachment);
-      assert!(flagged.important);
-
-      assert_eq!(by_id(12).sender_kind, SenderKind::Corp);
-      assert_eq!(by_id(13).sender_kind, SenderKind::System);
-    }
-
     async fn seed_fixtures(db: &Database) {
       seed_character(db, CHAR).await;
       store_mail(db, 1, 95_000_001, false).await;
@@ -1240,6 +1142,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_carries_the_header_indicator_flags_onto_the_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHAR).await;
+
+      store_flagged_mail(&db, 10, 95_000_001, false, false, false, false).await;
+      store_flagged_mail(&db, 11, 95_000_001, true, true, false, false).await;
+      store_flagged_mail(&db, 12, 95_000_001, false, false, true, false).await;
+      store_flagged_mail(&db, 13, 95_000_001, false, false, false, true).await;
+
+      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Standard(StandardFolder::Inbox)).await;
+      let by_id = |id: i64| rows.iter().find(|r| r.mail_id == id).unwrap();
+
+      let plain = by_id(10);
+      assert!(!plain.has_attachment);
+      assert!(!plain.important);
+      assert_eq!(plain.sender_kind, SenderKind::Character);
+
+      let flagged = by_id(11);
+      assert!(flagged.has_attachment);
+      assert!(flagged.important);
+
+      assert_eq!(by_id(12).sender_kind, SenderKind::Corp);
+      assert_eq!(by_id(13).sender_kind, SenderKind::System);
+    }
+
+    #[tokio::test]
+    async fn it_combines_for_the_unified_folder_and_scopes_other_folders_to_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_fixtures(&db).await;
+
+      let unified = load_messages(&db, Scope::Character(CHAR), Folder::Unified).await;
+      assert_eq!(
+        ids(&unified),
+        vec![1, 2, 3, 5],
+        "the unified folder combines the roster's mail"
+      );
+
+      let labelled = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
+      assert_eq!(
+        ids(&labelled),
+        vec![5],
+        "a non-unified folder is scoped to the active character"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_derives_a_label_folder_with_resolved_label_names() {
+      let db = store::open_test().await.unwrap();
+      seed_fixtures(&db).await;
+
+      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
+
+      assert_eq!(ids(&rows), vec![5]);
+      assert_eq!(
+        rows.first().unwrap().labels,
+        vec![MessageLabel {
+          color: Some("#fff".to_owned()),
+          name: "Fleet".to_owned(),
+        }]
+      );
+    }
+
+    #[tokio::test]
     async fn it_derives_the_inbox_excluding_sent_and_archived_and_snoozed() {
       let db = store::open_test().await.unwrap();
       seed_fixtures(&db).await;
@@ -1249,16 +1214,6 @@ mod tests {
       assert_eq!(ids(&rows), vec![1, 3, 5]);
       assert_eq!(rows.first().unwrap().mail_id, 3);
       assert!(rows.first().unwrap().is_pinned);
-    }
-
-    #[tokio::test]
-    async fn it_derives_the_sent_folder() {
-      let db = store::open_test().await.unwrap();
-      seed_fixtures(&db).await;
-
-      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Standard(StandardFolder::Sent)).await;
-
-      assert_eq!(ids(&rows), vec![2]);
     }
 
     #[tokio::test]
@@ -1288,40 +1243,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_derives_a_label_folder_with_resolved_label_names() {
+    async fn it_derives_the_sent_folder() {
       let db = store::open_test().await.unwrap();
       seed_fixtures(&db).await;
 
-      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
+      let rows = load_messages(&db, Scope::Character(CHAR), Folder::Standard(StandardFolder::Sent)).await;
 
-      assert_eq!(ids(&rows), vec![5]);
-      assert_eq!(
-        rows.first().unwrap().labels,
-        vec![MessageLabel {
-          color: Some("#fff".to_owned()),
-          name: "Fleet".to_owned(),
-        }]
-      );
+      assert_eq!(ids(&rows), vec![2]);
+    }
+  }
+
+  mod message_row {
+    use super::*;
+
+    #[allow(clippy::too_many_arguments)]
+    fn full_row(
+      mail_id: i64,
+      sender_kind: SenderKind,
+      is_read: bool,
+      is_pinned: bool,
+      is_starred: bool,
+      important: bool,
+      has_attachment: bool,
+      labels: &[&str],
+    ) -> MessageRow {
+      MessageRow {
+        bucket: DayBucket::Today,
+        character_id: 42,
+        has_attachment,
+        important,
+        is_pinned,
+        is_read,
+        is_starred,
+        label_ids: Vec::new(),
+        labels: labels
+          .iter()
+          .map(|name| MessageLabel {
+            color: Some("#ff6600".to_owned()),
+            name: (*name).to_owned(),
+          })
+          .collect(),
+        mail_id,
+        sender: "Vex Voronova".to_owned(),
+        sender_id: 95_000_001,
+        sender_kind,
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+        snippet: "Form up at Jita.".to_owned(),
+        subject: "CTA tonight".to_owned(),
+        time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+      }
     }
 
-    #[tokio::test]
-    async fn it_combines_for_the_unified_folder_and_scopes_other_folders_to_the_character() {
-      let db = store::open_test().await.unwrap();
-      seed_fixtures(&db).await;
+    #[test]
+    fn it_renders_a_read_starred_corp_row_unselected() {
+      let row = full_row(2, SenderKind::Corp, true, false, true, false, false, &[]);
+      let _el: Element<'_, Message> = super::super::message_row(&row, false);
+    }
 
-      let unified = load_messages(&db, Scope::Character(CHAR), Folder::Unified).await;
-      assert_eq!(
-        ids(&unified),
-        vec![1, 2, 3, 5],
-        "the unified folder combines the roster's mail"
-      );
+    #[test]
+    fn it_renders_a_read_system_row() {
+      let row = full_row(3, SenderKind::System, true, false, false, false, false, &[]);
+      let _el: Element<'_, Message> = super::super::message_row(&row, false);
+    }
 
-      let labelled = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;
-      assert_eq!(
-        ids(&labelled),
-        vec![5],
-        "a non-unified folder is scoped to the active character"
+    #[test]
+    fn it_renders_an_unread_pinned_important_selected_row_with_labels() {
+      let row = full_row(
+        1,
+        SenderKind::Character,
+        false,
+        true,
+        false,
+        true,
+        true,
+        &["Fleet", "Ops"],
       );
+      let _el: Element<'_, Message> = super::super::message_row(&row, true);
     }
   }
 }

@@ -424,6 +424,28 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_omits_label_ids_when_none_are_assigned() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/contacts/"))
+          .and(query_param("standing", "-10"))
+          .and(query_param("watched", "false"))
+          .respond_with(ResponseTemplate::new(201).set_body_raw("[1003]", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let affected = esi
+          .character_authenticated(&grant)
+          .add_contacts(&[1003], -10.0, &[], false)
+          .await
+          .unwrap();
+
+        assert_eq!(affected, vec![1003]);
+      }
+
+      #[tokio::test]
       async fn it_posts_contact_ids_with_query_params_and_returns_affected_ids() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -446,28 +468,6 @@ mod tests {
           .unwrap();
 
         assert_eq!(affected, vec![1001, 1002]);
-      }
-
-      #[tokio::test]
-      async fn it_omits_label_ids_when_none_are_assigned() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/characters/42/contacts/"))
-          .and(query_param("standing", "-10"))
-          .and(query_param("watched", "false"))
-          .respond_with(ResponseTemplate::new(201).set_body_raw("[1003]", "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let affected = esi
-          .character_authenticated(&grant)
-          .add_contacts(&[1003], -10.0, &[], false)
-          .await
-          .unwrap();
-
-        assert_eq!(affected, vec![1003]);
       }
     }
 
@@ -537,6 +537,27 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_batches_ids_into_chunks_of_at_most_a_thousand() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/assets/names/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(
+            ResponseTemplate::new(200).set_body_raw(r#"[{"item_id":1,"name":"Named"}]"#, "application/json"),
+          )
+          .expect(2)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+        let ids: Vec<i64> = (1..=1500).collect();
+
+        let names = esi.character_authenticated(&grant).assets_names(&ids).await.unwrap();
+
+        assert_eq!(names.len(), 2);
+      }
+
+      #[tokio::test]
       async fn it_posts_item_ids_with_the_bearer_token_and_parses_names() {
         let server = MockServer::start().await;
         let body = r#"[{"item_id":1000000016835,"name":"Pod Saver II"},{"item_id":1000000016836,"name":"Loot Can"}]"#;
@@ -559,27 +580,6 @@ mod tests {
         assert_eq!(names[0].item_id, 1000000016835);
         assert_eq!(names[0].name, "Pod Saver II");
         assert_eq!(names[1].name, "Loot Can");
-      }
-
-      #[tokio::test]
-      async fn it_batches_ids_into_chunks_of_at_most_a_thousand() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/characters/42/assets/names/"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .respond_with(
-            ResponseTemplate::new(200).set_body_raw(r#"[{"item_id":1,"name":"Named"}]"#, "application/json"),
-          )
-          .expect(2)
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("secret-token", 42);
-        let ids: Vec<i64> = (1..=1500).collect();
-
-        let names = esi.character_authenticated(&grant).assets_names(&ids).await.unwrap();
-
-        assert_eq!(names.len(), 2);
       }
 
       #[tokio::test]
@@ -608,6 +608,25 @@ mod tests {
       const ATTRIBUTES_FIXTURE: &str = include_str!("../../../test/fixtures/esi/character_attributes.json");
 
       #[tokio::test]
+      async fn it_defaults_remap_fields_for_a_never_remapped_pilot() {
+        let server = MockServer::start().await;
+        let body = r#"{"charisma":19,"intelligence":20,"memory":20,"perception":20,"willpower":20}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/attributes/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let attributes = esi.character_authenticated(&grant).attributes().await.unwrap();
+
+        assert_eq!(attributes.bonus_remaps, 0);
+        assert!(attributes.last_remap_date.is_none());
+        assert!(attributes.accrued_remap_cooldown_date.is_none());
+      }
+
+      #[tokio::test]
       async fn it_sends_the_bearer_token_to_the_v1_attributes_path() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -626,24 +645,51 @@ mod tests {
         assert_eq!(attributes.bonus_remaps, 2);
         assert_eq!(attributes.last_remap_date.as_deref(), Some("2023-04-01T12:00:00Z"));
       }
+    }
+
+    mod blueprints {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
 
       #[tokio::test]
-      async fn it_defaults_remap_fields_for_a_never_remapped_pilot() {
+      async fn it_sends_the_bearer_token_and_merges_all_pages() {
         let server = MockServer::start().await;
-        let body = r#"{"charisma":19,"intelligence":20,"memory":20,"perception":20,"willpower":20}"#;
+        let page_one = r#"[{"item_id":1000000000001,"type_id":962,"location_id":60003760,"location_flag":"Hangar","quantity":-1,"material_efficiency":10,"time_efficiency":20,"runs":-1}]"#;
+        let page_two = r#"[{"item_id":1000000000002,"type_id":963,"location_id":60003760,"location_flag":"Hangar","quantity":1,"material_efficiency":2,"time_efficiency":4,"runs":300}]"#;
         Mock::given(method("GET"))
-          .and(path("/characters/42/attributes/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .and(path("/characters/42/blueprints/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "1"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_one, "application/json"),
+          )
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/blueprints/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(wiremock::matchers::query_param("page", "2"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("X-Pages", "2")
+              .set_body_raw(page_two, "application/json"),
+          )
           .mount(&server)
           .await;
         let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
+        let grant = Grant::new_test("secret-token", 42);
 
-        let attributes = esi.character_authenticated(&grant).attributes().await.unwrap();
+        let blueprints = esi.character_authenticated(&grant).blueprints().await.unwrap();
 
-        assert_eq!(attributes.bonus_remaps, 0);
-        assert!(attributes.last_remap_date.is_none());
-        assert!(attributes.accrued_remap_cooldown_date.is_none());
+        assert_eq!(blueprints.len(), 2);
+        assert_eq!(blueprints[0].item_id, 1000000000001);
+        assert_eq!(blueprints[0].runs, -1);
+        assert_eq!(blueprints[0].time_efficiency, 20);
+        assert_eq!(blueprints[1].item_id, 1000000000002);
+        assert_eq!(blueprints[1].runs, 300);
       }
     }
 
@@ -685,6 +731,26 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_defaults_optional_fields_for_a_sparse_event() {
+        let server = MockServer::start().await;
+        let body = r#"{"event_id":1235}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/calendar/1235/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let detail = esi.character_authenticated(&grant).calendar_event(1235).await.unwrap();
+
+        assert_eq!(detail.event_id, 1235);
+        assert!(detail.date.is_none());
+        assert!(detail.owner_type.is_none());
+        assert!(detail.title.is_none());
+      }
+
+      #[tokio::test]
       async fn it_sends_the_bearer_token_and_returns_the_event_detail() {
         let server = MockServer::start().await;
         let body = r#"{"event_id":1234,"date":"2024-01-01T18:00:00Z","duration":60,"importance":1,"owner_id":98000001,"owner_name":"Test Corp","owner_type":"corporation","response":"accepted","title":"CTA","text":"<p>Form up.</p>"}"#;
@@ -707,26 +773,6 @@ mod tests {
         assert_eq!(detail.response.as_deref(), Some("accepted"));
         assert_eq!(detail.title.as_deref(), Some("CTA"));
         assert_eq!(detail.text.as_deref(), Some("<p>Form up.</p>"));
-      }
-
-      #[tokio::test]
-      async fn it_defaults_optional_fields_for_a_sparse_event() {
-        let server = MockServer::start().await;
-        let body = r#"{"event_id":1235}"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/calendar/1235/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let detail = esi.character_authenticated(&grant).calendar_event(1235).await.unwrap();
-
-        assert_eq!(detail.event_id, 1235);
-        assert!(detail.date.is_none());
-        assert!(detail.owner_type.is_none());
-        assert!(detail.title.is_none());
       }
     }
 
@@ -854,6 +900,26 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_defaults_optional_fields_for_an_unrated_contact() {
+        let server = MockServer::start().await;
+        let body = r#"[{"contact_id":2002,"contact_type":"corporation"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/contacts/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let contacts = esi.character_authenticated(&grant).contacts().await.unwrap();
+
+        assert_eq!(contacts.len(), 1);
+        assert!(contacts[0].standing.is_none());
+        assert!(contacts[0].is_watched.is_none());
+        assert!(contacts[0].label_ids.is_empty());
+      }
+
+      #[tokio::test]
       async fn it_sends_the_bearer_token_and_returns_contacts() {
         let server = MockServer::start().await;
         let body =
@@ -875,26 +941,6 @@ mod tests {
         assert_eq!(contacts[0].is_watched, Some(true));
         assert_eq!(contacts[0].label_ids, vec![1]);
         assert_eq!(contacts[0].standing, Some(7.5));
-      }
-
-      #[tokio::test]
-      async fn it_defaults_optional_fields_for_an_unrated_contact() {
-        let server = MockServer::start().await;
-        let body = r#"[{"contact_id":2002,"contact_type":"corporation"}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/contacts/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let contacts = esi.character_authenticated(&grant).contacts().await.unwrap();
-
-        assert_eq!(contacts.len(), 1);
-        assert!(contacts[0].standing.is_none());
-        assert!(contacts[0].is_watched.is_none());
-        assert!(contacts[0].label_ids.is_empty());
       }
     }
 
@@ -1036,6 +1082,18 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_omits_the_color_when_unset() {
+        let request = CreateMailLabelRequest {
+          color: None,
+          name: "PLAIN".to_string(),
+        };
+
+        let serialized: Value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(serialized, json!({"name": "PLAIN"}));
+      }
+
+      #[tokio::test]
       async fn it_posts_the_label_and_returns_the_server_assigned_id() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1059,18 +1117,6 @@ mod tests {
           .unwrap();
 
         assert_eq!(label_id, 128);
-      }
-
-      #[tokio::test]
-      async fn it_omits_the_color_when_unset() {
-        let request = CreateMailLabelRequest {
-          color: None,
-          name: "PLAIN".to_string(),
-        };
-
-        let serialized: Value = serde_json::to_value(&request).unwrap();
-
-        assert_eq!(serialized, json!({"name": "PLAIN"}));
       }
     }
 
@@ -1101,6 +1147,27 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_omits_label_ids_when_none_are_assigned() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/characters/42/contacts/"))
+          .and(query_param("standing", "0"))
+          .and(query_param("watched", "false"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let result = esi
+          .character_authenticated(&grant)
+          .edit_contacts(&[1002], 0.0, &[], false)
+          .await;
+
+        assert!(result.is_ok());
+      }
+
+      #[tokio::test]
       async fn it_puts_contact_ids_with_query_params_and_the_bearer_token() {
         let server = MockServer::start().await;
         Mock::given(method("PUT"))
@@ -1119,27 +1186,6 @@ mod tests {
         let result = esi
           .character_authenticated(&grant)
           .edit_contacts(&[1001], 10.0, &[7], true)
-          .await;
-
-        assert!(result.is_ok());
-      }
-
-      #[tokio::test]
-      async fn it_omits_label_ids_when_none_are_assigned() {
-        let server = MockServer::start().await;
-        Mock::given(method("PUT"))
-          .and(path("/characters/42/contacts/"))
-          .and(query_param("standing", "0"))
-          .and(query_param("watched", "false"))
-          .respond_with(ResponseTemplate::new(204))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let result = esi
-          .character_authenticated(&grant)
-          .edit_contacts(&[1002], 0.0, &[], false)
           .await;
 
         assert!(result.is_ok());
@@ -1167,52 +1213,6 @@ mod tests {
         let implants = esi.character_authenticated(&grant).implants().await.unwrap();
 
         assert_eq!(implants, vec![9899, 9941, 9942]);
-      }
-    }
-
-    mod blueprints {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[tokio::test]
-      async fn it_sends_the_bearer_token_and_merges_all_pages() {
-        let server = MockServer::start().await;
-        let page_one = r#"[{"item_id":1000000000001,"type_id":962,"location_id":60003760,"location_flag":"Hangar","quantity":-1,"material_efficiency":10,"time_efficiency":20,"runs":-1}]"#;
-        let page_two = r#"[{"item_id":1000000000002,"type_id":963,"location_id":60003760,"location_flag":"Hangar","quantity":1,"material_efficiency":2,"time_efficiency":4,"runs":300}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/blueprints/"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .and(wiremock::matchers::query_param("page", "1"))
-          .respond_with(
-            ResponseTemplate::new(200)
-              .insert_header("X-Pages", "2")
-              .set_body_raw(page_one, "application/json"),
-          )
-          .mount(&server)
-          .await;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/blueprints/"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .and(wiremock::matchers::query_param("page", "2"))
-          .respond_with(
-            ResponseTemplate::new(200)
-              .insert_header("X-Pages", "2")
-              .set_body_raw(page_two, "application/json"),
-          )
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("secret-token", 42);
-
-        let blueprints = esi.character_authenticated(&grant).blueprints().await.unwrap();
-
-        assert_eq!(blueprints.len(), 2);
-        assert_eq!(blueprints[0].item_id, 1000000000001);
-        assert_eq!(blueprints[0].runs, -1);
-        assert_eq!(blueprints[0].time_efficiency, 20);
-        assert_eq!(blueprints[1].item_id, 1000000000002);
-        assert_eq!(blueprints[1].runs, 300);
       }
     }
 
@@ -1298,6 +1298,29 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_defaults_optional_fields_for_a_system_mail() {
+        let server = MockServer::start().await;
+        let body = r#"[{"mail_id":8}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/mail/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let headers = esi.character_authenticated(&grant).mail().await.unwrap();
+
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].mail_id, 8);
+        assert!(headers[0].from.is_none());
+        assert!(headers[0].is_read.is_none());
+        assert!(headers[0].subject.is_none());
+        assert!(headers[0].labels.is_empty());
+        assert!(headers[0].recipients.is_empty());
+      }
+
+      #[tokio::test]
       async fn it_sends_the_bearer_token_and_returns_mail_headers() {
         let server = MockServer::start().await;
         let body = r#"[{"mail_id":7,"from":1001,"recipients":[{"recipient_id":2002,"recipient_type":"character"},{"recipient_id":3003,"recipient_type":"mailing_list"}],"subject":"Hello","timestamp":"2024-01-01T00:00:00Z","is_read":true,"labels":[1,4]}]"#;
@@ -1323,29 +1346,6 @@ mod tests {
         assert_eq!(headers[0].recipients[0].recipient_id, 2002);
         assert_eq!(headers[0].recipients[0].recipient_type, "character");
         assert_eq!(headers[0].recipients[1].recipient_type, "mailing_list");
-      }
-
-      #[tokio::test]
-      async fn it_defaults_optional_fields_for_a_system_mail() {
-        let server = MockServer::start().await;
-        let body = r#"[{"mail_id":8}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/mail/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let headers = esi.character_authenticated(&grant).mail().await.unwrap();
-
-        assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0].mail_id, 8);
-        assert!(headers[0].from.is_none());
-        assert!(headers[0].is_read.is_none());
-        assert!(headers[0].subject.is_none());
-        assert!(headers[0].labels.is_empty());
-        assert!(headers[0].recipients.is_empty());
       }
     }
 
@@ -1379,6 +1379,28 @@ mod tests {
       use super::*;
 
       #[tokio::test]
+      async fn it_defaults_optional_fields_for_a_sparse_label() {
+        let server = MockServer::start().await;
+        let body = r#"{"labels":[{"label_id":1}]}"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/mail/labels/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let labels = esi.character_authenticated(&grant).mail_labels().await.unwrap();
+
+        assert_eq!(labels.labels.len(), 1);
+        assert_eq!(labels.labels[0].label_id, 1);
+        assert!(labels.labels[0].color.is_none());
+        assert!(labels.labels[0].name.is_none());
+        assert!(labels.labels[0].unread_count.is_none());
+        assert!(labels.total_unread_count.is_none());
+      }
+
+      #[tokio::test]
       async fn it_sends_the_bearer_token_and_returns_label_definitions() {
         let server = MockServer::start().await;
         let body = r##"{"labels":[{"color":"#660066","label_id":16,"name":"PINK","unread_count":4},{"color":"#ffffff","label_id":17,"name":"WHITE","unread_count":1}],"total_unread_count":5}"##;
@@ -1401,28 +1423,6 @@ mod tests {
         assert_eq!(labels.labels[0].unread_count, Some(4));
         assert_eq!(labels.labels[1].label_id, 17);
       }
-
-      #[tokio::test]
-      async fn it_defaults_optional_fields_for_a_sparse_label() {
-        let server = MockServer::start().await;
-        let body = r#"{"labels":[{"label_id":1}]}"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/mail/labels/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let labels = esi.character_authenticated(&grant).mail_labels().await.unwrap();
-
-        assert_eq!(labels.labels.len(), 1);
-        assert_eq!(labels.labels[0].label_id, 1);
-        assert!(labels.labels[0].color.is_none());
-        assert!(labels.labels[0].name.is_none());
-        assert!(labels.labels[0].unread_count.is_none());
-        assert!(labels.total_unread_count.is_none());
-      }
     }
 
     mod mark_read {
@@ -1430,6 +1430,24 @@ mod tests {
       use wiremock::matchers::body_json;
 
       use super::*;
+
+      #[tokio::test]
+      async fn it_omits_unset_fields_from_the_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+          .and(path("/characters/42/mail/7/"))
+          .respond_with(ResponseTemplate::new(204))
+          .mount(&server)
+          .await;
+        let request = MarkReadRequest {
+          labels: None,
+          read: Some(true),
+        };
+
+        let serialized: Value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(serialized, json!({"read": true}));
+      }
 
       #[tokio::test]
       async fn it_puts_the_read_flag_with_the_bearer_token() {
@@ -1452,23 +1470,53 @@ mod tests {
 
         assert!(result.is_ok());
       }
+    }
+
+    mod notifications {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
 
       #[tokio::test]
-      async fn it_omits_unset_fields_from_the_body() {
+      async fn it_defaults_optional_fields_for_a_system_notification() {
         let server = MockServer::start().await;
-        Mock::given(method("PUT"))
-          .and(path("/characters/42/mail/7/"))
-          .respond_with(ResponseTemplate::new(204))
+        let body = r#"[{"notification_id":8,"type":"TutorialMsg","timestamp":"2024-02-01T00:00:00Z"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/notifications/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
           .mount(&server)
           .await;
-        let request = MarkReadRequest {
-          labels: None,
-          read: Some(true),
-        };
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
 
-        let serialized: Value = serde_json::to_value(&request).unwrap();
+        let notifications = esi.character_authenticated(&grant).notifications().await.unwrap();
 
-        assert_eq!(serialized, json!({"read": true}));
+        assert!(notifications[0].is_read.is_none());
+        assert!(notifications[0].sender_id.is_none());
+        assert!(notifications[0].text.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_sends_the_bearer_token_and_returns_notifications() {
+        let server = MockServer::start().await;
+        let body = r#"[{"notification_id":7,"type":"KillReportFinalBlow","sender_id":1001,"sender_type":"character","timestamp":"2024-01-01T00:00:00Z","is_read":true,"text":"body"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/notifications/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let notifications = esi.character_authenticated(&grant).notifications().await.unwrap();
+
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].notification_id, 7);
+        assert_eq!(notifications[0].notif_type, "KillReportFinalBlow");
+        assert_eq!(notifications[0].sender_id, Some(1001));
+        assert_eq!(notifications[0].is_read, Some(true));
+        assert_eq!(notifications[0].text.as_deref(), Some("body"));
       }
     }
 
@@ -1476,6 +1524,26 @@ mod tests {
       use pretty_assertions::assert_eq;
 
       use super::*;
+
+      #[tokio::test]
+      async fn it_defaults_is_buy_order_and_escrow_for_a_sell_order() {
+        let server = MockServer::start().await;
+        let body = r#"[{"order_id":2002,"type_id":35,"region_id":10000002,"location_id":60003760,"range":"station","price":12.3,"volume_remain":5,"volume_total":5,"duration":30,"issued":"2026-06-02T00:00:00Z"}]"#;
+        Mock::given(method("GET"))
+          .and(path("/characters/42/orders/"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("token", 42);
+
+        let orders = esi.character_authenticated(&grant).orders().await.unwrap();
+
+        assert_eq!(orders.len(), 1);
+        assert!(!orders[0].is_buy_order);
+        assert_eq!(orders[0].escrow, 0.0);
+        assert!(orders[0].min_volume.is_none());
+      }
 
       #[tokio::test]
       async fn it_sends_the_bearer_token_and_maps_a_buy_order() {
@@ -1505,149 +1573,6 @@ mod tests {
         assert_eq!(orders[0].escrow, 550.0);
         assert_eq!(orders[0].duration, 90);
         assert_eq!(orders[0].issued, "2026-06-01T12:00:00Z");
-      }
-
-      #[tokio::test]
-      async fn it_defaults_is_buy_order_and_escrow_for_a_sell_order() {
-        let server = MockServer::start().await;
-        let body = r#"[{"order_id":2002,"type_id":35,"region_id":10000002,"location_id":60003760,"range":"station","price":12.3,"volume_remain":5,"volume_total":5,"duration":30,"issued":"2026-06-02T00:00:00Z"}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/orders/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let orders = esi.character_authenticated(&grant).orders().await.unwrap();
-
-        assert_eq!(orders.len(), 1);
-        assert!(!orders[0].is_buy_order);
-        assert_eq!(orders[0].escrow, 0.0);
-        assert!(orders[0].min_volume.is_none());
-      }
-    }
-
-    mod send_mail {
-      use pretty_assertions::assert_eq;
-      use serde_json::{Value, json};
-      use wiremock::matchers::body_json;
-
-      use super::*;
-      use crate::clients::esi::models::character::SendMailRecipient;
-
-      #[tokio::test]
-      async fn it_posts_the_send_body_and_returns_the_new_mail_id() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/characters/42/mail/"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .and(body_json(json!({
-            "body": "Form up at 19:00.",
-            "recipients": [{"recipient_id": 2002, "recipient_type": "character"}],
-            "subject": "CTA"
-          })))
-          .respond_with(ResponseTemplate::new(201).set_body_raw("123456789", "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("secret-token", 42);
-        let request = SendMailRequest {
-          approved_cost: None,
-          body: "Form up at 19:00.".to_string(),
-          recipients: vec![SendMailRecipient {
-            recipient_id: 2002,
-            recipient_type: "character".to_string(),
-          }],
-          subject: "CTA".to_string(),
-        };
-
-        let mail_id = esi.character_authenticated(&grant).send_mail(&request).await.unwrap();
-
-        assert_eq!(mail_id, 123456789);
-      }
-
-      #[tokio::test]
-      async fn it_serializes_recipient_types_for_every_target_kind() {
-        let request = SendMailRequest {
-          approved_cost: Some(50),
-          body: "hi".to_string(),
-          recipients: vec![
-            SendMailRecipient {
-              recipient_id: 1,
-              recipient_type: "character".to_string(),
-            },
-            SendMailRecipient {
-              recipient_id: 2,
-              recipient_type: "corporation".to_string(),
-            },
-            SendMailRecipient {
-              recipient_id: 3,
-              recipient_type: "alliance".to_string(),
-            },
-            SendMailRecipient {
-              recipient_id: 4,
-              recipient_type: "mailing_list".to_string(),
-            },
-          ],
-          subject: "s".to_string(),
-        };
-
-        let serialized: Value = serde_json::to_value(&request).unwrap();
-
-        assert_eq!(serialized["approved_cost"], 50);
-        assert_eq!(serialized["recipients"][0]["recipient_type"], "character");
-        assert_eq!(serialized["recipients"][1]["recipient_type"], "corporation");
-        assert_eq!(serialized["recipients"][2]["recipient_type"], "alliance");
-        assert_eq!(serialized["recipients"][3]["recipient_type"], "mailing_list");
-      }
-    }
-
-    mod notifications {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[tokio::test]
-      async fn it_sends_the_bearer_token_and_returns_notifications() {
-        let server = MockServer::start().await;
-        let body = r#"[{"notification_id":7,"type":"KillReportFinalBlow","sender_id":1001,"sender_type":"character","timestamp":"2024-01-01T00:00:00Z","is_read":true,"text":"body"}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/notifications/"))
-          .and(header("Authorization", "Bearer secret-token"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("secret-token", 42);
-
-        let notifications = esi.character_authenticated(&grant).notifications().await.unwrap();
-
-        assert_eq!(notifications.len(), 1);
-        assert_eq!(notifications[0].notification_id, 7);
-        assert_eq!(notifications[0].notif_type, "KillReportFinalBlow");
-        assert_eq!(notifications[0].sender_id, Some(1001));
-        assert_eq!(notifications[0].is_read, Some(true));
-        assert_eq!(notifications[0].text.as_deref(), Some("body"));
-      }
-
-      #[tokio::test]
-      async fn it_defaults_optional_fields_for_a_system_notification() {
-        let server = MockServer::start().await;
-        let body = r#"[{"notification_id":8,"type":"TutorialMsg","timestamp":"2024-02-01T00:00:00Z"}]"#;
-        Mock::given(method("GET"))
-          .and(path("/characters/42/notifications/"))
-          .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-          .mount(&server)
-          .await;
-        let esi = make_esi(&server.uri()).await;
-        let grant = Grant::new_test("token", 42);
-
-        let notifications = esi.character_authenticated(&grant).notifications().await.unwrap();
-
-        assert!(notifications[0].is_read.is_none());
-        assert!(notifications[0].sender_id.is_none());
-        assert!(notifications[0].text.is_none());
       }
     }
 
@@ -1744,6 +1669,81 @@ mod tests {
         let serialized: Value = serde_json::to_value(&request).unwrap();
 
         assert_eq!(serialized, json!({"response": "declined"}));
+      }
+    }
+
+    mod send_mail {
+      use pretty_assertions::assert_eq;
+      use serde_json::{Value, json};
+      use wiremock::matchers::body_json;
+
+      use super::*;
+      use crate::clients::esi::models::character::SendMailRecipient;
+
+      #[tokio::test]
+      async fn it_posts_the_send_body_and_returns_the_new_mail_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+          .and(path("/characters/42/mail/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .and(body_json(json!({
+            "body": "Form up at 19:00.",
+            "recipients": [{"recipient_id": 2002, "recipient_type": "character"}],
+            "subject": "CTA"
+          })))
+          .respond_with(ResponseTemplate::new(201).set_body_raw("123456789", "application/json"))
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+        let request = SendMailRequest {
+          approved_cost: None,
+          body: "Form up at 19:00.".to_string(),
+          recipients: vec![SendMailRecipient {
+            recipient_id: 2002,
+            recipient_type: "character".to_string(),
+          }],
+          subject: "CTA".to_string(),
+        };
+
+        let mail_id = esi.character_authenticated(&grant).send_mail(&request).await.unwrap();
+
+        assert_eq!(mail_id, 123456789);
+      }
+
+      #[tokio::test]
+      async fn it_serializes_recipient_types_for_every_target_kind() {
+        let request = SendMailRequest {
+          approved_cost: Some(50),
+          body: "hi".to_string(),
+          recipients: vec![
+            SendMailRecipient {
+              recipient_id: 1,
+              recipient_type: "character".to_string(),
+            },
+            SendMailRecipient {
+              recipient_id: 2,
+              recipient_type: "corporation".to_string(),
+            },
+            SendMailRecipient {
+              recipient_id: 3,
+              recipient_type: "alliance".to_string(),
+            },
+            SendMailRecipient {
+              recipient_id: 4,
+              recipient_type: "mailing_list".to_string(),
+            },
+          ],
+          subject: "s".to_string(),
+        };
+
+        let serialized: Value = serde_json::to_value(&request).unwrap();
+
+        assert_eq!(serialized["approved_cost"], 50);
+        assert_eq!(serialized["recipients"][0]["recipient_type"], "character");
+        assert_eq!(serialized["recipients"][1]["recipient_type"], "corporation");
+        assert_eq!(serialized["recipients"][2]["recipient_type"], "alliance");
+        assert_eq!(serialized["recipients"][3]["recipient_type"], "mailing_list");
       }
     }
 

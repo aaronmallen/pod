@@ -147,6 +147,7 @@ mod tests {
   };
 
   const CORP: i64 = 90_000_001;
+
   const DIRECTOR: i64 = 100;
 
   async fn seed_character(db: &store::Database, id: i64) {
@@ -268,6 +269,26 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_errors_when_the_grant_is_missing() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporation/{CORP}/mining/extractions/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(org::corporation_mining_extractions(&db, CORP).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_full_replaces_the_extractions_table_when_the_role_is_held() {
       let server = MockServer::start().await;
       mount_roles(
@@ -297,6 +318,28 @@ mod tests {
       let rows = org::corporation_mining_extractions(&db, CORP).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].moon_id(), 40_000_001);
+    }
+
+    #[tokio::test]
+    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/roles/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
+      let grant = Grant::new_test("corp-token", CORP);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant));
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
     }
 
     #[tokio::test]
@@ -352,48 +395,6 @@ mod tests {
       assert!(
         matches!(outcome, Outcome::Skipped { .. }),
         "a 403 from the extractions endpoint is an honest skip, got {outcome:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_the_grant_is_missing() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporation/{CORP}/mining/extractions/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db).await;
-      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(org::corporation_mining_extractions(&db, CORP).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_short_retries_when_the_corporation_is_not_yet_persisted() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{CORP}/roles/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let (esi, image, image_store, _dir) = build_clients(&db, &server).await;
-      let grant = Grant::new_test("corp-token", CORP);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant));
-
-      let result = run(&ctx).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
     }
   }

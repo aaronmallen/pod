@@ -575,41 +575,6 @@ fn swatch<'a>(hex: Option<&str>) -> Element<'a, Message> {
 mod tests {
   use super::*;
 
-  mod label_draft {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_starts_blank_with_the_default_color_and_cannot_create() {
-      let draft = LabelDraft::blank();
-
-      assert_eq!(draft.color, DEFAULT_COLOR);
-      assert!(draft.name.is_empty());
-      assert!(!draft.can_create());
-    }
-
-    #[test]
-    fn it_can_create_once_a_non_blank_name_is_present() {
-      let mut draft = LabelDraft::blank();
-
-      draft.name = "  ".to_owned();
-      assert!(!draft.can_create());
-
-      draft.name = "Coalition".to_owned();
-      assert!(draft.can_create());
-    }
-  }
-
-  mod temp_label_id {
-    use super::*;
-
-    #[test]
-    fn it_is_always_negative() {
-      assert!(temp_label_id() < 0);
-    }
-  }
-
   mod is_system_label {
     use super::*;
 
@@ -631,15 +596,29 @@ mod tests {
     }
   }
 
-  mod toggled_set {
+  mod label_draft {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_adds_an_absent_label_and_removes_a_present_one() {
-      assert_eq!(toggled_set(&[1, 2], 3), vec![1, 2, 3]);
-      assert_eq!(toggled_set(&[1, 2, 3], 2), vec![1, 3]);
+    fn it_can_create_once_a_non_blank_name_is_present() {
+      let mut draft = LabelDraft::blank();
+
+      draft.name = "  ".to_owned();
+      assert!(!draft.can_create());
+
+      draft.name = "Coalition".to_owned();
+      assert!(draft.can_create());
+    }
+
+    #[test]
+    fn it_starts_blank_with_the_default_color_and_cannot_create() {
+      let draft = LabelDraft::blank();
+
+      assert_eq!(draft.color, DEFAULT_COLOR);
+      assert!(draft.name.is_empty());
+      assert!(!draft.can_create());
     }
   }
 
@@ -701,6 +680,12 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_create_modal_with_a_blank_draft() {
+      let draft = LabelDraft::blank();
+      let _el: Element<'_, Message> = create_modal(&draft);
+    }
+
+    #[test]
     fn it_renders_the_create_modal_with_a_named_draft() {
       let mut draft = LabelDraft::blank();
       draft.name = "Coalition".to_owned();
@@ -709,9 +694,8 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_create_modal_with_a_blank_draft() {
-      let draft = LabelDraft::blank();
-      let _el: Element<'_, Message> = create_modal(&draft);
+    fn it_renders_the_empty_toggle_picker() {
+      let _el: Element<'_, Message> = toggle_picker(7, &[], &[]);
     }
 
     #[test]
@@ -720,10 +704,26 @@ mod tests {
 
       let _el: Element<'_, Message> = toggle_picker(7, &catalog, &[1]);
     }
+  }
+
+  mod temp_label_id {
+    use super::*;
 
     #[test]
-    fn it_renders_the_empty_toggle_picker() {
-      let _el: Element<'_, Message> = toggle_picker(7, &[], &[]);
+    fn it_is_always_negative() {
+      assert!(temp_label_id() < 0);
+    }
+  }
+
+  mod toggled_set {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_adds_an_absent_label_and_removes_a_present_one() {
+      assert_eq!(toggled_set(&[1, 2], 3), vec![1, 2, 3]);
+      assert_eq!(toggled_set(&[1, 2, 3], 2), vec![1, 3]);
     }
   }
 }

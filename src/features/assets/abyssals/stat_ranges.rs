@@ -416,10 +416,26 @@ mod tests {
     }
   }
 
+  fn slider(min: f64, max: f64) -> RangeSliderProgram {
+    RangeSliderProgram {
+      attribute_id: 1,
+      current_max: max,
+      current_min: min,
+      hi: 100.0,
+      lo: 0.0,
+    }
+  }
+
   mod fraction_for_value {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_clamps_values_outside_the_bounds() {
+      assert_eq!(fraction_for_value(-5.0, 10.0, 50.0), 0.0);
+      assert_eq!(fraction_for_value(99.0, 10.0, 50.0), 1.0);
+    }
 
     #[test]
     fn it_maps_the_endpoints_to_zero_and_one() {
@@ -433,47 +449,88 @@ mod tests {
     }
 
     #[test]
-    fn it_clamps_values_outside_the_bounds() {
-      assert_eq!(fraction_for_value(-5.0, 10.0, 50.0), 0.0);
-      assert_eq!(fraction_for_value(99.0, 10.0, 50.0), 1.0);
-    }
-
-    #[test]
     fn it_yields_zero_for_a_degenerate_range() {
       assert_eq!(fraction_for_value(10.0, 10.0, 10.0), 0.0);
     }
   }
 
-  mod value_at_fraction {
+  mod nearest_target {
+    use super::*;
+
+    fn program(min: f64, max: f64) -> RangeSliderProgram {
+      slider(min, max)
+    }
+
+    #[test]
+    fn it_picks_the_max_thumb_when_the_cursor_is_nearer_to_it() {
+      let inner_w = 100.0;
+      let program = program(20.0, 80.0);
+
+      assert!(program.nearest_target(THUMB_RADIUS + 78.0, inner_w) == DragTarget::Max);
+    }
+
+    #[test]
+    fn it_picks_the_min_thumb_when_the_cursor_is_nearer_to_it() {
+      let inner_w = 100.0;
+      let program = program(20.0, 80.0);
+
+      assert!(program.nearest_target(THUMB_RADIUS + 22.0, inner_w) == DragTarget::Min);
+    }
+  }
+
+  mod panel {
+    use super::*;
+    use crate::features::assets::{State, abyssals::Filters};
+
+    fn selected_filters() -> Filters {
+      Filters {
+        source_type_id: Some(2410),
+        ..Filters::default()
+      }
+    }
+
+    #[test]
+    fn it_renders_sliders_for_the_selected_type_templates() {
+      let mut state = State::new();
+      state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
+      state.set_abyssal_stat_templates_for_test(vec![template(50, 28.0, 56.0)]);
+
+      let _el: Element<'_, Message> = panel(&state);
+    }
+
+    #[test]
+    fn it_renders_the_placeholder_when_every_template_is_degenerate() {
+      let mut state = State::new();
+      state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
+      state.set_abyssal_stat_templates_for_test(vec![template(50, 33.0, 33.0)]);
+
+      let _el: Element<'_, Message> = panel(&state);
+    }
+
+    #[test]
+    fn it_renders_the_placeholder_when_no_type_is_selected() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = panel(&state);
+    }
+  }
+
+  mod segment_color {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_maps_zero_and_one_to_the_endpoints() {
-      assert_eq!(value_at_fraction(0.0, 10.0, 50.0), 10.0);
-      assert_eq!(value_at_fraction(1.0, 10.0, 50.0), 50.0);
+    fn it_dims_the_segment_when_both_endpoints_sit_on_their_bounds() {
+      assert_eq!(
+        slider(0.0, 100.0).segment_color(),
+        color::with_alpha(color::text::PRIMARY, 0.22)
+      );
     }
 
     #[test]
-    fn it_maps_a_half_to_the_midpoint() {
-      assert_eq!(value_at_fraction(0.5, 10.0, 50.0), 30.0);
-    }
-
-    #[test]
-    fn it_clamps_fractions_outside_the_unit_interval() {
-      assert_eq!(value_at_fraction(-1.0, 10.0, 50.0), 10.0);
-      assert_eq!(value_at_fraction(2.0, 10.0, 50.0), 50.0);
-    }
-  }
-
-  fn slider(min: f64, max: f64) -> RangeSliderProgram {
-    RangeSliderProgram {
-      attribute_id: 1,
-      current_max: max,
-      current_min: min,
-      hi: 100.0,
-      lo: 0.0,
+    fn it_highlights_the_segment_when_an_endpoint_has_moved() {
+      assert_eq!(slider(20.0, 100.0).segment_color(), color::accent::PLASMA);
     }
   }
 
@@ -496,49 +553,6 @@ mod tests {
 
       assert_eq!(radius, THUMB_RADIUS);
       assert_eq!(color, color::text::PRIMARY);
-    }
-  }
-
-  mod segment_color {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_highlights_the_segment_when_an_endpoint_has_moved() {
-      assert_eq!(slider(20.0, 100.0).segment_color(), color::accent::PLASMA);
-    }
-
-    #[test]
-    fn it_dims_the_segment_when_both_endpoints_sit_on_their_bounds() {
-      assert_eq!(
-        slider(0.0, 100.0).segment_color(),
-        color::with_alpha(color::text::PRIMARY, 0.22)
-      );
-    }
-  }
-
-  mod nearest_target {
-    use super::*;
-
-    fn program(min: f64, max: f64) -> RangeSliderProgram {
-      slider(min, max)
-    }
-
-    #[test]
-    fn it_picks_the_min_thumb_when_the_cursor_is_nearer_to_it() {
-      let inner_w = 100.0;
-      let program = program(20.0, 80.0);
-
-      assert!(program.nearest_target(THUMB_RADIUS + 22.0, inner_w) == DragTarget::Min);
-    }
-
-    #[test]
-    fn it_picks_the_max_thumb_when_the_cursor_is_nearer_to_it() {
-      let inner_w = 100.0;
-      let program = program(20.0, 80.0);
-
-      assert!(program.nearest_target(THUMB_RADIUS + 78.0, inner_w) == DragTarget::Max);
     }
   }
 
@@ -566,38 +580,6 @@ mod tests {
 
     fn cursor_at(x: f32) -> mouse::Cursor {
       mouse::Cursor::Available(Point::new(x, BOUNDS.height / 2.0))
-    }
-
-    #[test]
-    fn it_starts_dragging_the_nearer_thumb_on_a_left_press() {
-      let program = program();
-      let mut state = RangeSliderState::default();
-      let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
-
-      let action = program.update(&mut state, &event, BOUNDS, cursor_at(THUMB_RADIUS + 10.0));
-
-      assert!(action.is_some());
-      assert_eq!(state.dragging, Some(DragTarget::Min));
-    }
-
-    #[test]
-    fn it_publishes_a_min_change_while_dragging_the_min_thumb() {
-      let program = program();
-      let mut state = RangeSliderState {
-        dragging: Some(DragTarget::Min),
-      };
-      let event = Event::Mouse(mouse::Event::CursorMoved {
-        position: Point::new(THUMB_RADIUS + 30.0, 10.0),
-      });
-
-      let action = program
-        .update(&mut state, &event, BOUNDS, cursor_at(THUMB_RADIUS + 30.0))
-        .expect("dragging publishes a stat change");
-
-      match action.into_inner().0 {
-        Some(Message::AbyssalStatMinChanged(id, _)) => assert_eq!(id, 7),
-        other => panic!("expected AbyssalStatMinChanged, got {other:?}"),
-      }
     }
 
     #[test]
@@ -633,42 +615,60 @@ mod tests {
 
       assert!(program.update(&mut state, &event, BOUNDS, cursor_at(40.0)).is_none());
     }
-  }
 
-  mod panel {
-    use super::*;
-    use crate::features::assets::{State, abyssals::Filters};
+    #[test]
+    fn it_publishes_a_min_change_while_dragging_the_min_thumb() {
+      let program = program();
+      let mut state = RangeSliderState {
+        dragging: Some(DragTarget::Min),
+      };
+      let event = Event::Mouse(mouse::Event::CursorMoved {
+        position: Point::new(THUMB_RADIUS + 30.0, 10.0),
+      });
 
-    fn selected_filters() -> Filters {
-      Filters {
-        source_type_id: Some(2410),
-        ..Filters::default()
+      let action = program
+        .update(&mut state, &event, BOUNDS, cursor_at(THUMB_RADIUS + 30.0))
+        .expect("dragging publishes a stat change");
+
+      match action.into_inner().0 {
+        Some(Message::AbyssalStatMinChanged(id, _)) => assert_eq!(id, 7),
+        other => panic!("expected AbyssalStatMinChanged, got {other:?}"),
       }
     }
 
     #[test]
-    fn it_renders_the_placeholder_when_no_type_is_selected() {
-      let state = State::new();
+    fn it_starts_dragging_the_nearer_thumb_on_a_left_press() {
+      let program = program();
+      let mut state = RangeSliderState::default();
+      let event = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
 
-      let _el: Element<'_, Message> = panel(&state);
+      let action = program.update(&mut state, &event, BOUNDS, cursor_at(THUMB_RADIUS + 10.0));
+
+      assert!(action.is_some());
+      assert_eq!(state.dragging, Some(DragTarget::Min));
+    }
+  }
+
+  mod value_at_fraction {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_fractions_outside_the_unit_interval() {
+      assert_eq!(value_at_fraction(-1.0, 10.0, 50.0), 10.0);
+      assert_eq!(value_at_fraction(2.0, 10.0, 50.0), 50.0);
     }
 
     #[test]
-    fn it_renders_sliders_for_the_selected_type_templates() {
-      let mut state = State::new();
-      state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
-      state.set_abyssal_stat_templates_for_test(vec![template(50, 28.0, 56.0)]);
-
-      let _el: Element<'_, Message> = panel(&state);
+    fn it_maps_a_half_to_the_midpoint() {
+      assert_eq!(value_at_fraction(0.5, 10.0, 50.0), 30.0);
     }
 
     #[test]
-    fn it_renders_the_placeholder_when_every_template_is_degenerate() {
-      let mut state = State::new();
-      state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
-      state.set_abyssal_stat_templates_for_test(vec![template(50, 33.0, 33.0)]);
-
-      let _el: Element<'_, Message> = panel(&state);
+    fn it_maps_zero_and_one_to_the_endpoints() {
+      assert_eq!(value_at_fraction(0.0, 10.0, 50.0), 10.0);
+      assert_eq!(value_at_fraction(1.0, 10.0, 50.0), 50.0);
     }
   }
 }

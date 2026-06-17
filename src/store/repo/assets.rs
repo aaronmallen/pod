@@ -2518,65 +2518,104 @@ mod abyssal_tests {
     )
   }
 
-  mod upsert {
+  mod count_for_characters {
+    use std::collections::HashMap;
+
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[tokio::test]
-    async fn it_inserts_a_record() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      upsert(&db, &item(100, 42)).await.unwrap();
-
-      let rows = for_character_abyssal(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].item_id(), 100);
-      assert_eq!(rows[0].muta_price_isk(), None);
+    fn item_with(item_id: i64, character_id: i64, type_id: i64, dogma: &str) -> AbyssalItem {
+      AbyssalItem::new(
+        item_id,
+        character_id,
+        type_id,
+        47_408,
+        47_297,
+        dogma.to_owned(),
+        1_700_000_000,
+      )
     }
 
     #[tokio::test]
-    async fn it_updates_on_conflict() {
+    async fn it_counts_every_matching_item_minus_pagination() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      upsert(&db, &item(100, 42)).await.unwrap();
-      let mut updated = item(100, 42);
-      updated.synced_at = 1_700_000_500;
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
+        .await
+        .unwrap();
 
-      upsert(&db, &updated).await.unwrap();
+      let count = count_for_characters(&db, &[42], None, &HashMap::new()).await.unwrap();
+      let page = page_for_characters(&db, &[42], None, &HashMap::new(), None, None)
+        .await
+        .unwrap();
 
-      let rows = for_character_abyssal(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].synced_at(), 1_700_000_500);
-    }
-  }
-
-  mod for_character {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_empty_when_none_exist() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      assert!(for_character_abyssal(&db, 42).await.unwrap().is_empty());
+      assert_eq!(count, 2);
+      assert_eq!(
+        count,
+        page.len() as i64,
+        "the count matches the unpaginated page length"
+      );
     }
 
     #[tokio::test]
-    async fn it_filters_by_character() {
+    async fn it_is_zero_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(count_for_characters(&db, &[], None, &HashMap::new()).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_the_rolled_type_filter() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      upsert(&db, &item(1, 42)).await.unwrap();
-      upsert(&db, &item(2, 43)).await.unwrap();
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
+        .await
+        .unwrap();
 
-      let rows = for_character_abyssal(&db, 42).await.unwrap();
+      let count = count_for_characters(&db, &[42], Some(2410), &HashMap::new())
+        .await
+        .unwrap();
+      let page = page_for_characters(&db, &[42], Some(2410), &HashMap::new(), None, None)
+        .await
+        .unwrap();
 
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].character_id(), 42);
+      assert_eq!(count, 1);
+      assert_eq!(count, page.len() as i64);
+    }
+
+    #[tokio::test]
+    async fn it_mirrors_the_stat_range_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
+        .await
+        .unwrap();
+      upsert(&db, &item_with(2, 42, 2410, r#"[{"attribute_id":50,"value":55.0}]"#))
+        .await
+        .unwrap();
+      let mut ranges = HashMap::new();
+      ranges.insert(
+        50,
+        StatRange {
+          max: 50.0,
+          min: 40.0,
+        },
+      );
+
+      let count = count_for_characters(&db, &[42], None, &ranges).await.unwrap();
+      let page = page_for_characters(&db, &[42], None, &ranges, None, None)
+        .await
+        .unwrap();
+
+      assert_eq!(count, 1);
+      assert_eq!(count, page.len() as i64);
     }
   }
 
@@ -2584,6 +2623,17 @@ mod abyssal_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_clears_all_rows_when_keep_set_is_empty() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item(1, 42)).await.unwrap();
+
+      delete_stale(&db, 42, &[]).await.unwrap();
+
+      assert!(for_character_abyssal(&db, 42).await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn it_deletes_items_not_in_the_keep_set() {
@@ -2605,17 +2655,6 @@ mod abyssal_tests {
     }
 
     #[tokio::test]
-    async fn it_clears_all_rows_when_keep_set_is_empty() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert(&db, &item(1, 42)).await.unwrap();
-
-      delete_stale(&db, 42, &[]).await.unwrap();
-
-      assert!(for_character_abyssal(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn it_leaves_other_characters_untouched() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -2627,69 +2666,6 @@ mod abyssal_tests {
 
       assert!(for_character_abyssal(&db, 42).await.unwrap().is_empty());
       assert_eq!(for_character_abyssal(&db, 43).await.unwrap().len(), 1);
-    }
-  }
-
-  mod update_price {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_sets_only_the_price_fields() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert(&db, &item(1, 42)).await.unwrap();
-
-      update_price(&db, 1, Some(1_500_000_000.0), 1_700_000_100)
-        .await
-        .unwrap();
-
-      let rows = for_character_abyssal(&db, 42).await.unwrap();
-      assert_eq!(rows[0].muta_price_isk(), Some(1_500_000_000.0));
-      assert_eq!(rows[0].muta_price_synced(), Some(1_700_000_100));
-      assert_eq!(rows[0].synced_at(), 1_700_000_000);
-    }
-  }
-
-  mod module_stats {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_upserts_lists_and_refreshes_bounds() {
-      let db = store::open_test().await.unwrap();
-      upsert_module_stats(
-        &db,
-        &[
-          AbyssalModuleStat::new(47_408, 6, 0.6, 1.4),
-          AbyssalModuleStat::new(47_408, 20, 0.9, 1.1),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let rows = module_stats_for_type(&db, 47_408).await.unwrap();
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].attribute_id(), 6);
-
-      upsert_module_stats(&db, &[AbyssalModuleStat::new(47_408, 6, 0.5, 1.5)])
-        .await
-        .unwrap();
-
-      let rows = module_stats_for_type(&db, 47_408).await.unwrap();
-      assert_eq!(rows.len(), 2);
-      let attr6 = rows.iter().find(|r| r.attribute_id() == 6).unwrap();
-      assert_eq!(attr6.min_mult(), 0.5);
-      assert_eq!(attr6.max_mult(), 1.5);
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_an_unknown_type() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(module_stats_for_type(&db, 99_999).await.unwrap().is_empty());
     }
   }
 
@@ -2713,19 +2689,7 @@ mod abyssal_tests {
     }
 
     #[tokio::test]
-    async fn it_is_empty_for_no_characters() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(
-        filtered_for_characters(&db, &[], None, &HashMap::new())
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_every_item_with_no_filters() {
+    async fn a_boundary_roll_is_included() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       upsert(
@@ -2734,18 +2698,18 @@ mod abyssal_tests {
       )
       .await
       .unwrap();
-      upsert(
-        &db,
-        &item_with_dogma(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#),
-      )
-      .await
-      .unwrap();
+      let mut ranges = HashMap::new();
+      ranges.insert(
+        50,
+        StatRange {
+          max: 41.0,
+          min: 41.0,
+        },
+      );
 
-      let rows = filtered_for_characters(&db, &[42], None, &HashMap::new())
-        .await
-        .unwrap();
+      let rows = filtered_for_characters(&db, &[42], None, &ranges).await.unwrap();
 
-      assert_eq!(rows.len(), 2);
+      assert_eq!(rows.len(), 1);
     }
 
     #[tokio::test]
@@ -2805,7 +2769,19 @@ mod abyssal_tests {
     }
 
     #[tokio::test]
-    async fn a_boundary_roll_is_included() {
+    async fn it_is_empty_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(
+        filtered_for_characters(&db, &[], None, &HashMap::new())
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_every_item_with_no_filters() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       upsert(
@@ -2814,18 +2790,182 @@ mod abyssal_tests {
       )
       .await
       .unwrap();
-      let mut ranges = HashMap::new();
-      ranges.insert(
-        50,
-        StatRange {
-          max: 41.0,
-          min: 41.0,
-        },
-      );
+      upsert(
+        &db,
+        &item_with_dogma(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#),
+      )
+      .await
+      .unwrap();
 
-      let rows = filtered_for_characters(&db, &[42], None, &ranges).await.unwrap();
+      let rows = filtered_for_characters(&db, &[42], None, &HashMap::new())
+        .await
+        .unwrap();
+
+      assert_eq!(rows.len(), 2);
+    }
+  }
+
+  mod for_character {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_filters_by_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      upsert(&db, &item(1, 42)).await.unwrap();
+      upsert(&db, &item(2, 43)).await.unwrap();
+
+      let rows = for_character_abyssal(&db, 42).await.unwrap();
 
       assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].character_id(), 42);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_none_exist() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert!(for_character_abyssal(&db, 42).await.unwrap().is_empty());
+    }
+  }
+
+  mod locations_for_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn disable_foreign_keys(db: &Database) {
+      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
+    }
+
+    async fn insert_station(db: &Database, id: i64, name: &str) {
+      sqlx::query(
+        "INSERT INTO stations \
+          (id, system_id, type_id, name, max_dockable_ship_volume, office_rental_cost, \
+          reprocessing_efficiency, reprocessing_stations_take, position_x, position_y, position_z) \
+        VALUES (?, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0)",
+      )
+      .bind(id)
+      .bind(name)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn insert_asset(db: &Database, item_id: i64, location_id: i64, location_type: &str) {
+      sqlx::query(
+        "INSERT INTO character_assets \
+          (item_id, character_id, type_id, location_id, location_type, location_flag, quantity) \
+        VALUES (?, 42, 0, ?, ?, 'Hangar', 1)",
+      )
+      .bind(item_id)
+      .bind(location_id)
+      .bind(location_type)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn enclosing_location_id_is_none_for_an_untracked_id() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+
+      assert_eq!(enclosing_location_id(&db, 60_000_001).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn enclosing_location_id_walks_a_container_up_to_its_station() {
+      // A blueprint's location_id points at a hangar container; the container is itself an asset
+      // docked in a station. The walk returns the station id so the caller can name it.
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      insert_asset(&db, 1000, 60_000_001, "station").await;
+      insert_asset(&db, 2000, 1000, "item").await;
+
+      assert_eq!(enclosing_location_id(&db, 1000).await.unwrap(), Some(60_000_001));
+      assert_eq!(enclosing_location_id(&db, 2000).await.unwrap(), Some(60_000_001));
+    }
+
+    #[tokio::test]
+    async fn it_omits_items_with_no_resolvable_location() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      insert_asset(&db, 99, 70_000_000, "structure").await;
+
+      let locations = locations_for_items(&db, &[99]).await.unwrap();
+
+      assert!(locations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_directly_docked_item_to_its_station() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      insert_station(&db, 60_000_001, "Jita IV - Moon 4").await;
+      insert_asset(&db, 99, 60_000_001, "station").await;
+
+      let locations = locations_for_items(&db, &[99]).await.unwrap();
+
+      assert_eq!(locations.get(&99).map(String::as_str), Some("Jita IV - Moon 4"));
+    }
+
+    #[tokio::test]
+    async fn it_walks_a_nested_item_up_to_its_root_station() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      insert_station(&db, 60_000_001, "Jita IV - Moon 4").await;
+      insert_asset(&db, 1000, 60_000_001, "station").await;
+      insert_asset(&db, 99, 1000, "item").await;
+
+      let locations = locations_for_items(&db, &[99]).await.unwrap();
+
+      assert_eq!(locations.get(&99).map(String::as_str), Some("Jita IV - Moon 4"));
+    }
+  }
+
+  mod module_stats {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_an_unknown_type() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(module_stats_for_type(&db, 99_999).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_upserts_lists_and_refreshes_bounds() {
+      let db = store::open_test().await.unwrap();
+      upsert_module_stats(
+        &db,
+        &[
+          AbyssalModuleStat::new(47_408, 6, 0.6, 1.4),
+          AbyssalModuleStat::new(47_408, 20, 0.9, 1.1),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let rows = module_stats_for_type(&db, 47_408).await.unwrap();
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].attribute_id(), 6);
+
+      upsert_module_stats(&db, &[AbyssalModuleStat::new(47_408, 6, 0.5, 1.5)])
+        .await
+        .unwrap();
+
+      let rows = module_stats_for_type(&db, 47_408).await.unwrap();
+      assert_eq!(rows.len(), 2);
+      let attr6 = rows.iter().find(|r| r.attribute_id() == 6).unwrap();
+      assert_eq!(attr6.min_mult(), 0.5);
+      assert_eq!(attr6.max_mult(), 1.5);
     }
   }
 
@@ -2851,6 +2991,35 @@ mod abyssal_tests {
     }
 
     #[tokio::test]
+    async fn it_caps_a_page_at_the_limit() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=5 {
+        upsert(&db, &item(id, 42, 100)).await.unwrap();
+      }
+
+      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), None, Some(2))
+        .await
+        .unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].item_id(), 1);
+      assert_eq!(rows[1].item_id(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(
+        page_for_characters(&db, &[], None, &HashMap::new(), None, Some(50))
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
     async fn it_orders_by_source_type_then_item_so_groups_stay_contiguous() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -2866,23 +3035,6 @@ mod abyssal_tests {
 
       let keys: Vec<(i64, i64)> = rows.iter().map(|r| (r.source_type_id(), r.item_id())).collect();
       assert_eq!(keys, vec![(100, 2), (100, 3), (200, 1), (200, 4)]);
-    }
-
-    #[tokio::test]
-    async fn it_caps_a_page_at_the_limit() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      for id in 1..=5 {
-        upsert(&db, &item(id, 42, 100)).await.unwrap();
-      }
-
-      let rows = page_for_characters(&db, &[42], None, &HashMap::new(), None, Some(2))
-        .await
-        .unwrap();
-
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].item_id(), 1);
-      assert_eq!(rows[1].item_id(), 2);
     }
 
     #[tokio::test]
@@ -2924,153 +3076,42 @@ mod abyssal_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].item_id(), 20);
     }
-
-    #[tokio::test]
-    async fn it_is_empty_for_no_characters() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(
-        page_for_characters(&db, &[], None, &HashMap::new(), None, Some(50))
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
   }
 
-  mod count_for_characters {
-    use std::collections::HashMap;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn item_with(item_id: i64, character_id: i64, type_id: i64, dogma: &str) -> AbyssalItem {
-      AbyssalItem::new(
-        item_id,
-        character_id,
-        type_id,
-        47_408,
-        47_297,
-        dogma.to_owned(),
-        1_700_000_000,
-      )
-    }
-
-    #[tokio::test]
-    async fn it_is_zero_for_no_characters() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(count_for_characters(&db, &[], None, &HashMap::new()).await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn it_counts_every_matching_item_minus_pagination() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
-        .await
-        .unwrap();
-      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
-        .await
-        .unwrap();
-
-      let count = count_for_characters(&db, &[42], None, &HashMap::new()).await.unwrap();
-      let page = page_for_characters(&db, &[42], None, &HashMap::new(), None, None)
-        .await
-        .unwrap();
-
-      assert_eq!(count, 2);
-      assert_eq!(
-        count,
-        page.len() as i64,
-        "the count matches the unpaginated page length"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_mirrors_the_rolled_type_filter() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
-        .await
-        .unwrap();
-      upsert(&db, &item_with(2, 42, 2281, r#"[{"attribute_id":50,"value":12.0}]"#))
-        .await
-        .unwrap();
-
-      let count = count_for_characters(&db, &[42], Some(2410), &HashMap::new())
-        .await
-        .unwrap();
-      let page = page_for_characters(&db, &[42], Some(2410), &HashMap::new(), None, None)
-        .await
-        .unwrap();
-
-      assert_eq!(count, 1);
-      assert_eq!(count, page.len() as i64);
-    }
-
-    #[tokio::test]
-    async fn it_mirrors_the_stat_range_filter() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      upsert(&db, &item_with(1, 42, 2410, r#"[{"attribute_id":50,"value":41.0}]"#))
-        .await
-        .unwrap();
-      upsert(&db, &item_with(2, 42, 2410, r#"[{"attribute_id":50,"value":55.0}]"#))
-        .await
-        .unwrap();
-      let mut ranges = HashMap::new();
-      ranges.insert(
-        50,
-        StatRange {
-          max: 50.0,
-          min: 40.0,
-        },
-      );
-
-      let count = count_for_characters(&db, &[42], None, &ranges).await.unwrap();
-      let page = page_for_characters(&db, &[42], None, &ranges, None, None)
-        .await
-        .unwrap();
-
-      assert_eq!(count, 1);
-      assert_eq!(count, page.len() as i64);
-    }
-  }
-
-  mod stat_templates_for_type {
+  mod source_type_filters {
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::store::{
-      model::{DogmaAttribute, ItemCategory, ItemGroup, ItemType},
+      model::{ItemCategory, ItemGroup, ItemType},
       repo::sde,
     };
 
-    async fn seed_typed_dogma(db: &Database, type_id: i64, dogma: &str) {
+    async fn seed_source_type(db: &Database, type_id: i64, name: &str, category: (i64, &str)) {
+      let (category_id, category_name) = category;
+      let group_id = category_id * 10;
       let cat = ItemCategory {
         icon_id: None,
-        id: 7,
-        name: "Module".to_owned(),
+        id: category_id,
+        name: category_name.to_owned(),
         published: true,
       };
       let group = ItemGroup {
-        category_id: 7,
+        category_id,
         icon_id: None,
-        id: 70,
+        id: group_id,
         name: "Group".to_owned(),
         published: true,
       };
       let item_type = ItemType {
         capacity: None,
         description: Some("A module.".to_owned()),
-        dogma_attributes: dogma.to_owned(),
-        group_id: 70,
+        dogma_attributes: "[]".to_owned(),
+        group_id,
         icon_id: None,
         id: type_id,
         market_group_id: None,
-        name: "Source Module".to_owned(),
+        name: name.to_owned(),
         packaged_volume: None,
         portion_size: None,
         published: true,
@@ -3082,89 +3123,77 @@ mod abyssal_tests {
         .unwrap();
     }
 
-    fn attribute(
-      attribute_id: i64,
-      name: &str,
-      display: &str,
-      unit_id: Option<i64>,
-      high_is_good: bool,
-    ) -> DogmaAttribute {
-      DogmaAttribute {
-        attribute_id,
-        default_value: None,
-        description: None,
-        display_name: Some(display.to_owned()),
-        high_is_good,
-        icon_id: None,
-        name: name.to_owned(),
-        published: true,
-        stackable: false,
-        unit_id,
-      }
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_when_the_type_has_no_module_stats() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(stat_templates_for_type(&db, 99_999).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_derives_bounds_from_base_dogma_times_mult_with_resolved_metadata() {
-      let db = store::open_test().await.unwrap();
-      seed_typed_dogma(&db, 47_408, r#"[{"attribute_id":50,"value":100.0}]"#).await;
-      upsert_module_stats(&db, &[AbyssalModuleStat::new(47_408, 50, 0.8, 1.2)])
-        .await
-        .unwrap();
-      sde::upsert_many_dogma_attributes(&db, &[attribute(50, "cpuOutput", "CPU Output", Some(115), true)])
-        .await
-        .unwrap();
-
-      let templates = stat_templates_for_type(&db, 47_408).await.unwrap();
-
-      assert_eq!(templates.len(), 1);
-      assert_eq!(templates[0].attribute_id, 50);
-      assert_eq!(templates[0].base_value, 100.0);
-      assert_eq!(templates[0].bound_lo, 80.0);
-      assert_eq!(templates[0].bound_hi, 120.0);
-      assert_eq!(templates[0].display_name, "CPU Output");
-      assert_eq!(templates[0].unit_id, Some(115));
-      assert_eq!(templates[0].high_is_good, true);
-    }
-
-    #[tokio::test]
-    async fn it_orders_templates_by_display_name() {
-      let db = store::open_test().await.unwrap();
-      seed_typed_dogma(
-        &db,
+    fn item_with_source(item_id: i64, character_id: i64, source_type_id: i64) -> AbyssalItem {
+      AbyssalItem::new(
+        item_id,
+        character_id,
         47_408,
-        r#"[{"attribute_id":50,"value":10.0},{"attribute_id":51,"value":20.0}]"#,
+        source_type_id,
+        47_297,
+        "[]".to_owned(),
+        1_700_000_000,
       )
-      .await;
+    }
+
+    #[tokio::test]
+    async fn it_exposes_the_distinct_set_of_seeded_types_as_abyssal_type_ids() {
+      let db = store::open_test().await.unwrap();
       upsert_module_stats(
         &db,
         &[
-          AbyssalModuleStat::new(47_408, 50, 0.9, 1.1),
-          AbyssalModuleStat::new(47_408, 51, 0.9, 1.1),
-        ],
-      )
-      .await
-      .unwrap();
-      sde::upsert_many_dogma_attributes(
-        &db,
-        &[
-          attribute(50, "zulu", "Zulu", None, true),
-          attribute(51, "alpha", "Alpha", None, true),
+          AbyssalModuleStat::new(47_408, 6, 0.6, 1.4),
+          AbyssalModuleStat::new(47_408, 20, 0.9, 1.1),
+          AbyssalModuleStat::new(47_410, 6, 0.7, 1.3),
         ],
       )
       .await
       .unwrap();
 
-      let templates = stat_templates_for_type(&db, 47_408).await.unwrap();
+      let mut ids = abyssal_type_ids(&db).await.unwrap();
+      ids.sort_unstable();
 
-      assert_eq!(templates[0].display_name, "Alpha");
-      assert_eq!(templates[1].display_name, "Zulu");
+      assert_eq!(ids, [47_408, 47_410]);
+    }
+
+    #[tokio::test]
+    async fn it_groups_distinct_owned_source_types_by_category_ordered_by_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_source_type(&db, 2048, "Damage Control II", (7, "Module")).await;
+      seed_source_type(&db, 2281, "Adaptive Invulnerability Field II", (7, "Module")).await;
+      upsert(&db, &item_with_source(1, 42, 2048)).await.unwrap();
+      upsert(&db, &item_with_source(2, 42, 2048)).await.unwrap();
+      upsert(&db, &item_with_source(3, 42, 2281)).await.unwrap();
+
+      let filters = source_type_filters(&db, &[42]).await.unwrap();
+
+      assert_eq!(filters.len(), 2);
+      assert_eq!(filters[0].source_type_name, "Adaptive Invulnerability Field II");
+      assert_eq!(filters[0].category, "Module");
+      assert_eq!(filters[1].source_type_name, "Damage Control II");
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_no_characters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(source_type_filters(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_only_offers_types_the_given_characters_own() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      seed_source_type(&db, 2048, "Damage Control II", (7, "Module")).await;
+      seed_source_type(&db, 2281, "Adaptive Invulnerability Field II", (7, "Module")).await;
+      upsert(&db, &item_with_source(1, 42, 2048)).await.unwrap();
+      upsert(&db, &item_with_source(2, 43, 2281)).await.unwrap();
+
+      let filters = source_type_filters(&db, &[42]).await.unwrap();
+
+      assert_eq!(filters.len(), 1);
+      assert_eq!(filters[0].source_type_id, 2048);
     }
   }
 
@@ -3266,135 +3295,38 @@ mod abyssal_tests {
     }
   }
 
-  mod locations_for_items {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn disable_foreign_keys(db: &Database) {
-      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
-    }
-
-    async fn insert_station(db: &Database, id: i64, name: &str) {
-      sqlx::query(
-        "INSERT INTO stations \
-          (id, system_id, type_id, name, max_dockable_ship_volume, office_rental_cost, \
-          reprocessing_efficiency, reprocessing_stations_take, position_x, position_y, position_z) \
-        VALUES (?, 0, 0, ?, 0, 0, 0, 0, 0, 0, 0)",
-      )
-      .bind(id)
-      .bind(name)
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    async fn insert_asset(db: &Database, item_id: i64, location_id: i64, location_type: &str) {
-      sqlx::query(
-        "INSERT INTO character_assets \
-          (item_id, character_id, type_id, location_id, location_type, location_flag, quantity) \
-        VALUES (?, 42, 0, ?, ?, 'Hangar', 1)",
-      )
-      .bind(item_id)
-      .bind(location_id)
-      .bind(location_type)
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_resolves_a_directly_docked_item_to_its_station() {
-      let db = store::open_test().await.unwrap();
-      disable_foreign_keys(&db).await;
-      insert_station(&db, 60_000_001, "Jita IV - Moon 4").await;
-      insert_asset(&db, 99, 60_000_001, "station").await;
-
-      let locations = locations_for_items(&db, &[99]).await.unwrap();
-
-      assert_eq!(locations.get(&99).map(String::as_str), Some("Jita IV - Moon 4"));
-    }
-
-    #[tokio::test]
-    async fn it_walks_a_nested_item_up_to_its_root_station() {
-      let db = store::open_test().await.unwrap();
-      disable_foreign_keys(&db).await;
-      insert_station(&db, 60_000_001, "Jita IV - Moon 4").await;
-      insert_asset(&db, 1000, 60_000_001, "station").await;
-      insert_asset(&db, 99, 1000, "item").await;
-
-      let locations = locations_for_items(&db, &[99]).await.unwrap();
-
-      assert_eq!(locations.get(&99).map(String::as_str), Some("Jita IV - Moon 4"));
-    }
-
-    #[tokio::test]
-    async fn it_omits_items_with_no_resolvable_location() {
-      let db = store::open_test().await.unwrap();
-      disable_foreign_keys(&db).await;
-      insert_asset(&db, 99, 70_000_000, "structure").await;
-
-      let locations = locations_for_items(&db, &[99]).await.unwrap();
-
-      assert!(locations.is_empty());
-    }
-
-    #[tokio::test]
-    async fn enclosing_location_id_walks_a_container_up_to_its_station() {
-      // A blueprint's location_id points at a hangar container; the container is itself an asset
-      // docked in a station. The walk returns the station id so the caller can name it.
-      let db = store::open_test().await.unwrap();
-      disable_foreign_keys(&db).await;
-      insert_asset(&db, 1000, 60_000_001, "station").await;
-      insert_asset(&db, 2000, 1000, "item").await;
-
-      assert_eq!(enclosing_location_id(&db, 1000).await.unwrap(), Some(60_000_001));
-      assert_eq!(enclosing_location_id(&db, 2000).await.unwrap(), Some(60_000_001));
-    }
-
-    #[tokio::test]
-    async fn enclosing_location_id_is_none_for_an_untracked_id() {
-      let db = store::open_test().await.unwrap();
-      disable_foreign_keys(&db).await;
-
-      assert_eq!(enclosing_location_id(&db, 60_000_001).await.unwrap(), None);
-    }
-  }
-
-  mod source_type_filters {
+  mod stat_templates_for_type {
     use pretty_assertions::assert_eq;
 
     use super::*;
     use crate::store::{
-      model::{ItemCategory, ItemGroup, ItemType},
+      model::{DogmaAttribute, ItemCategory, ItemGroup, ItemType},
       repo::sde,
     };
 
-    async fn seed_source_type(db: &Database, type_id: i64, name: &str, category: (i64, &str)) {
-      let (category_id, category_name) = category;
-      let group_id = category_id * 10;
+    async fn seed_typed_dogma(db: &Database, type_id: i64, dogma: &str) {
       let cat = ItemCategory {
         icon_id: None,
-        id: category_id,
-        name: category_name.to_owned(),
+        id: 7,
+        name: "Module".to_owned(),
         published: true,
       };
       let group = ItemGroup {
-        category_id,
+        category_id: 7,
         icon_id: None,
-        id: group_id,
+        id: 70,
         name: "Group".to_owned(),
         published: true,
       };
       let item_type = ItemType {
         capacity: None,
         description: Some("A module.".to_owned()),
-        dogma_attributes: "[]".to_owned(),
-        group_id,
+        dogma_attributes: dogma.to_owned(),
+        group_id: 70,
         icon_id: None,
         id: type_id,
         market_group_id: None,
-        name: name.to_owned(),
+        name: "Source Module".to_owned(),
         packaged_volume: None,
         portion_size: None,
         published: true,
@@ -3406,77 +3338,145 @@ mod abyssal_tests {
         .unwrap();
     }
 
-    fn item_with_source(item_id: i64, character_id: i64, source_type_id: i64) -> AbyssalItem {
-      AbyssalItem::new(
-        item_id,
-        character_id,
+    fn attribute(
+      attribute_id: i64,
+      name: &str,
+      display: &str,
+      unit_id: Option<i64>,
+      high_is_good: bool,
+    ) -> DogmaAttribute {
+      DogmaAttribute {
+        attribute_id,
+        default_value: None,
+        description: None,
+        display_name: Some(display.to_owned()),
+        high_is_good,
+        icon_id: None,
+        name: name.to_owned(),
+        published: true,
+        stackable: false,
+        unit_id,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_derives_bounds_from_base_dogma_times_mult_with_resolved_metadata() {
+      let db = store::open_test().await.unwrap();
+      seed_typed_dogma(&db, 47_408, r#"[{"attribute_id":50,"value":100.0}]"#).await;
+      upsert_module_stats(&db, &[AbyssalModuleStat::new(47_408, 50, 0.8, 1.2)])
+        .await
+        .unwrap();
+      sde::upsert_many_dogma_attributes(&db, &[attribute(50, "cpuOutput", "CPU Output", Some(115), true)])
+        .await
+        .unwrap();
+
+      let templates = stat_templates_for_type(&db, 47_408).await.unwrap();
+
+      assert_eq!(templates.len(), 1);
+      assert_eq!(templates[0].attribute_id, 50);
+      assert_eq!(templates[0].base_value, 100.0);
+      assert_eq!(templates[0].bound_lo, 80.0);
+      assert_eq!(templates[0].bound_hi, 120.0);
+      assert_eq!(templates[0].display_name, "CPU Output");
+      assert_eq!(templates[0].unit_id, Some(115));
+      assert_eq!(templates[0].high_is_good, true);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_when_the_type_has_no_module_stats() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(stat_templates_for_type(&db, 99_999).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_orders_templates_by_display_name() {
+      let db = store::open_test().await.unwrap();
+      seed_typed_dogma(
+        &db,
         47_408,
-        source_type_id,
-        47_297,
-        "[]".to_owned(),
-        1_700_000_000,
+        r#"[{"attribute_id":50,"value":10.0},{"attribute_id":51,"value":20.0}]"#,
       )
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_no_characters() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(source_type_filters(&db, &[]).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_groups_distinct_owned_source_types_by_category_ordered_by_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_source_type(&db, 2048, "Damage Control II", (7, "Module")).await;
-      seed_source_type(&db, 2281, "Adaptive Invulnerability Field II", (7, "Module")).await;
-      upsert(&db, &item_with_source(1, 42, 2048)).await.unwrap();
-      upsert(&db, &item_with_source(2, 42, 2048)).await.unwrap();
-      upsert(&db, &item_with_source(3, 42, 2281)).await.unwrap();
-
-      let filters = source_type_filters(&db, &[42]).await.unwrap();
-
-      assert_eq!(filters.len(), 2);
-      assert_eq!(filters[0].source_type_name, "Adaptive Invulnerability Field II");
-      assert_eq!(filters[0].category, "Module");
-      assert_eq!(filters[1].source_type_name, "Damage Control II");
-    }
-
-    #[tokio::test]
-    async fn it_only_offers_types_the_given_characters_own() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      seed_source_type(&db, 2048, "Damage Control II", (7, "Module")).await;
-      seed_source_type(&db, 2281, "Adaptive Invulnerability Field II", (7, "Module")).await;
-      upsert(&db, &item_with_source(1, 42, 2048)).await.unwrap();
-      upsert(&db, &item_with_source(2, 43, 2281)).await.unwrap();
-
-      let filters = source_type_filters(&db, &[42]).await.unwrap();
-
-      assert_eq!(filters.len(), 1);
-      assert_eq!(filters[0].source_type_id, 2048);
-    }
-
-    #[tokio::test]
-    async fn it_exposes_the_distinct_set_of_seeded_types_as_abyssal_type_ids() {
-      let db = store::open_test().await.unwrap();
+      .await;
       upsert_module_stats(
         &db,
         &[
-          AbyssalModuleStat::new(47_408, 6, 0.6, 1.4),
-          AbyssalModuleStat::new(47_408, 20, 0.9, 1.1),
-          AbyssalModuleStat::new(47_410, 6, 0.7, 1.3),
+          AbyssalModuleStat::new(47_408, 50, 0.9, 1.1),
+          AbyssalModuleStat::new(47_408, 51, 0.9, 1.1),
+        ],
+      )
+      .await
+      .unwrap();
+      sde::upsert_many_dogma_attributes(
+        &db,
+        &[
+          attribute(50, "zulu", "Zulu", None, true),
+          attribute(51, "alpha", "Alpha", None, true),
         ],
       )
       .await
       .unwrap();
 
-      let mut ids = abyssal_type_ids(&db).await.unwrap();
-      ids.sort_unstable();
+      let templates = stat_templates_for_type(&db, 47_408).await.unwrap();
 
-      assert_eq!(ids, [47_408, 47_410]);
+      assert_eq!(templates[0].display_name, "Alpha");
+      assert_eq!(templates[1].display_name, "Zulu");
+    }
+  }
+
+  mod update_price {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_sets_only_the_price_fields() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item(1, 42)).await.unwrap();
+
+      update_price(&db, 1, Some(1_500_000_000.0), 1_700_000_100)
+        .await
+        .unwrap();
+
+      let rows = for_character_abyssal(&db, 42).await.unwrap();
+      assert_eq!(rows[0].muta_price_isk(), Some(1_500_000_000.0));
+      assert_eq!(rows[0].muta_price_synced(), Some(1_700_000_100));
+      assert_eq!(rows[0].synced_at(), 1_700_000_000);
+    }
+  }
+
+  mod upsert {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_inserts_a_record() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      upsert(&db, &item(100, 42)).await.unwrap();
+
+      let rows = for_character_abyssal(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 100);
+      assert_eq!(rows[0].muta_price_isk(), None);
+    }
+
+    #[tokio::test]
+    async fn it_updates_on_conflict() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      upsert(&db, &item(100, 42)).await.unwrap();
+      let mut updated = item(100, 42);
+      updated.synced_at = 1_700_000_500;
+
+      upsert(&db, &updated).await.unwrap();
+
+      let rows = for_character_abyssal(&db, 42).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].synced_at(), 1_700_000_500);
     }
   }
 }
@@ -3494,7 +3494,9 @@ mod asset_tests {
   };
 
   const CORP_ID: i64 = 90_000_001;
+
   const DIRECTOR_ID: i64 = 42;
+
   const GEO_SYSTEM: i64 = 30_000_142;
 
   async fn seed_geography(db: &Database) {
@@ -3692,45 +3694,340 @@ mod asset_tests {
     }
   }
 
+  async fn seed_price(db: &Database, type_id: i64, adjusted: f64) {
+    sqlx::query("INSERT INTO market_prices (type_id, adjusted_price, average_price) VALUES (?, ?, NULL)")
+      .bind(type_id)
+      .bind(adjusted)
+      .execute(&db.0)
+      .await
+      .unwrap();
+  }
+
+  async fn seed_history(db: &Database, type_id: i64, date: &str, close: f64) {
+    sqlx::query("INSERT INTO type_price_histories (type_id, date, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(type_id)
+      .bind(date)
+      .bind(close)
+      .bind(close)
+      .bind(close)
+      .bind(close)
+      .execute(&db.0)
+      .await
+      .unwrap();
+  }
+
+  mod ancestors_of_match {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_computes_corporation_ancestors() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut root = corp_asset(100, CORP_ID, None);
+      root.is_container = true;
+      root.type_id = 24;
+      let mut hit = corp_asset(101, CORP_ID, Some(100));
+      hit.type_id = 24;
+      replace_for_corporation(&db, CORP_ID, &[root, hit]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_corporation(&db, CORP_ID, "name:trit", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_dedups_a_shared_ancestor_across_two_matches() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 24;
+      let mut hit_a = char_asset(101, 42, Some(100));
+      hit_a.type_id = 24;
+      let mut hit_b = char_asset(102, 42, Some(100));
+      hit_b.type_id = 24;
+      replace_for_character(&db, 42, &[root, hit_a, hit_b]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_top_level_match_with_no_ancestors() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut top = char_asset(100, 42, None);
+      top.type_id = 587;
+      replace_for_character(&db, 42, &[top]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "category:ship", None)
+        .await
+        .unwrap();
+
+      assert!(ancestors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_set_for_an_empty_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut child = char_asset(101, 42, Some(100));
+      child.type_id = 587;
+      replace_for_character(&db, 42, &[root, child]).await.unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "", None).await.unwrap();
+
+      assert!(ancestors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_ancestor_chain_for_a_hit_nested_two_levels_deep() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut sub = char_asset(101, 42, Some(100));
+      sub.is_container = true;
+      sub.type_id = 587;
+      let mut hit = char_asset(102, 42, Some(101));
+      hit.type_id = 24;
+      let mut sibling = char_asset(200, 42, None);
+      sibling.type_id = 587;
+      replace_for_character(&db, 42, &[root, sub, hit, sibling])
+        .await
+        .unwrap();
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100, 101]);
+    }
+  }
+
+  mod asset_value_as_of {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn asset(item_id: i64, type_id: i64, quantity: i64) -> CharacterAsset {
+      let mut a = char_asset(item_id, 42, None);
+      a.type_id = type_id;
+      a.quantity = quantity;
+      a
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_current_snapshot_when_no_history_precedes_the_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[asset(100, 587, 4)]).await.unwrap();
+      seed_price(&db, 587, 7.0).await;
+      seed_history(&db, 587, "2026-06-10", 50.0).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-01").await.unwrap();
+
+      assert_eq!(
+        value, 28.0,
+        "pre-history dates fall back to the current market_prices snapshot"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_forward_fills_from_the_nearest_prior_close_for_a_gap_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[asset(100, 587, 2)]).await.unwrap();
+      seed_history(&db, 587, "2026-06-01", 5.0).await;
+      seed_history(&db, 587, "2026-06-05", 9.0).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
+
+      assert_eq!(value, 10.0);
+    }
+
+    #[tokio::test]
+    async fn it_prices_corporation_holdings_for_an_authorized_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corp(&db).await;
+      let mut a = corp_asset(100, CORP_ID, None);
+      a.type_id = 587;
+      a.quantity = 2;
+      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
+      seed_history(&db, 587, "2026-06-03", 12.0).await;
+
+      let value = asset_value_as_of_for_corporation(&db, CORP_ID, "2026-06-03")
+        .await
+        .unwrap();
+
+      assert_eq!(value, 24.0);
+    }
+
+    #[tokio::test]
+    async fn it_prices_holdings_with_the_historical_close_on_the_exact_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[asset(100, 587, 3)]).await.unwrap();
+      seed_price(&db, 587, 100.0).await;
+      seed_history(&db, 587, "2026-06-03", 10.0).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
+
+      assert_eq!(value, 30.0, "uses the 06-03 close (10), not the current snapshot (100)");
+    }
+
+    #[tokio::test]
+    async fn it_returns_zero_for_a_scope_with_no_holdings() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
+
+      assert_eq!(value, 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_zero_for_an_unauthorized_corporation_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut a = corp_asset(100, CORP_ID, None);
+      a.type_id = 587;
+      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
+      seed_history(&db, 587, "2026-06-03", 12.0).await;
+
+      let value = asset_value_as_of_for_corporation(&db, CORP_ID, "2026-06-03")
+        .await
+        .unwrap();
+
+      assert_eq!(value, 0.0, "an unauthorized corp scope yields no value");
+    }
+
+    #[tokio::test]
+    async fn it_treats_an_unpriced_type_as_zero_without_nulling_the_sum() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[asset(100, 587, 3), asset(101, 999, 5)])
+        .await
+        .unwrap();
+      seed_history(&db, 587, "2026-06-03", 10.0).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
+
+      assert_eq!(value, 30.0, "type 999 has neither history nor a current price -> 0");
+    }
+
+    #[tokio::test]
+    async fn it_values_a_blueprint_copy_at_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut copy = asset(100, 587, 1);
+      copy.is_blueprint_copy = Some(true);
+      replace_for_character(&db, 42, &[copy]).await.unwrap();
+      seed_history(&db, 587, "2026-06-03", 999.0).await;
+      seed_price(&db, 587, 999.0).await;
+
+      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
+
+      assert_eq!(value, 0.0);
+    }
+  }
+
   mod character_assets {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_round_trips_a_replaced_batch_with_hierarchy_columns() {
+    async fn it_cascade_deletes_with_the_character() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      let child = char_asset(101, 42, Some(100));
-
-      replace_for_character(&db, 42, &[root, child]).await.unwrap();
-
-      let rows = for_character(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].item_id(), 100);
-      assert_eq!(rows[0].container_id(), None);
-      assert!(rows[0].is_container());
-      assert_eq!(rows[1].container_id(), Some(100));
-      assert_eq!(rows[1].depth(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_yields_the_current_set_not_duplicates_on_re_replace() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(101, 42, None)])
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
         .await
         .unwrap();
 
-      replace_for_character(&db, 42, &[char_asset(101, 42, None)])
+      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
+      sqlx::query("DELETE FROM characters WHERE id = ?")
+        .bind(42_i64)
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      assert_eq!(count_for_character(&db, 42).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_counts_scoped_rows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(101, 42, None)])
+        .await
+        .unwrap();
+      replace_for_character(&db, 43, &[char_asset(200, 43, None)])
+        .await
+        .unwrap();
+
+      assert_eq!(count_for_character(&db, 42).await.unwrap(), 2);
+      assert_eq!(count_for_character(&db, 43).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_crash_on_an_item_id_duplicated_within_one_batch() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(100, 42, None)])
         .await
         .unwrap();
 
       let rows = for_character(&db, 42).await.unwrap();
       assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].item_id(), 101);
+      assert_eq!(rows[0].item_id(), 100);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_children_by_container_id_and_roots_by_null() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(
+        &db,
+        42,
+        &[
+          char_asset(100, 42, None),
+          char_asset(101, 42, Some(100)),
+          char_asset(102, 42, Some(100)),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let children = children_for_character(&db, 42, 100).await.unwrap();
+      let roots = roots_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(
+        children.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(),
+        [101, 102]
+      );
+      assert_eq!(roots.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(), [100]);
     }
 
     #[tokio::test]
@@ -3772,17 +4069,22 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_crash_on_an_item_id_duplicated_within_one_batch() {
+    async fn it_round_trips_a_replaced_batch_with_hierarchy_columns() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      let child = char_asset(101, 42, Some(100));
 
-      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(100, 42, None)])
-        .await
-        .unwrap();
+      replace_for_character(&db, 42, &[root, child]).await.unwrap();
 
       let rows = for_character(&db, 42).await.unwrap();
-      assert_eq!(rows.len(), 1);
+      assert_eq!(rows.len(), 2);
       assert_eq!(rows[0].item_id(), 100);
+      assert_eq!(rows[0].container_id(), None);
+      assert!(rows[0].is_container());
+      assert_eq!(rows[1].container_id(), Some(100));
+      assert_eq!(rows[1].depth(), 1);
     }
 
     #[tokio::test]
@@ -3799,66 +4101,6 @@ mod asset_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].quantity(), 7);
       assert_eq!(rows[0].container_id(), Some(99));
-    }
-
-    #[tokio::test]
-    async fn it_fetches_children_by_container_id_and_roots_by_null() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(
-        &db,
-        42,
-        &[
-          char_asset(100, 42, None),
-          char_asset(101, 42, Some(100)),
-          char_asset(102, 42, Some(100)),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let children = children_for_character(&db, 42, 100).await.unwrap();
-      let roots = roots_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(
-        children.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(),
-        [101, 102]
-      );
-      assert_eq!(roots.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(), [100]);
-    }
-
-    #[tokio::test]
-    async fn it_counts_scoped_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(101, 42, None)])
-        .await
-        .unwrap();
-      replace_for_character(&db, 43, &[char_asset(200, 43, None)])
-        .await
-        .unwrap();
-
-      assert_eq!(count_for_character(&db, 42).await.unwrap(), 2);
-      assert_eq!(count_for_character(&db, 43).await.unwrap(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_cascade_deletes_with_the_character() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
-        .await
-        .unwrap();
-
-      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
-      sqlx::query("DELETE FROM characters WHERE id = ?")
-        .bind(42_i64)
-        .execute(&db.0)
-        .await
-        .unwrap();
-
-      assert_eq!(count_for_character(&db, 42).await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -3898,1375 +4140,22 @@ mod asset_tests {
         "stale rows are pruned across delete batches, final state matches the new set"
       );
     }
-  }
-
-  mod corporation_assets {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
-    async fn it_round_trips_a_replaced_batch_with_hierarchy_columns() {
+    async fn it_yields_the_current_set_not_duplicates_on_re_replace() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      let mut root = corp_asset(100, CORP_ID, None);
-      root.is_container = true;
-      let child = corp_asset(101, CORP_ID, Some(100));
-
-      replace_for_corporation(&db, CORP_ID, &[root, child]).await.unwrap();
-
-      let rows = for_corporation(&db, CORP_ID).await.unwrap();
-      assert_eq!(rows.len(), 2);
-      assert_eq!(rows[0].container_id(), None);
-      assert!(rows[0].is_container());
-      assert_eq!(rows[1].container_id(), Some(100));
-      assert_eq!(rows[1].depth(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_fetches_children_and_counts() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      replace_for_corporation(
-        &db,
-        CORP_ID,
-        &[corp_asset(100, CORP_ID, None), corp_asset(101, CORP_ID, Some(100))],
-      )
-      .await
-      .unwrap();
-
-      let children = children_for_corporation(&db, CORP_ID, 100).await.unwrap();
-      let roots = roots_for_corporation(&db, CORP_ID).await.unwrap();
-
-      assert_eq!(
-        children.iter().map(CorporationAsset::item_id).collect::<Vec<_>>(),
-        [101]
-      );
-      assert_eq!(roots.iter().map(CorporationAsset::item_id).collect::<Vec<_>>(), [100]);
-      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_reclaims_an_item_id_held_by_another_corporation() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let other_corp = 98_000_002;
-      let mut corp = Corporation::new(other_corp, "Other Corp", "OTC");
-      corp.set_ceo_id(42);
-      corp.set_creator_id(42);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      org::upsert_corporation(&db, &corp).await.unwrap();
-      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(101, 42, None)])
         .await
         .unwrap();
 
-      replace_for_corporation(&db, other_corp, &[corp_asset(100, other_corp, None)])
+      replace_for_character(&db, 42, &[char_asset(101, 42, None)])
         .await
         .unwrap();
 
-      let owner = sqlx::query_scalar::<_, i64>("SELECT corporation_id FROM corporation_assets WHERE item_id = ?")
-        .bind(100_i64)
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_assets WHERE item_id = ?")
-        .bind(100_i64)
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(owner, other_corp);
-      assert_eq!(total, 1);
-    }
-
-    #[tokio::test]
-    async fn it_upserts_a_single_row_in_place() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      upsert_corporation_asset(&db, &corp_asset(100, CORP_ID, None))
-        .await
-        .unwrap();
-      let mut updated = corp_asset(100, CORP_ID, Some(99));
-      updated.quantity = 7;
-
-      upsert_corporation_asset(&db, &updated).await.unwrap();
-
-      let rows = for_corporation(&db, CORP_ID).await.unwrap();
+      let rows = for_character(&db, 42).await.unwrap();
       assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].quantity(), 7);
-      assert_eq!(rows[0].container_id(), Some(99));
-    }
-
-    #[tokio::test]
-    async fn it_upserts_and_prunes_across_write_batch_boundaries() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      let initial: Vec<_> = (100..105).map(|id| corp_asset(id, CORP_ID, None)).collect();
-
-      replace_for_corporation_batched(&db, CORP_ID, &initial, 2)
-        .await
-        .unwrap();
-      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
-        .await
-        .unwrap()
-        .iter()
-        .map(CorporationAsset::item_id)
-        .collect();
-      ids.sort_unstable();
-      assert_eq!(
-        ids,
-        [100, 101, 102, 103, 104],
-        "every row survives multiple upsert batches"
-      );
-
-      let next: Vec<_> = (100..102).map(|id| corp_asset(id, CORP_ID, None)).collect();
-      replace_for_corporation_batched(&db, CORP_ID, &next, 2).await.unwrap();
-      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
-        .await
-        .unwrap()
-        .iter()
-        .map(CorporationAsset::item_id)
-        .collect();
-      ids.sort_unstable();
-      assert_eq!(
-        ids,
-        [100, 101],
-        "stale rows are pruned across delete batches, final state matches the new set"
-      );
-    }
-  }
-
-  mod referenced_locations {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_deduplicates_a_place_referenced_by_a_character_and_a_corporation() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
-        .await
-        .unwrap();
-      replace_for_corporation(&db, CORP_ID, &[corp_asset(200, CORP_ID, None)])
-        .await
-        .unwrap();
-
-      let locations = referenced_locations(&db).await.unwrap();
-
-      assert_eq!(
-        locations,
-        vec![ReferencedLocation {
-          location_id: 60_003_760,
-          location_type: "station".to_owned(),
-        }],
-        "the shared station appears once despite two owners referencing it"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_excludes_item_nested_roots_and_keeps_distinct_places() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut in_station = char_asset(100, 42, None);
-      in_station.location_id = 60_003_760;
-      in_station.location_type = "station".to_owned();
-      let mut in_structure = char_asset(101, 42, None);
-      in_structure.location_id = 1_021_000_000_000;
-      in_structure.location_type = "structure".to_owned();
-      let mut nested = char_asset(102, 42, Some(100));
-      nested.location_id = 100;
-      nested.location_type = "item".to_owned();
-      replace_for_character(&db, 42, &[in_station, in_structure, nested])
-        .await
-        .unwrap();
-
-      let locations = referenced_locations(&db).await.unwrap();
-
-      assert_eq!(
-        locations,
-        vec![
-          ReferencedLocation {
-            location_id: 60_003_760,
-            location_type: "station".to_owned(),
-          },
-          ReferencedLocation {
-            location_id: 1_021_000_000_000,
-            location_type: "structure".to_owned(),
-          },
-        ],
-        "distinct places are kept (ordered by id) and the `item`-nested row is excluded"
-      );
-    }
-  }
-
-  mod geo_locations {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const STRUCTURE_ID: i64 = 1_021_000_000_000;
-
-    #[tokio::test]
-    async fn it_resolves_the_full_geo_chain_and_aggregates_value_and_count_for_a_station() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 100.0).await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.quantity = 2;
-      let mut b = char_asset(101, 42, None);
-      b.type_id = 587;
-      b.quantity = 3;
-      replace_for_character(&db, 42, &[a, b]).await.unwrap();
-
-      let rows = geo_locations_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1, "both assets fold into one location row");
-      let row = &rows[0];
-      assert_eq!(row.location_id, 60_003_760);
-      assert_eq!(row.location_type, "station");
-      assert_eq!(
-        row.location_label.as_deref(),
-        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
-      );
-      assert_eq!(row.system_id, Some(GEO_SYSTEM));
-      assert_eq!(row.system_name.as_deref(), Some("Jita"));
-      assert_eq!(row.constellation_id, Some(20_000_020));
-      assert_eq!(row.constellation_name.as_deref(), Some("Kimotoro"));
-      assert_eq!(row.region_id, Some(10_000_002));
-      assert_eq!(row.region_name.as_deref(), Some("The Forge"));
-      assert_eq!(row.item_count, 5);
-      assert_eq!(row.value, 500.0);
-    }
-
-    #[tokio::test]
-    async fn it_resolves_a_structure_location_through_its_solar_system() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_named_structure(&db, STRUCTURE_ID, "Jita Citadel").await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.location_id = STRUCTURE_ID;
-      a.location_type = "structure".to_owned();
-      replace_for_character(&db, 42, &[a]).await.unwrap();
-
-      let rows = geo_locations_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].location_label.as_deref(), Some("Jita Citadel"));
-      assert_eq!(rows[0].system_name.as_deref(), Some("Jita"));
-      assert_eq!(rows[0].region_name.as_deref(), Some("The Forge"));
-    }
-
-    #[tokio::test]
-    async fn it_labels_in_space_holdings_by_their_system_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_geography(&db).await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.location_id = GEO_SYSTEM;
-      a.location_type = "solar_system".to_owned();
-      replace_for_character(&db, 42, &[a]).await.unwrap();
-
-      let rows = geo_locations_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].location_type, "solar_system");
-      assert_eq!(rows[0].location_label.as_deref(), Some("Jita"));
-      assert_eq!(rows[0].system_id, Some(GEO_SYSTEM));
-    }
-
-    #[tokio::test]
-    async fn it_excludes_container_nested_rows_from_the_location_aggregate() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 100.0).await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      root.type_id = 587;
-      let mut child = char_asset(101, 42, Some(100));
-      child.type_id = 587;
-      child.location_id = 100;
-      child.location_type = "item".to_owned();
-      replace_for_character(&db, 42, &[root, child]).await.unwrap();
-
-      let rows = geo_locations_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(
-        rows[0].item_count, 1,
-        "only the top-level container counts; the item-nested child is excluded"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_marks_an_inaccessible_structure_and_leaves_its_geo_chain_unresolved() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.location_id = STRUCTURE_ID;
-      a.location_type = "structure".to_owned();
-      replace_for_character(&db, 42, &[a]).await.unwrap();
-      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
-        .await
-        .unwrap();
-
-      let rows = geo_locations_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].location_label.as_deref(), Some("Inaccessible Structure"));
-      assert_eq!(rows[0].system_id, None, "an unresolved structure has no geo chain");
-    }
-
-    #[tokio::test]
-    async fn it_aggregates_geo_locations_across_an_owned_character_set() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 100.0).await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      let mut b = char_asset(200, 43, None);
-      b.type_id = 587;
-      replace_for_character(&db, 42, &[a]).await.unwrap();
-      replace_for_character(&db, 43, &[b]).await.unwrap();
-
-      let rows = geo_locations_for_characters(&db, &[42, 43]).await.unwrap();
-
-      assert_eq!(rows.len(), 1, "the shared station folds across both owners");
-      assert_eq!(rows[0].item_count, 2);
-      assert!(geo_locations_for_characters(&db, &[]).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_gates_corporation_geo_locations_on_authorization() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 250.0).await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
-      let mut a = corp_asset(100, CORP_ID, None);
-      a.type_id = 587;
-      a.quantity = 4;
-      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
-
-      assert!(
-        geo_locations_for_corporation(&db, CORP_ID).await.unwrap().is_empty(),
-        "no rows before the corp is authorized"
-      );
-
-      authorize_corp(&db).await;
-
-      let rows = geo_locations_for_corporation(&db, CORP_ID).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].item_count, 4);
-      assert_eq!(rows[0].value, 1_000.0);
-    }
-  }
-
-  mod render_join {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_populates_every_metadata_cell_from_the_sde_for_a_resolved_type() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut asset = char_asset(100, 42, None);
-      asset.type_id = 587;
-      replace_for_character(&db, 42, &[asset]).await.unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      let row = &rows[0];
-      assert_eq!(row.item_id, 100);
-      assert_eq!(row.type_id, 587);
-      assert_eq!(row.type_name, "Rifter");
-      assert_eq!(row.group_name, "Frigate");
-      assert_eq!(row.category, "ship");
-      assert_eq!(row.icon_id, Some(1587));
-      assert_eq!(row.volume, Some(2.5));
-    }
-
-    #[tokio::test]
-    async fn it_carries_the_custom_name_alongside_the_type_name_on_render_rows() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut named = char_asset(100, 42, None);
-      named.name = Some("My Scout".to_owned());
-      let plain = char_asset(101, 42, None);
-      replace_for_character(&db, 42, &[named, plain]).await.unwrap();
-      let mut corp_named = corp_asset(200, CORP_ID, None);
-      corp_named.name = Some("Corp Stash".to_owned());
-      replace_for_corporation(&db, CORP_ID, &[corp_named]).await.unwrap();
-
-      let char_rows = render_for_character(&db, 42).await.unwrap();
-      let corp_rows = render_for_corporation(&db, CORP_ID).await.unwrap();
-
-      assert_eq!(char_rows[0].name.as_deref(), Some("My Scout"));
-      assert_eq!(char_rows[0].type_name, "Rifter");
-      assert_eq!(char_rows[1].name, None, "an unnamed item keeps a null custom name");
-
-      assert_eq!(corp_rows[0].name.as_deref(), Some("Corp Stash"));
-      assert_eq!(corp_rows[0].type_name, "Rifter");
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_assembled_volume_when_packaged_is_null() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let category = ItemCategory {
-        id: 60,
-        icon_id: None,
-        name: "Ship".to_owned(),
-        published: true,
-      };
-      let group = ItemGroup {
-        category_id: 60,
-        icon_id: None,
-        id: 25,
-        name: "Frigate".to_owned(),
-        published: true,
-      };
-      let item_type = ItemType {
-        capacity: None,
-        description: Some("Test item".to_owned()),
-        dogma_attributes: "[]".to_owned(),
-        group_id: 25,
-        icon_id: None,
-        id: 587,
-        market_group_id: None,
-        name: "Rifter".to_owned(),
-        packaged_volume: None,
-        portion_size: None,
-        published: true,
-        radius: None,
-        volume: Some(27_289.0),
-      };
-      sde::insert_item_type_with_hierarchy(&db, &item_type, &group, &category)
-        .await
-        .unwrap();
-      let mut asset = char_asset(100, 42, None);
-      asset.type_id = 587;
-      replace_for_character(&db, 42, &[asset]).await.unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows[0].volume, Some(27_289.0));
-    }
-
-    #[tokio::test]
-    async fn it_maps_category_names_to_render_keys() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 1, "Augmenter", 1, "Cyber", "Augmentation").await;
-      seed_item_type(&db, 2, "Tritanium", 2, "Mineral", "Mineral").await;
-      seed_item_type(&db, 3, "Skillbook", 3, "Skills", "Skill").await;
-      seed_item_type(&db, 4, "Widget", 4, "Misc", "Totally Unknown").await;
-      let assets: Vec<_> = [1, 2, 3, 4]
-        .into_iter()
-        .map(|t| {
-          let mut a = char_asset(100 + t, 42, None);
-          a.type_id = t;
-          a
-        })
-        .collect();
-      replace_for_character(&db, 42, &assets).await.unwrap();
-
-      let keys: Vec<_> = render_for_character(&db, 42)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| r.category)
-        .collect();
-
-      assert_eq!(keys, ["implant", "material", "book", "commodity"]);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_assets_whose_type_is_unseeded_rather_than_yielding_a_blank_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut resolved = char_asset(100, 42, None);
-      resolved.type_id = 587;
-      let mut orphan = char_asset(101, 42, None);
-      orphan.type_id = 999_999;
-      replace_for_character(&db, 42, &[resolved, orphan]).await.unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-    }
-
-    #[tokio::test]
-    async fn it_renders_corporation_assets_from_the_sde() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut asset = corp_asset(100, CORP_ID, None);
-      asset.type_id = 587;
-      replace_for_corporation(&db, CORP_ID, &[asset]).await.unwrap();
-
-      let rows = render_for_corporation(&db, CORP_ID).await.unwrap();
-
-      assert_eq!(rows.len(), 1);
-      assert_eq!(rows[0].type_name, "Rifter");
-      assert_eq!(rows[0].category, "ship");
-    }
-  }
-
-  mod completeness {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_reports_a_fully_resolved_set_as_complete() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      let mut b = char_asset(101, 42, None);
-      b.type_id = 587;
-      replace_for_character(&db, 42, &[a, b]).await.unwrap();
-
-      let report = completeness_for_character(&db, 42).await.unwrap();
-
-      assert!(report.is_complete());
-      assert_eq!(report.distinct_type_ids, 1);
-      assert_eq!(report.resolved, 1);
-      assert!(report.unresolved.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_counts_and_lists_unresolved_type_ids() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut resolved = char_asset(100, 42, None);
-      resolved.type_id = 587;
-      let mut orphan_a = char_asset(101, 42, None);
-      orphan_a.type_id = 999_999;
-      let mut orphan_b = char_asset(102, 42, None);
-      orphan_b.type_id = 888_888;
-      let mut orphan_b_dup = char_asset(103, 42, None);
-      orphan_b_dup.type_id = 888_888;
-      replace_for_character(&db, 42, &[resolved, orphan_a, orphan_b, orphan_b_dup])
-        .await
-        .unwrap();
-
-      let report = completeness_for_character(&db, 42).await.unwrap();
-
-      assert!(!report.is_complete());
-      assert_eq!(report.distinct_type_ids, 3);
-      assert_eq!(report.resolved, 1);
-      assert_eq!(report.unresolved, [888_888, 999_999]);
-    }
-
-    #[tokio::test]
-    async fn it_reports_corporation_completeness() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      let mut orphan = corp_asset(100, CORP_ID, None);
-      orphan.type_id = 999_999;
-      replace_for_corporation(&db, CORP_ID, &[orphan]).await.unwrap();
-
-      let report = completeness_for_corporation(&db, CORP_ID).await.unwrap();
-
-      assert!(!report.is_complete());
-      assert_eq!(report.unresolved, [999_999]);
-    }
-  }
-
-  async fn seed_price(db: &Database, type_id: i64, adjusted: f64) {
-    sqlx::query("INSERT INTO market_prices (type_id, adjusted_price, average_price) VALUES (?, ?, NULL)")
-      .bind(type_id)
-      .bind(adjusted)
-      .execute(&db.0)
-      .await
-      .unwrap();
-  }
-
-  async fn seed_history(db: &Database, type_id: i64, date: &str, close: f64) {
-    sqlx::query("INSERT INTO type_price_histories (type_id, date, open, high, low, close) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(type_id)
-      .bind(date)
-      .bind(close)
-      .bind(close)
-      .bind(close)
-      .bind(close)
-      .execute(&db.0)
-      .await
-      .unwrap();
-  }
-
-  mod asset_value_as_of {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn asset(item_id: i64, type_id: i64, quantity: i64) -> CharacterAsset {
-      let mut a = char_asset(item_id, 42, None);
-      a.type_id = type_id;
-      a.quantity = quantity;
-      a
-    }
-
-    #[tokio::test]
-    async fn it_prices_holdings_with_the_historical_close_on_the_exact_date() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[asset(100, 587, 3)]).await.unwrap();
-      seed_price(&db, 587, 100.0).await;
-      seed_history(&db, 587, "2026-06-03", 10.0).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
-
-      assert_eq!(value, 30.0, "uses the 06-03 close (10), not the current snapshot (100)");
-    }
-
-    #[tokio::test]
-    async fn it_forward_fills_from_the_nearest_prior_close_for_a_gap_date() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[asset(100, 587, 2)]).await.unwrap();
-      seed_history(&db, 587, "2026-06-01", 5.0).await;
-      seed_history(&db, 587, "2026-06-05", 9.0).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
-
-      assert_eq!(value, 10.0);
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_current_snapshot_when_no_history_precedes_the_date() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[asset(100, 587, 4)]).await.unwrap();
-      seed_price(&db, 587, 7.0).await;
-      seed_history(&db, 587, "2026-06-10", 50.0).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-01").await.unwrap();
-
-      assert_eq!(
-        value, 28.0,
-        "pre-history dates fall back to the current market_prices snapshot"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_treats_an_unpriced_type_as_zero_without_nulling_the_sum() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      replace_for_character(&db, 42, &[asset(100, 587, 3), asset(101, 999, 5)])
-        .await
-        .unwrap();
-      seed_history(&db, 587, "2026-06-03", 10.0).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
-
-      assert_eq!(value, 30.0, "type 999 has neither history nor a current price -> 0");
-    }
-
-    #[tokio::test]
-    async fn it_values_a_blueprint_copy_at_zero() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut copy = asset(100, 587, 1);
-      copy.is_blueprint_copy = Some(true);
-      replace_for_character(&db, 42, &[copy]).await.unwrap();
-      seed_history(&db, 587, "2026-06-03", 999.0).await;
-      seed_price(&db, 587, 999.0).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
-
-      assert_eq!(value, 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_returns_zero_for_a_scope_with_no_holdings() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
-
-      assert_eq!(value, 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_prices_corporation_holdings_for_an_authorized_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corp(&db).await;
-      let mut a = corp_asset(100, CORP_ID, None);
-      a.type_id = 587;
-      a.quantity = 2;
-      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
-      seed_history(&db, 587, "2026-06-03", 12.0).await;
-
-      let value = asset_value_as_of_for_corporation(&db, CORP_ID, "2026-06-03")
-        .await
-        .unwrap();
-
-      assert_eq!(value, 24.0);
-    }
-
-    #[tokio::test]
-    async fn it_returns_zero_for_an_unauthorized_corporation_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut a = corp_asset(100, CORP_ID, None);
-      a.type_id = 587;
-      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
-      seed_history(&db, 587, "2026-06-03", 12.0).await;
-
-      let value = asset_value_as_of_for_corporation(&db, CORP_ID, "2026-06-03")
-        .await
-        .unwrap();
-
-      assert_eq!(value, 0.0, "an unauthorized corp scope yields no value");
-    }
-  }
-
-  mod location_label {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const STRUCTURE_ID: i64 = 1_021_000_000_000;
-
-    #[tokio::test]
-    async fn it_resolves_a_station_name_into_the_render_label() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
-        .await
-        .unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(
-        rows[0].location_label.as_deref(),
-        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
-      );
-    }
-
-    #[tokio::test]
-    async fn it_renders_inaccessible_structure_for_a_marked_location() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut asset = char_asset(100, 42, None);
-      asset.location_id = STRUCTURE_ID;
-      asset.location_type = "structure".to_owned();
-      replace_for_character(&db, 42, &[asset]).await.unwrap();
-      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
-        .await
-        .unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(rows[0].location_label.as_deref(), Some("Inaccessible Structure"));
-    }
-
-    #[tokio::test]
-    async fn it_marks_inaccessible_per_owner_not_across_owners() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_named_structure(&db, STRUCTURE_ID, "Some Citadel").await;
-      let mut asset = char_asset(100, 43, None);
-      asset.location_id = STRUCTURE_ID;
-      asset.location_type = "structure".to_owned();
-      replace_for_character(&db, 43, &[asset]).await.unwrap();
-      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
-        .await
-        .unwrap();
-
-      let rows = render_for_character(&db, 43).await.unwrap();
-
-      assert_eq!(
-        rows[0].location_label.as_deref(),
-        Some("Some Citadel"),
-        "43 sees the resolved name; 42's inaccessible mark does not leak across owners"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_leaves_the_render_label_null_when_unresolved() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
-        .await
-        .unwrap();
-
-      let rows = render_for_character(&db, 42).await.unwrap();
-
-      assert_eq!(
-        rows[0].location_label, None,
-        "an unresolved location never renders a raw id"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_carries_the_resolved_label_through_the_inventory_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
-      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
-        .await
-        .unwrap();
-
-      let query = InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 100,
-        location_ids: &[],
-        me_id: None,
-        sort: SortColumn::Name,
-      };
-      let rows = inventory_page_for_character(&db, 42, &query).await.unwrap();
-
-      assert_eq!(
-        rows[0].location_label.as_deref(),
-        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
-      );
-    }
-  }
-
-  mod inventory_page {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn query(sort: SortColumn) -> InventoryQuery<'static> {
-      InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 100,
-        location_ids: &[],
-        me_id: None,
-        sort,
-      }
-    }
-
-    #[tokio::test]
-    async fn it_returns_a_keyset_window_and_seeks_the_next_page_by_cursor() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let assets: Vec<_> = (100..105)
-        .map(|item_id| {
-          let mut a = char_asset(item_id, 42, None);
-          a.type_id = 587;
-          a
-        })
-        .collect();
-      replace_for_character(&db, 42, &assets).await.unwrap();
-
-      let first = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          limit: 2,
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(first.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100, 101]);
-
-      let cursor = first.last().unwrap().cursor(SortColumn::Name);
-      let second = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          cursor: Some(cursor),
-          limit: 2,
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(second.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
-    }
-
-    #[tokio::test]
-    async fn it_does_not_materialize_excluded_pages_and_orders_by_a_join_derived_column() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
-      seed_item_type(&db, 2, "Alpha", 2, "G", "Ship").await;
-      let mut z = char_asset(100, 42, None);
-      z.type_id = 1;
-      let mut a = char_asset(101, 42, None);
-      a.type_id = 2;
-      replace_for_character(&db, 42, &[z, a]).await.unwrap();
-
-      let names: Vec<_> = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| r.type_name)
-        .collect();
-
-      assert_eq!(names, ["Alpha", "Zilch"]);
-    }
-
-    #[tokio::test]
-    async fn it_sorts_descending_and_seeks_in_the_same_direction() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      for (item_id, qty) in [(100, 5), (101, 30), (102, 10)] {
-        let mut a = char_asset(item_id, 42, None);
-        a.type_id = 587;
-        a.quantity = qty;
-        upsert_character_asset(&db, &a).await.unwrap();
-      }
-
-      let page = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          direction: SortDirection::Descending,
-          limit: 2,
-          ..query(SortColumn::Quantity)
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(page.iter().map(|r| r.quantity).collect::<Vec<_>>(), [30, 10]);
-    }
-
-    #[tokio::test]
-    async fn it_prices_value_per_row_and_zeroes_blueprint_copies() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_item_type(&db, 700, "Blueprint", 70, "Blueprints", "Blueprint").await;
-      seed_price(&db, 587, 1_000.0).await;
-      seed_price(&db, 700, 9_999.0).await;
-      let mut priced = char_asset(100, 42, None);
-      priced.type_id = 587;
-      priced.quantity = 3;
-      let mut bpc = char_asset(101, 42, None);
-      bpc.type_id = 700;
-      bpc.is_blueprint_copy = Some(true);
-      replace_for_character(&db, 42, &[priced, bpc]).await.unwrap();
-
-      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      let by_item: std::collections::HashMap<_, _> = rows.into_iter().map(|r| (r.item_id, r)).collect();
-
-      assert_eq!(by_item[&100].unit_price, 1_000.0);
-      assert_eq!(by_item[&100].value, 3_000.0);
-      assert_eq!(by_item[&101].unit_price, 0.0);
-      assert_eq!(by_item[&101].value, 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_applies_the_structured_filter_to_the_window() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      let mut ship = char_asset(100, 42, None);
-      ship.type_id = 587;
-      let mut mineral = char_asset(101, 42, None);
-      mineral.type_id = 24;
-      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
-
-      let rows = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          filter: "category:ship",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-    }
-
-    #[tokio::test]
-    async fn it_paginates_only_top_level_rows_excluding_container_children() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      root.type_id = 587;
-      let mut child = char_asset(101, 42, Some(100));
-      child.type_id = 587;
-      let mut sibling = char_asset(102, 42, None);
-      sibling.type_id = 587;
-      replace_for_character(&db, 42, &[root, child, sibling]).await.unwrap();
-
-      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-
-      assert_eq!(
-        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 102],
-        "the nested child (101) never appears as a page row"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_restricts_the_page_to_the_supplied_location_ids_and_treats_empty_as_all() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut here = char_asset(100, 42, None);
-      here.type_id = 587;
-      here.location_id = 60_000_001;
-      let mut there = char_asset(101, 42, None);
-      there.type_id = 587;
-      there.location_id = 60_000_002;
-      replace_for_character(&db, 42, &[here, there]).await.unwrap();
-
-      let filtered = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          location_ids: &[60_000_001],
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(
-        filtered.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100],
-        "only rows at the selected location remain"
-      );
-
-      let unfiltered = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      assert_eq!(
-        unfiltered.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 101],
-        "an empty location_ids predicate yields every location"
-      );
-
-      let multi = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          location_ids: &[60_000_001, 60_000_002],
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(multi.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100, 101]);
-    }
-  }
-
-  mod custom_name {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn query(sort: SortColumn) -> InventoryQuery<'static> {
-      InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 100,
-        location_ids: &[],
-        me_id: None,
-        sort,
-      }
-    }
-
-    #[tokio::test]
-    async fn it_sorts_a_renamed_character_item_by_its_coalesced_display_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
-      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
-      let mut renamed = char_asset(100, 42, None);
-      renamed.type_id = 1;
-      renamed.name = Some("Aaa".to_owned());
-      let mut plain = char_asset(101, 42, None);
-      plain.type_id = 2;
-      replace_for_character(&db, 42, &[renamed, plain]).await.unwrap();
-
-      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-
-      assert_eq!(
-        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 101],
-        "the item renamed Aaa sorts ahead of the unnamed Mmm even though its type name is Zilch"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_finds_a_renamed_character_item_by_either_its_custom_or_type_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut renamed = char_asset(100, 42, None);
-      renamed.name = Some("My Scout".to_owned());
-      replace_for_character(&db, 42, &[renamed]).await.unwrap();
-
-      let by_custom = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          filter: "Scout",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      let by_type = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          filter: "Rifter",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      let by_miss = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          filter: "Velator",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-      assert!(by_miss.is_empty());
-
-      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
-      assert_eq!(by_custom[0].type_name, "Rifter");
-    }
-
-    #[tokio::test]
-    async fn it_sorts_a_renamed_corporation_item_by_its_coalesced_display_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
-      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
-      let mut renamed = corp_asset(100, CORP_ID, None);
-      renamed.type_id = 1;
-      renamed.name = Some("Aaa".to_owned());
-      let mut plain = corp_asset(101, CORP_ID, None);
-      plain.type_id = 2;
-      replace_for_corporation(&db, CORP_ID, &[renamed, plain]).await.unwrap();
-
-      let rows = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-        .await
-        .unwrap();
-
-      assert_eq!(
-        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 101],
-        "the corp item renamed Aaa sorts ahead of the unnamed Mmm despite its Zilch type name"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_finds_a_renamed_corporation_item_by_either_its_custom_or_type_name() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut renamed = corp_asset(100, CORP_ID, None);
-      renamed.name = Some("My Scout".to_owned());
-      replace_for_corporation(&db, CORP_ID, &[renamed]).await.unwrap();
-
-      let by_custom = inventory_page_for_corporation(
-        &db,
-        CORP_ID,
-        &InventoryQuery {
-          filter: "Scout",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      let by_type = inventory_page_for_corporation(
-        &db,
-        CORP_ID,
-        &InventoryQuery {
-          filter: "Rifter",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-
-      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
-      assert_eq!(by_custom[0].type_name, "Rifter");
-    }
-  }
-
-  mod inventory_totals {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_aggregates_the_four_header_totals_in_sql_over_a_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 100.0).await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.quantity = 2;
-      a.location_id = 60_000_001;
-      let mut b = char_asset(101, 42, None);
-      b.type_id = 587;
-      b.quantity = 3;
-      b.location_id = 60_000_002;
-      replace_for_character(&db, 42, &[a, b]).await.unwrap();
-
-      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-
-      assert_eq!(totals.items, 5);
-      assert_eq!(totals.locations, 2);
-      assert_eq!(totals.value, 500.0);
-      assert_eq!(totals.volume, 12.5);
-    }
-
-    #[tokio::test]
-    async fn it_restricts_the_totals_to_the_selected_locations() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut here = char_asset(100, 42, None);
-      here.type_id = 587;
-      here.quantity = 2;
-      here.location_id = 60_000_001;
-      let mut there = char_asset(101, 42, None);
-      there.type_id = 587;
-      there.quantity = 3;
-      there.location_id = 60_000_002;
-      replace_for_character(&db, 42, &[here, there]).await.unwrap();
-
-      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-      let one = inventory_totals_for_character(&db, 42, "", &[60_000_001], None)
-        .await
-        .unwrap();
-
-      assert_eq!(all.items, 5, "an empty location predicate counts every location");
-      assert_eq!(
-        one.items, 2,
-        "the badge total honors the same location filter as the page"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_restricts_the_totals_to_the_filtered_set() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      seed_price(&db, 587, 100.0).await;
-      seed_price(&db, 24, 5.0).await;
-      let mut ship = char_asset(100, 42, None);
-      ship.type_id = 587;
-      ship.quantity = 1;
-      let mut mineral = char_asset(101, 42, None);
-      mineral.type_id = 24;
-      mineral.quantity = 1_000;
-      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
-
-      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-      let ships_only = inventory_totals_for_character(&db, 42, "category:ship", &[], None)
-        .await
-        .unwrap();
-
-      assert_eq!(all.items, 1_001);
-      assert_eq!(all.value, 5_100.0);
-      assert_eq!(ships_only.items, 1);
-      assert_eq!(ships_only.value, 100.0);
-      assert_eq!(ships_only.locations, 1);
-    }
-
-    #[tokio::test]
-    async fn it_yields_zeroed_totals_for_an_empty_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-
-      assert_eq!(totals, InventoryTotals::default());
-    }
-
-    #[tokio::test]
-    async fn it_aggregates_corporation_totals() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 250.0).await;
-      let mut a = corp_asset(100, CORP_ID, None);
-      a.type_id = 587;
-      a.quantity = 4;
-      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
-
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-        .await
-        .unwrap();
-
-      assert_eq!(totals.items, 4);
-      assert_eq!(totals.value, 1_000.0);
+      assert_eq!(rows[0].item_id(), 101);
     }
   }
 
@@ -5295,30 +4184,74 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn the_page_unions_character_and_corporation_assets_in_one_keyset_window() {
+    async fn it_yields_nothing_for_an_all_scope_with_no_owners() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(
+        inventory_page_for_combined(&db, &[], &[], &query(SortColumn::Name))
+          .await
+          .unwrap()
+          .is_empty()
+      );
+      assert_eq!(
+        inventory_totals_for_combined(&db, &[], &[], "", &[], None)
+          .await
+          .unwrap(),
+        InventoryTotals::default()
+      );
+      assert!(geo_locations_for_combined(&db, &[], &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_geo_locations_fold_both_owners_at_a_shared_place() {
       let db = store::open_test().await.unwrap();
       seed_combined(&db).await;
-      let mut owned = char_asset(100, 42, None);
-      owned.type_id = 587;
-      let mut corp = corp_asset(200, CORP_ID, None);
-      corp.type_id = 587;
-      replace_for_character(&db, 42, &[owned]).await.unwrap();
-      replace_for_corporation(&db, CORP_ID, &[corp]).await.unwrap();
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.quantity = 2;
+      let mut b = corp_asset(200, CORP_ID, None);
+      b.type_id = 587;
+      b.quantity = 3;
+      replace_for_character(&db, 42, &[a]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[b]).await.unwrap();
 
-      let rows = inventory_page_for_combined(&db, &[42], &[CORP_ID], &query(SortColumn::Name))
-        .await
-        .unwrap();
+      let rows = geo_locations_for_combined(&db, &[42], &[CORP_ID]).await.unwrap();
 
       assert_eq!(
-        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 200],
-        "the corp row appears alongside the character row in the All page"
+        rows.len(),
+        1,
+        "the shared station folds across the character and the corp"
       );
-      assert_eq!(
-        rows.iter().map(|r| r.owner_id).collect::<Vec<_>>(),
-        [42, CORP_ID],
-        "each row carries its own owner id"
-      );
+      assert_eq!(rows[0].item_count, 5);
+      assert_eq!(rows[0].value, 500.0);
+    }
+
+    #[tokio::test]
+    async fn the_page_applies_the_structured_filter_to_the_union() {
+      let db = store::open_test().await.unwrap();
+      seed_combined(&db).await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut ship = char_asset(100, 42, None);
+      ship.type_id = 587;
+      let mut mineral = corp_asset(200, CORP_ID, None);
+      mineral.type_id = 24;
+      replace_for_character(&db, 42, &[ship]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[mineral]).await.unwrap();
+
+      let rows = inventory_page_for_combined(
+        &db,
+        &[42],
+        &[CORP_ID],
+        &InventoryQuery {
+          filter: "category:ship",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
     }
 
     #[tokio::test]
@@ -5389,54 +4322,30 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn the_page_applies_the_structured_filter_to_the_union() {
+    async fn the_page_unions_character_and_corporation_assets_in_one_keyset_window() {
       let db = store::open_test().await.unwrap();
       seed_combined(&db).await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      let mut ship = char_asset(100, 42, None);
-      ship.type_id = 587;
-      let mut mineral = corp_asset(200, CORP_ID, None);
-      mineral.type_id = 24;
-      replace_for_character(&db, 42, &[ship]).await.unwrap();
-      replace_for_corporation(&db, CORP_ID, &[mineral]).await.unwrap();
+      let mut owned = char_asset(100, 42, None);
+      owned.type_id = 587;
+      let mut corp = corp_asset(200, CORP_ID, None);
+      corp.type_id = 587;
+      replace_for_character(&db, 42, &[owned]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp]).await.unwrap();
 
-      let rows = inventory_page_for_combined(
-        &db,
-        &[42],
-        &[CORP_ID],
-        &InventoryQuery {
-          filter: "category:ship",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-    }
-
-    #[tokio::test]
-    async fn the_totals_sum_character_and_authorized_corporation_holdings() {
-      let db = store::open_test().await.unwrap();
-      seed_combined(&db).await;
-      let mut a = char_asset(100, 42, None);
-      a.type_id = 587;
-      a.quantity = 2;
-      a.location_id = 60_000_001;
-      let mut b = corp_asset(200, CORP_ID, None);
-      b.type_id = 587;
-      b.quantity = 3;
-      b.location_id = 60_000_002;
-      replace_for_character(&db, 42, &[a]).await.unwrap();
-      replace_for_corporation(&db, CORP_ID, &[b]).await.unwrap();
-
-      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", &[], None)
+      let rows = inventory_page_for_combined(&db, &[42], &[CORP_ID], &query(SortColumn::Name))
         .await
         .unwrap();
 
-      assert_eq!(totals.items, 5, "2 character + 3 corp units");
-      assert_eq!(totals.locations, 2);
-      assert_eq!(totals.value, 500.0);
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 200],
+        "the corp row appears alongside the character row in the All page"
+      );
+      assert_eq!(
+        rows.iter().map(|r| r.owner_id).collect::<Vec<_>>(),
+        [42, CORP_ID],
+        "each row carries its own owner id"
+      );
     }
 
     #[tokio::test]
@@ -5463,47 +4372,916 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn the_geo_locations_fold_both_owners_at_a_shared_place() {
+    async fn the_totals_sum_character_and_authorized_corporation_holdings() {
       let db = store::open_test().await.unwrap();
       seed_combined(&db).await;
-      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
       let mut a = char_asset(100, 42, None);
       a.type_id = 587;
       a.quantity = 2;
+      a.location_id = 60_000_001;
       let mut b = corp_asset(200, CORP_ID, None);
       b.type_id = 587;
       b.quantity = 3;
+      b.location_id = 60_000_002;
       replace_for_character(&db, 42, &[a]).await.unwrap();
       replace_for_corporation(&db, CORP_ID, &[b]).await.unwrap();
 
-      let rows = geo_locations_for_combined(&db, &[42], &[CORP_ID]).await.unwrap();
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "", &[], None)
+        .await
+        .unwrap();
 
-      assert_eq!(
-        rows.len(),
-        1,
-        "the shared station folds across the character and the corp"
-      );
-      assert_eq!(rows[0].item_count, 5);
-      assert_eq!(rows[0].value, 500.0);
+      assert_eq!(totals.items, 5, "2 character + 3 corp units");
+      assert_eq!(totals.locations, 2);
+      assert_eq!(totals.value, 500.0);
+    }
+  }
+
+  mod completeness {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_counts_and_lists_unresolved_type_ids() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut resolved = char_asset(100, 42, None);
+      resolved.type_id = 587;
+      let mut orphan_a = char_asset(101, 42, None);
+      orphan_a.type_id = 999_999;
+      let mut orphan_b = char_asset(102, 42, None);
+      orphan_b.type_id = 888_888;
+      let mut orphan_b_dup = char_asset(103, 42, None);
+      orphan_b_dup.type_id = 888_888;
+      replace_for_character(&db, 42, &[resolved, orphan_a, orphan_b, orphan_b_dup])
+        .await
+        .unwrap();
+
+      let report = completeness_for_character(&db, 42).await.unwrap();
+
+      assert!(!report.is_complete());
+      assert_eq!(report.distinct_type_ids, 3);
+      assert_eq!(report.resolved, 1);
+      assert_eq!(report.unresolved, [888_888, 999_999]);
     }
 
     #[tokio::test]
-    async fn it_yields_nothing_for_an_all_scope_with_no_owners() {
+    async fn it_reports_a_fully_resolved_set_as_complete() {
       let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      let mut b = char_asset(101, 42, None);
+      b.type_id = 587;
+      replace_for_character(&db, 42, &[a, b]).await.unwrap();
 
+      let report = completeness_for_character(&db, 42).await.unwrap();
+
+      assert!(report.is_complete());
+      assert_eq!(report.distinct_type_ids, 1);
+      assert_eq!(report.resolved, 1);
+      assert!(report.unresolved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_reports_corporation_completeness() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let mut orphan = corp_asset(100, CORP_ID, None);
+      orphan.type_id = 999_999;
+      replace_for_corporation(&db, CORP_ID, &[orphan]).await.unwrap();
+
+      let report = completeness_for_corporation(&db, CORP_ID).await.unwrap();
+
+      assert!(!report.is_complete());
+      assert_eq!(report.unresolved, [999_999]);
+    }
+  }
+
+  mod corp_scope_gating {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    async fn seed_one_corp_asset(db: &Database) {
+      seed_character(db, 42).await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(db, 587, 250.0).await;
+      let mut asset = corp_asset(100, CORP_ID, None);
+      asset.type_id = 587;
+      asset.quantity = 4;
+      replace_for_corporation(db, CORP_ID, &[asset]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_excludes_corp_rows_when_not_owned_even_if_a_director_role_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_one_corp_asset(&db).await;
+      org::replace_for_corporation(
+        &db,
+        CORP_ID,
+        &[CorporationMemberRole::from((
+          CORP_ID,
+          DIRECTOR_ID,
+          "Director".to_string(),
+        ))],
+      )
+      .await
+      .unwrap();
+
+      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert!(page.is_empty());
+      assert_eq!(totals, InventoryTotals::default());
+      assert!(render_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_excludes_corp_rows_when_owned_but_the_authorizer_lacks_the_role() {
+      let db = store::open_test().await.unwrap();
+      seed_one_corp_asset(&db).await;
+      infra::upsert(
+        &db,
+        CORP_ID,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(DIRECTOR_ID),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        &db,
+        CORP_ID,
+        &[CorporationMemberRole::from((
+          CORP_ID,
+          DIRECTOR_ID,
+          "Accountant".to_string(),
+        ))],
+      )
+      .await
+      .unwrap();
+
+      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert!(page.is_empty());
+      assert_eq!(totals, InventoryTotals::default());
+      assert!(for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_corp_rows_when_owned_and_the_authorizer_holds_the_role() {
+      let db = store::open_test().await.unwrap();
+      seed_one_corp_asset(&db).await;
+      authorize_corp(&db).await;
+
+      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(page.len(), 1);
+      assert_eq!(totals.items, 4);
+      assert_eq!(totals.value, 1_000.0);
+      assert_eq!(for_corporation(&db, CORP_ID).await.unwrap().len(), 1);
+      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 1);
+    }
+  }
+
+  mod corporation_assets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_fetches_children_and_counts() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      replace_for_corporation(
+        &db,
+        CORP_ID,
+        &[corp_asset(100, CORP_ID, None), corp_asset(101, CORP_ID, Some(100))],
+      )
+      .await
+      .unwrap();
+
+      let children = children_for_corporation(&db, CORP_ID, 100).await.unwrap();
+      let roots = roots_for_corporation(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(
+        children.iter().map(CorporationAsset::item_id).collect::<Vec<_>>(),
+        [101]
+      );
+      assert_eq!(roots.iter().map(CorporationAsset::item_id).collect::<Vec<_>>(), [100]);
+      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_reclaims_an_item_id_held_by_another_corporation() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let other_corp = 98_000_002;
+      let mut corp = Corporation::new(other_corp, "Other Corp", "OTC");
+      corp.set_ceo_id(42);
+      corp.set_creator_id(42);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(&db, &corp).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+        .await
+        .unwrap();
+
+      replace_for_corporation(&db, other_corp, &[corp_asset(100, other_corp, None)])
+        .await
+        .unwrap();
+
+      let owner = sqlx::query_scalar::<_, i64>("SELECT corporation_id FROM corporation_assets WHERE item_id = ?")
+        .bind(100_i64)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      let total = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_assets WHERE item_id = ?")
+        .bind(100_i64)
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(owner, other_corp);
+      assert_eq!(total, 1);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_replaced_batch_with_hierarchy_columns() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let mut root = corp_asset(100, CORP_ID, None);
+      root.is_container = true;
+      let child = corp_asset(101, CORP_ID, Some(100));
+
+      replace_for_corporation(&db, CORP_ID, &[root, child]).await.unwrap();
+
+      let rows = for_corporation(&db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].container_id(), None);
+      assert!(rows[0].is_container());
+      assert_eq!(rows[1].container_id(), Some(100));
+      assert_eq!(rows[1].depth(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_upserts_a_single_row_in_place() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      upsert_corporation_asset(&db, &corp_asset(100, CORP_ID, None))
+        .await
+        .unwrap();
+      let mut updated = corp_asset(100, CORP_ID, Some(99));
+      updated.quantity = 7;
+
+      upsert_corporation_asset(&db, &updated).await.unwrap();
+
+      let rows = for_corporation(&db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].quantity(), 7);
+      assert_eq!(rows[0].container_id(), Some(99));
+    }
+
+    #[tokio::test]
+    async fn it_upserts_and_prunes_across_write_batch_boundaries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      let initial: Vec<_> = (100..105).map(|id| corp_asset(id, CORP_ID, None)).collect();
+
+      replace_for_corporation_batched(&db, CORP_ID, &initial, 2)
+        .await
+        .unwrap();
+      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
+        .await
+        .unwrap()
+        .iter()
+        .map(CorporationAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101, 102, 103, 104],
+        "every row survives multiple upsert batches"
+      );
+
+      let next: Vec<_> = (100..102).map(|id| corp_asset(id, CORP_ID, None)).collect();
+      replace_for_corporation_batched(&db, CORP_ID, &next, 2).await.unwrap();
+      let mut ids: Vec<_> = for_corporation(&db, CORP_ID)
+        .await
+        .unwrap()
+        .iter()
+        .map(CorporationAsset::item_id)
+        .collect();
+      ids.sort_unstable();
+      assert_eq!(
+        ids,
+        [100, 101],
+        "stale rows are pruned across delete batches, final state matches the new set"
+      );
+    }
+  }
+
+  mod cross_character_all_scope {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 200,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    async fn ingest_two_characters(db: &Database) {
+      seed_character(db, 42).await;
+      seed_character(db, 43).await;
+      seed_character(db, 44).await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(db, 587, 1_000.0).await;
+
+      let mut a_root = char_asset(100, 42, None);
+      a_root.is_container = true;
+      a_root.type_id = 587;
+      let mut a_child = char_asset(101, 42, Some(100));
+      a_child.type_id = 587;
+      replace_for_character(db, 42, &[a_root, a_child]).await.unwrap();
+
+      let mut b_ship = char_asset(200, 43, None);
+      b_ship.type_id = 587;
+      replace_for_character(db, 43, &[b_ship]).await.unwrap();
+
+      let mut c_ship = char_asset(300, 44, None);
+      c_ship.type_id = 587;
+      replace_for_character(db, 44, &[c_ship]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_aggregates_page_and_totals_across_the_owned_set() {
+      let db = store::open_test().await.unwrap();
+      ingest_two_characters(&db).await;
+
+      let page = inventory_page_for_characters(&db, &[42, 43], &query(SortColumn::Name))
+        .await
+        .unwrap();
+      let totals = inventory_totals_for_characters(&db, &[42, 43], "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 200],
+        "only top-level rows paginate across the owned set; item 101 is nested and lazy-loads"
+      );
+      assert_eq!(totals.items, 3);
+      assert_eq!(totals.value, 3_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_finds_a_buried_match_ancestor_across_the_owned_set() {
+      let db = store::open_test().await.unwrap();
+      ingest_two_characters(&db).await;
+
+      let ancestors = ancestors_of_match_for_characters(&db, &[42, 43], "category:ship", None)
+        .await
+        .unwrap();
+
+      assert_eq!(ancestors, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_merges_roots_across_the_owned_set_and_excludes_a_non_listed_character() {
+      let db = store::open_test().await.unwrap();
+      ingest_two_characters(&db).await;
+
+      let roots = roots_for_characters(&db, &[42, 43]).await.unwrap();
+
+      assert_eq!(
+        roots.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(),
+        [100, 200]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_children_count_and_rollup_for_a_container_under_one_of_the_owners() {
+      let db = store::open_test().await.unwrap();
+      ingest_two_characters(&db).await;
+
+      let children = children_render_for_characters(&db, &[42, 43], 100).await.unwrap();
+      let count = child_count_for_characters(&db, &[42, 43], 100).await.unwrap();
+      let rollup = node_rollup_for_characters(&db, &[42, 43], 100).await.unwrap();
+
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
+      assert_eq!(count, 1);
+      assert_eq!(rollup.items, 1);
+      assert_eq!(rollup.value, 1_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_nothing_for_an_empty_owned_set() {
+      let db = store::open_test().await.unwrap();
+      ingest_two_characters(&db).await;
+
+      assert!(roots_for_characters(&db, &[]).await.unwrap().is_empty());
       assert!(
-        inventory_page_for_combined(&db, &[], &[], &query(SortColumn::Name))
+        inventory_page_for_characters(&db, &[], &query(SortColumn::Name))
           .await
           .unwrap()
           .is_empty()
       );
       assert_eq!(
-        inventory_totals_for_combined(&db, &[], &[], "", &[], None)
+        inventory_totals_for_characters(&db, &[], "", &[], None).await.unwrap(),
+        InventoryTotals::default()
+      );
+    }
+  }
+
+  mod custom_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_finds_a_renamed_character_item_by_either_its_custom_or_type_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut renamed = char_asset(100, 42, None);
+      renamed.name = Some("My Scout".to_owned());
+      replace_for_character(&db, 42, &[renamed]).await.unwrap();
+
+      let by_custom = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Scout",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_type = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Rifter",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_miss = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "Velator",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert!(by_miss.is_empty());
+
+      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(by_custom[0].type_name, "Rifter");
+    }
+
+    #[tokio::test]
+    async fn it_finds_a_renamed_corporation_item_by_either_its_custom_or_type_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut renamed = corp_asset(100, CORP_ID, None);
+      renamed.name = Some("My Scout".to_owned());
+      replace_for_corporation(&db, CORP_ID, &[renamed]).await.unwrap();
+
+      let by_custom = inventory_page_for_corporation(
+        &db,
+        CORP_ID,
+        &InventoryQuery {
+          filter: "Scout",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      let by_type = inventory_page_for_corporation(
+        &db,
+        CORP_ID,
+        &InventoryQuery {
+          filter: "Rifter",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(by_custom.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      assert_eq!(by_type.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+
+      assert_eq!(by_custom[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(by_custom[0].type_name, "Rifter");
+    }
+
+    #[tokio::test]
+    async fn it_sorts_a_renamed_character_item_by_its_coalesced_display_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
+      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
+      let mut renamed = char_asset(100, 42, None);
+      renamed.type_id = 1;
+      renamed.name = Some("Aaa".to_owned());
+      let mut plain = char_asset(101, 42, None);
+      plain.type_id = 2;
+      replace_for_character(&db, 42, &[renamed, plain]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "the item renamed Aaa sorts ahead of the unnamed Mmm even though its type name is Zilch"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_sorts_a_renamed_corporation_item_by_its_coalesced_display_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
+      seed_item_type(&db, 2, "Mmm", 2, "G", "Ship").await;
+      let mut renamed = corp_asset(100, CORP_ID, None);
+      renamed.type_id = 1;
+      renamed.name = Some("Aaa".to_owned());
+      let mut plain = corp_asset(101, CORP_ID, None);
+      plain.type_id = 2;
+      replace_for_corporation(&db, CORP_ID, &[renamed, plain]).await.unwrap();
+
+      let rows = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "the corp item renamed Aaa sorts ahead of the unnamed Mmm despite its Zilch type name"
+      );
+    }
+  }
+
+  mod e2e_integration {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 200,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    async fn ingest_character_portfolio(db: &Database, character_id: i64) {
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(db, 34, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(db, 587, 1_000.0).await;
+      seed_price(db, 34, 5.0).await;
+
+      let mut station_container = char_asset(100, character_id, None);
+      station_container.is_container = true;
+      station_container.type_id = 587;
+      let mut ship = char_asset(101, character_id, Some(100));
+      ship.is_container = true;
+      ship.type_id = 587;
+      let mut trit_a = char_asset(102, character_id, Some(101));
+      trit_a.type_id = 34;
+      trit_a.quantity = 1_000;
+      let mut trit_b = char_asset(103, character_id, Some(101));
+      trit_b.type_id = 34;
+      trit_b.quantity = 500;
+
+      replace_for_character(db, character_id, &[station_container, ship, trit_a, trit_b])
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_filters_page_totals_and_search_auto_expand_consistently_over_one_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      ingest_character_portfolio(&db, 42).await;
+
+      let page = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "category:material",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert!(
+        page.is_empty(),
+        "the material hits are nested, so no top-level page row matches; auto-expand surfaces them"
+      );
+
+      let totals = inventory_totals_for_character(&db, 42, "category:material", &[], None)
+        .await
+        .unwrap();
+      assert_eq!(
+        totals.items, 1_500,
+        "only the trit quantities, matching the filtered page"
+      );
+      assert_eq!(totals.value, 7_500.0);
+
+      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
+        .await
+        .unwrap();
+      assert_eq!(
+        ancestors,
+        [100, 101],
+        "force-expand reaches the collapsed container holding the hit"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_gates_corp_assets_across_every_pane_off_then_on() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 250.0).await;
+      let mut root = corp_asset(100, CORP_ID, None);
+      root.is_container = true;
+      root.type_id = 587;
+      root.quantity = 1;
+      let mut child = corp_asset(101, CORP_ID, Some(100));
+      child.type_id = 587;
+      child.quantity = 3;
+      replace_for_corporation(&db, CORP_ID, &[root, child]).await.unwrap();
+
+      assert!(
+        inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+          .await
+          .unwrap()
+          .is_empty()
+      );
+      assert_eq!(
+        inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
           .await
           .unwrap(),
         InventoryTotals::default()
       );
-      assert!(geo_locations_for_combined(&db, &[], &[]).await.unwrap().is_empty());
+      assert!(roots_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+      assert!(render_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+      assert!(
+        children_render_for_corporation(&db, CORP_ID, 100)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+      assert!(
+        ancestors_of_match_for_corporation(&db, CORP_ID, "name:rifter", None)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+
+      authorize_corp(&db).await;
+
+      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      assert_eq!(
+        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "only the top-level container paginates once gated in; the child lazy-loads"
+      );
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+      assert_eq!(totals.items, 4, "1 + 3 quantities now visible");
+      assert_eq!(totals.value, 1_000.0);
+      assert_eq!(roots_for_corporation(&db, CORP_ID).await.unwrap().len(), 1);
+      assert_eq!(render_for_corporation(&db, CORP_ID).await.unwrap().len(), 2);
+      assert_eq!(
+        children_render_for_corporation(&db, CORP_ID, 100)
+          .await
+          .unwrap()
+          .iter()
+          .map(|r| r.item_id)
+          .collect::<Vec<_>>(),
+        [101]
+      );
+      assert_eq!(
+        ancestors_of_match_for_corporation(&db, CORP_ID, "name:rifter", None)
+          .await
+          .unwrap(),
+        [100],
+        "the search auto-expand also unlocks once gated in"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_pages_a_bounded_window_while_totals_aggregate_the_full_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let assets: Vec<_> = (100..112)
+        .map(|item_id| {
+          let mut a = char_asset(item_id, 42, None);
+          a.type_id = 587;
+          a
+        })
+        .collect();
+      replace_for_character(&db, 42, &assets).await.unwrap();
+
+      let first = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          limit: 5,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(first.len(), 5, "the window is bounded to the limit, not the full set");
+
+      let cursor = first.last().unwrap().cursor(SortColumn::Name);
+      let second = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          cursor: Some(cursor),
+          limit: 5,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(second.len(), 5);
+      let first_ids: std::collections::HashSet<i64> = first.iter().map(|r| r.item_id).collect();
+      assert!(
+        second.iter().all(|r| !first_ids.contains(&r.item_id)),
+        "the second window does not re-yield any first-window row"
+      );
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      assert_eq!(totals.items, 12);
+    }
+
+    #[tokio::test]
+    async fn it_runs_the_full_character_pipeline_from_sync_output_to_every_query_seam() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      ingest_character_portfolio(&db, 42).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      assert_eq!(totals.items, 1_502);
+      assert_eq!(totals.locations, 1);
+      assert_eq!(totals.value, 9_500.0);
+
+      let page = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      assert_eq!(
+        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "only the top-level container paginates; its nested contents lazy-load on expand"
+      );
+      assert!(
+        page.iter().all(|row| !row.type_name.is_empty()),
+        "no blank metadata (post-mortem #5)"
+      );
+
+      let root_children = children_render_for_character(&db, 42, 100).await.unwrap();
+      assert_eq!(root_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
+      let ship_children = children_render_for_character(&db, 42, 101).await.unwrap();
+      assert_eq!(ship_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
+      assert_eq!(child_count_for_character(&db, 42, 100).await.unwrap(), 1);
+
+      let rollup = node_rollup_for_character(&db, 42, 100).await.unwrap();
+      assert_eq!(rollup.items, 1_501);
+      assert_eq!(rollup.value, 8_500.0);
+    }
+
+    #[tokio::test]
+    async fn it_switches_scope_character_to_corporation_across_every_pane() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 1_000.0).await;
+
+      let mut char_ship = char_asset(100, 42, None);
+      char_ship.type_id = 587;
+      replace_for_character(&db, 42, &[char_ship]).await.unwrap();
+
+      let mut corp_root = corp_asset(200, CORP_ID, None);
+      corp_root.is_container = true;
+      corp_root.type_id = 587;
+      let mut corp_child_a = corp_asset(201, CORP_ID, Some(200));
+      corp_child_a.type_id = 587;
+      let mut corp_child_b = corp_asset(202, CORP_ID, Some(200));
+      corp_child_b.type_id = 587;
+      replace_for_corporation(&db, CORP_ID, &[corp_root, corp_child_a, corp_child_b])
+        .await
+        .unwrap();
+
+      let char_page = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      assert_eq!(char_page.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+      let char_totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      assert_eq!(char_totals.items, 1);
+      assert_eq!(char_totals.value, 1_000.0);
+      assert_eq!(roots_for_character(&db, 42).await.unwrap().len(), 1);
+
+      let corp_page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      assert_eq!(
+        corp_page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [200],
+        "only the top-level corp container paginates; its children lazy-load"
+      );
+      let corp_totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+      assert_eq!(corp_totals.items, 3);
+      assert_eq!(corp_totals.value, 3_000.0);
+      let corp_children = children_render_for_corporation(&db, CORP_ID, 200).await.unwrap();
+      assert_eq!(corp_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [201, 202]);
+      assert_eq!(node_rollup_for_corporation(&db, CORP_ID, 200).await.unwrap().items, 2);
     }
   }
 
@@ -5513,7 +5291,9 @@ mod asset_tests {
     use super::*;
 
     const DODIXIE_STATION: i64 = 60_011_866;
+
     const DODIXIE_SYSTEM: i64 = 30_002_659;
+
     const JITA_STATION: i64 = 60_003_760;
 
     async fn seed_dodixie(db: &Database) {
@@ -5623,76 +5403,6 @@ mod asset_tests {
       .collect()
     }
 
-    #[tokio::test]
-    async fn it_filters_by_system_facet() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "system:Jita").await, [100]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_region_facet() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "region:\"The Forge\"").await, [100]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_constellation_facet() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "constellation:Kimotoro").await, [100]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_location_facet_and_its_loc_alias() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "location:Dodixie").await, [101]);
-      assert_eq!(page_items(&db, "loc:Dodixie").await, [101]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_a_location_name_via_free_text() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "Dodixie").await, [101]);
-    }
-
-    #[tokio::test]
-    async fn it_negates_a_geo_facet() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "-system:Jita").await, [101]);
-    }
-
-    #[tokio::test]
-    async fn it_ors_comma_separated_geo_values() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      assert_eq!(page_items(&db, "system:Jita,Dodixie").await, [100, 101]);
-    }
-
-    #[tokio::test]
-    async fn the_totals_reflect_a_geo_facet() {
-      let db = store::open_test().await.unwrap();
-      seed_single_scope(&db).await;
-
-      let totals = inventory_totals_for_character(&db, 42, "region:\"The Forge\"", &[], None)
-        .await
-        .unwrap();
-
-      assert_eq!(totals.items, 1, "only the Jita holding survives the region filter");
-      assert_eq!(totals.locations, 1);
-    }
-
     // Character 42 holds item 100 in Jita; the corp holds item 200 in Dodixie.
     async fn seed_combined_scope(db: &Database) {
       seed_character(db, 42).await;
@@ -5730,6 +5440,47 @@ mod asset_tests {
     }
 
     #[tokio::test]
+    async fn it_filters_by_constellation_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "constellation:Kimotoro").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_location_facet_and_its_loc_alias() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "location:Dodixie").await, [101]);
+      assert_eq!(page_items(&db, "loc:Dodixie").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_region_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "region:\"The Forge\"").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_system_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "system:Jita").await, [100]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_the_combined_union_by_a_location_free_text() {
+      let db = store::open_test().await.unwrap();
+      seed_combined_scope(&db).await;
+
+      assert_eq!(combined_items(&db, "Dodixie").await, [200]);
+    }
+
+    #[tokio::test]
     async fn it_filters_the_combined_union_by_region() {
       let db = store::open_test().await.unwrap();
       seed_combined_scope(&db).await;
@@ -5746,11 +5497,27 @@ mod asset_tests {
     }
 
     #[tokio::test]
-    async fn it_filters_the_combined_union_by_a_location_free_text() {
+    async fn it_matches_a_location_name_via_free_text() {
       let db = store::open_test().await.unwrap();
-      seed_combined_scope(&db).await;
+      seed_single_scope(&db).await;
 
-      assert_eq!(combined_items(&db, "Dodixie").await, [200]);
+      assert_eq!(page_items(&db, "Dodixie").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_negates_a_geo_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "-system:Jita").await, [101]);
+    }
+
+    #[tokio::test]
+    async fn it_ors_comma_separated_geo_values() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      assert_eq!(page_items(&db, "system:Jita,Dodixie").await, [100, 101]);
     }
 
     #[tokio::test]
@@ -5768,38 +5535,553 @@ mod asset_tests {
       );
       assert_eq!(totals.locations, 1);
     }
+
+    #[tokio::test]
+    async fn the_totals_reflect_a_geo_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_single_scope(&db).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "region:\"The Forge\"", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(totals.items, 1, "only the Jita holding survives the region filter");
+      assert_eq!(totals.locations, 1);
+    }
   }
 
-  mod lazy_children {
+  mod geo_locations {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
+    const STRUCTURE_ID: i64 = 1_021_000_000_000;
+
     #[tokio::test]
-    async fn it_fetches_render_ready_direct_children_one_level_by_container_id() {
+    async fn it_aggregates_geo_locations_across_an_owned_character_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      let mut b = char_asset(200, 43, None);
+      b.type_id = 587;
+      replace_for_character(&db, 42, &[a]).await.unwrap();
+      replace_for_character(&db, 43, &[b]).await.unwrap();
+
+      let rows = geo_locations_for_characters(&db, &[42, 43]).await.unwrap();
+
+      assert_eq!(rows.len(), 1, "the shared station folds across both owners");
+      assert_eq!(rows[0].item_count, 2);
+      assert!(geo_locations_for_characters(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_excludes_container_nested_rows_from_the_location_aggregate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut child = char_asset(101, 42, Some(100));
+      child.type_id = 587;
+      child.location_id = 100;
+      child.location_type = "item".to_owned();
+      replace_for_character(&db, 42, &[root, child]).await.unwrap();
+
+      let rows = geo_locations_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(
+        rows[0].item_count, 1,
+        "only the top-level container counts; the item-nested child is excluded"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_gates_corporation_geo_locations_on_authorization() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 250.0).await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4").await;
+      let mut a = corp_asset(100, CORP_ID, None);
+      a.type_id = 587;
+      a.quantity = 4;
+      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
+
+      assert!(
+        geo_locations_for_corporation(&db, CORP_ID).await.unwrap().is_empty(),
+        "no rows before the corp is authorized"
+      );
+
+      authorize_corp(&db).await;
+
+      let rows = geo_locations_for_corporation(&db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_count, 4);
+      assert_eq!(rows[0].value, 1_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_labels_in_space_holdings_by_their_system_name() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_geography(&db).await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.location_id = GEO_SYSTEM;
+      a.location_type = "solar_system".to_owned();
+      replace_for_character(&db, 42, &[a]).await.unwrap();
+
+      let rows = geo_locations_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].location_type, "solar_system");
+      assert_eq!(rows[0].location_label.as_deref(), Some("Jita"));
+      assert_eq!(rows[0].system_id, Some(GEO_SYSTEM));
+    }
+
+    #[tokio::test]
+    async fn it_marks_an_inaccessible_structure_and_leaves_its_geo_chain_unresolved() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.location_id = STRUCTURE_ID;
+      a.location_type = "structure".to_owned();
+      replace_for_character(&db, 42, &[a]).await.unwrap();
+      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      let rows = geo_locations_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].location_label.as_deref(), Some("Inaccessible Structure"));
+      assert_eq!(rows[0].system_id, None, "an unresolved structure has no geo chain");
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_location_through_its_solar_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_named_structure(&db, STRUCTURE_ID, "Jita Citadel").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.location_id = STRUCTURE_ID;
+      a.location_type = "structure".to_owned();
+      replace_for_character(&db, 42, &[a]).await.unwrap();
+
+      let rows = geo_locations_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].location_label.as_deref(), Some("Jita Citadel"));
+      assert_eq!(rows[0].system_name.as_deref(), Some("Jita"));
+      assert_eq!(rows[0].region_name.as_deref(), Some("The Forge"));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_full_geo_chain_and_aggregates_value_and_count_for_a_station() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.quantity = 2;
+      let mut b = char_asset(101, 42, None);
+      b.type_id = 587;
+      b.quantity = 3;
+      replace_for_character(&db, 42, &[a, b]).await.unwrap();
+
+      let rows = geo_locations_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1, "both assets fold into one location row");
+      let row = &rows[0];
+      assert_eq!(row.location_id, 60_003_760);
+      assert_eq!(row.location_type, "station");
+      assert_eq!(
+        row.location_label.as_deref(),
+        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
+      );
+      assert_eq!(row.system_id, Some(GEO_SYSTEM));
+      assert_eq!(row.system_name.as_deref(), Some("Jita"));
+      assert_eq!(row.constellation_id, Some(20_000_020));
+      assert_eq!(row.constellation_name.as_deref(), Some("Kimotoro"));
+      assert_eq!(row.region_id, Some(10_000_002));
+      assert_eq!(row.region_name.as_deref(), Some("The Forge"));
+      assert_eq!(row.item_count, 5);
+      assert_eq!(row.value, 500.0);
+    }
+  }
+
+  mod inventory_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_applies_the_structured_filter_to_the_window() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut ship = char_asset(100, 42, None);
+      ship.type_id = 587;
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "category:ship",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_materialize_excluded_pages_and_orders_by_a_join_derived_column() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 1, "Zilch", 1, "G", "Ship").await;
+      seed_item_type(&db, 2, "Alpha", 2, "G", "Ship").await;
+      let mut z = char_asset(100, 42, None);
+      z.type_id = 1;
+      let mut a = char_asset(101, 42, None);
+      a.type_id = 2;
+      replace_for_character(&db, 42, &[z, a]).await.unwrap();
+
+      let names: Vec<_> = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.type_name)
+        .collect();
+
+      assert_eq!(names, ["Alpha", "Zilch"]);
+    }
+
+    #[tokio::test]
+    async fn it_paginates_only_top_level_rows_excluding_container_children() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
       let mut root = char_asset(100, 42, None);
       root.is_container = true;
       root.type_id = 587;
-      let mut child_a = char_asset(101, 42, Some(100));
-      child_a.is_container = true;
-      child_a.type_id = 587;
-      let mut child_b = char_asset(102, 42, Some(100));
-      child_b.type_id = 587;
-      let mut grandchild = char_asset(103, 42, Some(101));
-      grandchild.type_id = 587;
-      replace_for_character(&db, 42, &[root, child_a, child_b, grandchild])
+      let mut child = char_asset(101, 42, Some(100));
+      child.type_id = 587;
+      let mut sibling = char_asset(102, 42, None);
+      sibling.type_id = 587;
+      replace_for_character(&db, 42, &[root, child, sibling]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
         .await
         .unwrap();
 
-      let children = children_render_for_character(&db, 42, 100).await.unwrap();
-
-      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 102]);
-      assert_eq!(children[0].type_name, "Rifter");
-      assert_eq!(children[0].container_id, Some(100));
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 102],
+        "the nested child (101) never appears as a page row"
+      );
     }
+
+    #[tokio::test]
+    async fn it_prices_value_per_row_and_zeroes_blueprint_copies() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 700, "Blueprint", 70, "Blueprints", "Blueprint").await;
+      seed_price(&db, 587, 1_000.0).await;
+      seed_price(&db, 700, 9_999.0).await;
+      let mut priced = char_asset(100, 42, None);
+      priced.type_id = 587;
+      priced.quantity = 3;
+      let mut bpc = char_asset(101, 42, None);
+      bpc.type_id = 700;
+      bpc.is_blueprint_copy = Some(true);
+      replace_for_character(&db, 42, &[priced, bpc]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      let by_item: std::collections::HashMap<_, _> = rows.into_iter().map(|r| (r.item_id, r)).collect();
+
+      assert_eq!(by_item[&100].unit_price, 1_000.0);
+      assert_eq!(by_item[&100].value, 3_000.0);
+      assert_eq!(by_item[&101].unit_price, 0.0);
+      assert_eq!(by_item[&101].value, 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_restricts_the_page_to_the_supplied_location_ids_and_treats_empty_as_all() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut here = char_asset(100, 42, None);
+      here.type_id = 587;
+      here.location_id = 60_000_001;
+      let mut there = char_asset(101, 42, None);
+      there.type_id = 587;
+      there.location_id = 60_000_002;
+      replace_for_character(&db, 42, &[here, there]).await.unwrap();
+
+      let filtered = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          location_ids: &[60_000_001],
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(
+        filtered.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "only rows at the selected location remain"
+      );
+
+      let unfiltered = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
+        .await
+        .unwrap();
+      assert_eq!(
+        unfiltered.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "an empty location_ids predicate yields every location"
+      );
+
+      let multi = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          location_ids: &[60_000_001, 60_000_002],
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(multi.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100, 101]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_a_keyset_window_and_seeks_the_next_page_by_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let assets: Vec<_> = (100..105)
+        .map(|item_id| {
+          let mut a = char_asset(item_id, 42, None);
+          a.type_id = 587;
+          a
+        })
+        .collect();
+      replace_for_character(&db, 42, &assets).await.unwrap();
+
+      let first = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          limit: 2,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(first.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100, 101]);
+
+      let cursor = first.last().unwrap().cursor(SortColumn::Name);
+      let second = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          cursor: Some(cursor),
+          limit: 2,
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+      assert_eq!(second.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_sorts_descending_and_seeks_in_the_same_direction() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      for (item_id, qty) in [(100, 5), (101, 30), (102, 10)] {
+        let mut a = char_asset(item_id, 42, None);
+        a.type_id = 587;
+        a.quantity = qty;
+        upsert_character_asset(&db, &a).await.unwrap();
+      }
+
+      let page = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          direction: SortDirection::Descending,
+          limit: 2,
+          ..query(SortColumn::Quantity)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(page.iter().map(|r| r.quantity).collect::<Vec<_>>(), [30, 10]);
+    }
+  }
+
+  mod inventory_totals {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_aggregates_corporation_totals() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 250.0).await;
+      let mut a = corp_asset(100, CORP_ID, None);
+      a.type_id = 587;
+      a.quantity = 4;
+      replace_for_corporation(&db, CORP_ID, &[a]).await.unwrap();
+
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(totals.items, 4);
+      assert_eq!(totals.value, 1_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_aggregates_the_four_header_totals_in_sql_over_a_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let mut a = char_asset(100, 42, None);
+      a.type_id = 587;
+      a.quantity = 2;
+      a.location_id = 60_000_001;
+      let mut b = char_asset(101, 42, None);
+      b.type_id = 587;
+      b.quantity = 3;
+      b.location_id = 60_000_002;
+      replace_for_character(&db, 42, &[a, b]).await.unwrap();
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+
+      assert_eq!(totals.items, 5);
+      assert_eq!(totals.locations, 2);
+      assert_eq!(totals.value, 500.0);
+      assert_eq!(totals.volume, 12.5);
+    }
+
+    #[tokio::test]
+    async fn it_restricts_the_totals_to_the_filtered_set() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let mut ship = char_asset(100, 42, None);
+      ship.type_id = 587;
+      ship.quantity = 1;
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      mineral.quantity = 1_000;
+      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
+
+      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let ships_only = inventory_totals_for_character(&db, 42, "category:ship", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(all.items, 1_001);
+      assert_eq!(all.value, 5_100.0);
+      assert_eq!(ships_only.items, 1);
+      assert_eq!(ships_only.value, 100.0);
+      assert_eq!(ships_only.locations, 1);
+    }
+
+    #[tokio::test]
+    async fn it_restricts_the_totals_to_the_selected_locations() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut here = char_asset(100, 42, None);
+      here.type_id = 587;
+      here.quantity = 2;
+      here.location_id = 60_000_001;
+      let mut there = char_asset(101, 42, None);
+      there.type_id = 587;
+      there.quantity = 3;
+      there.location_id = 60_000_002;
+      replace_for_character(&db, 42, &[here, there]).await.unwrap();
+
+      let all = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let one = inventory_totals_for_character(&db, 42, "", &[60_000_001], None)
+        .await
+        .unwrap();
+
+      assert_eq!(all.items, 5, "an empty location predicate counts every location");
+      assert_eq!(
+        one.items, 2,
+        "the badge total honors the same location filter as the page"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_yields_zeroed_totals_for_an_empty_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+
+      assert_eq!(totals, InventoryTotals::default());
+    }
+  }
+
+  mod lazy_children {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
     async fn it_counts_direct_children_without_loading_them() {
@@ -5843,12 +6125,164 @@ mod asset_tests {
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
       assert_eq!(child_count_for_corporation(&db, CORP_ID, 100).await.unwrap(), 1);
     }
+
+    #[tokio::test]
+    async fn it_fetches_render_ready_direct_children_one_level_by_container_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut child_a = char_asset(101, 42, Some(100));
+      child_a.is_container = true;
+      child_a.type_id = 587;
+      let mut child_b = char_asset(102, 42, Some(100));
+      child_b.type_id = 587;
+      let mut grandchild = char_asset(103, 42, Some(101));
+      grandchild.type_id = 587;
+      replace_for_character(&db, 42, &[root, child_a, child_b, grandchild])
+        .await
+        .unwrap();
+
+      let children = children_render_for_character(&db, 42, 100).await.unwrap();
+
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 102]);
+      assert_eq!(children[0].type_name, "Rifter");
+      assert_eq!(children[0].container_id, Some(100));
+    }
+  }
+
+  mod location_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const STRUCTURE_ID: i64 = 1_021_000_000_000;
+
+    #[tokio::test]
+    async fn it_carries_the_resolved_label_through_the_inventory_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
+        .await
+        .unwrap();
+
+      let query = InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        sort: SortColumn::Name,
+      };
+      let rows = inventory_page_for_character(&db, 42, &query).await.unwrap();
+
+      assert_eq!(
+        rows[0].location_label.as_deref(),
+        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
+      );
+    }
+
+    #[tokio::test]
+    async fn it_leaves_the_render_label_null_when_unresolved() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
+        .await
+        .unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(
+        rows[0].location_label, None,
+        "an unresolved location never renders a raw id"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_marks_inaccessible_per_owner_not_across_owners() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_named_structure(&db, STRUCTURE_ID, "Some Citadel").await;
+      let mut asset = char_asset(100, 43, None);
+      asset.location_id = STRUCTURE_ID;
+      asset.location_type = "structure".to_owned();
+      replace_for_character(&db, 43, &[asset]).await.unwrap();
+      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      let rows = render_for_character(&db, 43).await.unwrap();
+
+      assert_eq!(
+        rows[0].location_label.as_deref(),
+        Some("Some Citadel"),
+        "43 sees the resolved name; 42's inaccessible mark does not leak across owners"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_renders_inaccessible_structure_for_a_marked_location() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut asset = char_asset(100, 42, None);
+      asset.location_id = STRUCTURE_ID;
+      asset.location_type = "structure".to_owned();
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+      sde::mark_inaccessible_structure(&db, 42, OwnerType::Character, STRUCTURE_ID)
+        .await
+        .unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows[0].location_label.as_deref(), Some("Inaccessible Structure"));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_station_name_into_the_render_label() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_named_station(&db, 60_003_760, "Jita IV - Moon 4 - Caldari Navy Assembly Plant").await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
+        .await
+        .unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(
+        rows[0].location_label.as_deref(),
+        Some("Jita IV - Moon 4 - Caldari Navy Assembly Plant")
+      );
+    }
   }
 
   mod node_rollup {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_rolls_up_an_empty_container_to_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      replace_for_character(&db, 42, &[root]).await.unwrap();
+
+      assert_eq!(
+        node_rollup_for_character(&db, 42, 100).await.unwrap(),
+        NodeRollup::default()
+      );
+    }
 
     #[tokio::test]
     async fn it_rolls_up_value_and_count_over_the_whole_subtree_in_sql() {
@@ -5878,127 +6312,6 @@ mod asset_tests {
       assert_eq!(rollup.items, 8);
       assert_eq!(rollup.value, 800.0);
     }
-
-    #[tokio::test]
-    async fn it_rolls_up_an_empty_container_to_zero() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      replace_for_character(&db, 42, &[root]).await.unwrap();
-
-      assert_eq!(
-        node_rollup_for_character(&db, 42, 100).await.unwrap(),
-        NodeRollup::default()
-      );
-    }
-  }
-
-  mod ancestors_of_match {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_ancestor_chain_for_a_hit_nested_two_levels_deep() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      root.type_id = 587;
-      let mut sub = char_asset(101, 42, Some(100));
-      sub.is_container = true;
-      sub.type_id = 587;
-      let mut hit = char_asset(102, 42, Some(101));
-      hit.type_id = 24;
-      let mut sibling = char_asset(200, 42, None);
-      sibling.type_id = 587;
-      replace_for_character(&db, 42, &[root, sub, hit, sibling])
-        .await
-        .unwrap();
-
-      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
-        .await
-        .unwrap();
-
-      assert_eq!(ancestors, [100, 101]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_an_empty_set_for_an_empty_filter() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      root.type_id = 587;
-      let mut child = char_asset(101, 42, Some(100));
-      child.type_id = 587;
-      replace_for_character(&db, 42, &[root, child]).await.unwrap();
-
-      let ancestors = ancestors_of_match_for_character(&db, 42, "", None).await.unwrap();
-
-      assert!(ancestors.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_excludes_a_top_level_match_with_no_ancestors() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      let mut top = char_asset(100, 42, None);
-      top.type_id = 587;
-      replace_for_character(&db, 42, &[top]).await.unwrap();
-
-      let ancestors = ancestors_of_match_for_character(&db, 42, "category:ship", None)
-        .await
-        .unwrap();
-
-      assert!(ancestors.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_dedups_a_shared_ancestor_across_two_matches() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      let mut root = char_asset(100, 42, None);
-      root.is_container = true;
-      root.type_id = 24;
-      let mut hit_a = char_asset(101, 42, Some(100));
-      hit_a.type_id = 24;
-      let mut hit_b = char_asset(102, 42, Some(100));
-      hit_b.type_id = 24;
-      replace_for_character(&db, 42, &[root, hit_a, hit_b]).await.unwrap();
-
-      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
-        .await
-        .unwrap();
-
-      assert_eq!(ancestors, [100]);
-    }
-
-    #[tokio::test]
-    async fn it_computes_corporation_ancestors() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
-      let mut root = corp_asset(100, CORP_ID, None);
-      root.is_container = true;
-      root.type_id = 24;
-      let mut hit = corp_asset(101, CORP_ID, Some(100));
-      hit.type_id = 24;
-      replace_for_corporation(&db, CORP_ID, &[root, hit]).await.unwrap();
-
-      let ancestors = ancestors_of_match_for_corporation(&db, CORP_ID, "name:trit", None)
-        .await
-        .unwrap();
-
-      assert_eq!(ancestors, [100]);
-    }
   }
 
   mod on_hand_at_build_sites {
@@ -6007,6 +6320,7 @@ mod asset_tests {
     use super::*;
 
     const SITE_A: i64 = 60_003_760;
+
     const SITE_B: i64 = 60_008_494;
 
     #[tokio::test]
@@ -6014,29 +6328,6 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
 
       assert!(on_hand_at_build_sites(&db, &[]).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_sums_only_in_hangar_items_excluding_nested_ones() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let mut hangar = char_asset(100, 42, None);
-      hangar.type_id = 34;
-      hangar.quantity = 30;
-      let mut container = char_asset(200, 42, None);
-      container.is_container = true;
-      container.type_id = 11_488;
-      let mut nested = char_asset(201, 42, Some(200));
-      nested.type_id = 34;
-      nested.quantity = 7;
-
-      replace_for_character(&db, 42, &[hangar, container, nested])
-        .await
-        .unwrap();
-
-      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
-      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(30));
-      assert_eq!(totals.get(&(SITE_A, 11_488)).copied(), Some(1));
     }
 
     #[tokio::test]
@@ -6057,33 +6348,6 @@ mod asset_tests {
       let totals = on_hand_at_build_sites(&db, &[SITE_A, SITE_B]).await.unwrap();
       assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(10));
       assert_eq!(totals.get(&(SITE_B, 34)).copied(), Some(5));
-    }
-
-    #[tokio::test]
-    async fn it_sums_character_and_corporation_stock_together() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      authorize_corp(&db).await;
-      let mut char_stock = char_asset(100, 42, None);
-      char_stock.location_id = SITE_A;
-      char_stock.type_id = 34;
-      char_stock.quantity = 12;
-      let mut corp_stock = corp_asset(300, CORP_ID, None);
-      corp_stock.location_id = SITE_A;
-      corp_stock.type_id = 34;
-      corp_stock.quantity = 8;
-      let mut corp_nested = corp_asset(301, CORP_ID, Some(300));
-      corp_nested.location_id = SITE_A;
-      corp_nested.type_id = 34;
-      corp_nested.quantity = 100;
-
-      replace_for_character(&db, 42, &[char_stock]).await.unwrap();
-      replace_for_corporation(&db, CORP_ID, &[corp_stock, corp_nested])
-        .await
-        .unwrap();
-
-      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
-      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(20));
     }
 
     #[tokio::test]
@@ -6131,536 +6395,277 @@ mod asset_tests {
         "the composite index orders the GROUP BY, so no temporary b-tree is built: {plan:?}"
       );
     }
-  }
-
-  mod corp_scope_gating {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn query(sort: SortColumn) -> InventoryQuery<'static> {
-      InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 100,
-        location_ids: &[],
-        me_id: None,
-        sort,
-      }
-    }
-
-    async fn seed_one_corp_asset(db: &Database) {
-      seed_character(db, 42).await;
-      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(db, 587, 250.0).await;
-      let mut asset = corp_asset(100, CORP_ID, None);
-      asset.type_id = 587;
-      asset.quantity = 4;
-      replace_for_corporation(db, CORP_ID, &[asset]).await.unwrap();
-    }
 
     #[tokio::test]
-    async fn it_returns_corp_rows_when_owned_and_the_authorizer_holds_the_role() {
+    async fn it_sums_character_and_corporation_stock_together() {
       let db = store::open_test().await.unwrap();
-      seed_one_corp_asset(&db).await;
+      seed_character(&db, 42).await;
       authorize_corp(&db).await;
+      let mut char_stock = char_asset(100, 42, None);
+      char_stock.location_id = SITE_A;
+      char_stock.type_id = 34;
+      char_stock.quantity = 12;
+      let mut corp_stock = corp_asset(300, CORP_ID, None);
+      corp_stock.location_id = SITE_A;
+      corp_stock.type_id = 34;
+      corp_stock.quantity = 8;
+      let mut corp_nested = corp_asset(301, CORP_ID, Some(300));
+      corp_nested.location_id = SITE_A;
+      corp_nested.type_id = 34;
+      corp_nested.quantity = 100;
 
-      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
+      replace_for_character(&db, 42, &[char_stock]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp_stock, corp_nested])
         .await
         .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-        .await
-        .unwrap();
 
-      assert_eq!(page.len(), 1);
-      assert_eq!(totals.items, 4);
-      assert_eq!(totals.value, 1_000.0);
-      assert_eq!(for_corporation(&db, CORP_ID).await.unwrap().len(), 1);
-      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 1);
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(20));
     }
 
     #[tokio::test]
-    async fn it_excludes_corp_rows_when_owned_but_the_authorizer_lacks_the_role() {
+    async fn it_sums_only_in_hangar_items_excluding_nested_ones() {
       let db = store::open_test().await.unwrap();
-      seed_one_corp_asset(&db).await;
-      infra::upsert(
-        &db,
-        CORP_ID,
-        OwnerType::Corporation,
-        "tok",
-        "rt",
-        4_102_444_800,
-        Some(DIRECTOR_ID),
-        None,
-      )
-      .await
-      .unwrap();
-      org::replace_for_corporation(
-        &db,
-        CORP_ID,
-        &[CorporationMemberRole::from((
-          CORP_ID,
-          DIRECTOR_ID,
-          "Accountant".to_string(),
-        ))],
-      )
-      .await
-      .unwrap();
+      seed_character(&db, 42).await;
+      let mut hangar = char_asset(100, 42, None);
+      hangar.type_id = 34;
+      hangar.quantity = 30;
+      let mut container = char_asset(200, 42, None);
+      container.is_container = true;
+      container.type_id = 11_488;
+      let mut nested = char_asset(201, 42, Some(200));
+      nested.type_id = 34;
+      nested.quantity = 7;
 
-      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+      replace_for_character(&db, 42, &[hangar, container, nested])
         .await
         .unwrap();
 
-      assert!(page.is_empty());
-      assert_eq!(totals, InventoryTotals::default());
-      assert!(for_corporation(&db, CORP_ID).await.unwrap().is_empty());
-      assert_eq!(count_for_corporation(&db, CORP_ID).await.unwrap(), 0);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_corp_rows_when_not_owned_even_if_a_director_role_exists() {
-      let db = store::open_test().await.unwrap();
-      seed_one_corp_asset(&db).await;
-      org::replace_for_corporation(
-        &db,
-        CORP_ID,
-        &[CorporationMemberRole::from((
-          CORP_ID,
-          DIRECTOR_ID,
-          "Director".to_string(),
-        ))],
-      )
-      .await
-      .unwrap();
-
-      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-        .await
-        .unwrap();
-
-      assert!(page.is_empty());
-      assert_eq!(totals, InventoryTotals::default());
-      assert!(render_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+      let totals = on_hand_at_build_sites(&db, &[SITE_A]).await.unwrap();
+      assert_eq!(totals.get(&(SITE_A, 34)).copied(), Some(30));
+      assert_eq!(totals.get(&(SITE_A, 11_488)).copied(), Some(1));
     }
   }
 
-  mod cross_character_all_scope {
+  mod referenced_locations {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn query(sort: SortColumn) -> InventoryQuery<'static> {
-      InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 200,
-        location_ids: &[],
-        me_id: None,
-        sort,
-      }
-    }
-
-    async fn ingest_two_characters(db: &Database) {
-      seed_character(db, 42).await;
-      seed_character(db, 43).await;
-      seed_character(db, 44).await;
-      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(db, 587, 1_000.0).await;
-
-      let mut a_root = char_asset(100, 42, None);
-      a_root.is_container = true;
-      a_root.type_id = 587;
-      let mut a_child = char_asset(101, 42, Some(100));
-      a_child.type_id = 587;
-      replace_for_character(db, 42, &[a_root, a_child]).await.unwrap();
-
-      let mut b_ship = char_asset(200, 43, None);
-      b_ship.type_id = 587;
-      replace_for_character(db, 43, &[b_ship]).await.unwrap();
-
-      let mut c_ship = char_asset(300, 44, None);
-      c_ship.type_id = 587;
-      replace_for_character(db, 44, &[c_ship]).await.unwrap();
-    }
-
     #[tokio::test]
-    async fn it_merges_roots_across_the_owned_set_and_excludes_a_non_listed_character() {
+    async fn it_deduplicates_a_place_referenced_by_a_character_and_a_corporation() {
       let db = store::open_test().await.unwrap();
-      ingest_two_characters(&db).await;
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None)])
+        .await
+        .unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(200, CORP_ID, None)])
+        .await
+        .unwrap();
 
-      let roots = roots_for_characters(&db, &[42, 43]).await.unwrap();
+      let locations = referenced_locations(&db).await.unwrap();
 
       assert_eq!(
-        roots.iter().map(CharacterAsset::item_id).collect::<Vec<_>>(),
-        [100, 200]
+        locations,
+        vec![ReferencedLocation {
+          location_id: 60_003_760,
+          location_type: "station".to_owned(),
+        }],
+        "the shared station appears once despite two owners referencing it"
       );
     }
 
     #[tokio::test]
-    async fn it_aggregates_page_and_totals_across_the_owned_set() {
+    async fn it_excludes_item_nested_roots_and_keeps_distinct_places() {
       let db = store::open_test().await.unwrap();
-      ingest_two_characters(&db).await;
+      seed_character(&db, 42).await;
+      let mut in_station = char_asset(100, 42, None);
+      in_station.location_id = 60_003_760;
+      in_station.location_type = "station".to_owned();
+      let mut in_structure = char_asset(101, 42, None);
+      in_structure.location_id = 1_021_000_000_000;
+      in_structure.location_type = "structure".to_owned();
+      let mut nested = char_asset(102, 42, Some(100));
+      nested.location_id = 100;
+      nested.location_type = "item".to_owned();
+      replace_for_character(&db, 42, &[in_station, in_structure, nested])
+        .await
+        .unwrap();
 
-      let page = inventory_page_for_characters(&db, &[42, 43], &query(SortColumn::Name))
-        .await
-        .unwrap();
-      let totals = inventory_totals_for_characters(&db, &[42, 43], "", &[], None)
-        .await
-        .unwrap();
+      let locations = referenced_locations(&db).await.unwrap();
 
       assert_eq!(
-        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100, 200],
-        "only top-level rows paginate across the owned set; item 101 is nested and lazy-loads"
-      );
-      assert_eq!(totals.items, 3);
-      assert_eq!(totals.value, 3_000.0);
-    }
-
-    #[tokio::test]
-    async fn it_resolves_children_count_and_rollup_for_a_container_under_one_of_the_owners() {
-      let db = store::open_test().await.unwrap();
-      ingest_two_characters(&db).await;
-
-      let children = children_render_for_characters(&db, &[42, 43], 100).await.unwrap();
-      let count = child_count_for_characters(&db, &[42, 43], 100).await.unwrap();
-      let rollup = node_rollup_for_characters(&db, &[42, 43], 100).await.unwrap();
-
-      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
-      assert_eq!(count, 1);
-      assert_eq!(rollup.items, 1);
-      assert_eq!(rollup.value, 1_000.0);
-    }
-
-    #[tokio::test]
-    async fn it_finds_a_buried_match_ancestor_across_the_owned_set() {
-      let db = store::open_test().await.unwrap();
-      ingest_two_characters(&db).await;
-
-      let ancestors = ancestors_of_match_for_characters(&db, &[42, 43], "category:ship", None)
-        .await
-        .unwrap();
-
-      assert_eq!(ancestors, [100]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_nothing_for_an_empty_owned_set() {
-      let db = store::open_test().await.unwrap();
-      ingest_two_characters(&db).await;
-
-      assert!(roots_for_characters(&db, &[]).await.unwrap().is_empty());
-      assert!(
-        inventory_page_for_characters(&db, &[], &query(SortColumn::Name))
-          .await
-          .unwrap()
-          .is_empty()
-      );
-      assert_eq!(
-        inventory_totals_for_characters(&db, &[], "", &[], None).await.unwrap(),
-        InventoryTotals::default()
+        locations,
+        vec![
+          ReferencedLocation {
+            location_id: 60_003_760,
+            location_type: "station".to_owned(),
+          },
+          ReferencedLocation {
+            location_id: 1_021_000_000_000,
+            location_type: "structure".to_owned(),
+          },
+        ],
+        "distinct places are kept (ordered by id) and the `item`-nested row is excluded"
       );
     }
   }
 
-  mod e2e_integration {
+  mod render_join {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn query(sort: SortColumn) -> InventoryQuery<'static> {
-      InventoryQuery {
-        cursor: None,
-        direction: SortDirection::Ascending,
-        filter: "",
-        limit: 200,
-        location_ids: &[],
-        me_id: None,
-        sort,
-      }
-    }
-
-    async fn ingest_character_portfolio(db: &Database, character_id: i64) {
-      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_item_type(db, 34, "Tritanium", 18, "Mineral", "Mineral").await;
-      seed_price(db, 587, 1_000.0).await;
-      seed_price(db, 34, 5.0).await;
-
-      let mut station_container = char_asset(100, character_id, None);
-      station_container.is_container = true;
-      station_container.type_id = 587;
-      let mut ship = char_asset(101, character_id, Some(100));
-      ship.is_container = true;
-      ship.type_id = 587;
-      let mut trit_a = char_asset(102, character_id, Some(101));
-      trit_a.type_id = 34;
-      trit_a.quantity = 1_000;
-      let mut trit_b = char_asset(103, character_id, Some(101));
-      trit_b.type_id = 34;
-      trit_b.quantity = 500;
-
-      replace_for_character(db, character_id, &[station_container, ship, trit_a, trit_b])
-        .await
-        .unwrap();
-    }
-
     #[tokio::test]
-    async fn it_runs_the_full_character_pipeline_from_sync_output_to_every_query_seam() {
+    async fn it_carries_the_custom_name_alongside_the_type_name_on_render_rows() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      ingest_character_portfolio(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut named = char_asset(100, 42, None);
+      named.name = Some("My Scout".to_owned());
+      let plain = char_asset(101, 42, None);
+      replace_for_character(&db, 42, &[named, plain]).await.unwrap();
+      let mut corp_named = corp_asset(200, CORP_ID, None);
+      corp_named.name = Some("Corp Stash".to_owned());
+      replace_for_corporation(&db, CORP_ID, &[corp_named]).await.unwrap();
 
-      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-      assert_eq!(totals.items, 1_502);
-      assert_eq!(totals.locations, 1);
-      assert_eq!(totals.value, 9_500.0);
+      let char_rows = render_for_character(&db, 42).await.unwrap();
+      let corp_rows = render_for_corporation(&db, CORP_ID).await.unwrap();
 
-      let page = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      assert_eq!(
-        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100],
-        "only the top-level container paginates; its nested contents lazy-load on expand"
-      );
-      assert!(
-        page.iter().all(|row| !row.type_name.is_empty()),
-        "no blank metadata (post-mortem #5)"
-      );
+      assert_eq!(char_rows[0].name.as_deref(), Some("My Scout"));
+      assert_eq!(char_rows[0].type_name, "Rifter");
+      assert_eq!(char_rows[1].name, None, "an unnamed item keeps a null custom name");
 
-      let root_children = children_render_for_character(&db, 42, 100).await.unwrap();
-      assert_eq!(root_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
-      let ship_children = children_render_for_character(&db, 42, 101).await.unwrap();
-      assert_eq!(ship_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
-      assert_eq!(child_count_for_character(&db, 42, 100).await.unwrap(), 1);
-
-      let rollup = node_rollup_for_character(&db, 42, 100).await.unwrap();
-      assert_eq!(rollup.items, 1_501);
-      assert_eq!(rollup.value, 8_500.0);
+      assert_eq!(corp_rows[0].name.as_deref(), Some("Corp Stash"));
+      assert_eq!(corp_rows[0].type_name, "Rifter");
     }
 
     #[tokio::test]
-    async fn it_filters_page_totals_and_search_auto_expand_consistently_over_one_scope() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      ingest_character_portfolio(&db, 42).await;
-
-      let page = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          filter: "category:material",
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert!(
-        page.is_empty(),
-        "the material hits are nested, so no top-level page row matches; auto-expand surfaces them"
-      );
-
-      let totals = inventory_totals_for_character(&db, 42, "category:material", &[], None)
-        .await
-        .unwrap();
-      assert_eq!(
-        totals.items, 1_500,
-        "only the trit quantities, matching the filtered page"
-      );
-      assert_eq!(totals.value, 7_500.0);
-
-      let ancestors = ancestors_of_match_for_character(&db, 42, "category:material", None)
-        .await
-        .unwrap();
-      assert_eq!(
-        ancestors,
-        [100, 101],
-        "force-expand reaches the collapsed container holding the hit"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_pages_a_bounded_window_while_totals_aggregate_the_full_set() {
+    async fn it_excludes_assets_whose_type_is_unseeded_rather_than_yielding_a_blank_row() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 100.0).await;
-      let assets: Vec<_> = (100..112)
-        .map(|item_id| {
-          let mut a = char_asset(item_id, 42, None);
-          a.type_id = 587;
+      let mut resolved = char_asset(100, 42, None);
+      resolved.type_id = 587;
+      let mut orphan = char_asset(101, 42, None);
+      orphan.type_id = 999_999;
+      replace_for_character(&db, 42, &[resolved, orphan]).await.unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_assembled_volume_when_packaged_is_null() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let category = ItemCategory {
+        id: 60,
+        icon_id: None,
+        name: "Ship".to_owned(),
+        published: true,
+      };
+      let group = ItemGroup {
+        category_id: 60,
+        icon_id: None,
+        id: 25,
+        name: "Frigate".to_owned(),
+        published: true,
+      };
+      let item_type = ItemType {
+        capacity: None,
+        description: Some("Test item".to_owned()),
+        dogma_attributes: "[]".to_owned(),
+        group_id: 25,
+        icon_id: None,
+        id: 587,
+        market_group_id: None,
+        name: "Rifter".to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: Some(27_289.0),
+      };
+      sde::insert_item_type_with_hierarchy(&db, &item_type, &group, &category)
+        .await
+        .unwrap();
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows[0].volume, Some(27_289.0));
+    }
+
+    #[tokio::test]
+    async fn it_maps_category_names_to_render_keys() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 1, "Augmenter", 1, "Cyber", "Augmentation").await;
+      seed_item_type(&db, 2, "Tritanium", 2, "Mineral", "Mineral").await;
+      seed_item_type(&db, 3, "Skillbook", 3, "Skills", "Skill").await;
+      seed_item_type(&db, 4, "Widget", 4, "Misc", "Totally Unknown").await;
+      let assets: Vec<_> = [1, 2, 3, 4]
+        .into_iter()
+        .map(|t| {
+          let mut a = char_asset(100 + t, 42, None);
+          a.type_id = t;
           a
         })
         .collect();
       replace_for_character(&db, 42, &assets).await.unwrap();
 
-      let first = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          limit: 5,
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(first.len(), 5, "the window is bounded to the limit, not the full set");
+      let keys: Vec<_> = render_for_character(&db, 42)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|r| r.category)
+        .collect();
 
-      let cursor = first.last().unwrap().cursor(SortColumn::Name);
-      let second = inventory_page_for_character(
-        &db,
-        42,
-        &InventoryQuery {
-          cursor: Some(cursor),
-          limit: 5,
-          ..query(SortColumn::Name)
-        },
-      )
-      .await
-      .unwrap();
-      assert_eq!(second.len(), 5);
-      let first_ids: std::collections::HashSet<i64> = first.iter().map(|r| r.item_id).collect();
-      assert!(
-        second.iter().all(|r| !first_ids.contains(&r.item_id)),
-        "the second window does not re-yield any first-window row"
-      );
-
-      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-      assert_eq!(totals.items, 12);
+      assert_eq!(keys, ["implant", "material", "book", "commodity"]);
     }
 
     #[tokio::test]
-    async fn it_switches_scope_character_to_corporation_across_every_pane() {
+    async fn it_populates_every_metadata_cell_from_the_sde_for_a_resolved_type() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = render_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(rows.len(), 1);
+      let row = &rows[0];
+      assert_eq!(row.item_id, 100);
+      assert_eq!(row.type_id, 587);
+      assert_eq!(row.type_name, "Rifter");
+      assert_eq!(row.group_name, "Frigate");
+      assert_eq!(row.category, "ship");
+      assert_eq!(row.icon_id, Some(1587));
+      assert_eq!(row.volume, Some(2.5));
+    }
+
+    #[tokio::test]
+    async fn it_renders_corporation_assets_from_the_sde() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       authorize_corp(&db).await;
       seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 1_000.0).await;
+      let mut asset = corp_asset(100, CORP_ID, None);
+      asset.type_id = 587;
+      replace_for_corporation(&db, CORP_ID, &[asset]).await.unwrap();
 
-      let mut char_ship = char_asset(100, 42, None);
-      char_ship.type_id = 587;
-      replace_for_character(&db, 42, &[char_ship]).await.unwrap();
+      let rows = render_for_corporation(&db, CORP_ID).await.unwrap();
 
-      let mut corp_root = corp_asset(200, CORP_ID, None);
-      corp_root.is_container = true;
-      corp_root.type_id = 587;
-      let mut corp_child_a = corp_asset(201, CORP_ID, Some(200));
-      corp_child_a.type_id = 587;
-      let mut corp_child_b = corp_asset(202, CORP_ID, Some(200));
-      corp_child_b.type_id = 587;
-      replace_for_corporation(&db, CORP_ID, &[corp_root, corp_child_a, corp_child_b])
-        .await
-        .unwrap();
-
-      let char_page = inventory_page_for_character(&db, 42, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      assert_eq!(char_page.iter().map(|r| r.item_id).collect::<Vec<_>>(), [100]);
-      let char_totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
-      assert_eq!(char_totals.items, 1);
-      assert_eq!(char_totals.value, 1_000.0);
-      assert_eq!(roots_for_character(&db, 42).await.unwrap().len(), 1);
-
-      let corp_page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      assert_eq!(
-        corp_page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [200],
-        "only the top-level corp container paginates; its children lazy-load"
-      );
-      let corp_totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-        .await
-        .unwrap();
-      assert_eq!(corp_totals.items, 3);
-      assert_eq!(corp_totals.value, 3_000.0);
-      let corp_children = children_render_for_corporation(&db, CORP_ID, 200).await.unwrap();
-      assert_eq!(corp_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [201, 202]);
-      assert_eq!(node_rollup_for_corporation(&db, CORP_ID, 200).await.unwrap().items, 2);
-    }
-
-    #[tokio::test]
-    async fn it_gates_corp_assets_across_every_pane_off_then_on() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
-      seed_price(&db, 587, 250.0).await;
-      let mut root = corp_asset(100, CORP_ID, None);
-      root.is_container = true;
-      root.type_id = 587;
-      root.quantity = 1;
-      let mut child = corp_asset(101, CORP_ID, Some(100));
-      child.type_id = 587;
-      child.quantity = 3;
-      replace_for_corporation(&db, CORP_ID, &[root, child]).await.unwrap();
-
-      assert!(
-        inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-          .await
-          .unwrap()
-          .is_empty()
-      );
-      assert_eq!(
-        inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-          .await
-          .unwrap(),
-        InventoryTotals::default()
-      );
-      assert!(roots_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
-      assert!(render_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
-      assert!(
-        children_render_for_corporation(&db, CORP_ID, 100)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-      assert!(
-        ancestors_of_match_for_corporation(&db, CORP_ID, "name:rifter", None)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-
-      authorize_corp(&db).await;
-
-      let page = inventory_page_for_corporation(&db, CORP_ID, &query(SortColumn::Name))
-        .await
-        .unwrap();
-      assert_eq!(
-        page.iter().map(|r| r.item_id).collect::<Vec<_>>(),
-        [100],
-        "only the top-level container paginates once gated in; the child lazy-loads"
-      );
-      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
-        .await
-        .unwrap();
-      assert_eq!(totals.items, 4, "1 + 3 quantities now visible");
-      assert_eq!(totals.value, 1_000.0);
-      assert_eq!(roots_for_corporation(&db, CORP_ID).await.unwrap().len(), 1);
-      assert_eq!(render_for_corporation(&db, CORP_ID).await.unwrap().len(), 2);
-      assert_eq!(
-        children_render_for_corporation(&db, CORP_ID, 100)
-          .await
-          .unwrap()
-          .iter()
-          .map(|r| r.item_id)
-          .collect::<Vec<_>>(),
-        [101]
-      );
-      assert_eq!(
-        ancestors_of_match_for_corporation(&db, CORP_ID, "name:rifter", None)
-          .await
-          .unwrap(),
-        [100],
-        "the search auto-expand also unlocks once gated in"
-      );
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].type_name, "Rifter");
+      assert_eq!(rows[0].category, "ship");
     }
   }
 }
@@ -6707,6 +6712,22 @@ mod stockpile_tests {
     .unwrap();
   }
 
+  mod cascade {
+    use super::*;
+
+    #[tokio::test]
+    async fn deleting_a_scoped_character_cascades_its_stockpiles() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1)]).await.unwrap();
+
+      character::delete(&db, 1001).await.unwrap();
+
+      assert!(get(&db, created.stockpile.id()).await.unwrap().is_none());
+      assert!(items(&db, created.stockpile.id()).await.unwrap().is_empty());
+    }
+  }
+
   mod create {
     use pretty_assertions::assert_eq;
 
@@ -6743,94 +6764,15 @@ mod stockpile_tests {
     }
   }
 
-  mod with_items {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_a_stockpile_and_its_items() {
-      let db = store::open_test().await.unwrap();
-      let created = create(&db, "Cache", None, None, &[(34, 10)]).await.unwrap();
-
-      let loaded = with_items(&db, created.stockpile.id()).await.unwrap().unwrap();
-
-      assert_eq!(loaded, created);
-    }
-
-    #[tokio::test]
-    async fn it_is_none_for_a_missing_stockpile() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(with_items(&db, 999_999).await.unwrap().is_none());
-    }
-  }
-
-  mod list_with_items {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_every_stockpile_with_its_items() {
-      let db = store::open_test().await.unwrap();
-      let a = create(&db, "First", None, None, &[(34, 1)]).await.unwrap();
-      let b = create(&db, "Second", None, None, &[(35, 2), (36, 3)]).await.unwrap();
-
-      let all = list_with_items(&db).await.unwrap();
-
-      assert_eq!(
-        all.iter().map(|s| s.stockpile.id()).collect::<Vec<_>>(),
-        [a.stockpile.id(), b.stockpile.id()]
-      );
-      assert_eq!(all[0].items.len(), 1);
-      assert_eq!(all[1].items.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_when_there_are_no_stockpiles() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(list_with_items(&db).await.unwrap().is_empty());
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_replaces_fields_and_items() {
-      let db = store::open_test().await.unwrap();
-      let created = create(&db, "Old", None, None, &[(34, 100)]).await.unwrap();
-
-      let updated = update(&db, created.stockpile.id(), "New", None, Some(60_003_760), &[(35, 200)])
-        .await
-        .unwrap();
-
-      assert_eq!(updated.stockpile.name(), "New");
-      assert_eq!(updated.stockpile.location_id(), Some(60_003_760));
-      assert_eq!(updated.items.len(), 1);
-      assert_eq!(updated.items[0].type_id(), 35);
-      assert_eq!(items(&db, created.stockpile.id()).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_clears_items_when_given_none() {
-      let db = store::open_test().await.unwrap();
-      let created = create(&db, "Has Items", None, None, &[(34, 1), (35, 2)]).await.unwrap();
-
-      update(&db, created.stockpile.id(), "Has Items", None, None, &[])
-        .await
-        .unwrap();
-
-      assert!(items(&db, created.stockpile.id()).await.unwrap().is_empty());
-    }
-  }
-
   mod delete {
     use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_a_missing_stockpile() {
+      let db = store::open_test().await.unwrap();
+
+      delete(&db, 999_999).await.unwrap();
+    }
 
     #[tokio::test]
     async fn it_removes_the_stockpile_and_cascades_its_items() {
@@ -6842,29 +6784,6 @@ mod stockpile_tests {
 
       assert!(get(&db, id).await.unwrap().is_none());
       assert!(items(&db, id).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_for_a_missing_stockpile() {
-      let db = store::open_test().await.unwrap();
-
-      delete(&db, 999_999).await.unwrap();
-    }
-  }
-
-  mod cascade {
-    use super::*;
-
-    #[tokio::test]
-    async fn deleting_a_scoped_character_cascades_its_stockpiles() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1)]).await.unwrap();
-
-      character::delete(&db, 1001).await.unwrap();
-
-      assert!(get(&db, created.stockpile.id()).await.unwrap().is_none());
-      assert!(items(&db, created.stockpile.id()).await.unwrap().is_empty());
     }
   }
 
@@ -6878,16 +6797,27 @@ mod stockpile_tests {
     };
 
     const CONSTELLATION_ID: i64 = 20_000_020;
+
     const OTHER_STATION: i64 = 60_003_761;
+
     const OTHER_SYSTEM_ID: i64 = 30_000_142;
+
     const OWNER_CORP: i64 = 90_000_001;
+
     const REGION_ID: i64 = 10_000_002;
+
     const STATION_A: i64 = 60_003_760;
+
     const STATION_B: i64 = 60_008_494;
+
     const STATION_TYPE: i64 = 1529;
+
     const SYSTEM_ID: i64 = 31_000_005;
+
     const SYSTEM_STATION: i64 = 60_015_150;
+
     const SYSTEM_STATION_2: i64 = 60_015_151;
+
     const SYSTEM_STRUCTURE: i64 = 1_021_000_000_001;
 
     async fn seed_contained_asset(
@@ -7084,150 +7014,49 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
-    async fn it_is_none_for_a_missing_stockpile() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(super::super::fill_status(&db, 999_999, None).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_reports_under_met_and_over_target_items() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 500), (36, 200)])
-        .await
-        .unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
-      seed_asset(&db, 2, 1001, 35, STATION_A, 500).await;
-      seed_asset(&db, 3, 1001, 36, STATION_A, 350).await;
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.stockpile_id, created.stockpile.id());
-      assert_eq!(fill.items.len(), 3);
-
-      let under = fill.items[0];
-      assert_eq!(under.type_id, 34);
-      assert_eq!(under.have_quantity, 400);
-      assert_eq!(under.target_quantity, 1000);
-      assert_eq!(under.pct(), 0.4);
-
-      let met = fill.items[1];
-      assert_eq!(met.have_quantity, 500);
-      assert_eq!(met.pct(), 1.0);
-
-      let over = fill.items[2];
-      assert_eq!(over.have_quantity, 350);
-      assert_eq!(over.target_quantity, 200);
-      assert_eq!(over.pct(), 1.0);
-
-      assert!(!fill.is_full());
-    }
-
-    #[tokio::test]
-    async fn it_sums_multiple_asset_rows_of_the_same_type() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000)]).await.unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 300).await;
-      seed_asset(&db, 2, 1001, 34, STATION_B, 250).await;
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.items[0].have_quantity, 550);
-    }
-
-    #[tokio::test]
-    async fn it_reports_zero_on_hand_when_no_assets_match() {
-      let db = store::open_test().await.unwrap();
-      let created = create(&db, "Cache", None, None, &[(34, 100)]).await.unwrap();
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.items[0].have_quantity, 0);
-      assert_eq!(fill.items[0].pct(), 0.0);
-    }
-
-    #[tokio::test]
-    async fn character_scope_narrows_the_on_hand_sum() {
+    async fn a_character_scope_restricts_to_that_character_and_their_corp() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
       seed_character(&db, 1002).await;
-      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1000)])
+      seed_corporation(&db, 90_000_002).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 1000)])
         .await
         .unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
-      seed_asset(&db, 2, 1002, 34, STATION_A, 999).await;
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 100).await;
+      seed_asset(&db, 2, 1002, 34, SYSTEM_STATION, 50).await;
+      seed_corp_asset(&db, 3, OWNER_CORP, 34, SYSTEM_STATION, 30).await;
+      seed_corp_asset(&db, 4, 90_000_002, 34, SYSTEM_STATION, 70).await;
 
-      let fill = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
+      let scoped = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
+        .await
+        .unwrap()
+        .unwrap();
+      let unscoped = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 400);
+      assert_eq!(scoped.items[0].have_quantity, 130);
+      assert_eq!(unscoped.items[0].have_quantity, 250);
     }
 
     #[tokio::test]
-    async fn location_scope_narrows_the_on_hand_sum() {
+    async fn a_constellation_pile_counts_an_asset_at_a_station_in_the_constellation() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      let created = create(&db, "Loc Scoped", None, Some(STATION_A), &[(34, 1000)])
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Const", None, Some(CONSTELLATION_ID), &[(34, 10)])
         .await
         .unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
-      seed_asset(&db, 2, 1001, 34, STATION_B, 999).await;
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 400);
-    }
-
-    #[tokio::test]
-    async fn unscoped_stockpile_sums_across_characters_and_locations() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      seed_character(&db, 1002).await;
-      let created = create(&db, "Unscoped", None, None, &[(34, 1000)]).await.unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
-      seed_asset(&db, 2, 1002, 34, STATION_B, 350).await;
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.items[0].have_quantity, 750);
-    }
-
-    #[tokio::test]
-    async fn overall_pct_caps_each_item_at_its_target() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 1000)])
-        .await
-        .unwrap();
-      seed_asset(&db, 1, 1001, 34, STATION_A, 200).await;
-      seed_asset(&db, 2, 1001, 35, STATION_A, 5000).await;
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.overall_pct(), 0.6);
-      assert!(!fill.is_full());
+      assert_eq!(fill.items[0].have_quantity, 5);
     }
 
     #[tokio::test]
@@ -7250,18 +7079,73 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
-    async fn an_item_less_stockpile_is_fully_met_and_empty() {
+    async fn a_pile_counts_a_corp_asset_at_the_location() {
       let db = store::open_test().await.unwrap();
-      let created = create(&db, "Empty", None, None, &[]).await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
+      seed_corp_asset(&db, 1, OWNER_CORP, 34, SYSTEM_STATION, 9).await;
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert!(fill.items.is_empty());
-      assert_eq!(fill.overall_pct(), 1.0);
-      assert!(fill.is_full());
+      assert_eq!(fill.items[0].have_quantity, 9);
+    }
+
+    #[tokio::test]
+    async fn a_region_pile_counts_an_asset_at_a_station_in_the_region() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 5);
+    }
+
+    #[tokio::test]
+    async fn a_region_pile_excludes_an_asset_in_a_different_region() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      seed_station_in_region(&db, OTHER_STATION, 10_000_003, 20_000_021, OTHER_SYSTEM_ID).await;
+      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+      seed_asset(&db, 2, 1001, 34, OTHER_STATION, 8).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 5);
+    }
+
+    #[tokio::test]
+    async fn a_station_pile_counts_only_that_station_not_the_whole_system() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
+      seed_station_in(&db, SYSTEM_STATION_2, SYSTEM_ID).await;
+      let created = create(&db, "Dock", None, Some(SYSTEM_STATION), &[(34, 10)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 3).await;
+      seed_asset(&db, 2, 1001, 34, SYSTEM_STATION_2, 8).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 3);
     }
 
     #[tokio::test]
@@ -7314,22 +7198,6 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
-    async fn a_pile_counts_a_corp_asset_at_the_location() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 10)]).await.unwrap();
-      seed_corp_asset(&db, 1, OWNER_CORP, 34, SYSTEM_STATION, 9).await;
-
-      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
-        .await
-        .unwrap()
-        .unwrap();
-
-      assert_eq!(fill.items[0].have_quantity, 9);
-    }
-
-    #[tokio::test]
     async fn a_system_pile_excludes_an_asset_in_a_different_system() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
@@ -7347,103 +7215,194 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
-    async fn a_station_pile_counts_only_that_station_not_the_whole_system() {
+    async fn an_item_less_stockpile_is_fully_met_and_empty() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      seed_station_in(&db, SYSTEM_STATION_2, SYSTEM_ID).await;
-      let created = create(&db, "Dock", None, Some(SYSTEM_STATION), &[(34, 10)])
-        .await
-        .unwrap();
-      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 3).await;
-      seed_asset(&db, 2, 1001, 34, SYSTEM_STATION_2, 8).await;
+      let created = create(&db, "Empty", None, None, &[]).await.unwrap();
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 3);
+      assert!(fill.items.is_empty());
+      assert_eq!(fill.overall_pct(), 1.0);
+      assert!(fill.is_full());
     }
 
     #[tokio::test]
-    async fn a_character_scope_restricts_to_that_character_and_their_corp() {
+    async fn character_scope_narrows_the_on_hand_sum() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
       seed_character(&db, 1002).await;
-      seed_corporation(&db, 90_000_002).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      let created = create(&db, "Thera", None, Some(SYSTEM_ID), &[(34, 1000)])
+      let created = create(&db, "Char Scoped", Some(1001), None, &[(34, 1000)])
         .await
         .unwrap();
-      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 100).await;
-      seed_asset(&db, 2, 1002, 34, SYSTEM_STATION, 50).await;
-      seed_corp_asset(&db, 3, OWNER_CORP, 34, SYSTEM_STATION, 30).await;
-      seed_corp_asset(&db, 4, 90_000_002, 34, SYSTEM_STATION, 70).await;
+      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
+      seed_asset(&db, 2, 1002, 34, STATION_A, 999).await;
 
-      let scoped = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
-        .await
-        .unwrap()
-        .unwrap();
-      let unscoped = super::super::fill_status(&db, created.stockpile.id(), None)
+      let fill = super::super::fill_status(&db, created.stockpile.id(), Some(1001))
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(scoped.items[0].have_quantity, 130);
-      assert_eq!(unscoped.items[0].have_quantity, 250);
+      assert_eq!(fill.items[0].have_quantity, 400);
     }
 
     #[tokio::test]
-    async fn a_constellation_pile_counts_an_asset_at_a_station_in_the_constellation() {
+    async fn it_is_none_for_a_missing_stockpile() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(super::super::fill_status(&db, 999_999, None).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_reports_under_met_and_over_target_items() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      let created = create(&db, "Const", None, Some(CONSTELLATION_ID), &[(34, 10)])
+      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 500), (36, 200)])
         .await
         .unwrap();
-      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
+      seed_asset(&db, 2, 1001, 35, STATION_A, 500).await;
+      seed_asset(&db, 3, 1001, 36, STATION_A, 350).await;
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 5);
+      assert_eq!(fill.stockpile_id, created.stockpile.id());
+      assert_eq!(fill.items.len(), 3);
+
+      let under = fill.items[0];
+      assert_eq!(under.type_id, 34);
+      assert_eq!(under.have_quantity, 400);
+      assert_eq!(under.target_quantity, 1000);
+      assert_eq!(under.pct(), 0.4);
+
+      let met = fill.items[1];
+      assert_eq!(met.have_quantity, 500);
+      assert_eq!(met.pct(), 1.0);
+
+      let over = fill.items[2];
+      assert_eq!(over.have_quantity, 350);
+      assert_eq!(over.target_quantity, 200);
+      assert_eq!(over.pct(), 1.0);
+
+      assert!(!fill.is_full());
     }
 
     #[tokio::test]
-    async fn a_region_pile_counts_an_asset_at_a_station_in_the_region() {
+    async fn it_reports_zero_on_hand_when_no_assets_match() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1001).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
-      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
+      let created = create(&db, "Cache", None, None, &[(34, 100)]).await.unwrap();
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 5);
+      assert_eq!(fill.items[0].have_quantity, 0);
+      assert_eq!(fill.items[0].pct(), 0.0);
     }
 
     #[tokio::test]
-    async fn a_region_pile_excludes_an_asset_in_a_different_region() {
+    async fn it_sums_multiple_asset_rows_of_the_same_type() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1001).await;
-      seed_station_in(&db, SYSTEM_STATION, SYSTEM_ID).await;
-      seed_station_in_region(&db, OTHER_STATION, 10_000_003, 20_000_021, OTHER_SYSTEM_ID).await;
-      let created = create(&db, "Region", None, Some(REGION_ID), &[(34, 10)]).await.unwrap();
-      seed_asset(&db, 1, 1001, 34, SYSTEM_STATION, 5).await;
-      seed_asset(&db, 2, 1001, 34, OTHER_STATION, 8).await;
+      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, STATION_A, 300).await;
+      seed_asset(&db, 2, 1001, 34, STATION_B, 250).await;
 
       let fill = super::super::fill_status(&db, created.stockpile.id(), None)
         .await
         .unwrap()
         .unwrap();
 
-      assert_eq!(fill.items[0].have_quantity, 5);
+      assert_eq!(fill.items[0].have_quantity, 550);
+    }
+
+    #[tokio::test]
+    async fn location_scope_narrows_the_on_hand_sum() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      let created = create(&db, "Loc Scoped", None, Some(STATION_A), &[(34, 1000)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
+      seed_asset(&db, 2, 1001, 34, STATION_B, 999).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 400);
+    }
+
+    #[tokio::test]
+    async fn overall_pct_caps_each_item_at_its_target() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      let created = create(&db, "Cache", Some(1001), None, &[(34, 1000), (35, 1000)])
+        .await
+        .unwrap();
+      seed_asset(&db, 1, 1001, 34, STATION_A, 200).await;
+      seed_asset(&db, 2, 1001, 35, STATION_A, 5000).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.overall_pct(), 0.6);
+      assert!(!fill.is_full());
+    }
+
+    #[tokio::test]
+    async fn unscoped_stockpile_sums_across_characters_and_locations() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1001).await;
+      seed_character(&db, 1002).await;
+      let created = create(&db, "Unscoped", None, None, &[(34, 1000)]).await.unwrap();
+      seed_asset(&db, 1, 1001, 34, STATION_A, 400).await;
+      seed_asset(&db, 2, 1002, 34, STATION_B, 350).await;
+
+      let fill = super::super::fill_status(&db, created.stockpile.id(), None)
+        .await
+        .unwrap()
+        .unwrap();
+
+      assert_eq!(fill.items[0].have_quantity, 750);
+    }
+  }
+
+  mod list_with_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_empty_when_there_are_no_stockpiles() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(list_with_items(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_every_stockpile_with_its_items() {
+      let db = store::open_test().await.unwrap();
+      let a = create(&db, "First", None, None, &[(34, 1)]).await.unwrap();
+      let b = create(&db, "Second", None, None, &[(35, 2), (36, 3)]).await.unwrap();
+
+      let all = list_with_items(&db).await.unwrap();
+
+      assert_eq!(
+        all.iter().map(|s| s.stockpile.id()).collect::<Vec<_>>(),
+        [a.stockpile.id(), b.stockpile.id()]
+      );
+      assert_eq!(all[0].items.len(), 1);
+      assert_eq!(all[1].items.len(), 2);
     }
   }
 
@@ -7515,26 +7474,6 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
-    async fn it_resolves_a_structure_name() {
-      let db = store::open_test().await.unwrap();
-      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
-
-      let name = location_name(&db, 1_030_000_000_001).await.unwrap();
-
-      assert_eq!(name.as_deref(), Some("Jita Trade Hub"));
-    }
-
-    #[tokio::test]
-    async fn it_resolves_a_solar_system_name() {
-      let db = store::open_test().await.unwrap();
-      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
-
-      let name = location_name(&db, 30_000_142).await.unwrap();
-
-      assert_eq!(name.as_deref(), Some("Jita"));
-    }
-
-    #[tokio::test]
     async fn it_resolves_a_constellation_name() {
       let db = store::open_test().await.unwrap();
       seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
@@ -7555,10 +7494,87 @@ mod stockpile_tests {
     }
 
     #[tokio::test]
+    async fn it_resolves_a_solar_system_name() {
+      let db = store::open_test().await.unwrap();
+      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
+
+      let name = location_name(&db, 30_000_142).await.unwrap();
+
+      assert_eq!(name.as_deref(), Some("Jita"));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_structure_name() {
+      let db = store::open_test().await.unwrap();
+      seed_structure(&db, 1_030_000_000_001, "Jita Trade Hub").await;
+
+      let name = location_name(&db, 1_030_000_000_001).await.unwrap();
+
+      assert_eq!(name.as_deref(), Some("Jita Trade Hub"));
+    }
+
+    #[tokio::test]
     async fn it_returns_none_for_an_unknown_location() {
       let db = store::open_test().await.unwrap();
 
       assert_eq!(location_name(&db, 60_003_760).await.unwrap(), None);
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_clears_items_when_given_none() {
+      let db = store::open_test().await.unwrap();
+      let created = create(&db, "Has Items", None, None, &[(34, 1), (35, 2)]).await.unwrap();
+
+      update(&db, created.stockpile.id(), "Has Items", None, None, &[])
+        .await
+        .unwrap();
+
+      assert!(items(&db, created.stockpile.id()).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_replaces_fields_and_items() {
+      let db = store::open_test().await.unwrap();
+      let created = create(&db, "Old", None, None, &[(34, 100)]).await.unwrap();
+
+      let updated = update(&db, created.stockpile.id(), "New", None, Some(60_003_760), &[(35, 200)])
+        .await
+        .unwrap();
+
+      assert_eq!(updated.stockpile.name(), "New");
+      assert_eq!(updated.stockpile.location_id(), Some(60_003_760));
+      assert_eq!(updated.items.len(), 1);
+      assert_eq!(updated.items[0].type_id(), 35);
+      assert_eq!(items(&db, created.stockpile.id()).await.unwrap().len(), 1);
+    }
+  }
+
+  mod with_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_none_for_a_missing_stockpile() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(with_items(&db, 999_999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_a_stockpile_and_its_items() {
+      let db = store::open_test().await.unwrap();
+      let created = create(&db, "Cache", None, None, &[(34, 10)]).await.unwrap();
+
+      let loaded = with_items(&db, created.stockpile.id()).await.unwrap().unwrap();
+
+      assert_eq!(loaded, created);
     }
   }
 }
@@ -7598,10 +7614,38 @@ mod saved_filter_tests {
     }
   }
 
+  mod delete_saved_filter {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_a_missing_filter() {
+      let db = store::open_test().await.unwrap();
+
+      delete_saved_filter(&db, 999_999).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_removes_the_filter() {
+      let db = store::open_test().await.unwrap();
+      let created = create_saved_filter(&db, "Doomed", "", None).await.unwrap();
+
+      delete_saved_filter(&db, created.id()).await.unwrap();
+
+      assert!(saved_filters(&db).await.unwrap().is_empty());
+    }
+  }
+
   mod saved_filters {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_is_empty_when_there_are_no_filters() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(saved_filters(&db).await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn it_returns_every_filter_ordered_by_id() {
@@ -7619,34 +7663,6 @@ mod saved_filter_tests {
       );
       assert_eq!(all[0].category(), &None);
       assert_eq!(all[1].category().as_deref(), Some("module"));
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_when_there_are_no_filters() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(saved_filters(&db).await.unwrap().is_empty());
-    }
-  }
-
-  mod delete_saved_filter {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_removes_the_filter() {
-      let db = store::open_test().await.unwrap();
-      let created = create_saved_filter(&db, "Doomed", "", None).await.unwrap();
-
-      delete_saved_filter(&db, created.id()).await.unwrap();
-
-      assert!(saved_filters(&db).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_for_a_missing_filter() {
-      let db = store::open_test().await.unwrap();
-
-      delete_saved_filter(&db, 999_999).await.unwrap();
     }
   }
 }

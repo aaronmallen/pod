@@ -1290,21 +1290,56 @@ mod tests {
     }
   }
 
+  fn contacts_page(has_more: bool) -> ContactsPage {
+    ContactsPage {
+      cursor: Some(ContactCursor::Number(1.0, 5)),
+      has_more,
+      labels: Vec::new(),
+      rows: Vec::new(),
+    }
+  }
+
+  fn standings_catalog(agent_cursor: Option<(String, i64)>) -> StandingsCatalog {
+    StandingsCatalog {
+      agent_cursor,
+      rows: Vec::new(),
+    }
+  }
+
+  fn killlog_entry_fixture(killmail_id: i64) -> KillLogEntry {
+    KillLogEntry {
+      attacker_count: 1,
+      final_blow: true,
+      is_kill: true,
+      kill_time: "2024-01-01T00:00:00Z".to_owned(),
+      killmail_id,
+      ship_icon: images::IconResolution::Missing,
+      ship_name: "Rifter".to_owned(),
+      ship_type_id: 587,
+      system_name: Some("Jita".to_owned()),
+      system_security: 0.9,
+      value_destroyed_isk: 0.0,
+      value_isk: 1.0,
+      victim_corp: String::new(),
+      victim_name: "Unknown".to_owned(),
+    }
+  }
+
   mod format_members {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
+    fn it_returns_the_placeholder_for_an_unknown_count() {
+      assert_eq!(format_members(None), PLACEHOLDER);
+    }
+
+    #[test]
     fn it_uses_millions_thin_space_thousands_and_raw_figures() {
       assert_eq!(format_members(Some(2_400_000)), "2.4M");
       assert_eq!(format_members(Some(12_400)), "12\u{2009}400");
       assert_eq!(format_members(Some(89)), "89");
-    }
-
-    #[test]
-    fn it_returns_the_placeholder_for_an_unknown_count() {
-      assert_eq!(format_members(None), PLACEHOLDER);
     }
   }
 
@@ -1325,496 +1360,6 @@ mod tests {
     }
   }
 
-  mod state {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_opens_on_the_first_tab() {
-      let state = State::new(98_000_001);
-
-      assert_eq!(state.active(), 98_000_001);
-      assert_eq!(state.active_tab, Tab::Contacts);
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_tab() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
-
-      assert_eq!(state.active_tab, Tab::Standings);
-    }
-
-    #[tokio::test]
-    async fn it_stores_the_loaded_head() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
-
-      assert!(state.head.is_some());
-    }
-
-    #[tokio::test]
-    async fn it_reports_a_stale_logo_only_once_loaded() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      assert!(state.stale_images().is_empty());
-
-      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
-
-      assert_eq!(
-        state.stale_images(),
-        vec![(images::ImageKind::CorporationLogo, 98_000_001)]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_changes_the_killlog_filter() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
-
-      assert_eq!(state.killlog_filter(), KilllogFilter::Kills);
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_closes_the_killmail_detail_modal() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_killmail.is_some());
-
-      let _task = update(&mut state, Message::CloseKillmailDetail, &db);
-      assert!(state.selected_killmail.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_tracks_the_standings_search_query() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::StandingsSearchChanged("faction:caldari".to_owned()),
-        &db,
-      );
-
-      assert_eq!(state.standings_query(), "faction:caldari");
-      assert!(state.standings_has_filters());
-    }
-  }
-
-  fn contacts_page(has_more: bool) -> ContactsPage {
-    ContactsPage {
-      cursor: Some(ContactCursor::Number(1.0, 5)),
-      has_more,
-      labels: Vec::new(),
-      rows: Vec::new(),
-    }
-  }
-
-  fn standings_catalog(agent_cursor: Option<(String, i64)>) -> StandingsCatalog {
-    StandingsCatalog {
-      agent_cursor,
-      rows: Vec::new(),
-    }
-  }
-
-  mod update_contacts {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_restarts_the_page_on_a_filter_change() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Corp),
-        &db,
-      );
-
-      assert_eq!(state.contact_filter(), tabs::contacts::ContactFilter::Corp);
-      assert!(matches!(state.contacts, LoadState::Loading));
-      assert!(state.contacts_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_restarts_the_page_on_a_sort_change() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      let sort = state.contact_sort().toggled(tabs::contacts::SortColumn::Entity);
-
-      let _task = update(&mut state, Message::ContactSortChanged(sort), &db);
-
-      assert_eq!(state.contact_sort(), sort);
-      assert!(matches!(state.contacts, LoadState::Loading));
-    }
-
-    #[tokio::test]
-    async fn it_replaces_the_page_when_the_prior_state_was_loading() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::ContactsPageLoaded(Box::new(contacts_page(true))),
-        &db,
-      );
-
-      assert!(matches!(state.contacts, LoadState::Loaded(_)));
-      assert!(state.contacts_has_more);
-      assert!(!state.contacts_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_extends_an_already_loaded_page() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), true));
-
-      let _task = update(
-        &mut state,
-        Message::ContactsPageLoaded(Box::new(contacts_page(false))),
-        &db,
-      );
-
-      assert!(!state.contacts_has_more);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_short_scroll_with_no_more_pages() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 12.0,
-          relative: 0.99,
-        },
-        &db,
-      );
-
-      assert_eq!(state.contacts_scroll_offset(), 12.0);
-      assert!(!state.contacts_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_fetches_the_next_contacts_page_on_a_deep_scroll() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.contacts_has_more = true;
-      state.contacts_cursor = Some(ContactCursor::Number(1.0, 5));
-
-      let _task = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 99.0,
-          relative: 1.0,
-        },
-        &db,
-      );
-
-      assert!(state.contacts_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_restarts_only_when_the_search_query_actually_changes() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
-      assert!(matches!(state.contacts, LoadState::Loading));
-
-      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
-      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
-      assert!(matches!(state.contacts, LoadState::Loaded(_)));
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_search_only_when_a_query_is_present() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
-      assert!(matches!(state.contacts, LoadState::Loading) || matches!(state.contacts, LoadState::Loaded(_)));
-
-      let _task = update(&mut state, Message::ContactsSearchChanged("foo".to_owned()), &db);
-      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
-      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
-
-      assert!(state.contacts_query().is_empty());
-      assert!(matches!(state.contacts, LoadState::Loading));
-    }
-  }
-
-  mod update_killlog {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_appends_a_loaded_killlog_page() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.killlog = LoadState::Loaded(Vec::new());
-
-      let _task = update(
-        &mut state,
-        Message::KilllogPageLoaded(vec![killlog_entry_fixture(7)]),
-        &db,
-      );
-
-      let LoadState::Loaded(entries) = &state.killlog else {
-        panic!("expected a loaded killlog");
-      };
-      assert_eq!(entries.len(), 1);
-      assert!(!state.killlog_has_more);
-      assert!(!state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_short_killlog_scroll() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::KilllogScrolled {
-          absolute: 5.0,
-          relative: 0.1,
-        },
-        &db,
-      );
-
-      assert_eq!(state.killlog_scroll_offset(), 5.0);
-      assert!(!state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_fetches_the_next_killlog_page_on_a_deep_scroll() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.killlog_has_more = true;
-      state.killlog_cursor = Some(("2024-01-01T00:00:00Z".to_owned(), 7));
-
-      let _task = update(
-        &mut state,
-        Message::KilllogScrolled {
-          absolute: 80.0,
-          relative: 1.0,
-        },
-        &db,
-      );
-
-      assert!(state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_selects_a_killmail_for_detail() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::KillmailSelected(42), &db);
-
-      assert!(state.selected_killmail.is_none());
-    }
-  }
-
-  mod update_standings {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_appends_an_agent_page_for_the_current_generation() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.standings = LoadState::Loaded(Vec::new());
-      let page = StandingsAgentsPage {
-        generation: state.standings_generation,
-        next_cursor: Some(("a".to_owned(), 1)),
-        rows: Vec::new(),
-      };
-
-      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
-
-      assert!(state.standings_has_more);
-      assert!(!state.standings_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_discards_a_stale_generation_agent_page() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.standings_has_more = false;
-      let page = StandingsAgentsPage {
-        generation: state.standings_generation.wrapping_add(9),
-        next_cursor: Some(("a".to_owned(), 1)),
-        rows: Vec::new(),
-      };
-
-      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
-
-      assert!(!state.standings_has_more);
-    }
-
-    #[tokio::test]
-    async fn it_loads_results_for_the_current_generation() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      let results = StandingsResult {
-        generation: state.standings_generation,
-        result: Ok(standings_catalog(Some(("a".to_owned(), 1)))),
-      };
-
-      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
-
-      assert!(matches!(state.standings, LoadState::Loaded(_)));
-      assert!(state.standings_has_more);
-    }
-
-    #[tokio::test]
-    async fn it_records_an_error_result() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      let results = StandingsResult {
-        generation: state.standings_generation,
-        result: Err("boom".to_owned()),
-      };
-
-      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
-
-      assert!(matches!(state.standings, LoadState::Error(_)));
-      assert!(!state.standings_has_more);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_an_in_memory_filter_change_with_agents_loaded() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      let before = state.standings_generation;
-
-      let _task = update(
-        &mut state,
-        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Factions),
-        &db,
-      );
-
-      assert_eq!(state.standings_filter(), tabs::standings::StandingsFilter::Factions);
-      assert_eq!(state.standings_generation, before);
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_search_and_reruns() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.standings_query = "caldari".to_owned();
-      let before = state.standings_generation;
-
-      let _task = update(&mut state, Message::StandingsClearSearch, &db);
-
-      assert!(state.standings_query().is_empty());
-      assert_eq!(state.standings_generation, before.wrapping_add(1));
-    }
-
-    #[tokio::test]
-    async fn it_skips_a_standings_scroll_under_a_non_agent_filter() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.standings_filter = tabs::standings::StandingsFilter::Factions;
-      state.standings_has_more = true;
-      state.standings_agent_cursor = Some(("a".to_owned(), 1));
-
-      let _task = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 90.0,
-          relative: 1.0,
-        },
-        &db,
-      );
-
-      assert!(!state.standings_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_fetches_the_next_agent_page_on_a_deep_scroll() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-      state.standings_filter = tabs::standings::StandingsFilter::Agents;
-      state.standings_has_more = true;
-      state.standings_agent_cursor = Some(("a".to_owned(), 1));
-
-      let _task = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 90.0,
-          relative: 1.0,
-        },
-        &db,
-      );
-
-      assert!(state.standings_loading_more);
-    }
-  }
-
-  mod update_head {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_loads_the_detail_and_resets_pagination() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
-
-      assert!(matches!(state.contacts, LoadState::Loaded(_)));
-      assert!(state.head.is_some());
-      assert!(!state.contacts_has_more);
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_tab() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
-
-      assert_eq!(state.active_tab, Tab::Standings);
-    }
-  }
-
-  mod load_standings_catalog {
-
-    #[tokio::test]
-    async fn it_returns_an_empty_catalog_for_an_unseeded_corporation() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let catalog = super::super::load_standings_catalog(&db, 98_000_001, "", false)
-        .await
-        .unwrap();
-
-      assert!(catalog.rows.is_empty());
-      assert!(catalog.agent_cursor.is_none());
-    }
-  }
-
   mod load_killlog {
     use pretty_assertions::assert_eq;
 
@@ -1822,6 +1367,7 @@ mod tests {
     use crate::store::model::{Alliance, Bloodline, Character, Corporation, CorporationKillEntry, Gender, Race};
 
     const CEO_ID: i64 = 7001;
+
     const CORP_ID: i64 = 98_000_001;
 
     async fn seed_corporation(db: &Database) {
@@ -1864,6 +1410,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_loads_the_corporation_head_with_resolved_fields() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+
+      let head = load_head(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(head.name, "Cobalt Syndicate");
+      assert_eq!(head.ceo.as_deref(), Some("Test CEO"));
+      assert_eq!(head.members, Some(100));
+    }
+
+    #[tokio::test]
     async fn it_resolves_each_killmail_into_a_render_ready_entry() {
       let db = crate::store::open_test().await.unwrap();
       seed_corporation(&db).await;
@@ -1883,6 +1441,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_returns_no_head_for_an_unknown_corporation() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let head = load_head(&db, CORP_ID).await;
+
+      assert!(head.is_none());
+    }
+
+    #[tokio::test]
     async fn it_uses_unknown_placeholders_when_victim_ids_are_absent() {
       let db = crate::store::open_test().await.unwrap();
       seed_corporation(&db).await;
@@ -1897,57 +1464,483 @@ mod tests {
       assert_eq!(entries[0].victim_name, "Unknown");
       assert_eq!(entries[0].victim_corp, "");
     }
+  }
 
+  mod load_standings_catalog {
     #[tokio::test]
-    async fn it_loads_the_corporation_head_with_resolved_fields() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_corporation(&db).await;
-
-      let head = load_head(&db, CORP_ID).await.unwrap();
-
-      assert_eq!(head.name, "Cobalt Syndicate");
-      assert_eq!(head.ceo.as_deref(), Some("Test CEO"));
-      assert_eq!(head.members, Some(100));
-    }
-
-    #[tokio::test]
-    async fn it_returns_no_head_for_an_unknown_corporation() {
+    async fn it_returns_an_empty_catalog_for_an_unseeded_corporation() {
       let db = crate::store::open_test().await.unwrap();
 
-      let head = load_head(&db, CORP_ID).await;
+      let catalog = super::super::load_standings_catalog(&db, 98_000_001, "", false)
+        .await
+        .unwrap();
 
-      assert!(head.is_none());
+      assert!(catalog.rows.is_empty());
+      assert!(catalog.agent_cursor.is_none());
     }
   }
 
-  fn killlog_entry_fixture(killmail_id: i64) -> KillLogEntry {
-    KillLogEntry {
-      attacker_count: 1,
-      final_blow: true,
-      is_kill: true,
-      kill_time: "2024-01-01T00:00:00Z".to_owned(),
-      killmail_id,
-      ship_icon: images::IconResolution::Missing,
-      ship_name: "Rifter".to_owned(),
-      ship_type_id: 587,
-      system_name: Some("Jita".to_owned()),
-      system_security: 0.9,
-      value_destroyed_isk: 0.0,
-      value_isk: 1.0,
-      victim_corp: String::new(),
-      victim_name: "Unknown".to_owned(),
+  mod state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_changes_the_killlog_filter() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
+
+      assert_eq!(state.killlog_filter(), KilllogFilter::Kills);
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_killmail_detail_modal() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_killmail.is_some());
+
+      let _task = update(&mut state, Message::CloseKillmailDetail, &db);
+      assert!(state.selected_killmail.is_none());
+    }
+
+    #[test]
+    fn it_opens_on_the_first_tab() {
+      let state = State::new(98_000_001);
+
+      assert_eq!(state.active(), 98_000_001);
+      assert_eq!(state.active_tab, Tab::Contacts);
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_stale_logo_only_once_loaded() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      assert!(state.stale_images().is_empty());
+
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
+
+      assert_eq!(
+        state.stale_images(),
+        vec![(images::ImageKind::CorporationLogo, 98_000_001)]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_stores_the_loaded_head() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
+
+      assert!(state.head.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_standings_search_query() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::StandingsSearchChanged("faction:caldari".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.standings_query(), "faction:caldari");
+      assert!(state.standings_has_filters());
+    }
+  }
+
+  mod update_contacts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_clears_the_search_only_when_a_query_is_present() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
+      assert!(matches!(state.contacts, LoadState::Loading) || matches!(state.contacts, LoadState::Loaded(_)));
+
+      let _task = update(&mut state, Message::ContactsSearchChanged("foo".to_owned()), &db);
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
+
+      assert!(state.contacts_query().is_empty());
+      assert!(matches!(state.contacts, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_extends_an_already_loaded_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), true));
+
+      let _task = update(
+        &mut state,
+        Message::ContactsPageLoaded(Box::new(contacts_page(false))),
+        &db,
+      );
+
+      assert!(!state.contacts_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_contacts_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(1.0, 5));
+
+      let _task = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 99.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_short_scroll_with_no_more_pages() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 12.0,
+          relative: 0.99,
+        },
+        &db,
+      );
+
+      assert_eq!(state.contacts_scroll_offset(), 12.0);
+      assert!(!state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_page_when_the_prior_state_was_loading() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactsPageLoaded(Box::new(contacts_page(true))),
+        &db,
+      );
+
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+      assert!(state.contacts_has_more);
+      assert!(!state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_restarts_only_when_the_search_query_actually_changes() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
+      assert!(matches!(state.contacts, LoadState::Loading));
+
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+    }
+
+    #[tokio::test]
+    async fn it_restarts_the_page_on_a_filter_change() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Corp),
+        &db,
+      );
+
+      assert_eq!(state.contact_filter(), tabs::contacts::ContactFilter::Corp);
+      assert!(matches!(state.contacts, LoadState::Loading));
+      assert!(state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_restarts_the_page_on_a_sort_change() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let sort = state.contact_sort().toggled(tabs::contacts::SortColumn::Entity);
+
+      let _task = update(&mut state, Message::ContactSortChanged(sort), &db);
+
+      assert_eq!(state.contact_sort(), sort);
+      assert!(matches!(state.contacts, LoadState::Loading));
+    }
+  }
+
+  mod update_head {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_the_detail_and_resets_pagination() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
+
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+      assert!(state.head.is_some());
+      assert!(!state.contacts_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+  }
+
+  mod update_killlog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_a_loaded_killlog_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.killlog = LoadState::Loaded(Vec::new());
+
+      let _task = update(
+        &mut state,
+        Message::KilllogPageLoaded(vec![killlog_entry_fixture(7)]),
+        &db,
+      );
+
+      let LoadState::Loaded(entries) = &state.killlog else {
+        panic!("expected a loaded killlog");
+      };
+      assert_eq!(entries.len(), 1);
+      assert!(!state.killlog_has_more);
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_killlog_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.killlog_has_more = true;
+      state.killlog_cursor = Some(("2024-01-01T00:00:00Z".to_owned(), 7));
+
+      let _task = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 80.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_short_killlog_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 5.0,
+          relative: 0.1,
+        },
+        &db,
+      );
+
+      assert_eq!(state.killlog_scroll_offset(), 5.0);
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_killmail_for_detail() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::KillmailSelected(42), &db);
+
+      assert!(state.selected_killmail.is_none());
+    }
+  }
+
+  mod update_standings {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_an_agent_page_for_the_current_generation() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings = LoadState::Loaded(Vec::new());
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: Some(("a".to_owned(), 1)),
+        rows: Vec::new(),
+      };
+
+      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(state.standings_has_more);
+      assert!(!state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_search_and_reruns() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_query = "caldari".to_owned();
+      let before = state.standings_generation;
+
+      let _task = update(&mut state, Message::StandingsClearSearch, &db);
+
+      assert!(state.standings_query().is_empty());
+      assert_eq!(state.standings_generation, before.wrapping_add(1));
+    }
+
+    #[tokio::test]
+    async fn it_discards_a_stale_generation_agent_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_has_more = false;
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation.wrapping_add(9),
+        next_cursor: Some(("a".to_owned(), 1)),
+        rows: Vec::new(),
+      };
+
+      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_agent_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_filter = tabs::standings::StandingsFilter::Agents;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("a".to_owned(), 1));
+
+      let _task = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 90.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_an_in_memory_filter_change_with_agents_loaded() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let before = state.standings_generation;
+
+      let _task = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Factions),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter(), tabs::standings::StandingsFilter::Factions);
+      assert_eq!(state.standings_generation, before);
+    }
+
+    #[tokio::test]
+    async fn it_loads_results_for_the_current_generation() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let results = StandingsResult {
+        generation: state.standings_generation,
+        result: Ok(standings_catalog(Some(("a".to_owned(), 1)))),
+      };
+
+      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
+
+      assert!(matches!(state.standings, LoadState::Loaded(_)));
+      assert!(state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_records_an_error_result() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let results = StandingsResult {
+        generation: state.standings_generation,
+        result: Err("boom".to_owned()),
+      };
+
+      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
+
+      assert!(matches!(state.standings, LoadState::Error(_)));
+      assert!(!state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_skips_a_standings_scroll_under_a_non_agent_filter() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("a".to_owned(), 1));
+
+      let _task = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 90.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(!state.standings_loading_more);
     }
   }
 
   mod view {
     use super::*;
-
-    #[test]
-    fn it_renders_the_loading_header_before_data_arrives() {
-      let state = State::new(98_000_001);
-
-      let _el: Element<'_, Message> = view(&state);
-    }
 
     #[test]
     fn it_renders_the_loaded_header_and_each_tab_body() {
@@ -1958,6 +1951,13 @@ mod tests {
         state.active_tab = tab;
         let _el: Element<'_, Message> = view(&state);
       }
+    }
+
+    #[test]
+    fn it_renders_the_loading_header_before_data_arrives() {
+      let state = State::new(98_000_001);
+
+      let _el: Element<'_, Message> = view(&state);
     }
   }
 }

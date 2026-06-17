@@ -1333,6 +1333,15 @@ mod dogma_tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_returns_none_when_absent() {
+      let db = store::open_test().await.unwrap();
+
+      let row = get_dogma_attribute(&db, 999).await.unwrap();
+
+      assert_eq!(row, None);
+    }
+
+    #[tokio::test]
     async fn it_returns_the_matching_attribute() {
       let db = store::open_test().await.unwrap();
       upsert_many_dogma_attributes(&db, &[attribute(50, "cpuOutput")])
@@ -1347,21 +1356,24 @@ mod dogma_tests {
       assert_eq!(row.high_is_good(), true);
       assert_eq!(row.unit_id(), Some(115));
     }
-
-    #[tokio::test]
-    async fn it_returns_none_when_absent() {
-      let db = store::open_test().await.unwrap();
-
-      let row = get_dogma_attribute(&db, 999).await.unwrap();
-
-      assert_eq!(row, None);
-    }
   }
 
   mod get_dogma_attributes {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+      upsert_many_dogma_attributes(&db, &[attribute(50, "cpuOutput")])
+        .await
+        .unwrap();
+
+      let rows = get_dogma_attributes(&db, &[]).await.unwrap();
+
+      assert_eq!(rows.len(), 0);
+    }
 
     #[tokio::test]
     async fn it_returns_only_the_requested_ids() {
@@ -1383,18 +1395,6 @@ mod dogma_tests {
       assert_eq!(rows.len(), 2);
       assert_eq!(rows[0].attribute_id(), 50);
       assert_eq!(rows[1].attribute_id(), 52);
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_ids() {
-      let db = store::open_test().await.unwrap();
-      upsert_many_dogma_attributes(&db, &[attribute(50, "cpuOutput")])
-        .await
-        .unwrap();
-
-      let rows = get_dogma_attributes(&db, &[]).await.unwrap();
-
-      assert_eq!(rows.len(), 0);
     }
   }
 
@@ -1481,15 +1481,6 @@ mod items_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_categories_exist() {
-      let db = store::open_test().await.unwrap();
-
-      let result = all_item_categories(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
-    }
-
-    #[tokio::test]
     async fn it_returns_all_stored_categories() {
       let db = store::open_test().await.unwrap();
       upsert_item_category(&db, &make_category(1, "Ships")).await.unwrap();
@@ -1498,6 +1489,15 @@ mod items_tests {
       let result = all_item_categories(&db).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_categories_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all_item_categories(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
     }
   }
 
@@ -1537,15 +1537,6 @@ mod items_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_market_groups_exist() {
-      let db = store::open_test().await.unwrap();
-
-      let result = all_market_groups(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
-    }
-
-    #[tokio::test]
     async fn it_returns_all_stored_market_groups() {
       let db = store::open_test().await.unwrap();
       upsert_market_group(&db, &make_market_group(1, "Frigates"))
@@ -1558,6 +1549,15 @@ mod items_tests {
       let result = all_market_groups(&db).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_market_groups_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all_market_groups(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
     }
   }
 
@@ -1602,28 +1602,26 @@ mod items_tests {
     }
   }
 
-  mod product_categories {
+  mod catalog_types {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_joins_each_type_to_its_group_and_category_names() {
+    async fn it_falls_back_to_the_unpackaged_volume_when_packaged_is_absent() {
       let db = store::open_test().await.unwrap();
       upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
       upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
-      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+      let mut item_type = make_item_type(587, 25, "Rifter");
+      item_type.packaged_volume = None;
+      item_type.volume = Some(5.0);
+      upsert_item_type(&db, &item_type).await.unwrap();
 
-      let rows = product_categories(&db).await.unwrap();
+      let rows = catalog_types(&db).await.unwrap();
 
-      assert_eq!(rows, vec![(587, "Frigate".to_owned(), "Ship".to_owned())]);
+      assert_eq!(rows[0].packaged_volume, None);
+      assert_eq!(rows[0].volume, Some(5.0));
     }
-  }
-
-  mod catalog_types {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
     async fn it_returns_each_type_with_group_category_and_volumes() {
@@ -1648,69 +1646,6 @@ mod items_tests {
           volume: Some(27_289.0),
         }]
       );
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_unpackaged_volume_when_packaged_is_absent() {
-      let db = store::open_test().await.unwrap();
-      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
-      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
-      let mut item_type = make_item_type(587, 25, "Rifter");
-      item_type.packaged_volume = None;
-      item_type.volume = Some(5.0);
-      upsert_item_type(&db, &item_type).await.unwrap();
-
-      let rows = catalog_types(&db).await.unwrap();
-
-      assert_eq!(rows[0].packaged_volume, None);
-      assert_eq!(rows[0].volume, Some(5.0));
-    }
-  }
-
-  mod group_names_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_requested_group_names() {
-      let db = store::open_test().await.unwrap();
-      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
-      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
-      upsert_item_group(&db, &make_group(26, 6, "Cruiser")).await.unwrap();
-      upsert_item_group(&db, &make_group(27, 6, "Battleship")).await.unwrap();
-
-      let mut rows = group_names_for(&db, &[25, 27]).await.unwrap();
-      rows.sort();
-
-      assert_eq!(rows, vec![(25, "Frigate".to_owned()), (27, "Battleship".to_owned())]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_ids() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(group_names_for(&db, &[]).await.unwrap().is_empty());
-    }
-  }
-
-  mod type_details_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_id_name_and_group_for_the_requested_types() {
-      let db = store::open_test().await.unwrap();
-      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
-      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
-      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
-      upsert_item_type(&db, &make_item_type(588, 25, "Reaper")).await.unwrap();
-
-      let mut rows = type_details_for(&db, &[587]).await.unwrap();
-      rows.sort();
-
-      assert_eq!(rows, vec![(587, "Rifter".to_owned(), 25)]);
     }
   }
 
@@ -1785,6 +1720,33 @@ mod items_tests {
     }
   }
 
+  mod group_names_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(group_names_for(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_group_names() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_group(&db, &make_group(26, 6, "Cruiser")).await.unwrap();
+      upsert_item_group(&db, &make_group(27, 6, "Battleship")).await.unwrap();
+
+      let mut rows = group_names_for(&db, &[25, 27]).await.unwrap();
+      rows.sort();
+
+      assert_eq!(rows, vec![(25, "Frigate".to_owned()), (27, "Battleship".to_owned())]);
+    }
+  }
+
   mod insert_item_type_with_hierarchy {
     use super::*;
 
@@ -1802,6 +1764,44 @@ mod items_tests {
       assert!(get_item_type(&db, 587).await.unwrap().is_some());
       assert!(get_item_group(&db, 25).await.unwrap().is_some());
       assert!(get_item_category(&db, 6).await.unwrap().is_some());
+    }
+  }
+
+  mod product_categories {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_joins_each_type_to_its_group_and_category_names() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+
+      let rows = product_categories(&db).await.unwrap();
+
+      assert_eq!(rows, vec![(587, "Frigate".to_owned(), "Ship".to_owned())]);
+    }
+  }
+
+  mod type_details_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_id_name_and_group_for_the_requested_types() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(588, 25, "Reaper")).await.unwrap();
+
+      let mut rows = type_details_for(&db, &[587]).await.unwrap();
+      rows.sort();
+
+      assert_eq!(rows, vec![(587, "Rifter".to_owned(), 25)]);
     }
   }
 
@@ -1867,44 +1867,6 @@ mod items_tests {
     }
   }
 
-  mod upsert_market_group {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_stores_a_new_market_group() {
-      let db = store::open_test().await.unwrap();
-
-      upsert_market_group(&db, &make_market_group(157, "Frigates"))
-        .await
-        .unwrap();
-
-      assert!(get_market_group(&db, 157).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_handles_self_referencing_parent_group_id() {
-      let db = store::open_test().await.unwrap();
-      upsert_market_group(&db, &make_market_group(157, "Frigates"))
-        .await
-        .unwrap();
-
-      let child = MarketGroup {
-        description: "T1 Frigates".to_string(),
-        has_types: true,
-        icon_id: None,
-        id: 158,
-        name: "Standard Frigates".to_string(),
-        parent_id: Some(157),
-      };
-      upsert_market_group(&db, &child).await.unwrap();
-
-      let result = get_market_group(&db, 158).await.unwrap().unwrap();
-      assert_eq!(result.parent_id(), Some(157));
-    }
-  }
-
   mod upsert_many_item_categories {
     use pretty_assertions::assert_eq;
 
@@ -1943,6 +1905,32 @@ mod items_tests {
 
       assert!(get_item_group(&db, 255).await.unwrap().is_some());
       assert!(get_item_group(&db, 256).await.unwrap().is_some());
+    }
+  }
+
+  mod upsert_many_item_types {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_dogma_attributes_for_a_seeded_skill_type() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(16, "Skill")).await.unwrap();
+      upsert_item_group(&db, &make_group(255, 16, "Gunnery")).await.unwrap();
+
+      let dogma = "[{\"attribute_id\":275,\"value\":1.0},{\"attribute_id\":180,\"value\":3340.0},\
+        {\"attribute_id\":181,\"value\":0.0}]";
+      let mut skill_type = make_item_type(3300, 255, "Gunnery");
+      skill_type.dogma_attributes = dogma.to_string();
+
+      upsert_many_item_types(&db, &[skill_type, make_item_type(3301, 255, "Small Hybrid Turret")])
+        .await
+        .unwrap();
+
+      let stored = get_item_type(&db, 3300).await.unwrap().unwrap();
+      assert_eq!(stored.dogma_attributes(), dogma);
+      assert!(get_item_type(&db, 3301).await.unwrap().is_some());
     }
   }
 
@@ -1987,29 +1975,41 @@ mod items_tests {
     }
   }
 
-  mod upsert_many_item_types {
+  mod upsert_market_group {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_round_trips_dogma_attributes_for_a_seeded_skill_type() {
+    async fn it_handles_self_referencing_parent_group_id() {
       let db = store::open_test().await.unwrap();
-      upsert_item_category(&db, &make_category(16, "Skill")).await.unwrap();
-      upsert_item_group(&db, &make_group(255, 16, "Gunnery")).await.unwrap();
-
-      let dogma = "[{\"attribute_id\":275,\"value\":1.0},{\"attribute_id\":180,\"value\":3340.0},\
-        {\"attribute_id\":181,\"value\":0.0}]";
-      let mut skill_type = make_item_type(3300, 255, "Gunnery");
-      skill_type.dogma_attributes = dogma.to_string();
-
-      upsert_many_item_types(&db, &[skill_type, make_item_type(3301, 255, "Small Hybrid Turret")])
+      upsert_market_group(&db, &make_market_group(157, "Frigates"))
         .await
         .unwrap();
 
-      let stored = get_item_type(&db, 3300).await.unwrap().unwrap();
-      assert_eq!(stored.dogma_attributes(), dogma);
-      assert!(get_item_type(&db, 3301).await.unwrap().is_some());
+      let child = MarketGroup {
+        description: "T1 Frigates".to_string(),
+        has_types: true,
+        icon_id: None,
+        id: 158,
+        name: "Standard Frigates".to_string(),
+        parent_id: Some(157),
+      };
+      upsert_market_group(&db, &child).await.unwrap();
+
+      let result = get_market_group(&db, 158).await.unwrap().unwrap();
+      assert_eq!(result.parent_id(), Some(157));
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_new_market_group() {
+      let db = store::open_test().await.unwrap();
+
+      upsert_market_group(&db, &make_market_group(157, "Frigates"))
+        .await
+        .unwrap();
+
+      assert!(get_market_group(&db, 157).await.unwrap().is_some());
     }
   }
 }
@@ -2154,15 +2154,6 @@ mod universe_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_regions_exist() {
-      let db = store::open_test().await.unwrap();
-
-      let result = all_regions(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
-    }
-
-    #[tokio::test]
     async fn it_returns_all_stored_regions() {
       let db = store::open_test().await.unwrap();
       upsert_region(&db, &make_region(1)).await.unwrap();
@@ -2171,6 +2162,15 @@ mod universe_tests {
       let result = all_regions(&db).await.unwrap();
 
       assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_regions_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all_regions(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
     }
   }
 
@@ -2245,136 +2245,10 @@ mod universe_tests {
     }
   }
 
-  mod solar_systems_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_requested_systems() {
-      let db = store::open_test().await.unwrap();
-      upsert_region(&db, &make_region(10000001)).await.unwrap();
-      upsert_constellation(&db, &make_constellation(20000001, 10000001))
-        .await
-        .unwrap();
-      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
-        .await
-        .unwrap();
-      upsert_solar_system(&db, &make_solar_system(30000002, 20000001))
-        .await
-        .unwrap();
-
-      let mut ids = solar_systems_for(&db, &[30000001])
-        .await
-        .unwrap()
-        .iter()
-        .map(SolarSystem::id)
-        .collect::<Vec<_>>();
-      ids.sort_unstable();
-
-      assert_eq!(ids, [30000001]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_ids() {
-      let db = store::open_test().await.unwrap();
-
-      assert!(solar_systems_for(&db, &[]).await.unwrap().is_empty());
-    }
-  }
-
-  mod stations_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_requested_stations() {
-      let db = store::open_test().await.unwrap();
-      seed_item_type(&db, 54).await;
-      let region = make_region(10000001);
-      let constellation = make_constellation(20000001, 10000001);
-      let system = make_solar_system(30000001, 20000001);
-      insert_station_with_geography(
-        &db,
-        &make_station(60000001, 30000001, 54),
-        &system,
-        &constellation,
-        &region,
-      )
-      .await
-      .unwrap();
-      upsert_station(&db, &make_station(60000002, 30000001, 54))
-        .await
-        .unwrap();
-
-      let mut ids = stations_for(&db, &[60000001])
-        .await
-        .unwrap()
-        .iter()
-        .map(Station::id)
-        .collect::<Vec<_>>();
-      ids.sort_unstable();
-
-      assert_eq!(ids, [60000001]);
-    }
-  }
-
-  mod structures_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_requested_structures() {
-      let db = store::open_test().await.unwrap();
-      upsert_region(&db, &make_region(10000001)).await.unwrap();
-      upsert_constellation(&db, &make_constellation(20000001, 10000001))
-        .await
-        .unwrap();
-      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
-        VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
-      )
-      .execute(&db.0)
-      .await
-      .unwrap();
-      let structure = Structure {
-        id: 1_030_000_000_001,
-        name: "Test Citadel".to_owned(),
-        owner_id: 98_000_001,
-        position_x: None,
-        position_y: None,
-        position_z: None,
-        solar_system_id: 30000001,
-        type_id: None,
-      };
-      upsert_structure(&db, &structure).await.unwrap();
-
-      let rows = structures_for(&db, &[1_030_000_000_001]).await.unwrap();
-
-      assert_eq!(rows, vec![structure]);
-    }
-  }
-
   mod inaccessible_structures_for_owner {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_returns_empty_when_the_owner_has_no_marks() {
-      let db = store::open_test().await.unwrap();
-
-      let result = inaccessible_structures_for_owner(&db, 1, OwnerType::Character)
-        .await
-        .unwrap();
-
-      assert_eq!(result, vec![]);
-    }
 
     #[tokio::test]
     async fn it_lists_only_the_marks_for_the_given_owner() {
@@ -2399,6 +2273,17 @@ mod universe_tests {
       let mut ids = result.iter().map(InaccessibleStructure::id).collect::<Vec<_>>();
       ids.sort_unstable();
       assert_eq!(ids, [100, 200]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_the_owner_has_no_marks() {
+      let db = store::open_test().await.unwrap();
+
+      let result = inaccessible_structures_for_owner(&db, 1, OwnerType::Character)
+        .await
+        .unwrap();
+
+      assert_eq!(result, vec![]);
     }
   }
 
@@ -2442,20 +2327,6 @@ mod universe_tests {
     }
 
     #[tokio::test]
-    async fn it_is_true_after_the_structure_is_marked() {
-      let db = store::open_test().await.unwrap();
-      mark_inaccessible_structure(&db, 1, OwnerType::Character, 100)
-        .await
-        .unwrap();
-
-      let result = is_structure_inaccessible(&db, 1, OwnerType::Character, 100)
-        .await
-        .unwrap();
-
-      assert_eq!(result, true);
-    }
-
-    #[tokio::test]
     async fn it_is_scoped_to_the_marking_owner() {
       let db = store::open_test().await.unwrap();
       mark_inaccessible_structure(&db, 1, OwnerType::Character, 100)
@@ -2475,27 +2346,26 @@ mod universe_tests {
         false
       );
     }
+
+    #[tokio::test]
+    async fn it_is_true_after_the_structure_is_marked() {
+      let db = store::open_test().await.unwrap();
+      mark_inaccessible_structure(&db, 1, OwnerType::Character, 100)
+        .await
+        .unwrap();
+
+      let result = is_structure_inaccessible(&db, 1, OwnerType::Character, 100)
+        .await
+        .unwrap();
+
+      assert_eq!(result, true);
+    }
   }
 
   mod mark_inaccessible_structure {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_marks_a_structure_for_an_owner() {
-      let db = store::open_test().await.unwrap();
-
-      mark_inaccessible_structure(&db, 1, OwnerType::Character, 100)
-        .await
-        .unwrap();
-
-      assert!(
-        is_structure_inaccessible(&db, 1, OwnerType::Character, 100)
-          .await
-          .unwrap()
-      );
-    }
 
     #[tokio::test]
     async fn it_is_idempotent_on_the_composite_key() {
@@ -2512,6 +2382,21 @@ mod universe_tests {
         .await
         .unwrap();
       assert_eq!(result.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_marks_a_structure_for_an_owner() {
+      let db = store::open_test().await.unwrap();
+
+      mark_inaccessible_structure(&db, 1, OwnerType::Character, 100)
+        .await
+        .unwrap();
+
+      assert!(
+        is_structure_inaccessible(&db, 1, OwnerType::Character, 100)
+          .await
+          .unwrap()
+      );
     }
   }
 
@@ -2604,6 +2489,121 @@ mod universe_tests {
         pinned_row(&db, 1_021_000_000_001).await,
         Some(("New Name".to_string(), 30000002))
       );
+    }
+  }
+
+  mod solar_systems_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(solar_systems_for(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_systems() {
+      let db = store::open_test().await.unwrap();
+      upsert_region(&db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(&db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000002, 20000001))
+        .await
+        .unwrap();
+
+      let mut ids = solar_systems_for(&db, &[30000001])
+        .await
+        .unwrap()
+        .iter()
+        .map(SolarSystem::id)
+        .collect::<Vec<_>>();
+      ids.sort_unstable();
+
+      assert_eq!(ids, [30000001]);
+    }
+  }
+
+  mod stations_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_stations() {
+      let db = store::open_test().await.unwrap();
+      seed_item_type(&db, 54).await;
+      let region = make_region(10000001);
+      let constellation = make_constellation(20000001, 10000001);
+      let system = make_solar_system(30000001, 20000001);
+      insert_station_with_geography(
+        &db,
+        &make_station(60000001, 30000001, 54),
+        &system,
+        &constellation,
+        &region,
+      )
+      .await
+      .unwrap();
+      upsert_station(&db, &make_station(60000002, 30000001, 54))
+        .await
+        .unwrap();
+
+      let mut ids = stations_for(&db, &[60000001])
+        .await
+        .unwrap()
+        .iter()
+        .map(Station::id)
+        .collect::<Vec<_>>();
+      ids.sort_unstable();
+
+      assert_eq!(ids, [60000001]);
+    }
+  }
+
+  mod structures_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_structures() {
+      let db = store::open_test().await.unwrap();
+      upsert_region(&db, &make_region(10000001)).await.unwrap();
+      upsert_constellation(&db, &make_constellation(20000001, 10000001))
+        .await
+        .unwrap();
+      upsert_solar_system(&db, &make_solar_system(30000001, 20000001))
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+        VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+      let structure = Structure {
+        id: 1_030_000_000_001,
+        name: "Test Citadel".to_owned(),
+        owner_id: 98_000_001,
+        position_x: None,
+        position_y: None,
+        position_z: None,
+        solar_system_id: 30000001,
+        type_id: None,
+      };
+      upsert_structure(&db, &structure).await.unwrap();
+
+      let rows = structures_for(&db, &[1_030_000_000_001]).await.unwrap();
+
+      assert_eq!(rows, vec![structure]);
     }
   }
 

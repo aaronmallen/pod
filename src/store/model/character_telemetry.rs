@@ -51,6 +51,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_leaves_ship_columns_null_when_no_ship() {
+      let online = Online {
+        online: false,
+      };
+      let location = Location {
+        solar_system_id: 30_000_142,
+        station_id: None,
+        structure_id: Some(1_021_000_000_000),
+      };
+
+      let model = Model::from((42, online, location, None, 1_700_000_000));
+
+      assert!(!model.online());
+      assert_eq!(model.structure_id(), Some(1_021_000_000_000));
+      assert_eq!(model.ship_item_id(), None);
+      assert_eq!(model.ship_name().as_deref(), None);
+      assert_eq!(model.ship_type_id(), None);
+    }
+
+    #[test]
     fn it_maps_ship_columns_when_a_ship_is_present() {
       let online = Online {
         online: true,
@@ -76,26 +96,6 @@ mod tests {
       assert_eq!(model.ship_name().as_deref(), Some("My Rifter"));
       assert_eq!(model.ship_type_id(), Some(587));
       assert_eq!(model.synced_at(), 1_700_000_000);
-    }
-
-    #[test]
-    fn it_leaves_ship_columns_null_when_no_ship() {
-      let online = Online {
-        online: false,
-      };
-      let location = Location {
-        solar_system_id: 30_000_142,
-        station_id: None,
-        structure_id: Some(1_021_000_000_000),
-      };
-
-      let model = Model::from((42, online, location, None, 1_700_000_000));
-
-      assert!(!model.online());
-      assert_eq!(model.structure_id(), Some(1_021_000_000_000));
-      assert_eq!(model.ship_item_id(), None);
-      assert_eq!(model.ship_name().as_deref(), None);
-      assert_eq!(model.ship_type_id(), None);
     }
   }
 }

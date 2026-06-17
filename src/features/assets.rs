@@ -2127,180 +2127,6 @@ mod tests {
     }
   }
 
-  mod mark_dirty {
-    use super::*;
-
-    #[test]
-    fn it_marks_the_assets_dirty_for_an_asset_sync() {
-      let mut state = State::new();
-
-      state.mark_dirty(JobKind::AssetSync);
-
-      assert!(state.is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_an_unrelated_kind() {
-      let mut state = State::new();
-
-      state.mark_dirty(JobKind::CharacterWallet);
-
-      assert!(!state.is_dirty());
-    }
-  }
-
-  mod scope_gate {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_gates_a_character_scope_missing_the_asset_scopes() {
-      let mut state = State::new();
-      state.set_picker_for_test(Scope::Character(1), vec![pilot(1)], Vec::new());
-
-      let gate = state.scope_gate().expect("missing scope should gate");
-
-      assert_eq!(gate.0, 1);
-      assert!(!gate.2.is_empty());
-    }
-
-    #[test]
-    fn it_does_not_gate_a_character_with_the_asset_scopes() {
-      let granted = crate::features::registry::descriptor(crate::config::Feature::AssetTracking)
-        .scopes
-        .join(" ");
-      let mut granted_pilot = pilot(1);
-      granted_pilot.granted_scopes = Some(granted);
-      let mut state = State::new();
-      state.set_picker_for_test(Scope::Character(1), vec![granted_pilot], Vec::new());
-
-      assert!(state.scope_gate().is_none());
-    }
-
-    #[test]
-    fn it_does_not_gate_the_all_or_corporation_scopes() {
-      let mut state = State::new();
-      state.set_picker_for_test(Scope::All, vec![pilot(1)], Vec::new());
-
-      assert!(state.scope_gate().is_none());
-
-      state.set_picker_for_test(Scope::Corporation(99), vec![pilot(1)], Vec::new());
-
-      assert!(state.scope_gate().is_none());
-    }
-  }
-
-  mod stale_images {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn fresh_pilot(id: i64) -> RosterPilot {
-      RosterPilot {
-        corp: "TST".to_owned(),
-        granted_scopes: None,
-        id,
-        name: format!("Pilot {id}"),
-        portrait: images::ImageState::Fresh(std::path::PathBuf::from(format!("/cache/{id}.jpg"))),
-      }
-    }
-
-    #[test]
-    fn it_is_empty_when_every_model_is_fresh() {
-      let mut state = State::new();
-      state.set_picker_for_test(Scope::All, vec![fresh_pilot(7)], Vec::new());
-
-      assert_eq!(state.stale_images(), Vec::new());
-    }
-
-    #[test]
-    fn it_collects_stale_portraits_logos_and_abyssal_cards() {
-      let mut state = State::new();
-      state.set_picker_for_test(Scope::All, vec![pilot(7), fresh_pilot(9)], vec![corp(98)]);
-      state.set_abyssals_for_test(
-        vec![abyssals::AbyssalCard {
-          character_id: 11,
-          estimate: None,
-          group_type_id: 2410,
-          item_id: 1,
-          location: String::new(),
-          module_name: "Module".to_owned(),
-          owner_name: "Vex".to_owned(),
-          portrait: images::ImageState::Stale {
-            id: 11,
-            kind: images::ImageKind::CharacterPortrait,
-          },
-          price_unavailable: false,
-          stats: Vec::new(),
-          tier_label: "Gravid".to_owned(),
-          type_icon: images::IconResolution::Missing,
-        }],
-        Vec::new(),
-        abyssals::Filters::default(),
-        false,
-      );
-
-      assert_eq!(
-        state.stale_images(),
-        vec![
-          (images::ImageKind::CharacterPortrait, 7),
-          (images::ImageKind::CorporationLogo, 98),
-          (images::ImageKind::CharacterPortrait, 11),
-        ]
-      );
-    }
-  }
-
-  mod resolve_scope_owner {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_aggregates_the_all_scope_across_every_owned_character_and_corporation() {
-      assert_eq!(
-        resolve_scope_owner(Scope::All, &[pilot(7), pilot(9)], &[corp(98)]),
-        Some(Owner::Combined {
-          character_ids: vec![7, 9],
-          corporation_ids: vec![98],
-        })
-      );
-    }
-
-    #[test]
-    fn it_resolves_the_all_scope_with_no_owned_characters_to_the_corporations_alone() {
-      assert_eq!(
-        resolve_scope_owner(Scope::All, &[], &[corp(98)]),
-        Some(Owner::Combined {
-          character_ids: vec![],
-          corporation_ids: vec![98],
-        })
-      );
-    }
-
-    #[test]
-    fn it_resolves_a_character_scope_to_that_character() {
-      assert_eq!(
-        resolve_scope_owner(Scope::Character(7), &[], &[]),
-        Some(Owner::Character(7))
-      );
-    }
-
-    #[test]
-    fn it_resolves_a_known_corporation_scope_to_that_corporation() {
-      assert_eq!(
-        resolve_scope_owner(Scope::Corporation(98), &[], &[corp(98)]),
-        Some(Owner::Corporation(98))
-      );
-    }
-
-    #[test]
-    fn it_resolves_an_unknown_corporation_scope_to_none() {
-      assert_eq!(resolve_scope_owner(Scope::Corporation(404), &[], &[corp(98)]), None);
-    }
-  }
-
   mod effective_filter {
     use pretty_assertions::assert_eq;
 
@@ -2319,539 +2145,6 @@ mod tests {
         effective_filter(Category::Module, "name:Rifter"),
         "category:module name:Rifter"
       );
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn loaded_with_items(items: i64) -> Box<Loaded> {
-      Box::new(Loaded {
-        corporations: vec![],
-        geo_tree: GeoTree::default(),
-        inventory: vec![],
-        roster: vec![],
-        saved_filters: vec![],
-        totals: InventoryTotals {
-          items,
-          locations: 1,
-          value: 0.0,
-          volume: 0.0,
-        },
-        values: values::ValueSummary::default(),
-        nav: tracker::NavSeries::default(),
-        stockpiles: vec![],
-        abyssals: abyssals::AbyssalsData::default(),
-      })
-    }
-
-    #[tokio::test]
-    async fn it_records_the_loaded_roster_and_totals() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(Loaded {
-          corporations: vec![corp(98)],
-          geo_tree: GeoTree::default(),
-          inventory: vec![],
-          roster: vec![pilot(7)],
-          saved_filters: vec![],
-          totals: InventoryTotals {
-            items: 5,
-            locations: 2,
-            value: 100.0,
-            volume: 50.0,
-          },
-          values: values::ValueSummary::default(),
-          nav: tracker::NavSeries::default(),
-          stockpiles: vec![],
-          abyssals: abyssals::AbyssalsData::default(),
-        })),
-        &db,
-      );
-
-      assert_eq!(state.roster, vec![pilot(7)]);
-      assert_eq!(state.corporations, vec![corp(98)]);
-      assert_eq!(state.totals.items, 5);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_picker_open_and_closed() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open);
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_selected_scope_and_closes_the_picker() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.picker_open = true;
-
-      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
-
-      assert_eq!(state.active, Scope::Character(42));
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::TabSelected(Tab::Values), &db);
-      assert_eq!(state.tab, Tab::Values);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_search_string() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
-      assert_eq!(state.search, "tritanium");
-    }
-
-    #[tokio::test]
-    async fn it_bumps_the_search_generation_on_each_keystroke() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SearchChanged("r".to_owned()), &db);
-      let _ = update(&mut state, Message::SearchChanged("ri".to_owned()), &db);
-
-      assert_eq!(state.search_generation, 2);
-    }
-
-    #[tokio::test]
-    async fn it_covers_the_remaining_inventory_message_branches() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::AssetChartHovered(Some(0.5)), &db);
-      assert_eq!(state.chart_hover, Some(0.5));
-
-      let _ = update(&mut state, Message::InventoryHelpToggled, &db);
-      assert!(state.inventory_help_open);
-
-      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
-      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
-      assert_eq!(state.category, Category::Ship);
-
-      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
-      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
-      assert_eq!(state.sort_dir, SortDirection::Ascending);
-
-      let active = state.active;
-      let _ = update(&mut state, Message::ScopeSelected(active), &db);
-      assert_eq!(state.active, active);
-
-      let _ = update(&mut state, Message::SearchSubmitted, &db);
-      let _ = update(&mut state, Message::FilterExamplePicked("ship"), &db);
-      assert!(!state.inventory_help_open);
-    }
-
-    #[tokio::test]
-    async fn it_applies_search_results_for_the_current_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.search_generation = 7;
-      state.totals.items = 99;
-
-      let _ = update(
-        &mut state,
-        Message::SearchReloaded {
-          generation: 7,
-          loaded: loaded_with_items(5),
-        },
-        &db,
-      );
-
-      assert_eq!(state.totals.items, 5);
-    }
-
-    #[tokio::test]
-    async fn it_drops_search_results_from_a_superseded_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.search_generation = 8;
-      state.totals.items = 99;
-
-      let _ = update(
-        &mut state,
-        Message::SearchReloaded {
-          generation: 7,
-          loaded: loaded_with_items(5),
-        },
-        &db,
-      );
-
-      assert_eq!(state.totals.items, 99, "a stale keystroke's result is ignored");
-    }
-
-    #[tokio::test]
-    async fn it_invalidates_in_flight_searches_when_a_discrete_reload_runs() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SearchChanged("rifter".to_owned()), &db);
-      let stale_generation = state.search_generation;
-      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
-
-      assert_ne!(
-        state.search_generation, stale_generation,
-        "changing category supersedes the pending search"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_records_the_selected_inventory_category() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
-      assert_eq!(state.category, Category::Ship);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_abyssal_picker() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::AbyssalPickerToggled, &db);
-      assert!(state.abyssal_picker_open);
-      let _ = update(&mut state, Message::AbyssalPickerToggled, &db);
-      assert!(!state.abyssal_picker_open);
-    }
-
-    #[tokio::test]
-    async fn selecting_an_abyssal_source_type_records_it_and_closes_the_picker() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.abyssal_picker_open = true;
-      state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
-
-      let _ = update(&mut state, Message::AbyssalSourceTypeSelected(Some(2410)), &db);
-
-      assert_eq!(state.abyssal_filters.source_type_id, Some(2410));
-      assert!(state.abyssal_filters.stat_ranges.is_empty());
-      assert!(!state.abyssal_picker_open);
-    }
-
-    #[tokio::test]
-    async fn resetting_the_abyssal_filters_clears_type_and_ranges() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.abyssal_filters.source_type_id = Some(2410);
-      state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
-
-      let _ = update(&mut state, Message::AbyssalFilterReset, &db);
-
-      assert_eq!(state.abyssal_filters, abyssals::Filters::default());
-    }
-
-    fn abyssal_cards(count: usize) -> Vec<abyssals::AbyssalCard> {
-      (0..count)
-        .map(|i| abyssals::AbyssalCard {
-          character_id: 1,
-          estimate: None,
-          group_type_id: 2410,
-          item_id: i as i64,
-          location: String::new(),
-          module_name: "Module".to_owned(),
-          owner_name: "Vex".to_owned(),
-          portrait: images::ImageState::Stale {
-            id: 1,
-            kind: images::ImageKind::CharacterPortrait,
-          },
-          price_unavailable: false,
-          stats: Vec::new(),
-          tier_label: "Gravid".to_owned(),
-          type_icon: images::IconResolution::Missing,
-        })
-        .collect()
-    }
-
-    #[tokio::test]
-    async fn scrolling_past_the_threshold_starts_loading_the_next_page() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, false);
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalGridScrolled {
-          absolute: 2_000.0,
-          relative: 0.9,
-        },
-        &db,
-      );
-
-      assert!(state.abyssal_loading(), "crossing the threshold begins a page load");
-      assert_eq!(
-        state.abyssal_scroll_offset(),
-        2_000.0,
-        "the pixel offset is tracked for windowing"
-      );
-    }
-
-    #[tokio::test]
-    async fn scrolling_does_not_load_when_already_loading_or_exhausted() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-
-      // No more pages: a threshold scroll must not start a load.
-      state.set_abyssal_pagination_for_test(false, false);
-      let _ = update(
-        &mut state,
-        Message::AbyssalGridScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-      assert!(!state.abyssal_loading(), "no load is started once the set is exhausted");
-
-      // Already loading: a second threshold scroll must not start a duplicate load.
-      state.set_abyssal_pagination_for_test(true, true);
-      let _ = update(
-        &mut state,
-        Message::AbyssalGridScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-      assert!(state.abyssal_loading());
-    }
-
-    #[tokio::test]
-    async fn scrolling_below_the_threshold_only_tracks_the_offset() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, false);
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalGridScrolled {
-          absolute: 120.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert!(!state.abyssal_loading(), "a shallow scroll does not page");
-      assert_eq!(state.abyssal_scroll_offset(), 120.0);
-    }
-
-    #[tokio::test]
-    async fn a_loaded_page_is_appended_and_clears_has_more_for_a_short_page() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, true);
-
-      // A short page (fewer than PAGE_SIZE) means the set is exhausted.
-      let epoch = state.abyssal_page_epoch.current();
-      let _ = update(
-        &mut state,
-        Message::AbyssalPageLoaded {
-          cards: abyssal_cards(10),
-          epoch,
-        },
-        &db,
-      );
-
-      assert_eq!(state.abyssals().len(), 70, "the page is appended to the loaded set");
-      assert!(!state.abyssal_has_more(), "a short page leaves no more to load");
-      assert!(!state.abyssal_loading());
-    }
-
-    #[tokio::test]
-    async fn a_stale_abyssal_page_is_dropped_after_the_set_is_reloaded() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, true);
-
-      // The user scrolled (capturing the epoch) then changed the filter, which reloads the set and
-      // bumps the epoch.
-      let stale_epoch = state.abyssal_page_epoch.current();
-      let _ = update(
-        &mut state,
-        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
-          cards: abyssal_cards(10),
-          total: 10,
-        }),
-        &db,
-      );
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalPageLoaded {
-          cards: abyssal_cards(5),
-          epoch: stale_epoch,
-        },
-        &db,
-      );
-
-      assert_eq!(
-        state.abyssals().len(),
-        10,
-        "a page from the superseded filter must not append foreign cards"
-      );
-    }
-
-    #[tokio::test]
-    async fn reloading_cards_replaces_the_set_and_resets_pagination() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, true);
-      let _ = update(
-        &mut state,
-        Message::AbyssalGridScrolled {
-          absolute: 999.0,
-          relative: 0.9,
-        },
-        &db,
-      );
-
-      // A reload that returns a full page keeps has_more true and clears loading/offset.
-      let _ = update(
-        &mut state,
-        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
-          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
-          total: 137,
-        }),
-        &db,
-      );
-
-      assert_eq!(state.abyssals().len(), abyssals::PAGE_SIZE as usize);
-      assert_eq!(state.abyssal_total(), 137, "the reload feeds the filter-aware DB total");
-      assert!(state.abyssal_has_more(), "a full reload page implies more to load");
-      assert!(!state.abyssal_loading());
-      assert_eq!(
-        state.abyssal_scroll_offset(),
-        0.0,
-        "a reload returns the grid to the top"
-      );
-    }
-
-    #[tokio::test]
-    async fn a_scroll_append_does_not_clobber_the_abyssal_total() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
-      state.set_abyssal_pagination_for_test(true, true);
-      let _ = update(
-        &mut state,
-        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
-          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
-          total: 200,
-        }),
-        &db,
-      );
-      state.set_abyssal_pagination_for_test(true, true);
-
-      let epoch = state.abyssal_page_epoch.current();
-      let _ = update(
-        &mut state,
-        Message::AbyssalPageLoaded {
-          cards: abyssal_cards(10),
-          epoch,
-        },
-        &db,
-      );
-
-      assert_eq!(
-        state.abyssal_total(),
-        200,
-        "appending a scroll page leaves the DB total untouched"
-      );
-    }
-
-    #[tokio::test]
-    async fn an_abyssal_stat_range_change_without_loaded_templates_is_a_noop() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.abyssal_filters.source_type_id = Some(2410);
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalStatRangeChanged(50, SliderEndpoint::Min, 5.0),
-        &db,
-      );
-
-      assert!(state.abyssal_filters.stat_ranges.is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_clamped_abyssal_stat_range_is_recorded_against_its_attribute() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
-        attribute_id: 50,
-        base_value: 40.0,
-        bound_hi: 56.0,
-        bound_lo: 28.0,
-        display_name: "CPU Output".to_owned(),
-        high_is_good: true,
-        unit_id: Some(115),
-      }]);
-      state.abyssal_filters.source_type_id = Some(2410);
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalStatRangeChanged(50, SliderEndpoint::Min, 35.0),
-        &db,
-      );
-      assert_eq!(state.abyssal_filters.stat_ranges.get(&50), Some(&(35.0, 56.0)));
-    }
-
-    #[tokio::test]
-    async fn committing_a_slider_value_edit_applies_the_typed_bound() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
-        attribute_id: 50,
-        base_value: 40.0,
-        bound_hi: 56.0,
-        bound_lo: 28.0,
-        display_name: "CPU Output".to_owned(),
-        high_is_good: true,
-        unit_id: Some(115),
-      }]);
-      state.abyssal_filters.source_type_id = Some(2410);
-
-      let _ = update(
-        &mut state,
-        Message::AbyssalSliderEditStarted(50, SliderEndpoint::Min, 28.0),
-        &db,
-      );
-      assert_eq!(state.abyssal_slider_edit, Some((50, SliderEndpoint::Min)));
-
-      let _ = update(&mut state, Message::AbyssalSliderEditInput("33".to_owned()), &db);
-      let _ = update(
-        &mut state,
-        Message::AbyssalSliderEditCommitted(50, SliderEndpoint::Min),
-        &db,
-      );
-
-      assert_eq!(state.abyssal_slider_edit, None);
-      assert_eq!(state.abyssal_filters.stat_ranges.get(&50), Some(&(33.0, 56.0)));
     }
   }
 
@@ -2912,51 +2205,6 @@ mod tests {
       ids
     }
 
-    #[test]
-    fn it_resolves_each_selection_level_to_its_location_ids() {
-      let tree = geo_tree();
-
-      assert!(location_ids_for_selection(&tree, GeoSelection::All).is_empty());
-      assert_eq!(
-        location_ids_for_selection(&tree, GeoSelection::Location(60_000_002)),
-        [60_000_002]
-      );
-      assert_eq!(
-        sorted(location_ids_for_selection(&tree, GeoSelection::System(30))),
-        [60_000_001, 60_000_002]
-      );
-      assert_eq!(
-        sorted(location_ids_for_selection(&tree, GeoSelection::Constellation(20))),
-        [60_000_001, 60_000_002, 60_000_003]
-      );
-      assert_eq!(
-        sorted(location_ids_for_selection(&tree, GeoSelection::Region(10))),
-        [60_000_001, 60_000_002, 60_000_003]
-      );
-    }
-
-    #[test]
-    fn it_resolves_an_unknown_selection_to_no_location_ids() {
-      let tree = geo_tree();
-
-      assert!(location_ids_for_selection(&tree, GeoSelection::Region(999)).is_empty());
-      assert!(location_ids_for_selection(&tree, GeoSelection::System(999)).is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_toggles_a_group_expanded_then_collapsed_from_a_collapsed_default() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      let key = GeoNodeKey::Region(10);
-      assert!(state.geo_is_collapsed(key), "groups render collapsed by default");
-
-      let _ = update(&mut state, Message::GeoNodeToggled(key), &db);
-      assert!(!state.geo_is_collapsed(key));
-
-      let _ = update(&mut state, Message::GeoNodeToggled(key), &db);
-      assert!(state.geo_is_collapsed(key));
-    }
-
     #[tokio::test]
     async fn it_records_a_geo_selection() {
       let db = crate::store::open_test().await.unwrap();
@@ -2983,214 +2231,86 @@ mod tests {
         "the scope change re-collapses every group"
       );
     }
+
+    #[test]
+    fn it_resolves_an_unknown_selection_to_no_location_ids() {
+      let tree = geo_tree();
+
+      assert!(location_ids_for_selection(&tree, GeoSelection::Region(999)).is_empty());
+      assert!(location_ids_for_selection(&tree, GeoSelection::System(999)).is_empty());
+    }
+
+    #[test]
+    fn it_resolves_each_selection_level_to_its_location_ids() {
+      let tree = geo_tree();
+
+      assert!(location_ids_for_selection(&tree, GeoSelection::All).is_empty());
+      assert_eq!(
+        location_ids_for_selection(&tree, GeoSelection::Location(60_000_002)),
+        [60_000_002]
+      );
+      assert_eq!(
+        sorted(location_ids_for_selection(&tree, GeoSelection::System(30))),
+        [60_000_001, 60_000_002]
+      );
+      assert_eq!(
+        sorted(location_ids_for_selection(&tree, GeoSelection::Constellation(20))),
+        [60_000_001, 60_000_002, 60_000_003]
+      );
+      assert_eq!(
+        sorted(location_ids_for_selection(&tree, GeoSelection::Region(10))),
+        [60_000_001, 60_000_002, 60_000_003]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_group_expanded_then_collapsed_from_a_collapsed_default() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let key = GeoNodeKey::Region(10);
+      assert!(state.geo_is_collapsed(key), "groups render collapsed by default");
+
+      let _ = update(&mut state, Message::GeoNodeToggled(key), &db);
+      assert!(!state.geo_is_collapsed(key));
+
+      let _ = update(&mut state, Message::GeoNodeToggled(key), &db);
+      assert!(state.geo_is_collapsed(key));
+    }
   }
 
-  mod saved_filter {
-    use pretty_assertions::assert_eq;
-
+  mod load {
     use super::*;
 
-    fn filter(id: i64, name: &str, query: &str, category: Option<&str>) -> SavedAssetFilter {
-      SavedAssetFilter {
-        category: category.map(str::to_owned),
-        id,
-        name: name.to_owned(),
-        query: query.to_owned(),
-      }
-    }
-
     #[tokio::test]
-    async fn it_opens_and_clears_the_modal() {
+    async fn it_loads_an_empty_portfolio_for_a_fresh_db() {
       let db = crate::store::open_test().await.unwrap();
+
+      let loaded = load_assets(db, Scope::All, InventoryView::default()).await;
+
+      assert!(loaded.roster.is_empty());
+      assert_eq!(loaded.totals, InventoryTotals::default());
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    #[test]
+    fn it_ignores_an_unrelated_kind() {
       let mut state = State::new();
-      state.saved_filter_draft_name = "stale".to_owned();
 
-      let _ = update(&mut state, Message::SaveFilterOpened, &db);
+      state.mark_dirty(JobKind::CharacterWallet);
 
-      assert!(state.saved_filter_modal_open());
-      assert_eq!(state.saved_filter_draft_name(), "");
+      assert!(!state.is_dirty());
     }
 
-    #[tokio::test]
-    async fn it_cancels_the_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filter_modal_open = true;
-      state.saved_filter_draft_name = "Jita".to_owned();
-
-      let _ = update(&mut state, Message::SaveFilterCancelled, &db);
-
-      assert!(!state.saved_filter_modal_open());
-      assert_eq!(state.saved_filter_draft_name(), "");
-    }
-
-    #[tokio::test]
-    async fn it_records_the_draft_name() {
-      let db = crate::store::open_test().await.unwrap();
+    #[test]
+    fn it_marks_the_assets_dirty_for_an_asset_sync() {
       let mut state = State::new();
 
-      let _ = update(
-        &mut state,
-        Message::SaveFilterNameChanged("Jita modules".to_owned()),
-        &db,
-      );
+      state.mark_dirty(JobKind::AssetSync);
 
-      assert_eq!(state.saved_filter_draft_name(), "Jita modules");
-    }
-
-    #[tokio::test]
-    async fn confirming_with_an_empty_name_keeps_the_modal_open() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filter_modal_open = true;
-      state.saved_filter_draft_name = "   ".to_owned();
-      state.search = "tritanium".to_owned();
-
-      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
-
-      assert!(state.saved_filter_modal_open());
-    }
-
-    #[tokio::test]
-    async fn confirming_closes_the_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filter_modal_open = true;
-      state.saved_filter_draft_name = "Ships".to_owned();
-      state.category = Category::Ship;
-
-      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
-
-      assert!(!state.saved_filter_modal_open());
-      assert_eq!(state.saved_filter_draft_name(), "");
-    }
-
-    #[tokio::test]
-    async fn a_created_filter_is_recorded_selected_and_clears_the_geo_selection() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.geo_selected = GeoSelection::System(30);
-
-      let _ = update(
-        &mut state,
-        Message::SavedFilterCreated(Some(5), vec![filter(5, "Ships", "category:ship", Some("ship"))]),
-        &db,
-      );
-
-      assert_eq!(state.saved_filters().len(), 1);
-      assert_eq!(state.saved_filter_active(), Some(5));
-      assert_eq!(state.geo_selected(), GeoSelection::All);
-    }
-
-    #[tokio::test]
-    async fn selecting_a_filter_restores_its_query_and_category_and_clears_the_location() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
-      state.geo_selected = GeoSelection::System(30);
-
-      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
-
-      assert_eq!(state.saved_filter_active(), Some(5));
-      assert_eq!(state.search(), "name:Rifter");
-      assert_eq!(state.category(), Category::Module);
-      assert_eq!(state.geo_selected(), GeoSelection::All);
-    }
-
-    #[tokio::test]
-    async fn re_selecting_the_active_filter_clears_it() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
-      state.saved_filter_active = Some(5);
-      state.search = "name:Rifter".to_owned();
-      state.category = Category::Module;
-
-      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
-
-      assert_eq!(state.saved_filter_active(), None);
-      assert_eq!(state.search(), "");
-      assert_eq!(state.category(), Category::All);
-    }
-
-    #[tokio::test]
-    async fn selecting_a_location_clears_the_active_saved_filter() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filter_active = Some(5);
-
-      let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
-
-      assert_eq!(state.saved_filter_active(), None);
-    }
-
-    #[tokio::test]
-    async fn deleting_the_active_filter_clears_the_selection() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
-      state.saved_filter_active = Some(5);
-
-      let _ = update(&mut state, Message::SavedFilterDeleted(5), &db);
-
-      assert_eq!(state.saved_filter_active(), None);
-    }
-
-    #[tokio::test]
-    async fn a_reloaded_list_replaces_the_saved_filters() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filters = vec![filter(1, "Old", "", None)];
-
-      let _ = update(
-        &mut state,
-        Message::SavedFiltersReloaded(vec![filter(2, "New", "name:Rifter", None)]),
-        &db,
-      );
-
-      assert_eq!(state.saved_filters().len(), 1);
-      assert_eq!(state.saved_filters()[0].id(), 2);
-    }
-
-    #[tokio::test]
-    async fn the_capture_preview_prefers_the_query_then_falls_back_to_the_category() {
-      let mut state = State::new();
-      state.search = "  name:Rifter  ".to_owned();
-      assert_eq!(state.save_filter_capture(), "name:Rifter");
-
-      state.search = String::new();
-      state.category = Category::Ship;
-      assert_eq!(state.save_filter_capture(), "category:ship");
-
-      state.category = Category::All;
-      assert_eq!(state.save_filter_capture(), "");
-    }
-
-    #[tokio::test]
-    async fn can_save_is_gated_on_a_query_or_a_non_all_category() {
-      let mut state = State::new();
-      assert!(!state.can_save_filter());
-
-      state.search = "tritanium".to_owned();
-      assert!(state.can_save_filter());
-
-      state.search = String::new();
-      state.category = Category::Module;
-      assert!(state.can_save_filter());
-    }
-
-    #[tokio::test]
-    async fn right_pressing_a_filter_opens_its_context_menu_at_the_cursor() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
-      state.sidebar_cursor = Some(iced::Point::new(12.0, 34.0));
-
-      let _ = update(&mut state, Message::SavedFilterRightPressed(5), &db);
-
-      let menu = state.saved_filter_context_menu().expect("a context menu");
-      assert_eq!(menu.id, 5);
-      assert_eq!(menu.name, "Ships");
+      assert!(state.is_dirty());
     }
   }
 
@@ -3221,29 +2341,6 @@ mod tests {
         unit_price: 100.0,
         value: 100.0,
       }
-    }
-
-    #[tokio::test]
-    async fn it_loads_an_empty_inventory_page_for_a_character_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let roster = vec![pilot(7)];
-      let view = InventoryView::default();
-      let cursor = inv_row(100, false).cursor(view.sort);
-
-      let rows = load_inventory_page(&db, Scope::Character(7), &roster, &[], &view, cursor).await;
-
-      assert!(rows.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_yields_no_rows_when_the_scope_resolves_to_no_owner() {
-      let db = crate::store::open_test().await.unwrap();
-      let view = InventoryView::default();
-      let cursor = inv_row(100, false).cursor(view.sort);
-
-      let rows = load_inventory_page(&db, Scope::Corporation(7), &[], &[], &view, cursor).await;
-
-      assert!(rows.is_empty());
     }
 
     #[tokio::test]
@@ -3306,86 +2403,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_scroll_when_there_are_no_more_pages() {
+    async fn it_drops_expansions_for_items_absent_from_fresh_sync_data() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.inventory = vec![inv_row(100, false)];
-      state.inventory_has_more = false;
+      state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
+      let generation = state.search_generation;
 
       let _ = update(
         &mut state,
-        Message::InventoryScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(!state.inventory_loading, "no load is started when the set is exhausted");
-    }
-
-    #[tokio::test]
-    async fn it_ignores_scroll_below_the_threshold() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.inventory = vec![inv_row(100, false)];
-      state.inventory_has_more = true;
-
-      let _ = update(
-        &mut state,
-        Message::InventoryScrolled {
-          absolute: 0.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert!(!state.inventory_loading);
-    }
-
-    #[tokio::test]
-    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.inventory = vec![inv_row(100, false)];
-
-      let _ = update(
-        &mut state,
-        Message::InventoryScrolled {
-          absolute: 1_234.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert_eq!(
-        state.inventory_scroll_offset(),
-        1_234.0,
-        "the pixel offset is stored so the virtual list can window the body"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_load_when_scrolling_past_the_threshold_with_more_pages() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active = Scope::Character(7);
-      state.inventory = vec![inv_row(100, false)];
-      state.inventory_has_more = true;
-
-      let _ = update(
-        &mut state,
-        Message::InventoryScrolled {
-          absolute: 0.0,
-          relative: 0.9,
+        Message::SyncReloaded {
+          generation,
+          loaded: Box::new(Loaded {
+            inventory: vec![inv_row(200, false)],
+            ..Loaded::default()
+          }),
         },
         &db,
       );
 
       assert!(
-        state.inventory_loading,
-        "crossing the threshold with more pages starts a fetch"
+        !state.container_is_open(100),
+        "an expanded container that vanished from fresh data is dropped"
       );
+      assert!(state.container_children_of(100).is_none());
     }
 
     #[tokio::test]
@@ -3413,27 +2453,81 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_resets_pagination_and_expansion_on_reload() {
+    async fn it_ignores_a_stale_sync_reload_after_the_search_advanced() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
+      let stale_generation = state.search_generation;
+      state.search_generation = state.search_generation.wrapping_add(1);
+      state.totals.items = 3;
 
       let _ = update(
         &mut state,
-        Message::Loaded(Box::new(Loaded {
-          inventory: vec![inv_row(200, false)],
-          ..Loaded::default()
-        })),
+        Message::SyncReloaded {
+          generation: stale_generation,
+          loaded: Box::new(Loaded {
+            totals: InventoryTotals {
+              items: 99,
+              locations: 1,
+              value: 0.0,
+              volume: 0.0,
+            },
+            ..Loaded::default()
+          }),
+        },
         &db,
       );
 
-      assert_eq!(state.inventory.iter().map(|r| r.item_id).collect::<Vec<_>>(), [200]);
-      assert!(
-        state.expanded_containers.is_empty(),
-        "a reload clears stale container expansions"
+      assert_eq!(state.totals.items, 3, "a stale sync reload is discarded");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.inventory = vec![inv_row(100, false)];
+      state.inventory_has_more = true;
+
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
       );
-      assert!(state.container_children_of(100).is_none());
-      assert!(!state.inventory_has_more, "a short first page leaves no more to load");
+
+      assert!(!state.inventory_loading);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_scroll_when_there_are_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.inventory = vec![inv_row(100, false)];
+      state.inventory_has_more = false;
+
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(!state.inventory_loading, "no load is started when the set is exhausted");
+    }
+
+    #[tokio::test]
+    async fn it_loads_an_empty_inventory_page_for_a_character_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let roster = vec![pilot(7)];
+      let view = InventoryView::default();
+      let cursor = inv_row(100, false).cursor(view.sort);
+
+      let rows = load_inventory_page(&db, Scope::Character(7), &roster, &[], &view, cursor).await;
+
+      assert!(rows.is_empty());
     }
 
     #[tokio::test]
@@ -3474,57 +2568,539 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_drops_expansions_for_items_absent_from_fresh_sync_data() {
+    async fn it_resets_pagination_and_expansion_on_reload() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
       state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
-      let generation = state.search_generation;
 
       let _ = update(
         &mut state,
-        Message::SyncReloaded {
-          generation,
-          loaded: Box::new(Loaded {
-            inventory: vec![inv_row(200, false)],
-            ..Loaded::default()
-          }),
+        Message::Loaded(Box::new(Loaded {
+          inventory: vec![inv_row(200, false)],
+          ..Loaded::default()
+        })),
+        &db,
+      );
+
+      assert_eq!(state.inventory.iter().map(|r| r.item_id).collect::<Vec<_>>(), [200]);
+      assert!(
+        state.expanded_containers.is_empty(),
+        "a reload clears stale container expansions"
+      );
+      assert!(state.container_children_of(100).is_none());
+      assert!(!state.inventory_has_more, "a short first page leaves no more to load");
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_load_when_scrolling_past_the_threshold_with_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::Character(7);
+      state.inventory = vec![inv_row(100, false)];
+      state.inventory_has_more = true;
+
+      let _ = update(
+        &mut state,
+        Message::InventoryScrolled {
+          absolute: 0.0,
+          relative: 0.9,
         },
         &db,
       );
 
       assert!(
-        !state.container_is_open(100),
-        "an expanded container that vanished from fresh data is dropped"
+        state.inventory_loading,
+        "crossing the threshold with more pages starts a fetch"
       );
-      assert!(state.container_children_of(100).is_none());
     }
 
     #[tokio::test]
-    async fn it_ignores_a_stale_sync_reload_after_the_search_advanced() {
+    async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      let stale_generation = state.search_generation;
-      state.search_generation = state.search_generation.wrapping_add(1);
-      state.totals.items = 3;
+      state.inventory = vec![inv_row(100, false)];
 
       let _ = update(
         &mut state,
-        Message::SyncReloaded {
-          generation: stale_generation,
-          loaded: Box::new(Loaded {
-            totals: InventoryTotals {
-              items: 99,
-              locations: 1,
-              value: 0.0,
-              volume: 0.0,
-            },
-            ..Loaded::default()
-          }),
+        Message::InventoryScrolled {
+          absolute: 1_234.0,
+          relative: 0.5,
         },
         &db,
       );
 
-      assert_eq!(state.totals.items, 3, "a stale sync reload is discarded");
+      assert_eq!(
+        state.inventory_scroll_offset(),
+        1_234.0,
+        "the pixel offset is stored so the virtual list can window the body"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_yields_no_rows_when_the_scope_resolves_to_no_owner() {
+      let db = crate::store::open_test().await.unwrap();
+      let view = InventoryView::default();
+      let cursor = inv_row(100, false).cursor(view.sort);
+
+      let rows = load_inventory_page(&db, Scope::Corporation(7), &[], &[], &view, cursor).await;
+
+      assert!(rows.is_empty());
+    }
+  }
+
+  mod panes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_both_pane_widths_when_the_store_is_empty() {
+      let state = State::new().with_restored_panes(&UiState::default());
+
+      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH);
+      assert_eq!(state.pane(Pane::AbyssalsFilter).width(), ABYSSALS_FILTER_DEFAULT_WIDTH);
+    }
+
+    #[test]
+    fn it_does_not_listen_for_drag_events_while_no_pane_is_active() {
+      let state = State::new();
+
+      let _sub: iced::Subscription<Message> = subscription(&state);
+    }
+
+    #[test]
+    fn it_listens_for_drag_events_while_the_abyssals_filter_pane_is_active() {
+      let mut state = State::new();
+      state.abyssals_filter.start();
+
+      let _sub: iced::Subscription<Message> = subscription(&state);
+    }
+
+    #[test]
+    fn it_persists_the_settled_width_under_the_matching_pane_key() {
+      let mut state = State::new();
+      assert_eq!(state.pane_mut(Pane::Sidebar).1, SIDEBAR_PANE_KEY);
+      assert_eq!(state.pane_mut(Pane::AbyssalsFilter).1, ABYSSALS_FILTER_PANE_KEY);
+    }
+
+    #[test]
+    fn it_reports_the_active_drag_pane_only_while_dragging() {
+      let mut state = State::new();
+      assert!(state.active_drag().is_none());
+
+      state.sidebar.start();
+      assert_eq!(state.active_drag(), Some(Pane::Sidebar));
+
+      state.sidebar.end();
+      state.abyssals_filter.start();
+      assert_eq!(state.active_drag(), Some(Pane::AbyssalsFilter));
+    }
+
+    #[tokio::test]
+    async fn it_resizes_the_sidebar_during_a_drag_and_settles_its_width() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PaneDragStart(Pane::Sidebar), &db);
+      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(560.0), &db);
+      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH + 60.0);
+      assert!(state.pane(Pane::Sidebar).is_active());
+
+      let _task = update(&mut state, Message::PaneDragEnd, &db);
+      assert!(!state.pane(Pane::Sidebar).is_active());
+      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH + 60.0);
+    }
+
+    #[test]
+    fn it_restores_both_pane_widths_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert(SIDEBAR_PANE_KEY.to_owned(), 360.0);
+      ui.panes.insert(ABYSSALS_FILTER_PANE_KEY.to_owned(), 200.0);
+
+      let state = State::new().with_restored_panes(&ui);
+
+      assert_eq!(state.pane(Pane::Sidebar).width(), 360.0);
+      assert_eq!(state.pane(Pane::AbyssalsFilter).width(), 200.0);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_drag_solely_to_the_active_abyssals_filter_pane() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PaneDragStart(Pane::AbyssalsFilter), &db);
+      let _ = update(&mut state, Message::PaneDrag(400.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(370.0), &db);
+      assert_eq!(
+        state.pane(Pane::AbyssalsFilter).width(),
+        ABYSSALS_FILTER_DEFAULT_WIDTH - 30.0
+      );
+      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH);
+
+      let _task = update(&mut state, Message::PaneDragEnd, &db);
+      assert!(!state.pane(Pane::AbyssalsFilter).is_active());
+    }
+  }
+
+  mod resolve_scope_owner {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_aggregates_the_all_scope_across_every_owned_character_and_corporation() {
+      assert_eq!(
+        resolve_scope_owner(Scope::All, &[pilot(7), pilot(9)], &[corp(98)]),
+        Some(Owner::Combined {
+          character_ids: vec![7, 9],
+          corporation_ids: vec![98],
+        })
+      );
+    }
+
+    #[test]
+    fn it_resolves_a_character_scope_to_that_character() {
+      assert_eq!(
+        resolve_scope_owner(Scope::Character(7), &[], &[]),
+        Some(Owner::Character(7))
+      );
+    }
+
+    #[test]
+    fn it_resolves_a_known_corporation_scope_to_that_corporation() {
+      assert_eq!(
+        resolve_scope_owner(Scope::Corporation(98), &[], &[corp(98)]),
+        Some(Owner::Corporation(98))
+      );
+    }
+
+    #[test]
+    fn it_resolves_an_unknown_corporation_scope_to_none() {
+      assert_eq!(resolve_scope_owner(Scope::Corporation(404), &[], &[corp(98)]), None);
+    }
+
+    #[test]
+    fn it_resolves_the_all_scope_with_no_owned_characters_to_the_corporations_alone() {
+      assert_eq!(
+        resolve_scope_owner(Scope::All, &[], &[corp(98)]),
+        Some(Owner::Combined {
+          character_ids: vec![],
+          corporation_ids: vec![98],
+        })
+      );
+    }
+  }
+
+  mod saved_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn filter(id: i64, name: &str, query: &str, category: Option<&str>) -> SavedAssetFilter {
+      SavedAssetFilter {
+        category: category.map(str::to_owned),
+        id,
+        name: name.to_owned(),
+        query: query.to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn a_created_filter_is_recorded_selected_and_clears_the_geo_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.geo_selected = GeoSelection::System(30);
+
+      let _ = update(
+        &mut state,
+        Message::SavedFilterCreated(Some(5), vec![filter(5, "Ships", "category:ship", Some("ship"))]),
+        &db,
+      );
+
+      assert_eq!(state.saved_filters().len(), 1);
+      assert_eq!(state.saved_filter_active(), Some(5));
+      assert_eq!(state.geo_selected(), GeoSelection::All);
+    }
+
+    #[tokio::test]
+    async fn a_reloaded_list_replaces_the_saved_filters() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(1, "Old", "", None)];
+
+      let _ = update(
+        &mut state,
+        Message::SavedFiltersReloaded(vec![filter(2, "New", "name:Rifter", None)]),
+        &db,
+      );
+
+      assert_eq!(state.saved_filters().len(), 1);
+      assert_eq!(state.saved_filters()[0].id(), 2);
+    }
+
+    #[tokio::test]
+    async fn can_save_is_gated_on_a_query_or_a_non_all_category() {
+      let mut state = State::new();
+      assert!(!state.can_save_filter());
+
+      state.search = "tritanium".to_owned();
+      assert!(state.can_save_filter());
+
+      state.search = String::new();
+      state.category = Category::Module;
+      assert!(state.can_save_filter());
+    }
+
+    #[tokio::test]
+    async fn confirming_closes_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "Ships".to_owned();
+      state.category = Category::Ship;
+
+      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
+
+      assert!(!state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn confirming_with_an_empty_name_keeps_the_modal_open() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "   ".to_owned();
+      state.search = "tritanium".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterConfirmed, &db);
+
+      assert!(state.saved_filter_modal_open());
+    }
+
+    #[tokio::test]
+    async fn deleting_the_active_filter_clears_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
+      state.saved_filter_active = Some(5);
+
+      let _ = update(&mut state, Message::SavedFilterDeleted(5), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+    }
+
+    #[tokio::test]
+    async fn it_cancels_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_modal_open = true;
+      state.saved_filter_draft_name = "Jita".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterCancelled, &db);
+
+      assert!(!state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_clears_the_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_draft_name = "stale".to_owned();
+
+      let _ = update(&mut state, Message::SaveFilterOpened, &db);
+
+      assert!(state.saved_filter_modal_open());
+      assert_eq!(state.saved_filter_draft_name(), "");
+    }
+
+    #[tokio::test]
+    async fn it_records_the_draft_name() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::SaveFilterNameChanged("Jita modules".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.saved_filter_draft_name(), "Jita modules");
+    }
+
+    #[tokio::test]
+    async fn re_selecting_the_active_filter_clears_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
+      state.saved_filter_active = Some(5);
+      state.search = "name:Rifter".to_owned();
+      state.category = Category::Module;
+
+      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+      assert_eq!(state.search(), "");
+      assert_eq!(state.category(), Category::All);
+    }
+
+    #[tokio::test]
+    async fn right_pressing_a_filter_opens_its_context_menu_at_the_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
+      state.sidebar_cursor = Some(iced::Point::new(12.0, 34.0));
+
+      let _ = update(&mut state, Message::SavedFilterRightPressed(5), &db);
+
+      let menu = state.saved_filter_context_menu().expect("a context menu");
+      assert_eq!(menu.id, 5);
+      assert_eq!(menu.name, "Ships");
+    }
+
+    #[tokio::test]
+    async fn selecting_a_filter_restores_its_query_and_category_and_clears_the_location() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
+      state.geo_selected = GeoSelection::System(30);
+
+      let _ = update(&mut state, Message::SavedFilterSelected(5), &db);
+
+      assert_eq!(state.saved_filter_active(), Some(5));
+      assert_eq!(state.search(), "name:Rifter");
+      assert_eq!(state.category(), Category::Module);
+      assert_eq!(state.geo_selected(), GeoSelection::All);
+    }
+
+    #[tokio::test]
+    async fn selecting_a_location_clears_the_active_saved_filter() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.saved_filter_active = Some(5);
+
+      let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
+
+      assert_eq!(state.saved_filter_active(), None);
+    }
+
+    #[tokio::test]
+    async fn the_capture_preview_prefers_the_query_then_falls_back_to_the_category() {
+      let mut state = State::new();
+      state.search = "  name:Rifter  ".to_owned();
+      assert_eq!(state.save_filter_capture(), "name:Rifter");
+
+      state.search = String::new();
+      state.category = Category::Ship;
+      assert_eq!(state.save_filter_capture(), "category:ship");
+
+      state.category = Category::All;
+      assert_eq!(state.save_filter_capture(), "");
+    }
+  }
+
+  mod scope_gate {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_does_not_gate_a_character_with_the_asset_scopes() {
+      let granted = crate::features::registry::descriptor(crate::config::Feature::AssetTracking)
+        .scopes
+        .join(" ");
+      let mut granted_pilot = pilot(1);
+      granted_pilot.granted_scopes = Some(granted);
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::Character(1), vec![granted_pilot], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_does_not_gate_the_all_or_corporation_scopes() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![pilot(1)], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+
+      state.set_picker_for_test(Scope::Corporation(99), vec![pilot(1)], Vec::new());
+
+      assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_gates_a_character_scope_missing_the_asset_scopes() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::Character(1), vec![pilot(1)], Vec::new());
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 1);
+      assert!(!gate.2.is_empty());
+    }
+  }
+
+  mod stale_images {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fresh_pilot(id: i64) -> RosterPilot {
+      RosterPilot {
+        corp: "TST".to_owned(),
+        granted_scopes: None,
+        id,
+        name: format!("Pilot {id}"),
+        portrait: images::ImageState::Fresh(std::path::PathBuf::from(format!("/cache/{id}.jpg"))),
+      }
+    }
+
+    #[test]
+    fn it_collects_stale_portraits_logos_and_abyssal_cards() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![pilot(7), fresh_pilot(9)], vec![corp(98)]);
+      state.set_abyssals_for_test(
+        vec![abyssals::AbyssalCard {
+          character_id: 11,
+          estimate: None,
+          group_type_id: 2410,
+          item_id: 1,
+          location: String::new(),
+          module_name: "Module".to_owned(),
+          owner_name: "Vex".to_owned(),
+          portrait: images::ImageState::Stale {
+            id: 11,
+            kind: images::ImageKind::CharacterPortrait,
+          },
+          price_unavailable: false,
+          stats: Vec::new(),
+          tier_label: "Gravid".to_owned(),
+          type_icon: images::IconResolution::Missing,
+        }],
+        Vec::new(),
+        abyssals::Filters::default(),
+        false,
+      );
+
+      assert_eq!(
+        state.stale_images(),
+        vec![
+          (images::ImageKind::CharacterPortrait, 7),
+          (images::ImageKind::CorporationLogo, 98),
+          (images::ImageKind::CharacterPortrait, 11),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_is_empty_when_every_model_is_fresh() {
+      let mut state = State::new();
+      state.set_picker_for_test(Scope::All, vec![fresh_pilot(7)], Vec::new());
+
+      assert_eq!(state.stale_images(), Vec::new());
     }
   }
 
@@ -3548,103 +3124,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_opens_a_blank_editor_then_closes_it() {
+    async fn deleting_spawns_a_reload_and_reloaded_cards_replace_state() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
+      state.stockpiles = vec![card(1, "Old")];
 
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      assert!(state.stockpile_editor.is_some());
+      let _task = update(&mut state, Message::StockpileDeleted(1), &db);
 
-      let _ = update(&mut state, Message::StockpileEditorClosed, &db);
-      assert!(state.stockpile_editor.is_none());
+      let _ = update(&mut state, Message::StockpilesReloaded(vec![card(2, "New")]), &db);
+      assert_eq!(state.stockpiles, vec![card(2, "New")]);
     }
 
     #[tokio::test]
-    async fn it_opens_an_editor_prefilled_from_an_existing_card() {
+    async fn it_confirms_an_import_by_prefilling_the_editor_and_closing_the_panel() {
+      use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
+
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.stockpiles = vec![card(7, "Ammo")];
-
-      let _ = update(&mut state, Message::StockpileEditStarted(7), &db);
-      assert_eq!(state.stockpile_editor.as_ref().map(|e| e.name()), Some("Ammo"));
-
-      let _ = update(&mut state, Message::StockpileEditStarted(404), &db);
-      assert!(state.stockpile_editor.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_opens_a_context_menu_at_the_cursor_then_closes_it() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.stockpiles = vec![card(7, "Ammo")];
-
+      let _ = update(&mut state, Message::StockpileImportOpened, &db);
       let _ = update(
         &mut state,
-        Message::StockpileCursorMoved(iced::Point::new(20.0, 40.0)),
+        Message::StockpileImportResolved(MultibuyResolution {
+          matched: vec![MultibuyMatch {
+            name: "Tritanium".to_owned(),
+            quantity: 100,
+            type_id: 34,
+          }],
+          unmatched: Vec::new(),
+        }),
         &db,
       );
-      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
-      assert_eq!(state.stockpile_context_menu.as_ref().map(|menu| menu.id), Some(7));
 
-      let _ = update(&mut state, Message::StockpileContextMenuClosed, &db);
-      assert!(state.stockpile_context_menu.is_none());
-    }
+      let _ = update(&mut state, Message::StockpileImportConfirmed, &db);
 
-    #[tokio::test]
-    async fn it_ignores_a_right_press_without_a_cursor_anchor() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.stockpiles = vec![card(7, "Ammo")];
-
-      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
-
-      assert!(state.stockpile_context_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_toggles_a_card_expanded_then_collapsed() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
-      assert!(state.stockpile_expanded.contains(&7));
-
-      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
-      assert!(!state.stockpile_expanded.contains(&7));
-    }
-
-    #[tokio::test]
-    async fn it_opens_changes_and_closes_the_multibuy_export() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.stockpiles = vec![card(7, "Ammo")];
-
-      let _ = update(&mut state, Message::StockpileMultibuyExportOpened(7), &db);
-      assert_eq!(state.stockpile_multibuy_export, Some(7));
-      assert!(!state.stockpile_multibuy_copied);
-
-      let _ = update(
-        &mut state,
-        Message::StockpileMultibuyModeChanged(stockpiles::MultibuyMode::Remaining),
-        &db,
-      );
-      assert_eq!(state.stockpile_multibuy_mode, stockpiles::MultibuyMode::Remaining);
-
-      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(7), &db);
-      assert!(state.stockpile_multibuy_copied);
-
-      let _ = update(&mut state, Message::StockpileMultibuyExportClosed, &db);
-      assert!(state.stockpile_multibuy_export.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_multibuy_copy_for_an_unknown_card() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(404), &db);
-
-      assert!(!state.stockpile_multibuy_copied);
+      assert!(state.stockpile_import.is_none());
+      let editor = state.stockpile_editor.as_ref().expect("confirm seeds an editor");
+      assert!(editor.items().iter().any(|item| item.type_id == Some(34)));
     }
 
     #[tokio::test]
@@ -3682,6 +3197,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_ignores_a_multibuy_copy_for_an_unknown_card() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(404), &db);
+
+      assert!(!state.stockpile_multibuy_copied);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_right_press_without_a_cursor_anchor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
+
+      assert!(state.stockpile_context_menu.is_none());
+    }
+
+    #[tokio::test]
     async fn it_ignores_editor_edits_when_no_editor_is_open() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
@@ -3703,34 +3239,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saving_with_no_open_editor_is_a_noop() {
+    async fn it_opens_a_blank_editor_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::StockpileEditorSaved, &db);
-      assert!(state.stockpile_editor.is_none());
-    }
-
-    #[tokio::test]
-    async fn saving_an_open_editor_clears_it_and_spawns_a_reload() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
       let _ = update(&mut state, Message::StockpileNew, &db);
+      assert!(state.stockpile_editor.is_some());
 
-      let _task = update(&mut state, Message::StockpileEditorSaved, &db);
+      let _ = update(&mut state, Message::StockpileEditorClosed, &db);
       assert!(state.stockpile_editor.is_none());
     }
 
     #[tokio::test]
-    async fn deleting_spawns_a_reload_and_reloaded_cards_replace_state() {
+    async fn it_opens_a_context_menu_at_the_cursor_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.stockpiles = vec![card(1, "Old")];
+      state.stockpiles = vec![card(7, "Ammo")];
 
-      let _task = update(&mut state, Message::StockpileDeleted(1), &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileCursorMoved(iced::Point::new(20.0, 40.0)),
+        &db,
+      );
+      let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
+      assert_eq!(state.stockpile_context_menu.as_ref().map(|menu| menu.id), Some(7));
 
-      let _ = update(&mut state, Message::StockpilesReloaded(vec![card(2, "New")]), &db);
-      assert_eq!(state.stockpiles, vec![card(2, "New")]);
+      let _ = update(&mut state, Message::StockpileContextMenuClosed, &db);
+      assert!(state.stockpile_context_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_opens_an_editor_prefilled_from_an_existing_card() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(&mut state, Message::StockpileEditStarted(7), &db);
+      assert_eq!(state.stockpile_editor.as_ref().map(|e| e.name()), Some("Ammo"));
+
+      let _ = update(&mut state, Message::StockpileEditStarted(404), &db);
+      assert!(state.stockpile_editor.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_opens_changes_and_closes_the_multibuy_export() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.stockpiles = vec![card(7, "Ammo")];
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportOpened(7), &db);
+      assert_eq!(state.stockpile_multibuy_export, Some(7));
+      assert!(!state.stockpile_multibuy_copied);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileMultibuyModeChanged(stockpiles::MultibuyMode::Remaining),
+        &db,
+      );
+      assert_eq!(state.stockpile_multibuy_mode, stockpiles::MultibuyMode::Remaining);
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportCopied(7), &db);
+      assert!(state.stockpile_multibuy_copied);
+
+      let _ = update(&mut state, Message::StockpileMultibuyExportClosed, &db);
+      assert!(state.stockpile_multibuy_export.is_none());
     }
 
     #[tokio::test]
@@ -3755,56 +3327,572 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_confirms_an_import_by_prefilling_the_editor_and_closing_the_panel() {
-      use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
-
+    async fn it_toggles_a_card_expanded_then_collapsed() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      let _ = update(&mut state, Message::StockpileImportOpened, &db);
+
+      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
+      assert!(state.stockpile_expanded.contains(&7));
+
+      let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
+      assert!(!state.stockpile_expanded.contains(&7));
+    }
+
+    #[tokio::test]
+    async fn saving_an_open_editor_clears_it_and_spawns_a_reload() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      let _task = update(&mut state, Message::StockpileEditorSaved, &db);
+      assert!(state.stockpile_editor.is_none());
+    }
+
+    #[tokio::test]
+    async fn saving_with_no_open_editor_is_a_noop() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::StockpileEditorSaved, &db);
+      assert!(state.stockpile_editor.is_none());
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn loaded_with_items(items: i64) -> Box<Loaded> {
+      Box::new(Loaded {
+        corporations: vec![],
+        geo_tree: GeoTree::default(),
+        inventory: vec![],
+        roster: vec![],
+        saved_filters: vec![],
+        totals: InventoryTotals {
+          items,
+          locations: 1,
+          value: 0.0,
+          volume: 0.0,
+        },
+        values: values::ValueSummary::default(),
+        nav: tracker::NavSeries::default(),
+        stockpiles: vec![],
+        abyssals: abyssals::AbyssalsData::default(),
+      })
+    }
+
+    fn abyssal_cards(count: usize) -> Vec<abyssals::AbyssalCard> {
+      (0..count)
+        .map(|i| abyssals::AbyssalCard {
+          character_id: 1,
+          estimate: None,
+          group_type_id: 2410,
+          item_id: i as i64,
+          location: String::new(),
+          module_name: "Module".to_owned(),
+          owner_name: "Vex".to_owned(),
+          portrait: images::ImageState::Stale {
+            id: 1,
+            kind: images::ImageKind::CharacterPortrait,
+          },
+          price_unavailable: false,
+          stats: Vec::new(),
+          tier_label: "Gravid".to_owned(),
+          type_icon: images::IconResolution::Missing,
+        })
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn a_clamped_abyssal_stat_range_is_recorded_against_its_attribute() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
+        attribute_id: 50,
+        base_value: 40.0,
+        bound_hi: 56.0,
+        bound_lo: 28.0,
+        display_name: "CPU Output".to_owned(),
+        high_is_good: true,
+        unit_id: Some(115),
+      }]);
+      state.abyssal_filters.source_type_id = Some(2410);
+
       let _ = update(
         &mut state,
-        Message::StockpileImportResolved(MultibuyResolution {
-          matched: vec![MultibuyMatch {
-            name: "Tritanium".to_owned(),
-            quantity: 100,
-            type_id: 34,
-          }],
-          unmatched: Vec::new(),
+        Message::AbyssalStatRangeChanged(50, SliderEndpoint::Min, 35.0),
+        &db,
+      );
+      assert_eq!(state.abyssal_filters.stat_ranges.get(&50), Some(&(35.0, 56.0)));
+    }
+
+    #[tokio::test]
+    async fn a_loaded_page_is_appended_and_clears_has_more_for_a_short_page() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+
+      // A short page (fewer than PAGE_SIZE) means the set is exhausted.
+      let epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(10),
+          epoch,
+        },
+        &db,
+      );
+
+      assert_eq!(state.abyssals().len(), 70, "the page is appended to the loaded set");
+      assert!(!state.abyssal_has_more(), "a short page leaves no more to load");
+      assert!(!state.abyssal_loading());
+    }
+
+    #[tokio::test]
+    async fn a_scroll_append_does_not_clobber_the_abyssal_total() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
+          total: 200,
+        }),
+        &db,
+      );
+      state.set_abyssal_pagination_for_test(true, true);
+
+      let epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(10),
+          epoch,
+        },
+        &db,
+      );
+
+      assert_eq!(
+        state.abyssal_total(),
+        200,
+        "appending a scroll page leaves the DB total untouched"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_stale_abyssal_page_is_dropped_after_the_set_is_reloaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+
+      // The user scrolled (capturing the epoch) then changed the filter, which reloads the set and
+      // bumps the epoch.
+      let stale_epoch = state.abyssal_page_epoch.current();
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(10),
+          total: 10,
         }),
         &db,
       );
 
-      let _ = update(&mut state, Message::StockpileImportConfirmed, &db);
+      let _ = update(
+        &mut state,
+        Message::AbyssalPageLoaded {
+          cards: abyssal_cards(5),
+          epoch: stale_epoch,
+        },
+        &db,
+      );
 
-      assert!(state.stockpile_import.is_none());
-      let editor = state.stockpile_editor.as_ref().expect("confirm seeds an editor");
-      assert!(editor.items().iter().any(|item| item.type_id == Some(34)));
+      assert_eq!(
+        state.abyssals().len(),
+        10,
+        "a page from the superseded filter must not append foreign cards"
+      );
     }
-  }
-
-  mod load {
-    use super::*;
 
     #[tokio::test]
-    async fn it_loads_an_empty_portfolio_for_a_fresh_db() {
+    async fn an_abyssal_stat_range_change_without_loaded_templates_is_a_noop() {
       let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.abyssal_filters.source_type_id = Some(2410);
 
-      let loaded = load_assets(db, Scope::All, InventoryView::default()).await;
+      let _ = update(
+        &mut state,
+        Message::AbyssalStatRangeChanged(50, SliderEndpoint::Min, 5.0),
+        &db,
+      );
 
-      assert!(loaded.roster.is_empty());
-      assert_eq!(loaded.totals, InventoryTotals::default());
+      assert!(state.abyssal_filters.stat_ranges.is_empty());
+    }
+
+    #[tokio::test]
+    async fn committing_a_slider_value_edit_applies_the_typed_bound() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
+        attribute_id: 50,
+        base_value: 40.0,
+        bound_hi: 56.0,
+        bound_lo: 28.0,
+        display_name: "CPU Output".to_owned(),
+        high_is_good: true,
+        unit_id: Some(115),
+      }]);
+      state.abyssal_filters.source_type_id = Some(2410);
+
+      let _ = update(
+        &mut state,
+        Message::AbyssalSliderEditStarted(50, SliderEndpoint::Min, 28.0),
+        &db,
+      );
+      assert_eq!(state.abyssal_slider_edit, Some((50, SliderEndpoint::Min)));
+
+      let _ = update(&mut state, Message::AbyssalSliderEditInput("33".to_owned()), &db);
+      let _ = update(
+        &mut state,
+        Message::AbyssalSliderEditCommitted(50, SliderEndpoint::Min),
+        &db,
+      );
+
+      assert_eq!(state.abyssal_slider_edit, None);
+      assert_eq!(state.abyssal_filters.stat_ranges.get(&50), Some(&(33.0, 56.0)));
+    }
+
+    #[tokio::test]
+    async fn it_applies_search_results_for_the_current_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.search_generation = 7;
+      state.totals.items = 99;
+
+      let _ = update(
+        &mut state,
+        Message::SearchReloaded {
+          generation: 7,
+          loaded: loaded_with_items(5),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 5);
+    }
+
+    #[tokio::test]
+    async fn it_bumps_the_search_generation_on_each_keystroke() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("r".to_owned()), &db);
+      let _ = update(&mut state, Message::SearchChanged("ri".to_owned()), &db);
+
+      assert_eq!(state.search_generation, 2);
+    }
+
+    #[tokio::test]
+    async fn it_covers_the_remaining_inventory_message_branches() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::AssetChartHovered(Some(0.5)), &db);
+      assert_eq!(state.chart_hover, Some(0.5));
+
+      let _ = update(&mut state, Message::InventoryHelpToggled, &db);
+      assert!(state.inventory_help_open);
+
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+      assert_eq!(state.category, Category::Ship);
+
+      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
+      let _ = update(&mut state, Message::SortSelected(SortColumn::Name), &db);
+      assert_eq!(state.sort_dir, SortDirection::Ascending);
+
+      let active = state.active;
+      let _ = update(&mut state, Message::ScopeSelected(active), &db);
+      assert_eq!(state.active, active);
+
+      let _ = update(&mut state, Message::SearchSubmitted, &db);
+      let _ = update(&mut state, Message::FilterExamplePicked("ship"), &db);
+      assert!(!state.inventory_help_open);
+    }
+
+    #[tokio::test]
+    async fn it_drops_search_results_from_a_superseded_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.search_generation = 8;
+      state.totals.items = 99;
+
+      let _ = update(
+        &mut state,
+        Message::SearchReloaded {
+          generation: 7,
+          loaded: loaded_with_items(5),
+        },
+        &db,
+      );
+
+      assert_eq!(state.totals.items, 99, "a stale keystroke's result is ignored");
+    }
+
+    #[tokio::test]
+    async fn it_invalidates_in_flight_searches_when_a_discrete_reload_runs() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("rifter".to_owned()), &db);
+      let stale_generation = state.search_generation;
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+
+      assert_ne!(
+        state.search_generation, stale_generation,
+        "changing category supersedes the pending search"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_records_the_loaded_roster_and_totals() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Loaded {
+          corporations: vec![corp(98)],
+          geo_tree: GeoTree::default(),
+          inventory: vec![],
+          roster: vec![pilot(7)],
+          saved_filters: vec![],
+          totals: InventoryTotals {
+            items: 5,
+            locations: 2,
+            value: 100.0,
+            volume: 50.0,
+          },
+          values: values::ValueSummary::default(),
+          nav: tracker::NavSeries::default(),
+          stockpiles: vec![],
+          abyssals: abyssals::AbyssalsData::default(),
+        })),
+        &db,
+      );
+
+      assert_eq!(state.roster, vec![pilot(7)]);
+      assert_eq!(state.corporations, vec![corp(98)]);
+      assert_eq!(state.totals.items, 5);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_search_string() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
+      assert_eq!(state.search, "tritanium");
+    }
+
+    #[tokio::test]
+    async fn it_records_the_selected_inventory_category() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
+      assert_eq!(state.category, Category::Ship);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_selected_scope_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.picker_open = true;
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
+
+      assert_eq!(state.active, Scope::Character(42));
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::TabSelected(Tab::Values), &db);
+      assert_eq!(state.tab, Tab::Values);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_abyssal_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::AbyssalPickerToggled, &db);
+      assert!(state.abyssal_picker_open);
+      let _ = update(&mut state, Message::AbyssalPickerToggled, &db);
+      assert!(!state.abyssal_picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_picker_open_and_closed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn reloading_cards_replaces_the_set_and_resets_pagination() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 999.0,
+          relative: 0.9,
+        },
+        &db,
+      );
+
+      // A reload that returns a full page keeps has_more true and clears loading/offset.
+      let _ = update(
+        &mut state,
+        Message::AbyssalCardsReloaded(abyssals::FilteredCards {
+          cards: abyssal_cards(abyssals::PAGE_SIZE as usize),
+          total: 137,
+        }),
+        &db,
+      );
+
+      assert_eq!(state.abyssals().len(), abyssals::PAGE_SIZE as usize);
+      assert_eq!(state.abyssal_total(), 137, "the reload feeds the filter-aware DB total");
+      assert!(state.abyssal_has_more(), "a full reload page implies more to load");
+      assert!(!state.abyssal_loading());
+      assert_eq!(
+        state.abyssal_scroll_offset(),
+        0.0,
+        "a reload returns the grid to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn resetting_the_abyssal_filters_clears_type_and_ranges() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.abyssal_filters.source_type_id = Some(2410);
+      state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
+
+      let _ = update(&mut state, Message::AbyssalFilterReset, &db);
+
+      assert_eq!(state.abyssal_filters, abyssals::Filters::default());
+    }
+
+    #[tokio::test]
+    async fn scrolling_below_the_threshold_only_tracks_the_offset() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, false);
+
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 120.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert!(!state.abyssal_loading(), "a shallow scroll does not page");
+      assert_eq!(state.abyssal_scroll_offset(), 120.0);
+    }
+
+    #[tokio::test]
+    async fn scrolling_does_not_load_when_already_loading_or_exhausted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+
+      // No more pages: a threshold scroll must not start a load.
+      state.set_abyssal_pagination_for_test(false, false);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+      assert!(!state.abyssal_loading(), "no load is started once the set is exhausted");
+
+      // Already loading: a second threshold scroll must not start a duplicate load.
+      state.set_abyssal_pagination_for_test(true, true);
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+      assert!(state.abyssal_loading());
+    }
+
+    #[tokio::test]
+    async fn scrolling_past_the_threshold_starts_loading_the_next_page() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
+      state.set_abyssal_pagination_for_test(true, false);
+
+      let _ = update(
+        &mut state,
+        Message::AbyssalGridScrolled {
+          absolute: 2_000.0,
+          relative: 0.9,
+        },
+        &db,
+      );
+
+      assert!(state.abyssal_loading(), "crossing the threshold begins a page load");
+      assert_eq!(
+        state.abyssal_scroll_offset(),
+        2_000.0,
+        "the pixel offset is tracked for windowing"
+      );
+    }
+
+    #[tokio::test]
+    async fn selecting_an_abyssal_source_type_records_it_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.abyssal_picker_open = true;
+      state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
+
+      let _ = update(&mut state, Message::AbyssalSourceTypeSelected(Some(2410)), &db);
+
+      assert_eq!(state.abyssal_filters.source_type_id, Some(2410));
+      assert!(state.abyssal_filters.stat_ranges.is_empty());
+      assert!(!state.abyssal_picker_open);
     }
   }
 
   mod view {
     use super::*;
-
-    #[test]
-    fn it_renders_the_empty_state_before_any_load() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
 
     #[test]
     fn it_renders_a_loaded_state() {
@@ -3822,6 +3910,16 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_abyssal_picker_modal_overlay() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1)];
+      state.tab = Tab::Abyssals;
+      state.abyssal_picker_open = true;
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
     fn it_renders_the_abyssals_tab_with_its_resizable_filter_rail() {
       let mut state = State::new();
       state.roster = vec![pilot(1)];
@@ -3831,10 +3929,8 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_scope_picker_overlay() {
-      let mut state = State::new();
-      state.roster = vec![pilot(1)];
-      state.picker_open = true;
+    fn it_renders_the_empty_state_before_any_load() {
+      let state = State::new();
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
     }
@@ -3850,11 +3946,10 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_abyssal_picker_modal_overlay() {
+    fn it_renders_the_scope_picker_overlay() {
       let mut state = State::new();
       state.roster = vec![pilot(1)];
-      state.tab = Tab::Abyssals;
-      state.abyssal_picker_open = true;
+      state.picker_open = true;
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
     }
@@ -3871,101 +3966,6 @@ mod tests {
       });
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
-    }
-  }
-
-  mod panes {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_defaults_both_pane_widths_when_the_store_is_empty() {
-      let state = State::new().with_restored_panes(&UiState::default());
-
-      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH);
-      assert_eq!(state.pane(Pane::AbyssalsFilter).width(), ABYSSALS_FILTER_DEFAULT_WIDTH);
-    }
-
-    #[test]
-    fn it_does_not_listen_for_drag_events_while_no_pane_is_active() {
-      let state = State::new();
-
-      let _sub: iced::Subscription<Message> = subscription(&state);
-    }
-
-    #[test]
-    fn it_listens_for_drag_events_while_the_abyssals_filter_pane_is_active() {
-      let mut state = State::new();
-      state.abyssals_filter.start();
-
-      let _sub: iced::Subscription<Message> = subscription(&state);
-    }
-
-    #[test]
-    fn it_restores_both_pane_widths_from_the_keyed_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert(SIDEBAR_PANE_KEY.to_owned(), 360.0);
-      ui.panes.insert(ABYSSALS_FILTER_PANE_KEY.to_owned(), 200.0);
-
-      let state = State::new().with_restored_panes(&ui);
-
-      assert_eq!(state.pane(Pane::Sidebar).width(), 360.0);
-      assert_eq!(state.pane(Pane::AbyssalsFilter).width(), 200.0);
-    }
-
-    #[tokio::test]
-    async fn it_resizes_the_sidebar_during_a_drag_and_settles_its_width() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PaneDragStart(Pane::Sidebar), &db);
-      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
-      let _ = update(&mut state, Message::PaneDrag(560.0), &db);
-      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH + 60.0);
-      assert!(state.pane(Pane::Sidebar).is_active());
-
-      let _task = update(&mut state, Message::PaneDragEnd, &db);
-      assert!(!state.pane(Pane::Sidebar).is_active());
-      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH + 60.0);
-    }
-
-    #[tokio::test]
-    async fn it_routes_a_drag_solely_to_the_active_abyssals_filter_pane() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PaneDragStart(Pane::AbyssalsFilter), &db);
-      let _ = update(&mut state, Message::PaneDrag(400.0), &db);
-      let _ = update(&mut state, Message::PaneDrag(370.0), &db);
-      assert_eq!(
-        state.pane(Pane::AbyssalsFilter).width(),
-        ABYSSALS_FILTER_DEFAULT_WIDTH - 30.0
-      );
-      assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH);
-
-      let _task = update(&mut state, Message::PaneDragEnd, &db);
-      assert!(!state.pane(Pane::AbyssalsFilter).is_active());
-    }
-
-    #[test]
-    fn it_persists_the_settled_width_under_the_matching_pane_key() {
-      let mut state = State::new();
-      assert_eq!(state.pane_mut(Pane::Sidebar).1, SIDEBAR_PANE_KEY);
-      assert_eq!(state.pane_mut(Pane::AbyssalsFilter).1, ABYSSALS_FILTER_PANE_KEY);
-    }
-
-    #[test]
-    fn it_reports_the_active_drag_pane_only_while_dragging() {
-      let mut state = State::new();
-      assert!(state.active_drag().is_none());
-
-      state.sidebar.start();
-      assert_eq!(state.active_drag(), Some(Pane::Sidebar));
-
-      state.sidebar.end();
-      state.abyssals_filter.start();
-      assert_eq!(state.active_drag(), Some(Pane::AbyssalsFilter));
     }
   }
 }

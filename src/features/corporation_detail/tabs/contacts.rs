@@ -582,60 +582,42 @@ mod tests {
     )
   }
 
-  mod header {
+  mod body {
     use super::*;
 
     #[test]
-    fn it_renders_each_filter() {
+    fn it_renders_an_empty_page_as_a_no_match_panel() {
+      let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 600.0, 0.0);
+    }
+
+    #[test]
+    fn it_renders_each_sort_column_and_direction() {
       let state = LoadState::Loaded(loaded());
 
-      for filter in [
-        ContactFilter::All,
-        ContactFilter::Character,
-        ContactFilter::Corp,
-        ContactFilter::Alliance,
-      ] {
-        let _el: Element<'_, Message> = super::super::header(&state, filter, "");
+      for column in [SortColumn::Entity, SortColumn::Type, SortColumn::Standing] {
+        for direction in [SortDirection::Ascending, SortDirection::Descending] {
+          let _el: Element<'_, Message> = body(
+            &state,
+            ContactSort {
+              column,
+              direction,
+            },
+            600.0,
+            0.0,
+          );
+        }
       }
     }
 
     #[test]
-    fn it_keeps_the_filter_segments_in_render_order() {
-      assert_eq!(
-        ContactFilter::SEGMENTS,
-        [
-          (ContactFilter::All, "All"),
-          (ContactFilter::Character, "Characters"),
-          (ContactFilter::Corp, "Corps"),
-          (ContactFilter::Alliance, "Alliances"),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
-      let state = LoadState::Loaded(loaded());
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing");
-    }
-
-    #[test]
-    fn it_renders_the_more_pages_count_suffix() {
-      let page = ContactsPage::for_test(
-        vec![contact_row(100, "character", 1.0, false, "[]", "Pilot")],
-        Vec::new(),
-        true,
-      );
-      let state = LoadState::Loaded(page);
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "");
-    }
-
-    #[test]
-    fn it_renders_a_zero_count_in_the_loading_state() {
+    fn it_renders_loading_and_error_states() {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
+      let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "");
+      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 600.0, 0.0);
     }
   }
 
@@ -665,57 +647,6 @@ mod tests {
     }
   }
 
-  mod sortable_label {
-    use super::*;
-
-    #[test]
-    fn it_renders_active_and_inactive_columns_on_both_sides() {
-      let sort = ContactSort::default();
-
-      let _active: Element<'_, Message> = super::super::sortable_label("Standing", true, SortColumn::Standing, sort);
-      let _inactive: Element<'_, Message> = super::super::sortable_label("Entity", false, SortColumn::Entity, sort);
-    }
-  }
-
-  mod body {
-    use super::*;
-
-    #[test]
-    fn it_renders_each_sort_column_and_direction() {
-      let state = LoadState::Loaded(loaded());
-
-      for column in [SortColumn::Entity, SortColumn::Type, SortColumn::Standing] {
-        for direction in [SortDirection::Ascending, SortDirection::Descending] {
-          let _el: Element<'_, Message> = body(
-            &state,
-            ContactSort {
-              column,
-              direction,
-            },
-            600.0,
-            0.0,
-          );
-        }
-      }
-    }
-
-    #[test]
-    fn it_renders_loading_and_error_states() {
-      let loading: LoadState<ContactsPage> = LoadState::Loading;
-      let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
-
-      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 600.0, 0.0);
-      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 600.0, 0.0);
-    }
-
-    #[test]
-    fn it_renders_an_empty_page_as_a_no_match_panel() {
-      let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
-
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 600.0, 0.0);
-    }
-  }
-
   mod filter {
     use pretty_assertions::assert_eq;
 
@@ -730,6 +661,92 @@ mod tests {
     }
   }
 
+  mod header {
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_filter_segments_in_render_order() {
+      assert_eq!(
+        ContactFilter::SEGMENTS,
+        [
+          (ContactFilter::All, "All"),
+          (ContactFilter::Character, "Characters"),
+          (ContactFilter::Corp, "Corps"),
+          (ContactFilter::Alliance, "Alliances"),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_renders_a_zero_count_in_the_loading_state() {
+      let loading: LoadState<ContactsPage> = LoadState::Loading;
+
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "");
+    }
+
+    #[test]
+    fn it_renders_each_filter() {
+      let state = LoadState::Loaded(loaded());
+
+      for filter in [
+        ContactFilter::All,
+        ContactFilter::Character,
+        ContactFilter::Corp,
+        ContactFilter::Alliance,
+      ] {
+        let _el: Element<'_, Message> = super::super::header(&state, filter, "");
+      }
+    }
+
+    #[test]
+    fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
+      let state = LoadState::Loaded(loaded());
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing");
+    }
+
+    #[test]
+    fn it_renders_the_more_pages_count_suffix() {
+      let page = ContactsPage::for_test(
+        vec![contact_row(100, "character", 1.0, false, "[]", "Pilot")],
+        Vec::new(),
+        true,
+      );
+      let state = LoadState::Loaded(page);
+
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "");
+    }
+  }
+
+  mod label_note {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_empty_for_no_labels_or_unknown_ids() {
+      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet")]);
+
+      assert_eq!(label_note(&contact(1, "character", 0.0, false, "[]", "A"), &labels), "");
+      assert_eq!(
+        label_note(&contact(2, "character", 0.0, false, "[99]", "B"), &labels),
+        ""
+      );
+      assert_eq!(
+        label_note(&contact(3, "character", 0.0, false, "not-json", "C"), &labels),
+        ""
+      );
+    }
+
+    #[test]
+    fn it_joins_resolved_label_names() {
+      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet"), (2, "Trusted")]);
+      let c = contact(100, "character", 0.0, false, "[1,2]", "Wingmate");
+
+      assert_eq!(label_note(&c, &labels), "Fleet, Trusted");
+    }
+  }
+
   mod sort {
     use pretty_assertions::assert_eq;
 
@@ -739,16 +756,6 @@ mod tests {
     fn it_defaults_to_strongest_standing_first() {
       assert_eq!(ContactSort::default().column, SortColumn::Standing);
       assert_eq!(ContactSort::default().direction, SortDirection::Descending);
-    }
-
-    #[test]
-    fn it_starts_a_fresh_column_on_its_natural_direction() {
-      let sort = ContactSort::default().toggled(SortColumn::Entity);
-      assert_eq!(sort.column, SortColumn::Entity);
-      assert_eq!(sort.direction, SortDirection::Ascending);
-
-      let sort = ContactSort::default().toggled(SortColumn::Type);
-      assert_eq!(sort.direction, SortDirection::Ascending);
     }
 
     #[test]
@@ -776,34 +783,27 @@ mod tests {
       assert!(sort.caret(SortColumn::Entity).is_none());
       assert!(sort.caret(SortColumn::Type).is_none());
     }
+
+    #[test]
+    fn it_starts_a_fresh_column_on_its_natural_direction() {
+      let sort = ContactSort::default().toggled(SortColumn::Entity);
+      assert_eq!(sort.column, SortColumn::Entity);
+      assert_eq!(sort.direction, SortDirection::Ascending);
+
+      let sort = ContactSort::default().toggled(SortColumn::Type);
+      assert_eq!(sort.direction, SortDirection::Ascending);
+    }
   }
 
-  mod label_note {
-    use pretty_assertions::assert_eq;
-
+  mod sortable_label {
     use super::*;
 
     #[test]
-    fn it_joins_resolved_label_names() {
-      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet"), (2, "Trusted")]);
-      let c = contact(100, "character", 0.0, false, "[1,2]", "Wingmate");
+    fn it_renders_active_and_inactive_columns_on_both_sides() {
+      let sort = ContactSort::default();
 
-      assert_eq!(label_note(&c, &labels), "Fleet, Trusted");
-    }
-
-    #[test]
-    fn it_is_empty_for_no_labels_or_unknown_ids() {
-      let labels: HashMap<i64, &str> = HashMap::from([(1, "Fleet")]);
-
-      assert_eq!(label_note(&contact(1, "character", 0.0, false, "[]", "A"), &labels), "");
-      assert_eq!(
-        label_note(&contact(2, "character", 0.0, false, "[99]", "B"), &labels),
-        ""
-      );
-      assert_eq!(
-        label_note(&contact(3, "character", 0.0, false, "not-json", "C"), &labels),
-        ""
-      );
+      let _active: Element<'_, Message> = super::super::sortable_label("Standing", true, SortColumn::Standing, sort);
+      let _inactive: Element<'_, Message> = super::super::sortable_label("Entity", false, SortColumn::Entity, sort);
     }
   }
 }

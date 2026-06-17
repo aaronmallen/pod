@@ -758,115 +758,23 @@ mod tests {
     Utc.with_ymd_and_hms(2026, 6, 1, 14, 22, 0).unwrap()
   }
 
-  mod canonical_until {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_rewrites_an_offset_timestamp_to_a_z_suffixed_seconds_string() {
-      assert_eq!(canonical_until("2026-06-06T05:55:00+00:00"), "2026-06-06T05:55:00Z");
-    }
-
-    #[test]
-    fn it_normalises_a_non_utc_offset_to_utc() {
-      assert_eq!(canonical_until("2026-06-06T07:55:00+02:00"), "2026-06-06T05:55:00Z");
-    }
-
-    #[test]
-    fn it_leaves_an_already_canonical_string_untouched() {
-      assert_eq!(canonical_until("2026-06-06T05:55:00Z"), "2026-06-06T05:55:00Z");
-    }
-
-    #[test]
-    fn it_passes_through_an_unparseable_string() {
-      assert_eq!(canonical_until("not-a-date"), "not-a-date");
-    }
-  }
-
-  mod presets {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn later_today_resolves_to_18_00_utc_today_when_before_18() {
-      let r = Preset::LaterToday.resolve(now());
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 1, 18, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn later_today_rolls_to_tomorrow_18_00_when_already_past_18() {
-      let evening = Utc.with_ymd_and_hms(2026, 6, 1, 19, 0, 0).unwrap();
-      let r = Preset::LaterToday.resolve(evening);
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 2, 18, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn tomorrow_resolves_to_tomorrow_09_00_utc() {
-      let r = Preset::Tomorrow.resolve(now());
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 2, 9, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn this_weekend_resolves_to_the_upcoming_saturday_09_00() {
-      let r = Preset::ThisWeekend.resolve(now());
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 6, 9, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn this_weekend_on_saturday_afternoon_rolls_to_next_saturday() {
-      let sat_pm = Utc.with_ymd_and_hms(2026, 6, 6, 15, 0, 0).unwrap();
-      let r = Preset::ThisWeekend.resolve(sat_pm);
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 13, 9, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn next_week_resolves_to_the_upcoming_monday_09_00() {
-      let r = Preset::NextWeek.resolve(now());
-      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 8, 9, 0, 0).unwrap());
-    }
-
-    #[test]
-    fn every_preset_is_strictly_in_the_future() {
-      let n = now();
-      for preset in Preset::all() {
-        assert!(preset.resolve(n) > n, "{} must resolve to the future", preset.label());
-      }
-    }
-
-    #[test]
-    fn it_lists_presets_in_chronological_render_order() {
-      assert_eq!(
-        Preset::all(),
-        [
-          Preset::LaterToday,
-          Preset::Tomorrow,
-          Preset::ThisWeekend,
-          Preset::NextWeek
-        ]
-      );
-    }
-  }
-
   mod calendar {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
+    fn downtime_chip_is_11_00_utc() {
+      let mut cal = Calendar::open(now());
+      cal.set_time(DOWNTIME_HOUR, 0);
+      assert_eq!((cal.hour, cal.minute), (11, 0));
+    }
+
+    #[test]
     fn it_opens_defaulted_to_tomorrow_09_00() {
       let cal = Calendar::open(now());
       assert_eq!((cal.sel_year, cal.sel_month0, cal.sel_day), (2026, 5, 2));
       assert_eq!((cal.hour, cal.minute), (9, 0));
-    }
-
-    #[test]
-    fn minute_up_wraps_and_carries_the_hour() {
-      let mut cal = Calendar::open(now());
-      cal.set_time(10, 55);
-      cal.minute_up();
-      assert_eq!((cal.hour, cal.minute), (11, 0));
     }
 
     #[test]
@@ -878,9 +786,10 @@ mod tests {
     }
 
     #[test]
-    fn downtime_chip_is_11_00_utc() {
+    fn minute_up_wraps_and_carries_the_hour() {
       let mut cal = Calendar::open(now());
-      cal.set_time(DOWNTIME_HOUR, 0);
+      cal.set_time(10, 55);
+      cal.minute_up();
       assert_eq!((cal.hour, cal.minute), (11, 0));
     }
 
@@ -907,6 +816,32 @@ mod tests {
     }
   }
 
+  mod canonical_until {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_leaves_an_already_canonical_string_untouched() {
+      assert_eq!(canonical_until("2026-06-06T05:55:00Z"), "2026-06-06T05:55:00Z");
+    }
+
+    #[test]
+    fn it_normalises_a_non_utc_offset_to_utc() {
+      assert_eq!(canonical_until("2026-06-06T07:55:00+02:00"), "2026-06-06T05:55:00Z");
+    }
+
+    #[test]
+    fn it_passes_through_an_unparseable_string() {
+      assert_eq!(canonical_until("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn it_rewrites_an_offset_timestamp_to_a_z_suffixed_seconds_string() {
+      assert_eq!(canonical_until("2026-06-06T05:55:00+00:00"), "2026-06-06T05:55:00Z");
+    }
+  }
+
   mod grid {
     use pretty_assertions::assert_eq;
 
@@ -921,6 +856,12 @@ mod tests {
     }
 
     #[test]
+    fn it_counts_february_in_a_leap_year() {
+      assert_eq!(days_in_month(2024, 1), 29);
+      assert_eq!(days_in_month(2026, 1), 28);
+    }
+
+    #[test]
     fn it_pads_with_the_previous_month_when_the_first_is_not_monday() {
       let cells = month_grid(2026, 4);
       assert!(!cells[0].in_month);
@@ -928,11 +869,70 @@ mod tests {
       assert!(cells[4].in_month);
       assert_eq!(cells[4].day, 1);
     }
+  }
+
+  mod presets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
-    fn it_counts_february_in_a_leap_year() {
-      assert_eq!(days_in_month(2024, 1), 29);
-      assert_eq!(days_in_month(2026, 1), 28);
+    fn every_preset_is_strictly_in_the_future() {
+      let n = now();
+      for preset in Preset::all() {
+        assert!(preset.resolve(n) > n, "{} must resolve to the future", preset.label());
+      }
+    }
+
+    #[test]
+    fn it_lists_presets_in_chronological_render_order() {
+      assert_eq!(
+        Preset::all(),
+        [
+          Preset::LaterToday,
+          Preset::Tomorrow,
+          Preset::ThisWeekend,
+          Preset::NextWeek
+        ]
+      );
+    }
+
+    #[test]
+    fn later_today_resolves_to_18_00_utc_today_when_before_18() {
+      let r = Preset::LaterToday.resolve(now());
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 1, 18, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn later_today_rolls_to_tomorrow_18_00_when_already_past_18() {
+      let evening = Utc.with_ymd_and_hms(2026, 6, 1, 19, 0, 0).unwrap();
+      let r = Preset::LaterToday.resolve(evening);
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 2, 18, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn next_week_resolves_to_the_upcoming_monday_09_00() {
+      let r = Preset::NextWeek.resolve(now());
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 8, 9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn this_weekend_on_saturday_afternoon_rolls_to_next_saturday() {
+      let sat_pm = Utc.with_ymd_and_hms(2026, 6, 6, 15, 0, 0).unwrap();
+      let r = Preset::ThisWeekend.resolve(sat_pm);
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 13, 9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn this_weekend_resolves_to_the_upcoming_saturday_09_00() {
+      let r = Preset::ThisWeekend.resolve(now());
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 6, 9, 0, 0).unwrap());
+    }
+
+    #[test]
+    fn tomorrow_resolves_to_tomorrow_09_00_utc() {
+      let r = Preset::Tomorrow.resolve(now());
+      assert_eq!(r, Utc.with_ymd_and_hms(2026, 6, 2, 9, 0, 0).unwrap());
     }
   }
 }

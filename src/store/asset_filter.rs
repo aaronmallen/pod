@@ -371,91 +371,32 @@ mod tests {
     FilterParam::Text(value.to_owned())
   }
 
-  mod parse {
+  mod bind_onto {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_returns_no_tokens_for_blank_input() {
-      assert_eq!(parse("   "), vec![]);
+    fn it_binds_an_owner_me_integer_param() {
+      let clause = compile_with_me("owner:me", 7).unwrap();
+      let mut builder = QueryBuilder::<Sqlite>::new("SELECT 1 WHERE ");
+
+      clause.bind_onto(&mut builder);
+
+      assert_eq!(builder.sql(), "SELECT 1 WHERE (character_id = ?)");
     }
 
     #[test]
-    fn it_treats_a_bare_word_as_free_text() {
-      assert_eq!(parse("rifter"), vec![AssetFilterToken::FreeText("rifter".to_owned())]);
-    }
+    fn it_renders_placeholders_and_threads_the_params_in_order() {
+      let clause = compile_default("category:ship name:rifter").unwrap();
+      let mut builder = QueryBuilder::<Sqlite>::new("SELECT 1 WHERE ");
 
-    #[test]
-    fn it_normalizes_every_short_alias() {
-      for (alias, canonical) in [
-        ("n", "name"),
-        ("g", "group"),
-        ("cat", "category"),
-        ("r", "region"),
-        ("c", "constellation"),
-        ("s", "system"),
-        ("loc", "location"),
-      ] {
-        assert_eq!(
-          parse(&format!("{alias}:value")),
-          vec![AssetFilterToken::KeyValue {
-            key: canonical.to_owned(),
-            negated: false,
-            values: vec!["value".to_owned()],
-          }],
-          "alias {alias} should normalize to {canonical}"
-        );
-      }
-    }
+      clause.bind_onto(&mut builder);
 
-    #[test]
-    fn it_splits_comma_values_as_or_within_a_key() {
       assert_eq!(
-        parse("category:drone,ship"),
-        vec![AssetFilterToken::KeyValue {
-          key: "category".to_owned(),
-          negated: false,
-          values: vec!["drone".to_owned(), "ship".to_owned()],
-        }]
+        builder.sql(),
+        "SELECT 1 WHERE (category = ? COLLATE NOCASE) AND (type_name LIKE ? ESCAPE '\\')"
       );
-    }
-
-    #[test]
-    fn it_negates_a_facet_with_a_leading_dash() {
-      assert_eq!(
-        parse("-category:ship"),
-        vec![AssetFilterToken::KeyValue {
-          key: "category".to_owned(),
-          negated: true,
-          values: vec!["ship".to_owned()],
-        }]
-      );
-    }
-
-    #[test]
-    fn it_keeps_a_quoted_phrase_as_a_single_value() {
-      assert_eq!(
-        parse("region:\"The Forge\""),
-        vec![AssetFilterToken::KeyValue {
-          key: "region".to_owned(),
-          negated: false,
-          values: vec!["the forge".to_owned()],
-        }]
-      );
-    }
-
-    #[test]
-    fn it_degrades_an_unrecognized_key_to_free_text() {
-      assert_eq!(
-        parse("clone:omega"),
-        vec![AssetFilterToken::FreeText("clone:omega".to_owned())]
-      );
-    }
-
-    #[test]
-    fn it_degrades_an_empty_value_to_free_text() {
-      assert_eq!(parse("name:"), vec![AssetFilterToken::FreeText("name:".to_owned())]);
     }
   }
 
@@ -465,9 +406,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_returns_none_for_an_empty_query() {
-      assert_eq!(compile_default(""), None);
-      assert_eq!(compile_default("   "), None);
+    fn it_binds_like_metacharacters_rather_than_interpolating_them() {
+      let clause = compile_default("name:50%_x").unwrap();
+      assert_eq!(clause.sql, "(type_name LIKE ? ESCAPE '\\')");
+      assert_eq!(clause.params, vec![text("%50\\%\\_x%")]);
+    }
+
+    #[test]
+    fn it_combines_multi_values_as_or_within_a_key() {
+      let clause = compile_default("category:drone,ship").unwrap();
+      assert_eq!(
+        clause.sql,
+        "(category = ? COLLATE NOCASE OR category = ? COLLATE NOCASE)"
+      );
+      assert_eq!(clause.params, vec![text("drone"), text("ship")]);
+    }
+
+    #[test]
+    fn it_combines_multiple_tokens_as_and() {
+      let clause = compile_default("category:ship name:rifter").unwrap();
+      assert_eq!(
+        clause.sql,
+        "(category = ? COLLATE NOCASE) AND (type_name LIKE ? ESCAPE '\\')"
+      );
+      assert_eq!(clause.params, vec![text("ship"), text("%rifter%")]);
+    }
+
+    #[test]
+    fn it_compiles_a_non_me_owner_value_to_match_nothing() {
+      let clause = compile_with_me("owner:someone", 42).unwrap();
+      assert_eq!(clause.sql, "(0 = 1)");
+      assert!(clause.params.is_empty());
+    }
+
+    #[test]
+    fn it_compiles_a_quoted_multi_word_location_value() {
+      let clause = compile_default("loc:\"caldari navy\"").unwrap();
+      assert_eq!(clause.sql, "(location_name LIKE ? ESCAPE '\\')");
+      assert_eq!(clause.params, vec![text("%caldari navy%")]);
+    }
+
+    #[test]
+    fn it_compiles_an_unknown_type_value_to_match_nothing() {
+      let clause = compile_default("type:nonsense").unwrap();
+      assert_eq!(clause.sql, "(0 = 1)");
+    }
+
+    #[test]
+    fn it_compiles_category_and_its_alias_to_an_exact_nocase_match() {
+      for input in ["category:ship", "cat:ship"] {
+        let clause = compile_default(input).unwrap();
+        assert_eq!(clause.sql, "(category = ? COLLATE NOCASE)", "{input}");
+        assert_eq!(clause.params, vec![text("ship")], "{input}");
+      }
+    }
+
+    #[test]
+    fn it_compiles_constellation_and_its_alias_to_an_exact_nocase_match() {
+      for input in ["constellation:kimotoro", "c:kimotoro"] {
+        let clause = compile_default(input).unwrap();
+        assert_eq!(clause.sql, "(constellation_name = ? COLLATE NOCASE)", "{input}");
+        assert_eq!(clause.params, vec![text("kimotoro")], "{input}");
+      }
     }
 
     #[test]
@@ -486,32 +486,11 @@ mod tests {
     }
 
     #[test]
-    fn it_compiles_name_and_its_alias_identically_to_a_type_name_like() {
-      let expected_sql = "(type_name LIKE ? ESCAPE '\\')";
-      let expected_params = vec![text("%rift%")];
-
-      for input in ["name:rift", "n:rift"] {
-        let clause = compile_default(input).unwrap();
-        assert_eq!(clause.sql, expected_sql, "{input}");
-        assert_eq!(clause.params, expected_params, "{input}");
-      }
-    }
-
-    #[test]
     fn it_compiles_group_and_its_alias_to_a_group_name_like() {
       for input in ["group:frig", "g:frig"] {
         let clause = compile_default(input).unwrap();
         assert_eq!(clause.sql, "(group_name LIKE ? ESCAPE '\\')", "{input}");
         assert_eq!(clause.params, vec![text("%frig%")], "{input}");
-      }
-    }
-
-    #[test]
-    fn it_compiles_system_and_its_alias_to_a_system_name_like() {
-      for input in ["system:jita", "s:jita"] {
-        let clause = compile_default(input).unwrap();
-        assert_eq!(clause.sql, "(system_name LIKE ? ESCAPE '\\')", "{input}");
-        assert_eq!(clause.params, vec![text("%jita%")], "{input}");
       }
     }
 
@@ -525,19 +504,29 @@ mod tests {
     }
 
     #[test]
-    fn it_compiles_a_quoted_multi_word_location_value() {
-      let clause = compile_default("loc:\"caldari navy\"").unwrap();
-      assert_eq!(clause.sql, "(location_name LIKE ? ESCAPE '\\')");
-      assert_eq!(clause.params, vec![text("%caldari navy%")]);
+    fn it_compiles_name_and_its_alias_identically_to_a_type_name_like() {
+      let expected_sql = "(type_name LIKE ? ESCAPE '\\')";
+      let expected_params = vec![text("%rift%")];
+
+      for input in ["name:rift", "n:rift"] {
+        let clause = compile_default(input).unwrap();
+        assert_eq!(clause.sql, expected_sql, "{input}");
+        assert_eq!(clause.params, expected_params, "{input}");
+      }
     }
 
     #[test]
-    fn it_compiles_category_and_its_alias_to_an_exact_nocase_match() {
-      for input in ["category:ship", "cat:ship"] {
-        let clause = compile_default(input).unwrap();
-        assert_eq!(clause.sql, "(category = ? COLLATE NOCASE)", "{input}");
-        assert_eq!(clause.params, vec![text("ship")], "{input}");
-      }
+    fn it_compiles_owner_me_to_match_nothing_without_an_active_character() {
+      let clause = compile_default("owner:me").unwrap();
+      assert_eq!(clause.sql, "(0 = 1)");
+      assert!(clause.params.is_empty());
+    }
+
+    #[test]
+    fn it_compiles_owner_me_to_the_active_character_id() {
+      let clause = compile_with_me("owner:me", 42).unwrap();
+      assert_eq!(clause.sql, "(character_id = ?)");
+      assert_eq!(clause.params, vec![FilterParam::Int(42)]);
     }
 
     #[test]
@@ -552,11 +541,11 @@ mod tests {
     }
 
     #[test]
-    fn it_compiles_constellation_and_its_alias_to_an_exact_nocase_match() {
-      for input in ["constellation:kimotoro", "c:kimotoro"] {
+    fn it_compiles_system_and_its_alias_to_a_system_name_like() {
+      for input in ["system:jita", "s:jita"] {
         let clause = compile_default(input).unwrap();
-        assert_eq!(clause.sql, "(constellation_name = ? COLLATE NOCASE)", "{input}");
-        assert_eq!(clause.params, vec![text("kimotoro")], "{input}");
+        assert_eq!(clause.sql, "(system_name LIKE ? ESCAPE '\\')", "{input}");
+        assert_eq!(clause.params, vec![text("%jita%")], "{input}");
       }
     }
 
@@ -584,30 +573,13 @@ mod tests {
     }
 
     #[test]
-    fn it_compiles_owner_me_to_the_active_character_id() {
-      let clause = compile_with_me("owner:me", 42).unwrap();
-      assert_eq!(clause.sql, "(character_id = ?)");
-      assert_eq!(clause.params, vec![FilterParam::Int(42)]);
-    }
-
-    #[test]
-    fn it_compiles_owner_me_to_match_nothing_without_an_active_character() {
-      let clause = compile_default("owner:me").unwrap();
-      assert_eq!(clause.sql, "(0 = 1)");
-      assert!(clause.params.is_empty());
-    }
-
-    #[test]
-    fn it_compiles_a_non_me_owner_value_to_match_nothing() {
-      let clause = compile_with_me("owner:someone", 42).unwrap();
-      assert_eq!(clause.sql, "(0 = 1)");
-      assert!(clause.params.is_empty());
-    }
-
-    #[test]
-    fn it_compiles_an_unknown_type_value_to_match_nothing() {
-      let clause = compile_default("type:nonsense").unwrap();
-      assert_eq!(clause.sql, "(0 = 1)");
+    fn it_honours_an_overridden_column_schema() {
+      let schema = ColumnSchema {
+        type_name: "it.name",
+        ..ColumnSchema::default()
+      };
+      let clause = compile_query("name:rift", &schema, FilterContext::default()).unwrap();
+      assert_eq!(clause.sql, "(it.name LIKE ? ESCAPE '\\')");
     }
 
     #[test]
@@ -618,23 +590,9 @@ mod tests {
     }
 
     #[test]
-    fn it_combines_multi_values_as_or_within_a_key() {
-      let clause = compile_default("category:drone,ship").unwrap();
-      assert_eq!(
-        clause.sql,
-        "(category = ? COLLATE NOCASE OR category = ? COLLATE NOCASE)"
-      );
-      assert_eq!(clause.params, vec![text("drone"), text("ship")]);
-    }
-
-    #[test]
-    fn it_combines_multiple_tokens_as_and() {
-      let clause = compile_default("category:ship name:rifter").unwrap();
-      assert_eq!(
-        clause.sql,
-        "(category = ? COLLATE NOCASE) AND (type_name LIKE ? ESCAPE '\\')"
-      );
-      assert_eq!(clause.params, vec![text("ship"), text("%rifter%")]);
+    fn it_returns_none_for_an_empty_query() {
+      assert_eq!(compile_default(""), None);
+      assert_eq!(compile_default("   "), None);
     }
 
     #[test]
@@ -643,51 +601,93 @@ mod tests {
       assert_eq!(clause.sql, "(type_name LIKE ? ESCAPE '\\')");
       assert_eq!(clause.params, vec![text("%navy issue%")]);
     }
-
-    #[test]
-    fn it_binds_like_metacharacters_rather_than_interpolating_them() {
-      let clause = compile_default("name:50%_x").unwrap();
-      assert_eq!(clause.sql, "(type_name LIKE ? ESCAPE '\\')");
-      assert_eq!(clause.params, vec![text("%50\\%\\_x%")]);
-    }
-
-    #[test]
-    fn it_honours_an_overridden_column_schema() {
-      let schema = ColumnSchema {
-        type_name: "it.name",
-        ..ColumnSchema::default()
-      };
-      let clause = compile_query("name:rift", &schema, FilterContext::default()).unwrap();
-      assert_eq!(clause.sql, "(it.name LIKE ? ESCAPE '\\')");
-    }
   }
 
-  mod bind_onto {
+  mod parse {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_renders_placeholders_and_threads_the_params_in_order() {
-      let clause = compile_default("category:ship name:rifter").unwrap();
-      let mut builder = QueryBuilder::<Sqlite>::new("SELECT 1 WHERE ");
+    fn it_degrades_an_empty_value_to_free_text() {
+      assert_eq!(parse("name:"), vec![AssetFilterToken::FreeText("name:".to_owned())]);
+    }
 
-      clause.bind_onto(&mut builder);
-
+    #[test]
+    fn it_degrades_an_unrecognized_key_to_free_text() {
       assert_eq!(
-        builder.sql(),
-        "SELECT 1 WHERE (category = ? COLLATE NOCASE) AND (type_name LIKE ? ESCAPE '\\')"
+        parse("clone:omega"),
+        vec![AssetFilterToken::FreeText("clone:omega".to_owned())]
       );
     }
 
     #[test]
-    fn it_binds_an_owner_me_integer_param() {
-      let clause = compile_with_me("owner:me", 7).unwrap();
-      let mut builder = QueryBuilder::<Sqlite>::new("SELECT 1 WHERE ");
+    fn it_keeps_a_quoted_phrase_as_a_single_value() {
+      assert_eq!(
+        parse("region:\"The Forge\""),
+        vec![AssetFilterToken::KeyValue {
+          key: "region".to_owned(),
+          negated: false,
+          values: vec!["the forge".to_owned()],
+        }]
+      );
+    }
 
-      clause.bind_onto(&mut builder);
+    #[test]
+    fn it_negates_a_facet_with_a_leading_dash() {
+      assert_eq!(
+        parse("-category:ship"),
+        vec![AssetFilterToken::KeyValue {
+          key: "category".to_owned(),
+          negated: true,
+          values: vec!["ship".to_owned()],
+        }]
+      );
+    }
 
-      assert_eq!(builder.sql(), "SELECT 1 WHERE (character_id = ?)");
+    #[test]
+    fn it_normalizes_every_short_alias() {
+      for (alias, canonical) in [
+        ("n", "name"),
+        ("g", "group"),
+        ("cat", "category"),
+        ("r", "region"),
+        ("c", "constellation"),
+        ("s", "system"),
+        ("loc", "location"),
+      ] {
+        assert_eq!(
+          parse(&format!("{alias}:value")),
+          vec![AssetFilterToken::KeyValue {
+            key: canonical.to_owned(),
+            negated: false,
+            values: vec!["value".to_owned()],
+          }],
+          "alias {alias} should normalize to {canonical}"
+        );
+      }
+    }
+
+    #[test]
+    fn it_returns_no_tokens_for_blank_input() {
+      assert_eq!(parse("   "), vec![]);
+    }
+
+    #[test]
+    fn it_splits_comma_values_as_or_within_a_key() {
+      assert_eq!(
+        parse("category:drone,ship"),
+        vec![AssetFilterToken::KeyValue {
+          key: "category".to_owned(),
+          negated: false,
+          values: vec!["drone".to_owned(), "ship".to_owned()],
+        }]
+      );
+    }
+
+    #[test]
+    fn it_treats_a_bare_word_as_free_text() {
+      assert_eq!(parse("rifter"), vec![AssetFilterToken::FreeText("rifter".to_owned())]);
     }
   }
 }

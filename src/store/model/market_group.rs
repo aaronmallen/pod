@@ -42,6 +42,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_derives_has_types_false_from_an_empty_list() {
+      let group = MarketGroup {
+        description: "Empty".to_owned(),
+        market_group_id: 5,
+        name: "Empty".to_owned(),
+        parent_group_id: None,
+        types: vec![],
+      };
+
+      let model = Model::from(group);
+
+      assert_eq!(model.has_types(), false);
+      assert_eq!(model.parent_id(), None);
+    }
+
+    #[test]
     fn it_derives_has_types_from_a_populated_list() {
       let group = MarketGroup {
         description: "Ships".to_owned(),
@@ -56,22 +72,6 @@ mod tests {
       assert_eq!(model.id(), 4);
       assert_eq!(model.has_types(), true);
       assert_eq!(model.parent_id(), Some(2));
-    }
-
-    #[test]
-    fn it_derives_has_types_false_from_an_empty_list() {
-      let group = MarketGroup {
-        description: "Empty".to_owned(),
-        market_group_id: 5,
-        name: "Empty".to_owned(),
-        parent_group_id: None,
-        types: vec![],
-      };
-
-      let model = Model::from(group);
-
-      assert_eq!(model.has_types(), false);
-      assert_eq!(model.parent_id(), None);
     }
   }
 }

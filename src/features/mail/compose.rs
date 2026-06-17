@@ -743,63 +743,6 @@ mod tests {
     }
   }
 
-  #[test]
-  fn reply_prefills_sender_subject_quote_and_pins_from() {
-    let draft = Draft::from_mail(Kind::Reply, &render());
-
-    assert_eq!(draft.kind, Kind::Reply);
-    assert_eq!(draft.from_character_id, 42);
-    assert_eq!(draft.subject, "Re: CTA tonight");
-    assert_eq!(draft.to.len(), 1);
-    assert_eq!(draft.to[0].id, Some(95_000_001));
-    assert!(draft.quote.as_deref().unwrap().contains("Form up at Jita"));
-  }
-
-  #[test]
-  fn reply_all_moves_other_participants_to_cc_excluding_sender_and_self() {
-    let draft = Draft::from_mail(Kind::ReplyAll, &render());
-
-    assert_eq!(draft.to[0].id, Some(95_000_001));
-    assert_eq!(draft.cc.len(), 1);
-    assert_eq!(draft.cc[0].id, Some(95_000_009));
-    assert!(draft.show_cc);
-  }
-
-  #[test]
-  fn forward_uses_fwd_subject_and_no_recipients() {
-    let draft = Draft::from_mail(Kind::Forward, &render());
-
-    assert_eq!(draft.subject, "Fwd: CTA tonight");
-    assert!(draft.to.is_empty());
-    assert!(draft.quote.as_deref().unwrap().contains("Form up at Jita"));
-  }
-
-  #[test]
-  fn re_prefix_is_idempotent() {
-    assert_eq!(prefixed("Re: hi", "Re: "), "Re: hi");
-    assert_eq!(prefixed("hi", "Re: "), "Re: hi");
-  }
-
-  #[test]
-  fn can_send_requires_a_recipient_and_subject() {
-    let mut draft = Draft::blank(42);
-    assert!(!draft.can_send());
-    draft.to.push(Recipient::typed("Pilot"));
-    assert!(!draft.can_send());
-    draft.subject = "Hello".to_owned();
-    assert!(draft.can_send());
-  }
-
-  #[test]
-  fn send_payload_merges_to_and_cc() {
-    let mut draft = Draft::blank(42);
-    draft.to.push(Recipient::typed("A"));
-    draft.cc.push(Recipient::typed("B"));
-    let payload = SendPayload::from_draft(&draft);
-    assert_eq!(payload.recipients.len(), 2);
-    assert_eq!(payload.from_character_id, 42);
-  }
-
   async fn seed_character(db: &Database, id: i64) {
     let corp_id = 90_000_001;
     let alliance_id = 99_000_001;
@@ -815,6 +758,16 @@ mod tests {
     character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
       .await
       .unwrap();
+  }
+
+  #[test]
+  fn can_send_requires_a_recipient_and_subject() {
+    let mut draft = Draft::blank(42);
+    assert!(!draft.can_send());
+    draft.to.push(Recipient::typed("Pilot"));
+    assert!(!draft.can_send());
+    draft.subject = "Hello".to_owned();
+    assert!(draft.can_send());
   }
 
   #[tokio::test]
@@ -835,5 +788,52 @@ mod tests {
     .await
     .unwrap();
     assert_eq!(count, 1);
+  }
+
+  #[test]
+  fn forward_uses_fwd_subject_and_no_recipients() {
+    let draft = Draft::from_mail(Kind::Forward, &render());
+
+    assert_eq!(draft.subject, "Fwd: CTA tonight");
+    assert!(draft.to.is_empty());
+    assert!(draft.quote.as_deref().unwrap().contains("Form up at Jita"));
+  }
+
+  #[test]
+  fn re_prefix_is_idempotent() {
+    assert_eq!(prefixed("Re: hi", "Re: "), "Re: hi");
+    assert_eq!(prefixed("hi", "Re: "), "Re: hi");
+  }
+
+  #[test]
+  fn reply_all_moves_other_participants_to_cc_excluding_sender_and_self() {
+    let draft = Draft::from_mail(Kind::ReplyAll, &render());
+
+    assert_eq!(draft.to[0].id, Some(95_000_001));
+    assert_eq!(draft.cc.len(), 1);
+    assert_eq!(draft.cc[0].id, Some(95_000_009));
+    assert!(draft.show_cc);
+  }
+
+  #[test]
+  fn reply_prefills_sender_subject_quote_and_pins_from() {
+    let draft = Draft::from_mail(Kind::Reply, &render());
+
+    assert_eq!(draft.kind, Kind::Reply);
+    assert_eq!(draft.from_character_id, 42);
+    assert_eq!(draft.subject, "Re: CTA tonight");
+    assert_eq!(draft.to.len(), 1);
+    assert_eq!(draft.to[0].id, Some(95_000_001));
+    assert!(draft.quote.as_deref().unwrap().contains("Form up at Jita"));
+  }
+
+  #[test]
+  fn send_payload_merges_to_and_cc() {
+    let mut draft = Draft::blank(42);
+    draft.to.push(Recipient::typed("A"));
+    draft.cc.push(Recipient::typed("B"));
+    let payload = SendPayload::from_draft(&draft);
+    assert_eq!(payload.recipients.len(), 2);
+    assert_eq!(payload.from_character_id, 42);
   }
 }

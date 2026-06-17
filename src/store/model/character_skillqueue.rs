@@ -51,6 +51,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_carries_nulls_for_a_not_yet_started_entry() {
+      let entry = SkillQueueEntry {
+        finish_date: None,
+        finished_level: 3,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position: 2,
+        skill_id: 3301,
+        start_date: None,
+        training_start_sp: None,
+      };
+
+      let model = Model::from((42, entry));
+
+      assert_eq!(model.finish_date().as_deref(), None);
+      assert_eq!(model.start_date().as_deref(), None);
+      assert_eq!(model.level_end_sp(), None);
+      assert_eq!(model.training_start_sp(), None);
+    }
+
+    #[test]
     fn it_widens_ids_and_carries_optional_fields() {
       let entry = SkillQueueEntry {
         finish_date: Some("2026-06-01T00:00:00Z".to_owned()),
@@ -71,27 +92,6 @@ mod tests {
       assert_eq!(model.finished_level(), 5);
       assert_eq!(model.finish_date().as_deref(), Some("2026-06-01T00:00:00Z"));
       assert_eq!(model.level_end_sp(), Some(256_000));
-    }
-
-    #[test]
-    fn it_carries_nulls_for_a_not_yet_started_entry() {
-      let entry = SkillQueueEntry {
-        finish_date: None,
-        finished_level: 3,
-        level_end_sp: None,
-        level_start_sp: None,
-        queue_position: 2,
-        skill_id: 3301,
-        start_date: None,
-        training_start_sp: None,
-      };
-
-      let model = Model::from((42, entry));
-
-      assert_eq!(model.finish_date().as_deref(), None);
-      assert_eq!(model.start_date().as_deref(), None);
-      assert_eq!(model.level_end_sp(), None);
-      assert_eq!(model.training_start_sp(), None);
     }
   }
 }

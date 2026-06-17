@@ -426,6 +426,24 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_aborts_without_writing_when_the_event_list_fetch_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/calendar/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(calendar::events(&fx.db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_commits_event_detail_and_attendees_together() {
       let server = MockServer::start().await;
       let date = upcoming(5);
@@ -476,6 +494,75 @@ mod tests {
       assert_eq!(
         attendees.iter().map(|a| a.attendee_id()).collect::<Vec<_>>(),
         [95_000_001, 95_000_002]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_refetch_the_detail_when_the_cached_event_is_unchanged() {
+      let server = MockServer::start().await;
+      let date = upcoming(5);
+      mount_calendar_list(
+        &server,
+        serde_json::json!([{ "event_id": 1234, "event_date": date, "importance": 1, "title": "CTA",
+          "event_response": "accepted" }]),
+      )
+      .await;
+      let detail_hits = Arc::new(AtomicUsize::new(0));
+      struct CountingDetail(Arc<AtomicUsize>, String);
+      impl Respond for CountingDetail {
+        fn respond(&self, _: &Request) -> ResponseTemplate {
+          self.0.fetch_add(1, Ordering::SeqCst);
+          ResponseTemplate::new(200).set_body_json(serde_json::json!({ "event_id": 1234, "date": self.1,
+            "duration": 60, "owner_id": 98_000_001_i64, "owner_name": "Test Corp", "owner_type": "corporation",
+            "response": "accepted", "title": "CTA", "text": "<p>REFETCH</p>" }))
+        }
+      }
+      Mock::given(method("GET"))
+        .and(path("/characters/42/calendar/1234/"))
+        .respond_with(CountingDetail(detail_hits.clone(), date.clone()))
+        .mount(&server)
+        .await;
+      mount_json(
+        &server,
+        "/characters/42/calendar/1234/attendees/",
+        serde_json::json!([]),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      calendar::upsert_complete(
+        &fx.db,
+        &CharacterCalendarEvent {
+          body: Some("<p>cached</p>".to_owned()),
+          character_id: 42,
+          duration_minutes: 60,
+          event_id: 1234,
+          fetched_at: "2026-06-12T00:00:00Z".to_owned(),
+          importance: 1,
+          owner_id: 98_000_001,
+          owner_name: "Test Corp".to_owned(),
+          owner_type: "corporation".to_owned(),
+          response: "accepted".to_owned(),
+          timestamp: date.clone(),
+          title: "CTA".to_owned(),
+        },
+        &[],
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(detail_hits.load(Ordering::SeqCst), 0);
+      assert_eq!(
+        calendar::event(&fx.db, 42, 1234)
+          .await
+          .unwrap()
+          .unwrap()
+          .body()
+          .as_deref(),
+        Some("<p>cached</p>")
       );
     }
 
@@ -582,75 +669,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_refetch_the_detail_when_the_cached_event_is_unchanged() {
-      let server = MockServer::start().await;
-      let date = upcoming(5);
-      mount_calendar_list(
-        &server,
-        serde_json::json!([{ "event_id": 1234, "event_date": date, "importance": 1, "title": "CTA",
-          "event_response": "accepted" }]),
-      )
-      .await;
-      let detail_hits = Arc::new(AtomicUsize::new(0));
-      struct CountingDetail(Arc<AtomicUsize>, String);
-      impl Respond for CountingDetail {
-        fn respond(&self, _: &Request) -> ResponseTemplate {
-          self.0.fetch_add(1, Ordering::SeqCst);
-          ResponseTemplate::new(200).set_body_json(serde_json::json!({ "event_id": 1234, "date": self.1,
-            "duration": 60, "owner_id": 98_000_001_i64, "owner_name": "Test Corp", "owner_type": "corporation",
-            "response": "accepted", "title": "CTA", "text": "<p>REFETCH</p>" }))
-        }
-      }
-      Mock::given(method("GET"))
-        .and(path("/characters/42/calendar/1234/"))
-        .respond_with(CountingDetail(detail_hits.clone(), date.clone()))
-        .mount(&server)
-        .await;
-      mount_json(
-        &server,
-        "/characters/42/calendar/1234/attendees/",
-        serde_json::json!([]),
-      )
-      .await;
-      let fx = fixture(server, 42).await;
-      seed_character(&fx.db, 42).await;
-      calendar::upsert_complete(
-        &fx.db,
-        &CharacterCalendarEvent {
-          body: Some("<p>cached</p>".to_owned()),
-          character_id: 42,
-          duration_minutes: 60,
-          event_id: 1234,
-          fetched_at: "2026-06-12T00:00:00Z".to_owned(),
-          importance: 1,
-          owner_id: 98_000_001,
-          owner_name: "Test Corp".to_owned(),
-          owner_type: "corporation".to_owned(),
-          response: "accepted".to_owned(),
-          timestamp: date.clone(),
-          title: "CTA".to_owned(),
-        },
-        &[],
-      )
-      .await
-      .unwrap();
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      assert_eq!(detail_hits.load(Ordering::SeqCst), 0);
-      assert_eq!(
-        calendar::event(&fx.db, 42, 1234)
-          .await
-          .unwrap()
-          .unwrap()
-          .body()
-          .as_deref(),
-        Some("<p>cached</p>")
-      );
-    }
-
-    #[tokio::test]
     async fn it_skips_a_failed_event_without_aborting_the_rest() {
       let server = MockServer::start().await;
       let date = upcoming(5);
@@ -707,24 +725,6 @@ mod tests {
       let result = run(&ctx).await;
 
       assert!(matches!(result, Err(Error::NotReady)));
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_event_list_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/calendar/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let fx = fixture(server, 42).await;
-      seed_character(&fx.db, 42).await;
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(calendar::events(&fx.db, 42).await.unwrap().is_empty());
     }
   }
 }

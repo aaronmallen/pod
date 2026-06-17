@@ -244,45 +244,6 @@ mod tests {
     buf
   }
 
-  mod extract_zip {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_extracts_files_and_finds_the_sde_root() {
-      let zip = build_zip(&[
-        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
-      ]);
-      let dir = tempfile::tempdir().unwrap();
-      let dest = dir.path().to_owned();
-
-      extract_zip(zip, dest.clone()).await.unwrap();
-      let root = find_sde_root(&dest).await;
-
-      assert!(root.join("categories.yaml").exists());
-      assert_eq!(root, dest);
-    }
-
-    #[tokio::test]
-    async fn it_finds_the_sde_root_inside_a_wrapping_top_level_directory() {
-      let zip = build_zip(&[
-        ("sde/categories.yaml", b"6: {name: {en: Ship}}\n"),
-        ("sde/_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
-      ]);
-      let dir = tempfile::tempdir().unwrap();
-      let dest = dir.path().to_owned();
-
-      extract_zip(zip, dest.clone()).await.unwrap();
-      let root = find_sde_root(&dest).await;
-
-      assert!(root.join("categories.yaml").exists());
-      assert_eq!(root, dest.join("sde"));
-
-      let build = read_sde_build_version(&root).await;
-      assert_eq!(build.as_deref(), Some("12345"));
-    }
-  }
-
   mod download_and_extract {
     use pretty_assertions::assert_eq;
     use wiremock::{
@@ -375,6 +336,45 @@ mod tests {
       let result = client.download_and_extract().await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+  }
+
+  mod extract_zip {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_extracts_files_and_finds_the_sde_root() {
+      let zip = build_zip(&[
+        ("categories.yaml", b"6: {name: {en: Ship}}\n"),
+        ("_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
+      ]);
+      let dir = tempfile::tempdir().unwrap();
+      let dest = dir.path().to_owned();
+
+      extract_zip(zip, dest.clone()).await.unwrap();
+      let root = find_sde_root(&dest).await;
+
+      assert!(root.join("categories.yaml").exists());
+      assert_eq!(root, dest);
+    }
+
+    #[tokio::test]
+    async fn it_finds_the_sde_root_inside_a_wrapping_top_level_directory() {
+      let zip = build_zip(&[
+        ("sde/categories.yaml", b"6: {name: {en: Ship}}\n"),
+        ("sde/_sde.yaml", b"sde:\n  buildNumber: 12345\n"),
+      ]);
+      let dir = tempfile::tempdir().unwrap();
+      let dest = dir.path().to_owned();
+
+      extract_zip(zip, dest.clone()).await.unwrap();
+      let root = find_sde_root(&dest).await;
+
+      assert!(root.join("categories.yaml").exists());
+      assert_eq!(root, dest.join("sde"));
+
+      let build = read_sde_build_version(&root).await;
+      assert_eq!(build.as_deref(), Some("12345"));
     }
   }
 

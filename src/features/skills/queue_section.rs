@@ -138,9 +138,9 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_the_empty_state_when_only_the_active_head_remains() {
-    let computed = computed(1);
-    let head = active_head();
+  fn it_includes_every_row_when_the_head_is_paused() {
+    let computed = computed(2);
+    let head = paused_head();
     let selection = QueueSelection::default();
     let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
@@ -153,17 +153,17 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_the_list_excluding_the_active_head() {
-    let computed = computed(2);
+  fn it_renders_the_empty_state_when_only_the_active_head_remains() {
+    let computed = computed(1);
     let head = active_head();
     let selection = QueueSelection::default();
     let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
 
   #[test]
-  fn it_includes_every_row_when_the_head_is_paused() {
+  fn it_renders_the_list_excluding_the_active_head() {
     let computed = computed(2);
-    let head = paused_head();
+    let head = active_head();
     let selection = QueueSelection::default();
     let _el: Element<'_, Message> = queue_section(&computed, Some(&head), &selection, now());
   }
@@ -180,11 +180,6 @@ mod tests {
     }
 
     #[test]
-    fn it_skips_one_for_a_dated_active_head() {
-      assert_eq!(has_active(Some(&active_head())), 1);
-    }
-
-    #[test]
     fn it_skips_none_for_a_paused_head() {
       assert_eq!(has_active(Some(&paused_head())), 0);
     }
@@ -192,6 +187,11 @@ mod tests {
     #[test]
     fn it_skips_none_with_no_head() {
       assert_eq!(has_active(None), 0);
+    }
+
+    #[test]
+    fn it_skips_one_for_a_dated_active_head() {
+      assert_eq!(has_active(Some(&active_head())), 1);
     }
   }
 }

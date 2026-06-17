@@ -281,6 +281,55 @@ pub fn with_alpha(base: iced::Color, alpha: f32) -> iced::Color {
 
 #[cfg(test)]
 mod tests {
+  mod chart {
+    mod series {
+      use pretty_assertions::{assert_eq, assert_ne};
+
+      use super::super::super::chart::series;
+
+      #[test]
+      fn it_cycles_the_palette_beyond_its_length() {
+        assert_eq!(series(0), series(5));
+        assert_eq!(series(2), series(7));
+      }
+
+      #[test]
+      fn it_returns_distinct_colors_across_the_palette() {
+        let palette = [series(0), series(1), series(2), series(3), series(4)];
+
+        for (i, a) in palette.iter().enumerate() {
+          for b in &palette[i + 1..] {
+            assert_ne!(a, b);
+          }
+        }
+      }
+    }
+  }
+
+  mod from_hex {
+    use pretty_assertions::assert_eq;
+
+    use super::super::from_hex;
+
+    #[test]
+    fn it_expands_three_digit_shorthand() {
+      assert_eq!(from_hex("#abc"), Some(iced::Color::from_rgb8(170, 187, 204)));
+    }
+
+    #[test]
+    fn it_parses_six_digit_hex_with_and_without_a_hash() {
+      assert_eq!(from_hex("#ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
+      assert_eq!(from_hex("ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
+    }
+
+    #[test]
+    fn it_rejects_malformed_input() {
+      assert_eq!(from_hex(""), None);
+      assert_eq!(from_hex("#12345"), None);
+      assert_eq!(from_hex("zzzzzz"), None);
+    }
+  }
+
   mod high_contrast {
     use std::sync::Mutex;
 
@@ -296,36 +345,65 @@ mod tests {
       b: 0.545,
       a: 1.0,
     };
+
     const DIM_OFF: iced::Color = iced::Color {
       r: 0.957,
       g: 0.949,
       b: 0.925,
       a: 0.45,
     };
+
     const SECONDARY_HC: iced::Color = iced::Color {
       r: 0.812,
       g: 0.804,
       b: 0.780,
       a: 1.0,
     };
+
     const SECONDARY_OFF: iced::Color = iced::Color {
       r: 0.957,
       g: 0.949,
       b: 0.925,
       a: 0.55,
     };
+
     const TERTIARY_HC: iced::Color = iced::Color {
       r: 0.682,
       g: 0.675,
       b: 0.651,
       a: 1.0,
     };
+
     const TERTIARY_OFF: iced::Color = iced::Color {
       r: 0.957,
       g: 0.949,
       b: 0.925,
       a: 0.35,
     };
+
+    #[test]
+    fn it_firms_the_solids_above_the_overlays() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+      set_high_contrast(false);
+      let off = text::secondary();
+      set_high_contrast(true);
+      let on = text::secondary();
+      set_high_contrast(false);
+
+      assert_ne!(on, off);
+    }
+
+    #[test]
+    fn it_keeps_primary_text_unchanged_in_both_states() {
+      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      set_high_contrast(true);
+      let on = text::PRIMARY;
+      set_high_contrast(false);
+      let off = text::PRIMARY;
+
+      assert_eq!(on, off);
+    }
 
     #[test]
     fn it_returns_the_translucent_overlays_when_disabled() {
@@ -354,30 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn it_keeps_primary_text_unchanged_in_both_states() {
-      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-
-      set_high_contrast(true);
-      let on = text::PRIMARY;
-      set_high_contrast(false);
-      let off = text::PRIMARY;
-
-      assert_eq!(on, off);
-    }
-
-    #[test]
-    fn it_firms_the_solids_above_the_overlays() {
-      let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-      set_high_contrast(false);
-      let off = text::secondary();
-      set_high_contrast(true);
-      let on = text::secondary();
-      set_high_contrast(false);
-
-      assert_ne!(on, off);
-    }
-
-    #[test]
     fn the_preview_accessors_return_fixed_values_regardless_of_the_live_flag() {
       let _lock = GUARD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -392,30 +446,6 @@ mod tests {
       set_high_contrast(false);
       assert_eq!(text::secondary_off(), SECONDARY_OFF);
       assert_eq!(text::secondary_hc(), SECONDARY_HC);
-    }
-  }
-
-  mod from_hex {
-    use pretty_assertions::assert_eq;
-
-    use super::super::from_hex;
-
-    #[test]
-    fn it_parses_six_digit_hex_with_and_without_a_hash() {
-      assert_eq!(from_hex("#ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
-      assert_eq!(from_hex("ff6600"), Some(iced::Color::from_rgb8(255, 102, 0)));
-    }
-
-    #[test]
-    fn it_expands_three_digit_shorthand() {
-      assert_eq!(from_hex("#abc"), Some(iced::Color::from_rgb8(170, 187, 204)));
-    }
-
-    #[test]
-    fn it_rejects_malformed_input() {
-      assert_eq!(from_hex(""), None);
-      assert_eq!(from_hex("#12345"), None);
-      assert_eq!(from_hex("zzzzzz"), None);
     }
   }
 
@@ -434,31 +464,6 @@ mod tests {
     fn it_picks_light_foreground_over_a_dark_fill() {
       assert_eq!(on_fill(iced::Color::from_rgb8(0, 0, 254)), text::PRIMARY);
       assert_eq!(on_fill(iced::Color::from_rgb8(102, 0, 102)), text::PRIMARY);
-    }
-  }
-
-  mod chart {
-    mod series {
-      use pretty_assertions::{assert_eq, assert_ne};
-
-      use super::super::super::chart::series;
-
-      #[test]
-      fn it_returns_distinct_colors_across_the_palette() {
-        let palette = [series(0), series(1), series(2), series(3), series(4)];
-
-        for (i, a) in palette.iter().enumerate() {
-          for b in &palette[i + 1..] {
-            assert_ne!(a, b);
-          }
-        }
-      }
-
-      #[test]
-      fn it_cycles_the_palette_beyond_its_length() {
-        assert_eq!(series(0), series(5));
-        assert_eq!(series(2), series(7));
-      }
     }
   }
 }

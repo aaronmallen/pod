@@ -400,6 +400,30 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_errors_and_persists_nothing_when_the_location_fetch_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/location/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::telemetry(&db, 42).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn it_persists_a_telemetry_snapshot_resolving_location_names() {
       let server = MockServer::start().await;
       mount_location(
@@ -452,153 +476,6 @@ mod tests {
       assert!(sde::get_race(&db, 1).await.unwrap().is_some());
       assert!(sde::get_market_group(&db, 1500).await.unwrap().is_some());
       assert!(sde::get_market_group(&db, 1499).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_errors_and_persists_nothing_when_the_location_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/location/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::telemetry(&db, 42).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_solar_system_from_the_db_without_refetching() {
-      let server = MockServer::start().await;
-      mount_location(&server, 42, serde_json::json!({ "solar_system_id": 30000142 })).await;
-      mount_online(&server, 42, true).await;
-      mount_ship(&server, 42).await;
-      Mock::given(method("GET"))
-        .and(path("/universe/systems/30000142/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "constellation_id": 20000020, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
-          "security_status": 0.946, "system_id": 30000142,
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-      mount_json(
-        &server,
-        "/universe/constellations/20000020/",
-        serde_json::json!({
-          "constellation_id": 20000020, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
-          "region_id": 10000002, "systems": [30000142],
-        }),
-      )
-      .await;
-      mount_json(
-        &server,
-        "/universe/regions/10000002/",
-        serde_json::json!({
-          "constellations": [20000020], "description": "The Forge.", "name": "The Forge", "region_id": 10000002,
-        }),
-      )
-      .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-      run(&ctx).await.unwrap();
-
-      assert!(character::telemetry(&db, 42).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_tolerates_an_unresolvable_structure_without_failing() {
-      let server = MockServer::start().await;
-      mount_location(
-        &server,
-        42,
-        serde_json::json!({ "solar_system_id": 30000142, "structure_id": 1021000000000_i64 }),
-      )
-      .await;
-      mount_online(&server, 42, true).await;
-      mount_ship(&server, 42).await;
-      mount_system_geography(&server).await;
-      Mock::given(method("GET"))
-        .and(path("/universe/structures/1021000000000/"))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      let telemetry = character::telemetry(&db, 42)
-        .await
-        .unwrap()
-        .expect("telemetry persisted");
-      assert_eq!(telemetry.structure_id(), Some(1021000000000));
-      assert!(sde::get_structure(&db, 1021000000000).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_skips_structure_resolution_when_the_grant_lacks_the_scope() {
-      let server = MockServer::start().await;
-      mount_location(
-        &server,
-        42,
-        serde_json::json!({ "solar_system_id": 30000142, "structure_id": 1045971617379_i64 }),
-      )
-      .await;
-      mount_online(&server, 42, true).await;
-      mount_ship(&server, 42).await;
-      mount_system_geography(&server).await;
-      Mock::given(method("GET"))
-        .and(path("/universe/structures/1045971617379/"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      let telemetry = character::telemetry(&db, 42)
-        .await
-        .unwrap()
-        .expect("telemetry persisted");
-      assert_eq!(telemetry.structure_id(), Some(1045971617379));
-      assert!(sde::get_structure(&db, 1045971617379).await.unwrap().is_none());
     }
 
     #[tokio::test]
@@ -666,6 +543,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_resolves_the_solar_system_from_the_db_without_refetching() {
+      let server = MockServer::start().await;
+      mount_location(&server, 42, serde_json::json!({ "solar_system_id": 30000142 })).await;
+      mount_online(&server, 42, true).await;
+      mount_ship(&server, 42).await;
+      Mock::given(method("GET"))
+        .and(path("/universe/systems/30000142/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellation_id": 20000020, "name": "Jita", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
+          "security_status": 0.946, "system_id": 30000142,
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+      mount_json(
+        &server,
+        "/universe/constellations/20000020/",
+        serde_json::json!({
+          "constellation_id": 20000020, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
+          "region_id": 10000002, "systems": [30000142],
+        }),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/universe/regions/10000002/",
+        serde_json::json!({
+          "constellations": [20000020], "description": "The Forge.", "name": "The Forge", "region_id": 10000002,
+        }),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+      run(&ctx).await.unwrap();
+
+      assert!(character::telemetry(&db, 42).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_skips_structure_resolution_when_the_grant_lacks_the_scope() {
+      let server = MockServer::start().await;
+      mount_location(
+        &server,
+        42,
+        serde_json::json!({ "solar_system_id": 30000142, "structure_id": 1045971617379_i64 }),
+      )
+      .await;
+      mount_online(&server, 42, true).await;
+      mount_ship(&server, 42).await;
+      mount_system_geography(&server).await;
+      Mock::given(method("GET"))
+        .and(path("/universe/structures/1045971617379/"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let telemetry = character::telemetry(&db, 42)
+        .await
+        .unwrap()
+        .expect("telemetry persisted");
+      assert_eq!(telemetry.structure_id(), Some(1045971617379));
+      assert!(sde::get_structure(&db, 1045971617379).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -690,6 +653,43 @@ mod tests {
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
       assert!(character::telemetry(&db, 42).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_tolerates_an_unresolvable_structure_without_failing() {
+      let server = MockServer::start().await;
+      mount_location(
+        &server,
+        42,
+        serde_json::json!({ "solar_system_id": 30000142, "structure_id": 1021000000000_i64 }),
+      )
+      .await;
+      mount_online(&server, 42, true).await;
+      mount_ship(&server, 42).await;
+      mount_system_geography(&server).await;
+      Mock::given(method("GET"))
+        .and(path("/universe/structures/1021000000000/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 42, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let telemetry = character::telemetry(&db, 42)
+        .await
+        .unwrap()
+        .expect("telemetry persisted");
+      assert_eq!(telemetry.structure_id(), Some(1021000000000));
+      assert!(sde::get_structure(&db, 1021000000000).await.unwrap().is_none());
     }
   }
 }

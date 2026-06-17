@@ -392,9 +392,37 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_when_the_corp_feed_is_empty() {
+    async fn it_marks_a_killmail_as_a_loss_when_our_corp_is_the_victim() {
       let server = MockServer::start().await;
-      mount_paginated(&server, "/corporations/2000/killmails/recent/", serde_json::json!([])).await;
+      mount_paginated(
+        &server,
+        "/corporations/2000/killmails/recent/",
+        serde_json::json!([{"killmail_id": 600, "killmail_hash": "losshash"}]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/killmails/600/losshash/",
+        serde_json::json!({
+          "killmail_id": 600,
+          "killmail_time": "2024-04-01T00:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"character_id": 42, "corporation_id": 2000, "ship_type_id": 670},
+          "attackers": [{"character_id": 999, "corporation_id": 8888, "final_blow": true}]
+        }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          {"category": "character", "id": 42, "name": "Pilot"},
+          {"category": "character", "id": 999, "name": "Enemy"},
+          {"category": "corporation", "id": 2000, "name": "Test Corp"},
+          {"category": "corporation", "id": 8888, "name": "Enemy Corp"}
+        ]),
+      )
+      .await;
+      mount_json(&server, "/killID/600/", serde_json::json!([])).await;
 
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 2000).await;
@@ -406,10 +434,12 @@ mod tests {
       let grant = corp_grant(2000);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
 
-      let outcome = run(&ctx).await.unwrap();
+      run(&ctx).await.unwrap();
 
-      assert_eq!(outcome, Outcome::Empty);
-      assert!(org::corporation_killmails(&db, 2000).await.unwrap().is_empty());
+      let rows = org::corporation_killmails(&db, 2000).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert!(!rows[0].is_kill());
+      assert!(!rows[0].final_blow());
     }
 
     #[tokio::test]
@@ -504,37 +534,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_marks_a_killmail_as_a_loss_when_our_corp_is_the_victim() {
+    async fn it_returns_empty_when_the_corp_feed_is_empty() {
       let server = MockServer::start().await;
-      mount_paginated(
-        &server,
-        "/corporations/2000/killmails/recent/",
-        serde_json::json!([{"killmail_id": 600, "killmail_hash": "losshash"}]),
-      )
-      .await;
-      mount_json(
-        &server,
-        "/killmails/600/losshash/",
-        serde_json::json!({
-          "killmail_id": 600,
-          "killmail_time": "2024-04-01T00:00:00Z",
-          "solar_system_id": 30000142,
-          "victim": {"character_id": 42, "corporation_id": 2000, "ship_type_id": 670},
-          "attackers": [{"character_id": 999, "corporation_id": 8888, "final_blow": true}]
-        }),
-      )
-      .await;
-      mount_names(
-        &server,
-        serde_json::json!([
-          {"category": "character", "id": 42, "name": "Pilot"},
-          {"category": "character", "id": 999, "name": "Enemy"},
-          {"category": "corporation", "id": 2000, "name": "Test Corp"},
-          {"category": "corporation", "id": 8888, "name": "Enemy Corp"}
-        ]),
-      )
-      .await;
-      mount_json(&server, "/killID/600/", serde_json::json!([])).await;
+      mount_paginated(&server, "/corporations/2000/killmails/recent/", serde_json::json!([])).await;
 
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 2000).await;
@@ -544,34 +546,6 @@ mod tests {
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = corp_grant(2000);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
-
-      run(&ctx).await.unwrap();
-
-      let rows = org::corporation_killmails(&db, 2000).await.unwrap();
-      assert_eq!(rows.len(), 1);
-      assert!(!rows[0].is_kill());
-      assert!(!rows[0].final_blow());
-    }
-
-    #[tokio::test]
-    async fn it_skips_gracefully_when_the_grant_lacks_the_corporation_killmails_scope() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/corporations/2000/killmails/recent/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db, 2000).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 2000);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
 
       let outcome = run(&ctx).await.unwrap();
@@ -597,6 +571,32 @@ mod tests {
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let grant = corp_grant(2000);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert_eq!(outcome, Outcome::Empty);
+      assert!(org::corporation_killmails(&db, 2000).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_skips_gracefully_when_the_grant_lacks_the_corporation_killmails_scope() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/corporations/2000/killmails/recent/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 2000).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 2000);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 2000);
 
       let outcome = run(&ctx).await.unwrap();

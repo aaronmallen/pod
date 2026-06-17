@@ -859,57 +859,16 @@ mod certificate_tests {
     }
   }
 
-  mod upsert_many {
+  mod all {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_round_trips_a_certificate_with_required_skills() {
+    async fn it_returns_empty_when_no_certificates_exist() {
       let db = store::open_test().await.unwrap();
-      seed_skill_type(&db, 3300).await;
 
-      certificate_upsert_many(
-        &db,
-        &[make_certificate(1, "Gunnery Basics", 1)],
-        &[make_cert_skill(1, 3300)],
-      )
-      .await
-      .unwrap();
-
-      let certs = certificate_all(&db).await.unwrap();
-      assert_eq!(certs.len(), 1);
-      assert_eq!(certs[0].id(), 1);
-      assert_eq!(certs[0].grade(), 1);
-
-      let cert_skills = skills_for(&db, 1).await.unwrap();
-      assert_eq!(cert_skills.len(), 1);
-      assert_eq!(cert_skills[0].skill_id(), 3300);
-      assert_eq!(cert_skills[0].basic(), 1);
-      assert_eq!(cert_skills[0].elite(), 5);
-    }
-
-    #[tokio::test]
-    async fn it_overwrites_existing_rows_on_conflict() {
-      let db = store::open_test().await.unwrap();
-      seed_skill_type(&db, 3300).await;
-      certificate_upsert_many(&db, &[make_certificate(1, "Old Name", 1)], &[make_cert_skill(1, 3300)])
-        .await
-        .unwrap();
-
-      let mut updated_skill = make_cert_skill(1, 3300);
-      updated_skill.basic = 2;
-      certificate_upsert_many(&db, &[make_certificate(1, "New Name", 3)], &[updated_skill])
-        .await
-        .unwrap();
-
-      let cert = by_ids(&db, &[1]).await.unwrap().pop().unwrap();
-      assert_eq!(cert.name(), "New Name");
-      assert_eq!(cert.grade(), 3);
-
-      let cert_skills = skills_for(&db, 1).await.unwrap();
-      assert_eq!(cert_skills.len(), 1);
-      assert_eq!(cert_skills[0].basic(), 2);
+      assert_eq!(certificate_all(&db).await.unwrap(), vec![]);
     }
   }
 
@@ -948,16 +907,57 @@ mod certificate_tests {
     }
   }
 
-  mod all {
+  mod upsert_many {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_when_no_certificates_exist() {
+    async fn it_overwrites_existing_rows_on_conflict() {
       let db = store::open_test().await.unwrap();
+      seed_skill_type(&db, 3300).await;
+      certificate_upsert_many(&db, &[make_certificate(1, "Old Name", 1)], &[make_cert_skill(1, 3300)])
+        .await
+        .unwrap();
 
-      assert_eq!(certificate_all(&db).await.unwrap(), vec![]);
+      let mut updated_skill = make_cert_skill(1, 3300);
+      updated_skill.basic = 2;
+      certificate_upsert_many(&db, &[make_certificate(1, "New Name", 3)], &[updated_skill])
+        .await
+        .unwrap();
+
+      let cert = by_ids(&db, &[1]).await.unwrap().pop().unwrap();
+      assert_eq!(cert.name(), "New Name");
+      assert_eq!(cert.grade(), 3);
+
+      let cert_skills = skills_for(&db, 1).await.unwrap();
+      assert_eq!(cert_skills.len(), 1);
+      assert_eq!(cert_skills[0].basic(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_certificate_with_required_skills() {
+      let db = store::open_test().await.unwrap();
+      seed_skill_type(&db, 3300).await;
+
+      certificate_upsert_many(
+        &db,
+        &[make_certificate(1, "Gunnery Basics", 1)],
+        &[make_cert_skill(1, 3300)],
+      )
+      .await
+      .unwrap();
+
+      let certs = certificate_all(&db).await.unwrap();
+      assert_eq!(certs.len(), 1);
+      assert_eq!(certs[0].id(), 1);
+      assert_eq!(certs[0].grade(), 1);
+
+      let cert_skills = skills_for(&db, 1).await.unwrap();
+      assert_eq!(cert_skills.len(), 1);
+      assert_eq!(cert_skills[0].skill_id(), 3300);
+      assert_eq!(cert_skills[0].basic(), 1);
+      assert_eq!(cert_skills[0].elite(), 5);
     }
   }
 }
@@ -1032,10 +1032,40 @@ mod mastery_tests {
     .unwrap();
   }
 
+  mod all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_masteries_exist() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(mastery_all(&db).await.unwrap(), vec![]);
+    }
+  }
+
   mod upsert_many {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_is_idempotent_on_the_composite_key() {
+      let db = store::open_test().await.unwrap();
+      seed_ship_type(&db, 587).await;
+      seed_certificate(&db, 1).await;
+      let row = ShipMastery {
+        certificate_id: 1,
+        ship_type_id: 587,
+        tier: 2,
+      };
+
+      mastery_upsert_many(&db, &[row]).await.unwrap();
+      mastery_upsert_many(&db, &[row]).await.unwrap();
+
+      assert_eq!(mastery_all(&db).await.unwrap().len(), 1);
+    }
 
     #[tokio::test]
     async fn it_round_trips_a_ship_mastery() {
@@ -1060,42 +1090,12 @@ mod mastery_tests {
       assert_eq!(rows[0].tier(), 1);
       assert_eq!(rows[0].certificate_id(), 1);
     }
-
-    #[tokio::test]
-    async fn it_is_idempotent_on_the_composite_key() {
-      let db = store::open_test().await.unwrap();
-      seed_ship_type(&db, 587).await;
-      seed_certificate(&db, 1).await;
-      let row = ShipMastery {
-        certificate_id: 1,
-        ship_type_id: 587,
-        tier: 2,
-      };
-
-      mastery_upsert_many(&db, &[row]).await.unwrap();
-      mastery_upsert_many(&db, &[row]).await.unwrap();
-
-      assert_eq!(mastery_all(&db).await.unwrap().len(), 1);
-    }
-  }
-
-  mod all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_empty_when_no_masteries_exist() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(mastery_all(&db).await.unwrap(), vec![]);
-    }
   }
 }
 
 #[cfg(test)]
 mod metadata_tests {
-  mod skill_picker_tests {
+  mod skill_catalog_tests {
     use super::super::*;
     use crate::store::{
       self,
@@ -1103,226 +1103,235 @@ mod metadata_tests {
       repo::sde::{upsert_item_category, upsert_item_group, upsert_item_type},
     };
 
-    fn make_category(id: i64, name: &str) -> ItemCategory {
-      ItemCategory {
-        id,
-        icon_id: None,
-        name: name.to_string(),
-        published: true,
-      }
+    async fn seed_skill(db: &Database, group_id: i64, group_name: &str, skill_id: i64, name: &str, published: bool) {
+      seed_skill_with_dogma(db, group_id, group_name, skill_id, name, published, "[]").await;
     }
 
-    fn make_group(id: i64, category_id: i64, name: &str) -> ItemGroup {
-      ItemGroup {
-        category_id,
-        icon_id: None,
-        id,
-        name: name.to_string(),
-        published: true,
-      }
+    async fn seed_skill_with_dogma(
+      db: &Database,
+      group_id: i64,
+      group_name: &str,
+      skill_id: i64,
+      name: &str,
+      published: bool,
+      dogma_attributes: &str,
+    ) {
+      upsert_item_group(
+        db,
+        &ItemGroup {
+          category_id: SKILL_CATEGORY_ID,
+          icon_id: None,
+          id: group_id,
+          name: group_name.to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      upsert_item_type(
+        db,
+        &ItemType {
+          capacity: None,
+          description: Some("A skill.".to_owned()),
+          dogma_attributes: dogma_attributes.to_owned(),
+          group_id,
+          icon_id: None,
+          id: skill_id,
+          market_group_id: None,
+          name: name.to_owned(),
+          packaged_volume: None,
+          portion_size: None,
+          published,
+          radius: None,
+          volume: None,
+        },
+      )
+      .await
+      .unwrap();
     }
 
-    fn make_item_type(id: i64, group_id: i64, name: &str) -> ItemType {
-      ItemType {
-        capacity: None,
-        description: Some("Test item".to_string()),
-        dogma_attributes: "[]".to_string(),
-        group_id,
-        icon_id: None,
-        id,
-        market_group_id: None,
-        name: name.to_string(),
-        packaged_volume: None,
-        portion_size: None,
-        published: true,
-        radius: None,
-        volume: None,
-      }
+    async fn seed_skill_category(db: &Database) {
+      upsert_item_category(
+        db,
+        &ItemCategory {
+          id: SKILL_CATEGORY_ID,
+          icon_id: None,
+          name: "Skill".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
     }
 
-    fn item_type_with_dogma(id: i64, group_id: i64, name: &str, dogma: &[(i32, f64)]) -> ItemType {
-      let attrs: Vec<_> = dogma
-        .iter()
-        .map(|&(attribute_id, value)| DogmaAttribute {
-          attribute_id,
-          value,
-        })
-        .collect();
-      let mut item = make_item_type(id, group_id, name);
-      item.dogma_attributes = serde_json::to_string(&attrs).unwrap();
-      item
-    }
-
-    mod required_skills_for_item {
+    mod all {
       use pretty_assertions::assert_eq;
 
       use super::*;
 
-      #[test]
-      fn it_parses_the_five_required_skill_slots() {
-        let item = item_type_with_dogma(
-          100,
-          25,
-          "Rifter",
-          &[
-            (182, 3330.0),
-            (277, 1.0),
-            (183, 3300.0),
-            (278, 3.0),
-            (186, 3301.0),
-            (281, 5.0),
-          ],
+      #[tokio::test]
+      async fn it_defaults_rank_to_one_when_metadata_is_absent() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        assert_eq!(catalog.groups[0].skills[0].rank, 1);
+      }
+
+      #[tokio::test]
+      async fn it_excludes_unpublished_skills() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+        seed_skill(&db, 255, "Gunnery", 3301, "Removed Skill", false).await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        assert_eq!(catalog.groups[0].skills.len(), 1);
+        assert_eq!(catalog.groups[0].skills[0].name, "Gunnery");
+      }
+
+      #[tokio::test]
+      async fn it_groups_published_skills_by_item_group_sorted_by_name() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 257, "Spaceship Command", 3327, "Spaceship Command", true).await;
+        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        assert_eq!(catalog.groups.len(), 2);
+        assert_eq!(catalog.groups[0].name, "Gunnery");
+        assert_eq!(catalog.groups[1].name, "Spaceship Command");
+      }
+
+      #[tokio::test]
+      async fn it_leaves_prereqs_empty_when_no_prereq_dogma_attributes_are_present() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        assert!(catalog.groups[0].skills[0].prereqs.is_empty());
+      }
+
+      #[tokio::test]
+      async fn it_reads_rank_and_attrs_from_skill_metadata_when_present() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+        upsert_skill_metadata(
+          &db,
+          &SkillMetadata {
+            primary_attribute: 167,
+            rank: 3,
+            secondary_attribute: 166,
+            skill_id: 3300,
+          },
+        )
+        .await
+        .unwrap();
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        let skill = &catalog.groups[0].skills[0];
+        assert_eq!(skill.rank, 3);
+        assert_eq!(skill.primary_attr, AttrKey::Perception);
+        assert_eq!(skill.secondary_attr, AttrKey::Memory);
+        assert!(skill.prereqs.is_empty());
+      }
+
+      #[tokio::test]
+      async fn it_resolves_direct_prereqs_from_dogma_attributes_to_names_and_levels() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 256, "Spaceship Command", 3327, "Spaceship Command", true).await;
+        seed_skill_with_dogma(
+          &db,
+          255,
+          "Gunnery",
+          3300,
+          "Small Hybrid Turret",
+          true,
+          r#"[{"attribute_id":182,"value":3327.0},{"attribute_id":277,"value":3.0}]"#,
+        )
+        .await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        let skill = catalog
+          .groups
+          .iter()
+          .flat_map(|g| &g.skills)
+          .find(|s| s.name == "Small Hybrid Turret")
+          .unwrap();
+        assert_eq!(skill.prereqs, vec![("Spaceship Command".to_owned(), 3)]);
+      }
+
+      #[tokio::test]
+      async fn it_resolves_multiple_prereq_slots_in_order() {
+        let db = store::open_test().await.unwrap();
+        seed_skill_category(&db).await;
+        seed_skill(&db, 256, "Spaceship Command", 3327, "Spaceship Command", true).await;
+        seed_skill(&db, 256, "Spaceship Command", 3328, "Gallente Frigate", true).await;
+        seed_skill_with_dogma(
+          &db,
+          255,
+          "Gunnery",
+          3300,
+          "Atron",
+          true,
+          r#"[
+            {"attribute_id":182,"value":3327.0},{"attribute_id":277,"value":1.0},
+            {"attribute_id":1285,"value":3328.0},{"attribute_id":1286,"value":2.0}
+          ]"#,
+        )
+        .await;
+
+        let catalog = skill_catalog(&db).await.unwrap();
+
+        let skill = catalog
+          .groups
+          .iter()
+          .flat_map(|g| &g.skills)
+          .find(|s| s.name == "Atron")
+          .unwrap();
+        assert_eq!(
+          skill.prereqs,
+          vec![("Spaceship Command".to_owned(), 1), ("Gallente Frigate".to_owned(), 2)]
         );
-
-        let mut reqs = required_skills_for_item(&item);
-        reqs.sort();
-        assert_eq!(reqs, vec![(3300, 3), (3301, 5), (3330, 1)]);
-      }
-
-      #[test]
-      fn it_skips_absent_and_zero_skill_slots() {
-        let item = item_type_with_dogma(101, 25, "Empty", &[(277, 4.0), (183, 0.0), (278, 4.0)]);
-        assert_eq!(required_skills_for_item(&item), vec![]);
-      }
-
-      #[test]
-      fn it_returns_empty_for_an_item_with_no_dogma() {
-        let item = make_item_type(102, 25, "Plain");
-        assert_eq!(required_skills_for_item(&item), vec![]);
-      }
-    }
-
-    mod modules_for_picker {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      async fn seed_skill_name(db: &Database, id: i64, name: &str) {
-        upsert_item_category(db, &make_category(16, "Skill")).await.unwrap();
-        upsert_item_group(db, &make_group(900, 16, "Gunnery")).await.unwrap();
-        upsert_item_type(db, &make_item_type(id, 900, name)).await.unwrap();
       }
 
       #[tokio::test]
-      async fn it_lists_modules_with_resolved_requirements_and_skips_skill_free_ones() {
+      async fn it_returns_an_empty_catalog_when_no_skill_groups_exist() {
         let db = store::open_test().await.unwrap();
-        seed_skill_name(&db, 3300, "Gunnery").await;
 
-        upsert_item_category(&db, &make_category(MODULE_CATEGORY_ID, "Module"))
-          .await
-          .unwrap();
-        upsert_item_group(&db, &make_group(74, MODULE_CATEGORY_ID, "Energy Weapon"))
-          .await
-          .unwrap();
+        let catalog = skill_catalog(&db).await.unwrap();
 
-        let with_skill = item_type_with_dogma(2929, 74, "Gatling Pulse Laser", &[(182, 3300.0), (277, 1.0)]);
-        let without_skill = make_item_type(2930, 74, "Civilian Laser");
-        upsert_item_type(&db, &with_skill).await.unwrap();
-        upsert_item_type(&db, &without_skill).await.unwrap();
-
-        let modules = modules_for_picker(&db).await.unwrap();
-
-        assert_eq!(modules.len(), 1);
-        assert_eq!(modules[0].id, 2929);
-        assert_eq!(modules[0].group_name, "Energy Weapon");
-        assert_eq!(modules[0].skill_requirements, vec![("Gunnery".to_string(), 1)]);
-        assert!(modules[0].mastery_cert_ids.is_empty());
+        assert!(catalog.groups.is_empty());
       }
-    }
-
-    mod ships_for_picker {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-      use crate::store::model::{Certificate, CertificateSkill, ShipMastery};
 
       #[tokio::test]
-      async fn it_lists_ships_grouped_with_mastery_cert_ids_per_tier() {
+      async fn it_skips_prereq_slots_whose_skill_id_is_zero() {
         let db = store::open_test().await.unwrap();
-
-        upsert_item_category(&db, &make_category(16, "Skill")).await.unwrap();
-        upsert_item_group(&db, &make_group(255, 16, "Spaceship Command"))
-          .await
-          .unwrap();
-        upsert_item_type(&db, &make_item_type(3331, 255, "Minmatar Frigate"))
-          .await
-          .unwrap();
-
-        upsert_item_category(&db, &make_category(SHIP_CATEGORY_ID, "Ship"))
-          .await
-          .unwrap();
-        upsert_item_group(&db, &make_group(25, SHIP_CATEGORY_ID, "Frigate"))
-          .await
-          .unwrap();
-        let rifter = item_type_with_dogma(587, 25, "Rifter", &[(182, 3331.0), (277, 1.0)]);
-        upsert_item_type(&db, &rifter).await.unwrap();
-
-        certificate_upsert_many(
+        seed_skill_category(&db).await;
+        seed_skill_with_dogma(
           &db,
-          &[
-            Certificate {
-              description: None,
-              grade: 1,
-              id: 10,
-              name: "Cert I".to_string(),
-            },
-            Certificate {
-              description: None,
-              grade: 3,
-              id: 30,
-              name: "Cert III".to_string(),
-            },
-          ],
-          &[
-            CertificateSkill {
-              advanced: 3,
-              basic: 1,
-              certificate_id: 10,
-              elite: 5,
-              improved: 2,
-              skill_id: 3331,
-            },
-            CertificateSkill {
-              advanced: 3,
-              basic: 1,
-              certificate_id: 30,
-              elite: 5,
-              improved: 2,
-              skill_id: 3331,
-            },
-          ],
+          255,
+          "Gunnery",
+          3300,
+          "Gunnery",
+          true,
+          r#"[{"attribute_id":182,"value":0.0},{"attribute_id":277,"value":0.0}]"#,
         )
-        .await
-        .unwrap();
-        mastery_upsert_many(
-          &db,
-          &[
-            ShipMastery {
-              certificate_id: 10,
-              ship_type_id: 587,
-              tier: 1,
-            },
-            ShipMastery {
-              certificate_id: 30,
-              ship_type_id: 587,
-              tier: 3,
-            },
-          ],
-        )
-        .await
-        .unwrap();
+        .await;
 
-        let ships = ships_for_picker(&db).await.unwrap();
+        let catalog = skill_catalog(&db).await.unwrap();
 
-        assert_eq!(ships.len(), 1);
-        assert_eq!(ships[0].id, 587);
-        assert_eq!(ships[0].group_name, "Frigate");
-        assert_eq!(ships[0].skill_requirements, vec![("Minmatar Frigate".to_string(), 1)]);
-        assert_eq!(ships[0].mastery_cert_ids.len(), 5);
-        assert_eq!(ships[0].mastery_cert_ids[0], vec![10]);
-        assert_eq!(ships[0].mastery_cert_ids[2], vec![30]);
-        assert!(ships[0].mastery_cert_ids[1].is_empty());
-        assert!(ships[0].mastery_cert_ids[4].is_empty());
+        assert!(catalog.groups[0].skills[0].prereqs.is_empty());
       }
     }
   }
@@ -1436,7 +1445,7 @@ mod metadata_tests {
     }
   }
 
-  mod skill_catalog_tests {
+  mod skill_picker_tests {
     use super::super::*;
     use crate::store::{
       self,
@@ -1444,235 +1453,226 @@ mod metadata_tests {
       repo::sde::{upsert_item_category, upsert_item_group, upsert_item_type},
     };
 
-    async fn seed_skill(db: &Database, group_id: i64, group_name: &str, skill_id: i64, name: &str, published: bool) {
-      seed_skill_with_dogma(db, group_id, group_name, skill_id, name, published, "[]").await;
+    fn make_category(id: i64, name: &str) -> ItemCategory {
+      ItemCategory {
+        id,
+        icon_id: None,
+        name: name.to_string(),
+        published: true,
+      }
     }
 
-    async fn seed_skill_with_dogma(
-      db: &Database,
-      group_id: i64,
-      group_name: &str,
-      skill_id: i64,
-      name: &str,
-      published: bool,
-      dogma_attributes: &str,
-    ) {
-      upsert_item_group(
-        db,
-        &ItemGroup {
-          category_id: SKILL_CATEGORY_ID,
-          icon_id: None,
-          id: group_id,
-          name: group_name.to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
-      upsert_item_type(
-        db,
-        &ItemType {
-          capacity: None,
-          description: Some("A skill.".to_owned()),
-          dogma_attributes: dogma_attributes.to_owned(),
-          group_id,
-          icon_id: None,
-          id: skill_id,
-          market_group_id: None,
-          name: name.to_owned(),
-          packaged_volume: None,
-          portion_size: None,
-          published,
-          radius: None,
-          volume: None,
-        },
-      )
-      .await
-      .unwrap();
+    fn make_group(id: i64, category_id: i64, name: &str) -> ItemGroup {
+      ItemGroup {
+        category_id,
+        icon_id: None,
+        id,
+        name: name.to_string(),
+        published: true,
+      }
     }
 
-    async fn seed_skill_category(db: &Database) {
-      upsert_item_category(
-        db,
-        &ItemCategory {
-          id: SKILL_CATEGORY_ID,
-          icon_id: None,
-          name: "Skill".to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
+    fn make_item_type(id: i64, group_id: i64, name: &str) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: Some("Test item".to_string()),
+        dogma_attributes: "[]".to_string(),
+        group_id,
+        icon_id: None,
+        id,
+        market_group_id: None,
+        name: name.to_string(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
+      }
     }
 
-    mod all {
+    fn item_type_with_dogma(id: i64, group_id: i64, name: &str, dogma: &[(i32, f64)]) -> ItemType {
+      let attrs: Vec<_> = dogma
+        .iter()
+        .map(|&(attribute_id, value)| DogmaAttribute {
+          attribute_id,
+          value,
+        })
+        .collect();
+      let mut item = make_item_type(id, group_id, name);
+      item.dogma_attributes = serde_json::to_string(&attrs).unwrap();
+      item
+    }
+
+    mod modules_for_picker {
       use pretty_assertions::assert_eq;
 
       use super::*;
 
-      #[tokio::test]
-      async fn it_returns_an_empty_catalog_when_no_skill_groups_exist() {
-        let db = store::open_test().await.unwrap();
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        assert!(catalog.groups.is_empty());
+      async fn seed_skill_name(db: &Database, id: i64, name: &str) {
+        upsert_item_category(db, &make_category(16, "Skill")).await.unwrap();
+        upsert_item_group(db, &make_group(900, 16, "Gunnery")).await.unwrap();
+        upsert_item_type(db, &make_item_type(id, 900, name)).await.unwrap();
       }
 
       #[tokio::test]
-      async fn it_groups_published_skills_by_item_group_sorted_by_name() {
+      async fn it_lists_modules_with_resolved_requirements_and_skips_skill_free_ones() {
         let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 257, "Spaceship Command", 3327, "Spaceship Command", true).await;
-        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
+        seed_skill_name(&db, 3300, "Gunnery").await;
 
-        let catalog = skill_catalog(&db).await.unwrap();
+        upsert_item_category(&db, &make_category(MODULE_CATEGORY_ID, "Module"))
+          .await
+          .unwrap();
+        upsert_item_group(&db, &make_group(74, MODULE_CATEGORY_ID, "Energy Weapon"))
+          .await
+          .unwrap();
 
-        assert_eq!(catalog.groups.len(), 2);
-        assert_eq!(catalog.groups[0].name, "Gunnery");
-        assert_eq!(catalog.groups[1].name, "Spaceship Command");
+        let with_skill = item_type_with_dogma(2929, 74, "Gatling Pulse Laser", &[(182, 3300.0), (277, 1.0)]);
+        let without_skill = make_item_type(2930, 74, "Civilian Laser");
+        upsert_item_type(&db, &with_skill).await.unwrap();
+        upsert_item_type(&db, &without_skill).await.unwrap();
+
+        let modules = modules_for_picker(&db).await.unwrap();
+
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0].id, 2929);
+        assert_eq!(modules[0].group_name, "Energy Weapon");
+        assert_eq!(modules[0].skill_requirements, vec![("Gunnery".to_string(), 1)]);
+        assert!(modules[0].mastery_cert_ids.is_empty());
+      }
+    }
+
+    mod required_skills_for_item {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_parses_the_five_required_skill_slots() {
+        let item = item_type_with_dogma(
+          100,
+          25,
+          "Rifter",
+          &[
+            (182, 3330.0),
+            (277, 1.0),
+            (183, 3300.0),
+            (278, 3.0),
+            (186, 3301.0),
+            (281, 5.0),
+          ],
+        );
+
+        let mut reqs = required_skills_for_item(&item);
+        reqs.sort();
+        assert_eq!(reqs, vec![(3300, 3), (3301, 5), (3330, 1)]);
       }
 
+      #[test]
+      fn it_returns_empty_for_an_item_with_no_dogma() {
+        let item = make_item_type(102, 25, "Plain");
+        assert_eq!(required_skills_for_item(&item), vec![]);
+      }
+
+      #[test]
+      fn it_skips_absent_and_zero_skill_slots() {
+        let item = item_type_with_dogma(101, 25, "Empty", &[(277, 4.0), (183, 0.0), (278, 4.0)]);
+        assert_eq!(required_skills_for_item(&item), vec![]);
+      }
+    }
+
+    mod ships_for_picker {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+      use crate::store::model::{Certificate, CertificateSkill, ShipMastery};
+
       #[tokio::test]
-      async fn it_reads_rank_and_attrs_from_skill_metadata_when_present() {
+      async fn it_lists_ships_grouped_with_mastery_cert_ids_per_tier() {
         let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
-        upsert_skill_metadata(
+
+        upsert_item_category(&db, &make_category(16, "Skill")).await.unwrap();
+        upsert_item_group(&db, &make_group(255, 16, "Spaceship Command"))
+          .await
+          .unwrap();
+        upsert_item_type(&db, &make_item_type(3331, 255, "Minmatar Frigate"))
+          .await
+          .unwrap();
+
+        upsert_item_category(&db, &make_category(SHIP_CATEGORY_ID, "Ship"))
+          .await
+          .unwrap();
+        upsert_item_group(&db, &make_group(25, SHIP_CATEGORY_ID, "Frigate"))
+          .await
+          .unwrap();
+        let rifter = item_type_with_dogma(587, 25, "Rifter", &[(182, 3331.0), (277, 1.0)]);
+        upsert_item_type(&db, &rifter).await.unwrap();
+
+        certificate_upsert_many(
           &db,
-          &SkillMetadata {
-            primary_attribute: 167,
-            rank: 3,
-            secondary_attribute: 166,
-            skill_id: 3300,
-          },
+          &[
+            Certificate {
+              description: None,
+              grade: 1,
+              id: 10,
+              name: "Cert I".to_string(),
+            },
+            Certificate {
+              description: None,
+              grade: 3,
+              id: 30,
+              name: "Cert III".to_string(),
+            },
+          ],
+          &[
+            CertificateSkill {
+              advanced: 3,
+              basic: 1,
+              certificate_id: 10,
+              elite: 5,
+              improved: 2,
+              skill_id: 3331,
+            },
+            CertificateSkill {
+              advanced: 3,
+              basic: 1,
+              certificate_id: 30,
+              elite: 5,
+              improved: 2,
+              skill_id: 3331,
+            },
+          ],
+        )
+        .await
+        .unwrap();
+        mastery_upsert_many(
+          &db,
+          &[
+            ShipMastery {
+              certificate_id: 10,
+              ship_type_id: 587,
+              tier: 1,
+            },
+            ShipMastery {
+              certificate_id: 30,
+              ship_type_id: 587,
+              tier: 3,
+            },
+          ],
         )
         .await
         .unwrap();
 
-        let catalog = skill_catalog(&db).await.unwrap();
+        let ships = ships_for_picker(&db).await.unwrap();
 
-        let skill = &catalog.groups[0].skills[0];
-        assert_eq!(skill.rank, 3);
-        assert_eq!(skill.primary_attr, AttrKey::Perception);
-        assert_eq!(skill.secondary_attr, AttrKey::Memory);
-        assert!(skill.prereqs.is_empty());
-      }
-
-      #[tokio::test]
-      async fn it_defaults_rank_to_one_when_metadata_is_absent() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        assert_eq!(catalog.groups[0].skills[0].rank, 1);
-      }
-
-      #[tokio::test]
-      async fn it_excludes_unpublished_skills() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
-        seed_skill(&db, 255, "Gunnery", 3301, "Removed Skill", false).await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        assert_eq!(catalog.groups[0].skills.len(), 1);
-        assert_eq!(catalog.groups[0].skills[0].name, "Gunnery");
-      }
-
-      #[tokio::test]
-      async fn it_leaves_prereqs_empty_when_no_prereq_dogma_attributes_are_present() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 255, "Gunnery", 3300, "Gunnery", true).await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        assert!(catalog.groups[0].skills[0].prereqs.is_empty());
-      }
-
-      #[tokio::test]
-      async fn it_resolves_direct_prereqs_from_dogma_attributes_to_names_and_levels() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 256, "Spaceship Command", 3327, "Spaceship Command", true).await;
-        seed_skill_with_dogma(
-          &db,
-          255,
-          "Gunnery",
-          3300,
-          "Small Hybrid Turret",
-          true,
-          r#"[{"attribute_id":182,"value":3327.0},{"attribute_id":277,"value":3.0}]"#,
-        )
-        .await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        let skill = catalog
-          .groups
-          .iter()
-          .flat_map(|g| &g.skills)
-          .find(|s| s.name == "Small Hybrid Turret")
-          .unwrap();
-        assert_eq!(skill.prereqs, vec![("Spaceship Command".to_owned(), 3)]);
-      }
-
-      #[tokio::test]
-      async fn it_resolves_multiple_prereq_slots_in_order() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill(&db, 256, "Spaceship Command", 3327, "Spaceship Command", true).await;
-        seed_skill(&db, 256, "Spaceship Command", 3328, "Gallente Frigate", true).await;
-        seed_skill_with_dogma(
-          &db,
-          255,
-          "Gunnery",
-          3300,
-          "Atron",
-          true,
-          r#"[
-            {"attribute_id":182,"value":3327.0},{"attribute_id":277,"value":1.0},
-            {"attribute_id":1285,"value":3328.0},{"attribute_id":1286,"value":2.0}
-          ]"#,
-        )
-        .await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        let skill = catalog
-          .groups
-          .iter()
-          .flat_map(|g| &g.skills)
-          .find(|s| s.name == "Atron")
-          .unwrap();
-        assert_eq!(
-          skill.prereqs,
-          vec![("Spaceship Command".to_owned(), 1), ("Gallente Frigate".to_owned(), 2)]
-        );
-      }
-
-      #[tokio::test]
-      async fn it_skips_prereq_slots_whose_skill_id_is_zero() {
-        let db = store::open_test().await.unwrap();
-        seed_skill_category(&db).await;
-        seed_skill_with_dogma(
-          &db,
-          255,
-          "Gunnery",
-          3300,
-          "Gunnery",
-          true,
-          r#"[{"attribute_id":182,"value":0.0},{"attribute_id":277,"value":0.0}]"#,
-        )
-        .await;
-
-        let catalog = skill_catalog(&db).await.unwrap();
-
-        assert!(catalog.groups[0].skills[0].prereqs.is_empty());
+        assert_eq!(ships.len(), 1);
+        assert_eq!(ships[0].id, 587);
+        assert_eq!(ships[0].group_name, "Frigate");
+        assert_eq!(ships[0].skill_requirements, vec![("Minmatar Frigate".to_string(), 1)]);
+        assert_eq!(ships[0].mastery_cert_ids.len(), 5);
+        assert_eq!(ships[0].mastery_cert_ids[0], vec![10]);
+        assert_eq!(ships[0].mastery_cert_ids[2], vec![30]);
+        assert!(ships[0].mastery_cert_ids[1].is_empty());
+        assert!(ships[0].mastery_cert_ids[4].is_empty());
       }
     }
   }
@@ -1715,6 +1715,30 @@ mod plans_tests {
       .unwrap()
   }
 
+  mod cert_proficiencies {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_replaces_and_reads_back_proficiencies() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+
+      replace_cert_proficiencies(&db, plan_id, &[(1, 2), (2, 3)])
+        .await
+        .unwrap();
+      let rows = cert_proficiencies(&db, plan_id).await.unwrap();
+      assert_eq!(
+        rows.iter().map(|r| (r.cert_id(), r.level())).collect::<Vec<_>>(),
+        [(1, 2), (2, 3)]
+      );
+
+      replace_cert_proficiencies(&db, plan_id, &[]).await.unwrap();
+      assert!(cert_proficiencies(&db, plan_id).await.unwrap().is_empty());
+    }
+  }
+
   mod create {
     use pretty_assertions::assert_eq;
 
@@ -1735,31 +1759,30 @@ mod plans_tests {
     }
   }
 
-  mod round_trip {
+  mod entries {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_creates_reads_updates_lists_and_deletes_a_plan() {
+    async fn it_returns_entries_in_position_order() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
+      let plan_id = seed_plan(&db).await;
+      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
 
-      let plan = create(&db, 42, "Combat").await.unwrap();
-      assert_eq!(get(&db, plan.id()).await.unwrap().unwrap(), plan);
+      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
 
-      update(&db, plan.id(), "Industry", "optimal", "none").await.unwrap();
-      let updated = get(&db, plan.id()).await.unwrap().unwrap();
-      assert_eq!(updated.name(), "Industry");
-      assert_eq!(updated.sort_mode(), "optimal");
-      assert_eq!(updated.implant_set(), "none");
-      assert!(updated.updated_at() >= plan.updated_at());
-
-      assert_eq!(for_character(&db, 42).await.unwrap(), vec![updated]);
-
-      delete(&db, plan.id()).await.unwrap();
-      assert!(get(&db, plan.id()).await.unwrap().is_none());
-      assert!(for_character(&db, 42).await.unwrap().is_empty());
+      assert_eq!(
+        entries(&db, plan_id)
+          .await
+          .unwrap()
+          .iter()
+          .map(|e| e.skill_id())
+          .collect::<Vec<_>>(),
+        [3302, 3300, 3301]
+      );
     }
   }
 
@@ -1807,190 +1830,6 @@ mod plans_tests {
     }
   }
 
-  mod entries {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_entries_in_position_order() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
-
-      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
-
-      assert_eq!(
-        entries(&db, plan_id)
-          .await
-          .unwrap()
-          .iter()
-          .map(|e| e.skill_id())
-          .collect::<Vec<_>>(),
-        [3302, 3300, 3301]
-      );
-    }
-  }
-
-  mod reorder_entries {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_changes_positions_but_keeps_ids_stable() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
-
-      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
-
-      let after = entries(&db, plan_id).await.unwrap();
-      assert_eq!(
-        after.iter().map(|e| e.id()).collect::<Vec<_>>(),
-        [c.id(), a.id(), b.id()]
-      );
-      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1, 2]);
-      let mut ids = after.iter().map(|e| e.id()).collect::<Vec<_>>();
-      ids.sort_unstable();
-      let mut original = vec![a.id(), b.id(), c.id()];
-      original.sort_unstable();
-      assert_eq!(ids, original);
-    }
-  }
-
-  mod remove_entry {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_deletes_and_redensifies_positions() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
-
-      remove_entry(&db, b.id()).await.unwrap();
-
-      let after = entries(&db, plan_id).await.unwrap();
-      assert_eq!(after.iter().map(|e| e.id()).collect::<Vec<_>>(), [a.id(), c.id()]);
-      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1]);
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_for_a_missing_entry() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-
-      remove_entry(&db, 999_999).await.unwrap();
-
-      assert_eq!(entries(&db, plan_id).await.unwrap().len(), 1);
-    }
-  }
-
-  mod replace_entries {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_overwrites_every_entry_with_dense_positions() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-
-      replace_entries(
-        &db,
-        plan_id,
-        &[(4000, 5, "high", "must have", 0), (4001, 3, "normal", "", 1)],
-      )
-      .await
-      .unwrap();
-
-      let after = entries(&db, plan_id).await.unwrap();
-      assert_eq!(after.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [4000, 4001]);
-      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1]);
-      assert_eq!(after[0].priority(), "high");
-      assert_eq!(after[0].note(), "must have");
-      assert_eq!(after[1].is_auto(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_plan_when_given_no_entries() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-
-      replace_entries(&db, plan_id, &[]).await.unwrap();
-
-      assert!(entries(&db, plan_id).await.unwrap().is_empty());
-    }
-  }
-
-  mod upsert_remap_point {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_replaces_the_remap_in_a_slot() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let entry = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-
-      upsert_after(&db, plan_id, Some(entry.id())).await;
-      let replacement = upsert_remap_point(&db, plan_id, Some(entry.id()), 27, 17, 17, 21, 17)
-        .await
-        .unwrap();
-
-      let all = remap_points(&db, plan_id).await.unwrap();
-      assert_eq!(all.len(), 1);
-      assert_eq!(all[0].id(), replacement.id());
-      assert_eq!(all[0].base_perception(), 27);
-    }
-
-    #[tokio::test]
-    async fn it_supports_the_start_bucket() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-
-      let remap = upsert_after(&db, plan_id, None).await;
-
-      assert_eq!(remap.after_entry_id(), None);
-      assert_eq!(remap_points(&db, plan_id).await.unwrap().len(), 1);
-    }
-  }
-
-  mod reorder_survival {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn a_remap_keeps_pointing_at_the_same_entry_after_a_reorder() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
-      upsert_after(&db, plan_id, Some(b.id())).await;
-
-      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
-
-      let remaps = remap_points(&db, plan_id).await.unwrap();
-      assert_eq!(remaps.len(), 1);
-      assert_eq!(remaps[0].after_entry_id(), Some(b.id()));
-    }
-  }
-
   mod reanchor_on_delete {
     use pretty_assertions::assert_eq;
 
@@ -2032,23 +1871,6 @@ mod plans_tests {
     }
 
     #[tokio::test]
-    async fn it_prunes_a_dependent_remap_when_the_target_slot_is_occupied() {
-      let db = store::open_test().await.unwrap();
-      let plan_id = seed_plan(&db).await;
-      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
-      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
-      let on_a = upsert_after(&db, plan_id, Some(a.id())).await;
-      upsert_after(&db, plan_id, Some(b.id())).await;
-
-      remove_entry(&db, b.id()).await.unwrap();
-
-      let remaps = remap_points(&db, plan_id).await.unwrap();
-      assert_eq!(remaps.len(), 1, "no orphan, no duplicate slot");
-      assert_eq!(remaps[0].id(), on_a.id());
-      assert_eq!(remaps[0].after_entry_id(), Some(a.id()));
-    }
-
-    #[tokio::test]
     async fn it_leaves_no_orphan_rows_after_a_delete() {
       let db = store::open_test().await.unwrap();
       let plan_id = seed_plan(&db).await;
@@ -2067,6 +1889,55 @@ mod plans_tests {
       .unwrap();
       assert_eq!(orphans, 0);
     }
+
+    #[tokio::test]
+    async fn it_prunes_a_dependent_remap_when_the_target_slot_is_occupied() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+      let on_a = upsert_after(&db, plan_id, Some(a.id())).await;
+      upsert_after(&db, plan_id, Some(b.id())).await;
+
+      remove_entry(&db, b.id()).await.unwrap();
+
+      let remaps = remap_points(&db, plan_id).await.unwrap();
+      assert_eq!(remaps.len(), 1, "no orphan, no duplicate slot");
+      assert_eq!(remaps[0].id(), on_a.id());
+      assert_eq!(remaps[0].after_entry_id(), Some(a.id()));
+    }
+  }
+
+  mod remove_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_deletes_and_redensifies_positions() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
+
+      remove_entry(&db, b.id()).await.unwrap();
+
+      let after = entries(&db, plan_id).await.unwrap();
+      assert_eq!(after.iter().map(|e| e.id()).collect::<Vec<_>>(), [a.id(), c.id()]);
+      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1]);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_a_missing_entry() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+
+      remove_entry(&db, 999_999).await.unwrap();
+
+      assert_eq!(entries(&db, plan_id).await.unwrap().len(), 1);
+    }
   }
 
   mod remove_remap_point {
@@ -2081,6 +1952,125 @@ mod plans_tests {
       remove_remap_point(&db, remap.id()).await.unwrap();
 
       assert!(remap_points(&db, plan_id).await.unwrap().is_empty());
+    }
+  }
+
+  mod reorder_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_changes_positions_but_keeps_ids_stable() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
+
+      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
+
+      let after = entries(&db, plan_id).await.unwrap();
+      assert_eq!(
+        after.iter().map(|e| e.id()).collect::<Vec<_>>(),
+        [c.id(), a.id(), b.id()]
+      );
+      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1, 2]);
+      let mut ids = after.iter().map(|e| e.id()).collect::<Vec<_>>();
+      ids.sort_unstable();
+      let mut original = vec![a.id(), b.id(), c.id()];
+      original.sort_unstable();
+      assert_eq!(ids, original);
+    }
+  }
+
+  mod reorder_survival {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_remap_keeps_pointing_at_the_same_entry_after_a_reorder() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      let a = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      let b = insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+      let c = insert_entry(&db, plan_id, 3302, 5).await.unwrap();
+      upsert_after(&db, plan_id, Some(b.id())).await;
+
+      reorder_entries(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
+
+      let remaps = remap_points(&db, plan_id).await.unwrap();
+      assert_eq!(remaps.len(), 1);
+      assert_eq!(remaps[0].after_entry_id(), Some(b.id()));
+    }
+  }
+
+  mod replace_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_clears_the_plan_when_given_no_entries() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+
+      replace_entries(&db, plan_id, &[]).await.unwrap();
+
+      assert!(entries(&db, plan_id).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_overwrites_every_entry_with_dense_positions() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+      insert_entry(&db, plan_id, 3301, 5).await.unwrap();
+
+      replace_entries(
+        &db,
+        plan_id,
+        &[(4000, 5, "high", "must have", 0), (4001, 3, "normal", "", 1)],
+      )
+      .await
+      .unwrap();
+
+      let after = entries(&db, plan_id).await.unwrap();
+      assert_eq!(after.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [4000, 4001]);
+      assert_eq!(after.iter().map(|e| e.position()).collect::<Vec<_>>(), [0, 1]);
+      assert_eq!(after[0].priority(), "high");
+      assert_eq!(after[0].note(), "must have");
+      assert_eq!(after[1].is_auto(), 1);
+    }
+  }
+
+  mod round_trip {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_creates_reads_updates_lists_and_deletes_a_plan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let plan = create(&db, 42, "Combat").await.unwrap();
+      assert_eq!(get(&db, plan.id()).await.unwrap().unwrap(), plan);
+
+      update(&db, plan.id(), "Industry", "optimal", "none").await.unwrap();
+      let updated = get(&db, plan.id()).await.unwrap().unwrap();
+      assert_eq!(updated.name(), "Industry");
+      assert_eq!(updated.sort_mode(), "optimal");
+      assert_eq!(updated.implant_set(), "none");
+      assert!(updated.updated_at() >= plan.updated_at());
+
+      assert_eq!(for_character(&db, 42).await.unwrap(), vec![updated]);
+
+      delete(&db, plan.id()).await.unwrap();
+      assert!(get(&db, plan.id()).await.unwrap().is_none());
+      assert!(for_character(&db, 42).await.unwrap().is_empty());
     }
   }
 
@@ -2112,27 +2102,37 @@ mod plans_tests {
     }
   }
 
-  mod cert_proficiencies {
+  mod upsert_remap_point {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_replaces_and_reads_back_proficiencies() {
+    async fn it_replaces_the_remap_in_a_slot() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_plan(&db).await;
+      let entry = insert_entry(&db, plan_id, 3300, 5).await.unwrap();
+
+      upsert_after(&db, plan_id, Some(entry.id())).await;
+      let replacement = upsert_remap_point(&db, plan_id, Some(entry.id()), 27, 17, 17, 21, 17)
+        .await
+        .unwrap();
+
+      let all = remap_points(&db, plan_id).await.unwrap();
+      assert_eq!(all.len(), 1);
+      assert_eq!(all[0].id(), replacement.id());
+      assert_eq!(all[0].base_perception(), 27);
+    }
+
+    #[tokio::test]
+    async fn it_supports_the_start_bucket() {
       let db = store::open_test().await.unwrap();
       let plan_id = seed_plan(&db).await;
 
-      replace_cert_proficiencies(&db, plan_id, &[(1, 2), (2, 3)])
-        .await
-        .unwrap();
-      let rows = cert_proficiencies(&db, plan_id).await.unwrap();
-      assert_eq!(
-        rows.iter().map(|r| (r.cert_id(), r.level())).collect::<Vec<_>>(),
-        [(1, 2), (2, 3)]
-      );
+      let remap = upsert_after(&db, plan_id, None).await;
 
-      replace_cert_proficiencies(&db, plan_id, &[]).await.unwrap();
-      assert!(cert_proficiencies(&db, plan_id).await.unwrap().is_empty());
+      assert_eq!(remap.after_entry_id(), None);
+      assert_eq!(remap_points(&db, plan_id).await.unwrap().len(), 1);
     }
   }
 }
@@ -2163,6 +2163,12 @@ mod requirements_tests {
     use super::*;
 
     #[test]
+    fn it_drops_zero_level_requirements() {
+      let skills = vec![cert_skill(100, 0, 2, 3, 4)];
+      assert_eq!(skills_for_cert_at_proficiency(&skills, 0), vec![]);
+    }
+
+    #[test]
     fn it_reads_the_basic_column_at_index_0() {
       let skills = vec![cert_skill(100, 1, 2, 3, 4)];
       assert_eq!(skills_for_cert_at_proficiency(&skills, 0), vec![(100, 1)]);
@@ -2174,12 +2180,6 @@ mod requirements_tests {
       assert_eq!(skills_for_cert_at_proficiency(&skills, 3), vec![(100, 5)]);
       assert_eq!(skills_for_cert_at_proficiency(&skills, 9), vec![(100, 5)]);
     }
-
-    #[test]
-    fn it_drops_zero_level_requirements() {
-      let skills = vec![cert_skill(100, 0, 2, 3, 4)];
-      assert_eq!(skills_for_cert_at_proficiency(&skills, 0), vec![]);
-    }
   }
 
   mod skills_for_mastery {
@@ -2188,11 +2188,9 @@ mod requirements_tests {
     use super::*;
 
     #[test]
-    fn it_unions_tiers_cumulatively_up_to_the_requested_level() {
-      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 4)], vec![cert_skill(200, 1, 2, 3, 4)]];
-
-      assert_eq!(sorted(skills_for_mastery(&tiers, 1)), vec![(100, 1)]);
-      assert_eq!(sorted(skills_for_mastery(&tiers, 2)), vec![(100, 1), (200, 2)]);
+    fn it_caps_at_tier_five_and_at_the_available_tier_count() {
+      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 5)]];
+      assert_eq!(skills_for_mastery(&tiers, 5), vec![(100, 1)]);
     }
 
     #[test]
@@ -2207,6 +2205,20 @@ mod requirements_tests {
     }
 
     #[test]
+    fn it_returns_empty_for_mastery_zero() {
+      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 5)]];
+      assert_eq!(skills_for_mastery(&tiers, 0), vec![]);
+    }
+
+    #[test]
+    fn it_unions_tiers_cumulatively_up_to_the_requested_level() {
+      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 4)], vec![cert_skill(200, 1, 2, 3, 4)]];
+
+      assert_eq!(sorted(skills_for_mastery(&tiers, 1)), vec![(100, 1)]);
+      assert_eq!(sorted(skills_for_mastery(&tiers, 2)), vec![(100, 1), (200, 2)]);
+    }
+
+    #[test]
     fn it_uses_the_elite_column_for_tiers_iv_and_v() {
       let tiers = vec![
         vec![cert_skill(100, 1, 2, 3, 5)],
@@ -2218,18 +2230,6 @@ mod requirements_tests {
 
       assert_eq!(skills_for_mastery(&tiers, 5), vec![(100, 5)]);
     }
-
-    #[test]
-    fn it_caps_at_tier_five_and_at_the_available_tier_count() {
-      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 5)]];
-      assert_eq!(skills_for_mastery(&tiers, 5), vec![(100, 1)]);
-    }
-
-    #[test]
-    fn it_returns_empty_for_mastery_zero() {
-      let tiers = vec![vec![cert_skill(100, 1, 2, 3, 5)]];
-      assert_eq!(skills_for_mastery(&tiers, 0), vec![]);
-    }
   }
 
   mod skills_for_module {
@@ -2238,14 +2238,14 @@ mod requirements_tests {
     use super::*;
 
     #[test]
-    fn it_passes_through_single_requirements() {
-      assert_eq!(skills_for_module(&[(3300, 2)]), vec![(3300, 2)]);
-    }
-
-    #[test]
     fn it_dedups_duplicate_skills_keeping_the_highest_level() {
       let out = sorted(skills_for_module(&[(3300, 2), (3301, 1), (3300, 4)]));
       assert_eq!(out, vec![(3300, 4), (3301, 1)]);
+    }
+
+    #[test]
+    fn it_passes_through_single_requirements() {
+      assert_eq!(skills_for_module(&[(3300, 2)]), vec![(3300, 2)]);
     }
 
     #[test]

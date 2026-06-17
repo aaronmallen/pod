@@ -127,6 +127,16 @@ mod tests {
       use super::*;
 
       #[test]
+      fn it_averages_group_levels_into_cap_avg() {
+        let levels = HashMap::from([(10, 3), (11, 0), (12, 3), (20, 5)]);
+
+        let model = CompareModel::build(&catalog(), levels, 0);
+
+        assert_eq!(model.group(1).unwrap().cap_avg, 2.0);
+        assert_eq!(model.group(2).unwrap().cap_avg, 5.0);
+      }
+
+      #[test]
       fn it_counts_skills_at_v_iv_and_trained() {
         let levels = HashMap::from([(10, 5), (11, 4), (12, 0), (20, 1)]);
 
@@ -135,16 +145,6 @@ mod tests {
         assert_eq!(model.at_v_count, 1);
         assert_eq!(model.at_iv_count, 2);
         assert_eq!(model.trained_count, 3);
-      }
-
-      #[test]
-      fn it_averages_group_levels_into_cap_avg() {
-        let levels = HashMap::from([(10, 3), (11, 0), (12, 3), (20, 5)]);
-
-        let model = CompareModel::build(&catalog(), levels, 0);
-
-        assert_eq!(model.group(1).unwrap().cap_avg, 2.0);
-        assert_eq!(model.group(2).unwrap().cap_avg, 5.0);
       }
 
       #[test]

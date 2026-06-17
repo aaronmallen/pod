@@ -204,13 +204,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_the_combined_trigger() {
-      let state = state_with(Scope::All, vec![character(1)]);
-
-      let _el: Element<'_, Message> = trigger(&state);
-    }
-
-    #[test]
     fn it_renders_a_character_trigger() {
       let state = state_with(Scope::Char(1), vec![character(1)]);
 
@@ -220,6 +213,13 @@ mod tests {
     #[test]
     fn it_renders_a_corporation_trigger() {
       let state = state_with(Scope::Corp(98), vec![corporation(98)]);
+
+      let _el: Element<'_, Message> = trigger(&state);
+    }
+
+    #[test]
+    fn it_renders_the_combined_trigger() {
+      let state = state_with(Scope::All, vec![character(1)]);
 
       let _el: Element<'_, Message> = trigger(&state);
     }

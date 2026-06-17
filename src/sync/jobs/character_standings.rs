@@ -167,6 +167,64 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_aborts_without_writing_when_the_name_resolution_fails() {
+      let server = MockServer::start().await;
+      mount_standings(&server, 42).await;
+      mount_json(
+        &server,
+        "/universe/factions/",
+        serde_json::json!([
+          { "description": "The Amarr Empire.", "faction_id": 500_003, "is_unique": true, "name": "Amarr Empire",
+            "size_factor": 5.0, "station_count": 1000, "station_system_count": 500 },
+        ]),
+      )
+      .await;
+      Mock::given(method("POST"))
+        .and(path("/universe/names/"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::standings(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_aborts_without_writing_when_the_standings_fetch_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/standings/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::standings(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_persists_standings_resolving_faction_from_sde_and_others_from_the_resolver() {
       let server = MockServer::start().await;
       mount_standings(&server, 42).await;
@@ -242,64 +300,6 @@ mod tests {
 
       let standings = character::standings(&db, 42).await.unwrap();
       assert_eq!(standings[0].from_name(), "Amarr Empire");
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_standings_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/standings/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::standings(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_name_resolution_fails() {
-      let server = MockServer::start().await;
-      mount_standings(&server, 42).await;
-      mount_json(
-        &server,
-        "/universe/factions/",
-        serde_json::json!([
-          { "description": "The Amarr Empire.", "faction_id": 500_003, "is_unique": true, "name": "Amarr Empire",
-            "size_factor": 5.0, "station_count": 1000, "station_system_count": 500 },
-        ]),
-      )
-      .await;
-      Mock::given(method("POST"))
-        .and(path("/universe/names/"))
-        .respond_with(ResponseTemplate::new(503))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::standings(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]

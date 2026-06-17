@@ -424,10 +424,15 @@ mod tests {
   };
 
   const STRUCTURE_ID: i64 = 1_021_000_000_000;
+
   const STATION_ID: i64 = 60_003_760;
+
   const SYSTEM_ID: i64 = 30_000_142;
+
   const CONSTELLATION_ID: i64 = 20_000_020;
+
   const REGION_ID: i64 = 10_000_002;
+
   const OWNER_CORP_ID: i64 = 1_000_035;
 
   struct Harness {
@@ -610,28 +615,166 @@ mod tests {
       .await;
   }
 
+  async fn mount_owner_corporation_stack(server: &MockServer) {
+    Mock::given(method("GET"))
+      .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
+        "tax_rate": 0.0, "ticker": "CN",
+      })))
+      .mount(server)
+      .await;
+    Mock::given(method("GET"))
+      .and(path("/characters/3004029/"))
+      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+        "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
+        "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
+      })))
+      .mount(server)
+      .await;
+    Mock::given(method("GET"))
+      .and(path("/universe/races/"))
+      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+        { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+      ])))
+      .mount(server)
+      .await;
+    Mock::given(method("GET"))
+      .and(path("/universe/bloodlines/"))
+      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+        { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+          "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+          "ship_type_id": 601, "willpower": 5 },
+      ])))
+      .mount(server)
+      .await;
+  }
+
+  fn ctx_no_grant<'a>(harness: &'a Harness) -> JobCtx<'a> {
+    ctx_with(harness, None, Subject::Character(0))
+  }
+
+  mod ensure_corporation_present {
+    use super::*;
+
+    const STALE_CORP_ID: i64 = 98_000_001;
+
+    const STALE_ALLIANCE_ID: i64 = 99_000_009;
+
+    async fn seed_stale_corp_with_dangling_alliance(db: &store::Database) {
+      let alliance = Alliance::new(
+        STALE_ALLIANCE_ID,
+        STALE_CORP_ID,
+        1,
+        "2003-01-01",
+        "Gone Alliance",
+        "GONE",
+      );
+      org::upsert_alliance(db, &alliance).await.unwrap();
+      let mut corp = Corporation::new(STALE_CORP_ID, "Stale Corp", "STAL");
+      corp.set_alliance_id(STALE_ALLIANCE_ID);
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      org::upsert_corporation(db, &corp).await.unwrap();
+      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
+      sqlx::query("DELETE FROM alliances WHERE id = ?")
+        .bind(STALE_ALLIANCE_ID)
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_present_corp_untouched_when_its_alliance_is_intact() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_character(&harness.db, 100).await;
+      let ctx = ctx_no_grant(&harness);
+
+      ensure_corporation_present(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("a present corp with a live alliance needs no ESI and no re-upsert");
+
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_some()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_re_seeds_a_dangling_alliance_on_a_present_corp_without_refetching_it() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/alliances/{STALE_ALLIANCE_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": STALE_CORP_ID, "creator_id": 1, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": STALE_CORP_ID, "name": "Gone Alliance", "ticker": "GONE",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{STALE_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_stale_corp_with_dangling_alliance(&harness.db).await;
+      let ctx = ctx_no_grant(&harness);
+
+      ensure_corporation_present(&ctx, STALE_CORP_ID)
+        .await
+        .expect("a present-but-stale corp re-seeds its alliance instead of 787-ing at commit");
+
+      assert!(
+        org::get_alliance(&harness.db, STALE_ALLIANCE_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the dangling alliance_id is re-seeded so the deferred FK holds"
+      );
+      assert!(
+        org::get_corporation(&harness.db, STALE_CORP_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the stale corp row is preserved, never deleted"
+      );
+    }
+  }
+
   mod resolve_asset_references {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_resolves_and_caches_a_structure() {
+    async fn it_leaves_a_structure_unmarked_without_the_structures_scope() {
       let server = MockServer::start().await;
-      mount_structure_ok(&server, 1).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&server)
+        .await;
       let harness = Harness::new(&server.uri()).await;
-      seed_character(&harness.db, 100).await;
-      seed_geography(&harness.db).await;
-      let grant = scoped_grant();
+      let grant = Grant::new_test("no-scope-token", 100);
       let ctx = ctx_with(&harness, Some(&grant), Subject::Character(100));
 
       resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
 
-      let structure = sde::get_structure(&harness.db, STRUCTURE_ID)
-        .await
-        .unwrap()
-        .expect("the structure is cached");
-      assert_eq!(structure.name(), "A Player Structure");
+      assert!(sde::get_structure(&harness.db, STRUCTURE_ID).await.unwrap().is_none());
+      assert!(
+        !sde::is_structure_inaccessible(&harness.db, 100, OwnerType::Character, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "without the scope the id stays unmarked, so a later re-auth can still resolve it"
+      );
     }
 
     #[tokio::test]
@@ -689,26 +832,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_leaves_a_structure_unmarked_without_the_structures_scope() {
+    async fn it_resolves_a_referenced_item_type() {
       let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&server)
-        .await;
+      mount_item_type(&server).await;
       let harness = Harness::new(&server.uri()).await;
-      let grant = Grant::new_test("no-scope-token", 100);
-      let ctx = ctx_with(&harness, Some(&grant), Subject::Character(100));
+      let ctx = ctx_with(&harness, None, Subject::Character(100));
 
-      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+      resolve_asset_references(&ctx, &[1529], &[], &[]).await.unwrap();
 
-      assert!(sde::get_structure(&harness.db, STRUCTURE_ID).await.unwrap().is_none());
       assert!(
-        !sde::is_structure_inaccessible(&harness.db, 100, OwnerType::Character, STRUCTURE_ID)
-          .await
-          .unwrap(),
-        "without the scope the id stays unmarked, so a later re-auth can still resolve it"
+        sde::get_item_type(&harness.db, 1529).await.unwrap().is_some(),
+        "the referenced item type is resolved before persist"
       );
     }
 
@@ -729,6 +863,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_resolves_and_caches_a_structure() {
+      let server = MockServer::start().await;
+      mount_structure_ok(&server, 1).await;
+      let harness = Harness::new(&server.uri()).await;
+      seed_character(&harness.db, 100).await;
+      seed_geography(&harness.db).await;
+      let grant = scoped_grant();
+      let ctx = ctx_with(&harness, Some(&grant), Subject::Character(100));
+
+      resolve_asset_references(&ctx, &[], &[], &[STRUCTURE_ID]).await.unwrap();
+
+      let structure = sde::get_structure(&harness.db, STRUCTURE_ID)
+        .await
+        .unwrap()
+        .expect("the structure is cached");
+      assert_eq!(structure.name(), "A Player Structure");
+    }
+
+    #[tokio::test]
     async fn it_tolerates_an_inaccessible_station_without_erroring() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -746,478 +899,133 @@ mod tests {
         "a 403/404 station is left unresolved, not fatal"
       );
     }
-
-    #[tokio::test]
-    async fn it_resolves_a_referenced_item_type() {
-      let server = MockServer::start().await;
-      mount_item_type(&server).await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_with(&harness, None, Subject::Character(100));
-
-      resolve_asset_references(&ctx, &[1529], &[], &[]).await.unwrap();
-
-      assert!(
-        sde::get_item_type(&harness.db, 1529).await.unwrap().is_some(),
-        "the referenced item type is resolved before persist"
-      );
-    }
   }
 
-  async fn mount_owner_corporation_stack(server: &MockServer) {
-    Mock::given(method("GET"))
-      .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-        "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
-        "tax_rate": 0.0, "ticker": "CN",
-      })))
-      .mount(server)
-      .await;
-    Mock::given(method("GET"))
-      .and(path("/characters/3004029/"))
-      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-        "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
-        "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
-      })))
-      .mount(server)
-      .await;
-    Mock::given(method("GET"))
-      .and(path("/universe/races/"))
-      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-        { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
-      ])))
-      .mount(server)
-      .await;
-    Mock::given(method("GET"))
-      .and(path("/universe/bloodlines/"))
-      .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-        { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
-          "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
-          "ship_type_id": 601, "willpower": 5 },
-      ])))
-      .mount(server)
-      .await;
-  }
-
-  fn ctx_no_grant<'a>(harness: &'a Harness) -> JobCtx<'a> {
-    ctx_with(harness, None, Subject::Character(0))
-  }
-
-  mod resolve_stockpile_location {
+  mod resolve_bloodline {
     use super::*;
 
     #[tokio::test]
-    async fn it_resolves_a_station_picked_for_a_stockpile() {
+    async fn it_errors_when_the_bloodline_id_overflows_an_i32() {
       let server = MockServer::start().await;
-      mount_npc_station(&server).await;
       let harness = Harness::new(&server.uri()).await;
-      let grant = Grant::new_test("token", 100);
+      let ctx = ctx_no_grant(&harness);
 
-      resolve_stockpile_location(
-        &harness.db,
-        &harness.esi,
-        &harness.image,
-        &harness.image_store,
-        &grant,
-        STATION_ID,
-      )
-      .await
-      .unwrap();
+      let result = resolve_bloodline(&ctx, i64::from(i32::MAX) + 1).await;
 
-      assert!(
-        sde::get_station(&harness.db, STATION_ID).await.unwrap().is_some(),
-        "an NPC station chosen for a stockpile is resolved into the universe cache"
-      );
+      assert!(matches!(result, Err(Error::Internal(_))));
     }
 
     #[tokio::test]
-    async fn it_short_circuits_a_solar_system_without_touching_esi() {
+    async fn it_errors_when_the_bloodline_is_absent_from_the_esi_list() {
       let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
       let harness = Harness::new(&server.uri()).await;
-      let grant = Grant::new_test("token", 100);
+      let ctx = ctx_no_grant(&harness);
 
-      resolve_stockpile_location(
-        &harness.db,
-        &harness.esi,
-        &harness.image,
-        &harness.image_store,
-        &grant,
-        SYSTEM_ID,
-      )
-      .await
-      .unwrap();
+      let result = resolve_bloodline(&ctx, 5).await;
+
+      assert!(matches!(result, Err(Error::Internal(_))));
     }
 
     #[tokio::test]
-    async fn it_resolves_a_region_picked_for_a_stockpile() {
+    async fn it_fetches_a_bloodline_from_the_esi_list() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path(format!("/universe/regions/{REGION_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
-        })))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
         .mount(&server)
         .await;
       let harness = Harness::new(&server.uri()).await;
-      let grant = Grant::new_test("token", 100);
+      let ctx = ctx_no_grant(&harness);
 
-      resolve_stockpile_location(
-        &harness.db,
-        &harness.esi,
-        &harness.image,
-        &harness.image_store,
-        &grant,
-        REGION_ID,
-      )
-      .await
-      .unwrap();
+      let bloodline = resolve_bloodline(&ctx, 5).await.unwrap();
 
-      assert!(
-        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
-        "a region chosen for a stockpile is resolved into the universe cache"
-      );
+      assert_eq!(bloodline.name(), "Civire");
     }
 
     #[tokio::test]
-    async fn it_resolves_a_constellation_and_its_region_for_a_stockpile() {
+    async fn it_short_circuits_when_the_bloodline_is_already_cached() {
       let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/constellations/{CONSTELLATION_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
-          "region_id": REGION_ID, "systems": [SYSTEM_ID],
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/regions/{REGION_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
-        })))
-        .mount(&server)
-        .await;
       let harness = Harness::new(&server.uri()).await;
-      let grant = Grant::new_test("token", 100);
-
-      resolve_stockpile_location(
+      seed_character(&harness.db, 100).await;
+      sde::upsert_bloodline(
         &harness.db,
-        &harness.esi,
-        &harness.image,
-        &harness.image_store,
-        &grant,
-        CONSTELLATION_ID,
+        &Bloodline::new(5, OWNER_CORP_ID, 2, 3, "The Civire.", 4, 5, "Civire", 4, 4),
       )
       .await
       .unwrap();
+      let ctx = ctx_no_grant(&harness);
 
-      assert!(
-        sde::get_constellation(&harness.db, CONSTELLATION_ID)
-          .await
-          .unwrap()
-          .is_some(),
-        "the picked constellation is cached"
-      );
-      assert!(
-        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
-        "its parent region is resolved too, satisfying the constellation's region FK"
-      );
+      let bloodline = resolve_bloodline(&ctx, 5).await.unwrap();
+
+      assert_eq!(bloodline.name(), "Civire");
+    }
+  }
+
+  mod resolve_faction {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_errors_when_the_faction_is_absent_from_the_esi_list() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/factions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let result = resolve_faction(&ctx, 500_001).await;
+
+      assert!(matches!(result, Err(Error::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn it_fetches_a_faction_from_the_esi_list() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/factions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
+            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
+            "station_system_count": 50 },
+        ])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
+
+      assert_eq!(faction.name(), "Caldari State");
+    }
+
+    #[tokio::test]
+    async fn it_short_circuits_when_the_faction_is_already_cached() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server.uri()).await;
+      sde::upsert_faction(&harness.db, &Faction::new(500_001, "Caldari State", true, 5.0, 100, 50))
+        .await
+        .unwrap();
+      let ctx = ctx_no_grant(&harness);
+
+      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
+
+      assert_eq!(faction.name(), "Caldari State");
     }
   }
 
   mod resolve_owner_corporation {
     use super::*;
-
-    #[tokio::test]
-    async fn it_short_circuits_when_the_corporation_is_already_cached() {
-      let server = MockServer::start().await;
-      let harness = Harness::new(&server.uri()).await;
-      seed_character(&harness.db, 100).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
-
-      assert!(
-        org::get_corporation(&harness.db, OWNER_CORP_ID)
-          .await
-          .unwrap()
-          .is_some()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_full_owner_org_stack_when_uncached() {
-      let server = MockServer::start().await;
-      mount_owner_corporation_stack(&server).await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
-
-      let corporation = org::get_corporation(&harness.db, OWNER_CORP_ID)
-        .await
-        .unwrap()
-        .expect("the owner corporation is cached");
-      assert_eq!(corporation.name(), "Caldari Navy");
-      assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
-      assert!(sde::get_race(&harness.db, 1).await.unwrap().is_some());
-      assert!(sde::get_bloodline(&harness.db, 5).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_alliance_and_faction_when_the_corporation_carries_them() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "faction_id": 500_001,
-          "member_count": 10_000, "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/3004029/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
-          "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/alliances/99000001/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
-          "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/factions/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
-            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
-            "station_system_count": 50 },
-        ])))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/races/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
-        ])))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/bloodlines/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
-            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
-            "ship_type_id": 601, "willpower": 5 },
-        ])))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
-
-      assert!(
-        org::get_corporation(&harness.db, OWNER_CORP_ID)
-          .await
-          .unwrap()
-          .is_some()
-      );
-      assert!(org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some());
-      assert!(sde::get_faction(&harness.db, 500_001).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_persists_an_npc_corp_without_a_ceo_when_the_ceo_is_unprocessable() {
-      let server = MockServer::start().await;
-      // NPC corporations report ceo_id = 1, and GET /characters/1/ answers 422.
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "ceo_id": 1, "creator_id": 1, "member_count": 10_000, "name": "Caldari Navy",
-          "tax_rate": 0.0, "ticker": "CN",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/1/"))
-        .respond_with(ResponseTemplate::new(422))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
-        .await
-        .expect("a 422 CEO is tolerated, not fatal");
-
-      let corporation = org::get_corporation(&harness.db, OWNER_CORP_ID)
-        .await
-        .unwrap()
-        .expect("the NPC owner corporation is still persisted so station names resolve");
-      assert_eq!(corporation.name(), "Caldari Navy");
-      assert!(
-        character::get(&harness.db, 1).await.unwrap().is_none(),
-        "no CEO character row is created for an unfetchable NPC-corp CEO"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_persists_a_corp_without_a_ceo_when_the_ceo_is_not_found() {
-      let server = MockServer::start().await;
-      // A biomassed player CEO answers 404; the corp must still persist.
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000,
-          "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/3004029/"))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/alliances/99000001/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
-          "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
-        })))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
-        .await
-        .expect("a 404 CEO is tolerated, not fatal");
-
-      assert!(
-        org::get_corporation(&harness.db, OWNER_CORP_ID)
-          .await
-          .unwrap()
-          .is_some()
-      );
-      assert!(
-        org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some(),
-        "the corp's alliance row is ensured first so the deferred alliance_id FK holds at commit"
-      );
-      assert!(
-        character::get(&harness.db, 3_004_029).await.unwrap().is_none(),
-        "no CEO character row is created when the CEO 404s"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_propagates_a_non_miss_error_from_the_ceo_fetch() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
-          "tax_rate": 0.0, "ticker": "CN",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/3004029/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      let result = resolve_owner_corporation(&ctx, OWNER_CORP_ID).await;
-
-      assert!(
-        result.is_err(),
-        "a 500 CEO fetch still aborts; only 404/422 are tolerated"
-      );
-      assert!(
-        org::get_corporation(&harness.db, OWNER_CORP_ID)
-          .await
-          .unwrap()
-          .is_none(),
-        "nothing is persisted when the CEO fetch fails with an untolerated status"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_ceos_own_alliance_and_faction_when_the_corp_carries_neither() {
-      let server = MockServer::start().await;
-      // The corporation itself belongs to no alliance and no faction...
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
-          "tax_rate": 0.0, "ticker": "CN",
-        })))
-        .mount(&server)
-        .await;
-      // ...but its CEO personally holds an alliance and is enlisted in factional warfare.
-      Mock::given(method("GET"))
-        .and(path("/characters/3004029/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "alliance_id": 99_000_002, "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5,
-          "corporation_id": OWNER_CORP_ID, "faction_id": 500_001, "gender": "male",
-          "name": "Caldari Navy CEO", "race_id": 1,
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/alliances/99000002/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
-          "executor_corporation_id": OWNER_CORP_ID, "name": "CEO Personal Alliance", "ticker": "CPA",
-        })))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/factions/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
-            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
-            "station_system_count": 50 },
-        ])))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/races/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
-        ])))
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/bloodlines/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
-            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
-            "ship_type_id": 601, "willpower": 5 },
-        ])))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
-        .await
-        .expect("the CEO's own alliance and faction are resolved, so no FK violation at commit");
-
-      assert!(
-        org::get_alliance(&harness.db, 99_000_002).await.unwrap().is_some(),
-        "the CEO's personal alliance is persisted even though the corp has none"
-      );
-      assert!(
-        sde::get_faction(&harness.db, 500_001).await.unwrap().is_some(),
-        "the CEO's faction is persisted even though the corp has none"
-      );
-      assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
-    }
 
     #[tokio::test]
     async fn it_ensures_the_ceos_own_corp_when_it_differs_from_the_owner_corp() {
@@ -1303,91 +1111,291 @@ mod tests {
         "the CEO's corp is persisted corp-row-only, not recursively expanded into a CEO character"
       );
     }
-  }
-
-  mod ensure_corporation_present {
-    use super::*;
-
-    const STALE_CORP_ID: i64 = 98_000_001;
-    const STALE_ALLIANCE_ID: i64 = 99_000_009;
-
-    async fn seed_stale_corp_with_dangling_alliance(db: &store::Database) {
-      let alliance = Alliance::new(
-        STALE_ALLIANCE_ID,
-        STALE_CORP_ID,
-        1,
-        "2003-01-01",
-        "Gone Alliance",
-        "GONE",
-      );
-      org::upsert_alliance(db, &alliance).await.unwrap();
-      let mut corp = Corporation::new(STALE_CORP_ID, "Stale Corp", "STAL");
-      corp.set_alliance_id(STALE_ALLIANCE_ID);
-      corp.set_ceo_id(1);
-      corp.set_creator_id(1);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      org::upsert_corporation(db, &corp).await.unwrap();
-      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
-      sqlx::query("DELETE FROM alliances WHERE id = ?")
-        .bind(STALE_ALLIANCE_ID)
-        .execute(&db.0)
-        .await
-        .unwrap();
-      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
-    }
 
     #[tokio::test]
-    async fn it_re_seeds_a_dangling_alliance_on_a_present_corp_without_refetching_it() {
+    async fn it_persists_a_corp_without_a_ceo_when_the_ceo_is_not_found() {
       let server = MockServer::start().await;
+      // A biomassed player CEO answers 404; the corp must still persist.
       Mock::given(method("GET"))
-        .and(path(format!("/alliances/{STALE_ALLIANCE_ID}/")))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-          "creator_corporation_id": STALE_CORP_ID, "creator_id": 1, "date_founded": "2003-01-01T00:00:00Z",
-          "executor_corporation_id": STALE_CORP_ID, "name": "Gone Alliance", "ticker": "GONE",
+          "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000,
+          "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
         })))
         .mount(&server)
         .await;
       Mock::given(method("GET"))
-        .and(path(format!("/corporations/{STALE_CORP_ID}/")))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/alliances/99000001/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
+        })))
         .mount(&server)
         .await;
       let harness = Harness::new(&server.uri()).await;
-      seed_stale_corp_with_dangling_alliance(&harness.db).await;
       let ctx = ctx_no_grant(&harness);
 
-      ensure_corporation_present(&ctx, STALE_CORP_ID)
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
         .await
-        .expect("a present-but-stale corp re-seeds its alliance instead of 787-ing at commit");
+        .expect("a 404 CEO is tolerated, not fatal");
 
       assert!(
-        org::get_alliance(&harness.db, STALE_ALLIANCE_ID)
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
           .await
           .unwrap()
-          .is_some(),
-        "the dangling alliance_id is re-seeded so the deferred FK holds"
+          .is_some()
       );
       assert!(
-        org::get_corporation(&harness.db, STALE_CORP_ID)
-          .await
-          .unwrap()
-          .is_some(),
-        "the stale corp row is preserved, never deleted"
+        org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some(),
+        "the corp's alliance row is ensured first so the deferred alliance_id FK holds at commit"
+      );
+      assert!(
+        character::get(&harness.db, 3_004_029).await.unwrap().is_none(),
+        "no CEO character row is created when the CEO 404s"
       );
     }
 
     #[tokio::test]
-    async fn it_leaves_a_present_corp_untouched_when_its_alliance_is_intact() {
+    async fn it_persists_an_npc_corp_without_a_ceo_when_the_ceo_is_unprocessable() {
+      let server = MockServer::start().await;
+      // NPC corporations report ceo_id = 1, and GET /characters/1/ answers 422.
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 1, "creator_id": 1, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/1/"))
+        .respond_with(ResponseTemplate::new(422))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("a 422 CEO is tolerated, not fatal");
+
+      let corporation = org::get_corporation(&harness.db, OWNER_CORP_ID)
+        .await
+        .unwrap()
+        .expect("the NPC owner corporation is still persisted so station names resolve");
+      assert_eq!(corporation.name(), "Caldari Navy");
+      assert!(
+        character::get(&harness.db, 1).await.unwrap().is_none(),
+        "no CEO character row is created for an unfetchable NPC-corp CEO"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_propagates_a_non_miss_error_from_the_ceo_fetch() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let result = resolve_owner_corporation(&ctx, OWNER_CORP_ID).await;
+
+      assert!(
+        result.is_err(),
+        "a 500 CEO fetch still aborts; only 404/422 are tolerated"
+      );
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_none(),
+        "nothing is persisted when the CEO fetch fails with an untolerated status"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_alliance_and_faction_when_the_corporation_carries_them() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "alliance_id": 99_000_001, "ceo_id": 3_004_029, "creator_id": 3_004_029, "faction_id": 500_001,
+          "member_count": 10_000, "name": "Caldari Navy", "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5, "corporation_id": OWNER_CORP_ID,
+          "gender": "male", "name": "Caldari Navy CEO", "race_id": 1,
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/alliances/99000001/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": OWNER_CORP_ID, "name": "Test Alliance", "ticker": "TST",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/factions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
+            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
+            "station_system_count": 50 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
+
+      assert!(
+        org::get_corporation(&harness.db, OWNER_CORP_ID)
+          .await
+          .unwrap()
+          .is_some()
+      );
+      assert!(org::get_alliance(&harness.db, 99_000_001).await.unwrap().is_some());
+      assert!(sde::get_faction(&harness.db, 500_001).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_ceos_own_alliance_and_faction_when_the_corp_carries_neither() {
+      let server = MockServer::start().await;
+      // The corporation itself belongs to no alliance and no faction...
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "ceo_id": 3_004_029, "creator_id": 3_004_029, "member_count": 10_000, "name": "Caldari Navy",
+          "tax_rate": 0.0, "ticker": "CN",
+        })))
+        .mount(&server)
+        .await;
+      // ...but its CEO personally holds an alliance and is enlisted in factional warfare.
+      Mock::given(method("GET"))
+        .and(path("/characters/3004029/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "alliance_id": 99_000_002, "birthday": "2003-01-01T00:00:00Z", "bloodline_id": 5,
+          "corporation_id": OWNER_CORP_ID, "faction_id": 500_001, "gender": "male",
+          "name": "Caldari Navy CEO", "race_id": 1,
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/alliances/99000002/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "creator_corporation_id": OWNER_CORP_ID, "creator_id": 3_004_029, "date_founded": "2003-01-01T00:00:00Z",
+          "executor_corporation_id": OWNER_CORP_ID, "name": "CEO Personal Alliance", "ticker": "CPA",
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/factions/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
+            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
+            "station_system_count": 50 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID)
+        .await
+        .expect("the CEO's own alliance and faction are resolved, so no FK violation at commit");
+
+      assert!(
+        org::get_alliance(&harness.db, 99_000_002).await.unwrap().is_some(),
+        "the CEO's personal alliance is persisted even though the corp has none"
+      );
+      assert!(
+        sde::get_faction(&harness.db, 500_001).await.unwrap().is_some(),
+        "the CEO's faction is persisted even though the corp has none"
+      );
+      assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_full_owner_org_stack_when_uncached() {
+      let server = MockServer::start().await;
+      mount_owner_corporation_stack(&server).await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
+
+      let corporation = org::get_corporation(&harness.db, OWNER_CORP_ID)
+        .await
+        .unwrap()
+        .expect("the owner corporation is cached");
+      assert_eq!(corporation.name(), "Caldari Navy");
+      assert!(character::get(&harness.db, 3_004_029).await.unwrap().is_some());
+      assert!(sde::get_race(&harness.db, 1).await.unwrap().is_some());
+      assert!(sde::get_bloodline(&harness.db, 5).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_short_circuits_when_the_corporation_is_already_cached() {
       let server = MockServer::start().await;
       let harness = Harness::new(&server.uri()).await;
       seed_character(&harness.db, 100).await;
       let ctx = ctx_no_grant(&harness);
 
-      ensure_corporation_present(&ctx, OWNER_CORP_ID)
-        .await
-        .expect("a present corp with a live alliance needs no ESI and no re-upsert");
+      resolve_owner_corporation(&ctx, OWNER_CORP_ID).await.unwrap();
 
       assert!(
         org::get_corporation(&harness.db, OWNER_CORP_ID)
@@ -1398,20 +1406,79 @@ mod tests {
     }
   }
 
-  mod resolve_solar_system {
+  mod resolve_race {
     use super::*;
 
     #[tokio::test]
-    async fn it_short_circuits_when_the_system_is_already_cached() {
+    async fn it_fetches_and_persists_a_race_from_the_esi_list() {
       let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .mount(&server)
+        .await;
       let harness = Harness::new(&server.uri()).await;
-      seed_geography(&harness.db).await;
       let ctx = ctx_no_grant(&harness);
 
-      resolve_solar_system(&ctx, SYSTEM_ID).await.unwrap();
+      resolve_race(&ctx, 1).await.unwrap();
 
-      assert!(sde::get_solar_system(&harness.db, SYSTEM_ID).await.unwrap().is_some());
+      let race = sde::get_race(&harness.db, 1)
+        .await
+        .unwrap()
+        .expect("the race is cached");
+      assert_eq!(race.name(), "Caldari");
     }
+
+    #[tokio::test]
+    async fn it_short_circuits_when_the_race_is_already_cached() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server.uri()).await;
+      sde::upsert_race(&harness.db, &Race::new(1, 500_001, "The Caldari.", "Caldari"))
+        .await
+        .unwrap();
+      let ctx = ctx_no_grant(&harness);
+
+      resolve_race(&ctx, 1).await.unwrap();
+
+      assert!(sde::get_race(&harness.db, 1).await.unwrap().is_some());
+    }
+  }
+
+  mod resolve_race_model {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_errors_when_the_race_id_overflows_an_i32() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let result = resolve_race_model(&ctx, i64::from(i32::MAX) + 1).await;
+
+      assert!(matches!(result, Err(Error::Internal(_))));
+    }
+
+    #[tokio::test]
+    async fn it_errors_when_the_race_is_absent_from_the_esi_list() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .mount(&server)
+        .await;
+      let harness = Harness::new(&server.uri()).await;
+      let ctx = ctx_no_grant(&harness);
+
+      let result = resolve_race_model(&ctx, 7).await;
+
+      assert!(matches!(result, Err(Error::Internal(_))));
+    }
+  }
+
+  mod resolve_solar_system {
+    use super::*;
 
     #[tokio::test]
     async fn it_resolves_the_system_with_its_constellation_and_region_when_uncached() {
@@ -1457,199 +1524,138 @@ mod tests {
       );
       assert!(sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some());
     }
-  }
-
-  mod resolve_race {
-    use super::*;
 
     #[tokio::test]
-    async fn it_short_circuits_when_the_race_is_already_cached() {
+    async fn it_short_circuits_when_the_system_is_already_cached() {
       let server = MockServer::start().await;
       let harness = Harness::new(&server.uri()).await;
-      sde::upsert_race(&harness.db, &Race::new(1, 500_001, "The Caldari.", "Caldari"))
-        .await
-        .unwrap();
+      seed_geography(&harness.db).await;
       let ctx = ctx_no_grant(&harness);
 
-      resolve_race(&ctx, 1).await.unwrap();
+      resolve_solar_system(&ctx, SYSTEM_ID).await.unwrap();
 
-      assert!(sde::get_race(&harness.db, 1).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_fetches_and_persists_a_race_from_the_esi_list() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/races/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "alliance_id": 500_001, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
-        ])))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      resolve_race(&ctx, 1).await.unwrap();
-
-      let race = sde::get_race(&harness.db, 1)
-        .await
-        .unwrap()
-        .expect("the race is cached");
-      assert_eq!(race.name(), "Caldari");
+      assert!(sde::get_solar_system(&harness.db, SYSTEM_ID).await.unwrap().is_some());
     }
   }
 
-  mod resolve_race_model {
+  mod resolve_stockpile_location {
     use super::*;
 
     #[tokio::test]
-    async fn it_errors_when_the_race_is_absent_from_the_esi_list() {
+    async fn it_resolves_a_constellation_and_its_region_for_a_stockpile() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/universe/races/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .and(path(format!("/universe/constellations/{CONSTELLATION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellation_id": CONSTELLATION_ID, "name": "Kimotoro", "position": { "x": 1.0, "y": 2.0, "z": 3.0 },
+          "region_id": REGION_ID, "systems": [SYSTEM_ID],
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/regions/{REGION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
+        })))
         .mount(&server)
         .await;
       let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
+      let grant = Grant::new_test("token", 100);
 
-      let result = resolve_race_model(&ctx, 7).await;
-
-      assert!(matches!(result, Err(Error::Internal(_))));
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_the_race_id_overflows_an_i32() {
-      let server = MockServer::start().await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      let result = resolve_race_model(&ctx, i64::from(i32::MAX) + 1).await;
-
-      assert!(matches!(result, Err(Error::Internal(_))));
-    }
-  }
-
-  mod resolve_faction {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_short_circuits_when_the_faction_is_already_cached() {
-      let server = MockServer::start().await;
-      let harness = Harness::new(&server.uri()).await;
-      sde::upsert_faction(&harness.db, &Faction::new(500_001, "Caldari State", true, 5.0, 100, 50))
-        .await
-        .unwrap();
-      let ctx = ctx_no_grant(&harness);
-
-      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
-
-      assert_eq!(faction.name(), "Caldari State");
-    }
-
-    #[tokio::test]
-    async fn it_fetches_a_faction_from_the_esi_list() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/factions/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "corporation_id": OWNER_CORP_ID, "description": "The State.", "faction_id": 500_001,
-            "is_unique": true, "name": "Caldari State", "size_factor": 5.0, "station_count": 100,
-            "station_system_count": 50 },
-        ])))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
-
-      assert_eq!(faction.name(), "Caldari State");
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_the_faction_is_absent_from_the_esi_list() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/factions/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
-      let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
-
-      let result = resolve_faction(&ctx, 500_001).await;
-
-      assert!(matches!(result, Err(Error::Internal(_))));
-    }
-  }
-
-  mod resolve_bloodline {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_short_circuits_when_the_bloodline_is_already_cached() {
-      let server = MockServer::start().await;
-      let harness = Harness::new(&server.uri()).await;
-      seed_character(&harness.db, 100).await;
-      sde::upsert_bloodline(
+      resolve_stockpile_location(
         &harness.db,
-        &Bloodline::new(5, OWNER_CORP_ID, 2, 3, "The Civire.", 4, 5, "Civire", 4, 4),
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        CONSTELLATION_ID,
       )
       .await
       .unwrap();
-      let ctx = ctx_no_grant(&harness);
 
-      let bloodline = resolve_bloodline(&ctx, 5).await.unwrap();
-
-      assert_eq!(bloodline.name(), "Civire");
+      assert!(
+        sde::get_constellation(&harness.db, CONSTELLATION_ID)
+          .await
+          .unwrap()
+          .is_some(),
+        "the picked constellation is cached"
+      );
+      assert!(
+        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
+        "its parent region is resolved too, satisfying the constellation's region FK"
+      );
     }
 
     #[tokio::test]
-    async fn it_fetches_a_bloodline_from_the_esi_list() {
+    async fn it_resolves_a_region_picked_for_a_stockpile() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/universe/bloodlines/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "bloodline_id": 5, "charisma": 6, "corporation_id": OWNER_CORP_ID, "description": "The Civire.",
-            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
-            "ship_type_id": 601, "willpower": 5 },
-        ])))
+        .and(path(format!("/universe/regions/{REGION_ID}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "constellations": [CONSTELLATION_ID], "description": "The Forge.", "name": "The Forge", "region_id": REGION_ID,
+        })))
         .mount(&server)
         .await;
       let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
+      let grant = Grant::new_test("token", 100);
 
-      let bloodline = resolve_bloodline(&ctx, 5).await.unwrap();
+      resolve_stockpile_location(
+        &harness.db,
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        REGION_ID,
+      )
+      .await
+      .unwrap();
 
-      assert_eq!(bloodline.name(), "Civire");
+      assert!(
+        sde::get_region(&harness.db, REGION_ID).await.unwrap().is_some(),
+        "a region chosen for a stockpile is resolved into the universe cache"
+      );
     }
 
     #[tokio::test]
-    async fn it_errors_when_the_bloodline_id_overflows_an_i32() {
+    async fn it_resolves_a_station_picked_for_a_stockpile() {
       let server = MockServer::start().await;
+      mount_npc_station(&server).await;
       let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
+      let grant = Grant::new_test("token", 100);
 
-      let result = resolve_bloodline(&ctx, i64::from(i32::MAX) + 1).await;
+      resolve_stockpile_location(
+        &harness.db,
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        STATION_ID,
+      )
+      .await
+      .unwrap();
 
-      assert!(matches!(result, Err(Error::Internal(_))));
+      assert!(
+        sde::get_station(&harness.db, STATION_ID).await.unwrap().is_some(),
+        "an NPC station chosen for a stockpile is resolved into the universe cache"
+      );
     }
 
     #[tokio::test]
-    async fn it_errors_when_the_bloodline_is_absent_from_the_esi_list() {
+    async fn it_short_circuits_a_solar_system_without_touching_esi() {
       let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/universe/bloodlines/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
       let harness = Harness::new(&server.uri()).await;
-      let ctx = ctx_no_grant(&harness);
+      let grant = Grant::new_test("token", 100);
 
-      let result = resolve_bloodline(&ctx, 5).await;
-
-      assert!(matches!(result, Err(Error::Internal(_))));
+      resolve_stockpile_location(
+        &harness.db,
+        &harness.esi,
+        &harness.image,
+        &harness.image_store,
+        &grant,
+        SYSTEM_ID,
+      )
+      .await
+      .unwrap();
     }
   }
 }

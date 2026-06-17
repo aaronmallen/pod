@@ -364,13 +364,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_returns_the_full_roster_for_the_combined_scope() {
-      let state = state_with(Scope::All);
-
-      assert_eq!(super::super::slot_pool(&state).len(), 3);
-    }
-
-    #[test]
     fn it_filters_to_one_character_for_a_char_scope() {
       let state = state_with(Scope::Char(1));
 
@@ -389,6 +382,13 @@ mod tests {
 
       assert_eq!(pool.len(), 1);
       assert!(pool[0].is_corporation);
+    }
+
+    #[test]
+    fn it_returns_the_full_roster_for_the_combined_scope() {
+      let state = state_with(Scope::All);
+
+      assert_eq!(super::super::slot_pool(&state).len(), 3);
     }
   }
 }

@@ -65,87 +65,29 @@ mod tests {
     EsiClient::with_base_url(http, base_url)
   }
 
-  mod prices {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_prices_with_independently_optional_fields() {
-      let server = MockServer::start().await;
-      let body = r#"[{"adjusted_price":5.5,"type_id":34},{"average_price":6.25,"type_id":35},{"adjusted_price":7.0,"average_price":8.0,"type_id":36}]"#;
-      Mock::given(method("GET"))
-        .and(path("/markets/prices/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-
-      let prices = esi.market().prices().await.unwrap();
-
-      assert_eq!(prices.len(), 3);
-      assert_eq!(prices[0].type_id, 34);
-      assert_eq!(prices[0].adjusted_price, Some(5.5));
-      assert_eq!(prices[0].average_price, None);
-      assert_eq!(prices[1].adjusted_price, None);
-      assert_eq!(prices[1].average_price, Some(6.25));
-      assert_eq!(prices[2].adjusted_price, Some(7.0));
-      assert_eq!(prices[2].average_price, Some(8.0));
-    }
-
-    #[tokio::test]
-    async fn it_returns_http_error_on_5xx() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/markets/prices/"))
-        .respond_with(ResponseTemplate::new(503))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-
-      let result = esi.market().prices().await;
-
-      assert!(matches!(result, Err(clients::Error::Http(_))));
-    }
-  }
-
-  mod lowest_sell_at {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn order(is_buy_order: bool, location_id: i64, price: f64) -> RegionOrder {
-      RegionOrder {
-        is_buy_order,
-        location_id,
-        price,
-      }
-    }
-
-    #[test]
-    fn it_returns_none_when_no_sell_order_is_at_the_station() {
-      let orders = [order(false, 999, 5.0), order(true, 60_003_760, 1.0)];
-
-      assert_eq!(lowest_sell_at(&orders, 60_003_760), None);
-    }
-
-    #[test]
-    fn it_picks_the_minimum_sell_price_at_the_station_only() {
-      let orders = [
-        order(false, 60_003_760, 9.0),
-        order(false, 60_003_760, 5.5),
-        order(false, 999, 0.1),
-        order(true, 60_003_760, 0.5),
-      ];
-
-      assert_eq!(lowest_sell_at(&orders, 60_003_760), Some(5.5));
-    }
-  }
-
   mod lowest_sell {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_type_has_no_station_sell_orders() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/markets/10000002/orders/"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .insert_header("X-Pages", "1")
+            .set_body_raw("[]", "application/json"),
+        )
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let price = esi.market().lowest_sell(10_000_002, 34, 60_003_760).await.unwrap();
+
+      assert_eq!(price, None);
+    }
 
     #[tokio::test]
     async fn it_returns_the_lowest_jita_station_sell_price_across_pages() {
@@ -178,24 +120,82 @@ mod tests {
 
       assert_eq!(price, Some(6.5));
     }
+  }
+
+  mod lowest_sell_at {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn order(is_buy_order: bool, location_id: i64, price: f64) -> RegionOrder {
+      RegionOrder {
+        is_buy_order,
+        location_id,
+        price,
+      }
+    }
+
+    #[test]
+    fn it_picks_the_minimum_sell_price_at_the_station_only() {
+      let orders = [
+        order(false, 60_003_760, 9.0),
+        order(false, 60_003_760, 5.5),
+        order(false, 999, 0.1),
+        order(true, 60_003_760, 0.5),
+      ];
+
+      assert_eq!(lowest_sell_at(&orders, 60_003_760), Some(5.5));
+    }
+
+    #[test]
+    fn it_returns_none_when_no_sell_order_is_at_the_station() {
+      let orders = [order(false, 999, 5.0), order(true, 60_003_760, 1.0)];
+
+      assert_eq!(lowest_sell_at(&orders, 60_003_760), None);
+    }
+  }
+
+  mod prices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
-    async fn it_returns_none_when_the_type_has_no_station_sell_orders() {
+    async fn it_returns_http_error_on_5xx() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/markets/10000002/orders/"))
-        .respond_with(
-          ResponseTemplate::new(200)
-            .insert_header("X-Pages", "1")
-            .set_body_raw("[]", "application/json"),
-        )
+        .and(path("/markets/prices/"))
+        .respond_with(ResponseTemplate::new(503))
         .mount(&server)
         .await;
       let esi = make_esi(&server.uri()).await;
 
-      let price = esi.market().lowest_sell(10_000_002, 34, 60_003_760).await.unwrap();
+      let result = esi.market().prices().await;
 
-      assert_eq!(price, None);
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn it_returns_prices_with_independently_optional_fields() {
+      let server = MockServer::start().await;
+      let body = r#"[{"adjusted_price":5.5,"type_id":34},{"average_price":6.25,"type_id":35},{"adjusted_price":7.0,"average_price":8.0,"type_id":36}]"#;
+      Mock::given(method("GET"))
+        .and(path("/markets/prices/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let prices = esi.market().prices().await.unwrap();
+
+      assert_eq!(prices.len(), 3);
+      assert_eq!(prices[0].type_id, 34);
+      assert_eq!(prices[0].adjusted_price, Some(5.5));
+      assert_eq!(prices[0].average_price, None);
+      assert_eq!(prices[1].adjusted_price, None);
+      assert_eq!(prices[1].average_price, Some(6.25));
+      assert_eq!(prices[2].adjusted_price, Some(7.0));
+      assert_eq!(prices[2].average_price, Some(8.0));
     }
   }
 }

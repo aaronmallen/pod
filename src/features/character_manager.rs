@@ -2291,6 +2291,503 @@ async fn remove_corporation(db: Database, corporation_id: i64) -> Result<(), Str
 mod tests {
   use super::*;
 
+  mod card_failure {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::sync::Event;
+
+    fn key(kind: JobKind, id: i64) -> JobKey {
+      JobKey::new(kind, Subject::Character(id))
+    }
+
+    #[test]
+    fn it_is_none_for_healthy_or_unreported_jobs() {
+      let mut sync = SyncStatus::new();
+      sync.apply(&Event::Finished {
+        key: key(JobKind::CharacterWallet, 1),
+        outcome: crate::sync::Outcome::synced(),
+      });
+
+      assert_eq!(card_failure(&sync, 1), None);
+      assert_eq!(card_failure(&sync, 999), None);
+    }
+
+    #[test]
+    fn it_prefers_failed_over_backing_off() {
+      let mut sync = SyncStatus::new();
+      sync.apply(&Event::BackingOff {
+        key: key(JobKind::CharacterTelemetry, 1),
+        retry_secs: 30,
+      });
+      sync.apply(&Event::Failed {
+        key: key(JobKind::CharacterWallet, 1),
+        reason: "boom".to_owned(),
+      });
+
+      assert_eq!(card_failure(&sync, 1), Some(Phase::Failed));
+    }
+
+    #[test]
+    fn it_surfaces_a_failing_wallet_job() {
+      let mut sync = SyncStatus::new();
+      sync.apply(&Event::Finished {
+        key: key(JobKind::CharacterTelemetry, 1),
+        outcome: crate::sync::Outcome::synced(),
+      });
+      sync.apply(&Event::Failed {
+        key: key(JobKind::CharacterWallet, 1),
+        reason: "boom".to_owned(),
+      });
+
+      assert_eq!(card_failure(&sync, 1), Some(Phase::Failed));
+    }
+  }
+
+  mod corporations {
+    use chrono::TimeZone;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      store::{
+        self,
+        model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+        repo::infra,
+      },
+      sync::Event,
+    };
+
+    fn now() -> DateTime<Utc> {
+      Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap()
+    }
+
+    async fn seed_owned_corporation(db: &Database, corp_id: i64, ceo_id: i64) {
+      let alliance = Alliance::new(
+        corp_id,
+        corp_id,
+        ceo_id,
+        "2010-01-01T00:00:00Z",
+        "Iron Helix Pact",
+        "IHP",
+      );
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 6, 7);
+      let race = Race::new(2, 500_001, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Cobalt Syndicate", "COBSY");
+      corp.set_alliance_id(corp_id);
+      corp.set_ceo_id(ceo_id);
+      corp.set_creation_date("2019-03-14T00:00:00Z");
+      corp.set_creator_id(ceo_id);
+      corp.set_member_count(1247);
+      corp.set_tax_rate(0.10);
+      let ceo = Character::new(ceo_id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Vex Voronova");
+      character::insert_with_org(db, &ceo, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, ceo_id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+      infra::upsert(
+        db,
+        corp_id,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9999,
+        Some(ceo_id),
+        None,
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn reload(state: &mut State, db: &Database) {
+      let roster = load_roster_at(db, now(), &Feature::ALL).await.unwrap();
+      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
+    }
+
+    async fn reload_corp_tag_names(state: &mut State, db: &Database, corporation_id: i64) -> Vec<String> {
+      reload(state, db).await;
+      corp_for(state, corporation_id)
+        .map(|corp| corp.tags.iter().map(|chip| chip.name.clone()).collect())
+        .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn a_flagged_corp_context_menu_offers_a_reauthorize_item() {
+      use iced::advanced::widget::Tree;
+
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      // The seeded corp credential carries no scopes, so against Feature::ALL it is a strict
+      // subset of the required corp set and must be flagged for re-authorization.
+      assert!(state.corps[0].needs_reauth);
+
+      state.cursor = Some(iced::Point::new(10.0, 10.0));
+      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
+      let menu = state.corp_context_menu.as_ref().unwrap();
+      assert!(menu.needs_reauth);
+
+      let flagged = corp_context_menu_view(menu);
+      let flagged_rows = Tree::new(flagged.as_widget()).children.len();
+
+      let mut clear = menu.clone();
+      clear.needs_reauth = false;
+      let clear_rows = Tree::new(corp_context_menu_view(&clear).as_widget()).children.len();
+
+      assert_eq!(
+        flagged_rows,
+        clear_rows + 2,
+        "a flagged corp menu adds the re-authorize row and its separator"
+      );
+    }
+
+    #[tokio::test]
+    async fn corp_failure_surfaces_a_lost_role_as_needs_reauthentication() {
+      let mut sync = SyncStatus::new();
+      let key = JobKey::new(JobKind::CorporationProfile, Subject::Corporation(2_000_001));
+
+      assert_eq!(corp_failure(&sync, 2_000_001), None);
+
+      sync.apply(&Event::Failed {
+        key,
+        reason: "needs re-authentication".to_owned(),
+      });
+      assert_eq!(corp_failure(&sync, 2_000_001), Some(Phase::Failed));
+    }
+
+    #[tokio::test]
+    async fn corp_failure_surfaces_a_wallet_job_401_as_needs_reauthentication() {
+      let mut sync = SyncStatus::new();
+      let key = JobKey::new(JobKind::CorporationWallet, Subject::Corporation(2_000_002));
+
+      assert_eq!(corp_failure(&sync, 2_000_002), None);
+
+      sync.apply(&Event::Failed {
+        key,
+        reason: "needs re-authentication".to_owned(),
+      });
+      assert_eq!(corp_failure(&sync, 2_000_002), Some(Phase::Failed));
+    }
+
+    #[tokio::test]
+    async fn it_assigns_a_tag_to_a_corporation_through_the_add_tag_flow() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let industry = infra::create(&db, "Industry", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      state.cursor = Some(iced::Point::new(10.0, 10.0));
+      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
+      let _ = update(
+        &mut state,
+        Message::OpenAddTagModal {
+          entity_id: 2_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+        },
+        &db,
+      );
+      assert!(state.corp_context_menu.is_none());
+      assert_eq!(
+        state.add_tag_modal.as_ref().map(|modal| modal.entity_type),
+        Some(ENTITY_TYPE_CORPORATION)
+      );
+      let _ = update(
+        &mut state,
+        Message::AssignTag {
+          entity_id: 2_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: industry.id(),
+        },
+        &db,
+      );
+      assert!(state.add_tag_modal.is_none());
+
+      apply_tag_write(
+        &db,
+        TagWrite::Assign {
+          entity_id: 2_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: industry.id(),
+        },
+      )
+      .await
+      .unwrap();
+      let names = reload_corp_tag_names(&mut state, &db, 2_000_001).await;
+
+      assert_eq!(names, vec!["Industry".to_owned()]);
+      assert!(
+        infra::members(&db, industry.id(), ENTITY_TYPE_CHARACTER)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_derives_needs_reauth_from_the_corp_grant_versus_enabled_features_and_clears_on_a_wider_grant() {
+      use crate::clients::esi::scopes;
+
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+
+      let enabled = [Feature::Industry, Feature::Wallet];
+      let required = auth_feature::corp_scopes_for(&enabled);
+
+      async fn grant(db: &Database, scopes: &str) {
+        infra::upsert(
+          db,
+          2_000_001,
+          OwnerType::Corporation,
+          "tok",
+          "rt",
+          9999,
+          Some(8001),
+          Some(scopes),
+        )
+        .await
+        .unwrap();
+      }
+
+      // A grant dropping one required corp scope is a strict subset of the required set.
+      let strict_subset = required[1..].join(" ");
+      grant(&db, &strict_subset).await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert_eq!(corps.len(), 1);
+      assert!(
+        corps[0].needs_reauth,
+        "a corp grant missing a required corp scope must flag needs-reauth"
+      );
+
+      // A grant covering every required corp scope must clear the flag.
+      grant(&db, &required.join(" ")).await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert!(
+        !corps[0].needs_reauth,
+        "a corp grant covering every required corp scope must clear needs-reauth"
+      );
+
+      // A superset grant (every required scope plus an extra) must also stay clear.
+      grant(
+        &db,
+        &format!("{} {}", required.join(" "), scopes::CORPORATION_KILLMAILS),
+      )
+      .await;
+      let corps = load_corps(&db, &enabled).await.unwrap();
+      assert!(
+        !corps[0].needs_reauth,
+        "a superset corp grant must not flag needs-reauth"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_reference_corps_without_a_corporation_credential() {
+      let db = store::open_test().await.unwrap();
+      super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
+
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert!(corps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_corp_remove_confirm_modal_over_the_backdrop_when_open() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let sync = SyncStatus::new();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+      reload(&mut state, &db).await;
+      state.cursor = Some(iced::Point::new(40.0, 60.0));
+      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
+
+      let _ = update(&mut state, Message::OpenCorpRemoveConfirm(2_000_001), &db);
+      assert!(state.corp_remove_confirm.is_some());
+      let _open: Element<'_, Message> = view(&state, &sync);
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_director_added_corp_into_a_card_model() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert_eq!(corps.len(), 1);
+      let corp = &corps[0];
+      assert_eq!(corp.name, "Cobalt Syndicate");
+      assert_eq!(corp.ticker, "COBSY");
+      assert_eq!(corp.alliance.as_deref(), Some("Iron Helix Pact"));
+      assert_eq!(corp.alliance_ticker.as_deref(), Some("IHP"));
+      assert_eq!(corp.ceo.as_deref(), Some("Vex Voronova"));
+      assert_eq!(corp.members, Some(1247));
+    }
+
+    #[tokio::test]
+    async fn it_unassigns_a_tag_from_a_corporation_leaving_the_rest() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let kept = infra::create(&db, "Kept", None, None).await.unwrap();
+      let dropped = infra::create(&db, "Dropped", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, kept.id())
+        .await
+        .unwrap();
+      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, dropped.id())
+        .await
+        .unwrap();
+      let mut state = State::new();
+
+      apply_tag_write(
+        &db,
+        TagWrite::Unassign {
+          entity_id: 2_000_001,
+          entity_type: ENTITY_TYPE_CORPORATION,
+          tag_id: dropped.id(),
+        },
+      )
+      .await
+      .unwrap();
+      let names = reload_corp_tag_names(&mut state, &db, 2_000_001).await;
+
+      assert_eq!(names, vec!["Kept".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn load_corps_populates_the_card_model_tags_from_the_polymorphic_join() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let industry = infra::create(&db, "Industry", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, industry.id())
+        .await
+        .unwrap();
+
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      let corp = &corps[0];
+      assert_eq!(
+        corp.tags.iter().map(|chip| chip.name.as_str()).collect::<Vec<_>>(),
+        ["Industry"]
+      );
+    }
+
+    #[tokio::test]
+    async fn the_corp_add_tag_modal_offers_only_tags_not_already_on_the_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let on = infra::create(&db, "On", None, None).await.unwrap();
+      let off = infra::create(&db, "Off", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, on.id())
+        .await
+        .unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let (name, assigned, assignable) = resolve_add_tag_modal(&state, ENTITY_TYPE_CORPORATION, 2_000_001);
+      assert_eq!(name, "Cobalt Syndicate");
+      assert_eq!(assigned.iter().map(|tag| tag.id()).collect::<Vec<_>>(), vec![on.id()]);
+      assert_eq!(
+        assignable.iter().map(|tag| tag.id()).collect::<Vec<_>>(),
+        vec![off.id()]
+      );
+    }
+
+    #[test]
+    fn the_corporations_pane_renders_the_grid_and_the_empty_state() {
+      let sync = SyncStatus::new();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+
+      {
+        let _empty: Element<'_, Message> = view(&state, &sync);
+      }
+
+      state.corps = vec![CorpCardModel {
+        alliance: Some("Iron Helix Pact".to_owned()),
+        alliance_ticker: Some("IHP".to_owned()),
+        ceo: Some("Vex Voronova".to_owned()),
+        corporation_id: 2_000_001,
+        granted_scopes: None,
+        hq: Some("Jita IV — Moon 4".to_owned()),
+        logo: images::ImageState::Stale {
+          id: 2_000_001,
+          kind: images::ImageKind::CorporationLogo,
+        },
+        members: Some(1247),
+        name: "Cobalt Syndicate".to_owned(),
+        needs_reauth: false,
+        tags: Vec::new(),
+        tax_rate: Some(0.10),
+        ticker: "COBSY".to_owned(),
+      }];
+      {
+        let _populated: Element<'_, Message> = view(&state, &sync);
+      }
+    }
+
+    #[tokio::test]
+    async fn the_remove_flow_drops_the_corporation_credential() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      state.cursor = Some(iced::Point::new(10.0, 10.0));
+      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
+      assert!(state.corp_context_menu.is_some());
+      let _ = update(&mut state, Message::OpenCorpRemoveConfirm(2_000_001), &db);
+      assert!(state.corp_context_menu.is_none());
+      assert!(state.corp_remove_confirm.is_some());
+
+      let _ = update(&mut state, Message::RemoveCorporationConfirmed(2_000_001), &db);
+      assert!(state.corp_remove_confirm.is_none());
+      remove_corporation(db.clone(), 2_000_001).await.unwrap();
+
+      reload(&mut state, &db).await;
+      assert!(state.corps.is_empty());
+      assert!(
+        infra::get(&db, 2_000_001, OwnerType::Corporation)
+          .await
+          .unwrap()
+          .is_none()
+      );
+      assert!(org::get_corporation(&db, 2_000_001).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn the_tab_count_reflects_the_number_of_director_added_corps() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      reload(&mut state, &db).await;
+      assert_eq!(corp_count(&state), "0");
+
+      seed_owned_corporation(&db, 2_000_001, 8001).await;
+      reload(&mut state, &db).await;
+      assert_eq!(corp_count(&state), "1");
+    }
+  }
+
+  mod format_remaining {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_formats_coarse_durations() {
+      assert_eq!(
+        format_remaining(chrono::Duration::minutes(2 * 24 * 60 + 14 * 60 + 22)),
+        "2d 14h"
+      );
+      assert_eq!(format_remaining(chrono::Duration::minutes(8 * 60 + 12)), "8h 12m");
+      assert_eq!(format_remaining(chrono::Duration::minutes(45)), "45m");
+      assert_eq!(format_remaining(chrono::Duration::minutes(-5)), "Done");
+    }
+  }
+
   mod insert_signed_in_card {
     use pretty_assertions::{assert_eq, assert_ne};
 
@@ -2318,20 +2815,23 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_a_card_from_the_jwt_name_with_no_characters_row() {
+    fn it_drops_the_placeholder_once_the_real_row_loads() {
       let mut state = State::new();
-
       insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
 
-      let card = state
-        .unassigned
-        .iter()
-        .find(|card| card.character_id == 42)
-        .expect("the synthesized card is visible immediately");
-      assert_eq!(card.name, "New Pilot");
+      // The sync backfill created the characters row; the next load carries the real card.
+      state.groups = Vec::new();
+      state.unassigned = vec![real_card(42)];
+      merge_pending(&mut state);
+
       assert!(
-        state.pending.contains_key(&42),
-        "it is tracked as pending until its real row loads"
+        !state.pending.contains_key(&42),
+        "the placeholder is retired once the real card loads"
+      );
+      assert_eq!(
+        state.unassigned.iter().filter(|card| card.character_id == 42).count(),
+        1,
+        "the real card supersedes the placeholder with no duplicate"
       );
     }
 
@@ -2354,23 +2854,6 @@ mod tests {
     }
 
     #[test]
-    fn it_sorts_the_pending_card_last_among_the_unassigned_cards() {
-      let mut state = State::new();
-      let mut anchor = real_card(7);
-      anchor.position = 2;
-      state.unassigned = vec![anchor];
-
-      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
-
-      let last = state
-        .unassigned
-        .iter()
-        .max_by_key(|card| card.position)
-        .expect("the bucket is non-empty");
-      assert_eq!(last.character_id, 42);
-    }
-
-    #[test]
     fn it_keeps_the_card_after_a_load_that_still_lacks_its_row() {
       let mut state = State::new();
       insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
@@ -2388,186 +2871,38 @@ mod tests {
     }
 
     #[test]
-    fn it_drops_the_placeholder_once_the_real_row_loads() {
+    fn it_renders_a_card_from_the_jwt_name_with_no_characters_row() {
       let mut state = State::new();
+
       insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
 
-      // The sync backfill created the characters row; the next load carries the real card.
-      state.groups = Vec::new();
-      state.unassigned = vec![real_card(42)];
-      merge_pending(&mut state);
-
+      let card = state
+        .unassigned
+        .iter()
+        .find(|card| card.character_id == 42)
+        .expect("the synthesized card is visible immediately");
+      assert_eq!(card.name, "New Pilot");
       assert!(
-        !state.pending.contains_key(&42),
-        "the placeholder is retired once the real card loads"
-      );
-      assert_eq!(
-        state.unassigned.iter().filter(|card| card.character_id == 42).count(),
-        1,
-        "the real card supersedes the placeholder with no duplicate"
+        state.pending.contains_key(&42),
+        "it is tracked as pending until its real row loads"
       );
     }
-  }
-
-  mod card_failure {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::sync::Event;
-
-    fn key(kind: JobKind, id: i64) -> JobKey {
-      JobKey::new(kind, Subject::Character(id))
-    }
 
     #[test]
-    fn it_surfaces_a_failing_wallet_job() {
-      let mut sync = SyncStatus::new();
-      sync.apply(&Event::Finished {
-        key: key(JobKind::CharacterTelemetry, 1),
-        outcome: crate::sync::Outcome::synced(),
-      });
-      sync.apply(&Event::Failed {
-        key: key(JobKind::CharacterWallet, 1),
-        reason: "boom".to_owned(),
-      });
-
-      assert_eq!(card_failure(&sync, 1), Some(Phase::Failed));
-    }
-
-    #[test]
-    fn it_prefers_failed_over_backing_off() {
-      let mut sync = SyncStatus::new();
-      sync.apply(&Event::BackingOff {
-        key: key(JobKind::CharacterTelemetry, 1),
-        retry_secs: 30,
-      });
-      sync.apply(&Event::Failed {
-        key: key(JobKind::CharacterWallet, 1),
-        reason: "boom".to_owned(),
-      });
-
-      assert_eq!(card_failure(&sync, 1), Some(Phase::Failed));
-    }
-
-    #[test]
-    fn it_is_none_for_healthy_or_unreported_jobs() {
-      let mut sync = SyncStatus::new();
-      sync.apply(&Event::Finished {
-        key: key(JobKind::CharacterWallet, 1),
-        outcome: crate::sync::Outcome::synced(),
-      });
-
-      assert_eq!(card_failure(&sync, 1), None);
-      assert_eq!(card_failure(&sync, 999), None);
-    }
-  }
-
-  mod needs_reauthorization {
-    use super::*;
-    use crate::clients::esi::scopes;
-
-    #[test]
-    fn a_missing_required_scope_needs_reauth() {
-      let granted = scopes::CHARACTER_SKILLS;
-      let required = [scopes::CHARACTER_SKILLS, scopes::CHARACTER_WALLET];
-
-      assert!(needs_reauthorization(Some(granted), &required));
-    }
-
-    #[test]
-    fn a_skill_monitoring_grant_lacking_implants_needs_reauth() {
-      let granted = format!("{} {}", scopes::CHARACTER_SKILLS, scopes::CHARACTER_SKILLQUEUE);
-      let required = auth_feature::scopes_for(&[Feature::SkillMonitoring]);
-
-      assert!(needs_reauthorization(Some(&granted), &required));
-    }
-
-    #[test]
-    fn a_superset_grant_clears_reauth() {
-      let granted = format!(
-        "{} {} {}",
-        scopes::CHARACTER_WALLET,
-        scopes::CHARACTER_SKILLS,
-        scopes::CHARACTER_MAIL,
-      );
-      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
-
-      assert!(!needs_reauthorization(Some(&granted), &required));
-    }
-
-    #[test]
-    fn an_exact_match_clears_reauth() {
-      let granted = format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS);
-      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
-
-      assert!(!needs_reauthorization(Some(&granted), &required));
-    }
-
-    #[test]
-    fn no_required_scopes_never_needs_reauth() {
-      assert!(!needs_reauthorization(None, &[]));
-      assert!(!needs_reauthorization(Some(scopes::CHARACTER_WALLET), &[]));
-    }
-
-    #[test]
-    fn an_empty_grant_needs_reauth_when_anything_is_required() {
-      assert!(needs_reauthorization(None, &[scopes::CHARACTER_WALLET]));
-      assert!(needs_reauthorization(Some(""), &[scopes::CHARACTER_WALLET]));
-      assert!(needs_reauthorization(Some("   "), &[scopes::CHARACTER_WALLET]));
-    }
-
-    #[test]
-    fn extra_whitespace_in_the_grant_is_ignored() {
-      let granted = format!("  {}   {}  ", scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS);
-      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
-
-      assert!(!needs_reauthorization(Some(&granted), &required));
-    }
-  }
-
-  mod owned_roster {
-    use chrono::TimeZone;
-    use pretty_assertions::{assert_eq, assert_ne};
-
-    use super::{load_roster::seed_character, *};
-    use crate::store;
-
-    async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(), &Feature::ALL)
-        .await
-        .unwrap();
-      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
-    }
-
-    #[tokio::test]
-    async fn it_flattens_squad_members_then_the_unassigned_bucket_with_per_pilot_colors() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Squad Pilot").await;
-      seed_character(&db, 2, "Solo Pilot").await;
-      let group = character::create(&db, "Supers", None, Some("#3FB8DB")).await.unwrap();
-      character::assign(&db, 1, group.id(), 0).await.unwrap();
-
+    fn it_sorts_the_pending_card_last_among_the_unassigned_cards() {
       let mut state = State::new();
-      reload(&mut state, &db).await;
-      let pilots = owned_roster(&state);
+      let mut anchor = real_card(7);
+      anchor.position = 2;
+      state.unassigned = vec![anchor];
 
-      assert_eq!(pilots.len(), 2);
-      assert_eq!(pilots[0].id, 1);
-      assert_eq!(pilots[0].name, "Squad Pilot");
-      assert_eq!(pilots[1].id, 2);
+      insert_signed_in_card(&mut state, 42, "New Pilot".to_owned());
 
-      assert_ne!(pilots[0].color, DEFAULT_SQUAD_ACCENT);
-      assert_eq!(pilots[1].color, DEFAULT_SQUAD_ACCENT);
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_an_empty_roster() {
-      let db = store::open_test().await.unwrap();
-
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      assert!(owned_roster(&state).is_empty());
+      let last = state
+        .unassigned
+        .iter()
+        .max_by_key(|card| card.position)
+        .expect("the bucket is non-empty");
+      assert_eq!(last.character_id, 42);
     }
   }
 
@@ -2604,15 +2939,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_places_an_unsquadded_character_in_the_unassigned_bucket() {
+    async fn disabling_a_feature_clears_needs_reauth_without_touching_the_grant() {
+      use crate::clients::esi::scopes;
+
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Solo Pilot").await;
+      seed_character(&db, 1, "Toggle Pilot").await;
+      infra::upsert(
+        &db,
+        1,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        9999,
+        None,
+        Some(&format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS)),
+      )
+      .await
+      .unwrap();
 
-      let (groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet, Feature::Mail])
+        .await
+        .unwrap();
+      assert!(unassigned[0].needs_reauth);
 
-      assert!(groups.is_empty());
-      assert_eq!(unassigned.len(), 1);
-      assert_eq!(unassigned[0].corp_ticker, "CORP1");
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet]).await.unwrap();
+      assert!(!unassigned[0].needs_reauth);
+    }
+
+    #[tokio::test]
+    async fn it_carries_total_sp_from_character_state_onto_the_card() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Skilled Pilot").await;
+      for (skill_id, sp) in [(100, 5_000_000_i64), (101, 1_250_000)] {
+        sqlx::query("INSERT INTO character_skills (character_id, skill_id, active_skill_level, skillpoints_in_skill, trained_skill_level) VALUES (?, ?, ?, ?, ?)")
+          .bind(1_i64)
+          .bind(skill_id)
+          .bind(0_i64)
+          .bind(sp)
+          .bind(0_i64)
+          .execute(&db.0)
+          .await
+          .unwrap();
+      }
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert_eq!(unassigned[0].total_sp, Some(6_250_000));
     }
 
     #[tokio::test]
@@ -2671,34 +3043,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabling_a_feature_clears_needs_reauth_without_touching_the_grant() {
-      use crate::clients::esi::scopes;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Toggle Pilot").await;
-      infra::upsert(
-        &db,
-        1,
-        OwnerType::Character,
-        "tok",
-        "rt",
-        9999,
-        None,
-        Some(&format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS)),
-      )
-      .await
-      .unwrap();
-
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet, Feature::Mail])
-        .await
-        .unwrap();
-      assert!(unassigned[0].needs_reauth);
-
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet]).await.unwrap();
-      assert!(!unassigned[0].needs_reauth);
-    }
-
-    #[tokio::test]
     async fn it_groups_a_member_under_its_squad() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Squad Pilot").await;
@@ -2712,6 +3056,119 @@ mod tests {
       assert_eq!(groups[0].cards.len(), 1);
       assert!(groups[0].cards[0].accent.is_some());
       assert!(unassigned.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_leaves_total_sp_none_when_no_skills_are_synced() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Unskilled Pilot").await;
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert!(unassigned[0].total_sp.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_leaves_training_none_for_an_empty_queue() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Idle Pilot").await;
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert!(unassigned[0].training.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_orders_card_chips_by_the_settings_sort_order() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Sorted Pilot").await;
+      let first = infra::create(&db, "First", None, None).await.unwrap();
+      let second = infra::create(&db, "Second", None, None).await.unwrap();
+      let third = infra::create(&db, "Third", None, None).await.unwrap();
+      for tag in [&third, &first, &second] {
+        infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, tag.id()).await.unwrap();
+      }
+      infra::reorder(&db, &[third.id(), first.id(), second.id()])
+        .await
+        .unwrap();
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert_eq!(
+        unassigned[0]
+          .tags
+          .iter()
+          .map(|chip| chip.name.as_str())
+          .collect::<Vec<_>>(),
+        vec!["Third", "First", "Second"]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_places_an_unsquadded_character_in_the_unassigned_bucket() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Solo Pilot").await;
+
+      let (groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert!(groups.is_empty());
+      assert_eq!(unassigned.len(), 1);
+      assert_eq!(unassigned[0].corp_ticker, "CORP1");
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_training_skill_with_remaining_and_progress() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Trainer").await;
+      let entry = CharacterSkillqueue {
+        character_id: 1,
+        finish_date: Some("2026-05-25T00:00:00Z".to_owned()),
+        finished_level: 5,
+        level_end_sp: Some(256_000),
+        level_start_sp: Some(45_255),
+        queue_position: 0,
+        skill_id: 3300,
+        start_date: Some("2026-05-05T00:00:00Z".to_owned()),
+        training_start_sp: Some(45_255),
+      };
+      character::replace_skillqueue(&db, 1, &[entry]).await.unwrap();
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let training = unassigned[0].training.as_ref().unwrap();
+
+      assert_eq!(training.level, 5);
+      assert!((training.progress - 0.5).abs() < 0.01);
+      assert_eq!(training.remaining, "10d 0h");
+    }
+
+    #[tokio::test]
+    async fn it_resolves_tag_chips_for_a_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Tagged Pilot").await;
+      let main = infra::create(&db, "Main", None, Some("#5BB97E")).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
+
+      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert_eq!(unassigned[0].tags.len(), 1);
+      assert_eq!(unassigned[0].tags[0].name, "Main");
+      assert!(unassigned[0].tags[0].color.is_some());
+    }
+
+    #[tokio::test]
+    async fn no_row_stragglers_sort_after_positioned_members_by_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 5, "Positioned").await;
+      seed_character(&db, 9, "Straggler Nine").await;
+      seed_character(&db, 1, "Straggler One").await;
+      character::unassign(&db, 5).await.unwrap();
+
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+
+      assert_eq!(
+        unassigned.iter().map(|card| card.character_id).collect::<Vec<_>>(),
+        vec![5, 1, 9]
+      );
     }
 
     #[tokio::test]
@@ -2744,239 +3201,132 @@ mod tests {
         vec![20, 30, 10]
       );
     }
+  }
 
-    #[tokio::test]
-    async fn no_row_stragglers_sort_after_positioned_members_by_id() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 5, "Positioned").await;
-      seed_character(&db, 9, "Straggler Nine").await;
-      seed_character(&db, 1, "Straggler One").await;
-      character::unassign(&db, 5).await.unwrap();
+  mod needs_reauthorization {
+    use super::*;
+    use crate::clients::esi::scopes;
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+    #[test]
+    fn a_missing_required_scope_needs_reauth() {
+      let granted = scopes::CHARACTER_SKILLS;
+      let required = [scopes::CHARACTER_SKILLS, scopes::CHARACTER_WALLET];
 
-      assert_eq!(
-        unassigned.iter().map(|card| card.character_id).collect::<Vec<_>>(),
-        vec![5, 1, 9]
+      assert!(needs_reauthorization(Some(granted), &required));
+    }
+
+    #[test]
+    fn a_skill_monitoring_grant_lacking_implants_needs_reauth() {
+      let granted = format!("{} {}", scopes::CHARACTER_SKILLS, scopes::CHARACTER_SKILLQUEUE);
+      let required = auth_feature::scopes_for(&[Feature::SkillMonitoring]);
+
+      assert!(needs_reauthorization(Some(&granted), &required));
+    }
+
+    #[test]
+    fn a_superset_grant_clears_reauth() {
+      let granted = format!(
+        "{} {} {}",
+        scopes::CHARACTER_WALLET,
+        scopes::CHARACTER_SKILLS,
+        scopes::CHARACTER_MAIL,
       );
+      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
+
+      assert!(!needs_reauthorization(Some(&granted), &required));
     }
 
-    #[tokio::test]
-    async fn it_resolves_tag_chips_for_a_character() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Tagged Pilot").await;
-      let main = infra::create(&db, "Main", None, Some("#5BB97E")).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
-
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert_eq!(unassigned[0].tags.len(), 1);
-      assert_eq!(unassigned[0].tags[0].name, "Main");
-      assert!(unassigned[0].tags[0].color.is_some());
+    #[test]
+    fn an_empty_grant_needs_reauth_when_anything_is_required() {
+      assert!(needs_reauthorization(None, &[scopes::CHARACTER_WALLET]));
+      assert!(needs_reauthorization(Some(""), &[scopes::CHARACTER_WALLET]));
+      assert!(needs_reauthorization(Some("   "), &[scopes::CHARACTER_WALLET]));
     }
 
-    #[tokio::test]
-    async fn it_orders_card_chips_by_the_settings_sort_order() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Sorted Pilot").await;
-      let first = infra::create(&db, "First", None, None).await.unwrap();
-      let second = infra::create(&db, "Second", None, None).await.unwrap();
-      let third = infra::create(&db, "Third", None, None).await.unwrap();
-      for tag in [&third, &first, &second] {
-        infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, tag.id()).await.unwrap();
-      }
-      infra::reorder(&db, &[third.id(), first.id(), second.id()])
-        .await
-        .unwrap();
+    #[test]
+    fn an_exact_match_clears_reauth() {
+      let granted = format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS);
+      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert_eq!(
-        unassigned[0]
-          .tags
-          .iter()
-          .map(|chip| chip.name.as_str())
-          .collect::<Vec<_>>(),
-        vec!["Third", "First", "Second"]
-      );
+      assert!(!needs_reauthorization(Some(&granted), &required));
     }
 
-    #[tokio::test]
-    async fn it_leaves_training_none_for_an_empty_queue() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Idle Pilot").await;
+    #[test]
+    fn extra_whitespace_in_the_grant_is_ignored() {
+      let granted = format!("  {}   {}  ", scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS);
+      let required = [scopes::CHARACTER_WALLET, scopes::CHARACTER_SKILLS];
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert!(unassigned[0].training.is_none());
+      assert!(!needs_reauthorization(Some(&granted), &required));
     }
 
-    #[tokio::test]
-    async fn it_resolves_a_training_skill_with_remaining_and_progress() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Trainer").await;
-      let entry = CharacterSkillqueue {
-        character_id: 1,
-        finish_date: Some("2026-05-25T00:00:00Z".to_owned()),
-        finished_level: 5,
-        level_end_sp: Some(256_000),
-        level_start_sp: Some(45_255),
-        queue_position: 0,
-        skill_id: 3300,
-        start_date: Some("2026-05-05T00:00:00Z".to_owned()),
-        training_start_sp: Some(45_255),
-      };
-      character::replace_skillqueue(&db, 1, &[entry]).await.unwrap();
-
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-      let training = unassigned[0].training.as_ref().unwrap();
-
-      assert_eq!(training.level, 5);
-      assert!((training.progress - 0.5).abs() < 0.01);
-      assert_eq!(training.remaining, "10d 0h");
-    }
-
-    #[tokio::test]
-    async fn it_carries_total_sp_from_character_state_onto_the_card() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Skilled Pilot").await;
-      for (skill_id, sp) in [(100, 5_000_000_i64), (101, 1_250_000)] {
-        sqlx::query("INSERT INTO character_skills (character_id, skill_id, active_skill_level, skillpoints_in_skill, trained_skill_level) VALUES (?, ?, ?, ?, ?)")
-          .bind(1_i64)
-          .bind(skill_id)
-          .bind(0_i64)
-          .bind(sp)
-          .bind(0_i64)
-          .execute(&db.0)
-          .await
-          .unwrap();
-      }
-
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert_eq!(unassigned[0].total_sp, Some(6_250_000));
-    }
-
-    #[tokio::test]
-    async fn it_leaves_total_sp_none_when_no_skills_are_synced() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Unskilled Pilot").await;
-
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert!(unassigned[0].total_sp.is_none());
+    #[test]
+    fn no_required_scopes_never_needs_reauth() {
+      assert!(!needs_reauthorization(None, &[]));
+      assert!(!needs_reauthorization(Some(scopes::CHARACTER_WALLET), &[]));
     }
   }
 
-  mod stale_images {
+  mod owned_roster {
+    use chrono::TimeZone;
+    use pretty_assertions::{assert_eq, assert_ne};
+
+    use super::{load_roster::seed_character, *};
+    use crate::store;
+
+    async fn reload(state: &mut State, db: &Database) {
+      let roster = load_roster_at(db, Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(), &Feature::ALL)
+        .await
+        .unwrap();
+      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
+    }
+
+    #[tokio::test]
+    async fn it_flattens_squad_members_then_the_unassigned_bucket_with_per_pilot_colors() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Squad Pilot").await;
+      seed_character(&db, 2, "Solo Pilot").await;
+      let group = character::create(&db, "Supers", None, Some("#3FB8DB")).await.unwrap();
+      character::assign(&db, 1, group.id(), 0).await.unwrap();
+
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let pilots = owned_roster(&state);
+
+      assert_eq!(pilots.len(), 2);
+      assert_eq!(pilots[0].id, 1);
+      assert_eq!(pilots[0].name, "Squad Pilot");
+      assert_eq!(pilots[1].id, 2);
+
+      assert_ne!(pilots[0].color, DEFAULT_SQUAD_ACCENT);
+      assert_eq!(pilots[1].color, DEFAULT_SQUAD_ACCENT);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_an_empty_roster() {
+      let db = store::open_test().await.unwrap();
+
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      assert!(owned_roster(&state).is_empty());
+    }
+  }
+
+  mod parse_hex {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn card(character_id: i64, portrait: images::ImageState) -> CardModel {
-      CardModel {
-        accent: None,
-        character_id,
-        corp_ticker: "CORP".to_owned(),
-        docked: None,
-        location: None,
-        name: "Pilot".to_owned(),
-        needs_reauth: false,
-        portrait,
-        position: 0,
-        tags: Vec::new(),
-        total_sp: None,
-        training: None,
-        wallet_balance: None,
-      }
-    }
-
-    fn corp(corporation_id: i64, logo: images::ImageState) -> CorpCardModel {
-      CorpCardModel {
-        alliance: None,
-        alliance_ticker: None,
-        ceo: None,
-        corporation_id,
-        granted_scopes: None,
-        hq: None,
-        logo,
-        members: None,
-        name: "Corp".to_owned(),
-        needs_reauth: false,
-        tags: Vec::new(),
-        tax_rate: None,
-        ticker: "CORP".to_owned(),
-      }
-    }
-
-    fn fresh() -> images::ImageState {
-      images::ImageState::Fresh(std::path::PathBuf::from("/cache/portrait.jpg"))
-    }
-
-    fn stale_logo(id: i64) -> images::ImageState {
-      images::ImageState::Stale {
-        id,
-        kind: images::ImageKind::CorporationLogo,
-      }
-    }
-
-    fn stale_portrait(id: i64) -> images::ImageState {
-      images::ImageState::Stale {
-        id,
-        kind: images::ImageKind::CharacterPortrait,
-      }
+    #[test]
+    fn it_parses_a_six_digit_hex() {
+      assert_eq!(parse_hex(Some("#3FB8DB")), Some(Color::from_rgb8(0x3F, 0xB8, 0xDB)));
     }
 
     #[test]
-    fn it_is_empty_when_every_image_is_fresh() {
-      let mut state = State::new();
-      state.unassigned = vec![card(1, fresh())];
-      state.corps = vec![corp(2, fresh())];
-
-      assert!(state.stale_images().is_empty());
-    }
-
-    #[test]
-    fn it_collects_stale_portraits_and_logos_across_groups_unassigned_and_corps() {
-      let mut state = State::new();
-      state.groups = vec![SquadGroup {
-        accent: color::accent::PLASMA,
-        cards: vec![card(1, stale_portrait(1))],
-        color_hex: None,
-        description: None,
-        name: "Wing".to_owned(),
-        squad_id: 10,
-      }];
-      state.unassigned = vec![card(2, stale_portrait(2)), card(3, fresh())];
-      state.corps = vec![corp(4, stale_logo(4))];
-
-      let stale = state.stale_images();
-
-      assert_eq!(
-        stale,
-        vec![
-          (images::ImageKind::CharacterPortrait, 1),
-          (images::ImageKind::CharacterPortrait, 2),
-          (images::ImageKind::CorporationLogo, 4),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_collects_stale_keys_from_the_filtered_card_and_corp_results() {
-      let mut state = State::new();
-      state.filtered = Some(Filtered::Loaded(vec![card(1, stale_portrait(1))]));
-      state.corp_filtered = Some(CorpFiltered::Loaded(vec![corp(2, stale_logo(2))]));
-
-      let stale = state.stale_images();
-
-      assert_eq!(
-        stale,
-        vec![
-          (images::ImageKind::CharacterPortrait, 1),
-          (images::ImageKind::CorporationLogo, 2),
-        ]
-      );
+    fn it_rejects_malformed_or_absent_colors() {
+      assert_eq!(parse_hex(None), None);
+      assert_eq!(parse_hex(Some("3FB8DB")), None);
+      assert_eq!(parse_hex(Some("#FFF")), None);
     }
   }
 
@@ -3038,6 +3388,158 @@ mod tests {
       }
     }
 
+    #[tokio::test]
+    async fn it_appends_an_inserted_fragment_space_separated() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::InsertQuery("corp:cobalt".to_owned()), &db);
+      assert_eq!(state.search_query, "corp:cobalt");
+
+      let _ = update(&mut state, Message::InsertQuery("tag:pvp".to_owned()), &db);
+
+      assert_eq!(state.search_query, "corp:cobalt tag:pvp");
+      assert!(matches!(state.filtered, Some(Filtered::Loading)));
+    }
+
+    #[tokio::test]
+    async fn it_applies_loaded_corp_results_for_the_current_generation() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::CorpSearchResults {
+          generation: 1,
+          result: Ok(vec![corp_card_from_row(sample_corp_row(2001, "Cobalt Industries"))]),
+        },
+        &db,
+      );
+
+      match &state.corp_filtered {
+        Some(CorpFiltered::Loaded(corps)) => {
+          assert_eq!(corps.len(), 1);
+          assert_eq!(corps[0].name, "Cobalt Industries");
+        }
+        other => panic!("expected loaded corp results, got {other:?}"),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_applies_only_the_current_generation_of_results() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::SearchResults {
+          generation: 0,
+          result: Ok(vec![card_from_row(sample_row(1, "Stale"), now())]),
+        },
+        &db,
+      );
+      assert!(matches!(state.filtered, Some(Filtered::Loading)));
+
+      let _ = update(
+        &mut state,
+        Message::SearchResults {
+          generation: 1,
+          result: Ok(vec![card_from_row(sample_row(2, "Fresh"), now())]),
+        },
+        &db,
+      );
+
+      match &state.filtered {
+        Some(Filtered::Loaded(cards)) => {
+          assert_eq!(cards.len(), 1);
+          assert_eq!(cards[0].name, "Fresh");
+        }
+        other => panic!("expected loaded results, got {other:?}"),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_clears_both_filters_on_a_tab_switch_with_an_empty_query() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
+
+      assert!(!state.is_filtered());
+      assert!(!state.is_corp_filtered());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_corp_filter_on_clear_search() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
+      assert!(state.is_corp_filtered());
+
+      let _ = update(&mut state, Message::ClearSearch, &db);
+
+      assert_eq!(state.search_query, "");
+      assert!(!state.is_corp_filtered());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_filter_on_an_empty_change() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
+
+      let _ = update(&mut state, Message::SearchChanged("   ".to_owned()), &db);
+
+      assert!(!state.is_filtered());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_query_and_filter_on_clear_search() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
+
+      let _ = update(&mut state, Message::ClearSearch, &db);
+
+      assert_eq!(state.search_query, "");
+      assert!(!state.is_filtered());
+    }
+
+    #[test]
+    fn it_defaults_position_and_clears_training_when_idle() {
+      let mut row = sample_row(1, "Pilot");
+      row.position = None;
+      row.training = None;
+
+      let card = card_from_row(row, now());
+
+      assert_eq!(card.position, 0);
+      assert!(card.training.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_discards_stale_corp_results() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::CorpSearchResults {
+          generation: 0,
+          result: Ok(vec![corp_card_from_row(sample_corp_row(9, "Stale Corp"))]),
+        },
+        &db,
+      );
+
+      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loading)));
+    }
+
     #[test]
     fn it_maps_a_corp_projection_row_to_a_card_model() {
       let card = corp_card_from_row(sample_corp_row(2001, "Cobalt Industries"));
@@ -3083,6 +3585,42 @@ mod tests {
       );
     }
 
+    #[tokio::test]
+    async fn it_re_triggers_the_now_active_tab_on_a_tab_switch() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::SearchChanged("cobalt".to_owned()), &db);
+      assert!(matches!(state.filtered, Some(Filtered::Loading)));
+      assert!(state.corp_filtered.is_none());
+      let after_type = state.search_generation;
+
+      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
+      assert_eq!(state.active_pane, Pane::Corporations);
+      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loading)));
+      assert!(state.filtered.is_none());
+      assert_eq!(state.search_query, "cobalt");
+      assert_eq!(state.search_generation, after_type + 1);
+    }
+
+    #[tokio::test]
+    async fn it_renders_an_empty_corp_result_as_the_no_matches_state() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active_pane = Pane::Corporations;
+      let _ = update(&mut state, Message::SearchChanged("nomatch".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::CorpSearchResults {
+          generation: 1,
+          result: Ok(vec![]),
+        },
+        &db,
+      );
+
+      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loaded(ref corps)) if corps.is_empty()));
+    }
+
     #[test]
     fn it_resolves_training_progress_and_remaining_against_now() {
       let card = card_from_row(sample_row(1, "Pilot"), now());
@@ -3096,111 +3634,21 @@ mod tests {
     }
 
     #[test]
-    fn it_defaults_position_and_clears_training_when_idle() {
-      let mut row = sample_row(1, "Pilot");
-      row.position = None;
-      row.training = None;
-
-      let card = card_from_row(row, now());
-
-      assert_eq!(card.position, 0);
-      assert!(card.training.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_stores_the_query_and_starts_loading_on_a_non_empty_change() {
-      let db = store::open_test().await.unwrap();
+    fn it_shows_the_corp_tab_badge_as_n_of_m_when_filtered() {
       let mut state = State::new();
+      state.corps = vec![
+        corp_card_from_row(sample_corp_row(1, "A")),
+        corp_card_from_row(sample_corp_row(2, "B")),
+        corp_card_from_row(sample_corp_row(3, "C")),
+      ];
 
-      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
+      assert_eq!(corp_count(&state), "3");
 
-      assert_eq!(state.search_query, "corp:cobalt");
-      assert!(state.is_filtered());
-      assert!(matches!(state.filtered, Some(Filtered::Loading)));
-      assert_eq!(state.search_generation, 1);
-    }
+      state.corp_filtered = Some(CorpFiltered::Loaded(vec![corp_card_from_row(sample_corp_row(1, "A"))]));
+      assert_eq!(corp_count(&state), "1 of 3");
 
-    #[tokio::test]
-    async fn it_clears_the_filter_on_an_empty_change() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
-
-      let _ = update(&mut state, Message::SearchChanged("   ".to_owned()), &db);
-
-      assert!(!state.is_filtered());
-    }
-
-    #[tokio::test]
-    async fn it_applies_only_the_current_generation_of_results() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
-
-      let _ = update(
-        &mut state,
-        Message::SearchResults {
-          generation: 0,
-          result: Ok(vec![card_from_row(sample_row(1, "Stale"), now())]),
-        },
-        &db,
-      );
-      assert!(matches!(state.filtered, Some(Filtered::Loading)));
-
-      let _ = update(
-        &mut state,
-        Message::SearchResults {
-          generation: 1,
-          result: Ok(vec![card_from_row(sample_row(2, "Fresh"), now())]),
-        },
-        &db,
-      );
-
-      match &state.filtered {
-        Some(Filtered::Loaded(cards)) => {
-          assert_eq!(cards.len(), 1);
-          assert_eq!(cards[0].name, "Fresh");
-        }
-        other => panic!("expected loaded results, got {other:?}"),
-      }
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_query_and_filter_on_clear_search() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
-
-      let _ = update(&mut state, Message::ClearSearch, &db);
-
-      assert_eq!(state.search_query, "");
-      assert!(!state.is_filtered());
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_help_popover() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::ToggleSearchHelp, &db);
-      assert!(state.search_help_open());
-
-      let _ = update(&mut state, Message::ToggleSearchHelp, &db);
-      assert!(!state.search_help_open());
-    }
-
-    #[tokio::test]
-    async fn it_appends_an_inserted_fragment_space_separated() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::InsertQuery("corp:cobalt".to_owned()), &db);
-      assert_eq!(state.search_query, "corp:cobalt");
-
-      let _ = update(&mut state, Message::InsertQuery("tag:pvp".to_owned()), &db);
-
-      assert_eq!(state.search_query, "corp:cobalt tag:pvp");
-      assert!(matches!(state.filtered, Some(Filtered::Loading)));
+      state.corp_filtered = Some(CorpFiltered::Loading);
+      assert_eq!(corp_count(&state), "3");
     }
 
     #[test]
@@ -3237,126 +3685,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_applies_loaded_corp_results_for_the_current_generation() {
+    async fn it_stores_the_query_and_starts_loading_on_a_non_empty_change() {
       let db = store::open_test().await.unwrap();
       let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
 
-      let _ = update(
-        &mut state,
-        Message::CorpSearchResults {
-          generation: 1,
-          result: Ok(vec![corp_card_from_row(sample_corp_row(2001, "Cobalt Industries"))]),
-        },
-        &db,
-      );
+      let _ = update(&mut state, Message::SearchChanged("corp:cobalt".to_owned()), &db);
 
-      match &state.corp_filtered {
-        Some(CorpFiltered::Loaded(corps)) => {
-          assert_eq!(corps.len(), 1);
-          assert_eq!(corps[0].name, "Cobalt Industries");
-        }
-        other => panic!("expected loaded corp results, got {other:?}"),
-      }
-    }
-
-    #[tokio::test]
-    async fn it_renders_an_empty_corp_result_as_the_no_matches_state() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-      let _ = update(&mut state, Message::SearchChanged("nomatch".to_owned()), &db);
-
-      let _ = update(
-        &mut state,
-        Message::CorpSearchResults {
-          generation: 1,
-          result: Ok(vec![]),
-        },
-        &db,
-      );
-
-      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loaded(ref corps)) if corps.is_empty()));
-    }
-
-    #[tokio::test]
-    async fn it_discards_stale_corp_results() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
-
-      let _ = update(
-        &mut state,
-        Message::CorpSearchResults {
-          generation: 0,
-          result: Ok(vec![corp_card_from_row(sample_corp_row(9, "Stale Corp"))]),
-        },
-        &db,
-      );
-
-      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loading)));
-    }
-
-    #[tokio::test]
-    async fn it_re_triggers_the_now_active_tab_on_a_tab_switch() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::SearchChanged("cobalt".to_owned()), &db);
+      assert_eq!(state.search_query, "corp:cobalt");
+      assert!(state.is_filtered());
       assert!(matches!(state.filtered, Some(Filtered::Loading)));
-      assert!(state.corp_filtered.is_none());
-      let after_type = state.search_generation;
-
-      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
-      assert_eq!(state.active_pane, Pane::Corporations);
-      assert!(matches!(state.corp_filtered, Some(CorpFiltered::Loading)));
-      assert!(state.filtered.is_none());
-      assert_eq!(state.search_query, "cobalt");
-      assert_eq!(state.search_generation, after_type + 1);
+      assert_eq!(state.search_generation, 1);
     }
 
     #[tokio::test]
-    async fn it_clears_both_filters_on_a_tab_switch_with_an_empty_query() {
+    async fn it_toggles_the_help_popover() {
       let db = store::open_test().await.unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
+      let _ = update(&mut state, Message::ToggleSearchHelp, &db);
+      assert!(state.search_help_open());
 
-      assert!(!state.is_filtered());
-      assert!(!state.is_corp_filtered());
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_corp_filter_on_clear_search() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-      let _ = update(&mut state, Message::SearchChanged("mining".to_owned()), &db);
-      assert!(state.is_corp_filtered());
-
-      let _ = update(&mut state, Message::ClearSearch, &db);
-
-      assert_eq!(state.search_query, "");
-      assert!(!state.is_corp_filtered());
-    }
-
-    #[test]
-    fn it_shows_the_corp_tab_badge_as_n_of_m_when_filtered() {
-      let mut state = State::new();
-      state.corps = vec![
-        corp_card_from_row(sample_corp_row(1, "A")),
-        corp_card_from_row(sample_corp_row(2, "B")),
-        corp_card_from_row(sample_corp_row(3, "C")),
-      ];
-
-      assert_eq!(corp_count(&state), "3");
-
-      state.corp_filtered = Some(CorpFiltered::Loaded(vec![corp_card_from_row(sample_corp_row(1, "A"))]));
-      assert_eq!(corp_count(&state), "1 of 3");
-
-      state.corp_filtered = Some(CorpFiltered::Loading);
-      assert_eq!(corp_count(&state), "3");
+      let _ = update(&mut state, Message::ToggleSearchHelp, &db);
+      assert!(!state.search_help_open());
     }
 
     #[test]
@@ -3456,6 +3806,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_leaves_character_cards_unflagged_when_no_credential_needs_reauth() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Quiet Pilot").await;
+
+      let cards = search_character_cards(&db, "pilot").await.unwrap();
+
+      assert_eq!(cards.len(), 1);
+      assert!(!cards[0].needs_reauth);
+    }
+
+    #[tokio::test]
+    async fn it_leaves_corp_cards_unflagged_when_no_credential_needs_reauth() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 90_100_003, 3, "Cobalt Quiet").await;
+
+      let cards = search_corp_cards(&db, "cobalt").await.unwrap();
+
+      assert_eq!(cards.len(), 1);
+      assert!(!cards[0].needs_reauth);
+    }
+
+    #[tokio::test]
     async fn it_overlays_the_persisted_reauth_flag_onto_character_results() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Flagged Pilot").await;
@@ -3474,17 +3846,6 @@ mod tests {
         .expect("the clean pilot is in the results");
       assert!(flagged.needs_reauth, "the marked credential surfaces a reauth card");
       assert!(!clean.needs_reauth, "the unmarked credential stays clean");
-    }
-
-    #[tokio::test]
-    async fn it_leaves_character_cards_unflagged_when_no_credential_needs_reauth() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Quiet Pilot").await;
-
-      let cards = search_character_cards(&db, "pilot").await.unwrap();
-
-      assert_eq!(cards.len(), 1);
-      assert!(!cards[0].needs_reauth);
     }
 
     #[tokio::test]
@@ -3509,16 +3870,117 @@ mod tests {
       assert!(flagged.needs_reauth, "the marked credential surfaces a reauth card");
       assert!(!clean.needs_reauth, "the unmarked credential stays clean");
     }
+  }
 
-    #[tokio::test]
-    async fn it_leaves_corp_cards_unflagged_when_no_credential_needs_reauth() {
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db, 90_100_003, 3, "Cobalt Quiet").await;
+  mod stale_images {
+    use pretty_assertions::assert_eq;
 
-      let cards = search_corp_cards(&db, "cobalt").await.unwrap();
+    use super::*;
 
-      assert_eq!(cards.len(), 1);
-      assert!(!cards[0].needs_reauth);
+    fn card(character_id: i64, portrait: images::ImageState) -> CardModel {
+      CardModel {
+        accent: None,
+        character_id,
+        corp_ticker: "CORP".to_owned(),
+        docked: None,
+        location: None,
+        name: "Pilot".to_owned(),
+        needs_reauth: false,
+        portrait,
+        position: 0,
+        tags: Vec::new(),
+        total_sp: None,
+        training: None,
+        wallet_balance: None,
+      }
+    }
+
+    fn corp(corporation_id: i64, logo: images::ImageState) -> CorpCardModel {
+      CorpCardModel {
+        alliance: None,
+        alliance_ticker: None,
+        ceo: None,
+        corporation_id,
+        granted_scopes: None,
+        hq: None,
+        logo,
+        members: None,
+        name: "Corp".to_owned(),
+        needs_reauth: false,
+        tags: Vec::new(),
+        tax_rate: None,
+        ticker: "CORP".to_owned(),
+      }
+    }
+
+    fn fresh() -> images::ImageState {
+      images::ImageState::Fresh(std::path::PathBuf::from("/cache/portrait.jpg"))
+    }
+
+    fn stale_logo(id: i64) -> images::ImageState {
+      images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CorporationLogo,
+      }
+    }
+
+    fn stale_portrait(id: i64) -> images::ImageState {
+      images::ImageState::Stale {
+        id,
+        kind: images::ImageKind::CharacterPortrait,
+      }
+    }
+
+    #[test]
+    fn it_collects_stale_keys_from_the_filtered_card_and_corp_results() {
+      let mut state = State::new();
+      state.filtered = Some(Filtered::Loaded(vec![card(1, stale_portrait(1))]));
+      state.corp_filtered = Some(CorpFiltered::Loaded(vec![corp(2, stale_logo(2))]));
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 1),
+          (images::ImageKind::CorporationLogo, 2),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_collects_stale_portraits_and_logos_across_groups_unassigned_and_corps() {
+      let mut state = State::new();
+      state.groups = vec![SquadGroup {
+        accent: color::accent::PLASMA,
+        cards: vec![card(1, stale_portrait(1))],
+        color_hex: None,
+        description: None,
+        name: "Wing".to_owned(),
+        squad_id: 10,
+      }];
+      state.unassigned = vec![card(2, stale_portrait(2)), card(3, fresh())];
+      state.corps = vec![corp(4, stale_logo(4))];
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 1),
+          (images::ImageKind::CharacterPortrait, 2),
+          (images::ImageKind::CorporationLogo, 4),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_is_empty_when_every_image_is_fresh() {
+      let mut state = State::new();
+      state.unassigned = vec![card(1, fresh())];
+      state.corps = vec![corp(2, fresh())];
+
+      assert!(state.stale_images().is_empty());
     }
   }
 
@@ -3559,160 +4021,272 @@ mod tests {
         .unwrap_or_default()
     }
 
-    #[tokio::test]
-    async fn it_assigns_an_existing_tag_without_replacing_others() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let main = infra::create(&db, "Main", None, None).await.unwrap();
-      let alt = infra::create(&db, "Alt", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
-      let mut state = State::new();
-
-      apply_tag_write(
-        &db,
-        TagWrite::Assign {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-          tag_id: alt.id(),
-        },
-      )
-      .await
-      .unwrap();
-      let names = reload_tag_names(&mut state, &db, 1).await;
-
-      assert_eq!(names, vec!["Main".to_owned(), "Alt".to_owned()]);
+    async fn reload_squad_of(state: &mut State, db: &Database, character_id: i64) -> Option<i64> {
+      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
+      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
+      groups(state)
+        .iter()
+        .find(|group| group.cards.iter().any(|card| card.character_id == character_id))
+        .map(|group| group.squad_id)
     }
 
-    #[tokio::test]
-    async fn it_unassigns_a_tag_leaving_the_rest() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let main = infra::create(&db, "Main", None, None).await.unwrap();
-      let dropped = infra::create(&db, "Dropped", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, dropped.id())
+    async fn stored_position(db: &Database, character_id: i64) -> Option<i64> {
+      character::memberships(db)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .find(|m| m.character_id() == character_id)
+        .map(|m| m.position())
+    }
+
+    async fn reload(state: &mut State, db: &Database) {
+      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
+      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
+    }
+
+    async fn reload_group_names(state: &mut State, db: &Database) -> Vec<String> {
+      reload(state, db).await;
+      groups(state).iter().map(|group| group.name.clone()).collect()
+    }
+
+    async fn reordered_ids(db: &Database, squad_id: i64, index: usize) -> Vec<i64> {
+      let mut ids: Vec<i64> = character::all_user_squads(db)
+        .await
+        .unwrap()
+        .iter()
+        .map(|s| s.id())
+        .collect();
+      let from = ids.iter().position(|&id| id == squad_id).unwrap();
+      let moved = ids.remove(from);
+      ids.insert(index.min(ids.len()), moved);
+      ids
+    }
+
+    #[tokio::test]
+    async fn a_card_hover_is_ignored_during_a_squad_drag_and_vice_versa() {
+      let db = store::open_test().await.unwrap();
+      let a = character::create(&db, "A", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
+      let _ = update(
+        &mut state,
+        Message::HoverTarget(DropTarget {
+          position: 0,
+          squad_id: a.id(),
+        }),
+        &db,
+      );
+      assert_eq!(drop_target(&state), None);
+
+      let _ = update(&mut state, Message::CancelDrag, &db);
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(&mut state, Message::HoverSquadSlot(0), &db);
+      assert_eq!(squad_drop_target(&state), None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_squad_write_surfaces_as_a_load_error() {
+      let db = store::open_test().await.unwrap();
       let mut state = State::new();
 
-      apply_tag_write(
+      let _ = update(&mut state, Message::SquadsChanged(Err("boom".to_owned())), &db);
+
+      assert_eq!(load_error(&state), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_tag_write_surfaces_as_a_load_error() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::TagsChanged(Err("boom".to_owned())), &db);
+
+      assert_eq!(load_error(&state), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn a_right_press_opens_the_context_menu_at_the_cursor_for_the_card() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Right Click Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(120.0, 200.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+
+      let menu = state.context_menu.as_ref().expect("menu open");
+      assert_eq!(menu.character_id, 1);
+      assert_eq!(menu.name, "Right Click Pilot");
+      assert_eq!(menu.anchor, iced::Point::new(120.0, 200.0));
+    }
+
+    #[tokio::test]
+    async fn a_right_press_without_a_tracked_cursor_opens_nothing() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+
+      assert!(state.context_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_valid_custom_hex_sets_the_color_on_commit() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
+
+      let _ = update(&mut state, Message::SquadColorHexChanged("a1b2c3".to_owned()), &db);
+      let creator = state.squad_creator.as_ref().unwrap();
+      assert_eq!(creator.hex_draft, "a1b2c3");
+      assert_eq!(creator.color, "#3FB8DB");
+      assert!(!creator.hex_invalid);
+
+      let _ = update(&mut state, Message::SquadColorHexSubmitted, &db);
+      let creator = state.squad_creator.as_ref().unwrap();
+      assert_eq!(creator.color, "#A1B2C3");
+      assert!(!creator.hex_invalid);
+      assert!(creator.color_popover_open);
+    }
+
+    #[tokio::test]
+    async fn an_invalid_custom_hex_is_rejected_and_flagged() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
+
+      let _ = update(&mut state, Message::SquadColorHexChanged("nothex".to_owned()), &db);
+      let _ = update(&mut state, Message::SquadColorHexSubmitted, &db);
+
+      let creator = state.squad_creator.as_ref().unwrap();
+      assert_eq!(creator.color, "#3FB8DB");
+      assert!(creator.hex_invalid);
+    }
+
+    #[tokio::test]
+    async fn assigning_to_a_new_squad_moves_the_character_out_of_the_old_one() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let from = character::create(&db, "From", None, None).await.unwrap();
+      let to = character::create(&db, "To", None, None).await.unwrap();
+      character::assign(&db, 1, from.id(), 0).await.unwrap();
+      let mut state = State::new();
+
+      apply_squad_write(
         &db,
-        TagWrite::Unassign {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-          tag_id: dropped.id(),
+        SquadWrite::Assign {
+          character_id: 1,
+          position: 0,
+          squad_id: to.id(),
         },
       )
       .await
       .unwrap();
-      let names = reload_tag_names(&mut state, &db, 1).await;
 
-      assert_eq!(names, vec!["Main".to_owned()]);
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(to.id()));
+      assert!(character::members(&db, from.id()).await.unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn it_creates_then_assigns_a_new_tag() {
+    async fn cancelling_the_confirm_modal_clears_it_without_removing() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
 
-      let _ = update(
-        &mut state,
-        Message::OpenAddTagModal {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-        },
-        &db,
-      );
-      let _ = update(&mut state, Message::AddTagInputChanged("Hauler".to_owned()), &db);
-      let name = state.add_tag_modal.as_ref().unwrap().input.clone();
-      let _ = update(&mut state, Message::CreateAndAssignTag, &db);
-      assert!(state.add_tag_modal.is_none());
-      apply_tag_write(
-        &db,
-        TagWrite::CreateAndAssign {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-          name,
-        },
-      )
-      .await
-      .unwrap();
-      let names = reload_tag_names(&mut state, &db, 1).await;
+      let _ = update(&mut state, Message::CloseRemoveConfirm, &db);
 
-      assert_eq!(names, vec!["Hauler".to_owned()]);
-      assert!(all_tags(&state).iter().any(|tag| tag.name() == "Hauler"));
+      assert!(state.remove_confirm.is_none());
+      assert!(character::get(&db, 1).await.unwrap().is_some());
     }
 
     #[tokio::test]
-    async fn open_then_input_then_close_tracks_the_add_tag_modal() {
+    async fn choosing_remove_transitions_the_menu_to_the_confirm_modal() {
       let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Doomed Pilot").await;
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
 
-      let _ = update(
-        &mut state,
-        Message::OpenAddTagModal {
-          entity_id: 7,
-          entity_type: ENTITY_TYPE_CHARACTER,
-        },
-        &db,
-      );
-      let _ = update(&mut state, Message::AddTagInputChanged("Scout".to_owned()), &db);
-      let modal = state.add_tag_modal.as_ref().expect("modal open");
-      assert_eq!(modal.entity_id, 7);
-      assert_eq!(modal.entity_type, ENTITY_TYPE_CHARACTER);
-      assert_eq!(modal.input, "Scout");
+      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
 
-      let _ = update(&mut state, Message::CloseAddTagModal, &db);
-      assert!(state.add_tag_modal.is_none());
+      assert!(state.context_menu.is_none());
+      let confirm = state.remove_confirm.as_ref().expect("confirm open");
+      assert_eq!(confirm.character_id, 1);
+      assert_eq!(confirm.name, "Doomed Pilot");
     }
 
     #[tokio::test]
-    async fn it_closes_the_add_tag_modal_when_an_existing_tag_is_assigned() {
+    async fn closing_the_context_menu_clears_it() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
-      let main = infra::create(&db, "Main", None, None).await.unwrap();
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      assert!(state.context_menu.is_some());
 
-      let _ = update(
-        &mut state,
-        Message::OpenAddTagModal {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-        },
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::AssignTag {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-          tag_id: main.id(),
-        },
-        &db,
-      );
+      let _ = update(&mut state, Message::CloseContextMenu, &db);
 
-      assert!(state.add_tag_modal.is_none());
+      assert!(state.context_menu.is_none());
     }
 
     #[tokio::test]
-    async fn it_offers_only_tags_not_already_on_the_character() {
+    async fn closing_the_squad_menu_clears_it() {
+      let db = store::open_test().await.unwrap();
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
+      assert!(state.squad_menu.is_some());
+
+      let _ = update(&mut state, Message::CloseSquadMenu, &db);
+
+      assert!(state.squad_menu.is_none());
+    }
+
+    #[tokio::test]
+    async fn confirming_remove_closes_the_modal_and_deletes_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Doomed").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
+
+      let _ = update(&mut state, Message::RemoveCharacterConfirmed(1), &db);
+      assert!(state.remove_confirm.is_none());
+      character::delete(&db, 1).await.unwrap();
+      reload(&mut state, &db).await;
+
+      assert!(character::get(&db, 1).await.unwrap().is_none());
+      assert!(card_for(&state, 1).is_none());
+    }
+
+    #[tokio::test]
+    async fn copy_name_closes_the_menu() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
-      let main = infra::create(&db, "Main", None, None).await.unwrap();
-      let alt = infra::create(&db, "Alt", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
       let mut state = State::new();
-      let roster = load_roster_at(&db, Utc::now(), &Feature::ALL).await.unwrap();
-      let _ = update(&mut state, Message::CharactersLoaded(Ok(roster)), &db);
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
 
-      let (name, assigned, assignable) = resolve_add_tag_modal(&state, ENTITY_TYPE_CHARACTER, 1);
-      assert_eq!(name, "Pilot");
-      assert_eq!(assigned.iter().map(|tag| tag.id()).collect::<Vec<_>>(), vec![main.id()]);
-      assert_eq!(
-        assignable.iter().map(|tag| tag.id()).collect::<Vec<_>>(),
-        vec![alt.id()]
-      );
+      let _ = update(&mut state, Message::CopyCharacterName("Pilot".to_owned()), &db);
+
+      assert!(state.context_menu.is_none());
     }
 
     #[tokio::test]
@@ -3735,13 +4309,405 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_tag_write_surfaces_as_a_load_error() {
+    async fn deleting_a_squad_from_the_menu_closes_it_and_drops_pilots_to_unassigned() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Doomed", None, None).await.unwrap();
+      character::assign(&db, 1, squad.id(), 0).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
+
+      let _ = update(&mut state, Message::DeleteSquad(squad.id()), &db);
+      assert!(state.squad_menu.is_none());
+      apply_squad_write(
+        &db,
+        SquadWrite::Delete {
+          squad_id: squad.id(),
+        },
+      )
+      .await
+      .unwrap();
+
+      assert!(character::get_squad(&db, squad.id()).await.unwrap().is_none());
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
+      assert!(card_for(&state, 1).is_some());
+    }
+
+    #[tokio::test]
+    async fn drag_moved_tracks_the_cursor_drag_or_not() {
       let db = store::open_test().await.unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::TagsChanged(Err("boom".to_owned())), &db);
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 20.0)), &db);
+      assert_eq!(cursor(&state), Some(iced::Point::new(10.0, 20.0)));
 
-      assert_eq!(load_error(&state), Some("boom"));
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(30.0, 40.0)), &db);
+      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(55.0, 66.0)), &db);
+      assert_eq!(cursor(&state), Some(iced::Point::new(55.0, 66.0)));
+    }
+
+    #[tokio::test]
+    async fn dropping_a_dragged_squad_reorders_it_to_the_hovered_index() {
+      let db = store::open_test().await.unwrap();
+      let a = character::create(&db, "A", None, None).await.unwrap();
+      character::create(&db, "B", None, None).await.unwrap();
+      character::create(&db, "C", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
+      let _ = update(&mut state, Message::HoverSquadSlot(2), &db);
+      let _ = update(&mut state, Message::DropDragged, &db);
+
+      assert_eq!(dragging_squad(&state), None);
+      assert_eq!(squad_drop_target(&state), None);
+      apply_squad_write(
+        &db,
+        SquadWrite::Reorder {
+          ordered: reordered_ids(&db, a.id(), 2).await,
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(reload_group_names(&mut state, &db).await, ["B", "C", "A"]);
+    }
+
+    #[tokio::test]
+    async fn dropping_a_squad_over_no_target_cancels_without_reordering() {
+      let db = store::open_test().await.unwrap();
+      let a = character::create(&db, "A", None, None).await.unwrap();
+      character::create(&db, "B", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
+      assert_eq!(dragging_squad(&state), Some(a.id()));
+      let _ = update(&mut state, Message::DropDragged, &db);
+
+      assert_eq!(dragging_squad(&state), None);
+      assert_eq!(squad_drop_target(&state), None);
+      assert_eq!(reload_group_names(&mut state, &db).await, ["A", "B"]);
+    }
+
+    #[tokio::test]
+    async fn dropping_at_a_higher_slot_leaves_a_sparse_gap() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(
+        &mut state,
+        Message::HoverTarget(DropTarget {
+          position: 4,
+          squad_id: squad.id(),
+        }),
+        &db,
+      );
+      let _ = update(&mut state, Message::DropDragged, &db);
+      apply_squad_write(
+        &db,
+        SquadWrite::Assign {
+          character_id: 1,
+          position: 4,
+          squad_id: squad.id(),
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(stored_position(&db, 1).await, Some(4));
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+      let card = groups(&state)
+        .iter()
+        .flat_map(|group| group.cards.iter())
+        .find(|card| card.character_id == 1)
+        .unwrap();
+      assert_eq!(card.position, 4);
+    }
+
+    #[tokio::test]
+    async fn dropping_over_a_hovered_squad_lands_the_card_in_it() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(
+        &mut state,
+        Message::HoverTarget(DropTarget {
+          position: 0,
+          squad_id: squad.id(),
+        }),
+        &db,
+      );
+      let _ = update(&mut state, Message::DropDragged, &db);
+      assert_eq!(dragging_card(&state), None);
+      assert_eq!(drop_target(&state), None);
+      apply_squad_write(
+        &db,
+        SquadWrite::Assign {
+          character_id: 1,
+          position: 0,
+          squad_id: squad.id(),
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+    }
+
+    #[tokio::test]
+    async fn dropping_over_no_target_cancels_with_no_change() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      character::assign(&db, 1, squad.id(), 0).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      assert_eq!(dragging_card(&state), Some(1));
+      let _ = update(&mut state, Message::DropDragged, &db);
+
+      assert_eq!(dragging_card(&state), None);
+      assert_eq!(drop_target(&state), None);
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+    }
+
+    #[tokio::test]
+    async fn dropping_over_the_unassigned_bucket_unassigns_the_card() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      character::assign(&db, 1, squad.id(), 0).await.unwrap();
+      let reserved = character::get_or_create_unassigned(&db).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(
+        &mut state,
+        Message::HoverTarget(DropTarget {
+          position: 2,
+          squad_id: reserved.id(),
+        }),
+        &db,
+      );
+      let _ = update(&mut state, Message::DropDragged, &db);
+      assert_eq!(dragging_card(&state), None);
+      apply_squad_write(
+        &db,
+        SquadWrite::Assign {
+          character_id: 1,
+          position: 2,
+          squad_id: reserved.id(),
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
+      assert!(character::members(&db, squad.id()).await.unwrap().is_empty());
+      assert_eq!(stored_position(&db, 1).await, Some(2));
+    }
+
+    #[tokio::test]
+    async fn dropping_with_no_drag_in_progress_is_a_noop() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      character::assign(&db, 1, squad.id(), 0).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::DropDragged, &db);
+
+      assert_eq!(dragging_card(&state), None);
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+    }
+
+    #[tokio::test]
+    async fn edit_tags_opens_the_add_tag_modal_and_closes_the_menu() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+
+      let _ = update(
+        &mut state,
+        Message::OpenAddTagModal {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+        },
+        &db,
+      );
+
+      assert!(state.context_menu.is_none());
+      assert_eq!(state.add_tag_modal.as_ref().map(|modal| modal.entity_id), Some(1));
+      assert_eq!(
+        state.add_tag_modal.as_ref().map(|modal| modal.entity_type),
+        Some(ENTITY_TYPE_CHARACTER)
+      );
+    }
+
+    #[tokio::test]
+    async fn editing_a_squad_from_the_menu_seeds_the_creator_and_closes_the_menu() {
+      let db = store::open_test().await.unwrap();
+      let squad = character::create(&db, "Supers", Some("Cap fleet"), Some("#5BB97E"))
+        .await
+        .unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
+
+      let _ = update(&mut state, Message::OpenSquadEditor(squad.id()), &db);
+
+      assert!(state.squad_menu.is_none());
+      let creator = state.squad_creator.as_ref().expect("creator open in edit mode");
+      assert_eq!(creator.editing, Some(squad.id()));
+      assert_eq!(creator.name, "Supers");
+      assert_eq!(creator.description, "Cap fleet");
+      assert_eq!(creator.color, "#5BB97E");
+      assert_eq!(creator.hex_draft, "#5BB97E");
+    }
+
+    #[tokio::test]
+    async fn ending_a_drag_leaves_the_tracked_cursor_for_the_next_right_click() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(30.0, 40.0)), &db);
+      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
+      let _ = update(&mut state, Message::CancelDrag, &db);
+      assert_eq!(dragging_card(&state), None);
+      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
+
+      let _ = update(&mut state, Message::PickUpCard(2), &db);
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(12.0, 34.0)), &db);
+      let _ = update(
+        &mut state,
+        Message::AssignToSquad {
+          character_id: 2,
+          position: 0,
+          squad_id: 7,
+        },
+        &db,
+      );
+      assert_eq!(cursor(&state), Some(iced::Point::new(12.0, 34.0)));
+    }
+
+    #[tokio::test]
+    async fn hover_and_cancel_track_the_drag_gesture() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let slot = |squad_id, position| DropTarget {
+        position,
+        squad_id,
+      };
+
+      let _ = update(&mut state, Message::HoverTarget(slot(5, 0)), &db);
+      assert_eq!(drop_target(&state), None);
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      let _ = update(&mut state, Message::HoverTarget(slot(5, 0)), &db);
+      assert_eq!(drop_target(&state), Some(slot(5, 0)));
+
+      let _ = update(&mut state, Message::LeaveTarget(slot(5, 1)), &db);
+      assert_eq!(drop_target(&state), Some(slot(5, 0)));
+
+      let _ = update(&mut state, Message::LeaveTarget(slot(5, 0)), &db);
+      assert_eq!(drop_target(&state), None);
+      let _ = update(&mut state, Message::CancelDrag, &db);
+      assert_eq!(dragging_card(&state), None);
+    }
+
+    #[tokio::test]
+    async fn hovering_a_squad_index_during_a_squad_drag_records_the_target() {
+      let db = store::open_test().await.unwrap();
+      let a = character::create(&db, "A", None, None).await.unwrap();
+      character::create(&db, "B", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+
+      let _ = update(&mut state, Message::HoverSquadSlot(1), &db);
+      assert_eq!(squad_drop_target(&state), None);
+
+      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
+      let _ = update(&mut state, Message::HoverSquadSlot(1), &db);
+      assert_eq!(squad_drop_target(&state), Some(1));
+
+      let _ = update(&mut state, Message::LeaveSquadSlot(0), &db);
+      assert_eq!(squad_drop_target(&state), Some(1));
+      let _ = update(&mut state, Message::LeaveSquadSlot(1), &db);
+      assert_eq!(squad_drop_target(&state), None);
+    }
+
+    #[tokio::test]
+    async fn it_assigns_a_dragged_card_to_a_squad() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+      assert_eq!(dragging_card(&state), Some(1));
+      let _ = update(
+        &mut state,
+        Message::AssignToSquad {
+          character_id: 1,
+          position: 0,
+          squad_id: squad.id(),
+        },
+        &db,
+      );
+      assert_eq!(dragging_card(&state), None);
+      apply_squad_write(
+        &db,
+        SquadWrite::Assign {
+          character_id: 1,
+          position: 0,
+          squad_id: squad.id(),
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+    }
+
+    #[tokio::test]
+    async fn it_assigns_an_existing_tag_without_replacing_others() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let main = infra::create(&db, "Main", None, None).await.unwrap();
+      let alt = infra::create(&db, "Alt", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
+      let mut state = State::new();
+
+      apply_tag_write(
+        &db,
+        TagWrite::Assign {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          tag_id: alt.id(),
+        },
+      )
+      .await
+      .unwrap();
+      let names = reload_tag_names(&mut state, &db, 1).await;
+
+      assert_eq!(names, vec!["Main".to_owned(), "Alt".to_owned()]);
     }
 
     #[tokio::test]
@@ -3817,133 +4783,6 @@ mod tests {
       );
     }
 
-    async fn reload_squad_of(state: &mut State, db: &Database, character_id: i64) -> Option<i64> {
-      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
-      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
-      groups(state)
-        .iter()
-        .find(|group| group.cards.iter().any(|card| card.character_id == character_id))
-        .map(|group| group.squad_id)
-    }
-
-    async fn stored_position(db: &Database, character_id: i64) -> Option<i64> {
-      character::memberships(db)
-        .await
-        .unwrap()
-        .into_iter()
-        .find(|m| m.character_id() == character_id)
-        .map(|m| m.position())
-    }
-
-    async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
-      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
-    }
-
-    async fn reload_group_names(state: &mut State, db: &Database) -> Vec<String> {
-      reload(state, db).await;
-      groups(state).iter().map(|group| group.name.clone()).collect()
-    }
-
-    #[tokio::test]
-    async fn it_opens_a_squad_creator_seeded_to_plasma() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-
-      let creator = state.squad_creator.as_ref().expect("creator open");
-      assert!(creator.name.is_empty());
-      assert!(creator.description.is_empty());
-      assert_eq!(creator.color, "#3FB8DB");
-      assert_eq!(creator.hex_draft, "#3FB8DB");
-      assert!(!creator.color_popover_open);
-      assert!(!creator.hex_invalid);
-    }
-
-    #[tokio::test]
-    async fn it_edits_the_open_creator_name_and_description() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-
-      let _ = update(&mut state, Message::SquadCreatorNameChanged("Supers".to_owned()), &db);
-      let _ = update(
-        &mut state,
-        Message::SquadCreatorDescriptionChanged("Cap fleet".to_owned()),
-        &db,
-      );
-
-      let creator = state.squad_creator.as_ref().expect("creator open");
-      assert_eq!(creator.name, "Supers");
-      assert_eq!(creator.description, "Cap fleet");
-    }
-
-    #[tokio::test]
-    async fn the_color_picker_toggles_the_popover_and_seeds_its_draft() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-
-      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
-      let creator = state.squad_creator.as_ref().expect("creator open");
-      assert!(creator.color_popover_open);
-      assert_eq!(creator.hex_draft, "#3FB8DB");
-
-      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
-      assert!(!state.squad_creator.as_ref().unwrap().color_popover_open);
-    }
-
-    #[tokio::test]
-    async fn selecting_a_preset_sets_the_color_and_closes_the_popover() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
-
-      let _ = update(&mut state, Message::SquadColorSelected("#5BB97E".to_owned()), &db);
-
-      let creator = state.squad_creator.as_ref().expect("creator open");
-      assert_eq!(creator.color, "#5BB97E");
-      assert_eq!(creator.hex_draft, "#5BB97E");
-      assert!(!creator.color_popover_open);
-    }
-
-    #[tokio::test]
-    async fn a_valid_custom_hex_sets_the_color_on_commit() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
-
-      let _ = update(&mut state, Message::SquadColorHexChanged("a1b2c3".to_owned()), &db);
-      let creator = state.squad_creator.as_ref().unwrap();
-      assert_eq!(creator.hex_draft, "a1b2c3");
-      assert_eq!(creator.color, "#3FB8DB");
-      assert!(!creator.hex_invalid);
-
-      let _ = update(&mut state, Message::SquadColorHexSubmitted, &db);
-      let creator = state.squad_creator.as_ref().unwrap();
-      assert_eq!(creator.color, "#A1B2C3");
-      assert!(!creator.hex_invalid);
-      assert!(creator.color_popover_open);
-    }
-
-    #[tokio::test]
-    async fn an_invalid_custom_hex_is_rejected_and_flagged() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
-
-      let _ = update(&mut state, Message::SquadColorHexChanged("nothex".to_owned()), &db);
-      let _ = update(&mut state, Message::SquadColorHexSubmitted, &db);
-
-      let creator = state.squad_creator.as_ref().unwrap();
-      assert_eq!(creator.color, "#3FB8DB");
-      assert!(creator.hex_invalid);
-    }
-
     #[tokio::test]
     async fn it_clears_the_creator_on_close() {
       let db = store::open_test().await.unwrap();
@@ -3954,6 +4793,34 @@ mod tests {
       let _ = update(&mut state, Message::CloseSquadCreator, &db);
 
       assert!(state.squad_creator.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_add_tag_modal_when_an_existing_tag_is_assigned() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let main = infra::create(&db, "Main", None, None).await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::OpenAddTagModal {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+        },
+        &db,
+      );
+      let _ = update(
+        &mut state,
+        Message::AssignTag {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          tag_id: main.id(),
+        },
+        &db,
+      );
+
+      assert!(state.add_tag_modal.is_none());
     }
 
     #[tokio::test]
@@ -3995,6 +4862,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_creates_then_assigns_a_new_tag() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::OpenAddTagModal {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+        },
+        &db,
+      );
+      let _ = update(&mut state, Message::AddTagInputChanged("Hauler".to_owned()), &db);
+      let name = state.add_tag_modal.as_ref().unwrap().input.clone();
+      let _ = update(&mut state, Message::CreateAndAssignTag, &db);
+      assert!(state.add_tag_modal.is_none());
+      apply_tag_write(
+        &db,
+        TagWrite::CreateAndAssign {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          name,
+        },
+      )
+      .await
+      .unwrap();
+      let names = reload_tag_names(&mut state, &db, 1).await;
+
+      assert_eq!(names, vec!["Hauler".to_owned()]);
+      assert!(all_tags(&state).iter().any(|tag| tag.name() == "Hauler"));
+    }
+
+    #[tokio::test]
+    async fn it_edits_the_open_creator_name_and_description() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+
+      let _ = update(&mut state, Message::SquadCreatorNameChanged("Supers".to_owned()), &db);
+      let _ = update(
+        &mut state,
+        Message::SquadCreatorDescriptionChanged("Cap fleet".to_owned()),
+        &db,
+      );
+
+      let creator = state.squad_creator.as_ref().expect("creator open");
+      assert_eq!(creator.name, "Supers");
+      assert_eq!(creator.description, "Cap fleet");
+    }
+
+    #[tokio::test]
+    async fn it_is_a_noop_when_creating_a_squad_with_a_blank_name() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+      let _ = update(&mut state, Message::SquadCreatorNameChanged("   ".to_owned()), &db);
+
+      let _ = update(&mut state, Message::CreateSquad, &db);
+
+      assert!(character::all_squads(&db).await.unwrap().is_empty());
+      assert!(state.squad_creator.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_offers_only_tags_not_already_on_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let main = infra::create(&db, "Main", None, None).await.unwrap();
+      let alt = infra::create(&db, "Alt", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
+      let mut state = State::new();
+      let roster = load_roster_at(&db, Utc::now(), &Feature::ALL).await.unwrap();
+      let _ = update(&mut state, Message::CharactersLoaded(Ok(roster)), &db);
+
+      let (name, assigned, assignable) = resolve_add_tag_modal(&state, ENTITY_TYPE_CHARACTER, 1);
+      assert_eq!(name, "Pilot");
+      assert_eq!(assigned.iter().map(|tag| tag.id()).collect::<Vec<_>>(), vec![main.id()]);
+      assert_eq!(
+        assignable.iter().map(|tag| tag.id()).collect::<Vec<_>>(),
+        vec![alt.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_opens_a_squad_creator_seeded_to_plasma() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+
+      let creator = state.squad_creator.as_ref().expect("creator open");
+      assert!(creator.name.is_empty());
+      assert!(creator.description.is_empty());
+      assert_eq!(creator.color, "#3FB8DB");
+      assert_eq!(creator.hex_draft, "#3FB8DB");
+      assert!(!creator.color_popover_open);
+      assert!(!creator.hex_invalid);
+    }
+
+    #[tokio::test]
     async fn it_persists_a_blank_description_as_none_and_the_seeded_color() {
       let db = store::open_test().await.unwrap();
       let mut state = State::new();
@@ -4024,40 +4992,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_is_a_noop_when_creating_a_squad_with_a_blank_name() {
+    async fn it_persists_the_collapsed_set_across_a_reload() {
       let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      character::assign(&db, 1, squad.id(), 0).await.unwrap();
       let mut state = State::new();
-      let _ = update(&mut state, Message::OpenSquadCreator, &db);
-      let _ = update(&mut state, Message::SquadCreatorNameChanged("   ".to_owned()), &db);
+      reload(&mut state, &db).await;
 
-      let _ = update(&mut state, Message::CreateSquad, &db);
-
-      assert!(character::all_squads(&db).await.unwrap().is_empty());
-      assert!(state.squad_creator.is_some());
+      let _ = update(&mut state, Message::ToggleSquadCollapse(squad.id()), &db);
+      assert!(is_squad_collapsed(&state, squad.id()));
+      reload(&mut state, &db).await;
+      assert!(is_squad_collapsed(&state, squad.id()));
     }
 
     #[test]
-    fn it_renders_the_modal_with_the_color_swatch_and_open_popover() {
+    fn it_renders_an_element_in_both_panes() {
       let sync = SyncStatus::new();
       let mut state = State::new();
-      {
-        let _closed: Element<'_, Message> = view(&state, &sync);
-      }
 
-      state.squad_creator = Some(SquadCreator {
-        name: "Supers".to_owned(),
-        ..SquadCreator::default()
-      });
       {
-        let _swatch_only: Element<'_, Message> = view(&state, &sync);
+        let _characters: Element<'_, Message> = view(&state, &sync);
       }
-
-      state.squad_creator = Some(SquadCreator {
-        name: "Supers".to_owned(),
-        color_popover_open: true,
-        ..SquadCreator::default()
-      });
-      let _open: Element<'_, Message> = view(&state, &sync);
+      state.active_pane = Pane::Corporations;
+      let _corporations: Element<'_, Message> = view(&state, &sync);
     }
 
     #[tokio::test]
@@ -4090,98 +5048,97 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_assigns_a_dragged_card_to_a_squad() {
+    async fn it_renders_the_confirm_modal_over_the_backdrop_when_open() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let sync = SyncStatus::new();
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
 
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      assert_eq!(dragging_card(&state), Some(1));
-      let _ = update(
-        &mut state,
-        Message::AssignToSquad {
-          character_id: 1,
-          position: 0,
-          squad_id: squad.id(),
-        },
-        &db,
-      );
-      assert_eq!(dragging_card(&state), None);
-      apply_squad_write(
-        &db,
-        SquadWrite::Assign {
-          character_id: 1,
-          position: 0,
-          squad_id: squad.id(),
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
+      let _open: Element<'_, Message> = view(&state, &sync);
     }
 
     #[tokio::test]
-    async fn dropping_at_a_higher_slot_leaves_a_sparse_gap() {
+    async fn it_renders_the_context_menu_over_the_backdrop_when_open() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let sync = SyncStatus::new();
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
 
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(
-        &mut state,
-        Message::HoverTarget(DropTarget {
-          position: 4,
-          squad_id: squad.id(),
-        }),
-        &db,
-      );
-      let _ = update(&mut state, Message::DropDragged, &db);
-      apply_squad_write(
-        &db,
-        SquadWrite::Assign {
-          character_id: 1,
-          position: 4,
-          squad_id: squad.id(),
-        },
-      )
-      .await
-      .unwrap();
+      {
+        let _closed: Element<'_, Message> = view(&state, &sync);
+      }
 
-      assert_eq!(stored_position(&db, 1).await, Some(4));
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
-      let card = groups(&state)
-        .iter()
-        .flat_map(|group| group.cards.iter())
-        .find(|card| card.character_id == 1)
-        .unwrap();
-      assert_eq!(card.position, 4);
+      let _ = update(&mut state, Message::CardRightPressed(1), &db);
+      let _open: Element<'_, Message> = view(&state, &sync);
+    }
+
+    #[test]
+    fn it_renders_the_modal_with_the_color_swatch_and_open_popover() {
+      let sync = SyncStatus::new();
+      let mut state = State::new();
+      {
+        let _closed: Element<'_, Message> = view(&state, &sync);
+      }
+
+      state.squad_creator = Some(SquadCreator {
+        name: "Supers".to_owned(),
+        ..SquadCreator::default()
+      });
+      {
+        let _swatch_only: Element<'_, Message> = view(&state, &sync);
+      }
+
+      state.squad_creator = Some(SquadCreator {
+        name: "Supers".to_owned(),
+        color_popover_open: true,
+        ..SquadCreator::default()
+      });
+      let _open: Element<'_, Message> = view(&state, &sync);
     }
 
     #[tokio::test]
-    async fn assigning_to_a_new_squad_moves_the_character_out_of_the_old_one() {
+    async fn it_renders_the_squad_menu_over_the_backdrop_when_open() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let from = character::create(&db, "From", None, None).await.unwrap();
-      let to = character::create(&db, "To", None, None).await.unwrap();
-      character::assign(&db, 1, from.id(), 0).await.unwrap();
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let sync = SyncStatus::new();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
+
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
+      let _open: Element<'_, Message> = view(&state, &sync);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_pane_on_tab_selected() {
+      let db = store::open_test().await.unwrap();
       let mut state = State::new();
 
-      apply_squad_write(
-        &db,
-        SquadWrite::Assign {
-          character_id: 1,
-          position: 0,
-          squad_id: to.id(),
-        },
-      )
-      .await
-      .unwrap();
+      assert_eq!(state.active_pane, Pane::Characters);
 
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(to.id()));
-      assert!(character::members(&db, from.id()).await.unwrap().is_empty());
+      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
+      assert_eq!(state.active_pane, Pane::Corporations);
+
+      let _ = update(&mut state, Message::TabSelected(Pane::Characters), &db);
+      assert_eq!(state.active_pane, Pane::Characters);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_squad_collapse_adding_then_removing_its_id() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      assert!(!is_squad_collapsed(&state, 5));
+      let _ = update(&mut state, Message::ToggleSquadCollapse(5), &db);
+      assert!(is_squad_collapsed(&state, 5));
+      let _ = update(&mut state, Message::ToggleSquadCollapse(5), &db);
+      assert!(!is_squad_collapsed(&state, 5));
     }
 
     #[tokio::test]
@@ -4222,170 +5179,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dropping_over_a_hovered_squad_lands_the_card_in_it() {
+    async fn it_unassigns_a_tag_leaving_the_rest() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let main = infra::create(&db, "Main", None, None).await.unwrap();
+      let dropped = infra::create(&db, "Dropped", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, dropped.id())
+        .await
+        .unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(
-        &mut state,
-        Message::HoverTarget(DropTarget {
-          position: 0,
-          squad_id: squad.id(),
-        }),
+      apply_tag_write(
         &db,
-      );
-      let _ = update(&mut state, Message::DropDragged, &db);
-      assert_eq!(dragging_card(&state), None);
-      assert_eq!(drop_target(&state), None);
-      apply_squad_write(
-        &db,
-        SquadWrite::Assign {
-          character_id: 1,
-          position: 0,
-          squad_id: squad.id(),
+        TagWrite::Unassign {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          tag_id: dropped.id(),
         },
       )
       .await
       .unwrap();
+      let names = reload_tag_names(&mut state, &db, 1).await;
 
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
+      assert_eq!(names, vec!["Main".to_owned()]);
     }
 
     #[tokio::test]
-    async fn dropping_over_the_unassigned_bucket_unassigns_the_card() {
+    async fn open_then_input_then_close_tracks_the_add_tag_modal() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      character::assign(&db, 1, squad.id(), 0).await.unwrap();
-      let reserved = character::get_or_create_unassigned(&db).await.unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
       let _ = update(
         &mut state,
-        Message::HoverTarget(DropTarget {
-          position: 2,
-          squad_id: reserved.id(),
-        }),
-        &db,
-      );
-      let _ = update(&mut state, Message::DropDragged, &db);
-      assert_eq!(dragging_card(&state), None);
-      apply_squad_write(
-        &db,
-        SquadWrite::Assign {
-          character_id: 1,
-          position: 2,
-          squad_id: reserved.id(),
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
-      assert!(character::members(&db, squad.id()).await.unwrap().is_empty());
-      assert_eq!(stored_position(&db, 1).await, Some(2));
-    }
-
-    #[tokio::test]
-    async fn dropping_over_no_target_cancels_with_no_change() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      character::assign(&db, 1, squad.id(), 0).await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      assert_eq!(dragging_card(&state), Some(1));
-      let _ = update(&mut state, Message::DropDragged, &db);
-
-      assert_eq!(dragging_card(&state), None);
-      assert_eq!(drop_target(&state), None);
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
-    }
-
-    #[tokio::test]
-    async fn dropping_with_no_drag_in_progress_is_a_noop() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      character::assign(&db, 1, squad.id(), 0).await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::DropDragged, &db);
-
-      assert_eq!(dragging_card(&state), None);
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, Some(squad.id()));
-    }
-
-    #[tokio::test]
-    async fn drag_moved_tracks_the_cursor_drag_or_not() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 20.0)), &db);
-      assert_eq!(cursor(&state), Some(iced::Point::new(10.0, 20.0)));
-
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(30.0, 40.0)), &db);
-      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(55.0, 66.0)), &db);
-      assert_eq!(cursor(&state), Some(iced::Point::new(55.0, 66.0)));
-    }
-
-    #[tokio::test]
-    async fn ending_a_drag_leaves_the_tracked_cursor_for_the_next_right_click() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(30.0, 40.0)), &db);
-      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
-      let _ = update(&mut state, Message::CancelDrag, &db);
-      assert_eq!(dragging_card(&state), None);
-      assert_eq!(cursor(&state), Some(iced::Point::new(30.0, 40.0)));
-
-      let _ = update(&mut state, Message::PickUpCard(2), &db);
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(12.0, 34.0)), &db);
-      let _ = update(
-        &mut state,
-        Message::AssignToSquad {
-          character_id: 2,
-          position: 0,
-          squad_id: 7,
+        Message::OpenAddTagModal {
+          entity_id: 7,
+          entity_type: ENTITY_TYPE_CHARACTER,
         },
         &db,
       );
-      assert_eq!(cursor(&state), Some(iced::Point::new(12.0, 34.0)));
+      let _ = update(&mut state, Message::AddTagInputChanged("Scout".to_owned()), &db);
+      let modal = state.add_tag_modal.as_ref().expect("modal open");
+      assert_eq!(modal.entity_id, 7);
+      assert_eq!(modal.entity_type, ENTITY_TYPE_CHARACTER);
+      assert_eq!(modal.input, "Scout");
+
+      let _ = update(&mut state, Message::CloseAddTagModal, &db);
+      assert!(state.add_tag_modal.is_none());
     }
 
     #[tokio::test]
-    async fn hover_and_cancel_track_the_drag_gesture() {
+    async fn opening_the_squad_kebab_menu_anchors_at_the_cursor_with_the_squad_state() {
       let db = store::open_test().await.unwrap();
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
       let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::DragMoved(iced::Point::new(80.0, 120.0)), &db);
 
-      let slot = |squad_id, position| DropTarget {
-        position,
-        squad_id,
-      };
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
 
-      let _ = update(&mut state, Message::HoverTarget(slot(5, 0)), &db);
-      assert_eq!(drop_target(&state), None);
+      let menu = state.squad_menu.as_ref().expect("squad menu open");
+      assert_eq!(menu.squad_id, squad.id());
+      assert_eq!(menu.name, "Supers");
+      assert_eq!(menu.anchor, iced::Point::new(80.0, 120.0));
+      assert!(menu.is_empty);
+      assert!(!menu.collapsed);
+    }
 
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(&mut state, Message::HoverTarget(slot(5, 0)), &db);
-      assert_eq!(drop_target(&state), Some(slot(5, 0)));
+    #[tokio::test]
+    async fn opening_the_squad_menu_without_a_tracked_cursor_opens_nothing() {
+      let db = store::open_test().await.unwrap();
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
 
-      let _ = update(&mut state, Message::LeaveTarget(slot(5, 1)), &db);
-      assert_eq!(drop_target(&state), Some(slot(5, 0)));
+      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
 
-      let _ = update(&mut state, Message::LeaveTarget(slot(5, 0)), &db);
-      assert_eq!(drop_target(&state), None);
-      let _ = update(&mut state, Message::CancelDrag, &db);
-      assert_eq!(dragging_card(&state), None);
+      assert!(state.squad_menu.is_none());
     }
 
     #[tokio::test]
@@ -4413,294 +5283,6 @@ mod tests {
       let _ = update(&mut state, Message::PickUpSquad(reserved.id()), &db);
 
       assert_eq!(dragging_squad(&state), None);
-    }
-
-    #[tokio::test]
-    async fn hovering_a_squad_index_during_a_squad_drag_records_the_target() {
-      let db = store::open_test().await.unwrap();
-      let a = character::create(&db, "A", None, None).await.unwrap();
-      character::create(&db, "B", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::HoverSquadSlot(1), &db);
-      assert_eq!(squad_drop_target(&state), None);
-
-      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
-      let _ = update(&mut state, Message::HoverSquadSlot(1), &db);
-      assert_eq!(squad_drop_target(&state), Some(1));
-
-      let _ = update(&mut state, Message::LeaveSquadSlot(0), &db);
-      assert_eq!(squad_drop_target(&state), Some(1));
-      let _ = update(&mut state, Message::LeaveSquadSlot(1), &db);
-      assert_eq!(squad_drop_target(&state), None);
-    }
-
-    #[tokio::test]
-    async fn a_card_hover_is_ignored_during_a_squad_drag_and_vice_versa() {
-      let db = store::open_test().await.unwrap();
-      let a = character::create(&db, "A", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
-      let _ = update(
-        &mut state,
-        Message::HoverTarget(DropTarget {
-          position: 0,
-          squad_id: a.id(),
-        }),
-        &db,
-      );
-      assert_eq!(drop_target(&state), None);
-
-      let _ = update(&mut state, Message::CancelDrag, &db);
-      let _ = update(&mut state, Message::PickUpCard(1), &db);
-      let _ = update(&mut state, Message::HoverSquadSlot(0), &db);
-      assert_eq!(squad_drop_target(&state), None);
-    }
-
-    #[tokio::test]
-    async fn dropping_a_dragged_squad_reorders_it_to_the_hovered_index() {
-      let db = store::open_test().await.unwrap();
-      let a = character::create(&db, "A", None, None).await.unwrap();
-      character::create(&db, "B", None, None).await.unwrap();
-      character::create(&db, "C", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
-      let _ = update(&mut state, Message::HoverSquadSlot(2), &db);
-      let _ = update(&mut state, Message::DropDragged, &db);
-
-      assert_eq!(dragging_squad(&state), None);
-      assert_eq!(squad_drop_target(&state), None);
-      apply_squad_write(
-        &db,
-        SquadWrite::Reorder {
-          ordered: reordered_ids(&db, a.id(), 2).await,
-        },
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(reload_group_names(&mut state, &db).await, ["B", "C", "A"]);
-    }
-
-    async fn reordered_ids(db: &Database, squad_id: i64, index: usize) -> Vec<i64> {
-      let mut ids: Vec<i64> = character::all_user_squads(db)
-        .await
-        .unwrap()
-        .iter()
-        .map(|s| s.id())
-        .collect();
-      let from = ids.iter().position(|&id| id == squad_id).unwrap();
-      let moved = ids.remove(from);
-      ids.insert(index.min(ids.len()), moved);
-      ids
-    }
-
-    #[tokio::test]
-    async fn dropping_a_squad_over_no_target_cancels_without_reordering() {
-      let db = store::open_test().await.unwrap();
-      let a = character::create(&db, "A", None, None).await.unwrap();
-      character::create(&db, "B", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
-      assert_eq!(dragging_squad(&state), Some(a.id()));
-      let _ = update(&mut state, Message::DropDragged, &db);
-
-      assert_eq!(dragging_squad(&state), None);
-      assert_eq!(squad_drop_target(&state), None);
-      assert_eq!(reload_group_names(&mut state, &db).await, ["A", "B"]);
-    }
-
-    #[tokio::test]
-    async fn a_failed_squad_write_surfaces_as_a_load_error() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      let _ = update(&mut state, Message::SquadsChanged(Err("boom".to_owned())), &db);
-
-      assert_eq!(load_error(&state), Some("boom"));
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_pane_on_tab_selected() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      assert_eq!(state.active_pane, Pane::Characters);
-
-      let _ = update(&mut state, Message::TabSelected(Pane::Corporations), &db);
-      assert_eq!(state.active_pane, Pane::Corporations);
-
-      let _ = update(&mut state, Message::TabSelected(Pane::Characters), &db);
-      assert_eq!(state.active_pane, Pane::Characters);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_a_squad_collapse_adding_then_removing_its_id() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      assert!(!is_squad_collapsed(&state, 5));
-      let _ = update(&mut state, Message::ToggleSquadCollapse(5), &db);
-      assert!(is_squad_collapsed(&state, 5));
-      let _ = update(&mut state, Message::ToggleSquadCollapse(5), &db);
-      assert!(!is_squad_collapsed(&state, 5));
-    }
-
-    #[tokio::test]
-    async fn it_persists_the_collapsed_set_across_a_reload() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      character::assign(&db, 1, squad.id(), 0).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::ToggleSquadCollapse(squad.id()), &db);
-      assert!(is_squad_collapsed(&state, squad.id()));
-      reload(&mut state, &db).await;
-      assert!(is_squad_collapsed(&state, squad.id()));
-    }
-
-    #[tokio::test]
-    async fn a_right_press_opens_the_context_menu_at_the_cursor_for_the_card() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Right Click Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(120.0, 200.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      let menu = state.context_menu.as_ref().expect("menu open");
-      assert_eq!(menu.character_id, 1);
-      assert_eq!(menu.name, "Right Click Pilot");
-      assert_eq!(menu.anchor, iced::Point::new(120.0, 200.0));
-    }
-
-    #[tokio::test]
-    async fn a_right_press_without_a_tracked_cursor_opens_nothing() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      assert!(state.context_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn closing_the_context_menu_clears_it() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-      assert!(state.context_menu.is_some());
-
-      let _ = update(&mut state, Message::CloseContextMenu, &db);
-
-      assert!(state.context_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn copy_name_closes_the_menu() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      let _ = update(&mut state, Message::CopyCharacterName("Pilot".to_owned()), &db);
-
-      assert!(state.context_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn edit_tags_opens_the_add_tag_modal_and_closes_the_menu() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      let _ = update(
-        &mut state,
-        Message::OpenAddTagModal {
-          entity_id: 1,
-          entity_type: ENTITY_TYPE_CHARACTER,
-        },
-        &db,
-      );
-
-      assert!(state.context_menu.is_none());
-      assert_eq!(state.add_tag_modal.as_ref().map(|modal| modal.entity_id), Some(1));
-      assert_eq!(
-        state.add_tag_modal.as_ref().map(|modal| modal.entity_type),
-        Some(ENTITY_TYPE_CHARACTER)
-      );
-    }
-
-    #[tokio::test]
-    async fn choosing_remove_transitions_the_menu_to_the_confirm_modal() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Doomed Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
-
-      assert!(state.context_menu.is_none());
-      let confirm = state.remove_confirm.as_ref().expect("confirm open");
-      assert_eq!(confirm.character_id, 1);
-      assert_eq!(confirm.name, "Doomed Pilot");
-    }
-
-    #[tokio::test]
-    async fn cancelling_the_confirm_modal_clears_it_without_removing() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
-
-      let _ = update(&mut state, Message::CloseRemoveConfirm, &db);
-
-      assert!(state.remove_confirm.is_none());
-      assert!(character::get(&db, 1).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn confirming_remove_closes_the_modal_and_deletes_the_character() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Doomed").await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
-
-      let _ = update(&mut state, Message::RemoveCharacterConfirmed(1), &db);
-      assert!(state.remove_confirm.is_none());
-      character::delete(&db, 1).await.unwrap();
-      reload(&mut state, &db).await;
-
-      assert!(character::get(&db, 1).await.unwrap().is_none());
-      assert!(card_for(&state, 1).is_none());
     }
 
     #[tokio::test]
@@ -4761,101 +5343,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_renders_the_context_menu_over_the_backdrop_when_open() {
+    async fn selecting_a_preset_sets_the_color_and_closes_the_popover() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let sync = SyncStatus::new();
       let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
 
-      {
-        let _closed: Element<'_, Message> = view(&state, &sync);
-      }
+      let _ = update(&mut state, Message::SquadColorSelected("#5BB97E".to_owned()), &db);
 
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-      let _open: Element<'_, Message> = view(&state, &sync);
-    }
-
-    #[tokio::test]
-    async fn it_renders_the_confirm_modal_over_the_backdrop_when_open() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let sync = SyncStatus::new();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
-      let _ = update(&mut state, Message::CardRightPressed(1), &db);
-
-      let _ = update(&mut state, Message::OpenRemoveConfirm(1), &db);
-      let _open: Element<'_, Message> = view(&state, &sync);
-    }
-
-    #[tokio::test]
-    async fn opening_the_squad_kebab_menu_anchors_at_the_cursor_with_the_squad_state() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(80.0, 120.0)), &db);
-
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-
-      let menu = state.squad_menu.as_ref().expect("squad menu open");
-      assert_eq!(menu.squad_id, squad.id());
-      assert_eq!(menu.name, "Supers");
-      assert_eq!(menu.anchor, iced::Point::new(80.0, 120.0));
-      assert!(menu.is_empty);
-      assert!(!menu.collapsed);
-    }
-
-    #[tokio::test]
-    async fn opening_the_squad_menu_without_a_tracked_cursor_opens_nothing() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-
-      assert!(state.squad_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn closing_the_squad_menu_clears_it() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-      assert!(state.squad_menu.is_some());
-
-      let _ = update(&mut state, Message::CloseSquadMenu, &db);
-
-      assert!(state.squad_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn editing_a_squad_from_the_menu_seeds_the_creator_and_closes_the_menu() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", Some("Cap fleet"), Some("#5BB97E"))
-        .await
-        .unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-
-      let _ = update(&mut state, Message::OpenSquadEditor(squad.id()), &db);
-
-      assert!(state.squad_menu.is_none());
-      let creator = state.squad_creator.as_ref().expect("creator open in edit mode");
-      assert_eq!(creator.editing, Some(squad.id()));
-      assert_eq!(creator.name, "Supers");
-      assert_eq!(creator.description, "Cap fleet");
+      let creator = state.squad_creator.as_ref().expect("creator open");
       assert_eq!(creator.color, "#5BB97E");
       assert_eq!(creator.hex_draft, "#5BB97E");
+      assert!(!creator.color_popover_open);
     }
 
     #[tokio::test]
@@ -4891,30 +5390,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deleting_a_squad_from_the_menu_closes_it_and_drops_pilots_to_unassigned() {
+    async fn the_color_picker_toggles_the_popover_and_seeds_its_draft() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 1, "Pilot").await;
-      let squad = character::create(&db, "Doomed", None, None).await.unwrap();
-      character::assign(&db, 1, squad.id(), 0).await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::OpenSquadCreator, &db);
+
+      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
+      let creator = state.squad_creator.as_ref().expect("creator open");
+      assert!(creator.color_popover_open);
+      assert_eq!(creator.hex_draft, "#3FB8DB");
+
+      let _ = update(&mut state, Message::SquadColorPickerToggled, &db);
+      assert!(!state.squad_creator.as_ref().unwrap().color_popover_open);
+    }
+
+    #[tokio::test]
+    async fn the_menu_collapse_row_toggles_collapse_and_closes_the_squad_menu() {
+      let db = store::open_test().await.unwrap();
+      let squad = character::create(&db, "Supers", None, None).await.unwrap();
       let mut state = State::new();
       reload(&mut state, &db).await;
       let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
       let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
 
-      let _ = update(&mut state, Message::DeleteSquad(squad.id()), &db);
-      assert!(state.squad_menu.is_none());
-      apply_squad_write(
-        &db,
-        SquadWrite::Delete {
-          squad_id: squad.id(),
-        },
-      )
-      .await
-      .unwrap();
+      let _ = update(&mut state, Message::ToggleSquadCollapse(squad.id()), &db);
 
-      assert!(character::get_squad(&db, squad.id()).await.unwrap().is_none());
-      assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
-      assert!(card_for(&state, 1).is_some());
+      assert!(is_squad_collapsed(&state, squad.id()));
+      assert!(state.squad_menu.is_none());
     }
 
     #[tokio::test]
@@ -4942,508 +5444,6 @@ mod tests {
       assert!(character::get_squad(&db, squad.id()).await.unwrap().is_some());
       assert!(character::members(&db, squad.id()).await.unwrap().is_empty());
       assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
-    }
-
-    #[tokio::test]
-    async fn the_menu_collapse_row_toggles_collapse_and_closes_the_squad_menu() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(10.0, 10.0)), &db);
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-
-      let _ = update(&mut state, Message::ToggleSquadCollapse(squad.id()), &db);
-
-      assert!(is_squad_collapsed(&state, squad.id()));
-      assert!(state.squad_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_renders_the_squad_menu_over_the_backdrop_when_open() {
-      let db = store::open_test().await.unwrap();
-      let squad = character::create(&db, "Supers", None, None).await.unwrap();
-      let sync = SyncStatus::new();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::DragMoved(iced::Point::new(40.0, 60.0)), &db);
-
-      let _ = update(&mut state, Message::OpenSquadMenu(squad.id()), &db);
-      let _open: Element<'_, Message> = view(&state, &sync);
-    }
-
-    #[test]
-    fn it_renders_an_element_in_both_panes() {
-      let sync = SyncStatus::new();
-      let mut state = State::new();
-
-      {
-        let _characters: Element<'_, Message> = view(&state, &sync);
-      }
-      state.active_pane = Pane::Corporations;
-      let _corporations: Element<'_, Message> = view(&state, &sync);
-    }
-  }
-
-  mod parse_hex {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_parses_a_six_digit_hex() {
-      assert_eq!(parse_hex(Some("#3FB8DB")), Some(Color::from_rgb8(0x3F, 0xB8, 0xDB)));
-    }
-
-    #[test]
-    fn it_rejects_malformed_or_absent_colors() {
-      assert_eq!(parse_hex(None), None);
-      assert_eq!(parse_hex(Some("3FB8DB")), None);
-      assert_eq!(parse_hex(Some("#FFF")), None);
-    }
-  }
-
-  mod format_remaining {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_formats_coarse_durations() {
-      assert_eq!(
-        format_remaining(chrono::Duration::minutes(2 * 24 * 60 + 14 * 60 + 22)),
-        "2d 14h"
-      );
-      assert_eq!(format_remaining(chrono::Duration::minutes(8 * 60 + 12)), "8h 12m");
-      assert_eq!(format_remaining(chrono::Duration::minutes(45)), "45m");
-      assert_eq!(format_remaining(chrono::Duration::minutes(-5)), "Done");
-    }
-  }
-
-  mod corporations {
-    use chrono::TimeZone;
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::{
-      store::{
-        self,
-        model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
-        repo::infra,
-      },
-      sync::Event,
-    };
-
-    fn now() -> DateTime<Utc> {
-      Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap()
-    }
-
-    async fn seed_owned_corporation(db: &Database, corp_id: i64, ceo_id: i64) {
-      let alliance = Alliance::new(
-        corp_id,
-        corp_id,
-        ceo_id,
-        "2010-01-01T00:00:00Z",
-        "Iron Helix Pact",
-        "IHP",
-      );
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 6, 7);
-      let race = Race::new(2, 500_001, "A race.", "Caldari");
-      let mut corp = Corporation::new(corp_id, "Cobalt Syndicate", "COBSY");
-      corp.set_alliance_id(corp_id);
-      corp.set_ceo_id(ceo_id);
-      corp.set_creation_date("2019-03-14T00:00:00Z");
-      corp.set_creator_id(ceo_id);
-      corp.set_member_count(1247);
-      corp.set_tax_rate(0.10);
-      let ceo = Character::new(ceo_id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Vex Voronova");
-      character::insert_with_org(db, &ceo, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-      infra::upsert(db, ceo_id, OwnerType::Character, "tok", "rt", 9999, None, None)
-        .await
-        .unwrap();
-      infra::upsert(
-        db,
-        corp_id,
-        OwnerType::Corporation,
-        "tok",
-        "rt",
-        9999,
-        Some(ceo_id),
-        None,
-      )
-      .await
-      .unwrap();
-    }
-
-    async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, now(), &Feature::ALL).await.unwrap();
-      let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
-    }
-
-    #[tokio::test]
-    async fn it_resolves_a_director_added_corp_into_a_card_model() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert_eq!(corps.len(), 1);
-      let corp = &corps[0];
-      assert_eq!(corp.name, "Cobalt Syndicate");
-      assert_eq!(corp.ticker, "COBSY");
-      assert_eq!(corp.alliance.as_deref(), Some("Iron Helix Pact"));
-      assert_eq!(corp.alliance_ticker.as_deref(), Some("IHP"));
-      assert_eq!(corp.ceo.as_deref(), Some("Vex Voronova"));
-      assert_eq!(corp.members, Some(1247));
-    }
-
-    #[tokio::test]
-    async fn it_derives_needs_reauth_from_the_corp_grant_versus_enabled_features_and_clears_on_a_wider_grant() {
-      use crate::clients::esi::scopes;
-
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-
-      let enabled = [Feature::Industry, Feature::Wallet];
-      let required = auth_feature::corp_scopes_for(&enabled);
-
-      async fn grant(db: &Database, scopes: &str) {
-        infra::upsert(
-          db,
-          2_000_001,
-          OwnerType::Corporation,
-          "tok",
-          "rt",
-          9999,
-          Some(8001),
-          Some(scopes),
-        )
-        .await
-        .unwrap();
-      }
-
-      // A grant dropping one required corp scope is a strict subset of the required set.
-      let strict_subset = required[1..].join(" ");
-      grant(&db, &strict_subset).await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
-      assert_eq!(corps.len(), 1);
-      assert!(
-        corps[0].needs_reauth,
-        "a corp grant missing a required corp scope must flag needs-reauth"
-      );
-
-      // A grant covering every required corp scope must clear the flag.
-      grant(&db, &required.join(" ")).await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
-      assert!(
-        !corps[0].needs_reauth,
-        "a corp grant covering every required corp scope must clear needs-reauth"
-      );
-
-      // A superset grant (every required scope plus an extra) must also stay clear.
-      grant(
-        &db,
-        &format!("{} {}", required.join(" "), scopes::CORPORATION_KILLMAILS),
-      )
-      .await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
-      assert!(
-        !corps[0].needs_reauth,
-        "a superset corp grant must not flag needs-reauth"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_excludes_reference_corps_without_a_corporation_credential() {
-      let db = store::open_test().await.unwrap();
-      super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
-
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      assert!(corps.is_empty());
-    }
-
-    #[tokio::test]
-    async fn the_tab_count_reflects_the_number_of_director_added_corps() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new();
-
-      reload(&mut state, &db).await;
-      assert_eq!(corp_count(&state), "0");
-
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      reload(&mut state, &db).await;
-      assert_eq!(corp_count(&state), "1");
-    }
-
-    #[tokio::test]
-    async fn the_remove_flow_drops_the_corporation_credential() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      state.cursor = Some(iced::Point::new(10.0, 10.0));
-      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
-      assert!(state.corp_context_menu.is_some());
-      let _ = update(&mut state, Message::OpenCorpRemoveConfirm(2_000_001), &db);
-      assert!(state.corp_context_menu.is_none());
-      assert!(state.corp_remove_confirm.is_some());
-
-      let _ = update(&mut state, Message::RemoveCorporationConfirmed(2_000_001), &db);
-      assert!(state.corp_remove_confirm.is_none());
-      remove_corporation(db.clone(), 2_000_001).await.unwrap();
-
-      reload(&mut state, &db).await;
-      assert!(state.corps.is_empty());
-      assert!(
-        infra::get(&db, 2_000_001, OwnerType::Corporation)
-          .await
-          .unwrap()
-          .is_none()
-      );
-      assert!(org::get_corporation(&db, 2_000_001).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn a_flagged_corp_context_menu_offers_a_reauthorize_item() {
-      use iced::advanced::widget::Tree;
-
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      // The seeded corp credential carries no scopes, so against Feature::ALL it is a strict
-      // subset of the required corp set and must be flagged for re-authorization.
-      assert!(state.corps[0].needs_reauth);
-
-      state.cursor = Some(iced::Point::new(10.0, 10.0));
-      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
-      let menu = state.corp_context_menu.as_ref().unwrap();
-      assert!(menu.needs_reauth);
-
-      let flagged = corp_context_menu_view(menu);
-      let flagged_rows = Tree::new(flagged.as_widget()).children.len();
-
-      let mut clear = menu.clone();
-      clear.needs_reauth = false;
-      let clear_rows = Tree::new(corp_context_menu_view(&clear).as_widget()).children.len();
-
-      assert_eq!(
-        flagged_rows,
-        clear_rows + 2,
-        "a flagged corp menu adds the re-authorize row and its separator"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_renders_the_corp_remove_confirm_modal_over_the_backdrop_when_open() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let sync = SyncStatus::new();
-      let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-      reload(&mut state, &db).await;
-      state.cursor = Some(iced::Point::new(40.0, 60.0));
-      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
-
-      let _ = update(&mut state, Message::OpenCorpRemoveConfirm(2_000_001), &db);
-      assert!(state.corp_remove_confirm.is_some());
-      let _open: Element<'_, Message> = view(&state, &sync);
-    }
-
-    #[tokio::test]
-    async fn corp_failure_surfaces_a_lost_role_as_needs_reauthentication() {
-      let mut sync = SyncStatus::new();
-      let key = JobKey::new(JobKind::CorporationProfile, Subject::Corporation(2_000_001));
-
-      assert_eq!(corp_failure(&sync, 2_000_001), None);
-
-      sync.apply(&Event::Failed {
-        key,
-        reason: "needs re-authentication".to_owned(),
-      });
-      assert_eq!(corp_failure(&sync, 2_000_001), Some(Phase::Failed));
-    }
-
-    #[tokio::test]
-    async fn corp_failure_surfaces_a_wallet_job_401_as_needs_reauthentication() {
-      let mut sync = SyncStatus::new();
-      let key = JobKey::new(JobKind::CorporationWallet, Subject::Corporation(2_000_002));
-
-      assert_eq!(corp_failure(&sync, 2_000_002), None);
-
-      sync.apply(&Event::Failed {
-        key,
-        reason: "needs re-authentication".to_owned(),
-      });
-      assert_eq!(corp_failure(&sync, 2_000_002), Some(Phase::Failed));
-    }
-
-    #[test]
-    fn the_corporations_pane_renders_the_grid_and_the_empty_state() {
-      let sync = SyncStatus::new();
-      let mut state = State::new();
-      state.active_pane = Pane::Corporations;
-
-      {
-        let _empty: Element<'_, Message> = view(&state, &sync);
-      }
-
-      state.corps = vec![CorpCardModel {
-        alliance: Some("Iron Helix Pact".to_owned()),
-        alliance_ticker: Some("IHP".to_owned()),
-        ceo: Some("Vex Voronova".to_owned()),
-        corporation_id: 2_000_001,
-        granted_scopes: None,
-        hq: Some("Jita IV — Moon 4".to_owned()),
-        logo: images::ImageState::Stale {
-          id: 2_000_001,
-          kind: images::ImageKind::CorporationLogo,
-        },
-        members: Some(1247),
-        name: "Cobalt Syndicate".to_owned(),
-        needs_reauth: false,
-        tags: Vec::new(),
-        tax_rate: Some(0.10),
-        ticker: "COBSY".to_owned(),
-      }];
-      {
-        let _populated: Element<'_, Message> = view(&state, &sync);
-      }
-    }
-
-    async fn reload_corp_tag_names(state: &mut State, db: &Database, corporation_id: i64) -> Vec<String> {
-      reload(state, db).await;
-      corp_for(state, corporation_id)
-        .map(|corp| corp.tags.iter().map(|chip| chip.name.clone()).collect())
-        .unwrap_or_default()
-    }
-
-    #[tokio::test]
-    async fn load_corps_populates_the_card_model_tags_from_the_polymorphic_join() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let industry = infra::create(&db, "Industry", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, industry.id())
-        .await
-        .unwrap();
-
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
-
-      let corp = &corps[0];
-      assert_eq!(
-        corp.tags.iter().map(|chip| chip.name.as_str()).collect::<Vec<_>>(),
-        ["Industry"]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_assigns_a_tag_to_a_corporation_through_the_add_tag_flow() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let industry = infra::create(&db, "Industry", None, None).await.unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      state.cursor = Some(iced::Point::new(10.0, 10.0));
-      let _ = update(&mut state, Message::CorpRightPressed(2_000_001), &db);
-      let _ = update(
-        &mut state,
-        Message::OpenAddTagModal {
-          entity_id: 2_000_001,
-          entity_type: ENTITY_TYPE_CORPORATION,
-        },
-        &db,
-      );
-      assert!(state.corp_context_menu.is_none());
-      assert_eq!(
-        state.add_tag_modal.as_ref().map(|modal| modal.entity_type),
-        Some(ENTITY_TYPE_CORPORATION)
-      );
-      let _ = update(
-        &mut state,
-        Message::AssignTag {
-          entity_id: 2_000_001,
-          entity_type: ENTITY_TYPE_CORPORATION,
-          tag_id: industry.id(),
-        },
-        &db,
-      );
-      assert!(state.add_tag_modal.is_none());
-
-      apply_tag_write(
-        &db,
-        TagWrite::Assign {
-          entity_id: 2_000_001,
-          entity_type: ENTITY_TYPE_CORPORATION,
-          tag_id: industry.id(),
-        },
-      )
-      .await
-      .unwrap();
-      let names = reload_corp_tag_names(&mut state, &db, 2_000_001).await;
-
-      assert_eq!(names, vec!["Industry".to_owned()]);
-      assert!(
-        infra::members(&db, industry.id(), ENTITY_TYPE_CHARACTER)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_unassigns_a_tag_from_a_corporation_leaving_the_rest() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let kept = infra::create(&db, "Kept", None, None).await.unwrap();
-      let dropped = infra::create(&db, "Dropped", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, kept.id())
-        .await
-        .unwrap();
-      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, dropped.id())
-        .await
-        .unwrap();
-      let mut state = State::new();
-
-      apply_tag_write(
-        &db,
-        TagWrite::Unassign {
-          entity_id: 2_000_001,
-          entity_type: ENTITY_TYPE_CORPORATION,
-          tag_id: dropped.id(),
-        },
-      )
-      .await
-      .unwrap();
-      let names = reload_corp_tag_names(&mut state, &db, 2_000_001).await;
-
-      assert_eq!(names, vec!["Kept".to_owned()]);
-    }
-
-    #[tokio::test]
-    async fn the_corp_add_tag_modal_offers_only_tags_not_already_on_the_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corporation(&db, 2_000_001, 8001).await;
-      let on = infra::create(&db, "On", None, None).await.unwrap();
-      let off = infra::create(&db, "Off", None, None).await.unwrap();
-      infra::assign(&db, ENTITY_TYPE_CORPORATION, 2_000_001, on.id())
-        .await
-        .unwrap();
-      let mut state = State::new();
-      reload(&mut state, &db).await;
-
-      let (name, assigned, assignable) = resolve_add_tag_modal(&state, ENTITY_TYPE_CORPORATION, 2_000_001);
-      assert_eq!(name, "Cobalt Syndicate");
-      assert_eq!(assigned.iter().map(|tag| tag.id()).collect::<Vec<_>>(), vec![on.id()]);
-      assert_eq!(
-        assignable.iter().map(|tag| tag.id()).collect::<Vec<_>>(),
-        vec![off.id()]
-      );
     }
   }
 }

@@ -191,29 +191,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_transitions_to_expanding_on_loading_complete() {
-      let mut state = State::default();
+    fn it_increments_expand_on_tick_during_expanding() {
+      let mut state = State {
+        phase: Phase::Expanding,
+        ..State::default()
+      };
 
-      let _ = update(&mut state, Message::LoadingComplete);
+      let _ = update(&mut state, Message::Tick);
 
-      assert_eq!(state.phase, Phase::Expanding);
-      assert_eq!(state.progress_target, 1.0);
+      assert!(state.expand > 0.0);
     }
 
     #[test]
-    fn it_records_the_label_and_target_on_step_changed() {
+    fn it_increments_rotation_and_pulse_on_tick_during_loading() {
       let mut state = State::default();
 
-      let _ = update(
-        &mut state,
-        Message::StepChanged {
-          label: "Loading\u{2026}".to_string(),
-          progress: 0.4,
-        },
-      );
+      let _ = update(&mut state, Message::Tick);
 
-      assert_eq!(state.step_label, "Loading\u{2026}");
-      assert_eq!(state.progress_target, 0.4);
+      assert!(state.rotation > 0.0);
+      assert!(state.pulse > 0.0);
     }
 
     #[test]
@@ -235,48 +231,28 @@ mod tests {
     }
 
     #[test]
-    fn it_increments_rotation_and_pulse_on_tick_during_loading() {
-      let mut state = State::default();
-
-      let _ = update(&mut state, Message::Tick);
-
-      assert!(state.rotation > 0.0);
-      assert!(state.pulse > 0.0);
-    }
-
-    #[test]
-    fn it_increments_expand_on_tick_during_expanding() {
-      let mut state = State {
-        phase: Phase::Expanding,
-        ..State::default()
-      };
-
-      let _ = update(&mut state, Message::Tick);
-
-      assert!(state.expand > 0.0);
-    }
-
-    #[test]
-    fn it_transitions_to_done_and_clamps_expand_on_the_final_tick() {
-      let mut state = State {
-        expand: 0.99,
-        phase: Phase::Expanding,
-        ..State::default()
-      };
-
-      let _ = update(&mut state, Message::Tick);
-
-      assert_eq!(state.expand, 1.0);
-      assert_eq!(state.phase, Phase::Done);
-    }
-
-    #[test]
     fn it_records_the_error_on_failed() {
       let mut state = State::default();
 
       let _ = update(&mut state, Message::Failed("seed boom".to_string()));
 
       assert_eq!(state.error.as_deref(), Some("seed boom"));
+    }
+
+    #[test]
+    fn it_records_the_label_and_target_on_step_changed() {
+      let mut state = State::default();
+
+      let _ = update(
+        &mut state,
+        Message::StepChanged {
+          label: "Loading\u{2026}".to_string(),
+          progress: 0.4,
+        },
+      );
+
+      assert_eq!(state.step_label, "Loading\u{2026}");
+      assert_eq!(state.progress_target, 0.4);
     }
 
     #[test]
@@ -294,6 +270,30 @@ mod tests {
       assert_eq!(state.error, None);
       assert_eq!(state.phase, Phase::Loading);
       assert_eq!(state.progress_target, 0.0);
+    }
+
+    #[test]
+    fn it_transitions_to_done_and_clamps_expand_on_the_final_tick() {
+      let mut state = State {
+        expand: 0.99,
+        phase: Phase::Expanding,
+        ..State::default()
+      };
+
+      let _ = update(&mut state, Message::Tick);
+
+      assert_eq!(state.expand, 1.0);
+      assert_eq!(state.phase, Phase::Done);
+    }
+
+    #[test]
+    fn it_transitions_to_expanding_on_loading_complete() {
+      let mut state = State::default();
+
+      let _ = update(&mut state, Message::LoadingComplete);
+
+      assert_eq!(state.phase, Phase::Expanding);
+      assert_eq!(state.progress_target, 1.0);
     }
   }
 }

@@ -207,158 +207,6 @@ mod tests {
     }
   }
 
-  mod upsert_complete {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_persists_event_and_attendees_together_and_round_trips() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_complete(
-        &db,
-        &make_event(42, 1, "2026-06-20T19:00:00Z", 1, "accepted"),
-        &[
-          attendee(42, 1, 95_000_001, "accepted"),
-          attendee(42, 1, 95_000_002, "declined"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let events = super::events(&db, 42).await.unwrap();
-      assert_eq!(events.len(), 1);
-      assert_eq!(events[0].title(), "Doctrine refit night");
-      assert_eq!(events[0].importance(), 1);
-      assert_eq!(events[0].response(), "accepted");
-      assert_eq!(events[0].body().as_deref(), Some("<p>Form up at the Keepstar.</p>"));
-
-      let attendees = super::attendees(&db, 42, 1).await.unwrap();
-      assert_eq!(
-        attendees.iter().map(|a| a.attendee_id()).collect::<Vec<_>>(),
-        [95_000_001, 95_000_002]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_replaces_the_attendee_set_on_re_sync() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_complete(
-        &db,
-        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
-        &[attendee(42, 1, 1, "accepted")],
-      )
-      .await
-      .unwrap();
-      super::upsert_complete(
-        &db,
-        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
-        &[attendee(42, 1, 2, "tentative")],
-      )
-      .await
-      .unwrap();
-
-      let attendees = super::attendees(&db, 42, 1).await.unwrap();
-      assert_eq!(attendees.len(), 1);
-      assert_eq!(attendees[0].attendee_id(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_cascades_when_the_character_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(
-        &db,
-        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
-        &[attendee(42, 1, 1, "accepted")],
-      )
-      .await
-      .unwrap();
-
-      sqlx::query("DELETE FROM characters WHERE id = 42")
-        .execute(&db.0)
-        .await
-        .unwrap();
-
-      assert!(super::events(&db, 42).await.unwrap().is_empty());
-      assert!(super::attendees(&db, 42, 1).await.unwrap().is_empty());
-    }
-  }
-
-  mod set_response {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_updates_the_viewers_rsvp_in_place() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "not_responded"), &[])
-        .await
-        .unwrap();
-
-      super::set_response(&db, 42, 1, "tentative").await.unwrap();
-
-      assert_eq!(super::event(&db, 42, 1).await.unwrap().unwrap().response(), "tentative");
-    }
-  }
-
-  mod events {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_orders_a_characters_events_chronologically() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(&db, &make_event(42, 2, "2026-06-22T19:00:00Z", 0, "accepted"), &[])
-        .await
-        .unwrap();
-      super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"), &[])
-        .await
-        .unwrap();
-
-      let events = super::events(&db, 42).await.unwrap();
-
-      assert_eq!(events.iter().map(|e| e.event_id()).collect::<Vec<_>>(), [1, 2]);
-    }
-  }
-
-  mod combined {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_merges_all_characters_events_chronologically() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::upsert_complete(&db, &make_event(42, 1, "2026-06-22T19:00:00Z", 0, "accepted"), &[])
-        .await
-        .unwrap();
-      super::upsert_complete(&db, &make_event(43, 2, "2026-06-20T19:00:00Z", 0, "accepted"), &[])
-        .await
-        .unwrap();
-
-      let combined = super::combined(&db).await.unwrap();
-
-      assert_eq!(
-        combined
-          .iter()
-          .map(|e| (e.character_id(), e.event_id()))
-          .collect::<Vec<_>>(),
-        [(43, 2), (42, 1)]
-      );
-    }
-  }
-
   mod attendee_tally {
     use pretty_assertions::assert_eq;
 
@@ -422,6 +270,158 @@ mod tests {
       let count = super::attention_count(&db, now).await.unwrap();
 
       assert_eq!(count, 1);
+    }
+  }
+
+  mod combined {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_merges_all_characters_events_chronologically() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::upsert_complete(&db, &make_event(42, 1, "2026-06-22T19:00:00Z", 0, "accepted"), &[])
+        .await
+        .unwrap();
+      super::upsert_complete(&db, &make_event(43, 2, "2026-06-20T19:00:00Z", 0, "accepted"), &[])
+        .await
+        .unwrap();
+
+      let combined = super::combined(&db).await.unwrap();
+
+      assert_eq!(
+        combined
+          .iter()
+          .map(|e| (e.character_id(), e.event_id()))
+          .collect::<Vec<_>>(),
+        [(43, 2), (42, 1)]
+      );
+    }
+  }
+
+  mod events {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_orders_a_characters_events_chronologically() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(&db, &make_event(42, 2, "2026-06-22T19:00:00Z", 0, "accepted"), &[])
+        .await
+        .unwrap();
+      super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"), &[])
+        .await
+        .unwrap();
+
+      let events = super::events(&db, 42).await.unwrap();
+
+      assert_eq!(events.iter().map(|e| e.event_id()).collect::<Vec<_>>(), [1, 2]);
+    }
+  }
+
+  mod set_response {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_updates_the_viewers_rsvp_in_place() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "not_responded"), &[])
+        .await
+        .unwrap();
+
+      super::set_response(&db, 42, 1, "tentative").await.unwrap();
+
+      assert_eq!(super::event(&db, 42, 1).await.unwrap().unwrap().response(), "tentative");
+    }
+  }
+
+  mod upsert_complete {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_cascades_when_the_character_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(
+        &db,
+        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
+        &[attendee(42, 1, 1, "accepted")],
+      )
+      .await
+      .unwrap();
+
+      sqlx::query("DELETE FROM characters WHERE id = 42")
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      assert!(super::events(&db, 42).await.unwrap().is_empty());
+      assert!(super::attendees(&db, 42, 1).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_persists_event_and_attendees_together_and_round_trips() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_complete(
+        &db,
+        &make_event(42, 1, "2026-06-20T19:00:00Z", 1, "accepted"),
+        &[
+          attendee(42, 1, 95_000_001, "accepted"),
+          attendee(42, 1, 95_000_002, "declined"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let events = super::events(&db, 42).await.unwrap();
+      assert_eq!(events.len(), 1);
+      assert_eq!(events[0].title(), "Doctrine refit night");
+      assert_eq!(events[0].importance(), 1);
+      assert_eq!(events[0].response(), "accepted");
+      assert_eq!(events[0].body().as_deref(), Some("<p>Form up at the Keepstar.</p>"));
+
+      let attendees = super::attendees(&db, 42, 1).await.unwrap();
+      assert_eq!(
+        attendees.iter().map(|a| a.attendee_id()).collect::<Vec<_>>(),
+        [95_000_001, 95_000_002]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_attendee_set_on_re_sync() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_complete(
+        &db,
+        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
+        &[attendee(42, 1, 1, "accepted")],
+      )
+      .await
+      .unwrap();
+      super::upsert_complete(
+        &db,
+        &make_event(42, 1, "2026-06-20T19:00:00Z", 0, "accepted"),
+        &[attendee(42, 1, 2, "tentative")],
+      )
+      .await
+      .unwrap();
+
+      let attendees = super::attendees(&db, 42, 1).await.unwrap();
+      assert_eq!(attendees.len(), 1);
+      assert_eq!(attendees[0].attendee_id(), 2);
     }
   }
 }

@@ -100,6 +100,30 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_errors_when_the_grant_is_missing() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/orders/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(finance::for_character(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_persists_the_characters_open_orders_as_state_open() {
       let server = MockServer::start().await;
       mount_orders(
@@ -183,30 +207,6 @@ mod tests {
       assert_eq!(stored.len(), 1);
       assert_eq!(stored[0].order_id(), 2002);
       assert_eq!(finance::open_escrow(&db, 42).await.unwrap(), 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_errors_when_the_grant_is_missing() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/orders/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(finance::for_character(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]

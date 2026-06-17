@@ -275,6 +275,81 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_aborts_without_writing_when_a_skill_is_missing_a_dogma_attribute() {
+      let server = MockServer::start().await;
+      mount_skills(&server, 42).await;
+      mount_skill_queue(&server, 42).await;
+      mount_attributes(&server, 42).await;
+      mount_implants(&server, 42).await;
+      mount_json(
+        &server,
+        "/universe/types/3300/",
+        serde_json::json!({
+          "description": "Gunnery.", "group_id": 255, "market_group_id": 1112, "name": "Gunnery",
+          "published": true, "type_id": 3300,
+          "dogma_attributes": [
+            { "attribute_id": 275, "value": 1.0 },
+            { "attribute_id": 180, "value": 167.0 },
+          ],
+        }),
+      )
+      .await;
+      mount_skill_group_and_category(&server).await;
+      mount_market_groups(&server).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
+      assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
+      assert!(character::implants(&db, 42).await.unwrap().is_empty());
+      assert_eq!(skills::get_skill_metadata(&db, 3300).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_aborts_without_writing_when_the_attributes_fetch_fails() {
+      let server = MockServer::start().await;
+      mount_skills(&server, 42).await;
+      mount_skill_queue(&server, 42).await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/attributes/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      mount_implants(&server, 42).await;
+      mount_skill_type(&server).await;
+      mount_skill_group_and_category(&server).await;
+      mount_market_groups(&server).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
+      assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
+      assert!(character::implants(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_assembles_and_persists_the_full_skill_picture() {
       let server = MockServer::start().await;
       mount_skills(&server, 42).await;
@@ -347,81 +422,6 @@ mod tests {
       let implants = character::implants(&db, 42).await.unwrap();
       assert_eq!(implants.len(), 5);
       assert!(implants.iter().all(|i| i.bonus() == 0));
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_attributes_fetch_fails() {
-      let server = MockServer::start().await;
-      mount_skills(&server, 42).await;
-      mount_skill_queue(&server, 42).await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/attributes/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      mount_implants(&server, 42).await;
-      mount_skill_type(&server).await;
-      mount_skill_group_and_category(&server).await;
-      mount_market_groups(&server).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
-      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
-      assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
-      assert!(character::implants(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_a_skill_is_missing_a_dogma_attribute() {
-      let server = MockServer::start().await;
-      mount_skills(&server, 42).await;
-      mount_skill_queue(&server, 42).await;
-      mount_attributes(&server, 42).await;
-      mount_implants(&server, 42).await;
-      mount_json(
-        &server,
-        "/universe/types/3300/",
-        serde_json::json!({
-          "description": "Gunnery.", "group_id": 255, "market_group_id": 1112, "name": "Gunnery",
-          "published": true, "type_id": 3300,
-          "dogma_attributes": [
-            { "attribute_id": 275, "value": 1.0 },
-            { "attribute_id": 180, "value": 167.0 },
-          ],
-        }),
-      )
-      .await;
-      mount_skill_group_and_category(&server).await;
-      mount_market_groups(&server).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
-      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
-      assert_eq!(character::attributes(&db, 42).await.unwrap(), None);
-      assert!(character::implants(&db, 42).await.unwrap().is_empty());
-      assert_eq!(skills::get_skill_metadata(&db, 3300).await.unwrap(), None);
     }
 
     #[tokio::test]

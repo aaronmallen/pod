@@ -141,28 +141,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_killmail_rows_with_hash_and_value() {
-      let server = MockServer::start().await;
-      let body = r#"[
-        {"killmail_id": 100, "zkb": {"hash": "abc123", "totalValue": 1234.5}},
-        {"killmail_id": 101, "zkb": {"hash": "def456", "totalValue": 9999.0}}
-      ]"#;
-      Mock::given(method("GET"))
-        .and(path("/characterID/42/kills/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
-        .mount(&server)
-        .await;
-      let client = Client::with_base_url(make_http().await, server.uri());
-
-      let kills = client.character_kills(42).await.unwrap();
-
-      assert_eq!(kills.len(), 2);
-      assert_eq!(kills[0].killmail_id, 100);
-      assert_eq!(kills[0].zkb.hash, "abc123");
-      assert_eq!(kills[0].zkb.total_value, 1234.5);
-    }
-
-    #[tokio::test]
     async fn it_defaults_total_value_when_absent() {
       let server = MockServer::start().await;
       let body = r#"[{"killmail_id": 200, "zkb": {"hash": "ghi789"}}]"#;
@@ -191,6 +169,28 @@ mod tests {
       let result = client.character_kills(42).await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
+    async fn it_returns_killmail_rows_with_hash_and_value() {
+      let server = MockServer::start().await;
+      let body = r#"[
+        {"killmail_id": 100, "zkb": {"hash": "abc123", "totalValue": 1234.5}},
+        {"killmail_id": 101, "zkb": {"hash": "def456", "totalValue": 9999.0}}
+      ]"#;
+      Mock::given(method("GET"))
+        .and(path("/characterID/42/kills/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+        .mount(&server)
+        .await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let kills = client.character_kills(42).await.unwrap();
+
+      assert_eq!(kills.len(), 2);
+      assert_eq!(kills[0].killmail_id, 100);
+      assert_eq!(kills[0].zkb.hash, "abc123");
+      assert_eq!(kills[0].zkb.total_value, 1234.5);
     }
   }
 
@@ -246,6 +246,21 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_returns_none_when_the_kill_is_absent() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/killID/500/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+        .mount(&server)
+        .await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.value_for_kill(500).await.unwrap();
+
+      assert_eq!(value, None);
+    }
+
+    #[tokio::test]
     async fn it_returns_the_total_value_when_the_kill_is_present() {
       let server = MockServer::start().await;
       let body = r#"[{"killmail_id": 500, "zkb": {"hash": "abc123", "totalValue": 4242.5}}]"#;
@@ -259,21 +274,6 @@ mod tests {
       let value = client.value_for_kill(500).await.unwrap();
 
       assert_eq!(value, Some(4242.5));
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_when_the_kill_is_absent() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/killID/500/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
-        .mount(&server)
-        .await;
-      let client = Client::with_base_url(make_http().await, server.uri());
-
-      let value = client.value_for_kill(500).await.unwrap();
-
-      assert_eq!(value, None);
     }
   }
 }

@@ -187,85 +187,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_persists_the_corp_identity_when_the_director_still_holds_the_role() {
-      let server = MockServer::start().await;
-      mount_corporation(&server, 2000).await;
-      mount_logo(&server, 2000).await;
-      mount_roles(
-        &server,
-        2000,
-        serde_json::json!([{ "character_id": 100, "roles": ["Director", "Accountant"] }]),
-      )
-      .await;
-      let db = store::open_test().await.unwrap();
-      seed_credential(&db, 2000, 100).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 2000);
-
-      run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await.unwrap();
-
-      let corp = org::get_corporation(&db, 2000).await.unwrap().expect("corp persisted");
-      assert_eq!(corp.name(), "Test Corp");
-      assert_eq!(corp.ticker(), "TST");
-
-      assert!(image_store.corporation_logo_path(2000).exists(), "logo written");
-
-      let roles = org::for_corporation(&db, 2000).await.unwrap();
-      let mut role_names: Vec<&str> = roles.iter().map(|r| r.role().as_str()).collect();
-      role_names.sort_unstable();
-      assert_eq!(role_names, ["Accountant", "Director"], "authorizing roles persisted");
-      assert!(roles.iter().all(|r| r.character_id() == 100));
-    }
-
-    #[tokio::test]
-    async fn it_persists_the_alliance_so_the_corp_alliance_fk_is_satisfied() {
-      let server = MockServer::start().await;
-      mount_json(
-        &server,
-        "/corporations/2000/",
-        serde_json::json!({
-          "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
-          "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
-        }),
-      )
-      .await;
-      mount_json(
-        &server,
-        "/alliances/300/",
-        serde_json::json!({
-          "creator_corporation_id": 2000, "creator_id": 100,
-          "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
-        }),
-      )
-      .await;
-      mount_logo(&server, 2000).await;
-      mount_roles(
-        &server,
-        2000,
-        serde_json::json!([{ "character_id": 100, "roles": ["Director"] }]),
-      )
-      .await;
-      let db = store::open_test().await.unwrap();
-      seed_credential(&db, 2000, 100).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 2000);
-
-      run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await.unwrap();
-
-      let corp = org::get_corporation(&db, 2000).await.unwrap().expect("corp persisted");
-      assert_eq!(corp.alliance_id(), Some(300));
-      assert!(org::get_alliance(&db, 300).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
     async fn it_errors_and_persists_nothing_when_the_corp_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -338,6 +259,85 @@ mod tests {
 
       assert!(matches!(result, Err(Error::Http(_))));
       assert!(org::get_corporation(&db, 2000).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_persists_the_alliance_so_the_corp_alliance_fk_is_satisfied() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/corporations/2000/",
+        serde_json::json!({
+          "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
+          "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
+        }),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/alliances/300/",
+        serde_json::json!({
+          "creator_corporation_id": 2000, "creator_id": 100,
+          "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
+        }),
+      )
+      .await;
+      mount_logo(&server, 2000).await;
+      mount_roles(
+        &server,
+        2000,
+        serde_json::json!([{ "character_id": 100, "roles": ["Director"] }]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_credential(&db, 2000, 100).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 2000);
+
+      run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await.unwrap();
+
+      let corp = org::get_corporation(&db, 2000).await.unwrap().expect("corp persisted");
+      assert_eq!(corp.alliance_id(), Some(300));
+      assert!(org::get_alliance(&db, 300).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_persists_the_corp_identity_when_the_director_still_holds_the_role() {
+      let server = MockServer::start().await;
+      mount_corporation(&server, 2000).await;
+      mount_logo(&server, 2000).await;
+      mount_roles(
+        &server,
+        2000,
+        serde_json::json!([{ "character_id": 100, "roles": ["Director", "Accountant"] }]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_credential(&db, 2000, 100).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 2000);
+
+      run(&ctx(&db, &esi, &image, &image_store, &grant, 2000)).await.unwrap();
+
+      let corp = org::get_corporation(&db, 2000).await.unwrap().expect("corp persisted");
+      assert_eq!(corp.name(), "Test Corp");
+      assert_eq!(corp.ticker(), "TST");
+
+      assert!(image_store.corporation_logo_path(2000).exists(), "logo written");
+
+      let roles = org::for_corporation(&db, 2000).await.unwrap();
+      let mut role_names: Vec<&str> = roles.iter().map(|r| r.role().as_str()).collect();
+      role_names.sort_unstable();
+      assert_eq!(role_names, ["Accountant", "Director"], "authorizing roles persisted");
+      assert!(roles.iter().all(|r| r.character_id() == 100));
     }
   }
 }

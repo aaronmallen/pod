@@ -205,12 +205,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_both_injector_pills_without_panicking() {
-      let _el: Element<'static, Message> = injector_pill(true, 3, 500_000);
-      let _el: Element<'static, Message> = injector_pill(false, 7, 30_000);
-    }
-
-    #[test]
     fn it_falls_back_to_the_letter_tile_when_the_icon_is_missing() {
       let _large: Element<'static, Message> = injector_tile(
         LARGE_INJECTOR_TYPE_ID,
@@ -226,6 +220,12 @@ mod tests {
         color::accent::PLASMA,
         color::accent::PLASMA,
       );
+    }
+
+    #[test]
+    fn it_renders_both_injector_pills_without_panicking() {
+      let _el: Element<'static, Message> = injector_pill(true, 3, 500_000);
+      let _el: Element<'static, Message> = injector_pill(false, 7, 30_000);
     }
   }
 }

@@ -239,17 +239,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_an_empty_resolution_for_no_entries() {
-      let server = MockServer::start().await;
-      let (db, esi, sso) = make_clients(&server.uri()).await;
-      seed_owned_character(&db).await;
-
-      let resolution = resolve_multibuy(db, esi, sso, Vec::new()).await;
-
-      assert_eq!(resolution, MultibuyResolution::default());
-    }
-
-    #[tokio::test]
     async fn it_matches_known_names_and_reports_unmatched_ones() {
       let server = MockServer::start().await;
       let body = r#"{"inventory_types":[{"id":34,"name":"Tritanium"},{"id":35,"name":"Pyerite"}]}"#;
@@ -290,12 +279,33 @@ mod tests {
       );
       assert_eq!(resolution.unmatched, vec!["Notathing".to_owned()]);
     }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_resolution_for_no_entries() {
+      let server = MockServer::start().await;
+      let (db, esi, sso) = make_clients(&server.uri()).await;
+      seed_owned_character(&db).await;
+
+      let resolution = resolve_multibuy(db, esi, sso, Vec::new()).await;
+
+      assert_eq!(resolution, MultibuyResolution::default());
+    }
   }
 
   mod search_item_types {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_credentialed_character_exists() {
+      let server = MockServer::start().await;
+      let (db, esi, sso) = make_clients(&server.uri()).await;
+
+      let results = search_item_types(db, esi, sso, "Trit".to_owned()).await;
+
+      assert!(results.is_empty());
+    }
 
     #[tokio::test]
     async fn it_returns_resolved_type_ids_and_names() {
@@ -321,16 +331,6 @@ mod tests {
       let results = search_item_types(db, esi, sso, "Trit".to_owned()).await;
 
       assert_eq!(results, vec![(34, "Tritanium".to_owned()), (35, "Pyerite".to_owned())]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_when_no_credentialed_character_exists() {
-      let server = MockServer::start().await;
-      let (db, esi, sso) = make_clients(&server.uri()).await;
-
-      let results = search_item_types(db, esi, sso, "Trit".to_owned()).await;
-
-      assert!(results.is_empty());
     }
   }
 

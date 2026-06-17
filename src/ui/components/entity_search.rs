@@ -622,30 +622,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_bumps_the_generation_and_marks_searching_above_min_chars() {
-      let mut search = EntitySearch::default();
-
-      let generation = search.set_query("Vex".to_owned());
-
-      assert_eq!(generation, 1);
-      assert_eq!(search.generation(), 1);
-      assert_eq!(search.query(), "Vex");
-      assert!(search.searching());
-    }
-
-    #[test]
-    fn it_clears_results_below_min_chars_without_searching() {
-      let mut search = EntitySearch::default();
-      let generation = search.set_query("Vex".to_owned());
-      search.accept_results(generation, vec![sample(EntityKind::Character, 95, "Vex")]);
-
-      search.set_query("Ve".to_owned());
-
-      assert!(search.results().is_empty());
-      assert!(!search.searching());
-    }
-
-    #[test]
     fn it_accepts_results_only_for_the_current_generation() {
       let mut search = EntitySearch::default();
       let stale = search.set_query("Vex".to_owned());
@@ -661,6 +637,18 @@ mod tests {
     }
 
     #[test]
+    fn it_bumps_the_generation_and_marks_searching_above_min_chars() {
+      let mut search = EntitySearch::default();
+
+      let generation = search.set_query("Vex".to_owned());
+
+      assert_eq!(generation, 1);
+      assert_eq!(search.generation(), 1);
+      assert_eq!(search.query(), "Vex");
+      assert!(search.searching());
+    }
+
+    #[test]
     fn it_clears_query_results_and_bumps_the_generation() {
       let mut search = EntitySearch::default();
       let generation = search.set_query("Vex".to_owned());
@@ -672,6 +660,18 @@ mod tests {
       assert!(search.results().is_empty());
       assert!(!search.searching());
       assert_eq!(search.generation(), 2);
+    }
+
+    #[test]
+    fn it_clears_results_below_min_chars_without_searching() {
+      let mut search = EntitySearch::default();
+      let generation = search.set_query("Vex".to_owned());
+      search.accept_results(generation, vec![sample(EntityKind::Character, 95, "Vex")]);
+
+      search.set_query("Ve".to_owned());
+
+      assert!(search.results().is_empty());
+      assert!(!search.searching());
     }
   }
 
@@ -776,15 +776,6 @@ mod tests {
     }
 
     #[test]
-    fn it_suppresses_the_dropdown_for_a_resting_short_query() {
-      let results: Vec<EntityRef> = Vec::new();
-
-      let _el: Element<'_, Message> = SingleSelect::new("Ve", None, &results, Message::Input, Message::Changed)
-        .open(true)
-        .view();
-    }
-
-    #[test]
     fn it_renders_results() {
       let results = vec![
         sample(EntityKind::Character, 95, "Vex Voronova"),
@@ -808,6 +799,15 @@ mod tests {
       let results: Vec<EntityRef> = Vec::new();
 
       let _el: Element<'_, Message> = SingleSelect::new("", None, &results, Message::Input, Message::Changed).view();
+    }
+
+    #[test]
+    fn it_suppresses_the_dropdown_for_a_resting_short_query() {
+      let results: Vec<EntityRef> = Vec::new();
+
+      let _el: Element<'_, Message> = SingleSelect::new("Ve", None, &results, Message::Input, Message::Changed)
+        .open(true)
+        .view();
     }
   }
 }

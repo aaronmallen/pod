@@ -90,10 +90,8 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_for_each_active_side() {
-    for side in Side::all() {
-      let _el: Element<'_, Msg> = side_filter(side, Msg::Pick);
-    }
+  fn it_defaults_to_all() {
+    assert_eq!(Side::default(), Side::All);
   }
 
   #[test]
@@ -102,7 +100,9 @@ mod tests {
   }
 
   #[test]
-  fn it_defaults_to_all() {
-    assert_eq!(Side::default(), Side::All);
+  fn it_renders_for_each_active_side() {
+    for side in Side::all() {
+      let _el: Element<'_, Msg> = side_filter(side, Msg::Pick);
+    }
   }
 }

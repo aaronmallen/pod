@@ -591,6 +591,25 @@ mod tests {
     }
   }
 
+  async fn seed_character(db: &Database, id: i64, name: &str) {
+    use crate::store::model::{Alliance, Bloodline, Character, Corporation, Gender, Race};
+
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, name);
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
+  }
+
   mod fmt_eta {
     use pretty_assertions::assert_eq;
 
@@ -619,6 +638,206 @@ mod tests {
       let secs = 250 * 86_400;
 
       assert!(fmt_eta(now(), secs).ends_with("2027 · 12:00"));
+    }
+  }
+
+  mod left_pane {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_adopts_the_loaded_screen_model() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Loaded {
+          attributes: None,
+          character_id: 42,
+          computed: queue::ComputedQueue::default(),
+          queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
+          roster: vec![pilot(42, "Test Pilot")],
+        })),
+        &db,
+      );
+
+      assert_eq!(state.roster.len(), 1);
+      assert_eq!(state.queue.len(), 1);
+    }
+
+    #[test]
+    fn it_defaults_the_left_pane_width_when_the_store_is_empty() {
+      let state = State::new(42).with_restored_panes(&UiState::default());
+
+      assert_eq!(state.left_pane.width(), LEFT_PANE_DEFAULT);
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_summary_for_a_character_the_user_switched_away_from() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      // A slow load for pilot 7 lands after the user has already switched to pilot 42.
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(Loaded {
+          attributes: None,
+          character_id: 7,
+          computed: queue::ComputedQueue::default(),
+          queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
+          roster: vec![pilot(7, "Stale Pilot")],
+        })),
+        &db,
+      );
+
+      assert!(
+        state.queue.is_empty(),
+        "the wrong character's queue must not replace the active pilot's"
+      );
+      assert!(state.roster.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_records_the_new_active_pilot_and_closes_the_picker_on_character_changed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+      state.picker_open = true;
+
+      let _ = update(&mut state, Message::CharacterChanged(7), &db);
+
+      assert_eq!(state.active, 7);
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_resizes_the_left_pane_during_a_drag_and_bubbles_the_settled_width() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(&mut state, Message::PaneDragStart, &db);
+      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(560.0), &db);
+      assert_eq!(state.left_pane.width(), LEFT_PANE_DEFAULT + 60.0);
+      assert!(state.left_pane.is_active());
+
+      let task = update(&mut state, Message::PaneDragEnd, &db);
+      assert!(!state.left_pane.is_active());
+      let _ = task;
+    }
+
+    #[test]
+    fn it_restores_the_left_pane_width_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert(LEFT_PANE_KEY.to_owned(), 540.0);
+
+      let state = State::new(42).with_restored_panes(&ui);
+
+      assert_eq!(state.left_pane.width(), 540.0);
+    }
+  }
+
+  mod load_attributes_tab {
+    use super::*;
+    use crate::store::model::{CharacterAttributes, CharacterImplant};
+
+    fn attributes(character_id: i64) -> CharacterAttributes {
+      CharacterAttributes {
+        accrued_remap_cooldown_date: None,
+        bonus_remaps: 2,
+        character_id,
+        charisma: 19,
+        intelligence: 20,
+        last_remap_date: None,
+        memory: 21,
+        perception: 27,
+        unallocated_sp: 0,
+        willpower: 24,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_assembles_the_model_summing_implant_bonuses() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot").await;
+      character::upsert_attributes(&db, &attributes(42)).await.unwrap();
+      character::replace_implants(
+        &db,
+        42,
+        &[CharacterImplant {
+          attribute_id: 167,
+          bonus: 5,
+          character_id: 42,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let queue = vec![entry(Some("2026-06-03T12:00:00Z"))];
+      let model = super::load_attributes_tab(&db, 42, &queue).await;
+
+      assert!(model.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_is_none_without_a_synced_attributes_row() {
+      let db = crate::store::open_test().await.unwrap();
+
+      assert!(super::load_attributes_tab(&db, 42, &[]).await.is_none());
+    }
+  }
+
+  mod load_summary {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_assembles_the_roster_queue_and_computed_model() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot").await;
+      character::replace_skillqueue(&db, 42, &[entry(Some("2999-06-03T12:00:00Z"))])
+        .await
+        .unwrap();
+
+      let loaded = super::load_summary(db, 42, vec![42]).await;
+
+      assert_eq!(loaded.roster.len(), 1);
+      assert_eq!(loaded.roster[0].name, "Test Pilot");
+      assert_eq!(loaded.queue.len(), 1);
+    }
+  }
+
+  mod picker_pilot {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_degrades_to_empty_fields_for_an_unknown_character() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let pilot = super::picker_pilot(&db, 999).await;
+
+      assert_eq!(pilot.id, 999);
+      assert!(pilot.name.is_empty());
+      assert!(pilot.corp.is_empty());
+      assert_eq!(pilot.total_sp, 0);
+      assert_eq!(
+        pilot.portrait.stale_key(),
+        Some((images::ImageKind::CharacterPortrait, 999))
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_name_and_corp_ticker_for_a_seeded_character() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot").await;
+
+      let pilot = super::picker_pilot(&db, 42).await;
+
+      assert_eq!(pilot.id, 42);
+      assert_eq!(pilot.name, "Test Pilot");
+      assert_eq!(pilot.corp, "TSC");
     }
   }
 
@@ -672,371 +891,6 @@ mod tests {
     }
   }
 
-  mod view {
-    use super::*;
-
-    fn status() -> crate::sync::SyncStatus {
-      crate::sync::SyncStatus::new()
-    }
-
-    #[test]
-    fn it_renders_a_loaded_state_with_a_queue() {
-      let mut state = State::new(42);
-      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
-      state.queue = vec![entry(Some("2026-06-03T12:00:00Z"))];
-      let status = status();
-
-      let _el: Element<'_, Message> = view(&state, 42, &status, now());
-    }
-
-    #[test]
-    fn it_renders_a_loaded_state_with_an_empty_queue() {
-      let mut state = State::new(42);
-      state.roster = vec![pilot(42, "Test Pilot")];
-      let status = status();
-
-      let _el: Element<'_, Message> = view(&state, 42, &status, now());
-    }
-
-    #[test]
-    fn it_renders_the_empty_state_with_zero_owned_pilots() {
-      let state = State::new(42);
-      let status = status();
-
-      let _el: Element<'_, Message> = view(&state, 42, &status, now());
-    }
-
-    #[test]
-    fn it_renders_the_attributes_tab_when_selected() {
-      let mut state = State::new(42);
-      state.roster = vec![pilot(42, "Test Pilot")];
-      state.tab = RightTab::Attributes;
-      let status = status();
-
-      let _el: Element<'_, Message> = view(&state, 42, &status, now());
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_switches_the_right_panel_tab() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Attributes)),
-        &db,
-      );
-      assert_eq!(state.tab, RightTab::Attributes);
-
-      let _ = update(
-        &mut state,
-        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Plans)),
-        &db,
-      );
-      assert_eq!(state.tab, RightTab::Plans);
-
-      let _ = update(
-        &mut state,
-        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Browse)),
-        &db,
-      );
-      assert_eq!(state.tab, RightTab::Browse);
-    }
-
-    #[tokio::test]
-    async fn it_forwards_browse_messages_to_the_browse_tab() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::RightPanel(right_panel::Message::Browse(
-          right_panel::browser_tab::Message::SearchChanged("gun".to_owned()),
-        )),
-        &db,
-      );
-    }
-
-    #[tokio::test]
-    async fn the_plan_seams_bubble_up_without_touching_screen_state() {
-      let db = crate::store::open_test().await.unwrap();
-
-      for seam in [
-        right_panel::plans_tab::Message::NewPlan,
-        right_panel::plans_tab::Message::FromQueue,
-        right_panel::plans_tab::Message::OpenPlan(7),
-      ] {
-        let mut state = State::new(42);
-        let _ = update(&mut state, Message::RightPanel(right_panel::Message::Plans(seam)), &db);
-        assert_eq!(state.active, 42);
-      }
-    }
-
-    #[tokio::test]
-    async fn the_open_plan_editor_bubble_is_a_feature_no_op() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::OpenPlanEditor(EditorSeed::New), &db);
-
-      assert_eq!(state.active, 42);
-    }
-
-    fn computed_item(position: i64) -> queue::ComputedQueueItem {
-      queue::ComputedQueueItem {
-        cum_start_secs: 0.0,
-        duration_secs: 0.0,
-        from_level: 0,
-        group_name: String::new(),
-        primary: queue::Attr::Perception,
-        progress: 0.0,
-        queue_position: position,
-        rank: 1,
-        secondary: queue::Attr::Willpower,
-        skill_name: format!("Skill {position}"),
-        sp_needed: 0,
-        sp_now: 0,
-        sp_to: 0,
-        to_level: 1,
-      }
-    }
-
-    fn state_with_queue(positions: &[i64]) -> State {
-      let mut state = State::new(42);
-      state.computed = queue::ComputedQueue {
-        items: positions.iter().map(|p| computed_item(*p)).collect(),
-        sp_rate: 1.0,
-        total_secs: 0.0,
-        total_sp: 0,
-      };
-      state
-    }
-
-    #[tokio::test]
-    async fn a_plain_row_click_selects_a_single_row() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1, 2]);
-
-      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
-
-      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1]);
-    }
-
-    #[tokio::test]
-    async fn a_shift_click_extends_a_range_after_the_anchor() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1, 2, 3]);
-
-      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
-      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::SHIFT), &db);
-      let _ = update(&mut state, Message::QueueRowClicked(3), &db);
-
-      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1, 2, 3]);
-    }
-
-    #[tokio::test]
-    async fn escape_clears_the_selection() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1, 2]);
-      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
-
-      let _ = update(&mut state, Message::SelectionCleared, &db);
-
-      assert!(state.selection.is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_character_change_clears_the_selection() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1, 2]);
-      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
-
-      let _ = update(&mut state, Message::CharacterChanged(7), &db);
-
-      assert!(state.selection.is_empty());
-    }
-
-    #[tokio::test]
-    async fn create_plan_from_selection_emits_the_seed_for_the_chosen_positions() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1, 2]);
-      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
-      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::COMMAND), &db);
-      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
-
-      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
-
-      // The selection survives the action; the seed carries queue-ordered positions.
-      assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 2]);
-    }
-
-    #[tokio::test]
-    async fn create_plan_from_an_empty_selection_is_a_no_op() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = state_with_queue(&[0, 1]);
-
-      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
-
-      assert!(state.selection.is_empty());
-    }
-  }
-
-  mod left_pane {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_defaults_the_left_pane_width_when_the_store_is_empty() {
-      let state = State::new(42).with_restored_panes(&UiState::default());
-
-      assert_eq!(state.left_pane.width(), LEFT_PANE_DEFAULT);
-    }
-
-    #[test]
-    fn it_restores_the_left_pane_width_from_the_keyed_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert(LEFT_PANE_KEY.to_owned(), 540.0);
-
-      let state = State::new(42).with_restored_panes(&ui);
-
-      assert_eq!(state.left_pane.width(), 540.0);
-    }
-
-    #[tokio::test]
-    async fn it_resizes_the_left_pane_during_a_drag_and_bubbles_the_settled_width() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
-
-      let _ = update(&mut state, Message::PaneDragStart, &db);
-      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
-      let _ = update(&mut state, Message::PaneDrag(560.0), &db);
-      assert_eq!(state.left_pane.width(), LEFT_PANE_DEFAULT + 60.0);
-      assert!(state.left_pane.is_active());
-
-      let task = update(&mut state, Message::PaneDragEnd, &db);
-      assert!(!state.left_pane.is_active());
-      let _ = task;
-    }
-
-    #[tokio::test]
-    async fn it_records_the_new_active_pilot_and_closes_the_picker_on_character_changed() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
-      state.picker_open = true;
-
-      let _ = update(&mut state, Message::CharacterChanged(7), &db);
-
-      assert_eq!(state.active, 7);
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_adopts_the_loaded_screen_model() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
-
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(Loaded {
-          attributes: None,
-          character_id: 42,
-          computed: queue::ComputedQueue::default(),
-          queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
-          roster: vec![pilot(42, "Test Pilot")],
-        })),
-        &db,
-      );
-
-      assert_eq!(state.roster.len(), 1);
-      assert_eq!(state.queue.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_drops_a_summary_for_a_character_the_user_switched_away_from() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
-
-      // A slow load for pilot 7 lands after the user has already switched to pilot 42.
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(Loaded {
-          attributes: None,
-          character_id: 7,
-          computed: queue::ComputedQueue::default(),
-          queue: vec![entry(Some("2026-06-03T12:00:00Z"))],
-          roster: vec![pilot(7, "Stale Pilot")],
-        })),
-        &db,
-      );
-
-      assert!(
-        state.queue.is_empty(),
-        "the wrong character's queue must not replace the active pilot's"
-      );
-      assert!(state.roster.is_empty());
-    }
-  }
-
-  async fn seed_character(db: &Database, id: i64, name: &str) {
-    use crate::store::model::{Alliance, Bloodline, Character, Corporation, Gender, Race};
-
-    let corp_id = 90_000_001;
-    let alliance_id = 99_000_001;
-    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-    let race = Race::new(2, alliance_id, "A race.", "Caldari");
-    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-    corp.set_ceo_id(id);
-    corp.set_creator_id(id);
-    corp.set_member_count(1);
-    corp.set_tax_rate(0.0);
-    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, name);
-    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-      .await
-      .unwrap();
-  }
-
-  mod picker_pilot {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_degrades_to_empty_fields_for_an_unknown_character() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let pilot = super::picker_pilot(&db, 999).await;
-
-      assert_eq!(pilot.id, 999);
-      assert!(pilot.name.is_empty());
-      assert!(pilot.corp.is_empty());
-      assert_eq!(pilot.total_sp, 0);
-      assert_eq!(
-        pilot.portrait.stale_key(),
-        Some((images::ImageKind::CharacterPortrait, 999))
-      );
-    }
-
-    #[tokio::test]
-    async fn it_resolves_the_name_and_corp_ticker_for_a_seeded_character() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot").await;
-
-      let pilot = super::picker_pilot(&db, 42).await;
-
-      assert_eq!(pilot.id, 42);
-      assert_eq!(pilot.name, "Test Pilot");
-      assert_eq!(pilot.corp, "TSC");
-    }
-  }
-
   mod stale_images {
     use std::path::PathBuf;
 
@@ -1069,72 +923,218 @@ mod tests {
     }
   }
 
-  mod load_attributes_tab {
-    use super::*;
-    use crate::store::model::{CharacterAttributes, CharacterImplant};
+  mod update {
+    use pretty_assertions::assert_eq;
 
-    fn attributes(character_id: i64) -> CharacterAttributes {
-      CharacterAttributes {
-        accrued_remap_cooldown_date: None,
-        bonus_remaps: 2,
-        character_id,
-        charisma: 19,
-        intelligence: 20,
-        last_remap_date: None,
-        memory: 21,
-        perception: 27,
-        unallocated_sp: 0,
-        willpower: 24,
+    use super::*;
+
+    fn computed_item(position: i64) -> queue::ComputedQueueItem {
+      queue::ComputedQueueItem {
+        cum_start_secs: 0.0,
+        duration_secs: 0.0,
+        from_level: 0,
+        group_name: String::new(),
+        primary: queue::Attr::Perception,
+        progress: 0.0,
+        queue_position: position,
+        rank: 1,
+        secondary: queue::Attr::Willpower,
+        skill_name: format!("Skill {position}"),
+        sp_needed: 0,
+        sp_now: 0,
+        sp_to: 0,
+        to_level: 1,
       }
     }
 
-    #[tokio::test]
-    async fn it_is_none_without_a_synced_attributes_row() {
-      let db = crate::store::open_test().await.unwrap();
-
-      assert!(super::load_attributes_tab(&db, 42, &[]).await.is_none());
+    fn state_with_queue(positions: &[i64]) -> State {
+      let mut state = State::new(42);
+      state.computed = queue::ComputedQueue {
+        items: positions.iter().map(|p| computed_item(*p)).collect(),
+        sp_rate: 1.0,
+        total_secs: 0.0,
+        total_sp: 0,
+      };
+      state
     }
 
     #[tokio::test]
-    async fn it_assembles_the_model_summing_implant_bonuses() {
+    async fn a_character_change_clears_the_selection() {
       let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot").await;
-      character::upsert_attributes(&db, &attributes(42)).await.unwrap();
-      character::replace_implants(
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
+
+      let _ = update(&mut state, Message::CharacterChanged(7), &db);
+
+      assert!(state.selection.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_plain_row_click_selects_a_single_row() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1]);
+    }
+
+    #[tokio::test]
+    async fn a_shift_click_extends_a_range_after_the_anchor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2, 3]);
+
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::SHIFT), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(3), &db);
+
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn create_plan_from_an_empty_selection_is_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1]);
+
+      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
+
+      assert!(state.selection.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_plan_from_selection_emits_the_seed_for_the_chosen_positions() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(0), &db);
+      let _ = update(&mut state, Message::ModifiersChanged(keyboard::Modifiers::COMMAND), &db);
+      let _ = update(&mut state, Message::QueueRowClicked(2), &db);
+
+      let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
+
+      // The selection survives the action; the seed carries queue-ordered positions.
+      assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 2]);
+    }
+
+    #[tokio::test]
+    async fn escape_clears_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_queue(&[0, 1, 2]);
+      let _ = update(&mut state, Message::QueueRowClicked(1), &db);
+
+      let _ = update(&mut state, Message::SelectionCleared, &db);
+
+      assert!(state.selection.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_forwards_browse_messages_to_the_browse_tab() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::RightPanel(right_panel::Message::Browse(
+          right_panel::browser_tab::Message::SearchChanged("gun".to_owned()),
+        )),
         &db,
-        42,
-        &[CharacterImplant {
-          attribute_id: 167,
-          bonus: 5,
-          character_id: 42,
-        }],
-      )
-      .await
-      .unwrap();
+      );
+    }
 
-      let queue = vec![entry(Some("2026-06-03T12:00:00Z"))];
-      let model = super::load_attributes_tab(&db, 42, &queue).await;
+    #[tokio::test]
+    async fn it_switches_the_right_panel_tab() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
 
-      assert!(model.is_some());
+      let _ = update(
+        &mut state,
+        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Attributes)),
+        &db,
+      );
+      assert_eq!(state.tab, RightTab::Attributes);
+
+      let _ = update(
+        &mut state,
+        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Plans)),
+        &db,
+      );
+      assert_eq!(state.tab, RightTab::Plans);
+
+      let _ = update(
+        &mut state,
+        Message::RightPanel(right_panel::Message::TabSelected(RightTab::Browse)),
+        &db,
+      );
+      assert_eq!(state.tab, RightTab::Browse);
+    }
+
+    #[tokio::test]
+    async fn the_open_plan_editor_bubble_is_a_feature_no_op() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::OpenPlanEditor(EditorSeed::New), &db);
+
+      assert_eq!(state.active, 42);
+    }
+
+    #[tokio::test]
+    async fn the_plan_seams_bubble_up_without_touching_screen_state() {
+      let db = crate::store::open_test().await.unwrap();
+
+      for seam in [
+        right_panel::plans_tab::Message::NewPlan,
+        right_panel::plans_tab::Message::FromQueue,
+        right_panel::plans_tab::Message::OpenPlan(7),
+      ] {
+        let mut state = State::new(42);
+        let _ = update(&mut state, Message::RightPanel(right_panel::Message::Plans(seam)), &db);
+        assert_eq!(state.active, 42);
+      }
     }
   }
 
-  mod load_summary {
+  mod view {
     use super::*;
 
-    #[tokio::test]
-    async fn it_assembles_the_roster_queue_and_computed_model() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot").await;
-      character::replace_skillqueue(&db, 42, &[entry(Some("2999-06-03T12:00:00Z"))])
-        .await
-        .unwrap();
+    fn status() -> crate::sync::SyncStatus {
+      crate::sync::SyncStatus::new()
+    }
 
-      let loaded = super::load_summary(db, 42, vec![42]).await;
+    #[test]
+    fn it_renders_a_loaded_state_with_a_queue() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
+      state.queue = vec![entry(Some("2026-06-03T12:00:00Z"))];
+      let status = status();
 
-      assert_eq!(loaded.roster.len(), 1);
-      assert_eq!(loaded.roster[0].name, "Test Pilot");
-      assert_eq!(loaded.queue.len(), 1);
+      let _el: Element<'_, Message> = view(&state, 42, &status, now());
+    }
+
+    #[test]
+    fn it_renders_a_loaded_state_with_an_empty_queue() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot")];
+      let status = status();
+
+      let _el: Element<'_, Message> = view(&state, 42, &status, now());
+    }
+
+    #[test]
+    fn it_renders_the_attributes_tab_when_selected() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, "Test Pilot")];
+      state.tab = RightTab::Attributes;
+      let status = status();
+
+      let _el: Element<'_, Message> = view(&state, 42, &status, now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_with_zero_owned_pilots() {
+      let state = State::new(42);
+      let status = status();
+
+      let _el: Element<'_, Message> = view(&state, 42, &status, now());
     }
   }
 }

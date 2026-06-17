@@ -1480,49 +1480,35 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
 mod tests {
   use super::*;
 
-  mod state {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_opens_scoped_to_the_starting_character() {
-      let state = State::new(42);
-
-      assert_eq!(state.active(), Scope::Character(42));
-      assert_eq!(state.unified_unread(), 0);
-    }
-
-    #[test]
-    fn it_restores_pane_widths_from_the_keyed_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 300.0);
-      ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 420.0);
-
-      let state = State::new(42).with_restored_panes(&ui);
-
-      assert_eq!(state.folder_pane_width(), 300.0);
-      assert_eq!(state.message_list_pane_width(), 420.0);
-    }
-
-    #[test]
-    fn it_falls_back_to_default_pane_widths_when_unsized() {
-      let state = State::new(42).with_restored_panes(&UiState::default());
-
-      assert_eq!(state.folder_pane_width(), FOLDER_PANE_DEFAULT_WIDTH);
-      assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_DEFAULT_WIDTH);
-    }
-
-    #[test]
-    fn it_clamps_a_restored_folder_width_to_its_80px_minimum() {
-      let mut ui = UiState::default();
-      ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 40.0);
-      ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 60.0);
-
-      let state = State::new(42).with_restored_panes(&ui);
-
-      assert_eq!(state.folder_pane_width(), FOLDER_PANE_MIN_WIDTH);
-      assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_MIN_WIDTH);
+  fn sample_render() -> crate::store::model::character_mail_view::MailRender {
+    use crate::store::model::{
+      CharacterMail, CharacterMailBody, CharacterMailRecipient, character_mail_view::MailRender,
+    };
+    MailRender {
+      body: CharacterMailBody {
+        body: "<p>Form up at Jita.</p>".to_owned(),
+        character_id: 42,
+        mail_id: 7,
+      },
+      header: CharacterMail {
+        character_id: 42,
+        from_id: 95_000_001,
+        from_name: "Vex Voronova".to_owned(),
+        is_read: true,
+        mail_id: 7,
+        subject: Some("CTA tonight".to_owned()),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+        ..Default::default()
+      },
+      label_ids: vec![8],
+      recipients: vec![CharacterMailRecipient {
+        character_id: 42,
+        mail_id: 7,
+        recipient_id: 42,
+        recipient_name: "Vex Voronova".to_owned(),
+        recipient_type: "character".to_owned(),
+      }],
+      recipients_display: "Vex Voronova".to_owned(),
     }
   }
 
@@ -1543,17 +1529,6 @@ mod tests {
     }
 
     #[test]
-    fn it_gates_when_the_active_character_lacks_the_mail_scopes() {
-      let mut state = State::new(42);
-      state.roster = vec![pilot(42, None)];
-
-      let gate = state.scope_gate().expect("missing scope should gate");
-
-      assert_eq!(gate.0, 42);
-      assert!(!gate.2.is_empty());
-    }
-
-    #[test]
     fn it_does_not_gate_when_the_active_character_has_the_mail_scopes() {
       let granted = crate::features::registry::descriptor(crate::config::Feature::Mail)
         .scopes
@@ -1569,6 +1544,17 @@ mod tests {
       let state = State::new(42);
 
       assert!(state.scope_gate().is_none());
+    }
+
+    #[test]
+    fn it_gates_when_the_active_character_lacks_the_mail_scopes() {
+      let mut state = State::new(42);
+      state.roster = vec![pilot(42, None)];
+
+      let gate = state.scope_gate().expect("missing scope should gate");
+
+      assert_eq!(gate.0, 42);
+      assert!(!gate.2.is_empty());
     }
   }
 
@@ -1605,13 +1591,6 @@ mod tests {
     }
 
     #[test]
-    fn it_is_empty_for_a_fresh_default_state() {
-      let state = State::new(42);
-
-      assert!(state.stale_images().is_empty());
-    }
-
-    #[test]
     fn it_collects_stale_keys_from_the_roster_messages_and_open_render() {
       let mut state = State::new(42);
       state.roster = vec![RosterPilot {
@@ -1644,6 +1623,13 @@ mod tests {
     }
 
     #[test]
+    fn it_is_empty_for_a_fresh_default_state() {
+      let state = State::new(42);
+
+      assert!(state.stale_images().is_empty());
+    }
+
+    #[test]
     fn it_omits_a_fresh_portrait_and_a_non_positive_sender_id() {
       let mut state = State::new(42);
       state.roster = vec![RosterPilot {
@@ -1657,6 +1643,52 @@ mod tests {
       state.messages = vec![message_row(7, 0)];
 
       assert_eq!(state.stale_images(), Vec::new());
+    }
+  }
+
+  mod state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_a_restored_folder_width_to_its_80px_minimum() {
+      let mut ui = UiState::default();
+      ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 40.0);
+      ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 60.0);
+
+      let state = State::new(42).with_restored_panes(&ui);
+
+      assert_eq!(state.folder_pane_width(), FOLDER_PANE_MIN_WIDTH);
+      assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_MIN_WIDTH);
+    }
+
+    #[test]
+    fn it_falls_back_to_default_pane_widths_when_unsized() {
+      let state = State::new(42).with_restored_panes(&UiState::default());
+
+      assert_eq!(state.folder_pane_width(), FOLDER_PANE_DEFAULT_WIDTH);
+      assert_eq!(state.message_list_pane_width(), MESSAGE_LIST_PANE_DEFAULT_WIDTH);
+    }
+
+    #[test]
+    fn it_opens_scoped_to_the_starting_character() {
+      let state = State::new(42);
+
+      assert_eq!(state.active(), Scope::Character(42));
+      assert_eq!(state.unified_unread(), 0);
+    }
+
+    #[test]
+    fn it_restores_pane_widths_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert(FOLDER_PANE_KEY.to_owned(), 300.0);
+      ui.panes.insert(MESSAGE_LIST_PANE_KEY.to_owned(), 420.0);
+
+      let state = State::new(42).with_restored_panes(&ui);
+
+      assert_eq!(state.folder_pane_width(), 300.0);
+      assert_eq!(state.message_list_pane_width(), 420.0);
     }
   }
 
@@ -1675,84 +1707,30 @@ mod tests {
       }
     }
 
-    #[tokio::test]
-    async fn it_records_a_scope_selection() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
-
-      assert_eq!(state.active(), Scope::Character(42));
-    }
-
-    #[tokio::test]
-    async fn it_echoes_a_settled_folder_pane_width_for_the_app_to_persist() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::FolderPaneDragStart, &db);
-      let _ = update(&mut state, Message::FolderPaneDragged(500.0), &db);
-      let _ = update(&mut state, Message::FolderPaneDragged(540.0), &db);
-      let _ = update(&mut state, Message::FolderPaneDragEnd, &db);
-
-      assert_eq!(state.folder_pane_width(), FOLDER_PANE_DEFAULT_WIDTH + 40.0);
-    }
-
-    #[tokio::test]
-    async fn it_stores_a_landed_reading_pane_render() {
-      let mut state = State::new(42);
-      state.selected = Some(7);
-      let db = crate::store::open_test().await.unwrap();
-      let render = ReadingRender {
-        is_starred: true,
-        labels: Vec::new(),
-        mail: sample_render(),
-        sender_portrait: images::ImageState::Stale {
-          id: 95_000_001,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-      };
-
-      let _ = update(
-        &mut state,
-        Message::RenderLoaded {
-          mail_id: 7,
-          render: Box::new(Some(render.clone())),
-        },
-        &db,
-      );
-
-      assert_eq!(state.render(), Some(&render));
-    }
-
-    #[tokio::test]
-    async fn it_drops_a_render_for_a_mail_that_is_no_longer_selected() {
-      let mut state = State::new(42);
-      state.selected = Some(9);
-      let db = crate::store::open_test().await.unwrap();
-      let render = ReadingRender {
+    fn list_row(mail_id: i64, character_id: i64, is_read: bool) -> message_list::MessageRow {
+      message_list::MessageRow {
+        bucket: message_list::DayBucket::Today,
+        character_id,
+        is_pinned: false,
+        is_read,
         is_starred: false,
+        has_attachment: false,
+        important: false,
+        sender_kind: message_list::SenderKind::Character,
+        label_ids: Vec::new(),
         labels: Vec::new(),
-        mail: sample_render(),
+        mail_id,
+        sender: "Vex".to_owned(),
+        sender_id: 95_000_001,
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
           kind: images::ImageKind::CharacterPortrait,
         },
-      };
-
-      let _ = update(
-        &mut state,
-        Message::RenderLoaded {
-          mail_id: 7,
-          render: Box::new(Some(render)),
-        },
-        &db,
-      );
-
-      assert!(
-        state.render().is_none(),
-        "a render for mail 7 must not land while mail 9 is selected"
-      );
+        snippet: String::new(),
+        subject: "S".to_owned(),
+        time: "10:00".to_owned(),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+      }
     }
 
     #[tokio::test]
@@ -1766,83 +1744,6 @@ mod tests {
       let _ = update(&mut state, Message::FolderPaneDragEnd, &db);
 
       assert!((state.folder_pane_width() - FOLDER_PANE_MIN_WIDTH).abs() < 0.5);
-    }
-
-    #[tokio::test]
-    async fn it_does_not_adopt_a_stale_scope_loads_scope_specific_picture() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.active = Scope::Character(42);
-      state.folder_data = FolderPaneData {
-        labels: vec![loaders::FolderLabel {
-          color: None,
-          label_id: 99,
-          name: "Sentinel".to_owned(),
-          unread: 7,
-        }],
-        ..FolderPaneData::default()
-      };
-      let loaded = Loaded {
-        scope: Scope::Character(0),
-        folder: Folder::Unified,
-        ..Loaded::default()
-      };
-
-      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
-
-      assert_eq!(state.folder_data().labels.len(), 1);
-      assert_eq!(state.active(), Scope::Character(42));
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_account_switcher_dropdown() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      assert!(!state.picker_open());
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open());
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open());
-    }
-
-    #[tokio::test]
-    async fn it_closes_the_dropdown_and_resets_the_folder_on_a_scope_selection() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.picker_open = true;
-      state.folder = Folder::Standard(StandardFolder::Starred);
-      state.selected = Some(7);
-
-      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
-
-      assert_eq!(state.active(), Scope::Character(42));
-      assert_eq!(state.folder(), Folder::Unified);
-      assert!(!state.picker_open());
-      assert!(state.selected().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_open_render_when_the_folder_changes() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.render = Some(ReadingRender {
-        is_starred: false,
-        labels: Vec::new(),
-        mail: sample_render(),
-        sender_portrait: images::ImageState::Stale {
-          id: 95_000_001,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-      });
-
-      let _ = update(
-        &mut state,
-        Message::FolderSelected(Folder::Standard(StandardFolder::Starred)),
-        &db,
-      );
-
-      assert!(state.render().is_none());
     }
 
     #[tokio::test]
@@ -1881,65 +1782,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_keeps_the_open_mail_when_a_reload_still_lists_it() {
+    async fn it_clears_the_open_render_when_the_folder_changes() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
-      state.active = Scope::Character(42);
-      state.folder = Folder::Standard(StandardFolder::Inbox);
-      state.selected = Some(7);
-      let loaded = Loaded {
-        folder: Folder::Standard(StandardFolder::Inbox),
-        messages: vec![list_row(7, 42, true), list_row(8, 42, true)],
-        scope: Scope::Character(42),
-        ..Loaded::default()
-      };
-
-      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
-
-      assert_eq!(
-        state.selected(),
-        Some(7),
-        "a reload that still lists the open mail keeps the selection"
-      );
-    }
-
-    fn list_row(mail_id: i64, character_id: i64, is_read: bool) -> message_list::MessageRow {
-      message_list::MessageRow {
-        bucket: message_list::DayBucket::Today,
-        character_id,
-        is_pinned: false,
-        is_read,
+      state.render = Some(ReadingRender {
         is_starred: false,
-        has_attachment: false,
-        important: false,
-        sender_kind: message_list::SenderKind::Character,
-        label_ids: Vec::new(),
         labels: Vec::new(),
-        mail_id,
-        sender: "Vex".to_owned(),
-        sender_id: 95_000_001,
+        mail: sample_render(),
         sender_portrait: images::ImageState::Stale {
           id: 95_000_001,
           kind: images::ImageKind::CharacterPortrait,
         },
-        snippet: String::new(),
-        subject: "S".to_owned(),
-        time: "10:00".to_owned(),
-        timestamp: "2026-06-01T10:00:00Z".to_owned(),
-      }
-    }
+      });
 
-    #[tokio::test]
-    async fn it_selects_a_row_and_clears_any_open_snooze_menu() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.messages = vec![list_row(7, 42, true)];
-      state.snooze_menu = SnoozeMenu::Presets;
+      let _ = update(
+        &mut state,
+        Message::FolderSelected(Folder::Standard(StandardFolder::Starred)),
+        &db,
+      );
 
-      let _ = update(&mut state, Message::Selected(7), &db);
-
-      assert_eq!(state.selected(), Some(7));
-      assert!(!state.snooze_presets_open());
+      assert!(state.render().is_none());
     }
 
     #[tokio::test]
@@ -1963,9 +1825,81 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_resolves_the_owning_character_for_an_action() {
+    async fn it_closes_the_dropdown_and_resets_the_folder_on_a_scope_selection() {
       let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.picker_open = true;
+      state.folder = Folder::Standard(StandardFolder::Starred);
+      state.selected = Some(7);
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
+
+      assert_eq!(state.active(), Scope::Character(42));
+      assert_eq!(state.folder(), Folder::Unified);
+      assert!(!state.picker_open());
+      assert!(state.selected().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_commits_a_typed_recipient_name_without_an_id() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.compose = Some(compose::Draft::blank(42));
+
+      let _ = update(&mut state, Message::ComposeToInput("Typed Pilot".to_owned()), &db);
+      let _ = update(&mut state, Message::ComposeToCommitted, &db);
+
+      let draft = state.compose().unwrap();
+      assert_eq!(draft.to.len(), 1);
+      assert_eq!(draft.to[0].id, None);
+      assert_eq!(draft.to[0].name, "Typed Pilot");
+      assert!(draft.to_search.query().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_confirms_a_calendar_snooze_and_unsnoozes() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
       state.active = Scope::Character(42);
+      state.selected = Some(7);
+
+      let _ = update(&mut state, Message::SnoozeCalendarOpened, &db);
+      let _ = update(&mut state, Message::SnoozeCalendarConfirmed, &db);
+      assert!(state.snooze_calendar().is_none());
+
+      let _ = update(&mut state, Message::Unsnooze(7), &db);
+      assert!(!state.snooze_presets_open());
+    }
+
+    #[tokio::test]
+    async fn it_discards_recipient_results_from_a_superseded_search() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.compose = Some(compose::Draft::blank(42));
+
+      let _ = update(&mut state, Message::ComposeToInput("Vex".to_owned()), &db);
+      let stale = state.compose_search_generation(true);
+      let _ = update(&mut state, Message::ComposeToInput("Vexor".to_owned()), &db);
+
+      let _ = update(
+        &mut state,
+        Message::ComposeToSearched {
+          generation: stale,
+          results: vec![character_entity(1, "Stale")],
+        },
+        &db,
+      );
+
+      assert!(state.compose().unwrap().to_search.results().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_the_remaining_arms_without_panicking() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.active = Scope::Character(42);
+      state.messages = vec![list_row(7, 42, true)];
+      state.selected = Some(7);
       state.render = Some(ReadingRender {
         is_starred: false,
         labels: Vec::new(),
@@ -1975,47 +1909,149 @@ mod tests {
           kind: images::ImageKind::CharacterPortrait,
         },
       });
-      assert_eq!(state.character_for(7), Some(42));
-      state.render = None;
-      state.messages = vec![list_row(8, 43, true)];
-      assert_eq!(state.character_for(8), Some(43));
-      assert_eq!(state.character_for(999), Some(42));
-    }
 
-    #[tokio::test]
-    async fn it_toggles_the_snooze_preset_menu() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::SnoozeMenuToggled, &db);
-      assert!(state.snooze_presets_open());
-      let _ = update(&mut state, Message::SnoozeMenuToggled, &db);
-      assert!(!state.snooze_presets_open());
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_edits_the_snooze_calendar() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::SnoozeCalendarOpened, &db);
-      assert!(state.snooze_calendar().is_some());
       for message in [
-        Message::SnoozeCalendarNextMonth,
-        Message::SnoozeCalendarPrevMonth,
-        Message::SnoozeCalendarHourUp,
-        Message::SnoozeCalendarHourDown,
-        Message::SnoozeCalendarMinuteUp,
-        Message::SnoozeCalendarMinuteDown,
-        Message::SnoozeCalendarChip(11, 0),
-        Message::SnoozeCalendarDaySelected(2026, 5, 15),
+        Message::PickerToggled,
+        Message::MarkedRead,
+        Message::OverlayWritten,
+        Message::ToggleStar(7),
+        Message::TogglePin(7),
+        Message::Archive(7),
+        Message::Trash(7),
+        Message::Reply(7),
+        Message::ReplyAll(7),
+        Message::Forward(7),
+        Message::OutboxRetry(1),
+        Message::OutboxDismiss(1),
+        Message::SearchChanged("cta".to_owned()),
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(None),
+        },
+        Message::PaneSettled(FOLDER_PANE_KEY, 240.0),
       ] {
         let _ = update(&mut state, message, &db);
       }
-      assert!(state.snooze_calendar().is_some());
-      let _ = update(&mut state, Message::SnoozeCalendarBack, &db);
-      assert!(state.snooze_calendar().is_none());
-      assert!(state.snooze_presets_open());
+
+      assert_eq!(state.search(), "cta");
+      assert!(state.render().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_adopt_a_stale_scope_loads_scope_specific_picture() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.active = Scope::Character(42);
+      state.folder_data = FolderPaneData {
+        labels: vec![loaders::FolderLabel {
+          color: None,
+          label_id: 99,
+          name: "Sentinel".to_owned(),
+          unread: 7,
+        }],
+        ..FolderPaneData::default()
+      };
+      let loaded = Loaded {
+        scope: Scope::Character(0),
+        folder: Folder::Unified,
+        ..Loaded::default()
+      };
+
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+
+      assert_eq!(state.folder_data().labels.len(), 1);
+      assert_eq!(state.active(), Scope::Character(42));
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_render_for_a_mail_that_is_no_longer_selected() {
+      let mut state = State::new(42);
+      state.selected = Some(9);
+      let db = crate::store::open_test().await.unwrap();
+      let render = ReadingRender {
+        is_starred: false,
+        labels: Vec::new(),
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      };
+
+      let _ = update(
+        &mut state,
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(Some(render)),
+        },
+        &db,
+      );
+
+      assert!(
+        state.render().is_none(),
+        "a render for mail 7 must not land while mail 9 is selected"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_echoes_a_settled_folder_pane_width_for_the_app_to_persist() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::FolderPaneDragStart, &db);
+      let _ = update(&mut state, Message::FolderPaneDragged(500.0), &db);
+      let _ = update(&mut state, Message::FolderPaneDragged(540.0), &db);
+      let _ = update(&mut state, Message::FolderPaneDragEnd, &db);
+
+      assert_eq!(state.folder_pane_width(), FOLDER_PANE_DEFAULT_WIDTH + 40.0);
+    }
+
+    #[tokio::test]
+    async fn it_folds_a_refreshed_outbox_indicator_into_state() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      let indicator = OutboxIndicator {
+        pending: 2,
+        failed: Vec::new(),
+      };
+
+      let _ = update(&mut state, Message::OutboxRefreshed(Box::new(indicator)), &db);
+
+      assert_eq!(state.outbox_indicator().pending, 2);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_a_blocked_send_open_with_an_unsendable_draft() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.compose = Some(compose::Draft::blank(42));
+
+      let _ = update(&mut state, Message::ComposeSend, &db);
+
+      assert!(state.compose().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_open_mail_when_a_reload_still_lists_it() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.active = Scope::Character(42);
+      state.folder = Folder::Standard(StandardFolder::Inbox);
+      state.selected = Some(7);
+      let loaded = Loaded {
+        folder: Folder::Standard(StandardFolder::Inbox),
+        messages: vec![list_row(7, 42, true), list_row(8, 42, true)],
+        scope: Scope::Character(42),
+        ..Loaded::default()
+      };
+
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+
+      assert_eq!(
+        state.selected(),
+        Some(7),
+        "a reload that still lists the open mail keeps the selection"
+      );
     }
 
     #[tokio::test]
@@ -2086,52 +2122,98 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_commits_a_typed_recipient_name_without_an_id() {
+    async fn it_opens_and_edits_the_snooze_calendar() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
 
-      let _ = update(&mut state, Message::ComposeToInput("Typed Pilot".to_owned()), &db);
-      let _ = update(&mut state, Message::ComposeToCommitted, &db);
-
-      let draft = state.compose().unwrap();
-      assert_eq!(draft.to.len(), 1);
-      assert_eq!(draft.to[0].id, None);
-      assert_eq!(draft.to[0].name, "Typed Pilot");
-      assert!(draft.to_search.query().is_empty());
+      let _ = update(&mut state, Message::SnoozeCalendarOpened, &db);
+      assert!(state.snooze_calendar().is_some());
+      for message in [
+        Message::SnoozeCalendarNextMonth,
+        Message::SnoozeCalendarPrevMonth,
+        Message::SnoozeCalendarHourUp,
+        Message::SnoozeCalendarHourDown,
+        Message::SnoozeCalendarMinuteUp,
+        Message::SnoozeCalendarMinuteDown,
+        Message::SnoozeCalendarChip(11, 0),
+        Message::SnoozeCalendarDaySelected(2026, 5, 15),
+      ] {
+        let _ = update(&mut state, message, &db);
+      }
+      assert!(state.snooze_calendar().is_some());
+      let _ = update(&mut state, Message::SnoozeCalendarBack, &db);
+      assert!(state.snooze_calendar().is_none());
+      assert!(state.snooze_presets_open());
     }
 
     #[tokio::test]
-    async fn it_discards_recipient_results_from_a_superseded_search() {
+    async fn it_records_a_scope_selection() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
 
-      let _ = update(&mut state, Message::ComposeToInput("Vex".to_owned()), &db);
-      let stale = state.compose_search_generation(true);
-      let _ = update(&mut state, Message::ComposeToInput("Vexor".to_owned()), &db);
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
+
+      assert_eq!(state.active(), Scope::Character(42));
+    }
+
+    #[tokio::test]
+    async fn it_resolves_the_owning_character_for_an_action() {
+      let mut state = State::new(42);
+      state.active = Scope::Character(42);
+      state.render = Some(ReadingRender {
+        is_starred: false,
+        labels: Vec::new(),
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      });
+      assert_eq!(state.character_for(7), Some(42));
+      state.render = None;
+      state.messages = vec![list_row(8, 43, true)];
+      assert_eq!(state.character_for(8), Some(43));
+      assert_eq!(state.character_for(999), Some(42));
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_row_and_clears_any_open_snooze_menu() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      state.messages = vec![list_row(7, 42, true)];
+      state.snooze_menu = SnoozeMenu::Presets;
+
+      let _ = update(&mut state, Message::Selected(7), &db);
+
+      assert_eq!(state.selected(), Some(7));
+      assert!(!state.snooze_presets_open());
+    }
+
+    #[tokio::test]
+    async fn it_stores_a_landed_reading_pane_render() {
+      let mut state = State::new(42);
+      state.selected = Some(7);
+      let db = crate::store::open_test().await.unwrap();
+      let render = ReadingRender {
+        is_starred: true,
+        labels: Vec::new(),
+        mail: sample_render(),
+        sender_portrait: images::ImageState::Stale {
+          id: 95_000_001,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      };
 
       let _ = update(
         &mut state,
-        Message::ComposeToSearched {
-          generation: stale,
-          results: vec![character_entity(1, "Stale")],
+        Message::RenderLoaded {
+          mail_id: 7,
+          render: Box::new(Some(render.clone())),
         },
         &db,
       );
 
-      assert!(state.compose().unwrap().to_search.results().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_keeps_a_blocked_send_open_with_an_unsendable_draft() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
-
-      let _ = update(&mut state, Message::ComposeSend, &db);
-
-      assert!(state.compose().is_some());
+      assert_eq!(state.render(), Some(&render));
     }
 
     #[tokio::test]
@@ -2148,17 +2230,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_folds_a_refreshed_outbox_indicator_into_state() {
+    async fn it_toggles_the_account_switcher_dropdown() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
-      let indicator = OutboxIndicator {
-        pending: 2,
-        failed: Vec::new(),
-      };
 
-      let _ = update(&mut state, Message::OutboxRefreshed(Box::new(indicator)), &db);
+      assert!(!state.picker_open());
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open());
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open());
+    }
 
-      assert_eq!(state.outbox_indicator().pending, 2);
+    #[tokio::test]
+    async fn it_toggles_the_snooze_preset_menu() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::SnoozeMenuToggled, &db);
+      assert!(state.snooze_presets_open());
+      let _ = update(&mut state, Message::SnoozeMenuToggled, &db);
+      assert!(!state.snooze_presets_open());
     }
 
     #[tokio::test]
@@ -2176,83 +2267,60 @@ mod tests {
       let _ = update(&mut state, Message::SnoozePreset(snooze::Preset::Tomorrow), &db);
     }
 
-    #[tokio::test]
-    async fn it_confirms_a_calendar_snooze_and_unsnoozes() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.active = Scope::Character(42);
-      state.selected = Some(7);
-
-      let _ = update(&mut state, Message::SnoozeCalendarOpened, &db);
-      let _ = update(&mut state, Message::SnoozeCalendarConfirmed, &db);
-      assert!(state.snooze_calendar().is_none());
-
-      let _ = update(&mut state, Message::Unsnooze(7), &db);
-      assert!(!state.snooze_presets_open());
-    }
-
-    #[tokio::test]
-    async fn it_dispatches_the_remaining_arms_without_panicking() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.active = Scope::Character(42);
-      state.messages = vec![list_row(7, 42, true)];
-      state.selected = Some(7);
-      state.render = Some(ReadingRender {
-        is_starred: false,
-        labels: Vec::new(),
-        mail: sample_render(),
-        sender_portrait: images::ImageState::Stale {
-          id: 95_000_001,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-      });
-
-      for message in [
-        Message::PickerToggled,
-        Message::MarkedRead,
-        Message::OverlayWritten,
-        Message::ToggleStar(7),
-        Message::TogglePin(7),
-        Message::Archive(7),
-        Message::Trash(7),
-        Message::Reply(7),
-        Message::ReplyAll(7),
-        Message::Forward(7),
-        Message::OutboxRetry(1),
-        Message::OutboxDismiss(1),
-        Message::SearchChanged("cta".to_owned()),
-        Message::RenderLoaded {
-          mail_id: 7,
-          render: Box::new(None),
-        },
-        Message::PaneSettled(FOLDER_PANE_KEY, 240.0),
-      ] {
-        let _ = update(&mut state, message, &db);
-      }
-
-      assert_eq!(state.search(), "cta");
-      assert!(state.render().is_none());
-    }
-
     mod labels_dispatch {
       use pretty_assertions::assert_eq;
 
       use super::*;
 
       #[tokio::test]
-      async fn it_opens_a_blank_label_modal_and_clears_the_picker() {
+      async fn it_assigns_the_label_when_releasing_onto_a_target() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.label_picker = Some(LabelPicker {
-          anchor: None,
-          mail_id: 7,
-        });
+        state.messages = vec![list_row(7, 42, true)];
+        state.dragging_mail = Some(7);
+        state.drop_target = Some(8);
 
-        let _ = update_labels(&mut state, Message::LabelModalOpened, &db);
+        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
 
-        assert_eq!(state.label_modal, Some(LabelDraft::blank()));
-        assert!(state.label_picker.is_none());
+        assert!(state.dragging_mail.is_none());
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_cancels_a_pending_label_deletion() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.pending_label_delete = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDeleteCancelled, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_clears_drag_state_when_releasing_with_no_target() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.dragging_mail = Some(7);
+        state.drop_target = None;
+
+        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
+
+        assert!(state.dragging_mail.is_none());
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_clears_only_the_matching_drop_target_on_leave() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.drop_target = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(9), &db);
+        assert_eq!(state.drop_target, Some(8));
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(8), &db);
+        assert!(state.drop_target.is_none());
       }
 
       #[tokio::test]
@@ -2267,51 +2335,17 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_truncates_the_label_name_to_the_max_length() {
+      async fn it_closes_the_label_picker() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.label_modal = Some(LabelDraft::blank());
-        let oversized = "x".repeat(labels::NAME_MAX_CHARS + 10);
+        state.label_picker = Some(LabelPicker {
+          anchor: None,
+          mail_id: 7,
+        });
 
-        let _ = update_labels(&mut state, Message::LabelNameChanged(oversized), &db);
+        let _ = update_labels(&mut state, Message::LabelPickerClosed, &db);
 
-        let name = state.label_modal.as_ref().map(|d| d.name.clone()).unwrap();
-        assert_eq!(name.chars().count(), labels::NAME_MAX_CHARS);
-      }
-
-      #[tokio::test]
-      async fn it_ignores_a_name_change_with_no_open_modal() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-
-        let _ = update_labels(&mut state, Message::LabelNameChanged("Fleet".to_owned()), &db);
-
-        assert!(state.label_modal.is_none());
-      }
-
-      #[tokio::test]
-      async fn it_records_a_picked_label_color() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.label_modal = Some(LabelDraft::blank());
-
-        let _ = update_labels(&mut state, Message::LabelColorPicked("#ff6600".to_owned()), &db);
-
-        assert_eq!(
-          state.label_modal.as_ref().map(|d| d.color.clone()),
-          Some("#ff6600".to_owned())
-        );
-      }
-
-      #[tokio::test]
-      async fn it_drops_a_submission_for_an_uncreatable_draft() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.label_modal = Some(LabelDraft::blank());
-
-        let _ = update_labels(&mut state, Message::LabelModalSubmitted, &db);
-
-        assert!(state.label_modal.is_some());
+        assert!(state.label_picker.is_none());
       }
 
       #[tokio::test]
@@ -2329,6 +2363,28 @@ mod tests {
       }
 
       #[tokio::test]
+      async fn it_consumes_the_pending_label_on_a_delete_confirmation() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.pending_label_delete = Some(8);
+
+        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_submission_for_an_uncreatable_draft() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+
+        let _ = update_labels(&mut state, Message::LabelModalSubmitted, &db);
+
+        assert!(state.label_modal.is_some());
+      }
+
+      #[tokio::test]
       async fn it_drops_a_submission_with_no_open_modal() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
@@ -2339,23 +2395,51 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_opens_an_unanchored_label_picker() {
+      async fn it_ignores_a_delete_confirmation_with_nothing_pending() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.label_modal = Some(LabelDraft::blank());
-        state.snooze_menu = SnoozeMenu::Presets;
 
-        let _ = update_labels(&mut state, Message::LabelPickerOpened(7), &db);
+        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
+
+        assert!(state.pending_label_delete.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_ignores_a_name_change_with_no_open_modal() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelNameChanged("Fleet".to_owned()), &db);
 
         assert!(state.label_modal.is_none());
-        assert_eq!(state.snooze_menu, SnoozeMenu::Closed);
-        assert_eq!(
-          state.label_picker,
-          Some(LabelPicker {
-            anchor: None,
-            mail_id: 7,
-          })
-        );
+      }
+
+      #[tokio::test]
+      async fn it_marks_a_drop_target_only_while_dragging() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
+        assert!(state.drop_target.is_none());
+
+        state.dragging_mail = Some(7);
+        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
+        assert_eq!(state.drop_target, Some(8));
+      }
+
+      #[tokio::test]
+      async fn it_opens_a_blank_label_modal_and_clears_the_picker() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.label_picker = Some(LabelPicker {
+          anchor: None,
+          mail_id: 7,
+        });
+
+        let _ = update_labels(&mut state, Message::LabelModalOpened, &db);
+
+        assert_eq!(state.label_modal, Some(LabelDraft::blank()));
+        assert!(state.label_picker.is_none());
       }
 
       #[tokio::test]
@@ -2379,26 +2463,23 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_closes_the_label_picker() {
+      async fn it_opens_an_unanchored_label_picker() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.label_picker = Some(LabelPicker {
-          anchor: None,
-          mail_id: 7,
-        });
+        state.label_modal = Some(LabelDraft::blank());
+        state.snooze_menu = SnoozeMenu::Presets;
 
-        let _ = update_labels(&mut state, Message::LabelPickerClosed, &db);
+        let _ = update_labels(&mut state, Message::LabelPickerOpened(7), &db);
 
-        assert!(state.label_picker.is_none());
-      }
-
-      #[tokio::test]
-      async fn it_toggles_a_label_for_a_known_mail() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.messages = vec![list_row(7, 42, true)];
-
-        let _ = update_labels(&mut state, Message::LabelToggled(7, 8), &db);
+        assert!(state.label_modal.is_none());
+        assert_eq!(state.snooze_menu, SnoozeMenu::Closed);
+        assert_eq!(
+          state.label_picker,
+          Some(LabelPicker {
+            anchor: None,
+            mail_id: 7,
+          })
+        );
       }
 
       #[tokio::test]
@@ -2412,35 +2493,34 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_cancels_a_pending_label_deletion() {
+      async fn it_records_a_picked_label_color() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.pending_label_delete = Some(8);
+        state.label_modal = Some(LabelDraft::blank());
 
-        let _ = update_labels(&mut state, Message::LabelDeleteCancelled, &db);
+        let _ = update_labels(&mut state, Message::LabelColorPicked("#ff6600".to_owned()), &db);
 
-        assert!(state.pending_label_delete.is_none());
+        assert_eq!(
+          state.label_modal.as_ref().map(|d| d.color.clone()),
+          Some("#ff6600".to_owned())
+        );
       }
 
       #[tokio::test]
-      async fn it_ignores_a_delete_confirmation_with_nothing_pending() {
+      async fn it_reloads_after_a_label_write() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
 
-        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
-
-        assert!(state.pending_label_delete.is_none());
+        let _ = update_labels(&mut state, Message::LabelsWritten, &db);
       }
 
       #[tokio::test]
-      async fn it_consumes_the_pending_label_on_a_delete_confirmation() {
+      async fn it_toggles_a_label_for_a_known_mail() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.pending_label_delete = Some(8);
+        state.messages = vec![list_row(7, 42, true)];
 
-        let _ = update_labels(&mut state, Message::LabelDeleteConfirmed, &db);
-
-        assert!(state.pending_label_delete.is_none());
+        let _ = update_labels(&mut state, Message::LabelToggled(7, 8), &db);
       }
 
       #[tokio::test]
@@ -2455,64 +2535,16 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_marks_a_drop_target_only_while_dragging() {
+      async fn it_truncates_the_label_name_to_the_max_length() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
+        state.label_modal = Some(LabelDraft::blank());
+        let oversized = "x".repeat(labels::NAME_MAX_CHARS + 10);
 
-        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
-        assert!(state.drop_target.is_none());
+        let _ = update_labels(&mut state, Message::LabelNameChanged(oversized), &db);
 
-        state.dragging_mail = Some(7);
-        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
-        assert_eq!(state.drop_target, Some(8));
-      }
-
-      #[tokio::test]
-      async fn it_clears_only_the_matching_drop_target_on_leave() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.drop_target = Some(8);
-
-        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(9), &db);
-        assert_eq!(state.drop_target, Some(8));
-
-        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(8), &db);
-        assert!(state.drop_target.is_none());
-      }
-
-      #[tokio::test]
-      async fn it_clears_drag_state_when_releasing_with_no_target() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.dragging_mail = Some(7);
-        state.drop_target = None;
-
-        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
-
-        assert!(state.dragging_mail.is_none());
-        assert!(state.drop_target.is_none());
-      }
-
-      #[tokio::test]
-      async fn it_assigns_the_label_when_releasing_onto_a_target() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.messages = vec![list_row(7, 42, true)];
-        state.dragging_mail = Some(7);
-        state.drop_target = Some(8);
-
-        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
-
-        assert!(state.dragging_mail.is_none());
-        assert!(state.drop_target.is_none());
-      }
-
-      #[tokio::test]
-      async fn it_reloads_after_a_label_write() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-
-        let _ = update_labels(&mut state, Message::LabelsWritten, &db);
+        let name = state.label_modal.as_ref().map(|d| d.name.clone()).unwrap();
+        assert_eq!(name.chars().count(), labels::NAME_MAX_CHARS);
       }
     }
 
@@ -2522,70 +2554,27 @@ mod tests {
       use super::*;
 
       #[tokio::test]
-      async fn it_stores_the_absolute_scroll_offset_for_windowing() {
+      async fn it_appends_a_loaded_search_page_into_the_search_accumulator() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
+        state.search = "cta".to_owned();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_loading = true;
 
         let _ = update(
           &mut state,
-          Message::ListScrolled {
-            absolute: 1_234.0,
-            relative: 0.2,
+          Message::SearchPageLoaded {
+            query: "cta".to_owned(),
+            rows: vec![list_row(8, 42, true)],
           },
           &db,
         );
 
         assert_eq!(
-          state.list_scroll_offset(),
-          1_234.0,
-          "the pixel offset is stored so the virtual list can window the body"
+          state.all_messages().iter().map(|r| r.mail_id).collect::<Vec<_>>(),
+          [7, 8]
         );
-        assert!(!state.messages_loading, "a shallow scroll loads no further page");
-      }
-
-      #[tokio::test]
-      async fn it_does_not_load_more_when_the_tail_is_exhausted() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.folder = Folder::Standard(StandardFolder::Inbox);
-        state.messages = vec![list_row(7, 42, true)];
-        state.messages_cursor = Some(cursor_of(&state.messages[0]));
-        state.messages_has_more = false;
-
-        let _ = update(
-          &mut state,
-          Message::ListScrolled {
-            absolute: 9_000.0,
-            relative: 0.99,
-          },
-          &db,
-        );
-
-        assert!(!state.messages_loading, "no page is requested past the last page");
-      }
-
-      #[tokio::test]
-      async fn it_starts_a_tail_load_when_scrolling_past_the_threshold_with_more_pages() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.folder = Folder::Standard(StandardFolder::Inbox);
-        state.messages = vec![list_row(7, 42, true)];
-        state.messages_cursor = Some(cursor_of(&state.messages[0]));
-        state.messages_has_more = true;
-
-        let _ = update(
-          &mut state,
-          Message::ListScrolled {
-            absolute: 9_000.0,
-            relative: 0.99,
-          },
-          &db,
-        );
-
-        assert!(
-          state.messages_loading,
-          "a deep scroll with more pages requests the next"
-        );
+        assert!(!state.search_loading);
       }
 
       #[tokio::test]
@@ -2622,6 +2611,42 @@ mod tests {
       }
 
       #[tokio::test]
+      async fn it_clears_search_paging_when_the_query_is_emptied() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.search = "cta".to_owned();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_loading = true;
+
+        let _ = update(&mut state, Message::SearchChanged(String::new()), &db);
+
+        assert_eq!(state.search(), "");
+        assert!(state.all_messages().is_empty());
+        assert!(!state.search_loading, "no search runs for an empty query");
+      }
+
+      #[tokio::test]
+      async fn it_does_not_load_more_when_the_tail_is_exhausted() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.folder = Folder::Standard(StandardFolder::Inbox);
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_cursor = Some(cursor_of(&state.messages[0]));
+        state.messages_has_more = false;
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 9_000.0,
+            relative: 0.99,
+          },
+          &db,
+        );
+
+        assert!(!state.messages_loading, "no page is requested past the last page");
+      }
+
+      #[tokio::test]
       async fn it_drops_a_messages_page_captured_before_a_folder_switch() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
@@ -2653,63 +2678,6 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_resets_search_paging_and_kicks_a_query_on_search_change() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.all_messages = vec![list_row(7, 42, true)];
-        state.search_cursor = Some(cursor_of(&state.all_messages[0]));
-
-        let _ = update(&mut state, Message::SearchChanged("cta".to_owned()), &db);
-
-        assert_eq!(state.search(), "cta");
-        assert!(state.all_messages().is_empty(), "the prior search results are cleared");
-        assert!(
-          state.search_cursor.is_none(),
-          "the search cursor resets for the new query"
-        );
-        assert!(state.search_loading, "the first search page is requested");
-      }
-
-      #[tokio::test]
-      async fn it_clears_search_paging_when_the_query_is_emptied() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.search = "cta".to_owned();
-        state.all_messages = vec![list_row(7, 42, true)];
-        state.search_loading = true;
-
-        let _ = update(&mut state, Message::SearchChanged(String::new()), &db);
-
-        assert_eq!(state.search(), "");
-        assert!(state.all_messages().is_empty());
-        assert!(!state.search_loading, "no search runs for an empty query");
-      }
-
-      #[tokio::test]
-      async fn it_appends_a_loaded_search_page_into_the_search_accumulator() {
-        let mut state = State::new(42);
-        let db = crate::store::open_test().await.unwrap();
-        state.search = "cta".to_owned();
-        state.all_messages = vec![list_row(7, 42, true)];
-        state.search_loading = true;
-
-        let _ = update(
-          &mut state,
-          Message::SearchPageLoaded {
-            query: "cta".to_owned(),
-            rows: vec![list_row(8, 42, true)],
-          },
-          &db,
-        );
-
-        assert_eq!(
-          state.all_messages().iter().map(|r| r.mail_id).collect::<Vec<_>>(),
-          [7, 8]
-        );
-        assert!(!state.search_loading);
-      }
-
-      #[tokio::test]
       async fn it_drops_a_search_page_from_a_superseded_query() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
@@ -2734,38 +2702,70 @@ mod tests {
           "the in-flight load for the current query is left untouched"
         );
       }
-    }
-  }
 
-  fn sample_render() -> crate::store::model::character_mail_view::MailRender {
-    use crate::store::model::{
-      CharacterMail, CharacterMailBody, CharacterMailRecipient, character_mail_view::MailRender,
-    };
-    MailRender {
-      body: CharacterMailBody {
-        body: "<p>Form up at Jita.</p>".to_owned(),
-        character_id: 42,
-        mail_id: 7,
-      },
-      header: CharacterMail {
-        character_id: 42,
-        from_id: 95_000_001,
-        from_name: "Vex Voronova".to_owned(),
-        is_read: true,
-        mail_id: 7,
-        subject: Some("CTA tonight".to_owned()),
-        timestamp: "2026-06-01T10:00:00Z".to_owned(),
-        ..Default::default()
-      },
-      label_ids: vec![8],
-      recipients: vec![CharacterMailRecipient {
-        character_id: 42,
-        mail_id: 7,
-        recipient_id: 42,
-        recipient_name: "Vex Voronova".to_owned(),
-        recipient_type: "character".to_owned(),
-      }],
-      recipients_display: "Vex Voronova".to_owned(),
+      #[tokio::test]
+      async fn it_resets_search_paging_and_kicks_a_query_on_search_change() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.all_messages = vec![list_row(7, 42, true)];
+        state.search_cursor = Some(cursor_of(&state.all_messages[0]));
+
+        let _ = update(&mut state, Message::SearchChanged("cta".to_owned()), &db);
+
+        assert_eq!(state.search(), "cta");
+        assert!(state.all_messages().is_empty(), "the prior search results are cleared");
+        assert!(
+          state.search_cursor.is_none(),
+          "the search cursor resets for the new query"
+        );
+        assert!(state.search_loading, "the first search page is requested");
+      }
+
+      #[tokio::test]
+      async fn it_starts_a_tail_load_when_scrolling_past_the_threshold_with_more_pages() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.folder = Folder::Standard(StandardFolder::Inbox);
+        state.messages = vec![list_row(7, 42, true)];
+        state.messages_cursor = Some(cursor_of(&state.messages[0]));
+        state.messages_has_more = true;
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 9_000.0,
+            relative: 0.99,
+          },
+          &db,
+        );
+
+        assert!(
+          state.messages_loading,
+          "a deep scroll with more pages requests the next"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_stores_the_absolute_scroll_offset_for_windowing() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+
+        let _ = update(
+          &mut state,
+          Message::ListScrolled {
+            absolute: 1_234.0,
+            relative: 0.2,
+          },
+          &db,
+        );
+
+        assert_eq!(
+          state.list_scroll_offset(),
+          1_234.0,
+          "the pixel offset is stored so the virtual list can window the body"
+        );
+        assert!(!state.messages_loading, "a shallow scroll loads no further page");
+      }
     }
   }
 
@@ -2882,51 +2882,9 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_three_pane_shell() {
-      let state = State::new(42);
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_the_populated_shell_with_an_open_mail() {
-      let state = populated_state();
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_the_account_switcher_dropdown_overlay() {
+    fn it_filters_the_message_list_live_on_search() {
       let mut state = populated_state();
-      state.picker_open = true;
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_the_snooze_presets_overlay() {
-      let mut state = populated_state();
-      state.snooze_menu = SnoozeMenu::Presets;
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_the_snooze_calendar_overlay() {
-      let mut state = populated_state();
-      state.snooze_menu = SnoozeMenu::Calendar;
-      state.snooze_calendar = Some(snooze::Calendar::open(chrono::Utc::now()));
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_the_compose_panel_overlay() {
-      let mut state = populated_state();
-      let mut draft = compose::Draft::blank(42);
-      draft.to.push(compose::Recipient::typed("Vex Voronova"));
-      draft.show_cc = true;
-      draft.cc.push(compose::Recipient::typed("Alt Pilot"));
-      draft.subject = "CTA".to_owned();
-      draft.body = text_editor::Content::with_text("Form up.");
-      draft.from_picker_open = true;
-      draft.error = Some("enqueue failed".to_owned());
-      state.compose = Some(draft);
+      state.search = "nothing matches".to_owned();
       let _el: Element<'_, Message> = view(&state);
     }
 
@@ -2951,9 +2909,51 @@ mod tests {
     }
 
     #[test]
-    fn it_filters_the_message_list_live_on_search() {
+    fn it_renders_the_account_switcher_dropdown_overlay() {
       let mut state = populated_state();
-      state.search = "nothing matches".to_owned();
+      state.picker_open = true;
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_compose_panel_overlay() {
+      let mut state = populated_state();
+      let mut draft = compose::Draft::blank(42);
+      draft.to.push(compose::Recipient::typed("Vex Voronova"));
+      draft.show_cc = true;
+      draft.cc.push(compose::Recipient::typed("Alt Pilot"));
+      draft.subject = "CTA".to_owned();
+      draft.body = text_editor::Content::with_text("Form up.");
+      draft.from_picker_open = true;
+      draft.error = Some("enqueue failed".to_owned());
+      state.compose = Some(draft);
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_populated_shell_with_an_open_mail() {
+      let state = populated_state();
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_snooze_calendar_overlay() {
+      let mut state = populated_state();
+      state.snooze_menu = SnoozeMenu::Calendar;
+      state.snooze_calendar = Some(snooze::Calendar::open(chrono::Utc::now()));
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_snooze_presets_overlay() {
+      let mut state = populated_state();
+      state.snooze_menu = SnoozeMenu::Presets;
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_three_pane_shell() {
+      let state = State::new(42);
       let _el: Element<'_, Message> = view(&state);
     }
   }

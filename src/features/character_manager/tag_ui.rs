@@ -381,19 +381,6 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_renders_the_modal_with_assignable_rows() {
-    let tags = seed_tags().await;
-    let assignable: Vec<&Tag> = tags.iter().collect();
-    let modal = AddTagModal {
-      entity_id: 1,
-      entity_type: ENTITY_TYPE_CHARACTER,
-      input: String::new(),
-    };
-
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), assignable);
-  }
-
-  #[tokio::test]
   async fn it_renders_a_create_row_when_the_typed_name_is_new() {
     let tags = seed_tags().await;
     let assignable: Vec<&Tag> = tags.iter().collect();
@@ -404,17 +391,6 @@ mod tests {
     };
 
     let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), assignable);
-  }
-
-  #[tokio::test]
-  async fn it_renders_the_empty_placeholder_when_nothing_is_assignable() {
-    let modal = AddTagModal {
-      entity_id: 1,
-      entity_type: ENTITY_TYPE_CHARACTER,
-      input: String::new(),
-    };
-
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), Vec::new());
   }
 
   #[tokio::test]
@@ -438,5 +414,29 @@ mod tests {
     );
 
     let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", assigned, assignable);
+  }
+
+  #[tokio::test]
+  async fn it_renders_the_empty_placeholder_when_nothing_is_assignable() {
+    let modal = AddTagModal {
+      entity_id: 1,
+      entity_type: ENTITY_TYPE_CHARACTER,
+      input: String::new(),
+    };
+
+    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), Vec::new());
+  }
+
+  #[tokio::test]
+  async fn it_renders_the_modal_with_assignable_rows() {
+    let tags = seed_tags().await;
+    let assignable: Vec<&Tag> = tags.iter().collect();
+    let modal = AddTagModal {
+      entity_id: 1,
+      entity_type: ENTITY_TYPE_CHARACTER,
+      input: String::new(),
+    };
+
+    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), assignable);
   }
 }

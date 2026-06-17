@@ -234,6 +234,67 @@ mod tests {
     }
   }
 
+  mod events_on_day {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sorts_all_day_events_first() {
+      let timed = event("2026-06-12T19:00:00Z", 60);
+      let all_day = event("2026-06-12T00:00:00Z", 1440);
+      let refs = vec![&timed, &all_day];
+
+      let items = events_on_day(&refs, at("2026-06-12T00:00:00Z"));
+
+      assert_eq!(items.len(), 2);
+      assert!(items[0].is_all_day());
+    }
+  }
+
+  mod month_matrix {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_spans_forty_two_days_from_the_week_start() {
+      let matrix = month_matrix(2026, 5, CalendarWeekStart::Monday);
+
+      assert_eq!(matrix.len(), 42);
+      assert_eq!(matrix[0], at("2026-06-01T00:00:00Z"));
+    }
+  }
+
+  mod pack_day {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_disjoint_events_in_one_lane() {
+      let a = event("2026-06-12T09:00:00Z", 60);
+      let b = event("2026-06-12T19:00:00Z", 60);
+      let refs = vec![&a, &b];
+
+      let packed = pack_day(&refs);
+
+      assert!(packed.iter().all(|span| span.lanes == 1));
+    }
+
+    #[test]
+    fn it_lanes_overlapping_events_side_by_side() {
+      let a = event("2026-06-12T19:00:00Z", 120);
+      let b = event("2026-06-12T19:30:00Z", 60);
+      let refs = vec![&a, &b];
+
+      let packed = pack_day(&refs);
+
+      assert_eq!(packed.len(), 2);
+      assert!(packed.iter().all(|span| span.lanes == 2));
+    }
+  }
+
   mod start_of_week {
     use pretty_assertions::assert_eq;
 
@@ -260,16 +321,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_drops_weekends_when_hidden() {
+      assert_eq!(visible_weekdays(CalendarWeekStart::Sunday, false), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
     fn it_orders_a_monday_week() {
       assert_eq!(
         visible_weekdays(CalendarWeekStart::Monday, true),
         vec![1, 2, 3, 4, 5, 6, 0]
       );
-    }
-
-    #[test]
-    fn it_drops_weekends_when_hidden() {
-      assert_eq!(visible_weekdays(CalendarWeekStart::Sunday, false), vec![1, 2, 3, 4, 5]);
     }
   }
 
@@ -279,79 +340,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_yields_seven_days_with_weekends() {
-      let dates = week_dates(at("2026-06-12T00:00:00Z"), CalendarWeekStart::Monday, true);
-
-      assert_eq!(dates.len(), 7);
-      assert_eq!(dates[0], at("2026-06-08T00:00:00Z"));
-    }
-
-    #[test]
     fn it_drops_the_weekend_columns() {
       let dates = week_dates(at("2026-06-12T00:00:00Z"), CalendarWeekStart::Monday, false);
 
       assert_eq!(dates.len(), 5);
     }
-  }
-
-  mod month_matrix {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[test]
-    fn it_spans_forty_two_days_from_the_week_start() {
-      let matrix = month_matrix(2026, 5, CalendarWeekStart::Monday);
+    fn it_yields_seven_days_with_weekends() {
+      let dates = week_dates(at("2026-06-12T00:00:00Z"), CalendarWeekStart::Monday, true);
 
-      assert_eq!(matrix.len(), 42);
-      assert_eq!(matrix[0], at("2026-06-01T00:00:00Z"));
-    }
-  }
-
-  mod pack_day {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_lanes_overlapping_events_side_by_side() {
-      let a = event("2026-06-12T19:00:00Z", 120);
-      let b = event("2026-06-12T19:30:00Z", 60);
-      let refs = vec![&a, &b];
-
-      let packed = pack_day(&refs);
-
-      assert_eq!(packed.len(), 2);
-      assert!(packed.iter().all(|span| span.lanes == 2));
-    }
-
-    #[test]
-    fn it_keeps_disjoint_events_in_one_lane() {
-      let a = event("2026-06-12T09:00:00Z", 60);
-      let b = event("2026-06-12T19:00:00Z", 60);
-      let refs = vec![&a, &b];
-
-      let packed = pack_day(&refs);
-
-      assert!(packed.iter().all(|span| span.lanes == 1));
-    }
-  }
-
-  mod events_on_day {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sorts_all_day_events_first() {
-      let timed = event("2026-06-12T19:00:00Z", 60);
-      let all_day = event("2026-06-12T00:00:00Z", 1440);
-      let refs = vec![&timed, &all_day];
-
-      let items = events_on_day(&refs, at("2026-06-12T00:00:00Z"));
-
-      assert_eq!(items.len(), 2);
-      assert!(items[0].is_all_day());
+      assert_eq!(dates.len(), 7);
+      assert_eq!(dates[0], at("2026-06-08T00:00:00Z"));
     }
   }
 }

@@ -150,55 +150,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_upgrades_a_local_kill_to_the_zkill_value_when_it_is_now_present() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/killID/100/"))
-        .respond_with(
-          ResponseTemplate::new(200)
-            .set_body_json(serde_json::json!([{"killmail_id": 100, "zkb": {"hash": "hash", "totalValue": 4242.5}}])),
-        )
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let recent = Utc::now().to_rfc3339();
-      character::upsert_killmail(&db, &local_kill(42, 100, &recent, 0))
-        .await
-        .unwrap();
-
-      run_in(&db, server.uri()).await;
-
-      let rows = character::killmails(&db, 42).await.unwrap();
-      assert_eq!(rows[0].value_source(), "zkill");
-      assert_eq!(rows[0].value_isk(), 4242.5);
-      assert!(rows[0].value_final());
-    }
-
-    #[tokio::test]
-    async fn it_increments_the_recheck_count_without_finalizing_a_recent_absent_kill() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/killID/100/"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let recent = Utc::now().to_rfc3339();
-      character::upsert_killmail(&db, &local_kill(42, 100, &recent, 0))
-        .await
-        .unwrap();
-
-      run_in(&db, server.uri()).await;
-
-      let rows = character::killmails(&db, 42).await.unwrap();
-      assert_eq!(rows[0].value_recheck_count(), 1);
-      assert_eq!(rows[0].value_source(), "local");
-      assert!(!rows[0].value_final());
-    }
-
-    #[tokio::test]
     async fn it_finalizes_a_local_kill_once_it_ages_past_the_recheck_window() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -239,6 +190,55 @@ mod tests {
       run_in(&db, server.uri()).await;
 
       let rows = character::killmails(&db, 42).await.unwrap();
+      assert!(rows[0].value_final());
+    }
+
+    #[tokio::test]
+    async fn it_increments_the_recheck_count_without_finalizing_a_recent_absent_kill() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/killID/100/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw("[]", "application/json"))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let recent = Utc::now().to_rfc3339();
+      character::upsert_killmail(&db, &local_kill(42, 100, &recent, 0))
+        .await
+        .unwrap();
+
+      run_in(&db, server.uri()).await;
+
+      let rows = character::killmails(&db, 42).await.unwrap();
+      assert_eq!(rows[0].value_recheck_count(), 1);
+      assert_eq!(rows[0].value_source(), "local");
+      assert!(!rows[0].value_final());
+    }
+
+    #[tokio::test]
+    async fn it_upgrades_a_local_kill_to_the_zkill_value_when_it_is_now_present() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/killID/100/"))
+        .respond_with(
+          ResponseTemplate::new(200)
+            .set_body_json(serde_json::json!([{"killmail_id": 100, "zkb": {"hash": "hash", "totalValue": 4242.5}}])),
+        )
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let recent = Utc::now().to_rfc3339();
+      character::upsert_killmail(&db, &local_kill(42, 100, &recent, 0))
+        .await
+        .unwrap();
+
+      run_in(&db, server.uri()).await;
+
+      let rows = character::killmails(&db, 42).await.unwrap();
+      assert_eq!(rows[0].value_source(), "zkill");
+      assert_eq!(rows[0].value_isk(), 4242.5);
       assert!(rows[0].value_final());
     }
   }

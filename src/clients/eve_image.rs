@@ -81,6 +81,34 @@ mod tests {
     Client::new(http)
   }
 
+  mod fetch {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_fetches_image_bytes_for_a_built_url() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/portrait"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![7u8, 7, 7], "image/png"))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      let client = Client::with_base_url(http, server.uri());
+      let url = client.character_portrait_url(42, Size::S64);
+
+      let bytes = client.fetch(&url).await.unwrap();
+
+      assert_eq!(bytes, vec![7u8, 7, 7]);
+    }
+  }
+
   mod url {
     use pretty_assertions::assert_eq;
 
@@ -122,34 +150,6 @@ mod tests {
         client.type_render_url(587, Size::S512),
         "https://images.evetech.net/types/587/render?size=512"
       );
-    }
-  }
-
-  mod fetch {
-    use pretty_assertions::assert_eq;
-    use wiremock::{
-      Mock, MockServer, ResponseTemplate,
-      matchers::{method, path},
-    };
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_fetches_image_bytes_for_a_built_url() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/portrait"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![7u8, 7, 7], "image/png"))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db)).build();
-      let client = Client::with_base_url(http, server.uri());
-      let url = client.character_portrait_url(42, Size::S64);
-
-      let bytes = client.fetch(&url).await.unwrap();
-
-      assert_eq!(bytes, vec![7u8, 7, 7]);
     }
   }
 }

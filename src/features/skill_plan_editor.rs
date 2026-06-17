@@ -2425,35 +2425,14 @@ mod tests {
     }
   }
 
-  mod fmt_eta {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_formats_the_instant_with_the_year() {
-      assert_eq!(fmt_eta(now(), 2 * 3_600 + 30 * 60), "1 Jun 2026 · 14:30");
-    }
-
-    #[test]
-    fn it_renders_an_em_dash_for_zero_or_negative() {
-      assert_eq!(fmt_eta(now(), 0), "—");
-    }
-
-    #[test]
-    fn it_rolls_into_a_later_year() {
-      assert!(fmt_eta(now(), 250 * 86_400).ends_with("2027 · 12:00"));
-    }
-  }
-
   mod after_index_for {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_maps_the_start_bucket_to_negative_one() {
-      assert_eq!(after_index_for(None, &[10, 11]), Some(-1));
+    fn it_drops_a_point_anchored_to_a_missing_entry() {
+      assert_eq!(after_index_for(Some(999), &[10, 11]), None);
     }
 
     #[test]
@@ -2462,457 +2441,329 @@ mod tests {
     }
 
     #[test]
-    fn it_drops_a_point_anchored_to_a_missing_entry() {
-      assert_eq!(after_index_for(Some(999), &[10, 11]), None);
+    fn it_maps_the_start_bucket_to_negative_one() {
+      assert_eq!(after_index_for(None, &[10, 11]), Some(-1));
     }
   }
 
-  mod priority {
+  mod creation {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::store::{
+      self,
+      model::{
+        Alliance, Bloodline, Character, Corporation, Gender, ItemCategory, ItemGroup, ItemType, Race, SkillMetadata,
+      },
+      repo::{character, sde, skills},
+    };
 
-    #[test]
-    fn it_cycles_low_normal_high() {
-      assert_eq!(Priority::Low.next(), Priority::Normal);
-      assert_eq!(Priority::Normal.next(), Priority::High);
-      assert_eq!(Priority::High.next(), Priority::Low);
+    const SKILL_CATEGORY_ID: i64 = 16;
+
+    async fn seed_character(db: &Database, id: i64) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
     }
 
-    #[test]
-    fn it_round_trips_through_its_token() {
-      for p in [Priority::Low, Priority::Normal, Priority::High] {
-        assert_eq!(Priority::from_token(p.as_token()), p);
-      }
-      assert_eq!(Priority::from_token("garbage"), Priority::Normal);
-    }
-  }
-
-  mod sort {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_toggles_direction_when_the_same_column_is_reselected() {
-      let sort = Sort {
-        column: SortColumn::Time,
-        direction: SortDirection::Ascending,
-      };
-
-      let flipped = sort.toggled(SortColumn::Time);
-      assert_eq!(flipped.column, SortColumn::Time);
-      assert_eq!(flipped.direction, SortDirection::Descending);
-
-      let flipped_again = flipped.toggled(SortColumn::Time);
-      assert_eq!(flipped_again.direction, SortDirection::Ascending);
-    }
-
-    #[test]
-    fn it_opens_a_new_column_in_its_natural_direction() {
-      let sort = Sort {
-        column: SortColumn::Time,
-        direction: SortDirection::Descending,
-      };
-
-      let switched = sort.toggled(SortColumn::Primary);
-      assert_eq!(switched.column, SortColumn::Primary);
-      assert_eq!(switched.direction, SortDirection::Ascending);
-    }
-
-    #[test]
-    fn it_carets_only_the_active_column() {
-      let sort = Sort {
-        column: SortColumn::Secondary,
-        direction: SortDirection::Descending,
-      };
-
-      assert_eq!(sort.caret(SortColumn::Secondary), Some("\u{2193}"));
-      assert_eq!(sort.caret(SortColumn::Time), None);
-      assert_eq!(sort.caret(SortColumn::Primary), None);
-    }
-
-    #[test]
-    fn it_round_trips_every_column_and_direction_through_its_token() {
-      for column in [
-        SortColumn::Manual,
-        SortColumn::Primary,
-        SortColumn::Secondary,
-        SortColumn::Time,
-      ] {
-        for direction in [SortDirection::Ascending, SortDirection::Descending] {
-          let sort = Sort {
-            column,
-            direction,
-          };
-
-          let parsed = Sort::from_token(sort.as_token());
-          if column == SortColumn::Manual {
-            assert_eq!(parsed, Sort::default());
-          } else {
-            assert_eq!(parsed, sort);
-          }
-        }
-      }
-    }
-
-    #[test]
-    fn it_parses_legacy_tokens_without_error() {
-      assert_eq!(Sort::from_token("manual"), Sort::default());
-      assert_eq!(
-        Sort::from_token("time-asc"),
-        Sort {
-          column: SortColumn::Time,
-          direction: SortDirection::Ascending,
-        }
-      );
-      assert_eq!(
-        Sort::from_token("time-desc"),
-        Sort {
-          column: SortColumn::Time,
-          direction: SortDirection::Descending,
-        }
-      );
-    }
-
-    #[test]
-    fn it_degrades_an_unknown_token_to_manual() {
-      assert_eq!(Sort::from_token("optimal"), Sort::default());
-      assert_eq!(Sort::from_token("garbage").column, SortColumn::Manual);
-    }
-  }
-
-  mod sync_aware_plan {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn attrs() -> Attributes {
-      Attributes {
-        charisma: 17,
-        intelligence: 17,
-        memory: 17,
-        perception: 27,
-        willpower: 21,
-      }
-    }
-
-    fn state_with_l5_entry() -> State {
-      let mut state = State::new(42);
-      state.attrs = attrs();
-      state.entries = vec![edit_entry(1, 3300, 5)];
-      state
-    }
-
-    #[test]
-    fn an_untrained_skill_charges_the_full_target_cost() {
-      let mut state = state_with_l5_entry();
-      state.refresh_rows();
-
-      let row = &state.rows[0];
-      assert!(!row.skipped);
-      assert_eq!({ row.sp }, state.total_sp);
-      assert!(row.sp > 0);
-    }
-
-    #[test]
-    fn a_partially_trained_skill_yields_reduced_remaining_sp() {
-      let mut untrained = state_with_l5_entry();
-      untrained.refresh_rows();
-      let full_sp = untrained.rows[0].sp;
-      let full_sec = untrained.rows[0].sec;
-
-      let mut partial = state_with_l5_entry();
-      partial.synced_levels = HashMap::from([(3300, 4)]);
-      partial.synced_sp = HashMap::from([(3300, 226_275)]);
-      partial.refresh_rows();
-      let partial_row = &partial.rows[0];
-
-      assert!(!partial_row.skipped, "a not-yet-complete level still trains");
-      assert!(
-        partial_row.sp < full_sp,
-        "banked SP discounts the remaining cost ({} < {full_sp})",
-        partial_row.sp
-      );
-      assert!(partial_row.sp > 0, "L5 is not yet reached, so some SP remains");
-      assert!(
-        partial_row.sec < full_sec,
-        "less remaining SP means less remaining time"
-      );
-      assert_eq!(
-        partial.total_sp, partial_row.sp,
-        "plan total reflects the discounted step"
-      );
-    }
-
-    #[test]
-    fn an_already_trained_skill_contributes_zero_remaining() {
-      let mut state = state_with_l5_entry();
-      state.synced_levels = HashMap::from([(3300, 5)]);
-      state.synced_sp = HashMap::from([(3300, 1_280_000)]);
-      state.refresh_rows();
-
-      let row = &state.rows[0];
-      assert!(row.skipped, "an over-trained target is a zero-cost skip row");
-      assert_eq!(row.sp, 0);
-      assert_eq!(row.sec, 0.0);
-      assert_eq!(state.total_sp, 0);
-      assert_eq!(state.total_sec, 0.0);
-    }
-
-    #[test]
-    fn an_over_trained_plan_renders_terminal_training_time_and_eta_cells() {
-      let mut state = state_with_l5_entry();
-      state.synced_levels = HashMap::from([(3300, 5)]);
-      state.synced_sp = HashMap::from([(3300, u64::MAX)]);
-      state.refresh_rows();
-
-      assert_eq!(state.total_sp, 0, "an over-trained plan demands zero SP");
-      assert_eq!(state.total_sec, 0.0, "zero SP means zero training seconds");
-
-      let total_secs = if state.total_sec.is_finite() {
-        state.total_sec.clamp(0.0, i64::MAX as f64) as i64
-      } else {
-        0
-      };
-      assert_eq!(
-        fmt_duration(total_secs),
-        "\u{2014}",
-        "training-time cell renders the terminal dash"
-      );
-      assert_eq!(
-        fmt_eta(now(), total_secs),
-        "\u{2014}",
-        "ETA cell renders the terminal dash"
-      );
-    }
-
-    #[test]
-    fn summary_data_carries_the_character_total_sp() {
-      let mut state = state_with_l5_entry();
-      state.character_total_sp = 12_345_678;
-      state.refresh_rows();
-
-      assert_eq!(state.summary_data().character_total_sp, 12_345_678);
-    }
-
-    #[test]
-    fn installed_implants_shorten_the_plan_training_time() {
-      let mut no_implants = state_with_l5_entry();
-      no_implants.base_attrs = attrs();
-      no_implants.attrs = attrs();
-      no_implants.refresh_rows();
-
-      let mut with_implants = state_with_l5_entry();
-      with_implants.base_attrs = attrs();
-      with_implants.attrs = Attributes {
-        perception: attrs().perception + 5,
-        willpower: attrs().willpower + 5,
-        ..attrs()
-      };
-      with_implants.refresh_rows();
-
-      assert!(no_implants.total_sec > 0.0);
-      assert_eq!(
-        no_implants.total_sp, with_implants.total_sp,
-        "implants change the rate, not the SP demanded"
-      );
-      assert!(
-        with_implants.total_sec < no_implants.total_sec,
-        "installed implants raise the training rate, so the plan finishes sooner ({} < {})",
-        with_implants.total_sec,
-        no_implants.total_sec
-      );
-    }
-
-    #[test]
-    fn implant_bonus_is_the_difference_between_effective_and_base() {
-      let mut state = state_with_l5_entry();
-      state.base_attrs = attrs();
-      state.attrs = Attributes {
-        perception: attrs().perception + 4,
-        memory: attrs().memory + 3,
-        ..attrs()
-      };
-
-      let bonus = state.implant_bonus();
-      assert_eq!(bonus.perception, 4);
-      assert_eq!(bonus.memory, 3);
-      assert_eq!(bonus.charisma, 0);
-      assert_eq!(bonus.intelligence, 0);
-      assert_eq!(bonus.willpower, 0);
-    }
-
-    #[test]
-    fn implants_factor_into_the_summary_current_plan_time() {
-      let mut no_implants = state_with_l5_entry();
-      no_implants.base_attrs = attrs();
-      no_implants.attrs = attrs();
-      no_implants.refresh_rows();
-
-      let mut with_implants = state_with_l5_entry();
-      with_implants.base_attrs = attrs();
-      with_implants.attrs = Attributes {
-        perception: attrs().perception + 5,
-        willpower: attrs().willpower + 5,
-        ..attrs()
-      };
-      with_implants.refresh_rows();
-
-      let baseline = no_implants.summary_data().current_sec;
-      let boosted = with_implants.summary_data().current_sec;
-      assert!(baseline.is_finite() && baseline > 0.0);
-      assert!(
-        boosted < baseline,
-        "the summary's current plan time reflects installed implants ({boosted} < {baseline})"
-      );
-    }
-
-    #[test]
-    fn remap_optimization_stays_within_the_base_range_even_with_implants_installed() {
-      let mut state = state_with_l5_entry();
-      state.base_attrs = attrs();
-      state.attrs = Attributes {
-        charisma: attrs().charisma + 5,
-        intelligence: attrs().intelligence + 5,
-        memory: attrs().memory + 5,
-        perception: attrs().perception + 5,
-        willpower: attrs().willpower + 5,
-      };
-      state.refresh_rows();
-
-      let proposed = state.summary_data().recommendation.base;
-
-      for value in [
-        proposed.charisma,
-        proposed.intelligence,
-        proposed.memory,
-        proposed.perception,
-        proposed.willpower,
-      ] {
-        assert!(
-          (17..=27).contains(&value),
-          "remapped base attribute {value} escaped the [17, 27] base range"
-        );
-      }
-      assert_eq!(
-        proposed.charisma + proposed.intelligence + proposed.memory + proposed.perception + proposed.willpower,
-        99,
-        "remap base attributes must sum to 99"
-      );
-    }
-
-    #[test]
-    fn remap_optimization_ignores_implants_and_matches_the_base_only_recommendation() {
-      let mut no_implants = state_with_l5_entry();
-      no_implants.base_attrs = attrs();
-      no_implants.attrs = attrs();
-      no_implants.refresh_rows();
-
-      let mut with_implants = state_with_l5_entry();
-      with_implants.base_attrs = attrs();
-      with_implants.attrs = Attributes {
-        charisma: attrs().charisma + 4,
-        memory: attrs().memory + 3,
-        ..attrs()
-      };
-      with_implants.refresh_rows();
-
-      assert_eq!(
-        no_implants.summary_data().recommendation.base,
-        with_implants.summary_data().recommendation.base,
-        "installed implants must not change the recommended base remap"
-      );
-    }
-  }
-
-  mod view {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_empty_state_with_no_rows() {
-      let state = State::new(42);
-
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_the_entry_list_with_rows() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_a_placed_remap_divider_and_insertion_affordances() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-      state.remap_availability = 1;
-      state.remap_points = vec![EditRemap {
-        base: Attributes {
-          charisma: 19,
-          intelligence: 21,
-          memory: 19,
-          perception: 21,
-          willpower: 19,
+    async fn seed_skill(db: &Database, skill_id: i64, name: &str) {
+      sde::upsert_item_category(
+        db,
+        &ItemCategory {
+          id: SKILL_CATEGORY_ID,
+          icon_id: None,
+          name: "Skill".to_owned(),
+          published: true,
         },
-        after_entry_id: Some(1),
-        local_id: 1,
-      }];
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_group(
+        db,
+        &ItemGroup {
+          category_id: SKILL_CATEGORY_ID,
+          icon_id: None,
+          id: 255,
+          name: "Gunnery".to_owned(),
+          published: true,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_item_type(
+        db,
+        &ItemType {
+          capacity: None,
+          description: Some("A skill.".to_owned()),
+          dogma_attributes: "[]".to_owned(),
+          group_id: 255,
+          icon_id: None,
+          id: skill_id,
+          market_group_id: None,
+          name: name.to_owned(),
+          packaged_volume: None,
+          portion_size: None,
+          published: true,
+          radius: None,
+          volume: None,
+        },
+      )
+      .await
+      .unwrap();
+      skills::upsert_skill_metadata(
+        db,
+        &SkillMetadata {
+          primary_attribute: 167,
+          rank: 1,
+          secondary_attribute: 168,
+          skill_id,
+        },
+      )
+      .await
+      .unwrap();
     }
 
-    #[test]
-    fn it_renders_the_exhausted_constraint_when_no_remaps_available() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-      state.remap_availability = 0;
-      state.remap_reason = "No neural remaps available — next remap accrues in 30 days".to_owned();
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
+    fn queued(
+      character_id: i64,
+      position: i64,
+      skill_id: i64,
+      finished_level: i64,
+    ) -> crate::store::model::CharacterSkillqueue {
+      crate::store::model::CharacterSkillqueue {
+        character_id,
+        finish_date: None,
+        finished_level,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position: position,
+        skill_id,
+        start_date: None,
+        training_start_sp: None,
+      }
     }
 
-    #[test]
-    fn it_renders_the_summary_right_pane() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-      state.attrs = Attributes {
-        charisma: 19,
-        intelligence: 21,
-        memory: 19,
-        perception: 21,
-        willpower: 19,
-      };
-      state.base_attrs = state.attrs;
-      state.refresh_rows();
+    #[tokio::test]
+    async fn a_loaded_new_plan_defaults_to_untitled_after_save() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
 
-      let _el: Element<'_, Message> = view(&state, now());
+      let mut state = State::new(42);
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
+        &db,
+      );
+      assert_eq!(state.name, "", "a fresh plan opens with an empty name");
+
+      let id = persist(
+        &db,
+        42,
+        None,
+        "Untitled plan",
+        "manual",
+        "current",
+        &[],
+        &[],
+        &[],
+        &[],
+        &[],
+      )
+      .await
+      .unwrap();
+      let plan = skills::get(&db, id).await.unwrap().unwrap();
+      assert_eq!(plan.name(), "Untitled plan");
     }
 
-    #[test]
-    fn it_renders_the_import_export_overlay() {
+    #[tokio::test]
+    async fn from_queue_only_schedules_levels_above_the_trained_level() {
+      use crate::store::model::CharacterSkill;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      character::replace_skills(
+        &db,
+        42,
+        &[CharacterSkill {
+          active_skill_level: 2,
+          character_id: 42,
+          skill_id: 3300,
+          skillpoints_in_skill: 100,
+          trained_skill_level: 2,
+        }],
+      )
+      .await
+      .unwrap();
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 5)])
+        .await
+        .unwrap();
+
+      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
+
+      let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(
+        levels,
+        [3, 4, 5],
+        "only levels above the synced trained level are seeded"
+      );
+    }
+
+    #[tokio::test]
+    async fn from_queue_seeds_entries_expanded_from_the_synced_queue() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      seed_skill(&db, 3301, "Small Hybrid Turret").await;
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3), queued(42, 1, 3301, 2)])
+        .await
+        .unwrap();
+
+      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
+
+      assert!(loaded.plan.is_none(), "a from-queue plan is unsaved until Save");
+      let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(rows, vec![(3300, 1), (3300, 2), (3300, 3), (3301, 1), (3301, 2)]);
+      assert_eq!(
+        loaded.entries[0].meta.skill_name, "Gunnery",
+        "metadata resolved off the DB"
+      );
+    }
+
+    #[tokio::test]
+    async fn from_queue_selection_only_seeds_the_chosen_queue_positions() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      seed_skill(&db, 3301, "Small Hybrid Turret").await;
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3), queued(42, 1, 3301, 2)])
+        .await
+        .unwrap();
+
+      let loaded = async_load(db, 42, Seed::FromQueueSelection(vec![1]), now()).await;
+
+      assert!(loaded.plan.is_none(), "a from-selection plan is unsaved until Save");
+      let skill_ids: Vec<i64> = loaded.entries.iter().map(|e| e.skill_id).collect();
+      assert!(
+        skill_ids.iter().all(|id| *id == 3301),
+        "only the selected queue entry (and its prereqs) is seeded, got {skill_ids:?}"
+      );
+      let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(rows, vec![(3301, 1), (3301, 2)]);
+    }
+
+    #[tokio::test]
+    async fn from_queue_selection_titles_the_draft_plan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_skill(&db, 3300, "Gunnery").await;
+      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3)])
+        .await
+        .unwrap();
+
       let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5)];
-      state.refresh_rows();
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(
+          async_load(db.clone(), 42, Seed::FromQueueSelection(vec![0]), now()).await,
+        )),
+        &db,
+      );
 
-      state.io_panel = Some(IoPanel::Export);
-      {
-        let _el: Element<'_, Message> = view(&state, now());
-      }
+      assert_eq!(state.name, "Plan from selection");
+    }
 
-      state.io_panel = Some(IoPanel::Import);
-      {
-        let _el: Element<'_, Message> = view(&state, now());
-      }
+    #[tokio::test]
+    async fn new_seed_produces_an_empty_unsaved_plan() {
+      let db = store::open_test().await.unwrap();
 
-      state.io_panel = Some(IoPanel::ImportPrompt);
-      {
-        let _el: Element<'_, Message> = view(&state, now());
-      }
+      let loaded = async_load(db, 42, Seed::New, now()).await;
+
+      assert!(loaded.plan.is_none(), "new plan is not persisted until Save");
+      assert!(loaded.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn picker_selections_flip_the_dirty_dot_and_reload_into_the_picker() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let mut state = State::new(42);
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
+        &db,
+      );
+      assert!(!state.dirty());
+
+      let _ = update(&mut state, Message::PickerShipMasteryChanged(587, 4), &db);
+      let _ = update(&mut state, Message::PickerCertProficiencyChanged(1, 2), &db);
+      assert!(state.dirty(), "changing a selection flips the dirty dot");
+
+      let id = persist(
+        &db,
+        42,
+        None,
+        "Combat",
+        "manual",
+        "current",
+        &[],
+        &[],
+        &[],
+        &[(587, 4)],
+        &[(1, 2)],
+      )
+      .await
+      .unwrap();
+
+      let mut reloaded = State::new(42);
+      let _ = update(
+        &mut reloaded,
+        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::Existing(id), now()).await)),
+        &db,
+      );
+      assert_eq!(reloaded.picker.ship_mastery.get(&587).copied(), Some(4));
+      assert_eq!(reloaded.picker.cert_proficiency.get(&1).copied(), Some(2));
+      assert!(!reloaded.dirty(), "a freshly reloaded plan is not dirty");
+    }
+
+    #[tokio::test]
+    async fn ship_mastery_and_cert_proficiency_selections_survive_a_reload() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let id = persist(
+        &db,
+        42,
+        None,
+        "Combat",
+        "manual",
+        "current",
+        &[],
+        &[],
+        &[],
+        &[(587, 4), (588, 2)],
+        &[(1, 2), (3, 3)],
+      )
+      .await
+      .unwrap();
+
+      let loaded = async_load(db, 42, Seed::Existing(id), now()).await;
+
+      assert_eq!(loaded.ship_mastery.get(&587).copied(), Some(4));
+      assert_eq!(loaded.ship_mastery.get(&588).copied(), Some(2));
+      assert_eq!(loaded.cert_proficiency.get(&1).copied(), Some(2));
+      assert_eq!(loaded.cert_proficiency.get(&3).copied(), Some(3));
     }
   }
 
@@ -2927,20 +2778,6 @@ mod tests {
 
       let _ = update(&mut state, Message::NameChanged("Combat".to_owned()), &db);
 
-      assert!(state.dirty());
-    }
-
-    #[tokio::test]
-    async fn priority_cycle_flips_dirty() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5)];
-      state.saved = state.snapshot();
-      let db = crate::store::open_test().await.unwrap();
-      assert!(!state.dirty());
-
-      let _ = update(&mut state, Message::EntryPriorityCycled(1), &db);
-
-      assert_eq!(state.entries[0].priority, Priority::High);
       assert!(state.dirty());
     }
 
@@ -2961,6 +2798,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn priority_cycle_flips_dirty() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5)];
+      state.saved = state.snapshot();
+      let db = crate::store::open_test().await.unwrap();
+      assert!(!state.dirty());
+
+      let _ = update(&mut state, Message::EntryPriorityCycled(1), &db);
+
+      assert_eq!(state.entries[0].priority, Priority::High);
+      assert!(state.dirty());
+    }
+
+    #[tokio::test]
     async fn sort_change_flips_dirty() {
       let mut state = State::new(42);
       state.entries = vec![edit_entry(1, 3300, 5)];
@@ -2975,31 +2826,25 @@ mod tests {
     }
   }
 
-  mod toggles {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_defaults_the_picker_open() {
-      let state = State::new(42);
-      assert!(state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_picker() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open);
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open);
-    }
-  }
-
   mod drag {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_ignores_drag_when_not_in_manual_sort() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(10, 3300, 5), edit_entry(11, 3301, 5)];
+      state.sort = Sort {
+        column: SortColumn::Time,
+        direction: SortDirection::Ascending,
+      };
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::DragStarted(11), &db);
+
+      assert!(state.dragging.is_none());
+    }
 
     #[tokio::test]
     async fn it_reorders_in_memory_and_keeps_ids_stable() {
@@ -3022,20 +2867,1113 @@ mod tests {
       assert_eq!(ids, [10, 11, 12], "stable ids");
       assert!(state.dirty());
     }
+  }
+
+  mod fmt_eta {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_formats_the_instant_with_the_year() {
+      assert_eq!(fmt_eta(now(), 2 * 3_600 + 30 * 60), "1 Jun 2026 · 14:30");
+    }
+
+    #[test]
+    fn it_renders_an_em_dash_for_zero_or_negative() {
+      assert_eq!(fmt_eta(now(), 0), "—");
+    }
+
+    #[test]
+    fn it_rolls_into_a_later_year() {
+      assert!(fmt_eta(now(), 250 * 86_400).ends_with("2027 · 12:00"));
+    }
+  }
+
+  mod gap_hover {
+    use super::*;
 
     #[tokio::test]
-    async fn it_ignores_drag_when_not_in_manual_sort() {
+    async fn hovering_and_leaving_a_gap_tracks_the_hovered_gap() {
       let mut state = State::new(42);
-      state.entries = vec![edit_entry(10, 3300, 5), edit_entry(11, 3301, 5)];
-      state.sort = Sort {
-        column: SortColumn::Time,
-        direction: SortDirection::Ascending,
+      let db = crate::store::open_test().await.unwrap();
+      assert!(state.hovered_gap.is_none());
+
+      let _ = update(&mut state, Message::GapHovered(7), &db);
+      assert_eq!(state.hovered_gap, Some(7));
+
+      let _ = update(&mut state, Message::GapUnhovered, &db);
+      assert!(state.hovered_gap.is_none());
+    }
+  }
+
+  mod import_export_flow {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
+
+    fn catalog_entry(type_id: i64, name: &str) -> SkillCatalogEntry {
+      SkillCatalogEntry {
+        group_id: 255,
+        group_name: "Gunnery".to_owned(),
+        name: name.to_owned(),
+        primary_attr: AttrKey::Perception,
+        prereqs: vec![],
+        rank: 1,
+        secondary_attr: AttrKey::Willpower,
+        type_id,
+      }
+    }
+
+    fn state_with_catalog() -> State {
+      let mut state = State::new(42);
+      state.picker = PickerState {
+        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
+        catalog: Some(SkillCatalog {
+          groups: vec![SkillCatalogGroup {
+            id: 255,
+            name: "Gunnery".to_owned(),
+            skills: vec![
+              catalog_entry(3300, "Gunnery"),
+              catalog_entry(3301, "Small Hybrid Turret"),
+            ],
+          }],
+        }),
+        expanded_groups: std::iter::once(255).collect(),
+        trained_levels: HashMap::new(),
+        query: String::new(),
+        ..PickerState::default()
       };
+      state.saved = state.snapshot();
+      state
+    }
+
+    #[test]
+    fn a_json_plan_round_trips_through_the_dto_losslessly() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 2);
+      state.entries[0].note = "watch the rank".to_owned();
+      state.entries[0].priority = Priority::High;
+      let first_id = state.entries[0].id;
+      state.remap_points = vec![
+        EditRemap {
+          base: Attributes {
+            charisma: 19,
+            intelligence: 21,
+            memory: 19,
+            perception: 21,
+            willpower: 19,
+          },
+          after_entry_id: None,
+          local_id: 1,
+        },
+        EditRemap {
+          base: Attributes {
+            charisma: 17,
+            intelligence: 17,
+            memory: 17,
+            perception: 27,
+            willpower: 21,
+          },
+          after_entry_id: Some(first_id),
+          local_id: 2,
+        },
+      ];
+
+      let dto = plan_file(&state);
+      let restored = state_with_catalog();
+      let mut restored = restored;
+      apply_json_import(&mut restored, dto.clone(), ImportMode::Replace);
+
+      let original: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let round: Vec<(i64, u8)> = restored.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(round, original, "skills survive in the same order");
+      assert_eq!(restored.entries[0].note, "watch the rank");
+      assert_eq!(restored.entries[0].priority, Priority::High);
+
+      let anchors: Vec<Option<usize>> = dto.remaps.iter().map(|r| r.after_index).collect();
+      assert_eq!(anchors, vec![None, Some(0)], "remap anchors persist by ordinal index");
+      assert_eq!(restored.remap_points.len(), 2, "all remap points restored");
+      assert_eq!(restored.remap_points[0].after_entry_id, None);
+      assert_eq!(restored.remap_points[1].after_entry_id, Some(restored.entries[0].id));
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_import_neither_prompts_nor_changes_the_plan() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 2);
+      state.refresh_rows();
+      state.saved = state.snapshot();
       let db = crate::store::open_test().await.unwrap();
 
-      let _ = update(&mut state, Message::DragStarted(11), &db);
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("not a skill line at all".to_owned())),
+        &db,
+      );
 
-      assert!(state.dragging.is_none());
+      assert!(state.io_panel.is_none(), "garbage raises no prompt");
+      assert!(state.pending_import.is_none(), "nothing is staged");
+      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(levels, [1, 2], "the plan is untouched");
+    }
+
+    #[tokio::test]
+    async fn append_a_json_plan_dedups_existing_skill_levels() {
+      let mut donor = state_with_catalog();
+      add_skill(&mut donor, 3301, 1);
+      let dto = plan_file(&donor);
+
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3301, 1);
+      state.refresh_rows();
+      let db = crate::store::open_test().await.unwrap();
+
+      state.pending_import = Some(import_export::Payload::Json(dto));
+      let _ = update(&mut state, Message::ImportAppend, &db);
+
+      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(
+        rows,
+        vec![(3301, 1)],
+        "an identical skill-level is not doubled on append"
+      );
+    }
+
+    #[tokio::test]
+    async fn append_adds_to_the_end_and_dedups_existing_levels() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 2);
+      state.refresh_rows();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("Gunnery 1\nSmall Hybrid Turret 1".to_owned())),
+        &db,
+      );
+      let _ = update(&mut state, Message::ImportAppend, &db);
+
+      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(
+        rows,
+        vec![(3300, 1), (3300, 2), (3301, 1)],
+        "append keeps existing rows, dedups Gunnery 1, and adds the new skill at the end"
+      );
+    }
+
+    #[tokio::test]
+    async fn dismiss_clears_a_staged_import() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("Gunnery 1".to_owned())),
+        &db,
+      );
+      assert_eq!(state.io_panel, Some(IoPanel::ImportPrompt));
+
+      let _ = update(&mut state, Message::IoDismissed, &db);
+      assert!(state.io_panel.is_none());
+      assert!(state.pending_import.is_none());
+    }
+
+    #[test]
+    fn export_text_emits_one_eve_style_line_per_user_entry() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 3);
+      state.refresh_rows();
+
+      assert_eq!(serialize_plan_text(&state), "Gunnery 1\nGunnery 2\nGunnery 3");
+    }
+
+    #[test]
+    fn export_text_omits_auto_added_prerequisites() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 2);
+      if let Some(entry) = state.entries.iter_mut().find(|e| e.to_level == 2) {
+        entry.is_auto = true;
+      }
+
+      assert_eq!(
+        serialize_plan_text(&state),
+        "Gunnery 1",
+        "auto rows do not carry to EVE text"
+      );
+    }
+
+    #[tokio::test]
+    async fn import_and_export_triggers_toggle_their_dropdowns() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ExportRequested, &db);
+      assert_eq!(state.io_panel, Some(IoPanel::Export));
+      let _ = update(&mut state, Message::ImportRequested, &db);
+      assert_eq!(state.io_panel, Some(IoPanel::Import));
+      let _ = update(&mut state, Message::ImportRequested, &db);
+      assert!(state.io_panel.is_none());
+    }
+
+    #[tokio::test]
+    async fn import_from_clipboard_smart_detects_text_and_prompts() {
+      let mut state = state_with_catalog();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::ImportRequested, &db);
+      assert_eq!(state.io_panel, Some(IoPanel::Import));
+
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("Small Hybrid Turret 2\n".to_owned())),
+        &db,
+      );
+
+      assert_eq!(
+        state.io_panel,
+        Some(IoPanel::ImportPrompt),
+        "a valid payload raises the prompt"
+      );
+      assert!(
+        matches!(state.pending_import, Some(import_export::Payload::Text(_))),
+        "plain text smart-detects as text"
+      );
+    }
+
+    #[tokio::test]
+    async fn replace_clears_then_loads_the_text_import() {
+      let mut state = state_with_catalog();
+      add_skill(&mut state, 3300, 2);
+      state.refresh_rows();
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::ImportClipboardRead(Some("Small Hybrid Turret 2".to_owned())),
+        &db,
+      );
+      let _ = update(&mut state, Message::ImportReplace, &db);
+
+      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(rows, vec![(3301, 1), (3301, 2)], "replace clears the old Gunnery rows");
+      assert!(state.io_panel.is_none(), "the prompt closes after replace");
+    }
+  }
+
+  mod insertion_pill {
+    use super::*;
+
+    #[test]
+    fn the_hovered_gap_renders_the_clickable_pill() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.remap_availability = 1;
+      state.hovered_gap = Some(1);
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn the_start_gap_also_renders_the_pill_when_hovered() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5)];
+      state.remap_availability = 1;
+      state.hovered_gap = Some(GAP_START);
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+  }
+
+  mod load {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_an_empty_new_plan_without_panicking() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let loaded = async_load(db, 42, Seed::New, now()).await;
+
+      assert!(loaded.plan.is_none());
+      assert!(loaded.entries.is_empty());
+      assert_eq!(loaded.sort.column, SortColumn::Manual);
+    }
+  }
+
+  mod panes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_both_pane_widths_when_the_store_is_empty() {
+      let state = State::new(42).with_restored_panes(&UiState::default());
+
+      assert_eq!(state.picker_pane.width(), PICKER_WIDTH);
+      assert_eq!(state.summary_pane.width(), SUMMARY_WIDTH);
+    }
+
+    #[tokio::test]
+    async fn it_grows_the_picker_on_a_rightward_drag_of_its_right_edge_handle() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Picker), &db);
+      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(540.0), &db);
+
+      assert_eq!(state.picker_pane.width(), PICKER_WIDTH + 40.0);
+    }
+
+    #[tokio::test]
+    async fn it_grows_the_summary_on_a_leftward_drag_of_its_left_edge_handle() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
+      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
+      let _ = update(&mut state, Message::PaneDrag(460.0), &db);
+
+      assert_eq!(state.summary_pane.width(), SUMMARY_WIDTH + 40.0);
+    }
+
+    #[test]
+    fn it_restores_both_pane_widths_from_the_keyed_store() {
+      let mut ui = UiState::default();
+      ui.panes.insert(PICKER_PANE_KEY.to_owned(), 400.0);
+      ui.panes.insert(SUMMARY_PANE_KEY.to_owned(), 300.0);
+
+      let state = State::new(42).with_restored_panes(&ui);
+
+      assert_eq!(state.picker_pane.width(), 400.0);
+      assert_eq!(state.summary_pane.width(), 300.0);
+    }
+
+    #[tokio::test]
+    async fn it_settles_the_dragged_pane_and_clears_the_active_pane_on_drag_end() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+
+      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
+      assert!(state.summary_pane.is_active());
+      assert_eq!(state.dragging_pane, Some(EditorPane::Summary));
+
+      let _ = update(&mut state, Message::PaneDragEnd, &db);
+
+      assert!(!state.summary_pane.is_active());
+      assert_eq!(state.dragging_pane, None);
+    }
+  }
+
+  mod picker {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
+
+    fn catalog_entry(type_id: i64, name: &str, rank: u8, prereqs: Vec<(String, u8)>) -> SkillCatalogEntry {
+      SkillCatalogEntry {
+        group_id: 255,
+        group_name: "Gunnery".to_owned(),
+        name: name.to_owned(),
+        primary_attr: AttrKey::Perception,
+        prereqs,
+        rank,
+        secondary_attr: AttrKey::Willpower,
+        type_id,
+      }
+    }
+
+    fn state_with_catalog(skills: Vec<SkillCatalogEntry>) -> State {
+      let mut state = State::new(42);
+      state.picker = PickerState {
+        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
+        catalog: Some(SkillCatalog {
+          groups: vec![SkillCatalogGroup {
+            id: 255,
+            name: "Gunnery".to_owned(),
+            skills,
+          }],
+        }),
+        expanded_groups: std::iter::once(255).collect(),
+        trained_levels: HashMap::new(),
+        query: String::new(),
+        ..PickerState::default()
+      };
+      state.saved = state.snapshot();
+      state
+    }
+
+    fn cert_skill(
+      skill_id: i64,
+      basic: i64,
+      improved: i64,
+      advanced: i64,
+      elite: i64,
+    ) -> crate::store::model::CertificateSkill {
+      crate::store::model::CertificateSkill {
+        advanced,
+        basic,
+        certificate_id: 1,
+        elite,
+        improved,
+        skill_id,
+      }
+    }
+
+    fn state_with_items(skills: Vec<SkillCatalogEntry>) -> State {
+      use crate::features::skill_plan_editor::picker::{PickerCert, PickerShip};
+
+      let mut state = state_with_catalog(skills);
+      state.picker.ships = Some(vec![PickerShip {
+        id: 587,
+        name: "Rifter".to_owned(),
+        group_id: 25,
+        group_name: "Frigate".to_owned(),
+        own_requirements: vec![(3300, 1)],
+        tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5)], vec![cert_skill(3301, 1, 2, 3, 5)]],
+      }]);
+      state.picker.certs = Some(vec![PickerCert {
+        id: 1,
+        name: "Gunnery Basics".to_owned(),
+        grade: 1,
+        skills: vec![cert_skill(3300, 1, 2, 3, 5), cert_skill(3301, 0, 2, 3, 5)],
+      }]);
+      state
+    }
+
+    #[tokio::test]
+    async fn adding_a_cert_at_proficiency_adds_that_columns_skills_as_auto() {
+      let mut state = state_with_items(vec![
+        catalog_entry(3300, "Gunnery", 1, vec![]),
+        catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
+      ]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerCertSelected(1, 1), &db);
+
+      let mut rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      rows.sort();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, false), (3300, 2, false), (3301, 1, false), (3301, 2, false)],
+        "the cert's improved-column skills are removable wishes, not locked prereqs"
+      );
+    }
+
+    #[tokio::test]
+    async fn adding_a_module_adds_its_required_skills_as_auto() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      state.picker.modules = Some(vec![crate::features::skill_plan_editor::picker::PickerModule {
+        id: 12_058,
+        name: "125mm Gatling AutoCannon".to_owned(),
+        group_id: 55,
+        group_name: "Projectile Weapon".to_owned(),
+        requirements: vec![(3300, 3)],
+      }]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerModuleSelected(12_058), &db);
+
+      let rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, false), (3300, 2, false), (3300, 3, false)],
+        "the module's required skill is a removable wish, not a locked prereq"
+      );
+    }
+
+    #[tokio::test]
+    async fn adding_a_ship_at_mastery_tier_adds_the_cumulative_skill_set_as_auto() {
+      let mut state = state_with_items(vec![
+        catalog_entry(3300, "Gunnery", 1, vec![]),
+        catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
+      ]);
+      let db = crate::store::open_test().await.unwrap();
+      assert!(!state.dirty());
+
+      let _ = update(&mut state, Message::PickerShipSelected(587, 2), &db);
+
+      let mut rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      rows.sort();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, false), (3301, 1, false), (3301, 2, false)],
+        "the mastery's directly-required skills are removable wishes, not locked prereqs"
+      );
+      assert!(state.dirty(), "adding a ship flips the dirty dot");
+    }
+
+    #[tokio::test]
+    async fn it_locks_only_the_expanded_prereqs_pulled_behind_a_mastery_skill() {
+      use crate::features::skill_plan_editor::picker::PickerShip;
+
+      let mut state = state_with_catalog(vec![
+        catalog_entry(3300, "Gunnery", 1, vec![]),
+        catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+      ]);
+      state.picker.ships = Some(vec![PickerShip {
+        id: 587,
+        name: "Rifter".to_owned(),
+        group_id: 25,
+        group_name: "Frigate".to_owned(),
+        own_requirements: vec![],
+        tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+      }]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+      let mut rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      rows.sort();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3301, 1, false)],
+        "the directly-required turret is a removable wish; its Gunnery prereqs are locked"
+      );
+    }
+
+    #[test]
+    fn it_renders_each_non_skills_tab_loading_and_loaded_without_panicking() {
+      use crate::features::skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip, PickerTab};
+
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      state.picker_open = true;
+
+      for tab in [PickerTab::Ships, PickerTab::Modules, PickerTab::Certs] {
+        state.picker.active_tab = tab;
+        state.refresh_rows();
+        let _loading: Element<'_, Message> = view(&state, now());
+      }
+
+      state.picker.ships = Some(vec![PickerShip {
+        id: 587,
+        name: "Rifter".to_owned(),
+        group_id: 25,
+        group_name: "Frigate".to_owned(),
+        own_requirements: vec![(3300, 1)],
+        tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5)]],
+      }]);
+      state.picker.modules = Some(vec![PickerModule {
+        id: 12_058,
+        name: "125mm Gatling AutoCannon".to_owned(),
+        group_id: 55,
+        group_name: "Projectile Weapon".to_owned(),
+        requirements: vec![(3300, 1)],
+      }]);
+      state.picker.certs = Some(vec![PickerCert {
+        id: 1,
+        name: "Gunnery Basics".to_owned(),
+        grade: 1,
+        skills: vec![cert_skill(3300, 1, 2, 3, 5)],
+      }]);
+
+      for tab in [PickerTab::Ships, PickerTab::Modules, PickerTab::Certs] {
+        state.picker.active_tab = tab;
+        state.refresh_rows();
+        let _loaded: Element<'_, Message> = view(&state, now());
+      }
+    }
+
+    #[test]
+    fn it_renders_the_open_picker_without_panicking() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      state.picker_open = true;
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[tokio::test]
+    async fn picker_entries_get_unique_transient_ids() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
+
+      let ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
+      let mut unique = ids.clone();
+      unique.sort_unstable();
+      unique.dedup();
+      assert_eq!(unique.len(), ids.len(), "transient ids are unique");
+      assert!(
+        ids.iter().all(|&id| id < 0),
+        "transient ids are negative (Save treats them as new)"
+      );
+    }
+
+    #[tokio::test]
+    async fn picking_a_level_expands_into_one_level_steps_and_flips_dirty() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+      assert!(!state.dirty());
+
+      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
+
+      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(levels, [1, 2, 3], "a pick to L3 inserts the three missing levels");
+      assert!(state.entries.iter().all(|e| !e.is_auto), "explicit picks are not auto");
+      assert_eq!(
+        state.entries[0].meta.skill_name, "Gunnery",
+        "metadata resolved from the catalog"
+      );
+      assert!(state.dirty(), "adding a skill flips the dirty dot");
+    }
+
+    #[tokio::test]
+    async fn picking_a_level_inserts_direct_prereqs_as_auto_entries() {
+      let mut state = state_with_catalog(vec![
+        catalog_entry(3300, "Gunnery", 1, vec![]),
+        catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+      ]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
+
+      let rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3330, 1, false)],
+        "prereqs inserted before the target, flagged is_auto"
+      );
+    }
+
+    #[tokio::test]
+    async fn picking_a_trained_level_is_a_no_op() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      state.picker.trained_levels = HashMap::from([(3300, 5)]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerLevelPicked(3300, 4), &db);
+
+      assert!(state.entries.is_empty(), "an already-trained pick schedules nothing");
+    }
+
+    #[tokio::test]
+    async fn re_picking_an_already_planned_level_adds_no_duplicate_slot() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
+      let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
+
+      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(levels, [1, 2, 3], "no duplicate slots after re-picking a planned level");
+    }
+
+    mod remove_skill {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      fn rows(state: &State) -> Vec<(i64, u8, bool)> {
+        state
+          .entries
+          .iter()
+          .map(|e| (e.skill_id, e.to_level, e.is_auto))
+          .collect()
+      }
+
+      fn entry_id_for(state: &State, skill_id: i64, to_level: u8) -> i64 {
+        state
+          .entries
+          .iter()
+          .find(|e| e.skill_id == skill_id && e.to_level == to_level)
+          .unwrap()
+          .id
+      }
+
+      fn ship_with_two_required_skills() -> State {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
+        ]);
+        state.picker.ships = Some(vec![PickerShip {
+          id: 587,
+          name: "Rifter".to_owned(),
+          group_id: 25,
+          group_name: "Frigate".to_owned(),
+          own_requirements: vec![],
+          tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5), cert_skill(3301, 1, 2, 3, 5)]],
+        }]);
+        state
+      }
+
+      #[tokio::test]
+      async fn it_does_not_individually_remove_a_locked_prereq_row() {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        state.picker.ships = Some(vec![PickerShip {
+          id: 587,
+          name: "Rifter".to_owned(),
+          group_id: 25,
+          group_name: "Frigate".to_owned(),
+          own_requirements: vec![],
+          tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+        }]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+        let prereq_id = entry_id_for(&state, 3300, 2);
+        let before = rows(&state);
+        let _ = update(&mut state, Message::EntryRemoved(prereq_id), &db);
+
+        assert_eq!(
+          rows(&state),
+          before,
+          "an is_auto prereq row cannot be removed on its own"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_keeps_other_masteries_when_removing_one_masterys_wish() {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+          catalog_entry(3302, "Medium Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        state.picker.ships = Some(vec![
+          PickerShip {
+            id: 587,
+            name: "Rifter".to_owned(),
+            group_id: 25,
+            group_name: "Frigate".to_owned(),
+            own_requirements: vec![],
+            tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+          },
+          PickerShip {
+            id: 588,
+            name: "Thrasher".to_owned(),
+            group_id: 25,
+            group_name: "Destroyer".to_owned(),
+            own_requirements: vec![],
+            tier_cert_skills: vec![vec![cert_skill(3302, 1, 2, 3, 5)]],
+          },
+        ]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+        let _ = update(&mut state, Message::PickerShipSelected(588, 1), &db);
+
+        let id = entry_id_for(&state, 3301, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3302, 1, false)],
+          "the second ship's wish and its still-needed Gunnery prereq are retained"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_keeps_the_rest_when_removing_one_skill_from_a_pure_mastery_plan() {
+        let mut state = ship_with_two_required_skills();
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+        let id = entry_id_for(&state, 3300, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3301, 1, false)],
+          "only the removed mastery skill is dropped; the other survives"
+        );
+      }
+
+      #[tokio::test]
+      async fn removing_a_level_also_removes_higher_levels_of_the_same_skill() {
+        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3300, 5), &db);
+
+        let id = entry_id_for(&state, 3300, 3);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        assert_eq!(
+          rows(&state),
+          vec![(3300, 1, false), (3300, 2, false)],
+          "removing L3 drops L3, L4, L5 but keeps the lower levels"
+        );
+      }
+
+      #[tokio::test]
+      async fn removing_a_manual_skill_that_is_also_a_prereq_keeps_the_needed_lower_levels() {
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3300, 5), &db);
+        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
+
+        let id = entry_id_for(&state, 3300, 4);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3300, 1, false), (3300, 2, false), (3300, 3, false), (3330, 1, false),],
+          "Gunnery I-III remain (still a prereq for the turret); IV and V are removed"
+        );
+      }
+
+      #[tokio::test]
+      async fn removing_a_skill_drops_its_orphaned_auto_prereqs() {
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
+        assert_eq!(state.entries.len(), 4, "Gunnery I-III auto + Small Hybrid Turret I");
+
+        let id = entry_id_for(&state, 3330, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        assert!(
+          state.entries.is_empty(),
+          "removing the only wish drops its now-orphaned auto prereqs"
+        );
+      }
+
+      #[tokio::test]
+      async fn removing_a_skill_flips_the_dirty_state_and_refreshes_rows() {
+        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
+        state.saved = state.snapshot();
+        state.recompute_dirty();
+        assert!(!state.dirty());
+
+        let id = entry_id_for(&state, 3300, 2);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        assert_eq!(rows(&state), vec![(3300, 1, false)], "only L1 remains");
+        assert_eq!(state.rows.len(), 1, "computed rows refreshed");
+        assert!(state.dirty(), "removal marks the plan dirty");
+      }
+
+      #[tokio::test]
+      async fn removing_a_skill_keeps_a_prereq_still_needed_by_another_skill() {
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+          catalog_entry(3340, "Medium Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
+        let _ = update(&mut state, Message::PickerLevelPicked(3340, 1), &db);
+
+        let id = entry_id_for(&state, 3330, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3340, 1, false),],
+          "the shared Gunnery prereq is retained for the other wished skill"
+        );
+      }
+
+      #[tokio::test]
+      async fn removing_an_unknown_id_is_a_no_op() {
+        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
+
+        let _ = update(&mut state, Message::EntryRemoved(999_999), &db);
+
+        assert_eq!(
+          rows(&state),
+          vec![(3300, 1, false), (3300, 2, false)],
+          "nothing removed"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn search_and_group_toggle_update_picker_state() {
+      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerSearchChanged("gun".to_owned()), &db);
+      assert_eq!(state.picker.query, "gun");
+
+      assert!(state.picker.expanded_groups.contains(&255));
+      let _ = update(&mut state, Message::PickerGroupToggled(255), &db);
+      assert!(!state.picker.expanded_groups.contains(&255));
+      let _ = update(&mut state, Message::PickerGroupToggled(255), &db);
+      assert!(state.picker.expanded_groups.contains(&255));
+    }
+
+    #[tokio::test]
+    async fn selecting_a_cert_proficiency_chip_updates_the_selection() {
+      let mut state = state_with_items(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerCertProficiencyChanged(1, 2), &db);
+      assert_eq!(state.picker.cert_proficiency.get(&1).copied(), Some(2));
+    }
+
+    #[tokio::test]
+    async fn selecting_a_ship_mastery_chip_updates_the_selection() {
+      let mut state = state_with_items(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerShipMasteryChanged(587, 4), &db);
+      assert_eq!(state.picker.ship_mastery.get(&587).copied(), Some(4));
+    }
+  }
+
+  mod picker_ships_loader {
+    use super::*;
+    use crate::store::{
+      model::{ItemCategory, ItemGroup, ItemType},
+      repo::sde::{upsert_item_category, upsert_item_group, upsert_item_type},
+    };
+
+    fn category(id: i64, name: &str) -> ItemCategory {
+      ItemCategory {
+        id,
+        icon_id: None,
+        name: name.to_owned(),
+        published: true,
+      }
+    }
+
+    fn group(id: i64, category_id: i64, name: &str) -> ItemGroup {
+      ItemGroup {
+        category_id,
+        icon_id: None,
+        id,
+        name: name.to_owned(),
+        published: true,
+      }
+    }
+
+    fn item(id: i64, group_id: i64, name: &str) -> ItemType {
+      ItemType {
+        capacity: None,
+        description: Some("Test item".to_owned()),
+        dogma_attributes: "[]".to_owned(),
+        group_id,
+        icon_id: None,
+        id,
+        market_group_id: None,
+        name: name.to_owned(),
+        packaged_volume: None,
+        portion_size: None,
+        published: true,
+        radius: None,
+        volume: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_assembles_the_ships_tab_list_off_the_db() {
+      let db = crate::store::open_test().await.unwrap();
+      upsert_item_category(&db, &category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &item(587, 25, "Rifter")).await.unwrap();
+
+      let ships = load_picker_ships(db).await;
+
+      assert_eq!(ships.len(), 1);
+      assert_eq!(ships[0].id, 587);
+      assert_eq!(ships[0].name, "Rifter");
+      assert_eq!(ships[0].group_id, 25);
+      assert_eq!(ships[0].group_name, "Frigate");
+    }
+
+    #[tokio::test]
+    async fn it_yields_an_empty_list_when_no_ships_are_seeded() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let ships = load_picker_ships(db).await;
+
+      assert!(ships.is_empty());
+    }
+  }
+
+  mod picker_tabs {
+    use super::*;
+    use crate::features::skill_plan_editor::picker::PickerTab;
+
+    #[tokio::test]
+    async fn selecting_a_tab_switches_the_active_tab() {
+      let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
+      assert_eq!(state.picker.active_tab, PickerTab::Skills);
+
+      let _ = update(&mut state, Message::PickerTabSelected(PickerTab::Ships), &db);
+      assert_eq!(
+        state.picker.active_tab,
+        PickerTab::Ships,
+        "clicking a tab switches to it"
+      );
+
+      let _ = update(&mut state, Message::PickerTabSelected(PickerTab::Skills), &db);
+      assert_eq!(state.picker.active_tab, PickerTab::Skills);
+    }
+  }
+
+  mod priority {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_cycles_low_normal_high() {
+      assert_eq!(Priority::Low.next(), Priority::Normal);
+      assert_eq!(Priority::Normal.next(), Priority::High);
+      assert_eq!(Priority::High.next(), Priority::Low);
+    }
+
+    #[test]
+    fn it_round_trips_through_its_token() {
+      for p in [Priority::Low, Priority::Normal, Priority::High] {
+        assert_eq!(Priority::from_token(p.as_token()), p);
+      }
+      assert_eq!(Priority::from_token("garbage"), Priority::Normal);
     }
   }
 
@@ -3070,39 +4008,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_inserts_a_remap_seeded_from_the_synced_base() {
+    async fn an_impossible_bump_is_a_no_op() {
       let mut state = state_with(1);
       let db = crate::store::open_test().await.unwrap();
+      state.remap_points = vec![EditRemap {
+        base: Attributes {
+          charisma: 17,
+          intelligence: 17,
+          memory: 21,
+          perception: 27,
+          willpower: 17,
+        },
+        after_entry_id: Some(10),
+        local_id: 99,
+      }];
 
-      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let _ = update(&mut state, Message::RemapAttrBumped(99, AttrKey::Perception, 1), &db);
 
-      assert_eq!(state.remap_points.len(), 1);
-      assert_eq!(state.remap_points[0].after_entry_id, Some(10));
-      assert_eq!(state.remap_points[0].base, base());
-      assert!(state.dirty());
-    }
-
-    #[tokio::test]
-    async fn it_caps_manual_in_plan_insertion_by_availability() {
-      let mut state = state_with(1);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
-      let _ = update(&mut state, Message::RemapInserted(Some(11)), &db);
-
-      assert_eq!(state.remap_points.len(), 1, "second in-plan insert is capped");
-      assert!(!state.can_place_remap());
-    }
-
-    #[tokio::test]
-    async fn the_start_point_is_free_and_not_capped() {
-      let mut state = state_with(0);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::RemapInserted(None), &db);
-
-      assert_eq!(state.remap_points.len(), 1);
-      assert_eq!(state.remap_points[0].after_entry_id, None);
+      assert_eq!(state.remap_points[0].base.perception, 27, "illegal bump did not move");
     }
 
     #[tokio::test]
@@ -3126,39 +4049,6 @@ mod tests {
       assert_eq!(after.perception, base().perception + 1, "perception bumped +1");
       let after_total = after.charisma + after.intelligence + after.memory + after.perception + after.willpower;
       assert_eq!(after_total, before_total, "base total held at 99");
-    }
-
-    #[tokio::test]
-    async fn an_impossible_bump_is_a_no_op() {
-      let mut state = state_with(1);
-      let db = crate::store::open_test().await.unwrap();
-      state.remap_points = vec![EditRemap {
-        base: Attributes {
-          charisma: 17,
-          intelligence: 17,
-          memory: 21,
-          perception: 27,
-          willpower: 17,
-        },
-        after_entry_id: Some(10),
-        local_id: 99,
-      }];
-
-      let _ = update(&mut state, Message::RemapAttrBumped(99, AttrKey::Perception, 1), &db);
-
-      assert_eq!(state.remap_points[0].base.perception, 27, "illegal bump did not move");
-    }
-
-    #[tokio::test]
-    async fn it_removes_a_remap_point() {
-      let mut state = state_with(2);
-      let db = crate::store::open_test().await.unwrap();
-      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
-      let local_id = state.remap_points[0].local_id;
-
-      let _ = update(&mut state, Message::RemapRemoved(local_id), &db);
-
-      assert!(state.remap_points.is_empty());
     }
 
     #[test]
@@ -3187,66 +4077,53 @@ mod tests {
       });
       assert_eq!(state.placed_in_plan_remaps(), 2, "start point not counted");
     }
-  }
 
-  mod topo_sort {
-    use super::*;
+    #[tokio::test]
+    async fn it_caps_manual_in_plan_insertion_by_availability() {
+      let mut state = state_with(1);
+      let db = crate::store::open_test().await.unwrap();
 
-    #[test]
-    fn time_asc_never_places_a_level_before_its_lower_level() {
-      let mut state = State::new(42);
-      state.entries = vec![
-        edit_entry(1, 100, 3),
-        edit_entry(2, 100, 1),
-        edit_entry(3, 100, 2),
-        edit_entry(4, 200, 1),
-      ];
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let _ = update(&mut state, Message::RemapInserted(Some(11)), &db);
 
-      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Ascending);
-
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
-      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
-      let l3 = order.iter().position(|&(s, l)| s == 100 && l == 3).unwrap();
-      assert!(l1 < l2 && l2 < l3, "same-skill prereq order preserved: {order:?}");
+      assert_eq!(state.remap_points.len(), 1, "second in-plan insert is capped");
+      assert!(!state.can_place_remap());
     }
 
-    #[test]
-    fn time_desc_still_respects_same_skill_prereqs() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 100, 1), edit_entry(2, 100, 2), edit_entry(3, 200, 1)];
+    #[tokio::test]
+    async fn it_inserts_a_remap_seeded_from_the_synced_base() {
+      let mut state = state_with(1);
+      let db = crate::store::open_test().await.unwrap();
 
-      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Descending);
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
 
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
-      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
-      assert!(l1 < l2, "L1 must still precede L2 even descending: {order:?}");
+      assert_eq!(state.remap_points.len(), 1);
+      assert_eq!(state.remap_points[0].after_entry_id, Some(10));
+      assert_eq!(state.remap_points[0].base, base());
+      assert!(state.dirty());
     }
 
-    #[test]
-    fn primary_sort_still_respects_same_skill_prereqs() {
-      let mut state = State::new(42);
-      let mut high = edit_entry(1, 100, 2);
-      high.meta.primary = AttrKey::Perception;
-      let mut low = edit_entry(2, 100, 1);
-      low.meta.primary = AttrKey::Charisma;
-      state.entries = vec![high, low];
+    #[tokio::test]
+    async fn it_removes_a_remap_point() {
+      let mut state = state_with(2);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut state, Message::RemapInserted(Some(10)), &db);
+      let local_id = state.remap_points[0].local_id;
 
-      apply_sort_with(&mut state, SortColumn::Primary, SortDirection::Ascending);
+      let _ = update(&mut state, Message::RemapRemoved(local_id), &db);
 
-      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
-      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
-      assert!(l1 < l2, "L1 must precede L2 regardless of attribute key: {order:?}");
+      assert!(state.remap_points.is_empty());
     }
 
-    fn apply_sort_with(state: &mut State, column: SortColumn, direction: SortDirection) {
-      state.sort = Sort {
-        column,
-        direction,
-      };
-      apply_sort(state);
+    #[tokio::test]
+    async fn the_start_point_is_free_and_not_capped() {
+      let mut state = state_with(0);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::RemapInserted(None), &db);
+
+      assert_eq!(state.remap_points.len(), 1);
+      assert_eq!(state.remap_points[0].after_entry_id, None);
     }
   }
 
@@ -3369,1232 +4246,6 @@ mod tests {
     }
   }
 
-  mod load {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_loads_an_empty_new_plan_without_panicking() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let loaded = async_load(db, 42, Seed::New, now()).await;
-
-      assert!(loaded.plan.is_none());
-      assert!(loaded.entries.is_empty());
-      assert_eq!(loaded.sort.column, SortColumn::Manual);
-    }
-  }
-
-  mod picker {
-    use std::collections::HashMap;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
-
-    fn catalog_entry(type_id: i64, name: &str, rank: u8, prereqs: Vec<(String, u8)>) -> SkillCatalogEntry {
-      SkillCatalogEntry {
-        group_id: 255,
-        group_name: "Gunnery".to_owned(),
-        name: name.to_owned(),
-        primary_attr: AttrKey::Perception,
-        prereqs,
-        rank,
-        secondary_attr: AttrKey::Willpower,
-        type_id,
-      }
-    }
-
-    fn state_with_catalog(skills: Vec<SkillCatalogEntry>) -> State {
-      let mut state = State::new(42);
-      state.picker = PickerState {
-        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
-        catalog: Some(SkillCatalog {
-          groups: vec![SkillCatalogGroup {
-            id: 255,
-            name: "Gunnery".to_owned(),
-            skills,
-          }],
-        }),
-        expanded_groups: std::iter::once(255).collect(),
-        trained_levels: HashMap::new(),
-        query: String::new(),
-        ..PickerState::default()
-      };
-      state.saved = state.snapshot();
-      state
-    }
-
-    #[tokio::test]
-    async fn picking_a_level_expands_into_one_level_steps_and_flips_dirty() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-      assert!(!state.dirty());
-
-      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
-
-      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
-      assert_eq!(levels, [1, 2, 3], "a pick to L3 inserts the three missing levels");
-      assert!(state.entries.iter().all(|e| !e.is_auto), "explicit picks are not auto");
-      assert_eq!(
-        state.entries[0].meta.skill_name, "Gunnery",
-        "metadata resolved from the catalog"
-      );
-      assert!(state.dirty(), "adding a skill flips the dirty dot");
-    }
-
-    #[tokio::test]
-    async fn picking_a_level_inserts_direct_prereqs_as_auto_entries() {
-      let mut state = state_with_catalog(vec![
-        catalog_entry(3300, "Gunnery", 1, vec![]),
-        catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-      ]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
-
-      let rows: Vec<(i64, u8, bool)> = state
-        .entries
-        .iter()
-        .map(|e| (e.skill_id, e.to_level, e.is_auto))
-        .collect();
-      assert_eq!(
-        rows,
-        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3330, 1, false)],
-        "prereqs inserted before the target, flagged is_auto"
-      );
-    }
-
-    #[tokio::test]
-    async fn picking_a_trained_level_is_a_no_op() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      state.picker.trained_levels = HashMap::from([(3300, 5)]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerLevelPicked(3300, 4), &db);
-
-      assert!(state.entries.is_empty(), "an already-trained pick schedules nothing");
-    }
-
-    #[tokio::test]
-    async fn re_picking_an_already_planned_level_adds_no_duplicate_slot() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
-      let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
-
-      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
-      assert_eq!(levels, [1, 2, 3], "no duplicate slots after re-picking a planned level");
-    }
-
-    #[tokio::test]
-    async fn picker_entries_get_unique_transient_ids() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerLevelPicked(3300, 3), &db);
-
-      let ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
-      let mut unique = ids.clone();
-      unique.sort_unstable();
-      unique.dedup();
-      assert_eq!(unique.len(), ids.len(), "transient ids are unique");
-      assert!(
-        ids.iter().all(|&id| id < 0),
-        "transient ids are negative (Save treats them as new)"
-      );
-    }
-
-    #[tokio::test]
-    async fn search_and_group_toggle_update_picker_state() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerSearchChanged("gun".to_owned()), &db);
-      assert_eq!(state.picker.query, "gun");
-
-      assert!(state.picker.expanded_groups.contains(&255));
-      let _ = update(&mut state, Message::PickerGroupToggled(255), &db);
-      assert!(!state.picker.expanded_groups.contains(&255));
-      let _ = update(&mut state, Message::PickerGroupToggled(255), &db);
-      assert!(state.picker.expanded_groups.contains(&255));
-    }
-
-    #[test]
-    fn it_renders_the_open_picker_without_panicking() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      state.picker_open = true;
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_each_non_skills_tab_loading_and_loaded_without_panicking() {
-      use crate::features::skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip, PickerTab};
-
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      state.picker_open = true;
-
-      for tab in [PickerTab::Ships, PickerTab::Modules, PickerTab::Certs] {
-        state.picker.active_tab = tab;
-        state.refresh_rows();
-        let _loading: Element<'_, Message> = view(&state, now());
-      }
-
-      state.picker.ships = Some(vec![PickerShip {
-        id: 587,
-        name: "Rifter".to_owned(),
-        group_id: 25,
-        group_name: "Frigate".to_owned(),
-        own_requirements: vec![(3300, 1)],
-        tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5)]],
-      }]);
-      state.picker.modules = Some(vec![PickerModule {
-        id: 12_058,
-        name: "125mm Gatling AutoCannon".to_owned(),
-        group_id: 55,
-        group_name: "Projectile Weapon".to_owned(),
-        requirements: vec![(3300, 1)],
-      }]);
-      state.picker.certs = Some(vec![PickerCert {
-        id: 1,
-        name: "Gunnery Basics".to_owned(),
-        grade: 1,
-        skills: vec![cert_skill(3300, 1, 2, 3, 5)],
-      }]);
-
-      for tab in [PickerTab::Ships, PickerTab::Modules, PickerTab::Certs] {
-        state.picker.active_tab = tab;
-        state.refresh_rows();
-        let _loaded: Element<'_, Message> = view(&state, now());
-      }
-    }
-
-    fn cert_skill(
-      skill_id: i64,
-      basic: i64,
-      improved: i64,
-      advanced: i64,
-      elite: i64,
-    ) -> crate::store::model::CertificateSkill {
-      crate::store::model::CertificateSkill {
-        advanced,
-        basic,
-        certificate_id: 1,
-        elite,
-        improved,
-        skill_id,
-      }
-    }
-
-    fn state_with_items(skills: Vec<SkillCatalogEntry>) -> State {
-      use crate::features::skill_plan_editor::picker::{PickerCert, PickerShip};
-
-      let mut state = state_with_catalog(skills);
-      state.picker.ships = Some(vec![PickerShip {
-        id: 587,
-        name: "Rifter".to_owned(),
-        group_id: 25,
-        group_name: "Frigate".to_owned(),
-        own_requirements: vec![(3300, 1)],
-        tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5)], vec![cert_skill(3301, 1, 2, 3, 5)]],
-      }]);
-      state.picker.certs = Some(vec![PickerCert {
-        id: 1,
-        name: "Gunnery Basics".to_owned(),
-        grade: 1,
-        skills: vec![cert_skill(3300, 1, 2, 3, 5), cert_skill(3301, 0, 2, 3, 5)],
-      }]);
-      state
-    }
-
-    #[tokio::test]
-    async fn adding_a_ship_at_mastery_tier_adds_the_cumulative_skill_set_as_auto() {
-      let mut state = state_with_items(vec![
-        catalog_entry(3300, "Gunnery", 1, vec![]),
-        catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
-      ]);
-      let db = crate::store::open_test().await.unwrap();
-      assert!(!state.dirty());
-
-      let _ = update(&mut state, Message::PickerShipSelected(587, 2), &db);
-
-      let mut rows: Vec<(i64, u8, bool)> = state
-        .entries
-        .iter()
-        .map(|e| (e.skill_id, e.to_level, e.is_auto))
-        .collect();
-      rows.sort();
-      assert_eq!(
-        rows,
-        vec![(3300, 1, false), (3301, 1, false), (3301, 2, false)],
-        "the mastery's directly-required skills are removable wishes, not locked prereqs"
-      );
-      assert!(state.dirty(), "adding a ship flips the dirty dot");
-    }
-
-    #[tokio::test]
-    async fn adding_a_cert_at_proficiency_adds_that_columns_skills_as_auto() {
-      let mut state = state_with_items(vec![
-        catalog_entry(3300, "Gunnery", 1, vec![]),
-        catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
-      ]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerCertSelected(1, 1), &db);
-
-      let mut rows: Vec<(i64, u8, bool)> = state
-        .entries
-        .iter()
-        .map(|e| (e.skill_id, e.to_level, e.is_auto))
-        .collect();
-      rows.sort();
-      assert_eq!(
-        rows,
-        vec![(3300, 1, false), (3300, 2, false), (3301, 1, false), (3301, 2, false)],
-        "the cert's improved-column skills are removable wishes, not locked prereqs"
-      );
-    }
-
-    #[tokio::test]
-    async fn adding_a_module_adds_its_required_skills_as_auto() {
-      let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      state.picker.modules = Some(vec![crate::features::skill_plan_editor::picker::PickerModule {
-        id: 12_058,
-        name: "125mm Gatling AutoCannon".to_owned(),
-        group_id: 55,
-        group_name: "Projectile Weapon".to_owned(),
-        requirements: vec![(3300, 3)],
-      }]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerModuleSelected(12_058), &db);
-
-      let rows: Vec<(i64, u8, bool)> = state
-        .entries
-        .iter()
-        .map(|e| (e.skill_id, e.to_level, e.is_auto))
-        .collect();
-      assert_eq!(
-        rows,
-        vec![(3300, 1, false), (3300, 2, false), (3300, 3, false)],
-        "the module's required skill is a removable wish, not a locked prereq"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_locks_only_the_expanded_prereqs_pulled_behind_a_mastery_skill() {
-      use crate::features::skill_plan_editor::picker::PickerShip;
-
-      let mut state = state_with_catalog(vec![
-        catalog_entry(3300, "Gunnery", 1, vec![]),
-        catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-      ]);
-      state.picker.ships = Some(vec![PickerShip {
-        id: 587,
-        name: "Rifter".to_owned(),
-        group_id: 25,
-        group_name: "Frigate".to_owned(),
-        own_requirements: vec![],
-        tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
-      }]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
-
-      let mut rows: Vec<(i64, u8, bool)> = state
-        .entries
-        .iter()
-        .map(|e| (e.skill_id, e.to_level, e.is_auto))
-        .collect();
-      rows.sort();
-      assert_eq!(
-        rows,
-        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3301, 1, false)],
-        "the directly-required turret is a removable wish; its Gunnery prereqs are locked"
-      );
-    }
-
-    #[tokio::test]
-    async fn selecting_a_ship_mastery_chip_updates_the_selection() {
-      let mut state = state_with_items(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerShipMasteryChanged(587, 4), &db);
-      assert_eq!(state.picker.ship_mastery.get(&587).copied(), Some(4));
-    }
-
-    #[tokio::test]
-    async fn selecting_a_cert_proficiency_chip_updates_the_selection() {
-      let mut state = state_with_items(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::PickerCertProficiencyChanged(1, 2), &db);
-      assert_eq!(state.picker.cert_proficiency.get(&1).copied(), Some(2));
-    }
-
-    mod remove_skill {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      fn rows(state: &State) -> Vec<(i64, u8, bool)> {
-        state
-          .entries
-          .iter()
-          .map(|e| (e.skill_id, e.to_level, e.is_auto))
-          .collect()
-      }
-
-      fn entry_id_for(state: &State, skill_id: i64, to_level: u8) -> i64 {
-        state
-          .entries
-          .iter()
-          .find(|e| e.skill_id == skill_id && e.to_level == to_level)
-          .unwrap()
-          .id
-      }
-
-      #[tokio::test]
-      async fn removing_a_level_also_removes_higher_levels_of_the_same_skill() {
-        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3300, 5), &db);
-
-        let id = entry_id_for(&state, 3300, 3);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        assert_eq!(
-          rows(&state),
-          vec![(3300, 1, false), (3300, 2, false)],
-          "removing L3 drops L3, L4, L5 but keeps the lower levels"
-        );
-      }
-
-      #[tokio::test]
-      async fn removing_a_skill_drops_its_orphaned_auto_prereqs() {
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-        ]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
-        assert_eq!(state.entries.len(), 4, "Gunnery I-III auto + Small Hybrid Turret I");
-
-        let id = entry_id_for(&state, 3330, 1);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        assert!(
-          state.entries.is_empty(),
-          "removing the only wish drops its now-orphaned auto prereqs"
-        );
-      }
-
-      #[tokio::test]
-      async fn removing_a_skill_keeps_a_prereq_still_needed_by_another_skill() {
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-          catalog_entry(3340, "Medium Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-        ]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
-        let _ = update(&mut state, Message::PickerLevelPicked(3340, 1), &db);
-
-        let id = entry_id_for(&state, 3330, 1);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        let mut remaining = rows(&state);
-        remaining.sort();
-        assert_eq!(
-          remaining,
-          vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3340, 1, false),],
-          "the shared Gunnery prereq is retained for the other wished skill"
-        );
-      }
-
-      #[tokio::test]
-      async fn removing_a_manual_skill_that_is_also_a_prereq_keeps_the_needed_lower_levels() {
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3330, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-        ]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3300, 5), &db);
-        let _ = update(&mut state, Message::PickerLevelPicked(3330, 1), &db);
-
-        let id = entry_id_for(&state, 3300, 4);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        let mut remaining = rows(&state);
-        remaining.sort();
-        assert_eq!(
-          remaining,
-          vec![(3300, 1, false), (3300, 2, false), (3300, 3, false), (3330, 1, false),],
-          "Gunnery I-III remain (still a prereq for the turret); IV and V are removed"
-        );
-      }
-
-      #[tokio::test]
-      async fn removing_a_skill_flips_the_dirty_state_and_refreshes_rows() {
-        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
-        state.saved = state.snapshot();
-        state.recompute_dirty();
-        assert!(!state.dirty());
-
-        let id = entry_id_for(&state, 3300, 2);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        assert_eq!(rows(&state), vec![(3300, 1, false)], "only L1 remains");
-        assert_eq!(state.rows.len(), 1, "computed rows refreshed");
-        assert!(state.dirty(), "removal marks the plan dirty");
-      }
-
-      #[tokio::test]
-      async fn removing_an_unknown_id_is_a_no_op() {
-        let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerLevelPicked(3300, 2), &db);
-
-        let _ = update(&mut state, Message::EntryRemoved(999_999), &db);
-
-        assert_eq!(
-          rows(&state),
-          vec![(3300, 1, false), (3300, 2, false)],
-          "nothing removed"
-        );
-      }
-
-      fn ship_with_two_required_skills() -> State {
-        use crate::features::skill_plan_editor::picker::PickerShip;
-
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
-        ]);
-        state.picker.ships = Some(vec![PickerShip {
-          id: 587,
-          name: "Rifter".to_owned(),
-          group_id: 25,
-          group_name: "Frigate".to_owned(),
-          own_requirements: vec![],
-          tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5), cert_skill(3301, 1, 2, 3, 5)]],
-        }]);
-        state
-      }
-
-      #[tokio::test]
-      async fn it_keeps_the_rest_when_removing_one_skill_from_a_pure_mastery_plan() {
-        let mut state = ship_with_two_required_skills();
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
-
-        let id = entry_id_for(&state, 3300, 1);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        let mut remaining = rows(&state);
-        remaining.sort();
-        assert_eq!(
-          remaining,
-          vec![(3301, 1, false)],
-          "only the removed mastery skill is dropped; the other survives"
-        );
-      }
-
-      #[tokio::test]
-      async fn it_does_not_individually_remove_a_locked_prereq_row() {
-        use crate::features::skill_plan_editor::picker::PickerShip;
-
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-        ]);
-        state.picker.ships = Some(vec![PickerShip {
-          id: 587,
-          name: "Rifter".to_owned(),
-          group_id: 25,
-          group_name: "Frigate".to_owned(),
-          own_requirements: vec![],
-          tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
-        }]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
-
-        let prereq_id = entry_id_for(&state, 3300, 2);
-        let before = rows(&state);
-        let _ = update(&mut state, Message::EntryRemoved(prereq_id), &db);
-
-        assert_eq!(
-          rows(&state),
-          before,
-          "an is_auto prereq row cannot be removed on its own"
-        );
-      }
-
-      #[tokio::test]
-      async fn it_keeps_other_masteries_when_removing_one_masterys_wish() {
-        use crate::features::skill_plan_editor::picker::PickerShip;
-
-        let mut state = state_with_catalog(vec![
-          catalog_entry(3300, "Gunnery", 1, vec![]),
-          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-          catalog_entry(3302, "Medium Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
-        ]);
-        state.picker.ships = Some(vec![
-          PickerShip {
-            id: 587,
-            name: "Rifter".to_owned(),
-            group_id: 25,
-            group_name: "Frigate".to_owned(),
-            own_requirements: vec![],
-            tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
-          },
-          PickerShip {
-            id: 588,
-            name: "Thrasher".to_owned(),
-            group_id: 25,
-            group_name: "Destroyer".to_owned(),
-            own_requirements: vec![],
-            tier_cert_skills: vec![vec![cert_skill(3302, 1, 2, 3, 5)]],
-          },
-        ]);
-        let db = crate::store::open_test().await.unwrap();
-        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
-        let _ = update(&mut state, Message::PickerShipSelected(588, 1), &db);
-
-        let id = entry_id_for(&state, 3301, 1);
-        let _ = update(&mut state, Message::EntryRemoved(id), &db);
-
-        let mut remaining = rows(&state);
-        remaining.sort();
-        assert_eq!(
-          remaining,
-          vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3302, 1, false)],
-          "the second ship's wish and its still-needed Gunnery prereq are retained"
-        );
-      }
-    }
-  }
-
-  mod creation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::{
-      self,
-      model::{
-        Alliance, Bloodline, Character, Corporation, Gender, ItemCategory, ItemGroup, ItemType, Race, SkillMetadata,
-      },
-      repo::{character, sde, skills},
-    };
-
-    const SKILL_CATEGORY_ID: i64 = 16;
-
-    async fn seed_character(db: &Database, id: i64) {
-      let corp_id = 90_000_001;
-      let alliance_id = 99_000_001;
-      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
-      let race = Race::new(2, alliance_id, "A race.", "Caldari");
-      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
-      corp.set_ceo_id(id);
-      corp.set_creator_id(id);
-      corp.set_member_count(1);
-      corp.set_tax_rate(0.0);
-      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
-      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
-      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
-        .await
-        .unwrap();
-    }
-
-    async fn seed_skill(db: &Database, skill_id: i64, name: &str) {
-      sde::upsert_item_category(
-        db,
-        &ItemCategory {
-          id: SKILL_CATEGORY_ID,
-          icon_id: None,
-          name: "Skill".to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_item_group(
-        db,
-        &ItemGroup {
-          category_id: SKILL_CATEGORY_ID,
-          icon_id: None,
-          id: 255,
-          name: "Gunnery".to_owned(),
-          published: true,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_item_type(
-        db,
-        &ItemType {
-          capacity: None,
-          description: Some("A skill.".to_owned()),
-          dogma_attributes: "[]".to_owned(),
-          group_id: 255,
-          icon_id: None,
-          id: skill_id,
-          market_group_id: None,
-          name: name.to_owned(),
-          packaged_volume: None,
-          portion_size: None,
-          published: true,
-          radius: None,
-          volume: None,
-        },
-      )
-      .await
-      .unwrap();
-      skills::upsert_skill_metadata(
-        db,
-        &SkillMetadata {
-          primary_attribute: 167,
-          rank: 1,
-          secondary_attribute: 168,
-          skill_id,
-        },
-      )
-      .await
-      .unwrap();
-    }
-
-    fn queued(
-      character_id: i64,
-      position: i64,
-      skill_id: i64,
-      finished_level: i64,
-    ) -> crate::store::model::CharacterSkillqueue {
-      crate::store::model::CharacterSkillqueue {
-        character_id,
-        finish_date: None,
-        finished_level,
-        level_end_sp: None,
-        level_start_sp: None,
-        queue_position: position,
-        skill_id,
-        start_date: None,
-        training_start_sp: None,
-      }
-    }
-
-    #[tokio::test]
-    async fn new_seed_produces_an_empty_unsaved_plan() {
-      let db = store::open_test().await.unwrap();
-
-      let loaded = async_load(db, 42, Seed::New, now()).await;
-
-      assert!(loaded.plan.is_none(), "new plan is not persisted until Save");
-      assert!(loaded.entries.is_empty());
-    }
-
-    #[tokio::test]
-    async fn a_loaded_new_plan_defaults_to_untitled_after_save() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let mut state = State::new(42);
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
-        &db,
-      );
-      assert_eq!(state.name, "", "a fresh plan opens with an empty name");
-
-      let id = persist(
-        &db,
-        42,
-        None,
-        "Untitled plan",
-        "manual",
-        "current",
-        &[],
-        &[],
-        &[],
-        &[],
-        &[],
-      )
-      .await
-      .unwrap();
-      let plan = skills::get(&db, id).await.unwrap().unwrap();
-      assert_eq!(plan.name(), "Untitled plan");
-    }
-
-    #[tokio::test]
-    async fn from_queue_seeds_entries_expanded_from_the_synced_queue() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_skill(&db, 3300, "Gunnery").await;
-      seed_skill(&db, 3301, "Small Hybrid Turret").await;
-      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3), queued(42, 1, 3301, 2)])
-        .await
-        .unwrap();
-
-      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
-
-      assert!(loaded.plan.is_none(), "a from-queue plan is unsaved until Save");
-      let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(rows, vec![(3300, 1), (3300, 2), (3300, 3), (3301, 1), (3301, 2)]);
-      assert_eq!(
-        loaded.entries[0].meta.skill_name, "Gunnery",
-        "metadata resolved off the DB"
-      );
-    }
-
-    #[tokio::test]
-    async fn from_queue_selection_only_seeds_the_chosen_queue_positions() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_skill(&db, 3300, "Gunnery").await;
-      seed_skill(&db, 3301, "Small Hybrid Turret").await;
-      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3), queued(42, 1, 3301, 2)])
-        .await
-        .unwrap();
-
-      let loaded = async_load(db, 42, Seed::FromQueueSelection(vec![1]), now()).await;
-
-      assert!(loaded.plan.is_none(), "a from-selection plan is unsaved until Save");
-      let skill_ids: Vec<i64> = loaded.entries.iter().map(|e| e.skill_id).collect();
-      assert!(
-        skill_ids.iter().all(|id| *id == 3301),
-        "only the selected queue entry (and its prereqs) is seeded, got {skill_ids:?}"
-      );
-      let rows: Vec<(i64, u8)> = loaded.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(rows, vec![(3301, 1), (3301, 2)]);
-    }
-
-    #[tokio::test]
-    async fn from_queue_selection_titles_the_draft_plan() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_skill(&db, 3300, "Gunnery").await;
-      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 3)])
-        .await
-        .unwrap();
-
-      let mut state = State::new(42);
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(
-          async_load(db.clone(), 42, Seed::FromQueueSelection(vec![0]), now()).await,
-        )),
-        &db,
-      );
-
-      assert_eq!(state.name, "Plan from selection");
-    }
-
-    #[tokio::test]
-    async fn ship_mastery_and_cert_proficiency_selections_survive_a_reload() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let id = persist(
-        &db,
-        42,
-        None,
-        "Combat",
-        "manual",
-        "current",
-        &[],
-        &[],
-        &[],
-        &[(587, 4), (588, 2)],
-        &[(1, 2), (3, 3)],
-      )
-      .await
-      .unwrap();
-
-      let loaded = async_load(db, 42, Seed::Existing(id), now()).await;
-
-      assert_eq!(loaded.ship_mastery.get(&587).copied(), Some(4));
-      assert_eq!(loaded.ship_mastery.get(&588).copied(), Some(2));
-      assert_eq!(loaded.cert_proficiency.get(&1).copied(), Some(2));
-      assert_eq!(loaded.cert_proficiency.get(&3).copied(), Some(3));
-    }
-
-    #[tokio::test]
-    async fn picker_selections_flip_the_dirty_dot_and_reload_into_the_picker() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let mut state = State::new(42);
-      let _ = update(
-        &mut state,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::New, now()).await)),
-        &db,
-      );
-      assert!(!state.dirty());
-
-      let _ = update(&mut state, Message::PickerShipMasteryChanged(587, 4), &db);
-      let _ = update(&mut state, Message::PickerCertProficiencyChanged(1, 2), &db);
-      assert!(state.dirty(), "changing a selection flips the dirty dot");
-
-      let id = persist(
-        &db,
-        42,
-        None,
-        "Combat",
-        "manual",
-        "current",
-        &[],
-        &[],
-        &[],
-        &[(587, 4)],
-        &[(1, 2)],
-      )
-      .await
-      .unwrap();
-
-      let mut reloaded = State::new(42);
-      let _ = update(
-        &mut reloaded,
-        Message::Loaded(Box::new(async_load(db.clone(), 42, Seed::Existing(id), now()).await)),
-        &db,
-      );
-      assert_eq!(reloaded.picker.ship_mastery.get(&587).copied(), Some(4));
-      assert_eq!(reloaded.picker.cert_proficiency.get(&1).copied(), Some(2));
-      assert!(!reloaded.dirty(), "a freshly reloaded plan is not dirty");
-    }
-
-    #[tokio::test]
-    async fn from_queue_only_schedules_levels_above_the_trained_level() {
-      use crate::store::model::CharacterSkill;
-
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_skill(&db, 3300, "Gunnery").await;
-      character::replace_skills(
-        &db,
-        42,
-        &[CharacterSkill {
-          active_skill_level: 2,
-          character_id: 42,
-          skill_id: 3300,
-          skillpoints_in_skill: 100,
-          trained_skill_level: 2,
-        }],
-      )
-      .await
-      .unwrap();
-      character::replace_skillqueue(&db, 42, &[queued(42, 0, 3300, 5)])
-        .await
-        .unwrap();
-
-      let loaded = async_load(db, 42, Seed::FromQueue, now()).await;
-
-      let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
-      assert_eq!(
-        levels,
-        [3, 4, 5],
-        "only levels above the synced trained level are seeded"
-      );
-    }
-  }
-
-  mod import_export_flow {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::features::skills::browse::{SkillCatalog, SkillCatalogEntry, SkillCatalogGroup};
-
-    fn catalog_entry(type_id: i64, name: &str) -> SkillCatalogEntry {
-      SkillCatalogEntry {
-        group_id: 255,
-        group_name: "Gunnery".to_owned(),
-        name: name.to_owned(),
-        primary_attr: AttrKey::Perception,
-        prereqs: vec![],
-        rank: 1,
-        secondary_attr: AttrKey::Willpower,
-        type_id,
-      }
-    }
-
-    fn state_with_catalog() -> State {
-      let mut state = State::new(42);
-      state.picker = PickerState {
-        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
-        catalog: Some(SkillCatalog {
-          groups: vec![SkillCatalogGroup {
-            id: 255,
-            name: "Gunnery".to_owned(),
-            skills: vec![
-              catalog_entry(3300, "Gunnery"),
-              catalog_entry(3301, "Small Hybrid Turret"),
-            ],
-          }],
-        }),
-        expanded_groups: std::iter::once(255).collect(),
-        trained_levels: HashMap::new(),
-        query: String::new(),
-        ..PickerState::default()
-      };
-      state.saved = state.snapshot();
-      state
-    }
-
-    #[test]
-    fn export_text_emits_one_eve_style_line_per_user_entry() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 3);
-      state.refresh_rows();
-
-      assert_eq!(serialize_plan_text(&state), "Gunnery 1\nGunnery 2\nGunnery 3");
-    }
-
-    #[test]
-    fn export_text_omits_auto_added_prerequisites() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 2);
-      if let Some(entry) = state.entries.iter_mut().find(|e| e.to_level == 2) {
-        entry.is_auto = true;
-      }
-
-      assert_eq!(
-        serialize_plan_text(&state),
-        "Gunnery 1",
-        "auto rows do not carry to EVE text"
-      );
-    }
-
-    #[test]
-    fn a_json_plan_round_trips_through_the_dto_losslessly() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 2);
-      state.entries[0].note = "watch the rank".to_owned();
-      state.entries[0].priority = Priority::High;
-      let first_id = state.entries[0].id;
-      state.remap_points = vec![
-        EditRemap {
-          base: Attributes {
-            charisma: 19,
-            intelligence: 21,
-            memory: 19,
-            perception: 21,
-            willpower: 19,
-          },
-          after_entry_id: None,
-          local_id: 1,
-        },
-        EditRemap {
-          base: Attributes {
-            charisma: 17,
-            intelligence: 17,
-            memory: 17,
-            perception: 27,
-            willpower: 21,
-          },
-          after_entry_id: Some(first_id),
-          local_id: 2,
-        },
-      ];
-
-      let dto = plan_file(&state);
-      let restored = state_with_catalog();
-      let mut restored = restored;
-      apply_json_import(&mut restored, dto.clone(), ImportMode::Replace);
-
-      let original: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      let round: Vec<(i64, u8)> = restored.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(round, original, "skills survive in the same order");
-      assert_eq!(restored.entries[0].note, "watch the rank");
-      assert_eq!(restored.entries[0].priority, Priority::High);
-
-      let anchors: Vec<Option<usize>> = dto.remaps.iter().map(|r| r.after_index).collect();
-      assert_eq!(anchors, vec![None, Some(0)], "remap anchors persist by ordinal index");
-      assert_eq!(restored.remap_points.len(), 2, "all remap points restored");
-      assert_eq!(restored.remap_points[0].after_entry_id, None);
-      assert_eq!(restored.remap_points[1].after_entry_id, Some(restored.entries[0].id));
-    }
-
-    #[tokio::test]
-    async fn import_from_clipboard_smart_detects_text_and_prompts() {
-      let mut state = state_with_catalog();
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::ImportRequested, &db);
-      assert_eq!(state.io_panel, Some(IoPanel::Import));
-
-      let _ = update(
-        &mut state,
-        Message::ImportClipboardRead(Some("Small Hybrid Turret 2\n".to_owned())),
-        &db,
-      );
-
-      assert_eq!(
-        state.io_panel,
-        Some(IoPanel::ImportPrompt),
-        "a valid payload raises the prompt"
-      );
-      assert!(
-        matches!(state.pending_import, Some(import_export::Payload::Text(_))),
-        "plain text smart-detects as text"
-      );
-    }
-
-    #[tokio::test]
-    async fn replace_clears_then_loads_the_text_import() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 2);
-      state.refresh_rows();
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::ImportClipboardRead(Some("Small Hybrid Turret 2".to_owned())),
-        &db,
-      );
-      let _ = update(&mut state, Message::ImportReplace, &db);
-
-      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(rows, vec![(3301, 1), (3301, 2)], "replace clears the old Gunnery rows");
-      assert!(state.io_panel.is_none(), "the prompt closes after replace");
-    }
-
-    #[tokio::test]
-    async fn append_adds_to_the_end_and_dedups_existing_levels() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 2);
-      state.refresh_rows();
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::ImportClipboardRead(Some("Gunnery 1\nSmall Hybrid Turret 1".to_owned())),
-        &db,
-      );
-      let _ = update(&mut state, Message::ImportAppend, &db);
-
-      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(
-        rows,
-        vec![(3300, 1), (3300, 2), (3301, 1)],
-        "append keeps existing rows, dedups Gunnery 1, and adds the new skill at the end"
-      );
-    }
-
-    #[tokio::test]
-    async fn append_a_json_plan_dedups_existing_skill_levels() {
-      let mut donor = state_with_catalog();
-      add_skill(&mut donor, 3301, 1);
-      let dto = plan_file(&donor);
-
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3301, 1);
-      state.refresh_rows();
-      let db = crate::store::open_test().await.unwrap();
-
-      state.pending_import = Some(import_export::Payload::Json(dto));
-      let _ = update(&mut state, Message::ImportAppend, &db);
-
-      let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
-      assert_eq!(
-        rows,
-        vec![(3301, 1)],
-        "an identical skill-level is not doubled on append"
-      );
-    }
-
-    #[tokio::test]
-    async fn an_unparseable_import_neither_prompts_nor_changes_the_plan() {
-      let mut state = state_with_catalog();
-      add_skill(&mut state, 3300, 2);
-      state.refresh_rows();
-      state.saved = state.snapshot();
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::ImportClipboardRead(Some("not a skill line at all".to_owned())),
-        &db,
-      );
-
-      assert!(state.io_panel.is_none(), "garbage raises no prompt");
-      assert!(state.pending_import.is_none(), "nothing is staged");
-      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
-      assert_eq!(levels, [1, 2], "the plan is untouched");
-    }
-
-    #[tokio::test]
-    async fn dismiss_clears_a_staged_import() {
-      let mut state = state_with_catalog();
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(
-        &mut state,
-        Message::ImportClipboardRead(Some("Gunnery 1".to_owned())),
-        &db,
-      );
-      assert_eq!(state.io_panel, Some(IoPanel::ImportPrompt));
-
-      let _ = update(&mut state, Message::IoDismissed, &db);
-      assert!(state.io_panel.is_none());
-      assert!(state.pending_import.is_none());
-    }
-
-    #[tokio::test]
-    async fn import_and_export_triggers_toggle_their_dropdowns() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _ = update(&mut state, Message::ExportRequested, &db);
-      assert_eq!(state.io_panel, Some(IoPanel::Export));
-      let _ = update(&mut state, Message::ImportRequested, &db);
-      assert_eq!(state.io_panel, Some(IoPanel::Import));
-      let _ = update(&mut state, Message::ImportRequested, &db);
-      assert!(state.io_panel.is_none());
-    }
-  }
-
-  mod picker_tabs {
-    use super::*;
-    use crate::features::skill_plan_editor::picker::PickerTab;
-
-    #[tokio::test]
-    async fn selecting_a_tab_switches_the_active_tab() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      assert_eq!(state.picker.active_tab, PickerTab::Skills);
-
-      let _ = update(&mut state, Message::PickerTabSelected(PickerTab::Ships), &db);
-      assert_eq!(
-        state.picker.active_tab,
-        PickerTab::Ships,
-        "clicking a tab switches to it"
-      );
-
-      let _ = update(&mut state, Message::PickerTabSelected(PickerTab::Skills), &db);
-      assert_eq!(state.picker.active_tab, PickerTab::Skills);
-    }
-  }
-
-  mod gap_hover {
-    use super::*;
-
-    #[tokio::test]
-    async fn hovering_and_leaving_a_gap_tracks_the_hovered_gap() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      assert!(state.hovered_gap.is_none());
-
-      let _ = update(&mut state, Message::GapHovered(7), &db);
-      assert_eq!(state.hovered_gap, Some(7));
-
-      let _ = update(&mut state, Message::GapUnhovered, &db);
-      assert!(state.hovered_gap.is_none());
-    }
-  }
-
   mod save_task {
     use super::*;
 
@@ -4606,6 +4257,20 @@ mod tests {
         perception: 21,
         willpower: 17,
       }
+    }
+
+    #[tokio::test]
+    async fn a_named_plan_carries_its_trimmed_name() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42);
+      state.name = "  Combat  ".to_owned();
+      state.sort = Sort {
+        column: SortColumn::Time,
+        direction: SortDirection::Descending,
+      };
+      state.entries = vec![edit_entry(10, 3300, 5)];
+
+      let _task = save(&state, &db);
     }
 
     #[tokio::test]
@@ -4639,89 +4304,99 @@ mod tests {
       let _task = save(&state, &db);
       let _routed = update(&mut state, Message::SaveRequested, &db);
     }
+  }
 
-    #[tokio::test]
-    async fn a_named_plan_carries_its_trimmed_name() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42);
-      state.name = "  Combat  ".to_owned();
-      state.sort = Sort {
+  mod sort {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_carets_only_the_active_column() {
+      let sort = Sort {
+        column: SortColumn::Secondary,
+        direction: SortDirection::Descending,
+      };
+
+      assert_eq!(sort.caret(SortColumn::Secondary), Some("\u{2193}"));
+      assert_eq!(sort.caret(SortColumn::Time), None);
+      assert_eq!(sort.caret(SortColumn::Primary), None);
+    }
+
+    #[test]
+    fn it_degrades_an_unknown_token_to_manual() {
+      assert_eq!(Sort::from_token("optimal"), Sort::default());
+      assert_eq!(Sort::from_token("garbage").column, SortColumn::Manual);
+    }
+
+    #[test]
+    fn it_opens_a_new_column_in_its_natural_direction() {
+      let sort = Sort {
         column: SortColumn::Time,
         direction: SortDirection::Descending,
       };
-      state.entries = vec![edit_entry(10, 3300, 5)];
 
-      let _task = save(&state, &db);
+      let switched = sort.toggled(SortColumn::Primary);
+      assert_eq!(switched.column, SortColumn::Primary);
+      assert_eq!(switched.direction, SortDirection::Ascending);
     }
-  }
 
-  mod picker_ships_loader {
-    use super::*;
-    use crate::store::{
-      model::{ItemCategory, ItemGroup, ItemType},
-      repo::sde::{upsert_item_category, upsert_item_group, upsert_item_type},
-    };
+    #[test]
+    fn it_parses_legacy_tokens_without_error() {
+      assert_eq!(Sort::from_token("manual"), Sort::default());
+      assert_eq!(
+        Sort::from_token("time-asc"),
+        Sort {
+          column: SortColumn::Time,
+          direction: SortDirection::Ascending,
+        }
+      );
+      assert_eq!(
+        Sort::from_token("time-desc"),
+        Sort {
+          column: SortColumn::Time,
+          direction: SortDirection::Descending,
+        }
+      );
+    }
 
-    fn category(id: i64, name: &str) -> ItemCategory {
-      ItemCategory {
-        id,
-        icon_id: None,
-        name: name.to_owned(),
-        published: true,
+    #[test]
+    fn it_round_trips_every_column_and_direction_through_its_token() {
+      for column in [
+        SortColumn::Manual,
+        SortColumn::Primary,
+        SortColumn::Secondary,
+        SortColumn::Time,
+      ] {
+        for direction in [SortDirection::Ascending, SortDirection::Descending] {
+          let sort = Sort {
+            column,
+            direction,
+          };
+
+          let parsed = Sort::from_token(sort.as_token());
+          if column == SortColumn::Manual {
+            assert_eq!(parsed, Sort::default());
+          } else {
+            assert_eq!(parsed, sort);
+          }
+        }
       }
     }
 
-    fn group(id: i64, category_id: i64, name: &str) -> ItemGroup {
-      ItemGroup {
-        category_id,
-        icon_id: None,
-        id,
-        name: name.to_owned(),
-        published: true,
-      }
-    }
+    #[test]
+    fn it_toggles_direction_when_the_same_column_is_reselected() {
+      let sort = Sort {
+        column: SortColumn::Time,
+        direction: SortDirection::Ascending,
+      };
 
-    fn item(id: i64, group_id: i64, name: &str) -> ItemType {
-      ItemType {
-        capacity: None,
-        description: Some("Test item".to_owned()),
-        dogma_attributes: "[]".to_owned(),
-        group_id,
-        icon_id: None,
-        id,
-        market_group_id: None,
-        name: name.to_owned(),
-        packaged_volume: None,
-        portion_size: None,
-        published: true,
-        radius: None,
-        volume: None,
-      }
-    }
+      let flipped = sort.toggled(SortColumn::Time);
+      assert_eq!(flipped.column, SortColumn::Time);
+      assert_eq!(flipped.direction, SortDirection::Descending);
 
-    #[tokio::test]
-    async fn it_assembles_the_ships_tab_list_off_the_db() {
-      let db = crate::store::open_test().await.unwrap();
-      upsert_item_category(&db, &category(6, "Ship")).await.unwrap();
-      upsert_item_group(&db, &group(25, 6, "Frigate")).await.unwrap();
-      upsert_item_type(&db, &item(587, 25, "Rifter")).await.unwrap();
-
-      let ships = load_picker_ships(db).await;
-
-      assert_eq!(ships.len(), 1);
-      assert_eq!(ships[0].id, 587);
-      assert_eq!(ships[0].name, "Rifter");
-      assert_eq!(ships[0].group_id, 25);
-      assert_eq!(ships[0].group_name, "Frigate");
-    }
-
-    #[tokio::test]
-    async fn it_yields_an_empty_list_when_no_ships_are_seeded() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let ships = load_picker_ships(db).await;
-
-      assert!(ships.is_empty());
+      let flipped_again = flipped.toggled(SortColumn::Time);
+      assert_eq!(flipped_again.direction, SortDirection::Ascending);
     }
   }
 
@@ -4742,32 +4417,6 @@ mod tests {
       state.dragging_pane = Some(EditorPane::Picker);
 
       let _sub: iced::Subscription<Message> = subscription(&state);
-    }
-  }
-
-  mod insertion_pill {
-    use super::*;
-
-    #[test]
-    fn the_hovered_gap_renders_the_clickable_pill() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
-      state.remap_availability = 1;
-      state.hovered_gap = Some(1);
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn the_start_gap_also_renders_the_pill_when_hovered() {
-      let mut state = State::new(42);
-      state.entries = vec![edit_entry(1, 3300, 5)];
-      state.remap_availability = 1;
-      state.hovered_gap = Some(GAP_START);
-      state.refresh_rows();
-
-      let _el: Element<'_, Message> = view(&state, now());
     }
   }
 
@@ -4799,68 +4448,419 @@ mod tests {
     }
   }
 
-  mod panes {
+  mod sync_aware_plan {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
+    fn attrs() -> Attributes {
+      Attributes {
+        charisma: 17,
+        intelligence: 17,
+        memory: 17,
+        perception: 27,
+        willpower: 21,
+      }
+    }
+
+    fn state_with_l5_entry() -> State {
+      let mut state = State::new(42);
+      state.attrs = attrs();
+      state.entries = vec![edit_entry(1, 3300, 5)];
+      state
+    }
+
     #[test]
-    fn it_defaults_both_pane_widths_when_the_store_is_empty() {
-      let state = State::new(42).with_restored_panes(&UiState::default());
+    fn a_partially_trained_skill_yields_reduced_remaining_sp() {
+      let mut untrained = state_with_l5_entry();
+      untrained.refresh_rows();
+      let full_sp = untrained.rows[0].sp;
+      let full_sec = untrained.rows[0].sec;
 
-      assert_eq!(state.picker_pane.width(), PICKER_WIDTH);
-      assert_eq!(state.summary_pane.width(), SUMMARY_WIDTH);
+      let mut partial = state_with_l5_entry();
+      partial.synced_levels = HashMap::from([(3300, 4)]);
+      partial.synced_sp = HashMap::from([(3300, 226_275)]);
+      partial.refresh_rows();
+      let partial_row = &partial.rows[0];
+
+      assert!(!partial_row.skipped, "a not-yet-complete level still trains");
+      assert!(
+        partial_row.sp < full_sp,
+        "banked SP discounts the remaining cost ({} < {full_sp})",
+        partial_row.sp
+      );
+      assert!(partial_row.sp > 0, "L5 is not yet reached, so some SP remains");
+      assert!(
+        partial_row.sec < full_sec,
+        "less remaining SP means less remaining time"
+      );
+      assert_eq!(
+        partial.total_sp, partial_row.sp,
+        "plan total reflects the discounted step"
+      );
     }
 
     #[test]
-    fn it_restores_both_pane_widths_from_the_keyed_store() {
-      let mut ui = UiState::default();
-      ui.panes.insert(PICKER_PANE_KEY.to_owned(), 400.0);
-      ui.panes.insert(SUMMARY_PANE_KEY.to_owned(), 300.0);
+    fn an_already_trained_skill_contributes_zero_remaining() {
+      let mut state = state_with_l5_entry();
+      state.synced_levels = HashMap::from([(3300, 5)]);
+      state.synced_sp = HashMap::from([(3300, 1_280_000)]);
+      state.refresh_rows();
 
-      let state = State::new(42).with_restored_panes(&ui);
+      let row = &state.rows[0];
+      assert!(row.skipped, "an over-trained target is a zero-cost skip row");
+      assert_eq!(row.sp, 0);
+      assert_eq!(row.sec, 0.0);
+      assert_eq!(state.total_sp, 0);
+      assert_eq!(state.total_sec, 0.0);
+    }
 
-      assert_eq!(state.picker_pane.width(), 400.0);
-      assert_eq!(state.summary_pane.width(), 300.0);
+    #[test]
+    fn an_over_trained_plan_renders_terminal_training_time_and_eta_cells() {
+      let mut state = state_with_l5_entry();
+      state.synced_levels = HashMap::from([(3300, 5)]);
+      state.synced_sp = HashMap::from([(3300, u64::MAX)]);
+      state.refresh_rows();
+
+      assert_eq!(state.total_sp, 0, "an over-trained plan demands zero SP");
+      assert_eq!(state.total_sec, 0.0, "zero SP means zero training seconds");
+
+      let total_secs = if state.total_sec.is_finite() {
+        state.total_sec.clamp(0.0, i64::MAX as f64) as i64
+      } else {
+        0
+      };
+      assert_eq!(
+        fmt_duration(total_secs),
+        "\u{2014}",
+        "training-time cell renders the terminal dash"
+      );
+      assert_eq!(
+        fmt_eta(now(), total_secs),
+        "\u{2014}",
+        "ETA cell renders the terminal dash"
+      );
+    }
+
+    #[test]
+    fn an_untrained_skill_charges_the_full_target_cost() {
+      let mut state = state_with_l5_entry();
+      state.refresh_rows();
+
+      let row = &state.rows[0];
+      assert!(!row.skipped);
+      assert_eq!({ row.sp }, state.total_sp);
+      assert!(row.sp > 0);
+    }
+
+    #[test]
+    fn implant_bonus_is_the_difference_between_effective_and_base() {
+      let mut state = state_with_l5_entry();
+      state.base_attrs = attrs();
+      state.attrs = Attributes {
+        perception: attrs().perception + 4,
+        memory: attrs().memory + 3,
+        ..attrs()
+      };
+
+      let bonus = state.implant_bonus();
+      assert_eq!(bonus.perception, 4);
+      assert_eq!(bonus.memory, 3);
+      assert_eq!(bonus.charisma, 0);
+      assert_eq!(bonus.intelligence, 0);
+      assert_eq!(bonus.willpower, 0);
+    }
+
+    #[test]
+    fn implants_factor_into_the_summary_current_plan_time() {
+      let mut no_implants = state_with_l5_entry();
+      no_implants.base_attrs = attrs();
+      no_implants.attrs = attrs();
+      no_implants.refresh_rows();
+
+      let mut with_implants = state_with_l5_entry();
+      with_implants.base_attrs = attrs();
+      with_implants.attrs = Attributes {
+        perception: attrs().perception + 5,
+        willpower: attrs().willpower + 5,
+        ..attrs()
+      };
+      with_implants.refresh_rows();
+
+      let baseline = no_implants.summary_data().current_sec;
+      let boosted = with_implants.summary_data().current_sec;
+      assert!(baseline.is_finite() && baseline > 0.0);
+      assert!(
+        boosted < baseline,
+        "the summary's current plan time reflects installed implants ({boosted} < {baseline})"
+      );
+    }
+
+    #[test]
+    fn installed_implants_shorten_the_plan_training_time() {
+      let mut no_implants = state_with_l5_entry();
+      no_implants.base_attrs = attrs();
+      no_implants.attrs = attrs();
+      no_implants.refresh_rows();
+
+      let mut with_implants = state_with_l5_entry();
+      with_implants.base_attrs = attrs();
+      with_implants.attrs = Attributes {
+        perception: attrs().perception + 5,
+        willpower: attrs().willpower + 5,
+        ..attrs()
+      };
+      with_implants.refresh_rows();
+
+      assert!(no_implants.total_sec > 0.0);
+      assert_eq!(
+        no_implants.total_sp, with_implants.total_sp,
+        "implants change the rate, not the SP demanded"
+      );
+      assert!(
+        with_implants.total_sec < no_implants.total_sec,
+        "installed implants raise the training rate, so the plan finishes sooner ({} < {})",
+        with_implants.total_sec,
+        no_implants.total_sec
+      );
+    }
+
+    #[test]
+    fn remap_optimization_ignores_implants_and_matches_the_base_only_recommendation() {
+      let mut no_implants = state_with_l5_entry();
+      no_implants.base_attrs = attrs();
+      no_implants.attrs = attrs();
+      no_implants.refresh_rows();
+
+      let mut with_implants = state_with_l5_entry();
+      with_implants.base_attrs = attrs();
+      with_implants.attrs = Attributes {
+        charisma: attrs().charisma + 4,
+        memory: attrs().memory + 3,
+        ..attrs()
+      };
+      with_implants.refresh_rows();
+
+      assert_eq!(
+        no_implants.summary_data().recommendation.base,
+        with_implants.summary_data().recommendation.base,
+        "installed implants must not change the recommended base remap"
+      );
+    }
+
+    #[test]
+    fn remap_optimization_stays_within_the_base_range_even_with_implants_installed() {
+      let mut state = state_with_l5_entry();
+      state.base_attrs = attrs();
+      state.attrs = Attributes {
+        charisma: attrs().charisma + 5,
+        intelligence: attrs().intelligence + 5,
+        memory: attrs().memory + 5,
+        perception: attrs().perception + 5,
+        willpower: attrs().willpower + 5,
+      };
+      state.refresh_rows();
+
+      let proposed = state.summary_data().recommendation.base;
+
+      for value in [
+        proposed.charisma,
+        proposed.intelligence,
+        proposed.memory,
+        proposed.perception,
+        proposed.willpower,
+      ] {
+        assert!(
+          (17..=27).contains(&value),
+          "remapped base attribute {value} escaped the [17, 27] base range"
+        );
+      }
+      assert_eq!(
+        proposed.charisma + proposed.intelligence + proposed.memory + proposed.perception + proposed.willpower,
+        99,
+        "remap base attributes must sum to 99"
+      );
+    }
+
+    #[test]
+    fn summary_data_carries_the_character_total_sp() {
+      let mut state = state_with_l5_entry();
+      state.character_total_sp = 12_345_678;
+      state.refresh_rows();
+
+      assert_eq!(state.summary_data().character_total_sp, 12_345_678);
+    }
+  }
+
+  mod toggles {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_defaults_the_picker_open() {
+      let state = State::new(42);
+      assert!(state.picker_open);
     }
 
     #[tokio::test]
-    async fn it_grows_the_picker_on_a_rightward_drag_of_its_right_edge_handle() {
-      let db = crate::store::open_test().await.unwrap();
+    async fn it_toggles_the_picker() {
       let mut state = State::new(42);
+      let db = crate::store::open_test().await.unwrap();
 
-      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Picker), &db);
-      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
-      let _ = update(&mut state, Message::PaneDrag(540.0), &db);
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open);
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open);
+    }
+  }
 
-      assert_eq!(state.picker_pane.width(), PICKER_WIDTH + 40.0);
+  mod topo_sort {
+    use super::*;
+
+    fn apply_sort_with(state: &mut State, column: SortColumn, direction: SortDirection) {
+      state.sort = Sort {
+        column,
+        direction,
+      };
+      apply_sort(state);
     }
 
-    #[tokio::test]
-    async fn it_grows_the_summary_on_a_leftward_drag_of_its_left_edge_handle() {
-      let db = crate::store::open_test().await.unwrap();
+    #[test]
+    fn primary_sort_still_respects_same_skill_prereqs() {
       let mut state = State::new(42);
+      let mut high = edit_entry(1, 100, 2);
+      high.meta.primary = AttrKey::Perception;
+      let mut low = edit_entry(2, 100, 1);
+      low.meta.primary = AttrKey::Charisma;
+      state.entries = vec![high, low];
 
-      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
-      let _ = update(&mut state, Message::PaneDrag(500.0), &db);
-      let _ = update(&mut state, Message::PaneDrag(460.0), &db);
+      apply_sort_with(&mut state, SortColumn::Primary, SortDirection::Ascending);
 
-      assert_eq!(state.summary_pane.width(), SUMMARY_WIDTH + 40.0);
+      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
+      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
+      assert!(l1 < l2, "L1 must precede L2 regardless of attribute key: {order:?}");
     }
 
-    #[tokio::test]
-    async fn it_settles_the_dragged_pane_and_clears_the_active_pane_on_drag_end() {
-      let db = crate::store::open_test().await.unwrap();
+    #[test]
+    fn time_asc_never_places_a_level_before_its_lower_level() {
       let mut state = State::new(42);
+      state.entries = vec![
+        edit_entry(1, 100, 3),
+        edit_entry(2, 100, 1),
+        edit_entry(3, 100, 2),
+        edit_entry(4, 200, 1),
+      ];
 
-      let _ = update(&mut state, Message::PaneDragStart(EditorPane::Summary), &db);
-      assert!(state.summary_pane.is_active());
-      assert_eq!(state.dragging_pane, Some(EditorPane::Summary));
+      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Ascending);
 
-      let _ = update(&mut state, Message::PaneDragEnd, &db);
+      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
+      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
+      let l3 = order.iter().position(|&(s, l)| s == 100 && l == 3).unwrap();
+      assert!(l1 < l2 && l2 < l3, "same-skill prereq order preserved: {order:?}");
+    }
 
-      assert!(!state.summary_pane.is_active());
-      assert_eq!(state.dragging_pane, None);
+    #[test]
+    fn time_desc_still_respects_same_skill_prereqs() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 100, 1), edit_entry(2, 100, 2), edit_entry(3, 200, 1)];
+
+      apply_sort_with(&mut state, SortColumn::Time, SortDirection::Descending);
+
+      let order: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let l1 = order.iter().position(|&(s, l)| s == 100 && l == 1).unwrap();
+      let l2 = order.iter().position(|&(s, l)| s == 100 && l == 2).unwrap();
+      assert!(l1 < l2, "L1 must still precede L2 even descending: {order:?}");
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_placed_remap_divider_and_insertion_affordances() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.remap_availability = 1;
+      state.remap_points = vec![EditRemap {
+        base: Attributes {
+          charisma: 19,
+          intelligence: 21,
+          memory: 19,
+          perception: 21,
+          willpower: 19,
+        },
+        after_entry_id: Some(1),
+        local_id: 1,
+      }];
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_with_no_rows() {
+      let state = State::new(42);
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_entry_list_with_rows() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_exhausted_constraint_when_no_remaps_available() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.remap_availability = 0;
+      state.remap_reason = "No neural remaps available — next remap accrues in 30 days".to_owned();
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_import_export_overlay() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5)];
+      state.refresh_rows();
+
+      state.io_panel = Some(IoPanel::Export);
+      {
+        let _el: Element<'_, Message> = view(&state, now());
+      }
+
+      state.io_panel = Some(IoPanel::Import);
+      {
+        let _el: Element<'_, Message> = view(&state, now());
+      }
+
+      state.io_panel = Some(IoPanel::ImportPrompt);
+      {
+        let _el: Element<'_, Message> = view(&state, now());
+      }
+    }
+
+    #[test]
+    fn it_renders_the_summary_right_pane() {
+      let mut state = State::new(42);
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.attrs = Attributes {
+        charisma: 19,
+        intelligence: 21,
+        memory: 19,
+        perception: 21,
+        willpower: 19,
+      };
+      state.base_attrs = state.attrs;
+      state.refresh_rows();
+
+      let _el: Element<'_, Message> = view(&state, now());
     }
   }
 }

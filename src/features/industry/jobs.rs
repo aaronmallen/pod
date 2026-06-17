@@ -815,13 +815,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_warns_under_the_threshold() {
-      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS - 1), color::status::WARNING);
+    fn it_is_primary_at_or_above_the_threshold() {
+      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS), color::text::PRIMARY);
     }
 
     #[test]
-    fn it_is_primary_at_or_above_the_threshold() {
-      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS), color::text::PRIMARY);
+    fn it_warns_under_the_threshold() {
+      assert_eq!(countdown_color(COUNTDOWN_WARNING_SECS - 1), color::status::WARNING);
     }
   }
 
@@ -829,14 +829,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_shows_isk_out_for_a_positive_value() {
-      let (label, fill) = countdown_value_parts(&job(Activity::Manufacturing, Some(1_000.0), None));
-
-      assert_eq!(label, format!("{} out", fmt_isk(1_000.0)));
-      assert_eq!(fill, color::accent::PLASMA);
-    }
 
     #[test]
     fn it_falls_back_to_the_idle_label_for_zero_or_missing_value() {
@@ -851,6 +843,14 @@ mod tests {
       let (label, _) = countdown_value_parts(&job(Activity::Manufacturing, None, None));
 
       assert_eq!(label, "\u{2014}");
+    }
+
+    #[test]
+    fn it_shows_isk_out_for_a_positive_value() {
+      let (label, fill) = countdown_value_parts(&job(Activity::Manufacturing, Some(1_000.0), None));
+
+      assert_eq!(label, format!("{} out", fmt_isk(1_000.0)));
+      assert_eq!(fill, color::accent::PLASMA);
     }
   }
 
@@ -885,13 +885,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_says_complete_when_ready() {
-      assert_eq!(progress_label(true, 42.0), "COMPLETE");
+    fn it_floors_the_percentage_when_not_ready() {
+      assert_eq!(progress_label(false, 42.9), "42%");
     }
 
     #[test]
-    fn it_floors_the_percentage_when_not_ready() {
-      assert_eq!(progress_label(false, 42.9), "42%");
+    fn it_says_complete_when_ready() {
+      assert_eq!(progress_label(true, 42.0), "COMPLETE");
     }
   }
 
@@ -914,6 +914,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_dashes_an_unknown_security() {
+      let (label, fill) = sec_pill_parts(None);
+
+      assert_eq!(label, "\u{2014}");
+      assert_eq!(fill, color::text::tertiary());
+    }
+
+    #[test]
+    fn it_is_danger_in_null_sec() {
+      let (label, fill) = sec_pill_parts(Some(0.0));
+
+      assert_eq!(label, "0.0");
+      assert_eq!(fill, color::status::DANGER);
+    }
+
+    #[test]
     fn it_is_online_in_high_sec() {
       let (label, fill) = sec_pill_parts(Some(0.5));
 
@@ -928,35 +944,12 @@ mod tests {
       assert_eq!(label, "0.4");
       assert_eq!(fill, color::status::WARNING);
     }
-
-    #[test]
-    fn it_is_danger_in_null_sec() {
-      let (label, fill) = sec_pill_parts(Some(0.0));
-
-      assert_eq!(label, "0.0");
-      assert_eq!(fill, color::status::DANGER);
-    }
-
-    #[test]
-    fn it_dashes_an_unknown_security() {
-      let (label, fill) = sec_pill_parts(None);
-
-      assert_eq!(label, "\u{2014}");
-      assert_eq!(fill, color::text::tertiary());
-    }
   }
 
   mod success_label {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_renders_rounded_probability_for_invention() {
-      let label = success_label(&job(Activity::Invention, None, Some(0.426)));
-
-      assert_eq!(label, Some("43% success".to_owned()));
-    }
 
     #[test]
     fn it_is_none_for_invention_without_probability() {
@@ -966,6 +959,13 @@ mod tests {
     #[test]
     fn it_is_none_for_non_invention_activities() {
       assert_eq!(success_label(&job(Activity::Manufacturing, None, Some(0.5))), None);
+    }
+
+    #[test]
+    fn it_renders_rounded_probability_for_invention() {
+      let label = success_label(&job(Activity::Invention, None, Some(0.426)));
+
+      assert_eq!(label, Some("43% success".to_owned()));
     }
   }
 }

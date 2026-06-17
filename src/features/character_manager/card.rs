@@ -598,76 +598,14 @@ mod tests {
     }
   }
 
-  mod roman {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_levels_one_through_five() {
-      assert_eq!(roman(1), "I");
-      assert_eq!(roman(5), "V");
-      assert_eq!(roman(7), "7");
-    }
-  }
-
-  mod status_label {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_labels_docked_in_space_and_renders_no_pill_when_unknown() {
-      assert_eq!(status_label(Some(true)), Some("DOCKED"));
-      assert_eq!(status_label(Some(false)), Some("IN SPACE"));
-      assert_eq!(status_label(None), None);
-    }
-  }
-
   mod render {
     use super::*;
 
     #[test]
-    fn it_renders_a_training_card() {
+    fn it_renders_a_card_being_dragged() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
-    }
-
-    #[test]
-    fn it_renders_an_idle_card() {
-      let mut model = base_model();
-      model.training = None;
-
-      let _el: Element<'_, Message> = card(&model, None, false, true);
-    }
-
-    #[test]
-    fn it_renders_isk_present_and_placeholder() {
-      let present = base_model();
-      let mut absent = base_model();
-      absent.wallet_balance = None;
-
-      let _present: Element<'_, Message> = card(&present, None, false, true);
-      let _absent: Element<'_, Message> = card(&absent, None, false, true);
-    }
-
-    #[test]
-    fn it_renders_every_docked_state() {
-      for docked in [Some(true), Some(false), None] {
-        let mut model = base_model();
-        model.docked = docked;
-
-        let _el: Element<'_, Message> = card(&model, None, false, true);
-      }
-    }
-
-    #[test]
-    fn it_renders_an_accented_squad_card() {
-      let mut model = base_model();
-      model.accent = Some(color::accent::PLASMA);
-
-      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _el: Element<'_, Message> = card(&model, None, true, true);
     }
 
     #[test]
@@ -677,20 +615,6 @@ mod tests {
       for failure in [Phase::Failed, Phase::BackingOff] {
         let _el: Element<'_, Message> = card(&model, Some(failure), false, true);
       }
-    }
-
-    #[test]
-    fn it_renders_the_tag_row_with_the_add_affordance_and_no_inline_picker() {
-      let model = base_model();
-
-      let _el: Element<'_, Message> = card(&model, None, false, true);
-    }
-
-    #[test]
-    fn it_renders_a_card_being_dragged() {
-      let model = base_model();
-
-      let _el: Element<'_, Message> = card(&model, None, true, true);
     }
 
     #[test]
@@ -717,6 +641,69 @@ mod tests {
       plain.tags = Vec::new();
       let _plain: Element<'_, Message> = ghost(&plain);
     }
+
+    #[test]
+    fn it_renders_a_training_card() {
+      let model = base_model();
+
+      let _el: Element<'_, Message> = card(&model, None, false, true);
+    }
+
+    #[test]
+    fn it_renders_an_accented_squad_card() {
+      let mut model = base_model();
+      model.accent = Some(color::accent::PLASMA);
+
+      let _el: Element<'_, Message> = card(&model, None, false, true);
+    }
+
+    #[test]
+    fn it_renders_an_idle_card() {
+      let mut model = base_model();
+      model.training = None;
+
+      let _el: Element<'_, Message> = card(&model, None, false, true);
+    }
+
+    #[test]
+    fn it_renders_every_docked_state() {
+      for docked in [Some(true), Some(false), None] {
+        let mut model = base_model();
+        model.docked = docked;
+
+        let _el: Element<'_, Message> = card(&model, None, false, true);
+      }
+    }
+
+    #[test]
+    fn it_renders_isk_present_and_placeholder() {
+      let present = base_model();
+      let mut absent = base_model();
+      absent.wallet_balance = None;
+
+      let _present: Element<'_, Message> = card(&present, None, false, true);
+      let _absent: Element<'_, Message> = card(&absent, None, false, true);
+    }
+
+    #[test]
+    fn it_renders_the_tag_row_with_the_add_affordance_and_no_inline_picker() {
+      let model = base_model();
+
+      let _el: Element<'_, Message> = card(&model, None, false, true);
+    }
+  }
+
+  mod roman {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_levels_one_through_five() {
+      assert_eq!(roman(1), "I");
+      assert_eq!(roman(5), "V");
+      assert_eq!(roman(7), "7");
+    }
   }
 
   mod sizing {
@@ -731,11 +718,15 @@ mod tests {
     }
 
     #[test]
-    fn it_does_not_declare_a_fill_height_for_an_unaccented_card() {
-      let mut model = base_model();
-      model.accent = None;
+    fn it_declares_the_fixed_card_height() {
+      use pretty_assertions::assert_eq;
 
-      assert_ne!(declared_height(&model), Length::Fill);
+      let model = base_model();
+
+      assert_eq!(
+        declared_height(&model),
+        Length::Fixed(crate::ui::style::spacing::layout::CARD_HEIGHT),
+      );
     }
 
     #[test]
@@ -755,15 +746,24 @@ mod tests {
     }
 
     #[test]
-    fn it_declares_the_fixed_card_height() {
-      use pretty_assertions::assert_eq;
+    fn it_does_not_declare_a_fill_height_for_an_unaccented_card() {
+      let mut model = base_model();
+      model.accent = None;
 
-      let model = base_model();
+      assert_ne!(declared_height(&model), Length::Fill);
+    }
+  }
 
-      assert_eq!(
-        declared_height(&model),
-        Length::Fixed(crate::ui::style::spacing::layout::CARD_HEIGHT),
-      );
+  mod status_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_labels_docked_in_space_and_renders_no_pill_when_unknown() {
+      assert_eq!(status_label(Some(true)), Some("DOCKED"));
+      assert_eq!(status_label(Some(false)), Some("IN SPACE"));
+      assert_eq!(status_label(None), None);
     }
   }
 }

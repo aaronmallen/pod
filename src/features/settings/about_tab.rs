@@ -168,6 +168,16 @@ fn github_link<'a>() -> Element<'a, Message> {
 mod tests {
   use super::*;
 
+  mod notice {
+    use super::*;
+
+    #[test]
+    fn it_reuses_the_shared_trademark_constants() {
+      assert!(TRADEMARK_NOTICE.contains("Fenris Creations"));
+      assert!(TRADEMARK_COPYRIGHT.contains("Fenris Creations"));
+    }
+  }
+
   mod update {
     use super::*;
 
@@ -183,16 +193,6 @@ mod tests {
     #[test]
     fn it_renders_the_about_panel() {
       let _el: Element<'_, Message> = super::view();
-    }
-  }
-
-  mod notice {
-    use super::*;
-
-    #[test]
-    fn it_reuses_the_shared_trademark_constants() {
-      assert!(TRADEMARK_NOTICE.contains("Fenris Creations"));
-      assert!(TRADEMARK_COPYRIGHT.contains("Fenris Creations"));
     }
   }
 }

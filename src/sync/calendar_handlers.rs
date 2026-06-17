@@ -121,62 +121,6 @@ mod tests {
     )
   }
 
-  #[test]
-  fn it_registers_the_respond_handler() {
-    let registry = registry();
-
-    let handler = registry.handler(OutboxKind::CalendarRespond).expect("registered");
-
-    assert_eq!(handler.kind(), OutboxKind::CalendarRespond);
-  }
-
-  #[tokio::test]
-  async fn it_optimistically_writes_the_chosen_response_on_apply() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    store_event(&db, 42, 7, "not_responded").await;
-
-    RespondHandler
-      .apply(&db, &payload(42, 7, "accepted", "not_responded"))
-      .await
-      .unwrap();
-
-    assert_eq!(
-      calendar::event(&db, 42, 7).await.unwrap().unwrap().response(),
-      "accepted"
-    );
-  }
-
-  #[tokio::test]
-  async fn it_restores_the_previous_response_on_compensate() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    store_event(&db, 42, 7, "not_responded").await;
-    RespondHandler
-      .apply(&db, &payload(42, 7, "accepted", "not_responded"))
-      .await
-      .unwrap();
-
-    RespondHandler
-      .compensate(&db, &payload(42, 7, "accepted", "not_responded"))
-      .await
-      .unwrap();
-
-    assert_eq!(
-      calendar::event(&db, 42, 7).await.unwrap().unwrap().response(),
-      "not_responded"
-    );
-  }
-
-  #[tokio::test]
-  async fn it_fails_a_malformed_payload() {
-    let db = store::open_test().await.unwrap();
-
-    let result = RespondHandler.apply(&db, "not json").await;
-
-    assert!(matches!(result, Err(clients::Error::Json(_))));
-  }
-
   mod execute {
     use wiremock::{
       Mock, MockServer, ResponseTemplate,
@@ -229,5 +173,61 @@ mod tests {
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
     }
+  }
+
+  #[tokio::test]
+  async fn it_fails_a_malformed_payload() {
+    let db = store::open_test().await.unwrap();
+
+    let result = RespondHandler.apply(&db, "not json").await;
+
+    assert!(matches!(result, Err(clients::Error::Json(_))));
+  }
+
+  #[tokio::test]
+  async fn it_optimistically_writes_the_chosen_response_on_apply() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_event(&db, 42, 7, "not_responded").await;
+
+    RespondHandler
+      .apply(&db, &payload(42, 7, "accepted", "not_responded"))
+      .await
+      .unwrap();
+
+    assert_eq!(
+      calendar::event(&db, 42, 7).await.unwrap().unwrap().response(),
+      "accepted"
+    );
+  }
+
+  #[test]
+  fn it_registers_the_respond_handler() {
+    let registry = registry();
+
+    let handler = registry.handler(OutboxKind::CalendarRespond).expect("registered");
+
+    assert_eq!(handler.kind(), OutboxKind::CalendarRespond);
+  }
+
+  #[tokio::test]
+  async fn it_restores_the_previous_response_on_compensate() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_event(&db, 42, 7, "not_responded").await;
+    RespondHandler
+      .apply(&db, &payload(42, 7, "accepted", "not_responded"))
+      .await
+      .unwrap();
+
+    RespondHandler
+      .compensate(&db, &payload(42, 7, "accepted", "not_responded"))
+      .await
+      .unwrap();
+
+    assert_eq!(
+      calendar::event(&db, 42, 7).await.unwrap().unwrap().response(),
+      "not_responded"
+    );
   }
 }

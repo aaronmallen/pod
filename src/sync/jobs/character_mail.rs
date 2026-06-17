@@ -395,6 +395,24 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_aborts_without_writing_when_the_mail_fetch_fails() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_commits_header_body_and_resolved_recipients_together() {
       let server = MockServer::start().await;
       mount_json(
@@ -458,6 +476,72 @@ mod tests {
       assert_eq!(labels[0].name(), "Inbox");
       assert_eq!(labels[0].color().as_deref(), Some("#ffffff"));
       assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [1]);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_refetch_the_body_and_reconciles_read_state_on_re_run() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/42/mail/",
+        serde_json::json!([
+          { "mail_id": 7, "from": 1001, "is_read": true, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+            "recipients": [{ "recipient_id": 1001, "recipient_type": "character" }] },
+        ]),
+      )
+      .await;
+      let body_hits = Arc::new(AtomicUsize::new(0));
+      struct CountingBody(Arc<AtomicUsize>);
+      impl Respond for CountingBody {
+        fn respond(&self, _: &Request) -> ResponseTemplate {
+          self.0.fetch_add(1, Ordering::SeqCst);
+          ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "<p>SHOULD NOT FETCH</p>" }))
+        }
+      }
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(CountingBody(body_hits.clone()))
+        .mount(&server)
+        .await;
+      mount_names(
+        &server,
+        serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
+      )
+      .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      mail::upsert_complete(
+        &fx.db,
+        &CharacterMail {
+          character_id: 42,
+          from_id: 1001,
+          from_name: "Sender".to_owned(),
+          is_read: false,
+          mail_id: 7,
+          subject: Some("Hi".to_owned()),
+          timestamp: "2026-06-01T10:00:00Z".to_owned(),
+          ..Default::default()
+        },
+        &CharacterMailBody {
+          body: "<p>original</p>".to_owned(),
+          character_id: 42,
+          mail_id: 7,
+        },
+        &[],
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(body_hits.load(Ordering::SeqCst), 0);
+      assert_eq!(
+        mail::body(&fx.db, 42, 7).await.unwrap().unwrap().body(),
+        "<p>original</p>"
+      );
+      assert!(mail::headers(&fx.db, 42).await.unwrap()[0].is_read());
     }
 
     #[tokio::test]
@@ -547,106 +631,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_withholds_a_mail_with_an_unresolved_participant() {
-      let server = MockServer::start().await;
-      mount_json(
-        &server,
-        "/characters/42/mail/",
-        serde_json::json!([
-          { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
-            "recipients": [{ "recipient_id": 2002, "recipient_type": "character" }] },
-        ]),
-      )
-      .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/mail/7/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "<p>x</p>" })))
-        .expect(0)
-        .mount(&server)
-        .await;
-      mount_names(
-        &server,
-        serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
-      )
-      .await;
-      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
-      let fx = fixture(server, 42).await;
-      seed_character(&fx.db, 42).await;
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
-      assert!(!mail::has_body(&fx.db, 42, 7).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn it_does_not_refetch_the_body_and_reconciles_read_state_on_re_run() {
-      let server = MockServer::start().await;
-      mount_json(
-        &server,
-        "/characters/42/mail/",
-        serde_json::json!([
-          { "mail_id": 7, "from": 1001, "is_read": true, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
-            "recipients": [{ "recipient_id": 1001, "recipient_type": "character" }] },
-        ]),
-      )
-      .await;
-      let body_hits = Arc::new(AtomicUsize::new(0));
-      struct CountingBody(Arc<AtomicUsize>);
-      impl Respond for CountingBody {
-        fn respond(&self, _: &Request) -> ResponseTemplate {
-          self.0.fetch_add(1, Ordering::SeqCst);
-          ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "<p>SHOULD NOT FETCH</p>" }))
-        }
-      }
-      Mock::given(method("GET"))
-        .and(path("/characters/42/mail/7/"))
-        .respond_with(CountingBody(body_hits.clone()))
-        .mount(&server)
-        .await;
-      mount_names(
-        &server,
-        serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
-      )
-      .await;
-      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
-      let fx = fixture(server, 42).await;
-      seed_character(&fx.db, 42).await;
-      mail::upsert_complete(
-        &fx.db,
-        &CharacterMail {
-          character_id: 42,
-          from_id: 1001,
-          from_name: "Sender".to_owned(),
-          is_read: false,
-          mail_id: 7,
-          subject: Some("Hi".to_owned()),
-          timestamp: "2026-06-01T10:00:00Z".to_owned(),
-          ..Default::default()
-        },
-        &CharacterMailBody {
-          body: "<p>original</p>".to_owned(),
-          character_id: 42,
-          mail_id: 7,
-        },
-        &[],
-      )
-      .await
-      .unwrap();
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      assert_eq!(body_hits.load(Ordering::SeqCst), 0);
-      assert_eq!(
-        mail::body(&fx.db, 42, 7).await.unwrap().unwrap().body(),
-        "<p>original</p>"
-      );
-      assert!(mail::headers(&fx.db, 42).await.unwrap()[0].is_read());
-    }
-
-    #[tokio::test]
     async fn it_keeps_a_just_read_mail_read_when_the_outbox_write_is_still_pending() {
       let server = MockServer::start().await;
       mount_json(
@@ -690,45 +674,6 @@ mod tests {
         mail::headers(&fx.db, 42).await.unwrap()[0].is_read(),
         "a pending mark-read outbox row protects the optimistic read flag against an is_read:false sync"
       );
-    }
-
-    #[tokio::test]
-    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/mail/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
-      let fx = fixture(server, 42).await;
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(
-        matches!(result, Err(Error::NotReady)),
-        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
-      );
-      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_mail_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/mail/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let fx = fixture(server, 42).await;
-      seed_character(&fx.db, 42).await;
-      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -778,6 +723,66 @@ mod tests {
       assert!(inbox.color().is_none());
 
       assert_eq!(mail::membership(&fx.db, 42, 7).await.unwrap(), [1, 16]);
+    }
+
+    #[tokio::test]
+    async fn it_preserves_an_optimistic_negative_id_label_through_a_sync() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/42/mail/",
+        serde_json::json!([
+          { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
+            "labels": [16],
+            "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+        ]),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/characters/42/mail/7/",
+        serde_json::json!({ "body": "<p>Hello</p>" }),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Sender" },
+          { "category": "character", "id": 42, "name": "Pilot" },
+        ]),
+      )
+      .await;
+      mount_labels(
+        &server,
+        serde_json::json!({ "labels": [{ "label_id": 16, "name": "Keep", "color": "#660066" }] }),
+      )
+      .await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      mail::insert_label(
+        &fx.db,
+        &CharacterMailLabel {
+          character_id: 42,
+          color: Some("#ff0000".to_owned()),
+          label_id: -1,
+          name: "Pending".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(
+        mail::labels(&fx.db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [-1, 16]
+      );
     }
 
     #[tokio::test]
@@ -874,63 +879,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_preserves_an_optimistic_negative_id_label_through_a_sync() {
+    async fn it_skips_without_fetching_when_the_character_is_not_yet_persisted() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let fx = fixture(server, 42).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_withholds_a_mail_with_an_unresolved_participant() {
       let server = MockServer::start().await;
       mount_json(
         &server,
         "/characters/42/mail/",
         serde_json::json!([
           { "mail_id": 7, "from": 1001, "is_read": false, "timestamp": "2026-06-01T10:00:00Z", "subject": "Hi",
-            "labels": [16],
-            "recipients": [{ "recipient_id": 42, "recipient_type": "character" }] },
+            "recipients": [{ "recipient_id": 2002, "recipient_type": "character" }] },
         ]),
       )
       .await;
-      mount_json(
-        &server,
-        "/characters/42/mail/7/",
-        serde_json::json!({ "body": "<p>Hello</p>" }),
-      )
-      .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "body": "<p>x</p>" })))
+        .expect(0)
+        .mount(&server)
+        .await;
       mount_names(
         &server,
-        serde_json::json!([
-          { "category": "character", "id": 1001, "name": "Sender" },
-          { "category": "character", "id": 42, "name": "Pilot" },
-        ]),
+        serde_json::json!([{ "category": "character", "id": 1001, "name": "Sender" }]),
       )
       .await;
-      mount_labels(
-        &server,
-        serde_json::json!({ "labels": [{ "label_id": 16, "name": "Keep", "color": "#660066" }] }),
-      )
-      .await;
+      mount_labels(&server, serde_json::json!({ "labels": [] })).await;
       let fx = fixture(server, 42).await;
       seed_character(&fx.db, 42).await;
-      mail::insert_label(
-        &fx.db,
-        &CharacterMailLabel {
-          character_id: 42,
-          color: Some("#ff0000".to_owned()),
-          label_id: -1,
-          name: "Pending".to_owned(),
-        },
-      )
-      .await
-      .unwrap();
       let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
 
       run(&ctx).await.unwrap();
 
-      assert_eq!(
-        mail::labels(&fx.db, 42)
-          .await
-          .unwrap()
-          .iter()
-          .map(|l| l.label_id())
-          .collect::<Vec<_>>(),
-        [-1, 16]
-      );
+      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
+      assert!(!mail::has_body(&fx.db, 42, 7).await.unwrap());
     }
   }
 }

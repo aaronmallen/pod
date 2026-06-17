@@ -194,13 +194,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_prefers_the_ticker() {
-      assert_eq!(corp_ticker_label(Some("CBLT"), 98_000_001), "CBLT");
+    fn it_falls_back_to_the_corporation_id() {
+      assert_eq!(corp_ticker_label(None, 98_000_001), "CORP 98000001");
     }
 
     #[test]
-    fn it_falls_back_to_the_corporation_id() {
-      assert_eq!(corp_ticker_label(None, 98_000_001), "CORP 98000001");
+    fn it_prefers_the_ticker() {
+      assert_eq!(corp_ticker_label(Some("CBLT"), 98_000_001), "CBLT");
     }
   }
 
@@ -231,6 +231,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_renders_bare_seconds() {
+      assert_eq!(fmt_duration(5), "5s");
+    }
+
+    #[test]
     fn it_renders_days_and_hours() {
       assert_eq!(fmt_duration(90_061), "1d 1h");
     }
@@ -246,11 +251,6 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_bare_seconds() {
-      assert_eq!(fmt_duration(5), "5s");
-    }
-
-    #[test]
     fn it_renders_zero_as_zero_minutes() {
       assert_eq!(fmt_duration(0), "0m");
     }
@@ -262,15 +262,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_clamps_negatives_to_zero_minutes() {
+      assert_eq!(fmt_duration_coarse(-5), "0m");
+    }
+
+    #[test]
     fn it_omits_seconds() {
       assert_eq!(fmt_duration_coarse(90_061), "1d 1h");
       assert_eq!(fmt_duration_coarse(3_661), "1h 1m");
       assert_eq!(fmt_duration_coarse(61), "1m");
-    }
-
-    #[test]
-    fn it_clamps_negatives_to_zero_minutes() {
-      assert_eq!(fmt_duration_coarse(-5), "0m");
     }
   }
 
@@ -296,8 +296,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_scales_trillions() {
-      assert_eq!(fmt_isk(2_500_000_000_000.0), "2.5T");
+    fn it_prefixes_negatives_with_a_sign() {
+      assert_eq!(fmt_isk(-1_500_000_000.0), "-1.5B");
+    }
+
+    #[test]
+    fn it_renders_small_values_without_a_suffix() {
+      assert_eq!(fmt_isk(42.0), "42");
     }
 
     #[test]
@@ -311,13 +316,8 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_small_values_without_a_suffix() {
-      assert_eq!(fmt_isk(42.0), "42");
-    }
-
-    #[test]
-    fn it_prefixes_negatives_with_a_sign() {
-      assert_eq!(fmt_isk(-1_500_000_000.0), "-1.5B");
+    fn it_scales_trillions() {
+      assert_eq!(fmt_isk(2_500_000_000_000.0), "2.5T");
     }
   }
 
@@ -338,13 +338,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_an_em_dash_for_none() {
-      assert_eq!(fmt_isk_opt(None), EM_DASH);
+    fn it_formats_some() {
+      assert_eq!(fmt_isk_opt(Some(2_500_000.0)), "2.5M");
     }
 
     #[test]
-    fn it_formats_some() {
-      assert_eq!(fmt_isk_opt(Some(2_500_000.0)), "2.5M");
+    fn it_renders_an_em_dash_for_none() {
+      assert_eq!(fmt_isk_opt(None), EM_DASH);
     }
   }
 
@@ -352,6 +352,11 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_renders_small_totals_verbatim() {
+      assert_eq!(fmt_sp(420), "420");
+    }
 
     #[test]
     fn it_scales_millions_with_two_decimals() {
@@ -362,11 +367,6 @@ mod tests {
     fn it_scales_thousands() {
       assert_eq!(fmt_sp(12_400), "12K");
     }
-
-    #[test]
-    fn it_renders_small_totals_verbatim() {
-      assert_eq!(fmt_sp(420), "420");
-    }
   }
 
   mod fmt_sp_compact {
@@ -375,13 +375,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_uses_a_lowercase_thousands_suffix() {
-      assert_eq!(fmt_sp_compact(2_500), "2.5k");
+    fn it_scales_millions() {
+      assert_eq!(fmt_sp_compact(1_500_000), "1.5M");
     }
 
     #[test]
-    fn it_scales_millions() {
-      assert_eq!(fmt_sp_compact(1_500_000), "1.5M");
+    fn it_uses_a_lowercase_thousands_suffix() {
+      assert_eq!(fmt_sp_compact(2_500), "2.5k");
     }
   }
 
@@ -433,8 +433,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_scales_to_mega_cubic_metres() {
-      assert_eq!(fmt_volume(2_500_000.0), "2.5Mm\u{b3}");
+    fn it_renders_small_volumes_in_cubic_metres() {
+      assert_eq!(fmt_volume(42.0), "42m\u{b3}");
     }
 
     #[test]
@@ -443,8 +443,8 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_small_volumes_in_cubic_metres() {
-      assert_eq!(fmt_volume(42.0), "42m\u{b3}");
+    fn it_scales_to_mega_cubic_metres() {
+      assert_eq!(fmt_volume(2_500_000.0), "2.5Mm\u{b3}");
     }
   }
 
@@ -454,13 +454,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_prefers_the_skill_name() {
-      assert_eq!(skill_label(Some("Gunnery"), 3300), "Gunnery");
+    fn it_falls_back_to_the_skill_id() {
+      assert_eq!(skill_label(None, 3300), "Skill 3300");
     }
 
     #[test]
-    fn it_falls_back_to_the_skill_id() {
-      assert_eq!(skill_label(None, 3300), "Skill 3300");
+    fn it_prefers_the_skill_name() {
+      assert_eq!(skill_label(Some("Gunnery"), 3300), "Gunnery");
     }
   }
 }

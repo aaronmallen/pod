@@ -829,16 +829,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_seeds_an_edit_modal_from_a_contact_with_a_snapped_standing() {
-      let modal = ContactModal::edit(&contact("character", 8.5, true, "[1,2]"), catalog());
-
-      assert!(modal.is_edit());
-      assert_eq!(modal.standing(), 10.0);
-      assert_eq!(modal.labels(), &[1, 2]);
-      assert!(modal.watch());
-    }
-
-    #[test]
     fn it_forces_watch_off_for_a_non_character_entity() {
       let mut modal = ContactModal::add(Vec::new(), Vec::new());
       modal.set_entity(Some(corp_entity()));
@@ -850,17 +840,6 @@ mod tests {
     }
 
     #[test]
-    fn it_toggles_label_membership() {
-      let mut modal = ContactModal::add(Vec::new(), Vec::new());
-
-      modal.toggle_label(3);
-      modal.toggle_label(5);
-      modal.toggle_label(3);
-
-      assert_eq!(modal.labels(), &[5]);
-    }
-
-    #[test]
     fn it_only_submits_with_an_entity_selected() {
       let mut modal = ContactModal::add(Vec::new(), Vec::new());
 
@@ -869,6 +848,27 @@ mod tests {
       modal.set_entity(Some(corp_entity()));
 
       assert!(modal.can_submit());
+    }
+
+    #[test]
+    fn it_seeds_an_edit_modal_from_a_contact_with_a_snapped_standing() {
+      let modal = ContactModal::edit(&contact("character", 8.5, true, "[1,2]"), catalog());
+
+      assert!(modal.is_edit());
+      assert_eq!(modal.standing(), 10.0);
+      assert_eq!(modal.labels(), &[1, 2]);
+      assert!(modal.watch());
+    }
+
+    #[test]
+    fn it_toggles_label_membership() {
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
+
+      modal.toggle_label(3);
+      modal.toggle_label(5);
+      modal.toggle_label(3);
+
+      assert_eq!(modal.labels(), &[5]);
     }
   }
 
@@ -883,19 +883,19 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_edit_modal_with_a_locked_corporation_entity() {
-      let modal = ContactModal::edit(&contact("corporation", -5.0, false, "[]"), catalog());
-
-      let _el: Element<'_, Message> = super::super::modal(&modal);
-    }
-
-    #[test]
     fn it_renders_the_delete_confirm() {
       let confirm = DeleteConfirm {
         contact: contact("character", 0.0, false, "[]"),
       };
 
       let _el: Element<'_, Message> = super::super::delete_confirm(&confirm);
+    }
+
+    #[test]
+    fn it_renders_the_edit_modal_with_a_locked_corporation_entity() {
+      let modal = ContactModal::edit(&contact("corporation", -5.0, false, "[]"), catalog());
+
+      let _el: Element<'_, Message> = super::super::modal(&modal);
     }
   }
 

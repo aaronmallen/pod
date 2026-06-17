@@ -87,16 +87,16 @@ mod tests {
     }
 
     #[test]
+    fn it_returns_zero_for_levels_outside_one_to_five() {
+      assert_eq!(sp_cost(1.0, 0), 0);
+      assert_eq!(sp_cost(1.0, 6), 0);
+    }
+
+    #[test]
     fn it_scales_linearly_with_rank() {
       assert_eq!(sp_cost(2.0, 1), 500);
       assert_eq!(sp_cost(2.0, 2), 2_828);
       assert_eq!(sp_cost(2.0, 5), 512_000);
-    }
-
-    #[test]
-    fn it_returns_zero_for_levels_outside_one_to_five() {
-      assert_eq!(sp_cost(1.0, 0), 0);
-      assert_eq!(sp_cost(1.0, 6), 0);
     }
   }
 

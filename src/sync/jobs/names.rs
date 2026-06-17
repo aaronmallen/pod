@@ -96,35 +96,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_resolves_ids_to_name_records() {
-      let server = MockServer::start().await;
-      Mock::given(method("POST"))
-        .and(path("/universe/names/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          name_record("character", 95465499, "CCP Bartender"),
-          name_record("corporation", 98356193, "Test Corp"),
-        ])))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      let esi = make_esi(&server.uri(), &db).await;
-      let image = eve_image::Client::with_base_url(
-        http::Client::builder(http::Cache::new(db.clone())).build(),
-        server.uri(),
-      );
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let ctx = build_ctx(&db, &esi, &image, &image_store);
-
-      let resolved = resolve_names(&ctx, &[95465499, 98356193]).await.unwrap();
-
-      assert_eq!(resolved.len(), 2);
-      assert_eq!(resolved[&95465499].name, "CCP Bartender");
-      assert_eq!(resolved[&95465499].category, "character");
-      assert_eq!(resolved[&98356193].name, "Test Corp");
-    }
-
-    #[tokio::test]
     async fn it_chunks_requests_within_the_1000_id_cap() {
       let server = MockServer::start().await;
       let request_count = Arc::new(AtomicUsize::new(0));
@@ -258,6 +229,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_resolves_ids_to_name_records() {
+      let server = MockServer::start().await;
+      Mock::given(method("POST"))
+        .and(path("/universe/names/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          name_record("character", 95465499, "CCP Bartender"),
+          name_record("corporation", 98356193, "Test Corp"),
+        ])))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let esi = make_esi(&server.uri(), &db).await;
+      let image = eve_image::Client::with_base_url(
+        http::Client::builder(http::Cache::new(db.clone())).build(),
+        server.uri(),
+      );
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = build_ctx(&db, &esi, &image, &image_store);
+
+      let resolved = resolve_names(&ctx, &[95465499, 98356193]).await.unwrap();
+
+      assert_eq!(resolved.len(), 2);
+      assert_eq!(resolved[&95465499].name, "CCP Bartender");
+      assert_eq!(resolved[&95465499].category, "character");
+      assert_eq!(resolved[&98356193].name, "Test Corp");
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      let esi = make_esi(&server.uri(), &db).await;
+      let image = eve_image::Client::with_base_url(
+        http::Client::builder(http::Cache::new(db.clone())).build(),
+        server.uri(),
+      );
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = build_ctx(&db, &esi, &image, &image_store);
+
+      let resolved = resolve_names(&ctx, &[]).await.unwrap();
+
+      assert!(resolved.is_empty());
+    }
+
+    #[tokio::test]
     async fn it_returns_err_on_a_non_404_esi_error() {
       let server = MockServer::start().await;
       Mock::given(method("POST"))
@@ -278,24 +296,6 @@ mod tests {
       let result = resolve_names(&ctx, &[1, 2, 3]).await;
 
       assert!(matches!(result, Err(Error::Http(_))));
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_ids() {
-      let server = MockServer::start().await;
-      let db = store::open_test().await.unwrap();
-      let esi = make_esi(&server.uri(), &db).await;
-      let image = eve_image::Client::with_base_url(
-        http::Client::builder(http::Cache::new(db.clone())).build(),
-        server.uri(),
-      );
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let ctx = build_ctx(&db, &esi, &image, &image_store);
-
-      let resolved = resolve_names(&ctx, &[]).await.unwrap();
-
-      assert!(resolved.is_empty());
     }
   }
 }

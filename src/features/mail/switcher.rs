@@ -92,20 +92,6 @@ mod tests {
   }
 
   #[test]
-  fn it_renders_a_fallback_trigger_when_the_active_character_is_absent() {
-    let state = state_with(vec![pilot(1, 3)], Scope::Character(999));
-
-    let _el: Element<'_, Message> = trigger(&state);
-  }
-
-  #[test]
-  fn it_renders_the_trigger_in_a_character_scope() {
-    let state = state_with(vec![pilot(1, 3), pilot(2, 0)], Scope::Character(2));
-
-    let _el: Element<'_, Message> = trigger(&state);
-  }
-
-  #[test]
   fn it_builds_a_character_group_when_the_roster_is_non_empty() {
     let state = state_with(vec![pilot(1, 3), pilot(2, 0)], Scope::Character(1));
 
@@ -117,5 +103,19 @@ mod tests {
     let state = state_with(Vec::new(), Scope::Character(0));
 
     let _el: Element<'_, Message> = dropdown(&state);
+  }
+
+  #[test]
+  fn it_renders_a_fallback_trigger_when_the_active_character_is_absent() {
+    let state = state_with(vec![pilot(1, 3)], Scope::Character(999));
+
+    let _el: Element<'_, Message> = trigger(&state);
+  }
+
+  #[test]
+  fn it_renders_the_trigger_in_a_character_scope() {
+    let state = state_with(vec![pilot(1, 3), pilot(2, 0)], Scope::Character(2));
+
+    let _el: Element<'_, Message> = trigger(&state);
   }
 }

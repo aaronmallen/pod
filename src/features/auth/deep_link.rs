@@ -216,21 +216,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_warns_when_a_forward_falls_through_to_local_handling() {
-      let url = format!("{SCHEME}://callback");
-
-      let line = breadcrumb_message(
-        Some(&url),
-        &Claim::Primary {
-          pending: Some(url.clone()),
-        },
-      );
-
-      assert!(line.contains("[WARN]"));
-      assert!(line.contains(&url));
-    }
-
-    #[test]
     fn it_records_an_info_breadcrumb_for_a_forwarded_callback() {
       let url = format!("{SCHEME}://callback");
 
@@ -253,12 +238,46 @@ mod tests {
       assert!(focused.contains("[INFO]"));
       assert!(became_primary.contains("[INFO]"));
     }
+
+    #[test]
+    fn it_warns_when_a_forward_falls_through_to_local_handling() {
+      let url = format!("{SCHEME}://callback");
+
+      let line = breadcrumb_message(
+        Some(&url),
+        &Claim::Primary {
+          pending: Some(url.clone()),
+        },
+      );
+
+      assert!(line.contains("[WARN]"));
+      assert!(line.contains(&url));
+    }
   }
 
   mod resolve_claim {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_becomes_primary_when_a_no_url_launch_finds_no_running_primary() {
+      let claim = resolve_claim(None, |_| unreachable!(), || false);
+
+      assert_eq!(
+        claim,
+        Claim::Primary {
+          pending: None
+        }
+      );
+    }
+
+    #[test]
+    fn it_focuses_a_running_primary_when_a_no_url_launch_reaches_one() {
+      let claim = resolve_claim(None, |_| unreachable!(), || true);
+
+      assert_eq!(claim, Claim::Forwarded);
+    }
 
     #[test]
     fn it_forwards_a_callback_url_to_the_primary() {
@@ -277,25 +296,6 @@ mod tests {
         claim,
         Claim::Primary {
           pending: Some(url)
-        }
-      );
-    }
-
-    #[test]
-    fn it_focuses_a_running_primary_when_a_no_url_launch_reaches_one() {
-      let claim = resolve_claim(None, |_| unreachable!(), || true);
-
-      assert_eq!(claim, Claim::Forwarded);
-    }
-
-    #[test]
-    fn it_becomes_primary_when_a_no_url_launch_finds_no_running_primary() {
-      let claim = resolve_claim(None, |_| unreachable!(), || false);
-
-      assert_eq!(
-        claim,
-        Claim::Primary {
-          pending: None
         }
       );
     }

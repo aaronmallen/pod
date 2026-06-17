@@ -61,21 +61,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_is_empty_before_any_window_registers() {
-      let windows = Windows::default();
-
-      assert!(windows.is_empty());
-    }
-
-    #[test]
-    fn it_is_not_empty_while_a_window_is_registered() {
-      let mut windows = Windows::default();
-      windows.register(window::Id::unique(), Window::Main);
-
-      assert!(!windows.is_empty());
-    }
-
-    #[test]
     fn it_becomes_empty_again_once_the_last_window_is_removed() {
       let mut windows = Windows::default();
       let main = window::Id::unique();
@@ -89,12 +74,37 @@ mod tests {
       windows.remove(editor);
       assert!(windows.is_empty(), "removing the final window empties the registry");
     }
+
+    #[test]
+    fn it_is_empty_before_any_window_registers() {
+      let windows = Windows::default();
+
+      assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn it_is_not_empty_while_a_window_is_registered() {
+      let mut windows = Windows::default();
+      windows.register(window::Id::unique(), Window::Main);
+
+      assert!(!windows.is_empty());
+    }
   }
 
   mod state_key {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_gives_compare_and_the_editor_distinct_keys() {
+      assert_ne!(Window::Compare.state_key(), Window::SkillPlanEditor.state_key());
+    }
+
+    #[test]
+    fn it_gives_main_and_the_editor_distinct_keys() {
+      assert_ne!(Window::Main.state_key(), Window::SkillPlanEditor.state_key());
+    }
 
     #[test]
     fn it_maps_compare_to_a_stable_key() {
@@ -112,23 +122,13 @@ mod tests {
     }
 
     #[test]
-    fn it_gives_main_and_the_editor_distinct_keys() {
-      assert_ne!(Window::Main.state_key(), Window::SkillPlanEditor.state_key());
-    }
-
-    #[test]
-    fn it_never_persists_splash() {
-      assert_eq!(Window::Splash.state_key(), None);
-    }
-
-    #[test]
     fn it_never_persists_about() {
       assert_eq!(Window::About.state_key(), None);
     }
 
     #[test]
-    fn it_gives_compare_and_the_editor_distinct_keys() {
-      assert_ne!(Window::Compare.state_key(), Window::SkillPlanEditor.state_key());
+    fn it_never_persists_splash() {
+      assert_eq!(Window::Splash.state_key(), None);
     }
   }
 }

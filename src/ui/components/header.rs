@@ -120,13 +120,13 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_with_only_left_elements() {
-      let _el: Element<'_, ()> = header(vec![text("Characters").into()], vec![]);
+    fn it_renders_with_no_elements() {
+      let _el: Element<'_, ()> = header(vec![], vec![]);
     }
 
     #[test]
-    fn it_renders_with_no_elements() {
-      let _el: Element<'_, ()> = header(vec![], vec![]);
+    fn it_renders_with_only_left_elements() {
+      let _el: Element<'_, ()> = header(vec![text("Characters").into()], vec![]);
     }
   }
 

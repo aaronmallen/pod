@@ -88,13 +88,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_an_on_switch() {
-      let _el: Element<'_, i32> = toggle(true, 1);
+    fn it_renders_an_off_switch() {
+      let _el: Element<'_, i32> = toggle(false, 0);
     }
 
     #[test]
-    fn it_renders_an_off_switch() {
-      let _el: Element<'_, i32> = toggle(false, 0);
+    fn it_renders_an_on_switch() {
+      let _el: Element<'_, i32> = toggle(true, 1);
     }
   }
 }

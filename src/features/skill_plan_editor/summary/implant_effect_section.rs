@@ -211,10 +211,30 @@ mod tests {
   use super::*;
   use crate::features::skills::optimizer::Attributes;
 
+  mod figure_column {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_highlighted_and_plain_variants() {
+      let _highlighted: Element<'_, Message> = super::figure_column("With implants", 3_600.0, true);
+      let _plain: Element<'_, Message> = super::figure_column("Without", 7_200.0, false);
+    }
+  }
+
   mod has_implants {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_reports_false_when_no_attribute_has_a_bonus() {
+      let effect = ImplantEffect {
+        bonus: Attributes::default(),
+        with_sec: 100.0,
+        without_sec: 100.0,
+      };
+      assert_eq!(has_implants(&effect), false);
+    }
 
     #[test]
     fn it_reports_true_when_any_attribute_has_a_bonus() {
@@ -227,26 +247,6 @@ mod tests {
         without_sec: 120.0,
       };
       assert_eq!(has_implants(&effect), true);
-    }
-
-    #[test]
-    fn it_reports_false_when_no_attribute_has_a_bonus() {
-      let effect = ImplantEffect {
-        bonus: Attributes::default(),
-        with_sec: 100.0,
-        without_sec: 100.0,
-      };
-      assert_eq!(has_implants(&effect), false);
-    }
-  }
-
-  mod figure_column {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_highlighted_and_plain_variants() {
-      let _highlighted: Element<'_, Message> = super::figure_column("With implants", 3_600.0, true);
-      let _plain: Element<'_, Message> = super::figure_column("Without", 7_200.0, false);
     }
   }
 

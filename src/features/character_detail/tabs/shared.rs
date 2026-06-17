@@ -43,13 +43,13 @@ mod tests {
     }
 
     #[test]
-    fn it_reads_strong_negative_as_danger() {
-      assert_eq!(standing_color(-8.0), color::status::DANGER);
+    fn it_reads_neutral_as_secondary() {
+      assert_eq!(standing_color(0.0), color::text::secondary());
     }
 
     #[test]
-    fn it_reads_neutral_as_secondary() {
-      assert_eq!(standing_color(0.0), color::text::secondary());
+    fn it_reads_strong_negative_as_danger() {
+      assert_eq!(standing_color(-8.0), color::status::DANGER);
     }
   }
 }

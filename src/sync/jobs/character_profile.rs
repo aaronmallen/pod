@@ -143,6 +143,38 @@ mod tests {
     .unwrap();
   }
 
+  mod resolve_faction {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_faction_from_the_db_on_a_hit() {
+      let db = store::open_test().await.unwrap();
+      sde::upsert_faction(&db, &Faction::new(500_001, "Caldari State", true, 2.0, 100, 50))
+        .await
+        .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), "http://127.0.0.1:1");
+      let image = eve_image::Client::with_base_url(http, "http://127.0.0.1:1");
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = JobCtx {
+        db: &db,
+        esi: &esi,
+        image: &image,
+        image_store: &image_store,
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+        grant: None,
+        sso: None,
+      };
+
+      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
+
+      assert_eq!(faction.id(), 500_001);
+    }
+  }
+
   mod run {
     use super::*;
 
@@ -174,82 +206,6 @@ mod tests {
 
       assert!(result.is_err());
       assert!(character::get(&db, 42).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_resolves_reference_data_from_the_db_on_resync() {
-      let server = MockServer::start().await;
-      mount_json(
-        &server,
-        "/characters/100/",
-        serde_json::json!({
-          "alliance_id": 300, "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5,
-          "corporation_id": 200, "gender": "male", "name": "Test Pilot", "race_id": 1,
-        }),
-      )
-      .await;
-      mount_json(
-        &server,
-        "/corporations/200/",
-        serde_json::json!({
-          "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
-          "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
-        }),
-      )
-      .await;
-      mount_json(
-        &server,
-        "/alliances/300/",
-        serde_json::json!({
-          "creator_corporation_id": 200, "creator_id": 100,
-          "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
-        }),
-      )
-      .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/races/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
-        ])))
-        .expect(1)
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/universe/bloodlines/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-          { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
-            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
-            "ship_type_id": 601, "willpower": 5 },
-        ])))
-        .expect(1)
-        .mount(&server)
-        .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/100/portrait"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![9u8, 9, 9], "image/jpeg"))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_ship_type(&db).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let ctx = JobCtx {
-        db: &db,
-        esi: &esi,
-        image: &image,
-        image_store: &image_store,
-        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(100)),
-        grant: None,
-        sso: None,
-      };
-
-      run(&ctx).await.unwrap();
-      run(&ctx).await.unwrap();
-
-      assert!(character::get(&db, 100).await.unwrap().is_some());
     }
 
     #[tokio::test]
@@ -327,22 +283,65 @@ mod tests {
       assert!(result.is_err());
       assert!(character::get(&db, 100).await.unwrap().is_none());
     }
-  }
-
-  mod resolve_faction {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
-    async fn it_returns_the_faction_from_the_db_on_a_hit() {
+    async fn it_resolves_reference_data_from_the_db_on_resync() {
+      let server = MockServer::start().await;
+      mount_json(
+        &server,
+        "/characters/100/",
+        serde_json::json!({
+          "alliance_id": 300, "birthday": "2010-01-01T00:00:00Z", "bloodline_id": 5,
+          "corporation_id": 200, "gender": "male", "name": "Test Pilot", "race_id": 1,
+        }),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/corporations/200/",
+        serde_json::json!({
+          "alliance_id": 300, "ceo_id": 100, "creator_id": 100, "member_count": 42,
+          "name": "Test Corp", "tax_rate": 0.1, "ticker": "TST",
+        }),
+      )
+      .await;
+      mount_json(
+        &server,
+        "/alliances/300/",
+        serde_json::json!({
+          "creator_corporation_id": 200, "creator_id": 100,
+          "date_founded": "2005-01-01T00:00:00Z", "name": "Test Alliance", "ticker": "TSTA",
+        }),
+      )
+      .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/races/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "alliance_id": 300, "description": "The Caldari.", "name": "Caldari", "race_id": 1 },
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/bloodlines/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+          { "bloodline_id": 5, "charisma": 6, "corporation_id": 200, "description": "The Civire.",
+            "intelligence": 7, "memory": 5, "name": "Civire", "perception": 5, "race_id": 1,
+            "ship_type_id": 601, "willpower": 5 },
+        ])))
+        .expect(1)
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/characters/100/portrait"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(vec![9u8, 9, 9], "image/jpeg"))
+        .mount(&server)
+        .await;
       let db = store::open_test().await.unwrap();
-      sde::upsert_faction(&db, &Faction::new(500_001, "Caldari State", true, 2.0, 100, 50))
-        .await
-        .unwrap();
+      seed_ship_type(&db).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), "http://127.0.0.1:1");
-      let image = eve_image::Client::with_base_url(http, "http://127.0.0.1:1");
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
       let ctx = JobCtx {
@@ -350,14 +349,15 @@ mod tests {
         esi: &esi,
         image: &image,
         image_store: &image_store,
-        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(100)),
         grant: None,
         sso: None,
       };
 
-      let faction = resolve_faction(&ctx, 500_001).await.unwrap();
+      run(&ctx).await.unwrap();
+      run(&ctx).await.unwrap();
 
-      assert_eq!(faction.id(), 500_001);
+      assert!(character::get(&db, 100).await.unwrap().is_some());
     }
   }
 }

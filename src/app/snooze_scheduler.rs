@@ -85,6 +85,21 @@ mod tests {
     use crate::store::{self, repo::mail};
 
     #[tokio::test]
+    async fn it_leaves_a_not_yet_due_snooze_asleep() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      mail::upsert_snoozed_mail(&db, 42, 1, "2026-12-31T08:00:00Z")
+        .await
+        .unwrap();
+
+      let woken = wake_due_snoozes(db.clone(), at(2026, 6, 15)).await;
+
+      assert!(woken.is_empty());
+      let still = mail::all_snoozed_mails(&db, 42).await.unwrap();
+      assert_eq!(still.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [1]);
+    }
+
+    #[tokio::test]
     async fn it_wakes_a_due_snooze_and_clears_the_overlay() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -99,18 +114,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_leaves_a_not_yet_due_snooze_asleep() {
+    async fn it_wakes_nothing_on_a_quiet_tick_with_no_due_snoozes() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      mail::upsert_snoozed_mail(&db, 42, 1, "2026-12-31T08:00:00Z")
-        .await
-        .unwrap();
 
       let woken = wake_due_snoozes(db.clone(), at(2026, 6, 15)).await;
 
       assert!(woken.is_empty());
-      let still = mail::all_snoozed_mails(&db, 42).await.unwrap();
-      assert_eq!(still.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [1]);
     }
 
     #[tokio::test]
@@ -134,16 +144,6 @@ mod tests {
       assert_eq!(woken, [(42, 1), (43, 2)]);
       assert_eq!(mail::all_snoozed_mails(&db, 42).await.unwrap().len(), 1);
       assert!(mail::all_snoozed_mails(&db, 43).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_wakes_nothing_on_a_quiet_tick_with_no_due_snoozes() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let woken = wake_due_snoozes(db.clone(), at(2026, 6, 15)).await;
-
-      assert!(woken.is_empty());
     }
   }
 }

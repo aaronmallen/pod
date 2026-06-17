@@ -216,7 +216,9 @@ mod tests {
   };
 
   const CEO_ID: i64 = 7001;
+
   const CORP_ID: i64 = 98_000_001;
+
   const KILLMAIL_ID: i64 = 555;
 
   async fn seed_corporation(db: &Database) {
@@ -284,16 +286,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_none_when_the_killmail_is_absent() {
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db).await;
-
-      let detail = load(&db, CORP_ID, KILLMAIL_ID).await;
-
-      assert!(detail.is_none());
-    }
-
-    #[tokio::test]
     async fn it_assembles_a_detail_from_the_stored_killmail() {
       let db = store::open_test().await.unwrap();
       seed_corporation(&db).await;
@@ -306,6 +298,16 @@ mod tests {
       assert_eq!(detail.system_name, None);
       assert_eq!(detail.victim_name, "Unknown");
       assert_eq!(detail.dropped_isk, 150.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_killmail_is_absent() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+
+      let detail = load(&db, CORP_ID, KILLMAIL_ID).await;
+
+      assert!(detail.is_none());
     }
   }
 

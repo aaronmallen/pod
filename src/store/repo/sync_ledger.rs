@@ -92,6 +92,76 @@ mod tests {
 
   const CHARACTER: i64 = 95_465_499;
 
+  mod for_subject {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_the_rows_for_the_requested_subject() {
+      let db = store::open_test().await.unwrap();
+      upsert(
+        &db,
+        OwnerType::Character,
+        CHARACTER,
+        "AssetSync",
+        "synced",
+        1,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+      upsert(
+        &db,
+        OwnerType::Character,
+        CHARACTER,
+        "CharacterWallet",
+        "synced",
+        2,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+      upsert(
+        &db,
+        OwnerType::Character,
+        90_000_002,
+        "AssetSync",
+        "synced",
+        3,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+
+      let rows = for_subject(&db, OwnerType::Character, CHARACTER).await.unwrap();
+
+      assert_eq!(rows.len(), 2);
+      assert!(rows.iter().all(|row| row.subject_id() == CHARACTER));
+    }
+  }
+
+  mod get {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_when_no_row_exists() {
+      let db = store::open_test().await.unwrap();
+
+      let row = get(&db, OwnerType::Character, CHARACTER, "AssetSync").await.unwrap();
+
+      assert_eq!(row, None);
+    }
+  }
+
   mod upsert {
     use pretty_assertions::assert_eq;
 
@@ -127,6 +197,53 @@ mod tests {
       assert_eq!(row.last_reason(), &None);
       assert_eq!(row.last_success_at().as_deref(), Some("2026-01-01T00:00:00+00:00"));
       assert_eq!(row.next_eligible_at().as_deref(), Some("2026-01-01T01:00:00+00:00"));
+    }
+
+    #[tokio::test]
+    async fn it_keys_rows_independently_per_kind_and_subject() {
+      let db = store::open_test().await.unwrap();
+
+      upsert(
+        &db,
+        OwnerType::Character,
+        CHARACTER,
+        "AssetSync",
+        "synced",
+        1,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+      upsert(
+        &db,
+        OwnerType::Character,
+        CHARACTER,
+        "CharacterWallet",
+        "empty",
+        0,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+      upsert(
+        &db,
+        OwnerType::Corporation,
+        98_000_001,
+        "AssetSync",
+        "synced",
+        9,
+        None,
+        None,
+        None,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(all(&db).await.unwrap().len(), 3);
     }
 
     #[tokio::test]
@@ -211,53 +328,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_keys_rows_independently_per_kind_and_subject() {
-      let db = store::open_test().await.unwrap();
-
-      upsert(
-        &db,
-        OwnerType::Character,
-        CHARACTER,
-        "AssetSync",
-        "synced",
-        1,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-      upsert(
-        &db,
-        OwnerType::Character,
-        CHARACTER,
-        "CharacterWallet",
-        "empty",
-        0,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-      upsert(
-        &db,
-        OwnerType::Corporation,
-        98_000_001,
-        "AssetSync",
-        "synced",
-        9,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(all(&db).await.unwrap().len(), 3);
-    }
-
-    #[tokio::test]
     async fn it_rejects_an_outcome_outside_the_allowed_set() {
       let db = store::open_test().await.unwrap();
 
@@ -278,76 +348,6 @@ mod tests {
         result.is_err(),
         "the CHECK constraint must reject an unknown outcome token"
       );
-    }
-  }
-
-  mod for_subject {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_rows_for_the_requested_subject() {
-      let db = store::open_test().await.unwrap();
-      upsert(
-        &db,
-        OwnerType::Character,
-        CHARACTER,
-        "AssetSync",
-        "synced",
-        1,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-      upsert(
-        &db,
-        OwnerType::Character,
-        CHARACTER,
-        "CharacterWallet",
-        "synced",
-        2,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-      upsert(
-        &db,
-        OwnerType::Character,
-        90_000_002,
-        "AssetSync",
-        "synced",
-        3,
-        None,
-        None,
-        None,
-      )
-      .await
-      .unwrap();
-
-      let rows = for_subject(&db, OwnerType::Character, CHARACTER).await.unwrap();
-
-      assert_eq!(rows.len(), 2);
-      assert!(rows.iter().all(|row| row.subject_id() == CHARACTER));
-    }
-  }
-
-  mod get {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_none_when_no_row_exists() {
-      let db = store::open_test().await.unwrap();
-
-      let row = get(&db, OwnerType::Character, CHARACTER, "AssetSync").await.unwrap();
-
-      assert_eq!(row, None);
     }
   }
 }

@@ -185,106 +185,6 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_flags_a_revoked_character_token() {
-    let server = MockServer::start().await;
-    mount_revoked_token(&server).await;
-    let db = store::open_test().await.unwrap();
-    let sso = sso_for(&server, &db);
-    // Far-future expiry: the token is not near expiry, so only a forced refresh reveals revocation.
-    let far_future = chrono::Utc::now().timestamp() + 86_400;
-    let scopes = a_required_character_scope();
-    infra::upsert(
-      &db,
-      100,
-      OwnerType::Character,
-      "at",
-      "rt",
-      far_future,
-      None,
-      Some(&scopes),
-    )
-    .await
-    .unwrap();
-
-    let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
-
-    assert_eq!(
-      outcome,
-      Outcome::Synced {
-        rows_touched: 1
-      },
-      "the revoked token is flagged"
-    );
-    let after = infra::get(&db, 100, OwnerType::Character).await.unwrap().unwrap();
-    assert!(
-      after.needs_reauth(),
-      "a revoked refresh token must mark the character needs-reauth"
-    );
-  }
-
-  #[tokio::test]
-  async fn it_flags_a_character_missing_a_required_scope() {
-    let server = MockServer::start().await;
-    mount_live_token(&server, 200).await;
-    let db = store::open_test().await.unwrap();
-    let sso = sso_for(&server, &db);
-    let far_future = chrono::Utc::now().timestamp() + 86_400;
-    // A live token, but its granted scopes are empty while features require some.
-    infra::upsert(&db, 200, OwnerType::Character, "at", "rt", far_future, None, Some(""))
-      .await
-      .unwrap();
-
-    let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
-
-    assert_eq!(
-      outcome,
-      Outcome::Synced {
-        rows_touched: 1
-      }
-    );
-    let after = infra::get(&db, 200, OwnerType::Character).await.unwrap().unwrap();
-    assert!(
-      after.needs_reauth(),
-      "a live but under-scoped token must mark the character needs-reauth"
-    );
-  }
-
-  #[tokio::test]
-  async fn it_clears_a_stale_flag_when_validity_and_scopes_are_healthy() {
-    let server = MockServer::start().await;
-    mount_live_token(&server, 300).await;
-    let db = store::open_test().await.unwrap();
-    let sso = sso_for(&server, &db);
-    let far_future = chrono::Utc::now().timestamp() + 86_400;
-    let scopes = auth::scopes_for(&Feature::ALL).join(" ");
-    infra::upsert(
-      &db,
-      300,
-      OwnerType::Character,
-      "at",
-      "rt",
-      far_future,
-      None,
-      Some(&scopes),
-    )
-    .await
-    .unwrap();
-    infra::mark_needs_reauth(&db, 300, OwnerType::Character).await.unwrap();
-
-    let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
-
-    assert_eq!(outcome, Outcome::Empty, "a healthy entity flags nobody");
-    let after = infra::get(&db, 300, OwnerType::Character).await.unwrap().unwrap();
-    assert!(
-      !after.needs_reauth(),
-      "a fully-healthy token self-heals: the stale flag is cleared"
-    );
-  }
-
-  #[tokio::test]
   async fn it_cascades_a_dead_director_onto_its_corporation() {
     let server = MockServer::start().await;
     // The director (and corp, which shares the token path) refresh against the same revoked endpoint.
@@ -334,6 +234,106 @@ mod tests {
     assert!(
       corp.needs_reauth(),
       "a corporation whose authorizing director's token is dead must itself be flagged"
+    );
+  }
+
+  #[tokio::test]
+  async fn it_clears_a_stale_flag_when_validity_and_scopes_are_healthy() {
+    let server = MockServer::start().await;
+    mount_live_token(&server, 300).await;
+    let db = store::open_test().await.unwrap();
+    let sso = sso_for(&server, &db);
+    let far_future = chrono::Utc::now().timestamp() + 86_400;
+    let scopes = auth::scopes_for(&Feature::ALL).join(" ");
+    infra::upsert(
+      &db,
+      300,
+      OwnerType::Character,
+      "at",
+      "rt",
+      far_future,
+      None,
+      Some(&scopes),
+    )
+    .await
+    .unwrap();
+    infra::mark_needs_reauth(&db, 300, OwnerType::Character).await.unwrap();
+
+    let credentials = infra::all(&db).await.unwrap();
+    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+
+    assert_eq!(outcome, Outcome::Empty, "a healthy entity flags nobody");
+    let after = infra::get(&db, 300, OwnerType::Character).await.unwrap().unwrap();
+    assert!(
+      !after.needs_reauth(),
+      "a fully-healthy token self-heals: the stale flag is cleared"
+    );
+  }
+
+  #[tokio::test]
+  async fn it_flags_a_character_missing_a_required_scope() {
+    let server = MockServer::start().await;
+    mount_live_token(&server, 200).await;
+    let db = store::open_test().await.unwrap();
+    let sso = sso_for(&server, &db);
+    let far_future = chrono::Utc::now().timestamp() + 86_400;
+    // A live token, but its granted scopes are empty while features require some.
+    infra::upsert(&db, 200, OwnerType::Character, "at", "rt", far_future, None, Some(""))
+      .await
+      .unwrap();
+
+    let credentials = infra::all(&db).await.unwrap();
+    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+
+    assert_eq!(
+      outcome,
+      Outcome::Synced {
+        rows_touched: 1
+      }
+    );
+    let after = infra::get(&db, 200, OwnerType::Character).await.unwrap().unwrap();
+    assert!(
+      after.needs_reauth(),
+      "a live but under-scoped token must mark the character needs-reauth"
+    );
+  }
+
+  #[tokio::test]
+  async fn it_flags_a_revoked_character_token() {
+    let server = MockServer::start().await;
+    mount_revoked_token(&server).await;
+    let db = store::open_test().await.unwrap();
+    let sso = sso_for(&server, &db);
+    // Far-future expiry: the token is not near expiry, so only a forced refresh reveals revocation.
+    let far_future = chrono::Utc::now().timestamp() + 86_400;
+    let scopes = a_required_character_scope();
+    infra::upsert(
+      &db,
+      100,
+      OwnerType::Character,
+      "at",
+      "rt",
+      far_future,
+      None,
+      Some(&scopes),
+    )
+    .await
+    .unwrap();
+
+    let credentials = infra::all(&db).await.unwrap();
+    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+
+    assert_eq!(
+      outcome,
+      Outcome::Synced {
+        rows_touched: 1
+      },
+      "the revoked token is flagged"
+    );
+    let after = infra::get(&db, 100, OwnerType::Character).await.unwrap().unwrap();
+    assert!(
+      after.needs_reauth(),
+      "a revoked refresh token must mark the character needs-reauth"
     );
   }
 }

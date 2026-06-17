@@ -331,6 +331,38 @@ mod tests {
     }
   }
 
+  mod chart_points {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_each_nav_point_to_a_value_without_a_liquid_series() {
+      let points = sample_series().chart_points();
+
+      assert_eq!(points.len(), 4);
+      assert_eq!(points[0].date, "2026-03-05");
+      assert_eq!(points[0].value, 1_000.0);
+      assert!(points.iter().all(|point| point.liquid.is_none()));
+    }
+  }
+
+  mod render {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_empty_tracker_body() {
+      let series = NavSeries::default();
+      let _el: Element<'_, Message> = body(&series, None, Utc::now());
+    }
+
+    #[test]
+    fn it_renders_the_tracker_body_from_a_sample_series() {
+      let series = sample_series();
+      let _el: Element<'_, Message> = body(&series, Some(0.5), Utc::now());
+    }
+  }
+
   mod stats {
     use pretty_assertions::assert_eq;
 
@@ -373,22 +405,6 @@ mod tests {
     }
   }
 
-  mod chart_points {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_each_nav_point_to_a_value_without_a_liquid_series() {
-      let points = sample_series().chart_points();
-
-      assert_eq!(points.len(), 4);
-      assert_eq!(points[0].date, "2026-03-05");
-      assert_eq!(points[0].value, 1_000.0);
-      assert!(points.iter().all(|point| point.liquid.is_none()));
-    }
-  }
-
   mod window {
     use pretty_assertions::assert_eq;
 
@@ -402,22 +418,6 @@ mod tests {
 
       assert_eq!(end, NaiveDate::from_ymd_opt(2026, 6, 10).unwrap());
       assert_eq!((end - start).num_days(), WINDOW_DAYS);
-    }
-  }
-
-  mod render {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_empty_tracker_body() {
-      let series = NavSeries::default();
-      let _el: Element<'_, Message> = body(&series, None, Utc::now());
-    }
-
-    #[test]
-    fn it_renders_the_tracker_body_from_a_sample_series() {
-      let series = sample_series();
-      let _el: Element<'_, Message> = body(&series, Some(0.5), Utc::now());
     }
   }
 }

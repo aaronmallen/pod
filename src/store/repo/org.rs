@@ -1170,6 +1170,357 @@ mod corporation_tests {
       .unwrap();
   }
 
+  mod all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_vec_when_no_corporations_exist() {
+      let db = store::open_test().await.unwrap();
+
+      let result = all_corporations(&db).await.unwrap();
+
+      assert_eq!(result, vec![]);
+    }
+  }
+
+  mod corporation_contact_labels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 5001;
+
+    #[tokio::test]
+    async fn it_returns_the_labels_ordered_by_label_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CORP_ID, 8001).await;
+      let labels = vec![
+        CorporationContactLabel {
+          corporation_id: CORP_ID,
+          label_id: 20,
+          label_name: "Allies".to_owned(),
+        },
+        CorporationContactLabel {
+          corporation_id: CORP_ID,
+          label_id: 10,
+          label_name: "Hostiles".to_owned(),
+        },
+      ];
+      replace_labels_for_corporation(&db, CORP_ID, &labels).await.unwrap();
+
+      let fetched = corporation_contact_labels(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(fetched.iter().map(|l| l.label_id()).collect::<Vec<_>>(), vec![10, 20]);
+    }
+  }
+
+  mod corporation_contacts_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 5002;
+
+    fn contact(id: i64, kind: &str, standing: f64, name: &str) -> CorporationContact {
+      CorporationContact {
+        contact_id: id,
+        contact_name: name.to_owned(),
+        contact_type: kind.to_owned(),
+        corporation_id: CORP_ID,
+        is_blocked: false,
+        is_watched: false,
+        label_ids: "[]".to_owned(),
+        standing,
+      }
+    }
+
+    async fn seed_contacts(db: &store::Database) {
+      seed_character(db, CORP_ID, 8002).await;
+      let contacts = vec![
+        contact(100, "character", 8.5, "Wingmate"),
+        contact(200, "corporation", -5.0, "Hostile Corp"),
+        contact(300, "alliance", 0.0, "Neutral Alliance"),
+      ];
+      replace_contacts_for_corporation(db, CORP_ID, &contacts).await.unwrap();
+    }
+
+    fn ids(rows: &[CorporationContact]) -> Vec<i64> {
+      rows.iter().map(|row| row.contact_id()).collect()
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_contact_type() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        Some("corporation"),
+        None,
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![200]);
+    }
+
+    #[tokio::test]
+    async fn it_matches_a_name_query() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        Some("wing"),
+        ContactSortColumn::Name,
+        ContactSortDir::Asc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![100]);
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_standing_descending() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let rows = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        100,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&rows), vec![100, 300, 200]);
+    }
+
+    #[tokio::test]
+    async fn it_pages_through_contacts_without_overlap_via_the_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_contacts(&db).await;
+
+      let first = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+        2,
+      )
+      .await
+      .unwrap();
+      assert_eq!(ids(&first), vec![100, 300]);
+
+      let last = first.last().unwrap();
+      let cursor = ContactCursor::Number(last.standing(), last.contact_id());
+      let second = corporation_contacts_page(
+        &db,
+        CORP_ID,
+        None,
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        Some(&cursor),
+        2,
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(ids(&second), vec![200]);
+    }
+  }
+
+  mod corporation_killmails_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 4001;
+
+    fn kill(killmail_id: i64, kill_time: &str) -> CorporationKillEntry {
+      CorporationKillEntry {
+        attacker_count: 1,
+        corporation_id: CORP_ID,
+        final_blow: true,
+        is_kill: true,
+        kill_hash: format!("hash{killmail_id}"),
+        kill_time: kill_time.to_owned(),
+        killmail_id,
+        ship_type_id: 670,
+        synced_at: "2024-01-01T00:00:00Z".to_owned(),
+        system_id: 30_000_142,
+        value_destroyed_isk: 0.0,
+        value_final: false,
+        value_isk: 0.0,
+        value_recheck_count: 0,
+        value_source: "local".to_owned(),
+        victim_alliance_id: None,
+        victim_corp_id: None,
+        victim_damage_taken: 0,
+        victim_id: None,
+      }
+    }
+
+    fn ids(rows: &[CorporationKillEntry]) -> Vec<i64> {
+      rows.iter().map(|row| row.killmail_id()).collect()
+    }
+
+    async fn seed_kills(db: &store::Database) {
+      seed_character(db, CORP_ID, 7001).await;
+
+      // Two share a timestamp so the killmail_id tiebreaker is exercised.
+      upsert_corporation_killmail(db, &kill(100, "2024-03-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(101, "2024-02-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(102, "2024-02-01T00:00:00Z"))
+        .await
+        .unwrap();
+      upsert_corporation_killmail(db, &kill(103, "2024-01-01T00:00:00Z"))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_orders_by_kill_time_then_killmail_id_descending() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let rows = corporation_killmails_page(&db, CORP_ID, None, 100).await.unwrap();
+
+      assert_eq!(ids(&rows), vec![100, 102, 101, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_pages_through_kills_without_overlap_via_the_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let first = corporation_killmails_page(&db, CORP_ID, None, 2).await.unwrap();
+      assert_eq!(ids(&first), vec![100, 102]);
+
+      let last = first.last().unwrap();
+      let cursor = Some((last.kill_time().clone(), last.killmail_id()));
+      let second = corporation_killmails_page(&db, CORP_ID, cursor, 2).await.unwrap();
+
+      assert_eq!(ids(&second), vec![101, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_page_past_the_last_kill() {
+      let db = store::open_test().await.unwrap();
+      seed_kills(&db).await;
+
+      let beyond = corporation_killmails_page(&db, CORP_ID, Some(("2023-01-01T00:00:00Z".to_owned(), 0)), 10)
+        .await
+        .unwrap();
+
+      assert!(beyond.is_empty());
+    }
+  }
+
+  mod get {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unknown_id() {
+      let db = store::open_test().await.unwrap();
+
+      let result = get_corporation(&db, 9999).await.unwrap();
+
+      assert_eq!(result, None);
+    }
+  }
+
+  mod insert_with_org {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_inserts_corporation_without_optional_org_members() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 2001, 8001).await;
+      let ceo = make_character(8001, 2001);
+      let corp = make_corporation(20002, 8001);
+
+      insert_corporation_with_org(&db, &corp, None, None, &ceo, &ceo, None)
+        .await
+        .unwrap();
+
+      let result = get_corporation(&db, 20002).await.unwrap();
+      assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_the_alliance_when_present() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 5001, 9501).await;
+      let alliance = make_alliance(99_000_004, 5001, 9501);
+      let ceo = make_character(9501, 5001);
+      let corp = make_corporation(50002, 9501);
+
+      insert_corporation_with_org(&db, &corp, Some(&alliance), None, &ceo, &ceo, None)
+        .await
+        .unwrap();
+
+      assert!(get_corporation(&db, 50002).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_the_faction_when_present() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 6001, 9601).await;
+      let ceo = make_character(9601, 6001);
+      let corp = make_corporation(60002, 9601);
+      let faction = Faction::new(500_002, "Test Faction", true, 1.0, 100, 50);
+
+      insert_corporation_with_org(&db, &corp, None, Some(&faction), &ceo, &ceo, None)
+        .await
+        .unwrap();
+
+      assert!(get_corporation(&db, 60002).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_with_separate_ceo_and_creator() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 3001, 9001).await;
+      let ceo = make_character(9001, 3001);
+      let corp = make_corporation(30002, 9001);
+
+      insert_corporation_with_org(&db, &corp, None, None, &ceo, &ceo, None)
+        .await
+        .unwrap();
+
+      let result = get_corporation(&db, 30002).await.unwrap();
+      assert!(result.is_some());
+    }
+  }
+
   mod search {
     use pretty_assertions::assert_eq;
 
@@ -1184,8 +1535,11 @@ mod corporation_tests {
     };
 
     const COBALT_CEO: i64 = 7001;
+
     const COBALT_INDUSTRIES: i64 = 2001;
+
     const RED_CEO: i64 = 7002;
+
     const RED_SYNDICATE: i64 = 2002;
 
     fn make_constellation() -> Constellation {
@@ -1392,117 +1746,12 @@ mod corporation_tests {
     }
 
     #[tokio::test]
-    async fn it_returns_all_owned_corps_for_an_empty_query() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "").await, vec![COBALT_INDUSTRIES, RED_SYNDICATE]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_on_corp_name_or_ticker() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "cobalt").await, vec![COBALT_INDUSTRIES]);
-      assert_eq!(matching(&db, "reds").await, vec![RED_SYNDICATE]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_on_alliance_name_or_ticker() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "brave collective").await, vec![COBALT_INDUSTRIES]);
-      assert_eq!(matching(&db, "brave").await, vec![COBALT_INDUSTRIES]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_on_ceo_character_name() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "director").await, vec![COBALT_INDUSTRIES]);
-      assert_eq!(matching(&db, "overlord").await, vec![RED_SYNDICATE]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_on_hq_station_name() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "trade hub").await, vec![COBALT_INDUSTRIES]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_free_text_on_a_tag_name() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "mining").await, vec![COBALT_INDUSTRIES]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_a_tag_key_with_or_within_the_values() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "tag:mining").await, vec![COBALT_INDUSTRIES]);
-      assert_eq!(
-        matching(&db, "tag:mining,pvp").await,
-        vec![COBALT_INDUSTRIES, RED_SYNDICATE]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_negates_a_tag_filter() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "-tag:pvp").await, vec![COBALT_INDUSTRIES]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_a_quoted_phrase() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      assert_eq!(matching(&db, "\"jita trade hub\"").await, vec![COBALT_INDUSTRIES]);
-      assert_eq!(matching(&db, "tag:\"Mining\"").await, vec![COBALT_INDUSTRIES]);
-    }
-
-    #[tokio::test]
     async fn it_ands_multiple_tokens() {
       let db = store::open_test().await.unwrap();
       seed_owned_corps(&db).await;
 
       assert_eq!(matching(&db, "cobalt tag:mining").await, vec![COBALT_INDUSTRIES]);
       assert_eq!(matching(&db, "cobalt tag:pvp").await, Vec::<i64>::new());
-    }
-
-    #[tokio::test]
-    async fn it_treats_character_only_keys_as_no_ops() {
-      let db = store::open_test().await.unwrap();
-      seed_owned_corps(&db).await;
-
-      for query in [
-        "status:docked",
-        "training:active",
-        "loc:jita",
-        "name:cobalt",
-        "corp:cobalt",
-      ] {
-        assert_eq!(
-          matching(&db, query).await,
-          vec![COBALT_INDUSTRIES, RED_SYNDICATE],
-          "expected `{query}` to be a no-op"
-        );
-      }
-
-      assert_eq!(
-        matching(&db, "-status:docked").await,
-        vec![COBALT_INDUSTRIES, RED_SYNDICATE]
-      );
     }
 
     #[tokio::test]
@@ -1539,99 +1788,110 @@ mod corporation_tests {
       assert_eq!(matching(&db, "tag:leak").await, Vec::<i64>::new());
       assert_eq!(matching(&db, "leak").await, Vec::<i64>::new());
     }
-  }
-
-  mod all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_corporations_exist() {
+    async fn it_matches_a_quoted_phrase() {
       let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
 
-      let result = all_corporations(&db).await.unwrap();
-
-      assert_eq!(result, vec![]);
-    }
-  }
-
-  mod get {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_none_for_an_unknown_id() {
-      let db = store::open_test().await.unwrap();
-
-      let result = get_corporation(&db, 9999).await.unwrap();
-
-      assert_eq!(result, None);
-    }
-  }
-
-  mod insert_with_org {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_inserts_corporation_without_optional_org_members() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 2001, 8001).await;
-      let ceo = make_character(8001, 2001);
-      let corp = make_corporation(20002, 8001);
-
-      insert_corporation_with_org(&db, &corp, None, None, &ceo, &ceo, None)
-        .await
-        .unwrap();
-
-      let result = get_corporation(&db, 20002).await.unwrap();
-      assert!(result.is_some());
+      assert_eq!(matching(&db, "\"jita trade hub\"").await, vec![COBALT_INDUSTRIES]);
+      assert_eq!(matching(&db, "tag:\"Mining\"").await, vec![COBALT_INDUSTRIES]);
     }
 
     #[tokio::test]
-    async fn it_inserts_with_separate_ceo_and_creator() {
+    async fn it_matches_a_tag_key_with_or_within_the_values() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 3001, 9001).await;
-      let ceo = make_character(9001, 3001);
-      let corp = make_corporation(30002, 9001);
+      seed_owned_corps(&db).await;
 
-      insert_corporation_with_org(&db, &corp, None, None, &ceo, &ceo, None)
-        .await
-        .unwrap();
-
-      let result = get_corporation(&db, 30002).await.unwrap();
-      assert!(result.is_some());
+      assert_eq!(matching(&db, "tag:mining").await, vec![COBALT_INDUSTRIES]);
+      assert_eq!(
+        matching(&db, "tag:mining,pvp").await,
+        vec![COBALT_INDUSTRIES, RED_SYNDICATE]
+      );
     }
 
     #[tokio::test]
-    async fn it_inserts_the_alliance_when_present() {
+    async fn it_matches_free_text_on_a_tag_name() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 5001, 9501).await;
-      let alliance = make_alliance(99_000_004, 5001, 9501);
-      let ceo = make_character(9501, 5001);
-      let corp = make_corporation(50002, 9501);
+      seed_owned_corps(&db).await;
 
-      insert_corporation_with_org(&db, &corp, Some(&alliance), None, &ceo, &ceo, None)
-        .await
-        .unwrap();
-
-      assert!(get_corporation(&db, 50002).await.unwrap().is_some());
+      assert_eq!(matching(&db, "mining").await, vec![COBALT_INDUSTRIES]);
     }
 
     #[tokio::test]
-    async fn it_inserts_the_faction_when_present() {
+    async fn it_matches_free_text_on_alliance_name_or_ticker() {
       let db = store::open_test().await.unwrap();
-      seed_character(&db, 6001, 9601).await;
-      let ceo = make_character(9601, 6001);
-      let corp = make_corporation(60002, 9601);
-      let faction = Faction::new(500_002, "Test Faction", true, 1.0, 100, 50);
+      seed_owned_corps(&db).await;
 
-      insert_corporation_with_org(&db, &corp, None, Some(&faction), &ceo, &ceo, None)
-        .await
-        .unwrap();
+      assert_eq!(matching(&db, "brave collective").await, vec![COBALT_INDUSTRIES]);
+      assert_eq!(matching(&db, "brave").await, vec![COBALT_INDUSTRIES]);
+    }
 
-      assert!(get_corporation(&db, 60002).await.unwrap().is_some());
+    #[tokio::test]
+    async fn it_matches_free_text_on_ceo_character_name() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      assert_eq!(matching(&db, "director").await, vec![COBALT_INDUSTRIES]);
+      assert_eq!(matching(&db, "overlord").await, vec![RED_SYNDICATE]);
+    }
+
+    #[tokio::test]
+    async fn it_matches_free_text_on_corp_name_or_ticker() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      assert_eq!(matching(&db, "cobalt").await, vec![COBALT_INDUSTRIES]);
+      assert_eq!(matching(&db, "reds").await, vec![RED_SYNDICATE]);
+    }
+
+    #[tokio::test]
+    async fn it_matches_free_text_on_hq_station_name() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      assert_eq!(matching(&db, "trade hub").await, vec![COBALT_INDUSTRIES]);
+    }
+
+    #[tokio::test]
+    async fn it_negates_a_tag_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      assert_eq!(matching(&db, "-tag:pvp").await, vec![COBALT_INDUSTRIES]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_all_owned_corps_for_an_empty_query() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      assert_eq!(matching(&db, "").await, vec![COBALT_INDUSTRIES, RED_SYNDICATE]);
+    }
+
+    #[tokio::test]
+    async fn it_treats_character_only_keys_as_no_ops() {
+      let db = store::open_test().await.unwrap();
+      seed_owned_corps(&db).await;
+
+      for query in [
+        "status:docked",
+        "training:active",
+        "loc:jita",
+        "name:cobalt",
+        "corp:cobalt",
+      ] {
+        assert_eq!(
+          matching(&db, query).await,
+          vec![COBALT_INDUSTRIES, RED_SYNDICATE],
+          "expected `{query}` to be a no-op"
+        );
+      }
+
+      assert_eq!(
+        matching(&db, "-status:docked").await,
+        vec![COBALT_INDUSTRIES, RED_SYNDICATE]
+      );
     }
   }
 
@@ -1656,263 +1916,6 @@ mod corporation_tests {
 
       let result = get_corporation(&db, 40002).await.unwrap().unwrap();
       assert_eq!(result.member_count(), Some(999));
-    }
-  }
-
-  mod corporation_killmails_page {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const CORP_ID: i64 = 4001;
-
-    fn kill(killmail_id: i64, kill_time: &str) -> CorporationKillEntry {
-      CorporationKillEntry {
-        attacker_count: 1,
-        corporation_id: CORP_ID,
-        final_blow: true,
-        is_kill: true,
-        kill_hash: format!("hash{killmail_id}"),
-        kill_time: kill_time.to_owned(),
-        killmail_id,
-        ship_type_id: 670,
-        synced_at: "2024-01-01T00:00:00Z".to_owned(),
-        system_id: 30_000_142,
-        value_destroyed_isk: 0.0,
-        value_final: false,
-        value_isk: 0.0,
-        value_recheck_count: 0,
-        value_source: "local".to_owned(),
-        victim_alliance_id: None,
-        victim_corp_id: None,
-        victim_damage_taken: 0,
-        victim_id: None,
-      }
-    }
-
-    fn ids(rows: &[CorporationKillEntry]) -> Vec<i64> {
-      rows.iter().map(|row| row.killmail_id()).collect()
-    }
-
-    async fn seed_kills(db: &store::Database) {
-      seed_character(db, CORP_ID, 7001).await;
-
-      // Two share a timestamp so the killmail_id tiebreaker is exercised.
-      upsert_corporation_killmail(db, &kill(100, "2024-03-01T00:00:00Z"))
-        .await
-        .unwrap();
-      upsert_corporation_killmail(db, &kill(101, "2024-02-01T00:00:00Z"))
-        .await
-        .unwrap();
-      upsert_corporation_killmail(db, &kill(102, "2024-02-01T00:00:00Z"))
-        .await
-        .unwrap();
-      upsert_corporation_killmail(db, &kill(103, "2024-01-01T00:00:00Z"))
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_orders_by_kill_time_then_killmail_id_descending() {
-      let db = store::open_test().await.unwrap();
-      seed_kills(&db).await;
-
-      let rows = corporation_killmails_page(&db, CORP_ID, None, 100).await.unwrap();
-
-      assert_eq!(ids(&rows), vec![100, 102, 101, 103]);
-    }
-
-    #[tokio::test]
-    async fn it_pages_through_kills_without_overlap_via_the_cursor() {
-      let db = store::open_test().await.unwrap();
-      seed_kills(&db).await;
-
-      let first = corporation_killmails_page(&db, CORP_ID, None, 2).await.unwrap();
-      assert_eq!(ids(&first), vec![100, 102]);
-
-      let last = first.last().unwrap();
-      let cursor = Some((last.kill_time().clone(), last.killmail_id()));
-      let second = corporation_killmails_page(&db, CORP_ID, cursor, 2).await.unwrap();
-
-      assert_eq!(ids(&second), vec![101, 103]);
-    }
-
-    #[tokio::test]
-    async fn it_returns_an_empty_page_past_the_last_kill() {
-      let db = store::open_test().await.unwrap();
-      seed_kills(&db).await;
-
-      let beyond = corporation_killmails_page(&db, CORP_ID, Some(("2023-01-01T00:00:00Z".to_owned(), 0)), 10)
-        .await
-        .unwrap();
-
-      assert!(beyond.is_empty());
-    }
-  }
-
-  mod corporation_contact_labels {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const CORP_ID: i64 = 5001;
-
-    #[tokio::test]
-    async fn it_returns_the_labels_ordered_by_label_id() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CORP_ID, 8001).await;
-      let labels = vec![
-        CorporationContactLabel {
-          corporation_id: CORP_ID,
-          label_id: 20,
-          label_name: "Allies".to_owned(),
-        },
-        CorporationContactLabel {
-          corporation_id: CORP_ID,
-          label_id: 10,
-          label_name: "Hostiles".to_owned(),
-        },
-      ];
-      replace_labels_for_corporation(&db, CORP_ID, &labels).await.unwrap();
-
-      let fetched = corporation_contact_labels(&db, CORP_ID).await.unwrap();
-
-      assert_eq!(fetched.iter().map(|l| l.label_id()).collect::<Vec<_>>(), vec![10, 20]);
-    }
-  }
-
-  mod corporation_contacts_page {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const CORP_ID: i64 = 5002;
-
-    fn contact(id: i64, kind: &str, standing: f64, name: &str) -> CorporationContact {
-      CorporationContact {
-        contact_id: id,
-        contact_name: name.to_owned(),
-        contact_type: kind.to_owned(),
-        corporation_id: CORP_ID,
-        is_blocked: false,
-        is_watched: false,
-        label_ids: "[]".to_owned(),
-        standing,
-      }
-    }
-
-    async fn seed_contacts(db: &store::Database) {
-      seed_character(db, CORP_ID, 8002).await;
-      let contacts = vec![
-        contact(100, "character", 8.5, "Wingmate"),
-        contact(200, "corporation", -5.0, "Hostile Corp"),
-        contact(300, "alliance", 0.0, "Neutral Alliance"),
-      ];
-      replace_contacts_for_corporation(db, CORP_ID, &contacts).await.unwrap();
-    }
-
-    fn ids(rows: &[CorporationContact]) -> Vec<i64> {
-      rows.iter().map(|row| row.contact_id()).collect()
-    }
-
-    #[tokio::test]
-    async fn it_orders_by_standing_descending() {
-      let db = store::open_test().await.unwrap();
-      seed_contacts(&db).await;
-
-      let rows = corporation_contacts_page(
-        &db,
-        CORP_ID,
-        None,
-        None,
-        ContactSortColumn::Standing,
-        ContactSortDir::Desc,
-        None,
-        100,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(ids(&rows), vec![100, 300, 200]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_contact_type() {
-      let db = store::open_test().await.unwrap();
-      seed_contacts(&db).await;
-
-      let rows = corporation_contacts_page(
-        &db,
-        CORP_ID,
-        Some("corporation"),
-        None,
-        ContactSortColumn::Name,
-        ContactSortDir::Asc,
-        None,
-        100,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(ids(&rows), vec![200]);
-    }
-
-    #[tokio::test]
-    async fn it_matches_a_name_query() {
-      let db = store::open_test().await.unwrap();
-      seed_contacts(&db).await;
-
-      let rows = corporation_contacts_page(
-        &db,
-        CORP_ID,
-        None,
-        Some("wing"),
-        ContactSortColumn::Name,
-        ContactSortDir::Asc,
-        None,
-        100,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(ids(&rows), vec![100]);
-    }
-
-    #[tokio::test]
-    async fn it_pages_through_contacts_without_overlap_via_the_cursor() {
-      let db = store::open_test().await.unwrap();
-      seed_contacts(&db).await;
-
-      let first = corporation_contacts_page(
-        &db,
-        CORP_ID,
-        None,
-        None,
-        ContactSortColumn::Standing,
-        ContactSortDir::Desc,
-        None,
-        2,
-      )
-      .await
-      .unwrap();
-      assert_eq!(ids(&first), vec![100, 300]);
-
-      let last = first.last().unwrap();
-      let cursor = ContactCursor::Number(last.standing(), last.contact_id());
-      let second = corporation_contacts_page(
-        &db,
-        CORP_ID,
-        None,
-        None,
-        ContactSortColumn::Standing,
-        ContactSortDir::Desc,
-        Some(&cursor),
-        2,
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(ids(&second), vec![200]);
     }
   }
 }
@@ -2006,22 +2009,6 @@ mod alliance_tests {
     }
 
     #[tokio::test]
-    async fn it_inserts_with_an_executor_corporation() {
-      let db = store::open_test().await.unwrap();
-      seed_universe(&db).await;
-      let alliance = make_alliance(99_000_002, 90_000_002, 12_345_679);
-      let creator_corp = make_corporation(90_000_002, 12_345_679, 12_345_679);
-      let executor_corp = make_corporation(90_000_003, 12_345_680, 12_345_680);
-      let creator_char = make_character(12_345_679, 90_000_002);
-
-      insert_alliance_with_org(&db, &alliance, &creator_corp, &creator_char, Some(&executor_corp), None)
-        .await
-        .unwrap();
-
-      assert!(get_alliance(&db, 99_000_002).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
     async fn it_inserts_with_a_faction() {
       let db = store::open_test().await.unwrap();
       seed_universe(&db).await;
@@ -2035,6 +2022,22 @@ mod alliance_tests {
         .unwrap();
 
       assert!(get_alliance(&db, 99_000_004).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_inserts_with_an_executor_corporation() {
+      let db = store::open_test().await.unwrap();
+      seed_universe(&db).await;
+      let alliance = make_alliance(99_000_002, 90_000_002, 12_345_679);
+      let creator_corp = make_corporation(90_000_002, 12_345_679, 12_345_679);
+      let executor_corp = make_corporation(90_000_003, 12_345_680, 12_345_680);
+      let creator_char = make_character(12_345_679, 90_000_002);
+
+      insert_alliance_with_org(&db, &alliance, &creator_corp, &creator_char, Some(&executor_corp), None)
+        .await
+        .unwrap();
+
+      assert!(get_alliance(&db, 99_000_002).await.unwrap().is_some());
     }
   }
 }
@@ -2094,8 +2097,9 @@ mod owned_corporation_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_empty_vec_when_no_corporations_are_owned() {
+    async fn it_excludes_reference_corporations_without_a_credential() {
       let db = store::open_test().await.unwrap();
+      seed_owned_character(&db, 2001, 8001).await;
 
       let result = all_owned_corporations(&db).await.unwrap();
 
@@ -2103,9 +2107,8 @@ mod owned_corporation_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_reference_corporations_without_a_credential() {
+    async fn it_returns_empty_vec_when_no_corporations_are_owned() {
       let db = store::open_test().await.unwrap();
-      seed_owned_character(&db, 2001, 8001).await;
 
       let result = all_owned_corporations(&db).await.unwrap();
 
@@ -2137,6 +2140,7 @@ mod member_role_tests {
   };
 
   const CORP_ID: i64 = 90_000_001;
+
   const DIRECTOR_ID: i64 = 100;
 
   fn role(corporation_id: i64, character_id: i64, role: &str) -> CorporationMemberRole {
@@ -2167,10 +2171,74 @@ mod member_role_tests {
     .unwrap();
   }
 
+  mod corp_is_authorized {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_authorizes_an_owned_corp_whose_director_holds_the_role() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db, Some(DIRECTOR_ID)).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
+        .await
+        .unwrap();
+
+      assert!(corp_is_authorized(&db, CORP_ID).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_corp_with_no_credential() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
+        .await
+        .unwrap();
+
+      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_owned_corp_whose_authorizer_lacks_the_role() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db, Some(DIRECTOR_ID)).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Accountant")])
+        .await
+        .unwrap();
+
+      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_when_a_different_character_holds_the_role() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db, Some(DIRECTOR_ID)).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, 999, "Director")])
+        .await
+        .unwrap();
+
+      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
+    }
+  }
+
   mod replace_for_corporation {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_clears_roles_with_an_empty_slice() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
+        .await
+        .unwrap();
+
+      replace_for_corporation(&db, CORP_ID, &[]).await.unwrap();
+
+      assert!(for_corporation(&db, CORP_ID).await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn it_persists_a_characters_role_set() {
@@ -2206,70 +2274,6 @@ mod member_role_tests {
 
       let rows = for_corporation(&db, CORP_ID).await.unwrap();
       assert_eq!(rows, vec![role(CORP_ID, DIRECTOR_ID, "Accountant")]);
-    }
-
-    #[tokio::test]
-    async fn it_clears_roles_with_an_empty_slice() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
-        .await
-        .unwrap();
-
-      replace_for_corporation(&db, CORP_ID, &[]).await.unwrap();
-
-      assert!(for_corporation(&db, CORP_ID).await.unwrap().is_empty());
-    }
-  }
-
-  mod corp_is_authorized {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_authorizes_an_owned_corp_whose_director_holds_the_role() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      seed_credential(&db, Some(DIRECTOR_ID)).await;
-      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
-        .await
-        .unwrap();
-
-      assert!(corp_is_authorized(&db, CORP_ID).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn it_rejects_an_owned_corp_whose_authorizer_lacks_the_role() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      seed_credential(&db, Some(DIRECTOR_ID)).await;
-      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Accountant")])
-        .await
-        .unwrap();
-
-      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn it_rejects_a_corp_with_no_credential() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, DIRECTOR_ID, "Director")])
-        .await
-        .unwrap();
-
-      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn it_rejects_when_a_different_character_holds_the_role() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      seed_credential(&db, Some(DIRECTOR_ID)).await;
-      replace_for_corporation(&db, CORP_ID, &[role(CORP_ID, 999, "Director")])
-        .await
-        .unwrap();
-
-      assert!(!corp_is_authorized(&db, CORP_ID).await.unwrap());
     }
   }
 }
@@ -2411,6 +2415,19 @@ mod mining_extraction_tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_clears_extractions_with_an_empty_slice() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_001)])
+        .await
+        .unwrap();
+
+      replace_extractions_for_corporation(&db, CORP_ID, &[]).await.unwrap();
+
+      assert!(corporation_mining_extractions(&db, CORP_ID).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn it_full_replaces_the_prior_extraction_set() {
       let db = store::open_test().await.unwrap();
       seed_corp(&db).await;
@@ -2425,19 +2442,6 @@ mod mining_extraction_tests {
       let rows = corporation_mining_extractions(&db, CORP_ID).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].structure_id(), 1_021_000_000_002);
-    }
-
-    #[tokio::test]
-    async fn it_clears_extractions_with_an_empty_slice() {
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      replace_extractions_for_corporation(&db, CORP_ID, &[extraction(CORP_ID, 1_021_000_000_001, 40_000_001)])
-        .await
-        .unwrap();
-
-      replace_extractions_for_corporation(&db, CORP_ID, &[]).await.unwrap();
-
-      assert!(corporation_mining_extractions(&db, CORP_ID).await.unwrap().is_empty());
     }
   }
 }

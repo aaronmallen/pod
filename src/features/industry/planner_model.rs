@@ -443,10 +443,15 @@ mod tests {
   use super::*;
 
   const FUEL_BLOCK: i64 = 4051;
+
   const GAS: i64 = 16634;
+
   const HULK: i64 = 22544;
+
   const PYERITE: i64 = 35;
+
   const RETRIEVER: i64 = 17478;
+
   const TRITANIUM: i64 = 34;
 
   fn hulk_plan() -> BuildPlan {
@@ -460,6 +465,121 @@ mod tests {
     root.children.insert(RETRIEVER, retriever);
 
     BuildPlan::new(root, 1)
+  }
+
+  mod allocate_stock {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const COMPONENT_A: i64 = 700;
+
+    const SITE_A: i64 = 60_003_760;
+
+    const SITE_B: i64 = 60_008_494;
+
+    const TRITANIUM: i64 = 34;
+
+    #[test]
+    fn it_caps_the_draw_at_the_demand_when_stock_oversupplies() {
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
+      let selections = [StockSelection {
+        needed: 300,
+        site: SITE_A,
+        type_id: TRITANIUM,
+      }];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 300);
+      assert_eq!(allocation.draws[0].buy, 0);
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 300);
+    }
+
+    #[test]
+    fn it_drains_a_shared_pool_in_selection_order() {
+      // Example 1: A needs 2000 Trit, B needs 1000, 1000 on hand at the site. "Use Stock" on A first
+      // draws all 1000; B then finds the pool empty and must buy its full 1000.
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
+      let selections = [
+        StockSelection {
+          needed: 2000,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+        StockSelection {
+          needed: 1000,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+      ];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 1000);
+      assert_eq!(allocation.draws[0].buy, 1000);
+      assert_eq!(allocation.draws[1].drawn, 0);
+      assert_eq!(allocation.draws[1].buy, 1000);
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 1000);
+    }
+
+    #[test]
+    fn it_keys_pools_separately_per_site() {
+      // Same type at two sites: each draws from its own pool, never the other's.
+      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 100), ((SITE_B, TRITANIUM), 40)]);
+      let selections = [
+        StockSelection {
+          needed: 500,
+          site: SITE_A,
+          type_id: TRITANIUM,
+        },
+        StockSelection {
+          needed: 500,
+          site: SITE_B,
+          type_id: TRITANIUM,
+        },
+      ];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 100);
+      assert_eq!(allocation.draws[1].drawn, 40);
+      assert_eq!(allocation.drawn_by_pool.get(&(SITE_A, TRITANIUM)).copied(), Some(100));
+      assert_eq!(allocation.drawn_by_pool.get(&(SITE_B, TRITANIUM)).copied(), Some(40));
+      assert_eq!(allocation.drawn_for_type(TRITANIUM), 140);
+    }
+
+    #[test]
+    fn it_leaves_an_empty_on_hand_map_untouched() {
+      let selections = [StockSelection {
+        needed: 100,
+        site: SITE_A,
+        type_id: TRITANIUM,
+      }];
+
+      let allocation = allocate_stock(&HashMap::new(), &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 0);
+      assert_eq!(allocation.draws[0].buy, 100);
+      assert!(allocation.drawn_by_pool.is_empty());
+    }
+
+    #[test]
+    fn it_leaves_the_uncovered_remainder_to_break_down() {
+      // Example 2: Fenrir needs 10 of Component A, 5 on hand. The draw is 5 from stock; the remaining 5
+      // (the `buy` field) is the uncovered remainder a later breakdown applies to.
+      let on_hand = HashMap::from([((SITE_A, COMPONENT_A), 5)]);
+      let selections = [StockSelection {
+        needed: 10,
+        site: SITE_A,
+        type_id: COMPONENT_A,
+      }];
+
+      let allocation = allocate_stock(&on_hand, &selections);
+
+      assert_eq!(allocation.draws[0].drawn, 5);
+      assert_eq!(allocation.draws[0].buy, 5);
+    }
   }
 
   mod build_node {
@@ -789,6 +909,22 @@ mod tests {
       const SITE: i64 = 60_003_760;
 
       #[test]
+      fn it_drops_a_type_fully_covered_by_stock() {
+        let plan = hulk_plan();
+        let on_hand = HashMap::from([((SITE, TRITANIUM), 100)]);
+        let selections = [StockSelection {
+          needed: 15,
+          site: SITE,
+          type_id: TRITANIUM,
+        }];
+
+        let allocation = allocate_stock(&on_hand, &selections);
+        let netted = plan.raw_totals_after_stock(&allocation);
+
+        assert!(netted.is_empty());
+      }
+
+      #[test]
       fn it_is_unchanged_with_an_empty_allocation() {
         let plan = hulk_plan();
 
@@ -819,134 +955,6 @@ mod tests {
           }]
         );
       }
-
-      #[test]
-      fn it_drops_a_type_fully_covered_by_stock() {
-        let plan = hulk_plan();
-        let on_hand = HashMap::from([((SITE, TRITANIUM), 100)]);
-        let selections = [StockSelection {
-          needed: 15,
-          site: SITE,
-          type_id: TRITANIUM,
-        }];
-
-        let allocation = allocate_stock(&on_hand, &selections);
-        let netted = plan.raw_totals_after_stock(&allocation);
-
-        assert!(netted.is_empty());
-      }
-    }
-  }
-
-  mod allocate_stock {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const COMPONENT_A: i64 = 700;
-    const SITE_A: i64 = 60_003_760;
-    const SITE_B: i64 = 60_008_494;
-    const TRITANIUM: i64 = 34;
-
-    #[test]
-    fn it_drains_a_shared_pool_in_selection_order() {
-      // Example 1: A needs 2000 Trit, B needs 1000, 1000 on hand at the site. "Use Stock" on A first
-      // draws all 1000; B then finds the pool empty and must buy its full 1000.
-      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
-      let selections = [
-        StockSelection {
-          needed: 2000,
-          site: SITE_A,
-          type_id: TRITANIUM,
-        },
-        StockSelection {
-          needed: 1000,
-          site: SITE_A,
-          type_id: TRITANIUM,
-        },
-      ];
-
-      let allocation = allocate_stock(&on_hand, &selections);
-
-      assert_eq!(allocation.draws[0].drawn, 1000);
-      assert_eq!(allocation.draws[0].buy, 1000);
-      assert_eq!(allocation.draws[1].drawn, 0);
-      assert_eq!(allocation.draws[1].buy, 1000);
-      assert_eq!(allocation.drawn_for_type(TRITANIUM), 1000);
-    }
-
-    #[test]
-    fn it_leaves_the_uncovered_remainder_to_break_down() {
-      // Example 2: Fenrir needs 10 of Component A, 5 on hand. The draw is 5 from stock; the remaining 5
-      // (the `buy` field) is the uncovered remainder a later breakdown applies to.
-      let on_hand = HashMap::from([((SITE_A, COMPONENT_A), 5)]);
-      let selections = [StockSelection {
-        needed: 10,
-        site: SITE_A,
-        type_id: COMPONENT_A,
-      }];
-
-      let allocation = allocate_stock(&on_hand, &selections);
-
-      assert_eq!(allocation.draws[0].drawn, 5);
-      assert_eq!(allocation.draws[0].buy, 5);
-    }
-
-    #[test]
-    fn it_leaves_an_empty_on_hand_map_untouched() {
-      let selections = [StockSelection {
-        needed: 100,
-        site: SITE_A,
-        type_id: TRITANIUM,
-      }];
-
-      let allocation = allocate_stock(&HashMap::new(), &selections);
-
-      assert_eq!(allocation.draws[0].drawn, 0);
-      assert_eq!(allocation.draws[0].buy, 100);
-      assert!(allocation.drawn_by_pool.is_empty());
-    }
-
-    #[test]
-    fn it_caps_the_draw_at_the_demand_when_stock_oversupplies() {
-      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 1000)]);
-      let selections = [StockSelection {
-        needed: 300,
-        site: SITE_A,
-        type_id: TRITANIUM,
-      }];
-
-      let allocation = allocate_stock(&on_hand, &selections);
-
-      assert_eq!(allocation.draws[0].drawn, 300);
-      assert_eq!(allocation.draws[0].buy, 0);
-      assert_eq!(allocation.drawn_for_type(TRITANIUM), 300);
-    }
-
-    #[test]
-    fn it_keys_pools_separately_per_site() {
-      // Same type at two sites: each draws from its own pool, never the other's.
-      let on_hand = HashMap::from([((SITE_A, TRITANIUM), 100), ((SITE_B, TRITANIUM), 40)]);
-      let selections = [
-        StockSelection {
-          needed: 500,
-          site: SITE_A,
-          type_id: TRITANIUM,
-        },
-        StockSelection {
-          needed: 500,
-          site: SITE_B,
-          type_id: TRITANIUM,
-        },
-      ];
-
-      let allocation = allocate_stock(&on_hand, &selections);
-
-      assert_eq!(allocation.draws[0].drawn, 100);
-      assert_eq!(allocation.draws[1].drawn, 40);
-      assert_eq!(allocation.drawn_by_pool.get(&(SITE_A, TRITANIUM)).copied(), Some(100));
-      assert_eq!(allocation.drawn_by_pool.get(&(SITE_B, TRITANIUM)).copied(), Some(40));
-      assert_eq!(allocation.drawn_for_type(TRITANIUM), 140);
     }
   }
 
@@ -983,26 +991,6 @@ mod tests {
       let result = eff_qty(100, 3, 10, false);
 
       assert_eq!(result, 270);
-    }
-  }
-
-  mod runs_for {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_at_least_one_run() {
-      let result = runs_for(0, 5);
-
-      assert_eq!(result, 1);
-    }
-
-    #[test]
-    fn it_rounds_runs_up_to_cover_demand() {
-      let result = runs_for(11, 4);
-
-      assert_eq!(result, 3);
     }
   }
 
@@ -1115,6 +1103,26 @@ mod tests {
 
       // The pre-existing GADGET node is kept and gains its COG child rather than being replaced.
       assert!(children[&GADGET].children.contains_key(&COG));
+    }
+  }
+
+  mod runs_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_at_least_one_run() {
+      let result = runs_for(0, 5);
+
+      assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn it_rounds_runs_up_to_cover_demand() {
+      let result = runs_for(11, 4);
+
+      assert_eq!(result, 3);
     }
   }
 }

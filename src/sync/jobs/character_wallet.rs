@@ -142,29 +142,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_persists_journal_and_transactions_without_touching_skills() {
-      let server = MockServer::start().await;
-      mount_journal(&server, 42).await;
-      mount_transactions(&server, 42).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      run(&ctx).await.unwrap();
-
-      assert_eq!(finance::wallet_journal(&db, 42).await.unwrap().len(), 1);
-      assert_eq!(finance::wallet_transactions(&db, 42).await.unwrap().len(), 1);
-      assert!(character::skills(&db, 42).await.unwrap().is_empty());
-      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
-    }
-
-    #[tokio::test]
     async fn it_errors_and_persists_nothing_when_the_journal_fetch_fails() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -187,6 +164,29 @@ mod tests {
       assert!(result.is_err());
       assert!(finance::wallet_journal(&db, 42).await.unwrap().is_empty());
       assert!(character::skills(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_persists_journal_and_transactions_without_touching_skills() {
+      let server = MockServer::start().await;
+      mount_journal(&server, 42).await;
+      mount_transactions(&server, 42).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert_eq!(finance::wallet_journal(&db, 42).await.unwrap().len(), 1);
+      assert_eq!(finance::wallet_transactions(&db, 42).await.unwrap().len(), 1);
+      assert!(character::skills(&db, 42).await.unwrap().is_empty());
+      assert!(character::skillqueue(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]

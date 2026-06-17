@@ -386,32 +386,29 @@ mod tests {
     }
   }
 
-  mod detect {
+  mod attrs_round_trip {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_round_trips_a_json_plan_losslessly() {
-      let plan = sample_plan();
-      let json = to_json(&plan);
+    fn it_round_trips_through_the_optimizer_type() {
+      let attrs = Attributes {
+        charisma: 17,
+        intelligence: 27,
+        memory: 18,
+        perception: 20,
+        willpower: 17,
+      };
 
-      match detect(&json) {
-        Some(Payload::Json(parsed)) => assert_eq!(parsed, plan),
-        other => panic!("expected a JSON payload, got {other:?}"),
-      }
+      assert_eq!(PlanFileAttrs::from_attributes(attrs).to_attributes(), attrs);
     }
+  }
 
-    #[test]
-    fn it_preserves_entry_and_remap_order_on_round_trip() {
-      let plan = sample_plan();
-      let parsed: PlanFile = serde_json::from_str(&to_json(&plan)).unwrap();
+  mod detect {
+    use pretty_assertions::assert_eq;
 
-      let ids: Vec<i64> = parsed.entries.iter().map(|e| e.type_id).collect();
-      assert_eq!(ids, vec![3300, 3301]);
-      let anchors: Vec<Option<usize>> = parsed.remaps.iter().map(|r| r.after_index).collect();
-      assert_eq!(anchors, vec![None, Some(0)]);
-    }
+    use super::*;
 
     #[test]
     fn it_falls_back_to_text_for_non_json_lines() {
@@ -434,10 +431,32 @@ mod tests {
     }
 
     #[test]
+    fn it_preserves_entry_and_remap_order_on_round_trip() {
+      let plan = sample_plan();
+      let parsed: PlanFile = serde_json::from_str(&to_json(&plan)).unwrap();
+
+      let ids: Vec<i64> = parsed.entries.iter().map(|e| e.type_id).collect();
+      assert_eq!(ids, vec![3300, 3301]);
+      let anchors: Vec<Option<usize>> = parsed.remaps.iter().map(|r| r.after_index).collect();
+      assert_eq!(anchors, vec![None, Some(0)]);
+    }
+
+    #[test]
     fn it_returns_none_for_unparseable_input() {
       assert_eq!(detect(""), None);
       assert_eq!(detect("   \n  "), None);
       assert_eq!(detect("not a skill line"), None);
+    }
+
+    #[test]
+    fn it_round_trips_a_json_plan_losslessly() {
+      let plan = sample_plan();
+      let json = to_json(&plan);
+
+      match detect(&json) {
+        Some(Payload::Json(parsed)) => assert_eq!(parsed, plan),
+        other => panic!("expected a JSON payload, got {other:?}"),
+      }
     }
   }
 
@@ -459,25 +478,6 @@ mod tests {
       assert_eq!(parse_level("iv"), Some(4));
       assert_eq!(parse_level("V"), Some(5));
       assert_eq!(parse_level("vi"), None);
-    }
-  }
-
-  mod attrs_round_trip {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_round_trips_through_the_optimizer_type() {
-      let attrs = Attributes {
-        charisma: 17,
-        intelligence: 27,
-        memory: 18,
-        perception: 20,
-        willpower: 17,
-      };
-
-      assert_eq!(PlanFileAttrs::from_attributes(attrs).to_attributes(), attrs);
     }
   }
 }

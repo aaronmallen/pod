@@ -282,6 +282,18 @@ mod tests {
     }
   }
 
+  impl Attributes {
+    fn plus_for_test(self, implants: Attributes) -> Attributes {
+      Attributes {
+        charisma: self.charisma + implants.charisma,
+        intelligence: self.intelligence + implants.intelligence,
+        memory: self.memory + implants.memory,
+        perception: self.perception + implants.perception,
+        willpower: self.willpower + implants.willpower,
+      }
+    }
+  }
+
   mod project_rows {
     use pretty_assertions::assert_eq;
 
@@ -372,6 +384,104 @@ mod tests {
       assert_eq!(rows[0].role, Role::Primary);
       assert_eq!(rows[1].role, Role::Secondary);
       assert_eq!(rows[2].role, Role::None);
+    }
+  }
+
+  mod queue_pair_weights {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn entry(skill_id: i64, finished_level: i64, queue_position: i64) -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        character_id: 42,
+        finish_date: None,
+        finished_level,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position,
+        skill_id,
+        start_date: None,
+        training_start_sp: None,
+      }
+    }
+
+    fn skill(primary: Attribute, secondary: Attribute, skillpoints_in_skill: u64) -> WeightSkill {
+      WeightSkill {
+        primary,
+        rank: 1.0,
+        secondary,
+        skillpoints_in_skill,
+      }
+    }
+
+    #[test]
+    fn it_discounts_the_head_skill_by_its_invested_skillpoints() {
+      let queue = vec![entry(3300, 5, 0)];
+      let meta = HashMap::from([(3300, skill(Attribute::Perception, Attribute::Willpower, 100_000))]);
+
+      let weights = queue_pair_weights(&queue, &meta);
+
+      assert_eq!(weights.len(), 1);
+      assert_eq!(weights[0].primary, Attribute::Perception);
+      assert_eq!(weights[0].secondary, Attribute::Willpower);
+      assert_eq!(weights[0].sp, 156_000);
+    }
+
+    #[test]
+    fn it_drops_a_zero_demand_head_skill() {
+      let queue = vec![entry(3300, 5, 0)];
+      let meta = HashMap::from([(3300, skill(Attribute::Perception, Attribute::Willpower, 999_999))]);
+
+      let weights = queue_pair_weights(&queue, &meta);
+
+      assert!(weights.is_empty());
+    }
+
+    #[test]
+    fn it_skips_entries_with_no_metadata() {
+      let queue = vec![entry(3300, 5, 0), entry(9999, 5, 1)];
+      let meta = HashMap::from([(3300, skill(Attribute::Memory, Attribute::Perception, 0))]);
+
+      let weights = queue_pair_weights(&queue, &meta);
+
+      assert_eq!(weights.len(), 1, "the metadata-less entry contributes no pair");
+      assert_eq!(weights[0].primary, Attribute::Memory);
+    }
+
+    #[test]
+    fn it_sums_demand_across_entries_sharing_a_pair() {
+      let queue = vec![entry(3300, 5, 0), entry(3301, 5, 1), entry(3302, 5, 2)];
+      let meta = HashMap::from([
+        (3300, skill(Attribute::Intelligence, Attribute::Memory, 0)),
+        (3301, skill(Attribute::Perception, Attribute::Willpower, 0)),
+        (3302, skill(Attribute::Perception, Attribute::Willpower, 0)),
+      ]);
+
+      let weights = queue_pair_weights(&queue, &meta);
+
+      let per_wil = weights
+        .iter()
+        .find(|w| w.primary == Attribute::Perception && w.secondary == Attribute::Willpower)
+        .expect("per/wil pair present");
+      assert_eq!(per_wil.sp, 2 * (256_000 - 45_255));
+    }
+
+    #[test]
+    fn it_uses_the_full_level_delta_for_non_head_steps() {
+      let queue = vec![entry(3300, 4, 0), entry(3301, 5, 1)];
+      let meta = HashMap::from([
+        (3300, skill(Attribute::Intelligence, Attribute::Memory, 0)),
+        (3301, skill(Attribute::Perception, Attribute::Willpower, 999_999)),
+      ]);
+
+      let weights = queue_pair_weights(&queue, &meta);
+
+      let per_wil = weights
+        .iter()
+        .find(|w| w.primary == Attribute::Perception && w.secondary == Attribute::Willpower)
+        .expect("per/wil pair present");
+      assert_eq!(per_wil.sp, 256_000 - 45_255);
     }
   }
 
@@ -498,116 +608,6 @@ mod tests {
       assert_eq!(matrix[0].primary, Attribute::Perception);
       assert_eq!(matrix[0].secondary, Attribute::Willpower);
       assert_eq!(matrix[0].sp_per_hr, 2_340);
-    }
-  }
-
-  mod queue_pair_weights {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn entry(skill_id: i64, finished_level: i64, queue_position: i64) -> CharacterSkillqueue {
-      CharacterSkillqueue {
-        character_id: 42,
-        finish_date: None,
-        finished_level,
-        level_end_sp: None,
-        level_start_sp: None,
-        queue_position,
-        skill_id,
-        start_date: None,
-        training_start_sp: None,
-      }
-    }
-
-    fn skill(primary: Attribute, secondary: Attribute, skillpoints_in_skill: u64) -> WeightSkill {
-      WeightSkill {
-        primary,
-        rank: 1.0,
-        secondary,
-        skillpoints_in_skill,
-      }
-    }
-
-    #[test]
-    fn it_discounts_the_head_skill_by_its_invested_skillpoints() {
-      let queue = vec![entry(3300, 5, 0)];
-      let meta = HashMap::from([(3300, skill(Attribute::Perception, Attribute::Willpower, 100_000))]);
-
-      let weights = queue_pair_weights(&queue, &meta);
-
-      assert_eq!(weights.len(), 1);
-      assert_eq!(weights[0].primary, Attribute::Perception);
-      assert_eq!(weights[0].secondary, Attribute::Willpower);
-      assert_eq!(weights[0].sp, 156_000);
-    }
-
-    #[test]
-    fn it_uses_the_full_level_delta_for_non_head_steps() {
-      let queue = vec![entry(3300, 4, 0), entry(3301, 5, 1)];
-      let meta = HashMap::from([
-        (3300, skill(Attribute::Intelligence, Attribute::Memory, 0)),
-        (3301, skill(Attribute::Perception, Attribute::Willpower, 999_999)),
-      ]);
-
-      let weights = queue_pair_weights(&queue, &meta);
-
-      let per_wil = weights
-        .iter()
-        .find(|w| w.primary == Attribute::Perception && w.secondary == Attribute::Willpower)
-        .expect("per/wil pair present");
-      assert_eq!(per_wil.sp, 256_000 - 45_255);
-    }
-
-    #[test]
-    fn it_sums_demand_across_entries_sharing_a_pair() {
-      let queue = vec![entry(3300, 5, 0), entry(3301, 5, 1), entry(3302, 5, 2)];
-      let meta = HashMap::from([
-        (3300, skill(Attribute::Intelligence, Attribute::Memory, 0)),
-        (3301, skill(Attribute::Perception, Attribute::Willpower, 0)),
-        (3302, skill(Attribute::Perception, Attribute::Willpower, 0)),
-      ]);
-
-      let weights = queue_pair_weights(&queue, &meta);
-
-      let per_wil = weights
-        .iter()
-        .find(|w| w.primary == Attribute::Perception && w.secondary == Attribute::Willpower)
-        .expect("per/wil pair present");
-      assert_eq!(per_wil.sp, 2 * (256_000 - 45_255));
-    }
-
-    #[test]
-    fn it_skips_entries_with_no_metadata() {
-      let queue = vec![entry(3300, 5, 0), entry(9999, 5, 1)];
-      let meta = HashMap::from([(3300, skill(Attribute::Memory, Attribute::Perception, 0))]);
-
-      let weights = queue_pair_weights(&queue, &meta);
-
-      assert_eq!(weights.len(), 1, "the metadata-less entry contributes no pair");
-      assert_eq!(weights[0].primary, Attribute::Memory);
-    }
-
-    #[test]
-    fn it_drops_a_zero_demand_head_skill() {
-      let queue = vec![entry(3300, 5, 0)];
-      let meta = HashMap::from([(3300, skill(Attribute::Perception, Attribute::Willpower, 999_999))]);
-
-      let weights = queue_pair_weights(&queue, &meta);
-
-      assert!(weights.is_empty());
-    }
-  }
-
-  impl Attributes {
-    fn plus_for_test(self, implants: Attributes) -> Attributes {
-      Attributes {
-        charisma: self.charisma + implants.charisma,
-        intelligence: self.intelligence + implants.intelligence,
-        memory: self.memory + implants.memory,
-        perception: self.perception + implants.perception,
-        willpower: self.willpower + implants.willpower,
-      }
     }
   }
 }

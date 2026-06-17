@@ -125,39 +125,96 @@ mod tests {
     )
   }
 
-  mod redirect_uri {
+  mod complete_sign_in {
     use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
 
     use super::*;
 
-    #[test]
-    fn it_returns_the_static_https_bounce_url() {
-      assert_eq!(redirect_uri(), "https://pod.aaronmallen.dev/auth/callback/");
+    async fn sso_for(server: &MockServer) -> eve_sso::Client {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      eve_sso::Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()))
     }
-  }
 
-  mod parse_callback {
-    use pretty_assertions::assert_eq;
+    #[tokio::test]
+    async fn it_clears_a_previously_set_needs_reauth_flag_on_success() {
+      let server = MockServer::start().await;
+      let body = format!(
+        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
+        jwt("CHARACTER:EVE:42")
+      );
+      Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(&server)
+        .await;
+      let sso = sso_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      infra::upsert(&db, 42, OwnerType::Character, "at", "rt", 0, None, Some(""))
+        .await
+        .unwrap();
+      infra::mark_needs_reauth(&db, 42, OwnerType::Character).await.unwrap();
+      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
+      let callback = Callback {
+        code: "code".to_owned(),
+        state: pending.state.clone(),
+      };
 
-    use super::*;
+      complete_sign_in(&sso, &db, &pending, &callback).await.unwrap();
 
-    #[test]
-    fn it_extracts_code_and_state() {
-      let parsed = parse_callback("eveauth-pod://callback?code=abc123&state=xyz789");
-
-      assert_eq!(
-        parsed,
-        Some(Callback {
-          code: "abc123".to_owned(),
-          state: "xyz789".to_owned(),
-        })
+      let credential = infra::get(&db, 42, OwnerType::Character).await.unwrap().unwrap();
+      assert!(
+        !credential.needs_reauth(),
+        "a successful character re-auth must clear the persisted needs-reauth flag"
       );
     }
 
-    #[test]
-    fn it_returns_none_when_a_parameter_is_missing() {
-      assert_eq!(parse_callback("eveauth-pod://callback?code=abc123"), None);
-      assert_eq!(parse_callback("eveauth-pod://callback"), None);
+    #[tokio::test]
+    async fn it_exchanges_the_code_and_persists_the_credential() {
+      let server = MockServer::start().await;
+      let body = format!(
+        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
+        jwt("CHARACTER:EVE:42")
+      );
+      Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
+        .mount(&server)
+        .await;
+      let sso = sso_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
+      let callback = Callback {
+        code: "code".to_owned(),
+        state: pending.state.clone(),
+      };
+
+      let signed = complete_sign_in(&sso, &db, &pending, &callback).await.unwrap();
+
+      assert_eq!(signed.character_id, 42);
+      assert_eq!(signed.character_name, "Test Pilot");
+      assert!(infra::get(&db, 42, OwnerType::Character).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_mismatched_state_without_persisting() {
+      let server = MockServer::start().await;
+      let sso = sso_for(&server).await;
+      let db = store::open_test().await.unwrap();
+      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
+      let callback = Callback {
+        code: "code".to_owned(),
+        state: "tampered".to_owned(),
+      };
+
+      let result = complete_sign_in(&sso, &db, &pending, &callback).await;
+
+      assert!(result.is_err());
+      assert!(infra::get(&db, 42, OwnerType::Character).await.unwrap().is_none());
     }
   }
 
@@ -222,31 +279,42 @@ mod tests {
     }
   }
 
+  mod parse_callback {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_extracts_code_and_state() {
+      let parsed = parse_callback("eveauth-pod://callback?code=abc123&state=xyz789");
+
+      assert_eq!(
+        parsed,
+        Some(Callback {
+          code: "abc123".to_owned(),
+          state: "xyz789".to_owned(),
+        })
+      );
+    }
+
+    #[test]
+    fn it_returns_none_when_a_parameter_is_missing() {
+      assert_eq!(parse_callback("eveauth-pod://callback?code=abc123"), None);
+      assert_eq!(parse_callback("eveauth-pod://callback"), None);
+    }
+  }
+
   mod persist_corporation {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     const CHARACTER_ID: i64 = 42;
+
     const CORPORATION_ID: i64 = 2000;
 
     fn grant() -> Grant {
       Grant::from_stored("at", CHARACTER_ID, chrono::Utc::now(), "rt", Vec::new())
-    }
-
-    #[tokio::test]
-    async fn it_persists_the_corporation_credential_authorized_by_the_character() {
-      let db = store::open_test().await.unwrap();
-
-      let added = persist_corporation(&db, &grant(), CORPORATION_ID).await.unwrap();
-
-      assert_eq!(added.corporation_id, CORPORATION_ID);
-      assert_eq!(added.authorizing_character_id, CHARACTER_ID);
-      let credential = infra::get(&db, CORPORATION_ID, OwnerType::Corporation)
-        .await
-        .unwrap()
-        .unwrap();
-      assert_eq!(credential.authorized_by(), Some(CHARACTER_ID));
     }
 
     #[tokio::test]
@@ -279,98 +347,31 @@ mod tests {
         "a successful corp re-auth must clear the persisted needs-reauth flag"
       );
     }
+
+    #[tokio::test]
+    async fn it_persists_the_corporation_credential_authorized_by_the_character() {
+      let db = store::open_test().await.unwrap();
+
+      let added = persist_corporation(&db, &grant(), CORPORATION_ID).await.unwrap();
+
+      assert_eq!(added.corporation_id, CORPORATION_ID);
+      assert_eq!(added.authorizing_character_id, CHARACTER_ID);
+      let credential = infra::get(&db, CORPORATION_ID, OwnerType::Corporation)
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(credential.authorized_by(), Some(CHARACTER_ID));
+    }
   }
 
-  mod complete_sign_in {
+  mod redirect_uri {
     use pretty_assertions::assert_eq;
-    use wiremock::{
-      Mock, MockServer, ResponseTemplate,
-      matchers::{method, path},
-    };
 
     use super::*;
 
-    async fn sso_for(server: &MockServer) -> eve_sso::Client {
-      let db = store::open_test().await.unwrap();
-      let http = http::Client::builder(http::Cache::new(db)).build();
-      eve_sso::Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()))
-    }
-
-    #[tokio::test]
-    async fn it_exchanges_the_code_and_persists_the_credential() {
-      let server = MockServer::start().await;
-      let body = format!(
-        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
-        jwt("CHARACTER:EVE:42")
-      );
-      Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
-        .mount(&server)
-        .await;
-      let sso = sso_for(&server).await;
-      let db = store::open_test().await.unwrap();
-      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
-      let callback = Callback {
-        code: "code".to_owned(),
-        state: pending.state.clone(),
-      };
-
-      let signed = complete_sign_in(&sso, &db, &pending, &callback).await.unwrap();
-
-      assert_eq!(signed.character_id, 42);
-      assert_eq!(signed.character_name, "Test Pilot");
-      assert!(infra::get(&db, 42, OwnerType::Character).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_rejects_a_mismatched_state_without_persisting() {
-      let server = MockServer::start().await;
-      let sso = sso_for(&server).await;
-      let db = store::open_test().await.unwrap();
-      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
-      let callback = Callback {
-        code: "code".to_owned(),
-        state: "tampered".to_owned(),
-      };
-
-      let result = complete_sign_in(&sso, &db, &pending, &callback).await;
-
-      assert!(result.is_err());
-      assert!(infra::get(&db, 42, OwnerType::Character).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_clears_a_previously_set_needs_reauth_flag_on_success() {
-      let server = MockServer::start().await;
-      let body = format!(
-        r#"{{"access_token":"{}","expires_in":1200,"refresh_token":"rt"}}"#,
-        jwt("CHARACTER:EVE:42")
-      );
-      Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(body.into_bytes(), "application/json"))
-        .mount(&server)
-        .await;
-      let sso = sso_for(&server).await;
-      let db = store::open_test().await.unwrap();
-      infra::upsert(&db, 42, OwnerType::Character, "at", "rt", 0, None, Some(""))
-        .await
-        .unwrap();
-      infra::mark_needs_reauth(&db, 42, OwnerType::Character).await.unwrap();
-      let pending = sso.sign_in(&["esi-skills.read_skills.v1"], &redirect_uri());
-      let callback = Callback {
-        code: "code".to_owned(),
-        state: pending.state.clone(),
-      };
-
-      complete_sign_in(&sso, &db, &pending, &callback).await.unwrap();
-
-      let credential = infra::get(&db, 42, OwnerType::Character).await.unwrap().unwrap();
-      assert!(
-        !credential.needs_reauth(),
-        "a successful character re-auth must clear the persisted needs-reauth flag"
-      );
+    #[test]
+    fn it_returns_the_static_https_bounce_url() {
+      assert_eq!(redirect_uri(), "https://pod.aaronmallen.dev/auth/callback/");
     }
   }
 }

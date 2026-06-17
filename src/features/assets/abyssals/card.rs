@@ -208,15 +208,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_a_priced_card_with_a_location() {
-      let card = card_with(Some(1_000_000.0), false, "Jita IV - Moon 4");
+    fn it_renders_a_price_unavailable_card_without_a_location() {
+      let card = card_with(None, true, "");
 
       let _el: Element<'_, Message> = view(&card);
     }
 
     #[test]
-    fn it_renders_a_price_unavailable_card_without_a_location() {
-      let card = card_with(None, true, "");
+    fn it_renders_a_priced_card_with_a_location() {
+      let card = card_with(Some(1_000_000.0), false, "Jita IV - Moon 4");
 
       let _el: Element<'_, Message> = view(&card);
     }

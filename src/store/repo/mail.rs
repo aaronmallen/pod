@@ -1040,122 +1040,16 @@ mod core_tests {
     }
   }
 
-  mod upsert_complete {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_persists_header_body_and_recipients_together() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>Hi there</p>"),
-        &[
-          recipient(42, 1, 42, "character", "Me"),
-          recipient(42, 1, 90_000_001, "corporation", "My Corp"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      let headers = super::headers(&db, 42).await.unwrap();
-      assert_eq!(headers.len(), 1);
-      assert_eq!(headers[0].subject().as_deref(), Some("Hello"));
-      assert_eq!(
-        super::body(&db, 42, 1).await.unwrap().unwrap().body(),
-        "<p>Hi there</p>"
-      );
-      assert_eq!(
-        super::recipients(&db, 42, 1)
-          .await
-          .unwrap()
-          .iter()
-          .map(|r| r.recipient_name().clone())
-          .collect::<Vec<_>>(),
-        ["Me", "My Corp"]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_keeps_the_immutable_body_on_a_re_sync() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>original</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", true),
-        &body_of(42, 1, "<p>SHOULD NOT REPLACE</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(
-        super::body(&db, 42, 1).await.unwrap().unwrap().body(),
-        "<p>original</p>"
-      );
-      assert!(super::headers(&db, 42).await.unwrap()[0].is_read());
-    }
-
-    #[tokio::test]
-    async fn it_replaces_the_recipient_set_on_re_sync() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>x</p>"),
-        &[recipient(42, 1, 1, "character", "Old")],
-      )
-      .await
-      .unwrap();
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>x</p>"),
-        &[recipient(42, 1, 2, "character", "New")],
-      )
-      .await
-      .unwrap();
-
-      let recipients = super::recipients(&db, 42, 1).await.unwrap();
-      assert_eq!(recipients.len(), 1);
-      assert_eq!(recipients[0].recipient_name(), "New");
-    }
-  }
-
-  mod set_read {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_flips_the_mutable_is_read_flag() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>x</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-
-      super::set_read(&db, 42, 1, true).await.unwrap();
-
-      assert!(super::headers(&db, 42).await.unwrap()[0].is_read());
+  fn sent_header(character_id: i64, mail_id: i64, ts: &str, is_read: bool) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id: character_id,
+      from_name: "Me".to_owned(),
+      is_read,
+      mail_id,
+      subject: Some("Sent".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
     }
   }
 
@@ -1181,7 +1075,67 @@ mod core_tests {
     }
   }
 
-  mod labels {
+  mod headers_for_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn label(character_id: i64, label_id: i64, name: &str) -> CharacterMailLabel {
+      CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id,
+        name: name.to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_the_labels_members_newest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_labels_for_character(&db, 42, &[label(42, 1, "Inbox"), label(42, 2, "Corp")])
+        .await
+        .unwrap();
+
+      for (id, ts) in [
+        (10, "2026-06-01T10:00:00Z"),
+        (11, "2026-06-02T10:00:00Z"),
+        (12, "2026-06-03T10:00:00Z"),
+      ] {
+        super::upsert_complete(&db, &header(42, id, "x", ts, false), &body_of(42, id, "<p>x</p>"), &[])
+          .await
+          .unwrap();
+      }
+      super::replace_membership_for_character(
+        &db,
+        42,
+        &[
+          CharacterMailLabelMembership {
+            character_id: 42,
+            label_id: 1,
+            mail_id: 10,
+          },
+          CharacterMailLabelMembership {
+            character_id: 42,
+            label_id: 1,
+            mail_id: 12,
+          },
+          CharacterMailLabelMembership {
+            character_id: 42,
+            label_id: 2,
+            mail_id: 11,
+          },
+        ],
+      )
+      .await
+      .unwrap();
+
+      let inbox = super::headers_for_label(&db, 42, 1).await.unwrap();
+      assert_eq!(inbox.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [12, 10]);
+    }
+  }
+
+  mod label_crud {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -1195,53 +1149,41 @@ mod core_tests {
       }
     }
 
+    async fn seed_mail(db: &Database, character_id: i64, mail_id: i64) {
+      super::upsert_complete(
+        db,
+        &header(character_id, mail_id, "x", "2026-06-01T10:00:00Z", false),
+        &body_of(character_id, mail_id, "<p>x</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+    }
+
     #[tokio::test]
-    async fn it_replaces_the_catalog_and_membership_and_computes_unread_locally() {
+    async fn it_adds_membership_idempotently() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::replace_labels_for_character(
-        &db,
-        42,
-        &[label(42, 1, "Inbox", None), label(42, 2, "Important", Some("#ff0000"))],
-      )
-      .await
-      .unwrap();
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
 
-      super::upsert_complete(
-        &db,
-        &header(42, 10, "Unread", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 10, "<p>a</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-      super::upsert_complete(
-        &db,
-        &header(42, 11, "Read", "2026-06-01T11:00:00Z", true),
-        &body_of(42, 11, "<p>b</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
 
-      super::replace_membership_for_character(
-        &db,
-        42,
-        &[
-          CharacterMailLabelMembership {
-            character_id: 42,
-            label_id: 2,
-            mail_id: 10,
-          },
-          CharacterMailLabelMembership {
-            character_id: 42,
-            label_id: 2,
-            mail_id: 11,
-          },
-        ],
-      )
-      .await
-      .unwrap();
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [1]);
+    }
+
+    #[tokio::test]
+    async fn it_deletes_a_label_and_cascades_its_membership() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 2).await.unwrap();
+
+      super::delete_label(&db, 42, 1).await.unwrap();
 
       assert_eq!(
         super::labels(&db, 42)
@@ -1250,10 +1192,80 @@ mod core_tests {
           .iter()
           .map(|l| l.label_id())
           .collect::<Vec<_>>(),
-        [1, 2]
+        [2]
       );
       assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
-      assert_eq!(super::unread_count_for_label(&db, 42, 2).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_single_label_with_a_negative_temp_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::insert_label(&db, &label(42, -1, "Pending", Some("#ff0000")))
+        .await
+        .unwrap();
+
+      let labels = super::labels(&db, 42).await.unwrap();
+      assert_eq!(labels.len(), 1);
+      assert_eq!(labels[0].label_id(), -1);
+      assert_eq!(labels[0].color().as_deref(), Some("#ff0000"));
+    }
+
+    #[tokio::test]
+    async fn it_remaps_a_temp_id_to_the_real_id_carrying_membership_along() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, -1, "Pending", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      seed_mail(&db, 42, 11).await;
+      super::add_membership(&db, 42, 10, -1).await.unwrap();
+      super::add_membership(&db, 42, 11, -1).await.unwrap();
+
+      super::remap_label_id(&db, 42, -1, 555).await.unwrap();
+
+      assert_eq!(
+        super::labels(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [555]
+      );
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [555]);
+      assert_eq!(super::membership(&db, 42, 11).await.unwrap(), [555]);
+      assert_eq!(super::headers_for_label(&db, 42, 555).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_removes_a_single_membership_leaving_other_labels_intact() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
+      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
+      seed_mail(&db, 42, 10).await;
+      super::add_membership(&db, 42, 10, 1).await.unwrap();
+      super::add_membership(&db, 42, 10, 2).await.unwrap();
+
+      super::remove_membership(&db, 42, 10, 1).await.unwrap();
+
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
+    }
+  }
+
+  mod labels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn label(character_id: i64, label_id: i64, name: &str, color: Option<&str>) -> CharacterMailLabel {
+      CharacterMailLabel {
+        character_id,
+        color: color.map(str::to_owned),
+        label_id,
+        name: name.to_owned(),
+      }
     }
 
     #[tokio::test]
@@ -1321,236 +1333,44 @@ mod core_tests {
       );
       assert_eq!(super::membership(&db, 42, 1).await.unwrap(), [-1]);
     }
-  }
 
-  mod label_crud {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn label(character_id: i64, label_id: i64, name: &str, color: Option<&str>) -> CharacterMailLabel {
-      CharacterMailLabel {
-        character_id,
-        color: color.map(str::to_owned),
-        label_id,
-        name: name.to_owned(),
-      }
-    }
-
-    async fn seed_mail(db: &Database, character_id: i64, mail_id: i64) {
-      super::upsert_complete(
-        db,
-        &header(character_id, mail_id, "x", "2026-06-01T10:00:00Z", false),
-        &body_of(character_id, mail_id, "<p>x</p>"),
-        &[],
+    #[tokio::test]
+    async fn it_replaces_the_catalog_and_membership_and_computes_unread_locally() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::replace_labels_for_character(
+        &db,
+        42,
+        &[label(42, 1, "Inbox", None), label(42, 2, "Important", Some("#ff0000"))],
       )
       .await
       .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_inserts_a_single_label_with_a_negative_temp_id() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::insert_label(&db, &label(42, -1, "Pending", Some("#ff0000")))
-        .await
-        .unwrap();
-
-      let labels = super::labels(&db, 42).await.unwrap();
-      assert_eq!(labels.len(), 1);
-      assert_eq!(labels[0].label_id(), -1);
-      assert_eq!(labels[0].color().as_deref(), Some("#ff0000"));
-    }
-
-    #[tokio::test]
-    async fn it_remaps_a_temp_id_to_the_real_id_carrying_membership_along() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::insert_label(&db, &label(42, -1, "Pending", None)).await.unwrap();
-      seed_mail(&db, 42, 10).await;
-      seed_mail(&db, 42, 11).await;
-      super::add_membership(&db, 42, 10, -1).await.unwrap();
-      super::add_membership(&db, 42, 11, -1).await.unwrap();
-
-      super::remap_label_id(&db, 42, -1, 555).await.unwrap();
-
-      assert_eq!(
-        super::labels(&db, 42)
-          .await
-          .unwrap()
-          .iter()
-          .map(|l| l.label_id())
-          .collect::<Vec<_>>(),
-        [555]
-      );
-      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [555]);
-      assert_eq!(super::membership(&db, 42, 11).await.unwrap(), [555]);
-      assert_eq!(super::headers_for_label(&db, 42, 555).await.unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn it_adds_membership_idempotently() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
-      seed_mail(&db, 42, 10).await;
-
-      super::add_membership(&db, 42, 10, 1).await.unwrap();
-      super::add_membership(&db, 42, 10, 1).await.unwrap();
-
-      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [1]);
-    }
-
-    #[tokio::test]
-    async fn it_removes_a_single_membership_leaving_other_labels_intact() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
-      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
-      seed_mail(&db, 42, 10).await;
-      super::add_membership(&db, 42, 10, 1).await.unwrap();
-      super::add_membership(&db, 42, 10, 2).await.unwrap();
-
-      super::remove_membership(&db, 42, 10, 1).await.unwrap();
-
-      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
-    }
-
-    #[tokio::test]
-    async fn it_deletes_a_label_and_cascades_its_membership() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::insert_label(&db, &label(42, 1, "Inbox", None)).await.unwrap();
-      super::insert_label(&db, &label(42, 2, "Corp", None)).await.unwrap();
-      seed_mail(&db, 42, 10).await;
-      super::add_membership(&db, 42, 10, 1).await.unwrap();
-      super::add_membership(&db, 42, 10, 2).await.unwrap();
-
-      super::delete_label(&db, 42, 1).await.unwrap();
-
-      assert_eq!(
-        super::labels(&db, 42)
-          .await
-          .unwrap()
-          .iter()
-          .map(|l| l.label_id())
-          .collect::<Vec<_>>(),
-        [2]
-      );
-      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
-    }
-  }
-
-  mod unified {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_merges_owned_characters_mail_newest_first() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
 
       super::upsert_complete(
         &db,
-        &header(42, 1, "Older", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>from 42</p>"),
+        &header(42, 10, "Unread", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 10, "<p>a</p>"),
         &[],
       )
       .await
       .unwrap();
       super::upsert_complete(
         &db,
-        &header(43, 2, "Newer", "2026-06-02T10:00:00Z", false),
-        &body_of(43, 2, "<p>from 43</p>"),
+        &header(42, 11, "Read", "2026-06-01T11:00:00Z", true),
+        &body_of(42, 11, "<p>b</p>"),
         &[],
       )
       .await
       .unwrap();
 
-      let unified = super::unified(&db).await.unwrap();
-      assert_eq!(
-        unified.iter().map(|m| (m.character_id, m.mail_id)).collect::<Vec<_>>(),
-        [(43, 2), (42, 1)]
-      );
-      assert_eq!(unified[0].body, "<p>from 43</p>");
-    }
-
-    #[tokio::test]
-    async fn it_excludes_a_header_without_a_body() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      sqlx::query(
-        "INSERT INTO character_mail (character_id, mail_id, from_id, from_name, subject, timestamp, is_read) \
-          VALUES (42, 9, 95000001, 'X', 'No body', '2026-06-01T10:00:00Z', 0)",
-      )
-      .execute(&db.0)
-      .await
-      .unwrap();
-
-      assert!(super::unified(&db).await.unwrap().is_empty());
-    }
-  }
-
-  fn sent_header(character_id: i64, mail_id: i64, ts: &str, is_read: bool) -> CharacterMail {
-    CharacterMail {
-      character_id,
-      from_id: character_id,
-      from_name: "Me".to_owned(),
-      is_read,
-      mail_id,
-      subject: Some("Sent".to_owned()),
-      timestamp: ts.to_owned(),
-      ..Default::default()
-    }
-  }
-
-  mod headers_for_label {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn label(character_id: i64, label_id: i64, name: &str) -> CharacterMailLabel {
-      CharacterMailLabel {
-        character_id,
-        color: None,
-        label_id,
-        name: name.to_owned(),
-      }
-    }
-
-    #[tokio::test]
-    async fn it_returns_only_the_labels_members_newest_first() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::replace_labels_for_character(&db, 42, &[label(42, 1, "Inbox"), label(42, 2, "Corp")])
-        .await
-        .unwrap();
-
-      for (id, ts) in [
-        (10, "2026-06-01T10:00:00Z"),
-        (11, "2026-06-02T10:00:00Z"),
-        (12, "2026-06-03T10:00:00Z"),
-      ] {
-        super::upsert_complete(&db, &header(42, id, "x", ts, false), &body_of(42, id, "<p>x</p>"), &[])
-          .await
-          .unwrap();
-      }
       super::replace_membership_for_character(
         &db,
         42,
         &[
           CharacterMailLabelMembership {
             character_id: 42,
-            label_id: 1,
+            label_id: 2,
             mail_id: 10,
-          },
-          CharacterMailLabelMembership {
-            character_id: 42,
-            label_id: 1,
-            mail_id: 12,
           },
           CharacterMailLabelMembership {
             character_id: 42,
@@ -1562,49 +1382,17 @@ mod core_tests {
       .await
       .unwrap();
 
-      let inbox = super::headers_for_label(&db, 42, 1).await.unwrap();
-      assert_eq!(inbox.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [12, 10]);
-    }
-  }
-
-  mod recipients_display {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_joins_resolved_names_with_commas() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "x", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>x</p>"),
-        &[
-          recipient(42, 1, 1, "character", "Alpha"),
-          recipient(42, 1, 2, "character", "Bravo"),
-        ],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(super::recipients_display(&db, 42, 1).await.unwrap(), "Alpha, Bravo");
-    }
-
-    #[tokio::test]
-    async fn it_is_empty_for_a_mail_with_no_recipients() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::upsert_complete(
-        &db,
-        &header(42, 1, "x", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>x</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-
-      assert_eq!(super::recipients_display(&db, 42, 1).await.unwrap(), "");
+      assert_eq!(
+        super::labels(&db, 42)
+          .await
+          .unwrap()
+          .iter()
+          .map(|l| l.label_id())
+          .collect::<Vec<_>>(),
+        [1, 2]
+      );
+      assert_eq!(super::membership(&db, 42, 10).await.unwrap(), [2]);
+      assert_eq!(super::unread_count_for_label(&db, 42, 2).await.unwrap(), 1);
     }
   }
 
@@ -1677,10 +1465,158 @@ mod core_tests {
     }
   }
 
+  mod recipients_display {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_empty_for_a_mail_with_no_recipients() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "x", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::recipients_display(&db, 42, 1).await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn it_joins_resolved_names_with_commas() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "x", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[
+          recipient(42, 1, 1, "character", "Alpha"),
+          recipient(42, 1, 2, "character", "Bravo"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::recipients_display(&db, 42, 1).await.unwrap(), "Alpha, Bravo");
+    }
+  }
+
+  mod set_read {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_flips_the_mutable_is_read_flag() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+
+      super::set_read(&db, 42, 1, true).await.unwrap();
+
+      assert!(super::headers(&db, 42).await.unwrap()[0].is_read());
+    }
+  }
+
+  mod unified {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_excludes_a_header_without_a_body() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      sqlx::query(
+        "INSERT INTO character_mail (character_id, mail_id, from_id, from_name, subject, timestamp, is_read) \
+          VALUES (42, 9, 95000001, 'X', 'No body', '2026-06-01T10:00:00Z', 0)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+
+      assert!(super::unified(&db).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_merges_owned_characters_mail_newest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "Older", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>from 42</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+      super::upsert_complete(
+        &db,
+        &header(43, 2, "Newer", "2026-06-02T10:00:00Z", false),
+        &body_of(43, 2, "<p>from 43</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+
+      let unified = super::unified(&db).await.unwrap();
+      assert_eq!(
+        unified.iter().map(|m| (m.character_id, m.mail_id)).collect::<Vec<_>>(),
+        [(43, 2), (42, 1)]
+      );
+      assert_eq!(unified[0].body, "<p>from 43</p>");
+    }
+  }
+
   mod unread_counts {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_combines_unread_across_owned_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "a", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>a</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+      super::upsert_complete(
+        &db,
+        &header(43, 2, "b", "2026-06-01T11:00:00Z", false),
+        &body_of(43, 2, "<p>b</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+      super::upsert_complete(
+        &db,
+        &sent_header(43, 3, "2026-06-01T12:00:00Z", false),
+        &body_of(43, 3, "<p>c</p>"),
+        &[],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(super::unified_unread_count(&db).await.unwrap(), 2);
+    }
 
     #[tokio::test]
     async fn it_counts_unread_per_character_excluding_sent() {
@@ -1775,38 +1711,102 @@ mod core_tests {
 
       assert_eq!(super::unread_counts_by_label(&db, 42).await.unwrap(), [(1, 1), (2, 0)]);
     }
+  }
+
+  mod upsert_complete {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[tokio::test]
-    async fn it_combines_unread_across_owned_characters() {
+    async fn it_keeps_the_immutable_body_on_a_re_sync() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
+
       super::upsert_complete(
         &db,
-        &header(42, 1, "a", "2026-06-01T10:00:00Z", false),
-        &body_of(42, 1, "<p>a</p>"),
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>original</p>"),
         &[],
       )
       .await
       .unwrap();
       super::upsert_complete(
         &db,
-        &header(43, 2, "b", "2026-06-01T11:00:00Z", false),
-        &body_of(43, 2, "<p>b</p>"),
-        &[],
-      )
-      .await
-      .unwrap();
-      super::upsert_complete(
-        &db,
-        &sent_header(43, 3, "2026-06-01T12:00:00Z", false),
-        &body_of(43, 3, "<p>c</p>"),
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", true),
+        &body_of(42, 1, "<p>SHOULD NOT REPLACE</p>"),
         &[],
       )
       .await
       .unwrap();
 
-      assert_eq!(super::unified_unread_count(&db).await.unwrap(), 2);
+      assert_eq!(
+        super::body(&db, 42, 1).await.unwrap().unwrap().body(),
+        "<p>original</p>"
+      );
+      assert!(super::headers(&db, 42).await.unwrap()[0].is_read());
+    }
+
+    #[tokio::test]
+    async fn it_persists_header_body_and_recipients_together() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>Hi there</p>"),
+        &[
+          recipient(42, 1, 42, "character", "Me"),
+          recipient(42, 1, 90_000_001, "corporation", "My Corp"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let headers = super::headers(&db, 42).await.unwrap();
+      assert_eq!(headers.len(), 1);
+      assert_eq!(headers[0].subject().as_deref(), Some("Hello"));
+      assert_eq!(
+        super::body(&db, 42, 1).await.unwrap().unwrap().body(),
+        "<p>Hi there</p>"
+      );
+      assert_eq!(
+        super::recipients(&db, 42, 1)
+          .await
+          .unwrap()
+          .iter()
+          .map(|r| r.recipient_name().clone())
+          .collect::<Vec<_>>(),
+        ["Me", "My Corp"]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_recipient_set_on_re_sync() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[recipient(42, 1, 1, "character", "Old")],
+      )
+      .await
+      .unwrap();
+      super::upsert_complete(
+        &db,
+        &header(42, 1, "Hello", "2026-06-01T10:00:00Z", false),
+        &body_of(42, 1, "<p>x</p>"),
+        &[recipient(42, 1, 2, "character", "New")],
+      )
+      .await
+      .unwrap();
+
+      let recipients = super::recipients(&db, 42, 1).await.unwrap();
+      assert_eq!(recipients.len(), 1);
+      assert_eq!(recipients[0].recipient_name(), "New");
     }
   }
 }
@@ -1840,106 +1840,94 @@ mod overlay_tests {
       .unwrap();
   }
 
-  mod triage {
-    use pretty_assertions::assert_eq;
+  const NOW: &str = "2026-06-15T00:00:00Z";
 
-    use super::*;
-
-    #[tokio::test]
-    async fn it_upserts_star_and_pin_in_place() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::set_triage(&db, 42, 1, false, true).await.unwrap();
-
-      let row = super::triage(&db, 42, 1).await.unwrap().unwrap();
-      assert!(!row.star());
-      assert!(row.pin());
-      assert_eq!(super::all_triage(&db, 42).await.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_clears_a_triage_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, true).await.unwrap();
-
-      super::clear_triage(&db, 42, 1).await.unwrap();
-
-      assert!(super::triage(&db, 42, 1).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_cascades_when_the_character_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, true).await.unwrap();
-
-      sqlx::query("DELETE FROM characters WHERE id = 42")
-        .execute(&db.0)
-        .await
-        .unwrap();
-
-      assert!(super::all_triage(&db, 42).await.unwrap().is_empty());
+  fn received(character_id: i64, mail_id: i64, ts: &str, is_read: bool) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id: 95_000_001,
+      from_name: "Sender".to_owned(),
+      is_read,
+      mail_id,
+      subject: Some("Subject".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
     }
   }
 
-  mod snooze {
+  fn sent(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id: character_id,
+      from_name: "Me".to_owned(),
+      is_read: false,
+      mail_id,
+      subject: Some("Sent".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
+    }
+  }
+
+  async fn store_mail(db: &Database, header: &CharacterMail) {
+    let body = CharacterMailBody {
+      body: "<p>x</p>".to_owned(),
+      character_id: header.character_id(),
+      mail_id: header.mail_id(),
+    };
+    super::upsert_complete(db, header, &body, &[]).await.unwrap();
+  }
+
+  mod all_overlay_states {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_upserts_and_lists_snoozed_mail() {
+    async fn it_merges_multiple_overlays_on_the_same_mail_into_one_row() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-
-      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
-        .await
-        .unwrap();
-      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-11T08:00:00Z")
-        .await
-        .unwrap();
-      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-09T08:00:00Z")
+      super::set_triage(&db, 42, 5, true, true).await.unwrap();
+      super::upsert_snoozed_mail(&db, 42, 5, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
 
-      let all = super::all_snoozed_mails(&db, 42).await.unwrap();
-      assert_eq!(all.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [2, 1]);
-      assert_eq!(
-        all.iter().find(|s| s.mail_id() == 1).unwrap().snooze_until(),
-        "2026-06-11T08:00:00Z"
-      );
+      let states = super::all_overlay_states(&db, 42).await.unwrap();
+
+      assert_eq!(states.len(), 1);
+      assert_eq!(states[0].mail_id, 5);
+      assert!(states[0].is_pinned);
+      assert!(states[0].is_snoozed());
     }
 
     #[tokio::test]
-    async fn it_returns_only_expired_snoozes() {
+    async fn it_returns_one_row_per_overlaid_mail_across_tables() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-01T00:00:00Z")
+      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
-      super::upsert_snoozed_mail(&db, 42, 2, "2026-12-31T00:00:00Z")
-        .await
-        .unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
 
-      let expired = super::expired_snoozed_mails(&db, "2026-06-03T00:00:00Z").await.unwrap();
+      let states = super::all_overlay_states(&db, 42).await.unwrap();
 
-      assert_eq!(expired.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [1]);
+      assert_eq!(states.iter().map(|s| s.mail_id).collect::<Vec<_>>(), [1, 2, 3]);
+      assert!(states[0].is_starred);
+      assert!(states[1].is_snoozed());
+      assert_eq!(states[2].folder.as_deref(), Some("archive"));
     }
 
     #[tokio::test]
-    async fn it_deletes_a_snooze() {
+    async fn it_scopes_to_the_given_character() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
-        .await
-        .unwrap();
+      seed_character(&db, 43).await;
+      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::set_triage(&db, 43, 2, true, false).await.unwrap();
 
-      super::delete_snoozed_mail(&db, 42, 1).await.unwrap();
+      let states = super::all_overlay_states(&db, 42).await.unwrap();
 
-      assert!(super::all_snoozed_mails(&db, 42).await.unwrap().is_empty());
+      assert_eq!(states.iter().map(|s| s.mail_id).collect::<Vec<_>>(), [1]);
     }
   }
 
@@ -1947,26 +1935,6 @@ mod overlay_tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_upserts_a_folder_assignment_with_reserved_columns() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      super::assign_folder(&db, 42, 1, "archive", Some(7), false)
-        .await
-        .unwrap();
-      let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
-      assert_eq!(row.folder(), "archive");
-      assert_eq!(row.remap_label_id(), Some(7));
-      assert!(!row.soft_delete_intent());
-
-      super::assign_folder(&db, 42, 1, "trash", None, true).await.unwrap();
-      let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
-      assert_eq!(row.folder(), "trash");
-      assert_eq!(row.remap_label_id(), None);
-      assert!(row.soft_delete_intent());
-    }
 
     #[tokio::test]
     async fn it_lists_by_folder_and_clears() {
@@ -2007,27 +1975,62 @@ mod overlay_tests {
 
       assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn it_upserts_a_folder_assignment_with_reserved_columns() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::assign_folder(&db, 42, 1, "archive", Some(7), false)
+        .await
+        .unwrap();
+      let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
+      assert_eq!(row.folder(), "archive");
+      assert_eq!(row.remap_label_id(), Some(7));
+      assert!(!row.soft_delete_intent());
+
+      super::assign_folder(&db, 42, 1, "trash", None, true).await.unwrap();
+      let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
+      assert_eq!(row.folder(), "trash");
+      assert_eq!(row.remap_label_id(), None);
+      assert!(row.soft_delete_intent());
+    }
+  }
+
+  mod membership_reads {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_lists_mail_ids_in_a_folder() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 2, "trash", None, true).await.unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+
+      assert_eq!(super::folder_mail_ids(&db, 42, "archive").await.unwrap(), [1, 3]);
+      assert_eq!(super::folder_mail_ids(&db, 42, "trash").await.unwrap(), [2]);
+    }
+
+    #[tokio::test]
+    async fn it_lists_starred_and_pinned_mail_ids_independently() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::set_triage(&db, 42, 2, false, true).await.unwrap();
+      super::set_triage(&db, 42, 3, true, true).await.unwrap();
+
+      assert_eq!(super::starred_mail_ids(&db, 42).await.unwrap(), [1, 3]);
+      assert_eq!(super::pinned_mail_ids(&db, 42).await.unwrap(), [2, 3]);
+    }
   }
 
   mod overlay_state {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_returns_an_all_default_state_for_a_mail_with_no_overlays() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-
-      let state = super::overlay_state(&db, 42, 7).await.unwrap();
-
-      assert_eq!(state.mail_id, 7);
-      assert!(!state.is_starred);
-      assert!(!state.is_pinned);
-      assert!(!state.is_snoozed());
-      assert_eq!(state.snooze_until, None);
-      assert_eq!(state.folder, None);
-    }
 
     #[tokio::test]
     async fn it_joins_all_three_overlays_into_one_state() {
@@ -2061,127 +2064,330 @@ mod overlay_tests {
       assert!(!state.is_snoozed());
       assert_eq!(state.folder, None);
     }
+
+    #[tokio::test]
+    async fn it_returns_an_all_default_state_for_a_mail_with_no_overlays() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let state = super::overlay_state(&db, 42, 7).await.unwrap();
+
+      assert_eq!(state.mail_id, 7);
+      assert!(!state.is_starred);
+      assert!(!state.is_pinned);
+      assert!(!state.is_snoozed());
+      assert_eq!(state.snooze_until, None);
+      assert_eq!(state.folder, None);
+    }
   }
 
-  mod all_overlay_states {
+  mod paged_visible_headers {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
+    fn ids(rows: &[CharacterMail]) -> Vec<i64> {
+      rows.iter().map(|m| m.mail_id()).collect()
+    }
+
     #[tokio::test]
-    async fn it_returns_one_row_per_overlaid_mail_across_tables() {
+    async fn it_excludes_pinned_snoozed_and_archived_mail_from_the_tail() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-10T08:00:00Z")
-        .await
-        .unwrap();
+      for id in 1..=4 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
+      super::set_triage(&db, 42, 4, false, true).await.unwrap(); // pinned -> head, not tail
       super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
-
-      let states = super::all_overlay_states(&db, 42).await.unwrap();
-
-      assert_eq!(states.iter().map(|s| s.mail_id).collect::<Vec<_>>(), [1, 2, 3]);
-      assert!(states[0].is_starred);
-      assert!(states[1].is_snoozed());
-      assert_eq!(states[2].folder.as_deref(), Some("archive"));
-    }
-
-    #[tokio::test]
-    async fn it_merges_multiple_overlays_on_the_same_mail_into_one_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 5, true, true).await.unwrap();
-      super::upsert_snoozed_mail(&db, 42, 5, "2026-06-10T08:00:00Z")
+      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
 
-      let states = super::all_overlay_states(&db, 42).await.unwrap();
+      let tail = super::visible_headers_page(&db, 42, NOW, None, 50).await.unwrap();
+      assert_eq!(ids(&tail), [1]);
 
-      assert_eq!(states.len(), 1);
-      assert_eq!(states[0].mail_id, 5);
-      assert!(states[0].is_pinned);
-      assert!(states[0].is_snoozed());
+      let pinned = super::pinned_visible_headers(&db, 42, NOW, None).await.unwrap();
+      assert_eq!(ids(&pinned), [4]);
     }
 
     #[tokio::test]
-    async fn it_scopes_to_the_given_character() {
+    async fn it_pages_a_label_folder_and_keeps_pins_in_the_head() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::set_triage(&db, 43, 2, true, false).await.unwrap();
-
-      let states = super::all_overlay_states(&db, 42).await.unwrap();
-
-      assert_eq!(states.iter().map(|s| s.mail_id).collect::<Vec<_>>(), [1]);
-    }
-  }
-
-  mod membership_reads {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_lists_starred_and_pinned_mail_ids_independently() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::replace_labels_for_character(
+        &db,
+        42,
+        &[CharacterMailLabel {
+          character_id: 42,
+          color: None,
+          label_id: 7,
+          name: "Fleet".to_owned(),
+        }],
+      )
+      .await
+      .unwrap();
+      for id in 1..=3 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
+      super::replace_membership_for_character(
+        &db,
+        42,
+        &(1..=3)
+          .map(|mail_id| CharacterMailLabelMembership {
+            character_id: 42,
+            label_id: 7,
+            mail_id,
+          })
+          .collect::<Vec<_>>(),
+      )
+      .await
+      .unwrap();
       super::set_triage(&db, 42, 2, false, true).await.unwrap();
-      super::set_triage(&db, 42, 3, true, true).await.unwrap();
 
-      assert_eq!(super::starred_mail_ids(&db, 42).await.unwrap(), [1, 3]);
-      assert_eq!(super::pinned_mail_ids(&db, 42).await.unwrap(), [2, 3]);
+      let tail = super::visible_headers_for_label_page(&db, 42, 7, NOW, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(ids(&tail), [3, 1], "the pinned mail is excluded from the tail");
+
+      let pinned = super::pinned_visible_headers(&db, 42, NOW, Some(7)).await.unwrap();
+      assert_eq!(ids(&pinned), [2]);
     }
 
     #[tokio::test]
-    async fn it_lists_mail_ids_in_a_folder() {
+    async fn it_walks_the_inbox_in_bounded_keyset_pages_newest_first() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
-      super::assign_folder(&db, 42, 2, "trash", None, true).await.unwrap();
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      for id in 1..=5 {
+        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
+      }
 
-      assert_eq!(super::folder_mail_ids(&db, 42, "archive").await.unwrap(), [1, 3]);
-      assert_eq!(super::folder_mail_ids(&db, 42, "trash").await.unwrap(), [2]);
+      let first = super::visible_headers_page(&db, 42, NOW, None, 2).await.unwrap();
+      assert_eq!(ids(&first), [5, 4]);
+
+      let cursor = super::MailCursor::after(first.last().unwrap());
+      let second = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
+        .await
+        .unwrap();
+      assert_eq!(ids(&second), [3, 2]);
+
+      let cursor = super::MailCursor::after(second.last().unwrap());
+      let third = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
+        .await
+        .unwrap();
+      assert_eq!(ids(&third), [1], "the final short page signals exhaustion");
     }
   }
 
-  const NOW: &str = "2026-06-15T00:00:00Z";
+  mod search_visible_headers {
+    use pretty_assertions::assert_eq;
 
-  fn received(character_id: i64, mail_id: i64, ts: &str, is_read: bool) -> CharacterMail {
-    CharacterMail {
-      character_id,
-      from_id: 95_000_001,
-      from_name: "Sender".to_owned(),
-      is_read,
-      mail_id,
-      subject: Some("Subject".to_owned()),
-      timestamp: ts.to_owned(),
-      ..Default::default()
+    use super::*;
+
+    fn with_subject_and_sender(mail_id: i64, ts: &str, subject: &str, sender: &str) -> CharacterMail {
+      CharacterMail {
+        character_id: 42,
+        from_id: 95_000_001,
+        from_name: sender.to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some(subject.to_owned()),
+        timestamp: ts.to_owned(),
+        ..Default::default()
+      }
+    }
+
+    #[tokio::test]
+    async fn it_excludes_archived_mail_and_pages_by_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      for id in 1..=3 {
+        store_mail(
+          &db,
+          &with_subject_and_sender(id, &format!("2026-06-0{id}T10:00:00Z"), "fleet ping", "Org"),
+        )
+        .await;
+      }
+      super::assign_folder(&db, 42, 2, "archive", None, false).await.unwrap();
+
+      let first = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, None, 1)
+        .await
+        .unwrap();
+      assert_eq!(first.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [3]);
+
+      let cursor = super::MailCursor::after(first.last().unwrap());
+      let second = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, Some(&cursor), 50)
+        .await
+        .unwrap();
+      assert_eq!(
+        second.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [1],
+        "the archived mail 2 is skipped and the cursor advances past it"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_matches_subject_or_sender_case_insensitively_in_bounded_pages() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "CTA tonight", "Vex"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "Market update", "Cta Bot"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(3, "2026-06-03T10:00:00Z", "Standings", "Other"),
+      )
+      .await;
+
+      let hits = super::search_visible_headers_page(&db, 42, NOW, "cta", None, None, 50)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        hits.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [2, 1],
+        "newest first; matches either subject or sender, ignoring case"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_treats_like_metacharacters_as_literals() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "50% off", "Trader"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "no discount", "Trader"),
+      )
+      .await;
+
+      let literal = super::search_visible_headers_page(&db, 42, NOW, "50%", None, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(literal.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [1]);
+
+      let bare_percent = super::search_visible_headers_page(&db, 42, NOW, "%", None, None, 50)
+        .await
+        .unwrap();
+      assert_eq!(
+        bare_percent.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
+        [1],
+        "a bare percent is a literal needle: it matches only the subject containing '%', not every row"
+      );
     }
   }
 
-  fn sent(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
-    CharacterMail {
-      character_id,
-      from_id: character_id,
-      from_name: "Me".to_owned(),
-      is_read: false,
-      mail_id,
-      subject: Some("Sent".to_owned()),
-      timestamp: ts.to_owned(),
-      ..Default::default()
+  mod snooze {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_deletes_a_snooze() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
+        .await
+        .unwrap();
+
+      super::delete_snoozed_mail(&db, 42, 1).await.unwrap();
+
+      assert!(super::all_snoozed_mails(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_expired_snoozes() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::upsert_snoozed_mail(&db, 42, 2, "2026-12-31T00:00:00Z")
+        .await
+        .unwrap();
+
+      let expired = super::expired_snoozed_mails(&db, "2026-06-03T00:00:00Z").await.unwrap();
+
+      assert_eq!(expired.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [1]);
+    }
+
+    #[tokio::test]
+    async fn it_upserts_and_lists_snoozed_mail() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
+        .await
+        .unwrap();
+      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-11T08:00:00Z")
+        .await
+        .unwrap();
+      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-09T08:00:00Z")
+        .await
+        .unwrap();
+
+      let all = super::all_snoozed_mails(&db, 42).await.unwrap();
+      assert_eq!(all.iter().map(|s| s.mail_id()).collect::<Vec<_>>(), [2, 1]);
+      assert_eq!(
+        all.iter().find(|s| s.mail_id() == 1).unwrap().snooze_until(),
+        "2026-06-11T08:00:00Z"
+      );
     }
   }
 
-  async fn store_mail(db: &Database, header: &CharacterMail) {
-    let body = CharacterMailBody {
-      body: "<p>x</p>".to_owned(),
-      character_id: header.character_id(),
-      mail_id: header.mail_id(),
-    };
-    super::upsert_complete(db, header, &body, &[]).await.unwrap();
+  mod triage {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_cascades_when_the_character_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::set_triage(&db, 42, 1, true, true).await.unwrap();
+
+      sqlx::query("DELETE FROM characters WHERE id = 42")
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      assert!(super::all_triage(&db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_triage_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::set_triage(&db, 42, 1, true, true).await.unwrap();
+
+      super::clear_triage(&db, 42, 1).await.unwrap();
+
+      assert!(super::triage(&db, 42, 1).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_upserts_star_and_pin_in_place() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::set_triage(&db, 42, 1, false, true).await.unwrap();
+
+      let row = super::triage(&db, 42, 1).await.unwrap().unwrap();
+      assert!(!row.star());
+      assert!(row.pin());
+      assert_eq!(super::all_triage(&db, 42).await.unwrap().len(), 1);
+    }
   }
 
   mod visible_headers {
@@ -2272,209 +2478,52 @@ mod overlay_tests {
     }
   }
 
-  mod paged_visible_headers {
+  mod visible_unified {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn ids(rows: &[CharacterMail]) -> Vec<i64> {
-      rows.iter().map(|m| m.mail_id()).collect()
-    }
-
     #[tokio::test]
-    async fn it_walks_the_inbox_in_bounded_keyset_pages_newest_first() {
+    async fn it_merges_owned_characters_and_hides_overlaid_mail() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      for id in 1..=5 {
-        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
-      }
-
-      let first = super::visible_headers_page(&db, 42, NOW, None, 2).await.unwrap();
-      assert_eq!(ids(&first), [5, 4]);
-
-      let cursor = super::MailCursor::after(first.last().unwrap());
-      let second = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
-        .await
-        .unwrap();
-      assert_eq!(ids(&second), [3, 2]);
-
-      let cursor = super::MailCursor::after(second.last().unwrap());
-      let third = super::visible_headers_page(&db, 42, NOW, Some(&cursor), 2)
-        .await
-        .unwrap();
-      assert_eq!(ids(&third), [1], "the final short page signals exhaustion");
-    }
-
-    #[tokio::test]
-    async fn it_excludes_pinned_snoozed_and_archived_mail_from_the_tail() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      for id in 1..=4 {
-        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
-      }
-      super::set_triage(&db, 42, 4, false, true).await.unwrap(); // pinned -> head, not tail
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
-      super::upsert_snoozed_mail(&db, 42, 2, "2026-06-20T00:00:00Z")
+      seed_character(&db, 43).await;
+      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
+      store_mail(&db, &received(43, 2, "2026-06-02T10:00:00Z", false)).await;
+      store_mail(&db, &received(43, 3, "2026-06-03T10:00:00Z", false)).await;
+      super::assign_folder(&db, 43, 2, "archive", None, false).await.unwrap();
+      super::upsert_snoozed_mail(&db, 43, 3, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
 
-      let tail = super::visible_headers_page(&db, 42, NOW, None, 50).await.unwrap();
-      assert_eq!(ids(&tail), [1]);
+      let unified = super::visible_unified(&db, NOW).await.unwrap();
 
-      let pinned = super::pinned_visible_headers(&db, 42, NOW, None).await.unwrap();
-      assert_eq!(ids(&pinned), [4]);
-    }
-
-    #[tokio::test]
-    async fn it_pages_a_label_folder_and_keeps_pins_in_the_head() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      super::replace_labels_for_character(
-        &db,
-        42,
-        &[CharacterMailLabel {
-          character_id: 42,
-          color: None,
-          label_id: 7,
-          name: "Fleet".to_owned(),
-        }],
-      )
-      .await
-      .unwrap();
-      for id in 1..=3 {
-        store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
-      }
-      super::replace_membership_for_character(
-        &db,
-        42,
-        &(1..=3)
-          .map(|mail_id| CharacterMailLabelMembership {
-            character_id: 42,
-            label_id: 7,
-            mail_id,
-          })
-          .collect::<Vec<_>>(),
-      )
-      .await
-      .unwrap();
-      super::set_triage(&db, 42, 2, false, true).await.unwrap();
-
-      let tail = super::visible_headers_for_label_page(&db, 42, 7, NOW, None, 50)
-        .await
-        .unwrap();
-      assert_eq!(ids(&tail), [3, 1], "the pinned mail is excluded from the tail");
-
-      let pinned = super::pinned_visible_headers(&db, 42, NOW, Some(7)).await.unwrap();
-      assert_eq!(ids(&pinned), [2]);
+      assert_eq!(
+        unified.iter().map(|m| (m.character_id, m.mail_id)).collect::<Vec<_>>(),
+        [(42, 1)]
+      );
     }
   }
 
-  mod search_visible_headers {
+  mod visible_unified_unread_count {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    fn with_subject_and_sender(mail_id: i64, ts: &str, subject: &str, sender: &str) -> CharacterMail {
-      CharacterMail {
-        character_id: 42,
-        from_id: 95_000_001,
-        from_name: sender.to_owned(),
-        is_read: false,
-        mail_id,
-        subject: Some(subject.to_owned()),
-        timestamp: ts.to_owned(),
-        ..Default::default()
-      }
-    }
-
     #[tokio::test]
-    async fn it_matches_subject_or_sender_case_insensitively_in_bounded_pages() {
+    async fn it_aggregates_across_characters_with_the_same_exclusions() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      store_mail(
-        &db,
-        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "CTA tonight", "Vex"),
-      )
-      .await;
-      store_mail(
-        &db,
-        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "Market update", "Cta Bot"),
-      )
-      .await;
-      store_mail(
-        &db,
-        &with_subject_and_sender(3, "2026-06-03T10:00:00Z", "Standings", "Other"),
-      )
-      .await;
-
-      let hits = super::search_visible_headers_page(&db, 42, NOW, "cta", None, None, 50)
+      seed_character(&db, 43).await;
+      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
+      store_mail(&db, &received(43, 2, "2026-06-02T10:00:00Z", false)).await;
+      store_mail(&db, &sent(43, 3, "2026-06-03T10:00:00Z")).await;
+      store_mail(&db, &received(43, 4, "2026-06-04T10:00:00Z", false)).await;
+      super::upsert_snoozed_mail(&db, 43, 4, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
 
-      assert_eq!(
-        hits.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
-        [2, 1],
-        "newest first; matches either subject or sender, ignoring case"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_treats_like_metacharacters_as_literals() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      store_mail(
-        &db,
-        &with_subject_and_sender(1, "2026-06-01T10:00:00Z", "50% off", "Trader"),
-      )
-      .await;
-      store_mail(
-        &db,
-        &with_subject_and_sender(2, "2026-06-02T10:00:00Z", "no discount", "Trader"),
-      )
-      .await;
-
-      let literal = super::search_visible_headers_page(&db, 42, NOW, "50%", None, None, 50)
-        .await
-        .unwrap();
-      assert_eq!(literal.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [1]);
-
-      let bare_percent = super::search_visible_headers_page(&db, 42, NOW, "%", None, None, 50)
-        .await
-        .unwrap();
-      assert_eq!(
-        bare_percent.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
-        [1],
-        "a bare percent is a literal needle: it matches only the subject containing '%', not every row"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_excludes_archived_mail_and_pages_by_cursor() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      for id in 1..=3 {
-        store_mail(
-          &db,
-          &with_subject_and_sender(id, &format!("2026-06-0{id}T10:00:00Z"), "fleet ping", "Org"),
-        )
-        .await;
-      }
-      super::assign_folder(&db, 42, 2, "archive", None, false).await.unwrap();
-
-      let first = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, None, 1)
-        .await
-        .unwrap();
-      assert_eq!(first.iter().map(|m| m.mail_id()).collect::<Vec<_>>(), [3]);
-
-      let cursor = super::MailCursor::after(first.last().unwrap());
-      let second = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, Some(&cursor), 50)
-        .await
-        .unwrap();
-      assert_eq!(
-        second.iter().map(|m| m.mail_id()).collect::<Vec<_>>(),
-        [1],
-        "the archived mail 2 is skipped and the cursor advances past it"
-      );
+      assert_eq!(super::visible_unified_unread_count(&db, NOW).await.unwrap(), 2);
     }
   }
 
@@ -2484,16 +2533,11 @@ mod overlay_tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_excludes_sent_snoozed_and_archived_mail() {
+    async fn it_counts_a_woken_mail_before_the_scheduler_tick() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
-      store_mail(&db, &received(42, 2, "2026-06-02T10:00:00Z", true)).await;
-      store_mail(&db, &sent(42, 3, "2026-06-03T10:00:00Z")).await;
-      store_mail(&db, &received(42, 4, "2026-06-04T10:00:00Z", false)).await;
-      store_mail(&db, &received(42, 5, "2026-06-05T10:00:00Z", false)).await;
-      super::assign_folder(&db, 42, 4, "archive", None, false).await.unwrap();
-      super::upsert_snoozed_mail(&db, 42, 5, "2026-06-20T00:00:00Z")
+      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T00:00:00Z")
         .await
         .unwrap();
 
@@ -2511,11 +2555,16 @@ mod overlay_tests {
     }
 
     #[tokio::test]
-    async fn it_counts_a_woken_mail_before_the_scheduler_tick() {
+    async fn it_excludes_sent_snoozed_and_archived_mail() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
-      super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T00:00:00Z")
+      store_mail(&db, &received(42, 2, "2026-06-02T10:00:00Z", true)).await;
+      store_mail(&db, &sent(42, 3, "2026-06-03T10:00:00Z")).await;
+      store_mail(&db, &received(42, 4, "2026-06-04T10:00:00Z", false)).await;
+      store_mail(&db, &received(42, 5, "2026-06-05T10:00:00Z", false)).await;
+      super::assign_folder(&db, 42, 4, "archive", None, false).await.unwrap();
+      super::upsert_snoozed_mail(&db, 42, 5, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
 
@@ -2587,55 +2636,6 @@ mod overlay_tests {
         super::visible_unread_counts_by_label(&db, 42, NOW).await.unwrap(),
         [(1, 1), (2, 0)]
       );
-    }
-  }
-
-  mod visible_unified {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_merges_owned_characters_and_hides_overlaid_mail() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
-      store_mail(&db, &received(43, 2, "2026-06-02T10:00:00Z", false)).await;
-      store_mail(&db, &received(43, 3, "2026-06-03T10:00:00Z", false)).await;
-      super::assign_folder(&db, 43, 2, "archive", None, false).await.unwrap();
-      super::upsert_snoozed_mail(&db, 43, 3, "2026-06-20T00:00:00Z")
-        .await
-        .unwrap();
-
-      let unified = super::visible_unified(&db, NOW).await.unwrap();
-
-      assert_eq!(
-        unified.iter().map(|m| (m.character_id, m.mail_id)).collect::<Vec<_>>(),
-        [(42, 1)]
-      );
-    }
-  }
-
-  mod visible_unified_unread_count {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_aggregates_across_characters_with_the_same_exclusions() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      seed_character(&db, 43).await;
-      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
-      store_mail(&db, &received(43, 2, "2026-06-02T10:00:00Z", false)).await;
-      store_mail(&db, &sent(43, 3, "2026-06-03T10:00:00Z")).await;
-      store_mail(&db, &received(43, 4, "2026-06-04T10:00:00Z", false)).await;
-      super::upsert_snoozed_mail(&db, 43, 4, "2026-06-20T00:00:00Z")
-        .await
-        .unwrap();
-
-      assert_eq!(super::visible_unified_unread_count(&db, NOW).await.unwrap(), 2);
     }
   }
 }

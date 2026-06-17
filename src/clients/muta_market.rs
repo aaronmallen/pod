@@ -123,18 +123,18 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_the_estimated_value() {
+    async fn it_errors_on_a_persistent_server_error() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/100"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"estimated_value":1234.5}"#, "application/json"))
+        .and(path("/9"))
+        .respond_with(ResponseTemplate::new(500))
         .mount(&server)
         .await;
       let client = Client::with_base_url(server.uri());
 
-      let price = client.item_price(100).await.unwrap();
+      let result = client.item_price(9).await;
 
-      assert_eq!(price, Some(1234.5));
+      assert!(matches!(result, Err(clients::Error::Http(_))));
     }
 
     #[tokio::test]
@@ -168,18 +168,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_errors_on_a_persistent_server_error() {
+    async fn it_returns_the_estimated_value() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
-        .and(path("/9"))
-        .respond_with(ResponseTemplate::new(500))
+        .and(path("/100"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(r#"{"estimated_value":1234.5}"#, "application/json"))
         .mount(&server)
         .await;
       let client = Client::with_base_url(server.uri());
 
-      let result = client.item_price(9).await;
+      let price = client.item_price(100).await.unwrap();
 
-      assert!(matches!(result, Err(clients::Error::Http(_))));
+      assert_eq!(price, Some(1234.5));
     }
   }
 

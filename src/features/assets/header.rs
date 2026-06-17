@@ -168,6 +168,24 @@ mod tests {
     }
   }
 
+  mod band {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_header_band_for_each_scope_form() {
+      for scope in [
+        Scope::All,
+        Scope::Character(7),
+        Scope::Corporation(98),
+        Scope::Character(404),
+      ] {
+        let mut state = State::new();
+        state.set_picker_for_test(scope, vec![pilot(7)], vec![corporation(98)]);
+        let _el: Element<'_, Message> = header(&state);
+      }
+    }
+  }
+
   mod dropdown {
     use super::*;
 
@@ -184,24 +202,6 @@ mod tests {
       let state = State::new();
 
       let _el: Element<'_, Message> = picker_dropdown(&state);
-    }
-  }
-
-  mod band {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_header_band_for_each_scope_form() {
-      for scope in [
-        Scope::All,
-        Scope::Character(7),
-        Scope::Corporation(98),
-        Scope::Character(404),
-      ] {
-        let mut state = State::new();
-        state.set_picker_for_test(scope, vec![pilot(7)], vec![corporation(98)]);
-        let _el: Element<'_, Message> = header(&state);
-      }
     }
   }
 }

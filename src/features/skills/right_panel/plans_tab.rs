@@ -205,13 +205,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_formats_an_rfc3339_timestamp_as_a_compact_date() {
-      assert_eq!(fmt_plan_date("2026-06-02T13:45:00Z"), "2 Jun '26");
+    fn it_falls_back_to_the_date_prefix_on_an_unparsable_string() {
+      assert_eq!(fmt_plan_date("not-a-date-string"), "not-a-date");
     }
 
     #[test]
-    fn it_falls_back_to_the_date_prefix_on_an_unparsable_string() {
-      assert_eq!(fmt_plan_date("not-a-date-string"), "not-a-date");
+    fn it_formats_an_rfc3339_timestamp_as_a_compact_date() {
+      assert_eq!(fmt_plan_date("2026-06-02T13:45:00Z"), "2 Jun '26");
     }
   }
 
@@ -264,10 +264,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_the_loading_state_before_first_load() {
-      let state = State::new();
+    fn it_renders_a_plan_list_with_an_armed_confirm() {
+      let mut state = State::new();
+      state.loaded = true;
+      state.plans = vec![row(1, "Combat", 5), row(2, "Industry", 0)];
+      state.confirm_delete = Some(2);
 
-      let _el: Element<'_, Message> = view(&state, 0);
+      let _el: Element<'_, Message> = view(&state, 2);
     }
 
     #[test]
@@ -287,13 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_a_plan_list_with_an_armed_confirm() {
-      let mut state = State::new();
-      state.loaded = true;
-      state.plans = vec![row(1, "Combat", 5), row(2, "Industry", 0)];
-      state.confirm_delete = Some(2);
+    fn it_renders_the_loading_state_before_first_load() {
+      let state = State::new();
 
-      let _el: Element<'_, Message> = view(&state, 2);
+      let _el: Element<'_, Message> = view(&state, 0);
     }
   }
 }

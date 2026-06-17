@@ -32,13 +32,13 @@ mod tests {
     use crate::ui::style::color;
 
     #[test]
-    fn it_renders_a_default_label() {
-      let _el: Element<'_, ()> = eyebrow("overview", None);
+    fn it_renders_a_colored_label() {
+      let _el: Element<'_, ()> = eyebrow("active", Some(color::accent::PLASMA));
     }
 
     #[test]
-    fn it_renders_a_colored_label() {
-      let _el: Element<'_, ()> = eyebrow("active", Some(color::accent::PLASMA));
+    fn it_renders_a_default_label() {
+      let _el: Element<'_, ()> = eyebrow("overview", None);
     }
   }
 

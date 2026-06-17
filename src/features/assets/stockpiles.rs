@@ -1498,6 +1498,104 @@ fn field_label<'a>(label: &'a str) -> Element<'a, Message> {
 mod tests {
   use super::*;
 
+  mod crud {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store;
+
+    #[tokio::test]
+    async fn it_round_trips_a_stockpile_through_create_load_and_delete() {
+      let db = store::open_test().await.unwrap();
+
+      let mut editor = Editor::blank();
+      editor.set_name("Supply Cache".to_owned());
+      editor.pick_item(0, 34, "Tritanium".to_owned());
+      editor.set_item_target(0, "1000".to_owned());
+      save(&db, &editor).await;
+
+      let cards = load_cards(&db).await;
+      assert_eq!(cards.len(), 1);
+      let card = &cards[0];
+      assert_eq!(card.name, "Supply Cache");
+      assert_eq!(card.items.len(), 1);
+      assert_eq!(card.items[0].have, 0);
+      assert_eq!(card.items[0].target, 1000);
+      assert_eq!(card.items[0].pct, 0.0);
+      assert_eq!(card.overall_pct, 0.0);
+      assert!(!card.is_full());
+
+      let mut edit = Editor::from_card(card);
+      edit.set_name("Renamed Cache".to_owned());
+      edit.set_item_target(0, "500".to_owned());
+      save(&db, &edit).await;
+      let cards = load_cards(&db).await;
+      assert_eq!(cards[0].name, "Renamed Cache");
+      assert_eq!(cards[0].items[0].target, 500);
+
+      delete(&db, cards[0].id).await;
+      assert!(load_cards(&db).await.is_empty());
+    }
+  }
+
+  mod economics {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn line(type_id: i64, have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_icon: IconResolution::Missing,
+        type_id,
+        type_name: format!("Type {type_id}"),
+      }
+    }
+
+    fn prices(entries: &[(i64, f64)]) -> HashMap<i64, f64> {
+      entries.iter().copied().collect()
+    }
+
+    #[test]
+    fn it_reports_zero_fill_value_for_a_full_pile() {
+      let items = vec![line(34, 1000, 1000), line(35, 80, 50)];
+
+      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(fill_isk, 0.0);
+    }
+
+    #[test]
+    fn it_sums_fill_value_over_short_items_only() {
+      let items = vec![line(34, 400, 1000), line(35, 80, 50)];
+
+      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(fill_isk, (1000.0 - 400.0) * 6.0);
+    }
+
+    #[test]
+    fn it_sums_target_value_from_average_price() {
+      let items = vec![line(34, 0, 1000), line(35, 0, 50)];
+
+      let (target_isk, _) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
+
+      assert_eq!(target_isk, 1000.0 * 6.0 + 50.0 * 11.0);
+    }
+
+    #[test]
+    fn it_treats_an_unpriced_type_as_zero_value() {
+      let items = vec![line(34, 0, 1000)];
+
+      let (target_isk, fill_isk) = economics(&items, &prices(&[]));
+
+      assert_eq!(target_isk, 0.0);
+      assert_eq!(fill_isk, 0.0);
+    }
+  }
+
   mod editor {
     use pretty_assertions::assert_eq;
 
@@ -1509,6 +1607,35 @@ mod tests {
         quantity,
         type_id,
       }
+    }
+
+    #[test]
+    fn it_clears_item_suggestions_below_the_min_char_threshold() {
+      let mut editor = Editor::blank();
+      editor.set_item_suggestions(0, vec![(34, "Tritanium".to_owned())]);
+
+      editor.set_item_query(0, "Tr".to_owned());
+
+      assert!(editor.items()[0].suggestions.is_empty());
+    }
+
+    #[test]
+    fn it_clears_location_suggestions_below_the_min_char_threshold() {
+      let mut editor = Editor::blank();
+      editor.set_location_suggestions(vec![(60_003_760, "Jita IV".to_owned())]);
+
+      editor.set_location_query("Ji".to_owned());
+
+      assert!(editor.location_suggestions().is_empty());
+    }
+
+    #[test]
+    fn it_drops_unresolved_item_rows() {
+      let mut editor = Editor::blank();
+      editor.set_item_query(0, "Tri".to_owned());
+      editor.set_item_target(0, "500".to_owned());
+
+      assert!(editor.parsed_items().is_empty());
     }
 
     #[test]
@@ -1525,50 +1652,6 @@ mod tests {
       let items = editor.parsed_items();
 
       assert_eq!(items, vec![(34, 1000), (35, 0)]);
-    }
-
-    #[test]
-    fn it_drops_unresolved_item_rows() {
-      let mut editor = Editor::blank();
-      editor.set_item_query(0, "Tri".to_owned());
-      editor.set_item_target(0, "500".to_owned());
-
-      assert!(editor.parsed_items().is_empty());
-    }
-
-    #[test]
-    fn it_clears_item_suggestions_below_the_min_char_threshold() {
-      let mut editor = Editor::blank();
-      editor.set_item_suggestions(0, vec![(34, "Tritanium".to_owned())]);
-
-      editor.set_item_query(0, "Tr".to_owned());
-
-      assert!(editor.items()[0].suggestions.is_empty());
-    }
-
-    #[test]
-    fn it_picks_an_item_into_a_resolved_chip() {
-      let mut editor = Editor::blank();
-      editor.set_item_suggestions(0, vec![(34, "Tritanium".to_owned())]);
-
-      editor.pick_item(0, 34, "Tritanium".to_owned());
-
-      assert_eq!(editor.items()[0].type_id, Some(34));
-      assert_eq!(editor.items()[0].type_name.as_deref(), Some("Tritanium"));
-      assert!(editor.items()[0].suggestions.is_empty());
-    }
-
-    #[test]
-    fn it_removes_an_item_row() {
-      let mut editor = Editor::blank();
-      editor.pick_item(0, 34, "Tritanium".to_owned());
-      editor.add_item();
-      editor.pick_item(1, 35, "Pyerite".to_owned());
-
-      editor.remove_item(0);
-
-      assert_eq!(editor.items().len(), 1);
-      assert_eq!(editor.items()[0].type_id, Some(35));
     }
 
     #[test]
@@ -1589,13 +1672,49 @@ mod tests {
     }
 
     #[test]
-    fn it_clears_location_suggestions_below_the_min_char_threshold() {
+    fn it_picks_an_item_into_a_resolved_chip() {
       let mut editor = Editor::blank();
-      editor.set_location_suggestions(vec![(60_003_760, "Jita IV".to_owned())]);
+      editor.set_item_suggestions(0, vec![(34, "Tritanium".to_owned())]);
 
-      editor.set_location_query("Ji".to_owned());
+      editor.pick_item(0, 34, "Tritanium".to_owned());
 
-      assert!(editor.location_suggestions().is_empty());
+      assert_eq!(editor.items()[0].type_id, Some(34));
+      assert_eq!(editor.items()[0].type_name.as_deref(), Some("Tritanium"));
+      assert!(editor.items()[0].suggestions.is_empty());
+    }
+
+    #[test]
+    fn it_prefills_a_blank_row_when_no_items_matched() {
+      let mut editor = Editor::blank();
+
+      editor.prefill_items(&[]);
+
+      assert_eq!(editor.items().len(), 1);
+      assert_eq!(editor.items()[0].type_id, None);
+    }
+
+    #[test]
+    fn it_prefills_resolved_item_rows_from_matched_multibuy() {
+      let mut editor = Editor::blank();
+
+      editor.prefill_items(&[matched("Tritanium", 1000, 34), matched("Pyerite", 50, 35)]);
+
+      let items = editor.parsed_items();
+      assert_eq!(items, vec![(34, 1000), (35, 50)]);
+      assert_eq!(editor.items()[0].type_name.as_deref(), Some("Tritanium"));
+    }
+
+    #[test]
+    fn it_removes_an_item_row() {
+      let mut editor = Editor::blank();
+      editor.pick_item(0, 34, "Tritanium".to_owned());
+      editor.add_item();
+      editor.pick_item(1, 35, "Pyerite".to_owned());
+
+      editor.remove_item(0);
+
+      assert_eq!(editor.items().len(), 1);
+      assert_eq!(editor.items()[0].type_id, Some(35));
     }
 
     #[test]
@@ -1616,27 +1735,6 @@ mod tests {
 
       assert_eq!(editor.location_id, Some(60_003_760));
       assert_eq!(editor.location_name(), Some("Jita IV"));
-    }
-
-    #[test]
-    fn it_prefills_resolved_item_rows_from_matched_multibuy() {
-      let mut editor = Editor::blank();
-
-      editor.prefill_items(&[matched("Tritanium", 1000, 34), matched("Pyerite", 50, 35)]);
-
-      let items = editor.parsed_items();
-      assert_eq!(items, vec![(34, 1000), (35, 50)]);
-      assert_eq!(editor.items()[0].type_name.as_deref(), Some("Tritanium"));
-    }
-
-    #[test]
-    fn it_prefills_a_blank_row_when_no_items_matched() {
-      let mut editor = Editor::blank();
-
-      editor.prefill_items(&[]);
-
-      assert_eq!(editor.items().len(), 1);
-      assert_eq!(editor.items()[0].type_id, None);
     }
   }
 
@@ -1681,46 +1779,6 @@ mod tests {
 
       assert_eq!(panel.text(), "Pyerite 5");
       assert!(panel.resolution().is_none());
-    }
-  }
-
-  mod crud {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store;
-
-    #[tokio::test]
-    async fn it_round_trips_a_stockpile_through_create_load_and_delete() {
-      let db = store::open_test().await.unwrap();
-
-      let mut editor = Editor::blank();
-      editor.set_name("Supply Cache".to_owned());
-      editor.pick_item(0, 34, "Tritanium".to_owned());
-      editor.set_item_target(0, "1000".to_owned());
-      save(&db, &editor).await;
-
-      let cards = load_cards(&db).await;
-      assert_eq!(cards.len(), 1);
-      let card = &cards[0];
-      assert_eq!(card.name, "Supply Cache");
-      assert_eq!(card.items.len(), 1);
-      assert_eq!(card.items[0].have, 0);
-      assert_eq!(card.items[0].target, 1000);
-      assert_eq!(card.items[0].pct, 0.0);
-      assert_eq!(card.overall_pct, 0.0);
-      assert!(!card.is_full());
-
-      let mut edit = Editor::from_card(card);
-      edit.set_name("Renamed Cache".to_owned());
-      edit.set_item_target(0, "500".to_owned());
-      save(&db, &edit).await;
-      let cards = load_cards(&db).await;
-      assert_eq!(cards[0].name, "Renamed Cache");
-      assert_eq!(cards[0].items[0].target, 500);
-
-      delete(&db, cards[0].id).await;
-      assert!(load_cards(&db).await.is_empty());
     }
   }
 
@@ -1821,13 +1879,6 @@ mod tests {
     }
 
     #[test]
-    fn it_omits_zero_target_items_in_target_mode() {
-      let card = card(vec![line("Tritanium", 0, 0), line("Pyerite", 0, 50)], 0.0, 0.0);
-
-      assert_eq!(card.multibuy_target(), vec![("Pyerite".to_owned(), 50)]);
-    }
-
-    #[test]
     fn it_lists_only_shortfalls_in_remaining_mode() {
       let card = card(vec![line("Tritanium", 400, 1000), line("Pyerite", 50, 50)], 0.0, 0.0);
 
@@ -1838,114 +1889,18 @@ mod tests {
     }
 
     #[test]
+    fn it_omits_zero_target_items_in_target_mode() {
+      let card = card(vec![line("Tritanium", 0, 0), line("Pyerite", 0, 50)], 0.0, 0.0);
+
+      assert_eq!(card.multibuy_target(), vec![("Pyerite".to_owned(), 50)]);
+    }
+
+    #[test]
     fn it_reports_target_value_in_target_mode_and_fill_value_in_remaining_mode() {
       let card = card(vec![line("Tritanium", 400, 1000)], 3600.0, 6000.0);
 
       assert_eq!(card.multibuy_value(MultibuyMode::Target), 6000.0);
       assert_eq!(card.multibuy_value(MultibuyMode::Remaining), 3600.0);
-    }
-  }
-
-  mod short_items {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
-      StockpileCard {
-        character_id: None,
-        fill_isk: 0.0,
-        id: 1,
-        items,
-        location_id: None,
-        location_name: None,
-        name: "Cache".to_owned(),
-        overall_pct: 0.0,
-        target_isk: 0.0,
-      }
-    }
-
-    fn line(have: i64, target: i64) -> StockpileItemLine {
-      StockpileItemLine {
-        have,
-        pct: 0.0,
-        target,
-        type_icon: IconResolution::Missing,
-        type_id: 34,
-        type_name: "Tritanium".to_owned(),
-      }
-    }
-
-    #[test]
-    fn it_counts_only_items_below_target() {
-      let card = card(vec![line(1000, 1000), line(80, 50), line(10, 25), line(0, 100)]);
-
-      assert_eq!(card.short_items(), 2);
-    }
-
-    #[test]
-    fn it_reports_zero_for_a_full_pile() {
-      let card = card(vec![line(1000, 1000), line(80, 50)]);
-
-      assert_eq!(card.short_items(), 0);
-    }
-  }
-
-  mod economics {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn line(type_id: i64, have: i64, target: i64) -> StockpileItemLine {
-      StockpileItemLine {
-        have,
-        pct: 0.0,
-        target,
-        type_icon: IconResolution::Missing,
-        type_id,
-        type_name: format!("Type {type_id}"),
-      }
-    }
-
-    fn prices(entries: &[(i64, f64)]) -> HashMap<i64, f64> {
-      entries.iter().copied().collect()
-    }
-
-    #[test]
-    fn it_sums_target_value_from_average_price() {
-      let items = vec![line(34, 0, 1000), line(35, 0, 50)];
-
-      let (target_isk, _) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
-
-      assert_eq!(target_isk, 1000.0 * 6.0 + 50.0 * 11.0);
-    }
-
-    #[test]
-    fn it_sums_fill_value_over_short_items_only() {
-      let items = vec![line(34, 400, 1000), line(35, 80, 50)];
-
-      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
-
-      assert_eq!(fill_isk, (1000.0 - 400.0) * 6.0);
-    }
-
-    #[test]
-    fn it_reports_zero_fill_value_for_a_full_pile() {
-      let items = vec![line(34, 1000, 1000), line(35, 80, 50)];
-
-      let (_, fill_isk) = economics(&items, &prices(&[(34, 6.0), (35, 11.0)]));
-
-      assert_eq!(fill_isk, 0.0);
-    }
-
-    #[test]
-    fn it_treats_an_unpriced_type_as_zero_value() {
-      let items = vec![line(34, 0, 1000)];
-
-      let (target_isk, fill_isk) = economics(&items, &prices(&[]));
-
-      assert_eq!(target_isk, 0.0);
-      assert_eq!(fill_isk, 0.0);
     }
   }
 
@@ -1991,6 +1946,11 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_empty_state() {
+      let _el: Element<'_, Message> = body(&[], None, None, &HashSet::new());
+    }
+
+    #[test]
     fn it_renders_the_import_paste_overlay() {
       let mut panel = ImportPanel::blank();
       panel.set_text("Tritanium 1000".to_owned());
@@ -2014,8 +1974,11 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(&[], None, None, &HashSet::new());
+    fn it_renders_the_multibuy_export_overlay_empty_state_when_fully_stocked() {
+      let mut card = card_model();
+      card.items[0].have = card.items[0].target;
+
+      let _el: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, false);
     }
 
     #[test]
@@ -2026,13 +1989,50 @@ mod tests {
       let _target: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Target, false);
       let _copied: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, true);
     }
+  }
+
+  mod short_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn card(items: Vec<StockpileItemLine>) -> StockpileCard {
+      StockpileCard {
+        character_id: None,
+        fill_isk: 0.0,
+        id: 1,
+        items,
+        location_id: None,
+        location_name: None,
+        name: "Cache".to_owned(),
+        overall_pct: 0.0,
+        target_isk: 0.0,
+      }
+    }
+
+    fn line(have: i64, target: i64) -> StockpileItemLine {
+      StockpileItemLine {
+        have,
+        pct: 0.0,
+        target,
+        type_icon: IconResolution::Missing,
+        type_id: 34,
+        type_name: "Tritanium".to_owned(),
+      }
+    }
 
     #[test]
-    fn it_renders_the_multibuy_export_overlay_empty_state_when_fully_stocked() {
-      let mut card = card_model();
-      card.items[0].have = card.items[0].target;
+    fn it_counts_only_items_below_target() {
+      let card = card(vec![line(1000, 1000), line(80, 50), line(10, 25), line(0, 100)]);
 
-      let _el: Element<'_, Message> = multibuy_export_overlay(&card, MultibuyMode::Remaining, false);
+      assert_eq!(card.short_items(), 2);
+    }
+
+    #[test]
+    fn it_reports_zero_for_a_full_pile() {
+      let card = card(vec![line(1000, 1000), line(80, 50)]);
+
+      assert_eq!(card.short_items(), 0);
     }
   }
 }

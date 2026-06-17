@@ -172,6 +172,7 @@ mod tests {
   };
 
   const CORP: i64 = 2000;
+
   const DIRECTOR: i64 = 100;
 
   async fn mount_json(server: &MockServer, route: &str, body: serde_json::Value) {
@@ -285,6 +286,41 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_errors_and_persists_nothing_when_the_director_lost_the_role() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Hangar_Take_1"] }]),
+      )
+      .await;
+      mount_wallets(&server).await;
+      mount_division_ledgers(&server).await;
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", CORP);
+
+      let result = run(&ctx(&db, &esi, &image, &image_store, &grant)).await;
+
+      assert!(
+        matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
+        "expected a re-authentication error, got {result:?}"
+      );
+      assert!(finance::divisions(&db, CORP).await.unwrap().is_empty());
+      assert!(
+        finance::corporation_wallet_journal(&db, CORP, 1)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
     async fn it_persists_per_division_balances_journal_and_transactions_when_the_role_is_held() {
       let server = MockServer::start().await;
       mount_roles(
@@ -327,73 +363,6 @@ mod tests {
         finance::corporation_wallet_journal(&db, CORP, 7).await.unwrap().len(),
         1
       );
-    }
-
-    #[tokio::test]
-    async fn it_errors_and_persists_nothing_when_the_director_lost_the_role() {
-      let server = MockServer::start().await;
-      mount_roles(
-        &server,
-        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Hangar_Take_1"] }]),
-      )
-      .await;
-      mount_wallets(&server).await;
-      mount_division_ledgers(&server).await;
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      seed_credential(&db).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", CORP);
-
-      let result = run(&ctx(&db, &esi, &image, &image_store, &grant)).await;
-
-      assert!(
-        matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
-        "expected a re-authentication error, got {result:?}"
-      );
-      assert!(finance::divisions(&db, CORP).await.unwrap().is_empty());
-      assert!(
-        finance::corporation_wallet_journal(&db, CORP, 1)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-
-    #[tokio::test]
-    async fn it_surfaces_a_401_on_divisions_as_needs_reauthentication() {
-      let server = MockServer::start().await;
-      mount_roles(
-        &server,
-        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Accountant"] }]),
-      )
-      .await;
-      Mock::given(method("GET"))
-        .and(path(format!("/corporations/{CORP}/divisions/")))
-        .respond_with(ResponseTemplate::new(401))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_corp(&db).await;
-      seed_credential(&db).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", CORP);
-
-      let result = run(&ctx(&db, &esi, &image, &image_store, &grant)).await;
-
-      assert!(
-        matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
-        "expected a re-authentication error, got {result:?}"
-      );
-      assert!(finance::divisions(&db, CORP).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -465,6 +434,38 @@ mod tests {
       assert!(
         matches!(result, Err(Error::NotReady)),
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
+      );
+      assert!(finance::divisions(&db, CORP).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_401_on_divisions_as_needs_reauthentication() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Accountant"] }]),
+      )
+      .await;
+      Mock::given(method("GET"))
+        .and(path(format!("/corporations/{CORP}/divisions/")))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", CORP);
+
+      let result = run(&ctx(&db, &esi, &image, &image_store, &grant)).await;
+
+      assert!(
+        matches!(&result, Err(Error::Internal(message)) if message.contains("needs re-authentication")),
+        "expected a re-authentication error, got {result:?}"
       );
       assert!(finance::divisions(&db, CORP).await.unwrap().is_empty());
     }

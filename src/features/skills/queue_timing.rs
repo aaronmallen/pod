@@ -139,6 +139,7 @@ mod tests {
     use super::*;
 
     const LONG_RANGE_TARGETING: i64 = 3428;
+
     const SIGNATURE_ANALYSIS: i64 = 3426;
 
     fn queued(queue_position: i64, skill_id: i64, finish_date: Option<&str>) -> CharacterSkillqueue {
@@ -202,19 +203,51 @@ mod tests {
     }
   }
 
-  mod queue_entry_progress_sp {
+  mod queue_entry_progress {
     use super::*;
 
     #[test]
-    fn it_reports_partial_progress_mid_training() {
-      let start = at(2026, 6, 1, 0);
-      let finish = at(2026, 6, 11, 0);
+    fn it_falls_back_to_linear_with_dates_only() {
+      let entry = entry(
+        Some("2026-06-01T00:00:00Z"),
+        Some("2026-06-11T00:00:00Z"),
+        None,
+        None,
+        None,
+      );
       let now = at(2026, 6, 6, 0);
 
-      let progress = queue_entry_progress_sp(45_255, 256_000, 45_255, start, finish, now);
+      let progress = queue_entry_progress(&entry, now);
 
       assert!((progress - 0.5).abs() < 0.001, "expected ~0.5, got {progress}");
     }
+
+    #[test]
+    fn it_returns_zero_with_no_dates() {
+      let entry = entry(None, None, None, None, None);
+
+      assert_eq!(queue_entry_progress(&entry, at(2026, 6, 6, 0)), 0.0);
+    }
+
+    #[test]
+    fn it_uses_the_sp_path_when_all_five_fields_are_present() {
+      let entry = entry(
+        Some("2026-06-01T00:00:00Z"),
+        Some("2026-06-11T00:00:00Z"),
+        Some(45_255),
+        Some(256_000),
+        Some(45_255),
+      );
+      let now = at(2026, 6, 6, 0);
+
+      let progress = queue_entry_progress(&entry, now);
+
+      assert!((progress - 0.5).abs() < 0.001, "expected ~0.5, got {progress}");
+    }
+  }
+
+  mod queue_entry_progress_sp {
+    use super::*;
 
     #[test]
     fn it_clamps_to_one_when_finished() {
@@ -226,6 +259,17 @@ mod tests {
         queue_entry_progress_sp(45_255, 256_000, 45_255, start, finish, now),
         1.0
       );
+    }
+
+    #[test]
+    fn it_reports_partial_progress_mid_training() {
+      let start = at(2026, 6, 1, 0);
+      let finish = at(2026, 6, 11, 0);
+      let now = at(2026, 6, 6, 0);
+
+      let progress = queue_entry_progress_sp(45_255, 256_000, 45_255, start, finish, now);
+
+      assert!((progress - 0.5).abs() < 0.001, "expected ~0.5, got {progress}");
     }
 
     #[test]
@@ -251,46 +295,14 @@ mod tests {
     }
   }
 
-  mod queue_entry_progress {
+  mod sp_cost {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    fn it_uses_the_sp_path_when_all_five_fields_are_present() {
-      let entry = entry(
-        Some("2026-06-01T00:00:00Z"),
-        Some("2026-06-11T00:00:00Z"),
-        Some(45_255),
-        Some(256_000),
-        Some(45_255),
-      );
-      let now = at(2026, 6, 6, 0);
-
-      let progress = queue_entry_progress(&entry, now);
-
-      assert!((progress - 0.5).abs() < 0.001, "expected ~0.5, got {progress}");
-    }
-
-    #[test]
-    fn it_falls_back_to_linear_with_dates_only() {
-      let entry = entry(
-        Some("2026-06-01T00:00:00Z"),
-        Some("2026-06-11T00:00:00Z"),
-        None,
-        None,
-        None,
-      );
-      let now = at(2026, 6, 6, 0);
-
-      let progress = queue_entry_progress(&entry, now);
-
-      assert!((progress - 0.5).abs() < 0.001, "expected ~0.5, got {progress}");
-    }
-
-    #[test]
-    fn it_returns_zero_with_no_dates() {
-      let entry = entry(None, None, None, None, None);
-
-      assert_eq!(queue_entry_progress(&entry, at(2026, 6, 6, 0)), 0.0);
+    fn it_is_re_exported_from_format() {
+      assert_eq!(sp_cost(1.0, 5), 256_000);
     }
   }
 
@@ -300,13 +312,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_sums_each_crossed_level_boundary() {
-      assert_eq!(sp_for_range(1, 1, 3), 9_414);
-    }
-
-    #[test]
-    fn it_sums_a_full_zero_to_five_run() {
-      assert_eq!(sp_for_range(1, 0, 5), 250 + 1_414 + 8_000 + 45_255 + 256_000);
+    fn it_returns_zero_for_an_empty_range() {
+      assert_eq!(sp_for_range(3, 5, 5), 0);
     }
 
     #[test]
@@ -315,8 +322,13 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_zero_for_an_empty_range() {
-      assert_eq!(sp_for_range(3, 5, 5), 0);
+    fn it_sums_a_full_zero_to_five_run() {
+      assert_eq!(sp_for_range(1, 0, 5), 250 + 1_414 + 8_000 + 45_255 + 256_000);
+    }
+
+    #[test]
+    fn it_sums_each_crossed_level_boundary() {
+      assert_eq!(sp_for_range(1, 1, 3), 9_414);
     }
   }
 
@@ -329,17 +341,6 @@ mod tests {
 
       assert!((rate - (32.0 + 29.0 / 2.0) / 60.0).abs() < 1e-9, "got {rate}");
       assert!(rate > sp_per_sec(27, 24), "higher attributes must yield a higher rate");
-    }
-  }
-
-  mod sp_cost {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_re_exported_from_format() {
-      assert_eq!(sp_cost(1.0, 5), 256_000);
     }
   }
 }

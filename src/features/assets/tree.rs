@@ -841,135 +841,6 @@ fn modal_primary_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Messag
 mod tests {
   use super::*;
 
-  mod render {
-    use super::*;
-    use crate::{
-      features::assets::{GeoNodeKey, State},
-      store::model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSystemNode},
-    };
-
-    fn location(location_id: i64, label: &str) -> GeoLocationNode {
-      GeoLocationNode {
-        item_count: 1,
-        location_id,
-        location_label: Some(label.to_owned()),
-        location_type: "station".to_owned(),
-        value: 1_000.0,
-      }
-    }
-
-    fn region(name: &str) -> GeoRegionNode {
-      GeoRegionNode {
-        constellations: vec![GeoConstellationNode {
-          constellation_id: 20_000_020,
-          constellation_name: "Kimotoro".to_owned(),
-          item_count: 12,
-          systems: vec![GeoSystemNode {
-            item_count: 12,
-            locations: vec![location(60_003_760, "Jita IV - Moon 4")],
-            security_status: Some(0.9),
-            system_id: 30_000_142,
-            system_name: "Jita".to_owned(),
-            value: 5_000.0,
-          }],
-          value: 5_000.0,
-        }],
-        item_count: 12,
-        region_id: 10_000_002,
-        region_name: name.to_owned(),
-        value: 5_000.0,
-      }
-    }
-
-    fn orphan() -> GeoLocationNode {
-      GeoLocationNode {
-        item_count: 1,
-        location_id: 1_022_000_000_000,
-        location_label: Some("Inaccessible Structure".to_owned()),
-        location_type: "structure".to_owned(),
-        value: 10.0,
-      }
-    }
-
-    #[test]
-    fn it_renders_the_geo_tree_pane_with_regions_and_orphans() {
-      let mut state = State::new();
-      state.set_geo_tree_for_test(GeoTree {
-        orphans: vec![orphan()],
-        regions: vec![region("The Forge")],
-      });
-
-      let _el: Element<'_, Message> = pane(&state);
-    }
-
-    #[tokio::test]
-    async fn it_renders_an_expanded_region_with_its_descendants() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
-      state.set_geo_tree_for_test(GeoTree {
-        orphans: Vec::new(),
-        regions: vec![region("The Forge")],
-      });
-      let _ = crate::features::assets::update(&mut state, Message::GeoNodeToggled(GeoNodeKey::Region(10_000_002)), &db);
-
-      let _el: Element<'_, Message> = pane(&state);
-    }
-
-    #[test]
-    fn it_renders_an_empty_geo_tree_pane() {
-      let state = State::new();
-
-      let _el: Element<'_, Message> = pane(&state);
-    }
-
-    fn saved_filter(id: i64, name: &str, query: &str, category: Option<&str>) -> crate::store::model::SavedAssetFilter {
-      crate::store::model::SavedAssetFilter {
-        category: category.map(str::to_owned),
-        id,
-        name: name.to_owned(),
-        query: query.to_owned(),
-      }
-    }
-
-    #[test]
-    fn it_renders_an_active_saved_filter_row_with_a_query_hint() {
-      let filter = saved_filter(1, "Ships", "ship", None);
-
-      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
-    }
-
-    #[test]
-    fn it_renders_an_inactive_saved_filter_row_with_a_category_hint() {
-      let filter = saved_filter(2, "Modules", "", Some("module"));
-
-      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
-    }
-
-    #[test]
-    fn it_renders_a_saved_filter_row_with_an_all_assets_hint() {
-      let filter = saved_filter(3, "Everything", "", None);
-
-      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
-    }
-
-    #[test]
-    fn it_renders_a_saved_filter_row_with_a_truncated_long_query_hint() {
-      let filter = saved_filter(4, "Long", "a very long search query that exceeds the hint limit", None);
-
-      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
-    }
-
-    #[test]
-    fn it_renders_an_enabled_modal_primary_button() {
-      let _el: Element<'_, Message> = modal_primary_button("Save", true);
-    }
-
-    #[test]
-    fn it_renders_a_disabled_modal_primary_button() {
-      let _el: Element<'_, Message> = modal_primary_button("Save", false);
-    }
-  }
-
   mod db {
     use pretty_assertions::assert_eq;
 
@@ -987,11 +858,17 @@ mod tests {
     };
 
     const CHARACTER_ID: i64 = 42;
+
     const CONSTELLATION_ID: i64 = 20_000_020;
+
     const CORP_ID: i64 = 90_000_001;
+
     const GROUP_ID: i64 = 25;
+
     const REGION_ID: i64 = 10_000_002;
+
     const STATION_ID: i64 = 60_003_760;
+
     const SYSTEM_ID: i64 = 30_000_142;
 
     async fn seed_character(db: &Database) {
@@ -1178,6 +1055,135 @@ mod tests {
       let tree = load_geo_tree(&db, Scope::Corporation(404), &[], &[]).await;
 
       assert_eq!(tree, GeoTree::default());
+    }
+  }
+
+  mod render {
+    use super::*;
+    use crate::{
+      features::assets::{GeoNodeKey, State},
+      store::model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSystemNode},
+    };
+
+    fn location(location_id: i64, label: &str) -> GeoLocationNode {
+      GeoLocationNode {
+        item_count: 1,
+        location_id,
+        location_label: Some(label.to_owned()),
+        location_type: "station".to_owned(),
+        value: 1_000.0,
+      }
+    }
+
+    fn region(name: &str) -> GeoRegionNode {
+      GeoRegionNode {
+        constellations: vec![GeoConstellationNode {
+          constellation_id: 20_000_020,
+          constellation_name: "Kimotoro".to_owned(),
+          item_count: 12,
+          systems: vec![GeoSystemNode {
+            item_count: 12,
+            locations: vec![location(60_003_760, "Jita IV - Moon 4")],
+            security_status: Some(0.9),
+            system_id: 30_000_142,
+            system_name: "Jita".to_owned(),
+            value: 5_000.0,
+          }],
+          value: 5_000.0,
+        }],
+        item_count: 12,
+        region_id: 10_000_002,
+        region_name: name.to_owned(),
+        value: 5_000.0,
+      }
+    }
+
+    fn orphan() -> GeoLocationNode {
+      GeoLocationNode {
+        item_count: 1,
+        location_id: 1_022_000_000_000,
+        location_label: Some("Inaccessible Structure".to_owned()),
+        location_type: "structure".to_owned(),
+        value: 10.0,
+      }
+    }
+
+    fn saved_filter(id: i64, name: &str, query: &str, category: Option<&str>) -> crate::store::model::SavedAssetFilter {
+      crate::store::model::SavedAssetFilter {
+        category: category.map(str::to_owned),
+        id,
+        name: name.to_owned(),
+        query: query.to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_a_disabled_modal_primary_button() {
+      let _el: Element<'_, Message> = modal_primary_button("Save", false);
+    }
+
+    #[test]
+    fn it_renders_a_saved_filter_row_with_a_truncated_long_query_hint() {
+      let filter = saved_filter(4, "Long", "a very long search query that exceeds the hint limit", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
+    }
+
+    #[test]
+    fn it_renders_a_saved_filter_row_with_an_all_assets_hint() {
+      let filter = saved_filter(3, "Everything", "", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
+    }
+
+    #[test]
+    fn it_renders_an_active_saved_filter_row_with_a_query_hint() {
+      let filter = saved_filter(1, "Ships", "ship", None);
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, true);
+    }
+
+    #[test]
+    fn it_renders_an_empty_geo_tree_pane() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = pane(&state);
+    }
+
+    #[test]
+    fn it_renders_an_enabled_modal_primary_button() {
+      let _el: Element<'_, Message> = modal_primary_button("Save", true);
+    }
+
+    #[tokio::test]
+    async fn it_renders_an_expanded_region_with_its_descendants() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.set_geo_tree_for_test(GeoTree {
+        orphans: Vec::new(),
+        regions: vec![region("The Forge")],
+      });
+      let _ = crate::features::assets::update(&mut state, Message::GeoNodeToggled(GeoNodeKey::Region(10_000_002)), &db);
+
+      let _el: Element<'_, Message> = pane(&state);
+    }
+
+    #[test]
+    fn it_renders_an_inactive_saved_filter_row_with_a_category_hint() {
+      let filter = saved_filter(2, "Modules", "", Some("module"));
+
+      let _el: Element<'_, Message> = saved_filter_row(&filter, false);
+    }
+
+    #[test]
+    fn it_renders_the_geo_tree_pane_with_regions_and_orphans() {
+      let mut state = State::new();
+      state.set_geo_tree_for_test(GeoTree {
+        orphans: vec![orphan()],
+        regions: vec![region("The Forge")],
+      });
+
+      let _el: Element<'_, Message> = pane(&state);
     }
   }
 }

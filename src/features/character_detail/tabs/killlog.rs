@@ -647,39 +647,6 @@ mod tests {
     }
   }
 
-  mod filter {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_passes_everything_for_all() {
-      let entries = [entry(1, true, 1.0), entry(2, false, 1.0)];
-      let matched = entries.iter().filter(|e| KilllogFilter::All.matches(e)).count();
-      assert_eq!(matched, 2);
-    }
-
-    #[test]
-    fn it_filters_kills_and_losses() {
-      let entries = [entry(1, true, 1.0), entry(2, false, 1.0), entry(3, true, 1.0)];
-      let kills = entries.iter().filter(|e| KilllogFilter::Kills.matches(e)).count();
-      let losses = entries.iter().filter(|e| KilllogFilter::Losses.matches(e)).count();
-      assert_eq!(kills, 2);
-      assert_eq!(losses, 1);
-    }
-  }
-
-  mod segmented {
-    use super::*;
-
-    #[test]
-    fn it_renders_each_active_filter() {
-      for filter in [KilllogFilter::All, KilllogFilter::Kills, KilllogFilter::Losses] {
-        let _el: Element<'_, Message> = super::super::segmented(filter);
-      }
-    }
-  }
-
   mod compute_stats {
     use pretty_assertions::assert_eq;
 
@@ -715,6 +682,56 @@ mod tests {
     }
   }
 
+  mod filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_filters_kills_and_losses() {
+      let entries = [entry(1, true, 1.0), entry(2, false, 1.0), entry(3, true, 1.0)];
+      let kills = entries.iter().filter(|e| KilllogFilter::Kills.matches(e)).count();
+      let losses = entries.iter().filter(|e| KilllogFilter::Losses.matches(e)).count();
+      assert_eq!(kills, 2);
+      assert_eq!(losses, 1);
+    }
+
+    #[test]
+    fn it_passes_everything_for_all() {
+      let entries = [entry(1, true, 1.0), entry(2, false, 1.0)];
+      let matched = entries.iter().filter(|e| KilllogFilter::All.matches(e)).count();
+      assert_eq!(matched, 2);
+    }
+  }
+
+  mod relative_time {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
+      let label = relative_time("2000-01-01T00:00:00Z");
+      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
+      assert_eq!(relative_time("not-a-date"), "not-a-date");
+    }
+  }
+
+  mod segmented {
+    use super::*;
+
+    #[test]
+    fn it_renders_each_active_filter() {
+      for filter in [KilllogFilter::All, KilllogFilter::Kills, KilllogFilter::Losses] {
+        let _el: Element<'_, Message> = super::super::segmented(filter);
+      }
+    }
+  }
+
   mod system_col {
     use super::*;
 
@@ -727,23 +744,6 @@ mod tests {
       let mut unresolved = entry(2, false, 0.0);
       unresolved.system_name = None;
       let _el: Element<'_, Message> = system_col(&unresolved);
-    }
-  }
-
-  mod relative_time {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
-      assert_eq!(relative_time("not-a-date"), "not-a-date");
-    }
-
-    #[test]
-    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
-      let label = relative_time("2000-01-01T00:00:00Z");
-      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
     }
   }
 }

@@ -177,6 +177,13 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_with_a_subtitle_but_no_icon_or_action() {
+      let _el: Element<'_, Message> = super::super::empty_state("Nothing here")
+        .subtitle("Sync to populate this view.")
+        .render();
+    }
+
+    #[test]
     fn it_renders_with_an_icon_subtitle_and_action() {
       let _el: Element<'_, Message> = super::super::empty_state("No matches")
         .icon(Icon::filter())
@@ -184,22 +191,10 @@ mod tests {
         .action("Clear filters", Message::ClearFilters)
         .render();
     }
-
-    #[test]
-    fn it_renders_with_a_subtitle_but_no_icon_or_action() {
-      let _el: Element<'_, Message> = super::super::empty_state("Nothing here")
-        .subtitle("Sync to populate this view.")
-        .render();
-    }
   }
 
   mod load_state_view {
     use super::*;
-
-    #[test]
-    fn it_renders_the_loading_branch() {
-      let _el: Element<'_, Message> = load_state_view(LoadStateView::Loading("Loading\u{2026}"));
-    }
 
     #[test]
     fn it_renders_the_error_branch() {
@@ -209,6 +204,11 @@ mod tests {
     #[test]
     fn it_renders_the_loaded_empty_branch() {
       let _el: Element<'_, Message> = load_state_view(LoadStateView::Empty(super::super::empty_state("No rows")));
+    }
+
+    #[test]
+    fn it_renders_the_loading_branch() {
+      let _el: Element<'_, Message> = load_state_view(LoadStateView::Loading("Loading\u{2026}"));
     }
   }
 }

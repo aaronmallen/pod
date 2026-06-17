@@ -382,6 +382,158 @@ mod tests {
     state
   }
 
+  mod arrival_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_a_dash_when_no_arrival_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+        "2026-06-22T00:00:00Z",
+      );
+      extraction.chunk_arrival_time = None;
+
+      assert_eq!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
+    }
+
+    #[test]
+    fn it_renders_a_pending_chunk_as_a_countdown() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+        "2026-06-22T00:00:00Z",
+      );
+
+      assert_ne!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
+    }
+
+    #[test]
+    fn it_renders_an_arrived_chunk_as_a_day_and_clock() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T06:00:00Z",
+        "2026-06-18T00:00:00Z",
+      );
+
+      assert!(super::super::arrival_text(&extraction, now(), true).contains(':'));
+    }
+  }
+
+  mod decay_split {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_marks_a_fractured_timer_as_passed() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-12T00:00:00Z",
+        "2026-06-13T00:00:00Z",
+      );
+
+      let (value, color) = super::super::decay_split(&extraction, now(), true);
+
+      assert_eq!(value, "passed");
+      assert_eq!(color, color::status::DANGER);
+    }
+
+    #[test]
+    fn it_renders_a_dash_when_no_decay_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+      extraction.natural_decay_time = None;
+
+      let (value, _) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(value, "\u{2014}");
+    }
+
+    #[test]
+    fn it_stays_neutral_when_decay_is_more_than_a_day_out() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+
+      let (_, color) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(color, color::text::secondary());
+    }
+
+    #[test]
+    fn it_warns_when_decay_is_under_a_day_out() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-16T18:00:00Z",
+      );
+
+      let (_, color) = super::super::decay_split(&extraction, now(), false);
+
+      assert_eq!(color, color::status::WARNING);
+    }
+  }
+
+  mod per_row {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_fits_multiple_cards_across_a_wide_viewport() {
+      assert_eq!(super::per_row(900.0), 2);
+    }
+
+    #[test]
+    fn it_fits_one_card_below_the_minimum_width() {
+      assert_eq!(super::per_row(300.0), 1);
+    }
+  }
+
+  mod started_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_a_dash_when_no_start_is_known() {
+      let mut extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+      extraction.extraction_start_time = None;
+
+      assert_eq!(super::super::started_text(&extraction), "started \u{2014}");
+    }
+
+    #[test]
+    fn it_renders_the_start_day() {
+      let extraction = extraction(
+        1,
+        "2026-06-10T00:00:00Z",
+        "2026-06-15T00:00:00Z",
+        "2026-06-20T00:00:00Z",
+      );
+
+      assert!(super::super::started_text(&extraction).starts_with("started "));
+    }
+  }
+
   mod tab {
     use super::*;
 
@@ -441,158 +593,6 @@ mod tests {
       }]);
 
       let _el: Element<'_, Message> = tab(&state, now());
-    }
-  }
-
-  mod arrival_text {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_an_arrived_chunk_as_a_day_and_clock() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T06:00:00Z",
-        "2026-06-18T00:00:00Z",
-      );
-
-      assert!(super::super::arrival_text(&extraction, now(), true).contains(':'));
-    }
-
-    #[test]
-    fn it_renders_a_pending_chunk_as_a_countdown() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-        "2026-06-22T00:00:00Z",
-      );
-
-      assert_ne!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
-    }
-
-    #[test]
-    fn it_renders_a_dash_when_no_arrival_is_known() {
-      let mut extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-        "2026-06-22T00:00:00Z",
-      );
-      extraction.chunk_arrival_time = None;
-
-      assert_eq!(super::super::arrival_text(&extraction, now(), false), "\u{2014}");
-    }
-  }
-
-  mod decay_split {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_marks_a_fractured_timer_as_passed() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-12T00:00:00Z",
-        "2026-06-13T00:00:00Z",
-      );
-
-      let (value, color) = super::super::decay_split(&extraction, now(), true);
-
-      assert_eq!(value, "passed");
-      assert_eq!(color, color::status::DANGER);
-    }
-
-    #[test]
-    fn it_warns_when_decay_is_under_a_day_out() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T00:00:00Z",
-        "2026-06-16T18:00:00Z",
-      );
-
-      let (_, color) = super::super::decay_split(&extraction, now(), false);
-
-      assert_eq!(color, color::status::WARNING);
-    }
-
-    #[test]
-    fn it_stays_neutral_when_decay_is_more_than_a_day_out() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-      );
-
-      let (_, color) = super::super::decay_split(&extraction, now(), false);
-
-      assert_eq!(color, color::text::secondary());
-    }
-
-    #[test]
-    fn it_renders_a_dash_when_no_decay_is_known() {
-      let mut extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-      );
-      extraction.natural_decay_time = None;
-
-      let (value, _) = super::super::decay_split(&extraction, now(), false);
-
-      assert_eq!(value, "\u{2014}");
-    }
-  }
-
-  mod started_text {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_the_start_day() {
-      let extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-      );
-
-      assert!(super::super::started_text(&extraction).starts_with("started "));
-    }
-
-    #[test]
-    fn it_renders_a_dash_when_no_start_is_known() {
-      let mut extraction = extraction(
-        1,
-        "2026-06-10T00:00:00Z",
-        "2026-06-15T00:00:00Z",
-        "2026-06-20T00:00:00Z",
-      );
-      extraction.extraction_start_time = None;
-
-      assert_eq!(super::super::started_text(&extraction), "started \u{2014}");
-    }
-  }
-
-  mod per_row {
-    use pretty_assertions::assert_eq;
-
-    #[test]
-    fn it_fits_one_card_below_the_minimum_width() {
-      assert_eq!(super::per_row(300.0), 1);
-    }
-
-    #[test]
-    fn it_fits_multiple_cards_across_a_wide_viewport() {
-      assert_eq!(super::per_row(900.0), 2);
     }
   }
 }

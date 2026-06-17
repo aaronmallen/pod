@@ -372,8 +372,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_counts_zero_defaults_for_a_fresh_config() {
-      assert_eq!(badge(&Settings::default()), "0/2");
+    fn it_counts_both_activities_when_each_has_a_default() {
+      let mut settings = Settings::default();
+      settings.industry_mut().set_manufacturing(Some(60_003_760));
+      settings.industry_mut().set_reactions(Some(1_021_000_000_001));
+
+      assert_eq!(badge(&settings), "2/2");
     }
 
     #[test]
@@ -385,12 +389,8 @@ mod tests {
     }
 
     #[test]
-    fn it_counts_both_activities_when_each_has_a_default() {
-      let mut settings = Settings::default();
-      settings.industry_mut().set_manufacturing(Some(60_003_760));
-      settings.industry_mut().set_reactions(Some(1_021_000_000_001));
-
-      assert_eq!(badge(&settings), "2/2");
+    fn it_counts_zero_defaults_for_a_fresh_config() {
+      assert_eq!(badge(&Settings::default()), "0/2");
     }
   }
 
@@ -398,60 +398,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_persists_a_station_id_and_signals_persist() {
-      let mut state = State::default();
-      let mut settings = Settings::default();
-
-      let outcome = update(
-        &mut state,
-        Message::FacilityPicked {
-          activity: MANUFACTURING_ACTIVITY_ID,
-          facility: facility(60_003_760),
-        },
-        &mut settings,
-      );
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert_eq!(*settings.industry().manufacturing(), Some(60_003_760));
-    }
-
-    #[test]
-    fn it_persists_a_structure_id_and_requests_a_pin() {
-      let mut state = State::default();
-      let mut settings = Settings::default();
-
-      let outcome = update(
-        &mut state,
-        Message::FacilityPicked {
-          activity: REACTION_ACTIVITY_ID,
-          facility: facility(1_021_000_000_001),
-        },
-        &mut settings,
-      );
-
-      assert!(matches!(outcome, Outcome::IndustryPin(_)));
-      assert_eq!(*settings.industry().reactions(), Some(1_021_000_000_001));
-    }
-
-    #[test]
-    fn it_removes_the_default_when_cleared() {
-      let mut state = State::default();
-      let mut settings = Settings::default();
-      settings.industry_mut().set_manufacturing(Some(60_003_760));
-
-      let outcome = update(
-        &mut state,
-        Message::Cleared {
-          activity: MANUFACTURING_ACTIVITY_ID,
-        },
-        &mut settings,
-      );
-
-      assert_eq!(outcome, Outcome::Persist);
-      assert_eq!(*settings.industry().manufacturing(), None);
-    }
 
     #[test]
     fn it_emits_a_search_outcome_for_the_activity() {
@@ -509,6 +455,60 @@ mod tests {
     }
 
     #[test]
+    fn it_persists_a_station_id_and_signals_persist() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      let outcome = update(
+        &mut state,
+        Message::FacilityPicked {
+          activity: MANUFACTURING_ACTIVITY_ID,
+          facility: facility(60_003_760),
+        },
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.industry().manufacturing(), Some(60_003_760));
+    }
+
+    #[test]
+    fn it_persists_a_structure_id_and_requests_a_pin() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      let outcome = update(
+        &mut state,
+        Message::FacilityPicked {
+          activity: REACTION_ACTIVITY_ID,
+          facility: facility(1_021_000_000_001),
+        },
+        &mut settings,
+      );
+
+      assert!(matches!(outcome, Outcome::IndustryPin(_)));
+      assert_eq!(*settings.industry().reactions(), Some(1_021_000_000_001));
+    }
+
+    #[test]
+    fn it_removes_the_default_when_cleared() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+      settings.industry_mut().set_manufacturing(Some(60_003_760));
+
+      let outcome = update(
+        &mut state,
+        Message::Cleared {
+          activity: MANUFACTURING_ACTIVITY_ID,
+        },
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert_eq!(*settings.industry().manufacturing(), None);
+    }
+
+    #[test]
     fn it_seeds_the_trigger_display_from_resolved_selections() {
       let mut state = State::default();
       let mut settings = Settings::default();
@@ -528,14 +528,6 @@ mod tests {
 
   mod view {
     use super::*;
-
-    #[test]
-    fn it_renders_the_industry_panel() {
-      let state = State::default();
-      let settings = Settings::default();
-
-      let _el: Element<'_, Message> = view(&state, &settings);
-    }
 
     #[test]
     fn it_renders_an_open_picker_with_results() {
@@ -570,6 +562,14 @@ mod tests {
         },
         &mut settings,
       );
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_industry_panel() {
+      let state = State::default();
+      let settings = Settings::default();
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

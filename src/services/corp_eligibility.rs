@@ -49,6 +49,7 @@ mod tests {
   };
 
   const CHARACTER_ID: i64 = 42;
+
   const CORPORATION_ID: i64 = 2000;
 
   async fn esi_for(server: &MockServer) -> EsiClient {
@@ -98,6 +99,19 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_rejects_a_character_who_is_neither_director_nor_ceo() {
+      let server = MockServer::start().await;
+      mount_public_info(&server).await;
+      mount_roles(&server, r#"["Accountant"]"#).await;
+      mount_corporation_info(&server, 999).await;
+      let esi = esi_for(&server).await;
+
+      let result = eligible_corporation(&esi, &grant(), CHARACTER_ID).await;
+
+      assert!(matches!(result, Err(clients::Error::Auth(_))));
+    }
+
+    #[tokio::test]
     async fn it_returns_the_corporation_id_for_a_director() {
       let server = MockServer::start().await;
       mount_public_info(&server).await;
@@ -120,19 +134,6 @@ mod tests {
       let corporation_id = eligible_corporation(&esi, &grant(), CHARACTER_ID).await.unwrap();
 
       assert_eq!(corporation_id, CORPORATION_ID);
-    }
-
-    #[tokio::test]
-    async fn it_rejects_a_character_who_is_neither_director_nor_ceo() {
-      let server = MockServer::start().await;
-      mount_public_info(&server).await;
-      mount_roles(&server, r#"["Accountant"]"#).await;
-      mount_corporation_info(&server, 999).await;
-      let esi = esi_for(&server).await;
-
-      let result = eligible_corporation(&esi, &grant(), CHARACTER_ID).await;
-
-      assert!(matches!(result, Err(clients::Error::Auth(_))));
     }
   }
 }

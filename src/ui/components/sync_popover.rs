@@ -683,17 +683,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_emits_one_row_per_pilot_and_enabled_job() {
-      let pilots = vec![pilot(1), pilot(2)];
-      let status = sync::SyncStatus::new();
-
-      let model = build_model(&pilots, &status, &Feature::ALL, Some(5), false);
-
-      assert_eq!(model.total, model.rows.len());
-      assert_eq!(model.rows.len(), pilots.len() * POPOVER_JOBS.len());
-    }
-
-    #[test]
     fn it_drops_jobs_whose_feature_is_disabled() {
       let pilots = vec![pilot(1)];
       let status = sync::SyncStatus::new();
@@ -702,6 +691,17 @@ mod tests {
       let with_none = build_model(&pilots, &status, &[], None, false);
 
       assert!(with_none.rows.len() < with_all.rows.len());
+    }
+
+    #[test]
+    fn it_emits_one_row_per_pilot_and_enabled_job() {
+      let pilots = vec![pilot(1), pilot(2)];
+      let status = sync::SyncStatus::new();
+
+      let model = build_model(&pilots, &status, &Feature::ALL, Some(5), false);
+
+      assert_eq!(model.total, model.rows.len());
+      assert_eq!(model.rows.len(), pilots.len() * POPOVER_JOBS.len());
     }
   }
 
@@ -831,13 +831,6 @@ mod tests {
     }
 
     #[test]
-    fn it_reads_an_unreported_job_as_queued() {
-      let status = sync::SyncStatus::new();
-
-      assert_eq!(row_state(&status, &key()), (RowState::Queued, None));
-    }
-
-    #[test]
     fn it_maps_done_and_syncing_phases() {
       let mut status = sync::SyncStatus::new();
 
@@ -854,18 +847,10 @@ mod tests {
     }
 
     #[test]
-    fn it_surfaces_a_failure_reason_as_error_text() {
-      let mut status = sync::SyncStatus::new();
+    fn it_reads_an_unreported_job_as_queued() {
+      let status = sync::SyncStatus::new();
 
-      status.apply(&Event::Failed {
-        key: key(),
-        reason: "token expired".to_owned(),
-      });
-
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Error, Some("token expired".to_owned()))
-      );
+      assert_eq!(row_state(&status, &key()), (RowState::Queued, None));
     }
 
     #[test]
@@ -880,6 +865,21 @@ mod tests {
       assert_eq!(
         row_state(&status, &key()),
         (RowState::Error, Some("Backing off 30s".to_owned()))
+      );
+    }
+
+    #[test]
+    fn it_surfaces_a_failure_reason_as_error_text() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Failed {
+        key: key(),
+        reason: "token expired".to_owned(),
+      });
+
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Error, Some("token expired".to_owned()))
       );
     }
 

@@ -295,6 +295,15 @@ mod tests {
     }
 
     #[test]
+    fn it_records_the_search_query() {
+      let mut state = loaded_state();
+
+      let _ = update(&mut state, Message::SearchChanged("gun".to_owned()));
+
+      assert_eq!(state.query, "gun");
+    }
+
+    #[test]
     fn it_toggles_a_group_open_and_closed() {
       let mut state = loaded_state();
 
@@ -303,15 +312,6 @@ mod tests {
 
       let _ = update(&mut state, Message::GroupToggled(2));
       assert_eq!(state.collapsed.get(&2), Some(&true), "open → collapsed");
-    }
-
-    #[test]
-    fn it_records_the_search_query() {
-      let mut state = loaded_state();
-
-      let _ = update(&mut state, Message::SearchChanged("gun".to_owned()));
-
-      assert_eq!(state.query, "gun");
     }
 
     #[test]

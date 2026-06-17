@@ -304,70 +304,14 @@ mod tests {
     use crate::store::repo::finance;
 
     #[tokio::test]
-    async fn it_persists_contracts_with_resolved_party_names() {
+    async fn it_does_not_fetch_bids_for_a_finished_auction() {
       let server = MockServer::start().await;
       mount_contracts(
         &server,
         42,
         serde_json::json!([
-          { "contract_id": 9, "type": "courier", "status": "outstanding", "issuer_id": 1001,
-            "assignee_id": 2002, "acceptor_id": 3003, "reward": 1234.5, "collateral": 6789.0, "volume": 250.0,
-            "date_issued": "2024-01-01T00:00:00Z", "for_corporation": false },
-          { "contract_id": 10, "type": "item_exchange", "status": "finished", "issuer_id": 1001,
-            "price": 50.0, "date_issued": "2024-02-01T00:00:00Z", "for_corporation": true },
-        ]),
-      )
-      .await;
-      mount_names(
-        &server,
-        serde_json::json!([
-          { "category": "character", "id": 1001, "name": "Issuer Pilot" },
-          { "category": "character", "id": 2002, "name": "Assignee Pilot" },
-          { "category": "character", "id": 3003, "name": "Acceptor Pilot" },
-        ]),
-      )
-      .await;
-      mount_items(&server, 9, serde_json::json!([])).await;
-      mount_items(&server, 10, serde_json::json!([])).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant), 42);
-
-      run(&ctx).await.unwrap();
-
-      let stored = finance::contracts(&db, 42).await.unwrap();
-      assert_eq!(stored.len(), 2);
-      let courier = stored.iter().find(|c| c.contract_id() == 9).unwrap();
-      assert_eq!(courier.status(), "outstanding");
-      assert_eq!(courier.r#type(), "courier");
-      assert_eq!(courier.issuer_name().as_deref(), Some("Issuer Pilot"));
-      assert_eq!(courier.assignee_name().as_deref(), Some("Assignee Pilot"));
-      assert_eq!(courier.acceptor_name().as_deref(), Some("Acceptor Pilot"));
-      assert_eq!(courier.collateral(), Some(6789.0));
-      let exchange = stored.iter().find(|c| c.contract_id() == 10).unwrap();
-      assert!(exchange.for_corporation());
-      assert_eq!(exchange.price(), Some(50.0));
-      assert!(exchange.assignee_id().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_persists_the_new_header_fields() {
-      let server = MockServer::start().await;
-      mount_contracts(
-        &server,
-        42,
-        serde_json::json!([
-          { "contract_id": 11, "type": "item_exchange", "status": "in_progress", "issuer_id": 1001,
-            "issuer_corporation_id": 90000001, "title": "Heavy haul", "availability": "personal",
-            "days_to_complete": 7, "start_location_id": 60003760, "end_location_id": 1030000000001_i64,
-            "date_accepted": "2024-04-02T00:00:00Z", "date_issued": "2024-04-01T00:00:00Z",
-            "for_corporation": false },
+          { "contract_id": 14, "type": "auction", "status": "finished", "issuer_id": 1001,
+            "date_issued": "2024-07-01T00:00:00Z", "for_corporation": false },
         ]),
       )
       .await;
@@ -376,7 +320,13 @@ mod tests {
         serde_json::json!([{ "category": "character", "id": 1001, "name": "Issuer Pilot" }]),
       )
       .await;
-      mount_items(&server, 11, serde_json::json!([])).await;
+      mount_items(&server, 14, serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/contracts/14/bids/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -389,15 +339,31 @@ mod tests {
 
       run(&ctx).await.unwrap();
 
-      let stored = finance::contracts(&db, 42).await.unwrap();
-      let contract = stored.iter().find(|c| c.contract_id() == 11).unwrap();
-      assert_eq!(contract.title().as_deref(), Some("Heavy haul"));
-      assert_eq!(contract.availability().as_deref(), Some("personal"));
-      assert_eq!(contract.days_to_complete(), Some(7));
-      assert_eq!(contract.start_location_id(), Some(60003760));
-      assert_eq!(contract.end_location_id(), Some(1030000000001));
-      assert_eq!(contract.date_accepted().as_deref(), Some("2024-04-02T00:00:00Z"));
-      assert_eq!(contract.issuer_corporation_id(), Some(90000001));
+      assert!(finance::contract_bids(&db, 42, 14).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_errors_when_the_grant_is_missing() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/contracts/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(finance::contracts(&db, 42).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -505,29 +471,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_fetch_bids_for_a_finished_auction() {
+    async fn it_persists_contracts_with_resolved_party_names() {
       let server = MockServer::start().await;
       mount_contracts(
         &server,
         42,
         serde_json::json!([
-          { "contract_id": 14, "type": "auction", "status": "finished", "issuer_id": 1001,
-            "date_issued": "2024-07-01T00:00:00Z", "for_corporation": false },
+          { "contract_id": 9, "type": "courier", "status": "outstanding", "issuer_id": 1001,
+            "assignee_id": 2002, "acceptor_id": 3003, "reward": 1234.5, "collateral": 6789.0, "volume": 250.0,
+            "date_issued": "2024-01-01T00:00:00Z", "for_corporation": false },
+          { "contract_id": 10, "type": "item_exchange", "status": "finished", "issuer_id": 1001,
+            "price": 50.0, "date_issued": "2024-02-01T00:00:00Z", "for_corporation": true },
         ]),
       )
       .await;
       mount_names(
         &server,
-        serde_json::json!([{ "category": "character", "id": 1001, "name": "Issuer Pilot" }]),
+        serde_json::json!([
+          { "category": "character", "id": 1001, "name": "Issuer Pilot" },
+          { "category": "character", "id": 2002, "name": "Assignee Pilot" },
+          { "category": "character", "id": 3003, "name": "Acceptor Pilot" },
+        ]),
       )
       .await;
-      mount_items(&server, 14, serde_json::json!([])).await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/contracts/14/bids/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
+      mount_items(&server, 9, serde_json::json!([])).await;
+      mount_items(&server, 10, serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -540,18 +508,33 @@ mod tests {
 
       run(&ctx).await.unwrap();
 
-      assert!(finance::contract_bids(&db, 42, 14).await.unwrap().is_empty());
+      let stored = finance::contracts(&db, 42).await.unwrap();
+      assert_eq!(stored.len(), 2);
+      let courier = stored.iter().find(|c| c.contract_id() == 9).unwrap();
+      assert_eq!(courier.status(), "outstanding");
+      assert_eq!(courier.r#type(), "courier");
+      assert_eq!(courier.issuer_name().as_deref(), Some("Issuer Pilot"));
+      assert_eq!(courier.assignee_name().as_deref(), Some("Assignee Pilot"));
+      assert_eq!(courier.acceptor_name().as_deref(), Some("Acceptor Pilot"));
+      assert_eq!(courier.collateral(), Some(6789.0));
+      let exchange = stored.iter().find(|c| c.contract_id() == 10).unwrap();
+      assert!(exchange.for_corporation());
+      assert_eq!(exchange.price(), Some(50.0));
+      assert!(exchange.assignee_id().is_none());
     }
 
     #[tokio::test]
-    async fn it_skips_item_fetch_for_a_contract_whose_items_are_already_stored() {
+    async fn it_persists_the_new_header_fields() {
       let server = MockServer::start().await;
       mount_contracts(
         &server,
         42,
         serde_json::json!([
-          { "contract_id": 15, "type": "item_exchange", "status": "finished", "issuer_id": 1001,
-            "date_issued": "2024-08-01T00:00:00Z", "for_corporation": false },
+          { "contract_id": 11, "type": "item_exchange", "status": "in_progress", "issuer_id": 1001,
+            "issuer_corporation_id": 90000001, "title": "Heavy haul", "availability": "personal",
+            "days_to_complete": 7, "start_location_id": 60003760, "end_location_id": 1030000000001_i64,
+            "date_accepted": "2024-04-02T00:00:00Z", "date_issued": "2024-04-01T00:00:00Z",
+            "for_corporation": false },
         ]),
       )
       .await;
@@ -560,32 +543,9 @@ mod tests {
         serde_json::json!([{ "category": "character", "id": 1001, "name": "Issuer Pilot" }]),
       )
       .await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/contracts/15/items/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .expect(0)
-        .mount(&server)
-        .await;
+      mount_items(&server, 11, serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      finance::replace_contract_items_for_character(
-        &db,
-        42,
-        15,
-        &[CharacterContractItem {
-          character_id: 42,
-          contract_id: 15,
-          is_included: true,
-          is_singleton: false,
-          quantity: 3,
-          raw_quantity: None,
-          record_id: 5000,
-          type_id: 34,
-          value_isk: 30.0,
-        }],
-      )
-      .await
-      .unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
       let image = eve_image::Client::with_base_url(http, server.uri());
@@ -596,9 +556,15 @@ mod tests {
 
       run(&ctx).await.unwrap();
 
-      let items = finance::contract_items(&db, 42, 15).await.unwrap();
-      assert_eq!(items.len(), 1);
-      assert_eq!(items[0].record_id(), 5000);
+      let stored = finance::contracts(&db, 42).await.unwrap();
+      let contract = stored.iter().find(|c| c.contract_id() == 11).unwrap();
+      assert_eq!(contract.title().as_deref(), Some("Heavy haul"));
+      assert_eq!(contract.availability().as_deref(), Some("personal"));
+      assert_eq!(contract.days_to_complete(), Some(7));
+      assert_eq!(contract.start_location_id(), Some(60003760));
+      assert_eq!(contract.end_location_id(), Some(1030000000001));
+      assert_eq!(contract.date_accepted().as_deref(), Some("2024-04-02T00:00:00Z"));
+      assert_eq!(contract.issuer_corporation_id(), Some(90000001));
     }
 
     #[tokio::test]
@@ -670,27 +636,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_errors_when_the_grant_is_missing() {
+    async fn it_skips_item_fetch_for_a_contract_whose_items_are_already_stored() {
       let server = MockServer::start().await;
+      mount_contracts(
+        &server,
+        42,
+        serde_json::json!([
+          { "contract_id": 15, "type": "item_exchange", "status": "finished", "issuer_id": 1001,
+            "date_issued": "2024-08-01T00:00:00Z", "for_corporation": false },
+        ]),
+      )
+      .await;
+      mount_names(
+        &server,
+        serde_json::json!([{ "category": "character", "id": 1001, "name": "Issuer Pilot" }]),
+      )
+      .await;
       Mock::given(method("GET"))
-        .and(path("/characters/42/contracts/"))
+        .and(path("/characters/42/contracts/15/items/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .expect(0)
         .mount(&server)
         .await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
+      finance::replace_contract_items_for_character(
+        &db,
+        42,
+        15,
+        &[CharacterContractItem {
+          character_id: 42,
+          contract_id: 15,
+          is_included: true,
+          is_singleton: false,
+          quantity: 3,
+          raw_quantity: None,
+          record_id: 5000,
+          type_id: 34,
+          value_isk: 30.0,
+        }],
+      )
+      .await
+      .unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
       let image = eve_image::Client::with_base_url(http, server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, None, 42);
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, Some(&grant), 42);
 
-      let result = run(&ctx).await;
+      run(&ctx).await.unwrap();
 
-      assert!(result.is_err());
-      assert!(finance::contracts(&db, 42).await.unwrap().is_empty());
+      let items = finance::contract_items(&db, 42, 15).await.unwrap();
+      assert_eq!(items.len(), 1);
+      assert_eq!(items[0].record_id(), 5000);
     }
 
     #[tokio::test]

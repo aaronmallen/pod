@@ -135,22 +135,19 @@ mod tests {
     }
 
     #[test]
-    fn it_takes_over_a_stale_foreign_lease() {
+    fn it_refreshes_our_own_fresh_lease() {
       let dir = tempfile::tempdir().unwrap();
-      let now = Utc::now();
-      manager("machine-b")
-        .write(
-          &LeaseManager::lease_path(dir.path()),
-          now - chrono::Duration::seconds(31),
-        )
-        .unwrap();
+      let earlier = at(1_700_000_000_000);
+      let now = at(1_700_000_005_000);
+      let manager = manager("machine-a");
+      manager.write(&LeaseManager::lease_path(dir.path()), earlier).unwrap();
 
-      let outcome = manager("machine-a").acquire(dir.path(), now).unwrap();
+      let outcome = manager.acquire(dir.path(), now).unwrap();
 
       assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(
-        Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().machine_id,
-        "machine-a"
+        Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().heartbeat,
+        now
       );
     }
 
@@ -180,19 +177,22 @@ mod tests {
     }
 
     #[test]
-    fn it_refreshes_our_own_fresh_lease() {
+    fn it_takes_over_a_stale_foreign_lease() {
       let dir = tempfile::tempdir().unwrap();
-      let earlier = at(1_700_000_000_000);
-      let now = at(1_700_000_005_000);
-      let manager = manager("machine-a");
-      manager.write(&LeaseManager::lease_path(dir.path()), earlier).unwrap();
+      let now = Utc::now();
+      manager("machine-b")
+        .write(
+          &LeaseManager::lease_path(dir.path()),
+          now - chrono::Duration::seconds(31),
+        )
+        .unwrap();
 
-      let outcome = manager.acquire(dir.path(), now).unwrap();
+      let outcome = manager("machine-a").acquire(dir.path(), now).unwrap();
 
       assert_eq!(outcome, Outcome::Acquired);
       assert_eq!(
-        Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().heartbeat,
-        now
+        Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().machine_id,
+        "machine-a"
       );
     }
   }
@@ -225,22 +225,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_removes_our_lease_and_allows_reacquire() {
-      let dir = tempfile::tempdir().unwrap();
-      let now = Utc::now();
-      let holder = manager("machine-a");
-      holder.acquire(dir.path(), now).unwrap();
-
-      holder.release(dir.path()).unwrap();
-
-      assert_eq!(Lease::read(&LeaseManager::lease_path(dir.path())), None);
-      assert_eq!(
-        manager("machine-b").acquire(dir.path(), now).unwrap(),
-        Outcome::Acquired
-      );
-    }
-
-    #[test]
     fn it_is_a_no_op_when_no_lease_exists() {
       let dir = tempfile::tempdir().unwrap();
 
@@ -260,6 +244,22 @@ mod tests {
       assert_eq!(
         Lease::read(&LeaseManager::lease_path(dir.path())).unwrap().machine_id,
         "machine-b"
+      );
+    }
+
+    #[test]
+    fn it_removes_our_lease_and_allows_reacquire() {
+      let dir = tempfile::tempdir().unwrap();
+      let now = Utc::now();
+      let holder = manager("machine-a");
+      holder.acquire(dir.path(), now).unwrap();
+
+      holder.release(dir.path()).unwrap();
+
+      assert_eq!(Lease::read(&LeaseManager::lease_path(dir.path())), None);
+      assert_eq!(
+        manager("machine-b").acquire(dir.path(), now).unwrap(),
+        Outcome::Acquired
       );
     }
   }

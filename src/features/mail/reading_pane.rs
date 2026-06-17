@@ -447,15 +447,15 @@ mod tests {
   }
 
   #[test]
-  fn it_treats_br_tags_as_paragraph_breaks_and_drops_blank_runs() {
-    let html = "Alpha<br><br>Beta<br>";
-    assert_eq!(parse_stored_body(html), vec!["Alpha".to_owned(), "Beta".to_owned()]);
-  }
-
-  #[test]
   fn it_strips_inline_tags_without_breaking_a_paragraph() {
     let html = "Form up at <b>Jita</b> by <i>19:15</i>.";
     assert_eq!(parse_stored_body(html), vec!["Form up at Jita by 19:15.".to_owned()]);
+  }
+
+  #[test]
+  fn it_treats_br_tags_as_paragraph_breaks_and_drops_blank_runs() {
+    let html = "Alpha<br><br>Beta<br>";
+    assert_eq!(parse_stored_body(html), vec!["Alpha".to_owned(), "Beta".to_owned()]);
   }
 
   #[test]
@@ -512,16 +512,16 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_an_opened_starred_mail() {
-      let render = render(95_000_001, "character", "Vex Voronova", true);
-      let _el: Element<'_, Message> = super::super::pane(Some(&render), false);
-    }
-
-    #[test]
     fn it_renders_a_snoozed_system_message_addressed_to_me() {
       // A zero sender id flags a system message, and a blank recipient display resolves to "me".
       let render = render(0, "mailing_list", "  ", false);
       let _el: Element<'_, Message> = super::super::pane(Some(&render), true);
+    }
+
+    #[test]
+    fn it_renders_an_opened_starred_mail() {
+      let render = render(95_000_001, "character", "Vex Voronova", true);
+      let _el: Element<'_, Message> = super::super::pane(Some(&render), false);
     }
 
     #[test]

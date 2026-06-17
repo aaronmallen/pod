@@ -382,38 +382,6 @@ mod tests {
     ]
   }
 
-  mod picker_trigger {
-    use super::*;
-
-    #[test]
-    fn it_builds_a_closed_trigger() {
-      let _el: Element<'_, Msg> = picker_trigger(trigger_content(), false, Msg::Toggle);
-    }
-
-    #[test]
-    fn it_builds_an_open_trigger() {
-      let _el: Element<'_, Msg> = picker_trigger(trigger_content(), true, Msg::Toggle);
-    }
-  }
-
-  mod picker_dropdown {
-    use super::*;
-
-    #[test]
-    fn it_builds_a_dropdown_from_titled_groups() {
-      let _el: Element<'_, Msg> = picker_dropdown(groups());
-    }
-
-    #[test]
-    fn it_builds_an_untitled_single_group() {
-      let group = vec![PickerGroup {
-        title: None,
-        items: vec![picker_row("All Characters", true, Msg::Selected(0))],
-      }];
-      let _el: Element<'_, Msg> = picker_dropdown(group);
-    }
-  }
-
   mod picker_character_row {
     use std::path::PathBuf;
 
@@ -425,6 +393,22 @@ mod tests {
 
       let _el: Element<'_, Msg> =
         picker_character_row(1, "Cinder Vex", "PALE", portrait, None, true, None, Msg::Selected(1));
+    }
+
+    #[test]
+    fn it_builds_a_row_with_a_trailing_column() {
+      let trailing: Element<'_, Msg> = text("47.3M SP").into();
+
+      let _el: Element<'_, Msg> = picker_character_row(
+        3,
+        "Vala Rook",
+        "BRAVE",
+        None,
+        Some(trailing),
+        false,
+        None,
+        Msg::Selected(3),
+      );
     }
 
     #[test]
@@ -446,21 +430,37 @@ mod tests {
         Msg::Selected(4),
       );
     }
+  }
+
+  mod picker_dropdown {
+    use super::*;
 
     #[test]
-    fn it_builds_a_row_with_a_trailing_column() {
-      let trailing: Element<'_, Msg> = text("47.3M SP").into();
+    fn it_builds_a_dropdown_from_titled_groups() {
+      let _el: Element<'_, Msg> = picker_dropdown(groups());
+    }
 
-      let _el: Element<'_, Msg> = picker_character_row(
-        3,
-        "Vala Rook",
-        "BRAVE",
-        None,
-        Some(trailing),
-        false,
-        None,
-        Msg::Selected(3),
-      );
+    #[test]
+    fn it_builds_an_untitled_single_group() {
+      let group = vec![PickerGroup {
+        title: None,
+        items: vec![picker_row("All Characters", true, Msg::Selected(0))],
+      }];
+      let _el: Element<'_, Msg> = picker_dropdown(group);
+    }
+  }
+
+  mod picker_trigger {
+    use super::*;
+
+    #[test]
+    fn it_builds_a_closed_trigger() {
+      let _el: Element<'_, Msg> = picker_trigger(trigger_content(), false, Msg::Toggle);
+    }
+
+    #[test]
+    fn it_builds_an_open_trigger() {
+      let _el: Element<'_, Msg> = picker_trigger(trigger_content(), true, Msg::Toggle);
     }
   }
 
@@ -479,11 +479,6 @@ mod tests {
     use super::{super::trigger_identity, *};
 
     #[test]
-    fn it_builds_an_identity_without_a_portrait() {
-      let _el: Element<'_, Msg> = trigger_identity("All Inboxes", "12 unread", None);
-    }
-
-    #[test]
     fn it_builds_an_identity_with_a_portrait() {
       let portrait = Some(TriggerPortrait {
         id: 1,
@@ -492,6 +487,11 @@ mod tests {
       });
 
       let _el: Element<'_, Msg> = trigger_identity("Cinder Vex", "Pale Horse", portrait);
+    }
+
+    #[test]
+    fn it_builds_an_identity_without_a_portrait() {
+      let _el: Element<'_, Msg> = trigger_identity("All Inboxes", "12 unread", None);
     }
   }
 }

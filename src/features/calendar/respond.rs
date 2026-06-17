@@ -79,6 +79,22 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn it_collapses_repeated_responses_onto_one_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_event(&db, 42, 7, "not_responded").await;
+
+      respond(db.clone(), 42, 7, "accepted".to_owned(), "not_responded".to_owned()).await;
+      respond(db.clone(), 42, 7, "declined".to_owned(), "accepted".to_owned()).await;
+
+      let rows = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'calendar.respond'")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(rows, 1, "the per-event dedupe key collapses the repeated response");
+    }
+
+    #[tokio::test]
     async fn it_flips_the_local_mirror_and_enqueues_one_outbox_write() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -98,22 +114,6 @@ mod tests {
       .await
       .unwrap();
       assert_eq!(pending, 1);
-    }
-
-    #[tokio::test]
-    async fn it_collapses_repeated_responses_onto_one_row() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      store_event(&db, 42, 7, "not_responded").await;
-
-      respond(db.clone(), 42, 7, "accepted".to_owned(), "not_responded".to_owned()).await;
-      respond(db.clone(), 42, 7, "declined".to_owned(), "accepted".to_owned()).await;
-
-      let rows = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'calendar.respond'")
-        .fetch_one(&db.0)
-        .await
-        .unwrap();
-      assert_eq!(rows, 1, "the per-event dedupe key collapses the repeated response");
     }
   }
 

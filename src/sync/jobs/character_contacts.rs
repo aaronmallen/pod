@@ -224,10 +224,13 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_is_empty_when_the_character_has_no_contacts() {
+    async fn it_aborts_without_writing_when_the_contacts_fetch_fails() {
       let server = MockServer::start().await;
-      mount_json(&server, "/characters/42/contacts/", serde_json::json!([])).await;
-      mount_json(&server, "/characters/42/contacts/labels/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/contacts/"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
@@ -238,13 +241,38 @@ mod tests {
       let grant = Grant::new_test("token", 42);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
 
-      let outcome = run(&ctx).await.unwrap();
+      let result = run(&ctx).await;
 
-      assert_eq!(
-        outcome,
-        Outcome::Empty,
-        "a character with no contacts reads as Empty, not green"
-      );
+      assert!(result.is_err());
+      let contacts = character::contacts(&db, 42).await.unwrap();
+      assert!(contacts.contacts.is_empty());
+      assert!(contacts.labels.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_aborts_without_writing_when_the_name_resolution_fails() {
+      let server = MockServer::start().await;
+      mount_contacts(&server, 42).await;
+      mount_labels(&server, 42).await;
+      Mock::given(method("POST"))
+        .and(path("/universe/names/"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let result = run(&ctx).await;
+
+      assert!(result.is_err());
+      assert!(character::contacts(&db, 42).await.unwrap().contacts.is_empty());
     }
 
     #[tokio::test]
@@ -289,6 +317,30 @@ mod tests {
         "a contact with a pending remove is not resurrected by the full-replace sync"
       );
       assert!(ids.contains(&98_001), "unprotected server contacts are still synced");
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_when_the_character_has_no_contacts() {
+      let server = MockServer::start().await;
+      mount_json(&server, "/characters/42/contacts/", serde_json::json!([])).await;
+      mount_json(&server, "/characters/42/contacts/labels/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Empty,
+        "a character with no contacts reads as Empty, not green"
+      );
     }
 
     #[tokio::test]
@@ -385,58 +437,6 @@ mod tests {
       let result = character::contacts(&db, 42).await.unwrap();
       assert_eq!(result.contacts[0].contact_name(), "Amarr Empire");
       assert!(sde::get_faction(&db, 500_003).await.unwrap().is_some());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_contacts_fetch_fails() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/characters/42/contacts/"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      let contacts = character::contacts(&db, 42).await.unwrap();
-      assert!(contacts.contacts.is_empty());
-      assert!(contacts.labels.is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_aborts_without_writing_when_the_name_resolution_fails() {
-      let server = MockServer::start().await;
-      mount_contacts(&server, 42).await;
-      mount_labels(&server, 42).await;
-      Mock::given(method("POST"))
-        .and(path("/universe/names/"))
-        .respond_with(ResponseTemplate::new(503))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 42);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
-
-      let result = run(&ctx).await;
-
-      assert!(result.is_err());
-      assert!(character::contacts(&db, 42).await.unwrap().contacts.is_empty());
     }
 
     #[tokio::test]

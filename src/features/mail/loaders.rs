@@ -343,26 +343,67 @@ mod tests {
     mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
   }
 
-  #[test]
-  fn it_strips_tags_and_collapses_whitespace_into_a_one_line_snippet() {
-    assert_eq!(strip_html_snippet("<p>Form up   at\n\nJita.</p>"), "Form up at Jita.");
-    assert_eq!(strip_html_snippet("<b>bold</b> text"), "bold text");
-    assert_eq!(strip_html_snippet(""), "");
-    assert_eq!(strip_html_snippet("<br/>"), "");
-  }
-
   #[tokio::test]
-  async fn it_loads_the_owned_roster_with_unread_counts() {
+  async fn it_hides_system_labels_from_the_folder_pane_and_chips() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, CHAR).await;
     store_mail(&db, 1, 95_000_001, false).await;
+    // Mirror sync: synthesized system labels live alongside a real user label.
+    mail::replace_labels_for_character(
+      &db,
+      CHAR,
+      &[
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: None,
+          label_id: 1,
+          name: "Inbox".to_owned(),
+        },
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: None,
+          label_id: 8,
+          name: "Alliance".to_owned(),
+        },
+        CharacterMailLabel {
+          character_id: CHAR,
+          color: Some("#ff6600".to_owned()),
+          label_id: 7000,
+          name: "Fleet".to_owned(),
+        },
+      ],
+    )
+    .await
+    .unwrap();
 
-    let roster = load_roster(&db).await;
+    let data = load_folder_pane(&db, CHAR).await;
+    assert_eq!(
+      data.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
+      vec!["Fleet"]
+    );
 
-    assert_eq!(roster.len(), 1);
-    assert_eq!(roster[0].id, CHAR);
-    assert_eq!(roster[0].corp, "TSC");
-    assert_eq!(roster[0].unread, 1);
+    // A mail tagged with both a system label and a user label only shows the user chip.
+    let resolved = resolve_message_labels(&db, CHAR, &[1, 8, 7000]).await;
+    assert_eq!(
+      resolved,
+      vec![MessageLabel {
+        color: Some("#ff6600".to_owned()),
+        name: "Fleet".to_owned(),
+      }]
+    );
+  }
+
+  #[tokio::test]
+  async fn it_loads_headers_overlays_and_the_unified_stream() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    store_mail(&db, 1, 95_000_001, false).await;
+    mail::set_triage(&db, CHAR, 1, true, false).await.unwrap();
+
+    assert_eq!(load_headers(&db, CHAR).await.len(), 1);
+    assert_eq!(load_overlays(&db, CHAR).await.len(), 1);
+    assert_eq!(load_unified(&db).await.len(), 1);
+    assert_eq!(load_unified_unread(&db).await, 1);
   }
 
   #[tokio::test]
@@ -418,6 +459,75 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn it_loads_the_outbox_indicator_with_pending_and_failed_rows() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    infra::append(&db, OwnerType::Character, CHAR, "mail.send", "{}", Some("a"))
+      .await
+      .unwrap();
+    let failed = infra::append(&db, OwnerType::Character, CHAR, "mail.set_read", "{}", Some("b"))
+      .await
+      .unwrap();
+    infra::mark_failed(&db, failed.id(), "boom").await.unwrap();
+
+    let indicator = load_outbox_indicator(&db).await;
+
+    assert_eq!(indicator.pending, 1);
+    assert_eq!(indicator.failed.len(), 1);
+    assert_eq!(indicator.failed[0].last_error, "boom");
+  }
+
+  #[tokio::test]
+  async fn it_loads_the_owned_roster_with_unread_counts() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    store_mail(&db, 1, 95_000_001, false).await;
+
+    let roster = load_roster(&db).await;
+
+    assert_eq!(roster.len(), 1);
+    assert_eq!(roster[0].id, CHAR);
+    assert_eq!(roster[0].corp, "TSC");
+    assert_eq!(roster[0].unread, 1);
+  }
+
+  #[tokio::test]
+  async fn it_merges_per_character_folder_data_for_all_inboxes() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, CHAR).await;
+    store_mail(&db, 1, 95_000_001, false).await;
+    mail::replace_labels_for_character(
+      &db,
+      CHAR,
+      &[CharacterMailLabel {
+        character_id: CHAR,
+        color: None,
+        label_id: 7000,
+        name: "Fleet".to_owned(),
+      }],
+    )
+    .await
+    .unwrap();
+    mail::replace_membership_for_character(
+      &db,
+      CHAR,
+      &[CharacterMailLabelMembership {
+        character_id: CHAR,
+        label_id: 7000,
+        mail_id: 1,
+      }],
+    )
+    .await
+    .unwrap();
+    let roster = load_roster(&db).await;
+
+    let data = load_folder_pane_unified(&db, &roster).await;
+
+    assert_eq!(data.labels.len(), 1);
+    assert_eq!(data.labels[0].name, "Fleet");
+  }
+
+  #[tokio::test]
   async fn it_resolves_membership_ids_to_named_colored_labels_and_drops_unknown_ids() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, CHAR).await;
@@ -460,121 +570,11 @@ mod tests {
     assert!(resolve_message_labels(&db, CHAR, &[]).await.is_empty());
   }
 
-  #[tokio::test]
-  async fn it_hides_system_labels_from_the_folder_pane_and_chips() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, CHAR).await;
-    store_mail(&db, 1, 95_000_001, false).await;
-    // Mirror sync: synthesized system labels live alongside a real user label.
-    mail::replace_labels_for_character(
-      &db,
-      CHAR,
-      &[
-        CharacterMailLabel {
-          character_id: CHAR,
-          color: None,
-          label_id: 1,
-          name: "Inbox".to_owned(),
-        },
-        CharacterMailLabel {
-          character_id: CHAR,
-          color: None,
-          label_id: 8,
-          name: "Alliance".to_owned(),
-        },
-        CharacterMailLabel {
-          character_id: CHAR,
-          color: Some("#ff6600".to_owned()),
-          label_id: 7000,
-          name: "Fleet".to_owned(),
-        },
-      ],
-    )
-    .await
-    .unwrap();
-
-    let data = load_folder_pane(&db, CHAR).await;
-    assert_eq!(
-      data.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(),
-      vec!["Fleet"]
-    );
-
-    // A mail tagged with both a system label and a user label only shows the user chip.
-    let resolved = resolve_message_labels(&db, CHAR, &[1, 8, 7000]).await;
-    assert_eq!(
-      resolved,
-      vec![MessageLabel {
-        color: Some("#ff6600".to_owned()),
-        name: "Fleet".to_owned(),
-      }]
-    );
-  }
-
-  #[tokio::test]
-  async fn it_merges_per_character_folder_data_for_all_inboxes() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, CHAR).await;
-    store_mail(&db, 1, 95_000_001, false).await;
-    mail::replace_labels_for_character(
-      &db,
-      CHAR,
-      &[CharacterMailLabel {
-        character_id: CHAR,
-        color: None,
-        label_id: 7000,
-        name: "Fleet".to_owned(),
-      }],
-    )
-    .await
-    .unwrap();
-    mail::replace_membership_for_character(
-      &db,
-      CHAR,
-      &[CharacterMailLabelMembership {
-        character_id: CHAR,
-        label_id: 7000,
-        mail_id: 1,
-      }],
-    )
-    .await
-    .unwrap();
-    let roster = load_roster(&db).await;
-
-    let data = load_folder_pane_unified(&db, &roster).await;
-
-    assert_eq!(data.labels.len(), 1);
-    assert_eq!(data.labels[0].name, "Fleet");
-  }
-
-  #[tokio::test]
-  async fn it_loads_headers_overlays_and_the_unified_stream() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, CHAR).await;
-    store_mail(&db, 1, 95_000_001, false).await;
-    mail::set_triage(&db, CHAR, 1, true, false).await.unwrap();
-
-    assert_eq!(load_headers(&db, CHAR).await.len(), 1);
-    assert_eq!(load_overlays(&db, CHAR).await.len(), 1);
-    assert_eq!(load_unified(&db).await.len(), 1);
-    assert_eq!(load_unified_unread(&db).await, 1);
-  }
-
-  #[tokio::test]
-  async fn it_loads_the_outbox_indicator_with_pending_and_failed_rows() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, CHAR).await;
-    infra::append(&db, OwnerType::Character, CHAR, "mail.send", "{}", Some("a"))
-      .await
-      .unwrap();
-    let failed = infra::append(&db, OwnerType::Character, CHAR, "mail.set_read", "{}", Some("b"))
-      .await
-      .unwrap();
-    infra::mark_failed(&db, failed.id(), "boom").await.unwrap();
-
-    let indicator = load_outbox_indicator(&db).await;
-
-    assert_eq!(indicator.pending, 1);
-    assert_eq!(indicator.failed.len(), 1);
-    assert_eq!(indicator.failed[0].last_error, "boom");
+  #[test]
+  fn it_strips_tags_and_collapses_whitespace_into_a_one_line_snippet() {
+    assert_eq!(strip_html_snippet("<p>Form up   at\n\nJita.</p>"), "Form up at Jita.");
+    assert_eq!(strip_html_snippet("<b>bold</b> text"), "bold text");
+    assert_eq!(strip_html_snippet(""), "");
+    assert_eq!(strip_html_snippet("<br/>"), "");
   }
 }

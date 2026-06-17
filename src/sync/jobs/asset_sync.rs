@@ -452,97 +452,6 @@ mod tests {
     }
   }
 
-  mod normalize_name {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_treats_the_literal_none_as_no_custom_name() {
-      assert_eq!(normalize_name("None"), None);
-    }
-
-    #[test]
-    fn it_treats_empty_and_whitespace_as_no_custom_name() {
-      assert_eq!(normalize_name(""), None);
-      assert_eq!(normalize_name("   "), None);
-    }
-
-    #[test]
-    fn it_keeps_a_real_custom_name_trimmed() {
-      assert_eq!(normalize_name(" Loot Vault "), Some("Loot Vault"));
-    }
-  }
-
-  mod build_hierarchy {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_resolves_a_nested_chain_with_container_id_depth_and_is_container() {
-      let nodes = vec![
-        node(100, 60_003_760, "station"),
-        node(101, 100, "item"),
-        node(102, 101, "item"),
-      ];
-
-      let resolved = build_hierarchy(&nodes);
-
-      let root = resolved[0].as_ref().expect("root resolves");
-      assert_eq!(root.container_id, None);
-      assert_eq!(root.depth, 0);
-      assert!(root.is_container, "100 holds 101");
-
-      let mid = resolved[1].as_ref().expect("mid resolves");
-      assert_eq!(mid.container_id, Some(100));
-      assert_eq!(mid.depth, 1);
-      assert!(mid.is_container, "101 holds 102");
-
-      let leaf = resolved[2].as_ref().expect("leaf resolves");
-      assert_eq!(leaf.container_id, Some(101));
-      assert_eq!(leaf.depth, 2);
-      assert!(!leaf.is_container, "102 holds nothing");
-    }
-
-    #[test]
-    fn it_never_emits_container_id_zero_for_a_station_root() {
-      let nodes = vec![node(100, 0, "solar_system")];
-
-      let resolved = build_hierarchy(&nodes);
-
-      assert_eq!(resolved[0].as_ref().unwrap().container_id, None);
-    }
-
-    #[test]
-    fn it_lands_a_node_as_a_root_when_its_location_is_absent_from_the_snapshot() {
-      let nodes = vec![node(100, 60_003_760, "station"), node(200, 999, "item")];
-
-      let resolved = build_hierarchy(&nodes);
-
-      assert!(resolved[0].is_some(), "the present root still resolves");
-
-      let orphan = resolved[1]
-        .as_ref()
-        .expect("an absent location means root, not dropped");
-      assert_eq!(orphan.container_id, None);
-      assert_eq!(orphan.depth, 0);
-    }
-
-    #[test]
-    fn it_lands_a_node_as_a_root_when_its_middle_parent_is_absent() {
-      let nodes = vec![node(100, 60_003_760, "station"), node(102, 101, "item")];
-
-      let resolved = build_hierarchy(&nodes);
-
-      assert!(resolved[0].is_some());
-
-      let grandchild = resolved[1].as_ref().expect("an absent parent means root, not dropped");
-      assert_eq!(grandchild.container_id, None);
-      assert_eq!(grandchild.depth, 0);
-    }
-  }
-
   async fn mount_assets(server: &MockServer, route: &str, body: serde_json::Value) {
     Mock::given(method("GET"))
       .and(path(route))
@@ -611,6 +520,250 @@ mod tests {
     }
   }
 
+  mod build_hierarchy {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_lands_a_node_as_a_root_when_its_location_is_absent_from_the_snapshot() {
+      let nodes = vec![node(100, 60_003_760, "station"), node(200, 999, "item")];
+
+      let resolved = build_hierarchy(&nodes);
+
+      assert!(resolved[0].is_some(), "the present root still resolves");
+
+      let orphan = resolved[1]
+        .as_ref()
+        .expect("an absent location means root, not dropped");
+      assert_eq!(orphan.container_id, None);
+      assert_eq!(orphan.depth, 0);
+    }
+
+    #[test]
+    fn it_lands_a_node_as_a_root_when_its_middle_parent_is_absent() {
+      let nodes = vec![node(100, 60_003_760, "station"), node(102, 101, "item")];
+
+      let resolved = build_hierarchy(&nodes);
+
+      assert!(resolved[0].is_some());
+
+      let grandchild = resolved[1].as_ref().expect("an absent parent means root, not dropped");
+      assert_eq!(grandchild.container_id, None);
+      assert_eq!(grandchild.depth, 0);
+    }
+
+    #[test]
+    fn it_never_emits_container_id_zero_for_a_station_root() {
+      let nodes = vec![node(100, 0, "solar_system")];
+
+      let resolved = build_hierarchy(&nodes);
+
+      assert_eq!(resolved[0].as_ref().unwrap().container_id, None);
+    }
+
+    #[test]
+    fn it_resolves_a_nested_chain_with_container_id_depth_and_is_container() {
+      let nodes = vec![
+        node(100, 60_003_760, "station"),
+        node(101, 100, "item"),
+        node(102, 101, "item"),
+      ];
+
+      let resolved = build_hierarchy(&nodes);
+
+      let root = resolved[0].as_ref().expect("root resolves");
+      assert_eq!(root.container_id, None);
+      assert_eq!(root.depth, 0);
+      assert!(root.is_container, "100 holds 101");
+
+      let mid = resolved[1].as_ref().expect("mid resolves");
+      assert_eq!(mid.container_id, Some(100));
+      assert_eq!(mid.depth, 1);
+      assert!(mid.is_container, "101 holds 102");
+
+      let leaf = resolved[2].as_ref().expect("leaf resolves");
+      assert_eq!(leaf.container_id, Some(101));
+      assert_eq!(leaf.depth, 2);
+      assert!(!leaf.is_container, "102 holds nothing");
+    }
+  }
+
+  mod normalize_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_real_custom_name_trimmed() {
+      assert_eq!(normalize_name(" Loot Vault "), Some("Loot Vault"));
+    }
+
+    #[test]
+    fn it_treats_empty_and_whitespace_as_no_custom_name() {
+      assert_eq!(normalize_name(""), None);
+      assert_eq!(normalize_name("   "), None);
+    }
+
+    #[test]
+    fn it_treats_the_literal_none_as_no_custom_name() {
+      assert_eq!(normalize_name("None"), None);
+    }
+  }
+
+  mod readiness_invariant {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      store::model::{Constellation, OwnerType, Region, SolarSystem, Structure},
+      sync::{event::Event, job::JobKey, status::SyncStatus},
+    };
+
+    const INACCESSIBLE_ID: i64 = 1_021_000_000_001;
+
+    const RESOLVED_ID: i64 = 1_021_000_000_002;
+
+    async fn seed_named_structure(db: &store::Database, id: i64, name: &str) {
+      sde::upsert_region(
+        db,
+        &Region {
+          description: None,
+          id: 10_000_002,
+          name: "The Forge".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_constellation(
+        db,
+        &Constellation {
+          id: 20_000_020,
+          name: "Kimotoro".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          region_id: 10_000_002,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_solar_system(
+        db,
+        &SolarSystem {
+          constellation_id: 20_000_020,
+          id: 30_000_142,
+          name: "Jita".to_owned(),
+          position_x: 0.0,
+          position_y: 0.0,
+          position_z: 0.0,
+          security_class: None,
+          security_status: 0.9,
+          star_id: None,
+        },
+      )
+      .await
+      .unwrap();
+      sde::upsert_structure(
+        db,
+        &Structure {
+          id,
+          name: name.to_owned(),
+          owner_id: 90_000_001,
+          position_x: None,
+          position_y: None,
+          position_z: None,
+          solar_system_id: 30_000_142,
+          type_id: None,
+        },
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_chip_in_progress_until_assets_are_displayable_then_done() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/44/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": INACCESSIBLE_ID,
+            "location_type": "structure", "quantity": 1, "type_id": 587 },
+          { "is_singleton": true, "item_id": 501, "location_flag": "Hangar", "location_id": RESOLVED_ID,
+            "location_type": "structure", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        44,
+        serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{INACCESSIBLE_ID}/")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 44).await;
+      seed_item_types(&db, &[587]).await;
+      seed_named_structure(&db, RESOLVED_ID, "Some Citadel").await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 44, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(44));
+      let key = JobKey::new(JobKind::AssetSync, Subject::Character(44));
+
+      let mut status = SyncStatus::new();
+      status.apply(&Event::Started {
+        key,
+      });
+
+      assert!(status.is_syncing(), "the chip reads In Progress while AssetSync runs");
+      assert!(
+        assets::render_for_character(&db, 44).await.unwrap().is_empty(),
+        "the screen is blank until AssetSync finishes"
+      );
+
+      run(&ctx).await.unwrap();
+      status.apply(&Event::Finished {
+        key,
+        outcome: crate::sync::Outcome::synced(),
+      });
+
+      assert!(!status.is_syncing(), "Finished clears the In Progress chip");
+
+      let rows = assets::render_for_character(&db, 44).await.unwrap();
+      assert_eq!(rows.len(), 3, "two assets plus the synthetic ship are displayable");
+      assert!(
+        rows.iter().all(|row| !row.type_name.is_empty()),
+        "every displayable row is named"
+      );
+
+      let inaccessible = rows.iter().find(|row| row.item_id == 500).unwrap();
+      assert_eq!(
+        inaccessible.location_label.as_deref(),
+        Some("Inaccessible Structure"),
+        "a 403 structure renders Inaccessible Structure rather than hanging the chip In Progress"
+      );
+      let resolved = rows.iter().find(|row| row.item_id == 501).unwrap();
+      assert_eq!(resolved.location_label.as_deref(), Some("Some Citadel"));
+
+      assert!(
+        sde::is_structure_inaccessible(&db, 44, OwnerType::Character, INACCESSIBLE_ID)
+          .await
+          .unwrap(),
+        "the inaccessible structure is durably marked for the owner"
+      );
+    }
+  }
+
   mod run_character {
     use pretty_assertions::assert_eq;
 
@@ -618,47 +771,6 @@ mod tests {
     use crate::store::model::{Constellation, Region, SolarSystem, Structure};
 
     const CITADEL_ID: i64 = 1_021_000_000_500;
-
-    #[tokio::test]
-    async fn it_syncs_with_the_persisted_row_count() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/47/assets/",
-        serde_json::json!([
-          { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 60003760,
-            "location_type": "station", "quantity": 1, "type_id": 34 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        47,
-        serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
-      )
-      .await;
-      mount_asset_names(&server, "/characters/47/assets/names/", serde_json::json!([])).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 47).await;
-      seed_item_types(&db, &[34, 670]).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 47);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(47));
-
-      let outcome = run(&ctx).await.unwrap();
-
-      assert_eq!(
-        outcome,
-        Outcome::Synced {
-          rows_touched: 2
-        },
-        "the held item plus the boarded ship are both persisted"
-      );
-    }
 
     async fn seed_citadel(db: &store::Database, id: i64, name: &str) {
       sde::upsert_region(
@@ -715,6 +827,281 @@ mod tests {
       )
       .await
       .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_type_name_when_esi_returns_a_literal_none_name() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/49/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 100, "location_flag": "Hangar", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        49,
+        serde_json::json!({ "ship_item_id": 9009, "ship_name": "Pod", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(
+        &server,
+        "/characters/49/assets/names/",
+        serde_json::json!([{ "item_id": 100, "name": "None" }]),
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 49).await;
+      seed_item_types(&db, &[587]).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 49);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(49));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 49).await.unwrap();
+      let item = rows.iter().find(|row| row.item_id() == 100).unwrap();
+      assert_eq!(
+        item.name().as_deref(),
+        None,
+        "a literal \"None\" name is normalized to no custom name"
+      );
+
+      let rendered = assets::render_for_character(&db, 49).await.unwrap();
+      let rendered_item = rendered.iter().find(|row| row.item_id == 100).unwrap();
+      assert_eq!(
+        rendered_item.type_name, "Test Item",
+        "the UI shows the type name rather than \"None\""
+      );
+    }
+
+    #[tokio::test]
+    async fn it_lands_a_top_level_citadel_asset_as_a_resolved_structure_root() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/47/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 600, "location_flag": "Hangar", "location_id": CITADEL_ID,
+            "location_type": "item", "quantity": 1, "type_id": 587 },
+          { "is_singleton": false, "item_id": 601, "location_flag": "Cargo", "location_id": 600,
+            "location_type": "item", "quantity": 3, "type_id": 34 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        47,
+        serde_json::json!({ "ship_item_id": 9004, "ship_name": "Capsule", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(&server, "/characters/47/assets/names/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 47).await;
+      seed_item_types(&db, &[34, 587]).await;
+      seed_citadel(&db, CITADEL_ID, "Test Citadel").await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 47, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(47));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 47).await.unwrap();
+
+      let root = rows.iter().find(|row| row.item_id() == 600).unwrap();
+      assert_eq!(
+        root.location_type(),
+        "structure",
+        "the 'item' citadel root is stored as a structure"
+      );
+      assert_eq!(root.depth(), 0);
+      assert_eq!(root.container_id(), None);
+      assert!(root.is_container(), "the citadel root holds 601");
+
+      let child = rows.iter().find(|row| row.item_id() == 601).unwrap();
+      assert_eq!(child.depth(), 1);
+      assert_eq!(child.container_id(), Some(600));
+
+      let rendered = assets::render_for_character(&db, 47).await.unwrap();
+      let rendered_root = rendered.iter().find(|row| row.item_id == 600).unwrap();
+      assert_eq!(
+        rendered_root.location_label.as_deref(),
+        Some("Test Citadel"),
+        "the resolved citadel renders its name"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_lands_an_asset_whose_location_is_absent_as_a_structure_root() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/43/assets/",
+        serde_json::json!([
+          { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 100,
+            "location_type": "item", "quantity": 1, "type_id": 34 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        43,
+        serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
+      )
+      .await;
+      mount_asset_names(&server, "/characters/43/assets/names/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 43).await;
+      seed_item_types(&db, &[34, 670]).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 43);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(43));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 43).await.unwrap();
+
+      let item = rows.iter().find(|row| row.item_id() == 101).unwrap();
+      assert_eq!(
+        item.location_type(),
+        "structure",
+        "an 'item' root is reclassified to a structure"
+      );
+      assert_eq!(item.depth(), 0);
+      assert_eq!(item.container_id(), None);
+
+      assert!(rows.iter().any(|row| row.item_id() == 9002), "the ship still lands");
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_top_level_citadel_asset_in_an_inaccessible_structure_and_marks_it() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/48/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 700, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
+            "location_type": "item", "quantity": 1, "type_id": 587 },
+          { "is_singleton": false, "item_id": 701, "location_flag": "Cargo", "location_id": 700,
+            "location_type": "item", "quantity": 2, "type_id": 34 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        48,
+        serde_json::json!({ "ship_item_id": 9005, "ship_name": "Capsule", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(&server, "/characters/48/assets/names/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 48).await;
+      seed_item_types(&db, &[34, 587]).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 48, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(48));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 48).await.unwrap();
+
+      let root = rows.iter().find(|row| row.item_id() == 700).unwrap();
+      assert_eq!(
+        root.location_type(),
+        "structure",
+        "the inaccessible 'item' root is stored as a structure"
+      );
+      assert_eq!(root.depth(), 0);
+      assert_eq!(root.container_id(), None);
+
+      let child = rows.iter().find(|row| row.item_id() == 701).unwrap();
+      assert_eq!(
+        child.depth(),
+        1,
+        "nested contents still land even when the structure is inaccessible"
+      );
+      assert_eq!(child.container_id(), Some(700));
+
+      assert!(
+        sde::is_structure_inaccessible(&db, 48, store::model::OwnerType::Character, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "the 403 citadel is durably marked inaccessible for the owner"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_persists_an_asset_in_an_inaccessible_structure_and_marks_it() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/characters/44/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
+            "location_type": "structure", "quantity": 1, "type_id": 587 },
+        ]),
+      )
+      .await;
+      mount_ship(
+        &server,
+        44,
+        serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
+      )
+      .await;
+      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
+      Mock::given(method("GET"))
+        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 44).await;
+      seed_item_types(&db, &[587]).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test_with_scopes("token", 44, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(44));
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_character(&db, 44).await.unwrap();
+      assert!(
+        rows.iter().any(|row| row.item_id() == 500),
+        "the asset in the inaccessible structure is still persisted, never dropped"
+      );
+      assert!(
+        sde::is_structure_inaccessible(&db, 44, store::model::OwnerType::Character, STRUCTURE_ID)
+          .await
+          .unwrap(),
+        "the 403 structure is durably marked inaccessible for the owner"
+      );
     }
 
     #[tokio::test]
@@ -881,277 +1268,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_lands_an_asset_whose_location_is_absent_as_a_structure_root() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/43/assets/",
-        serde_json::json!([
-          { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 100,
-            "location_type": "item", "quantity": 1, "type_id": 34 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        43,
-        serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
-      )
-      .await;
-      mount_asset_names(&server, "/characters/43/assets/names/", serde_json::json!([])).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 43).await;
-      seed_item_types(&db, &[34, 670]).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 43);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(43));
-
-      run(&ctx).await.unwrap();
-
-      let rows = assets::for_character(&db, 43).await.unwrap();
-
-      let item = rows.iter().find(|row| row.item_id() == 101).unwrap();
-      assert_eq!(
-        item.location_type(),
-        "structure",
-        "an 'item' root is reclassified to a structure"
-      );
-      assert_eq!(item.depth(), 0);
-      assert_eq!(item.container_id(), None);
-
-      assert!(rows.iter().any(|row| row.item_id() == 9002), "the ship still lands");
-    }
-
-    #[tokio::test]
-    async fn it_persists_an_asset_in_an_inaccessible_structure_and_marks_it() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/44/assets/",
-        serde_json::json!([
-          { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
-            "location_type": "structure", "quantity": 1, "type_id": 587 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        44,
-        serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
-      )
-      .await;
-      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 44).await;
-      seed_item_types(&db, &[587]).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 44, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(44));
-
-      run(&ctx).await.unwrap();
-
-      let rows = assets::for_character(&db, 44).await.unwrap();
-      assert!(
-        rows.iter().any(|row| row.item_id() == 500),
-        "the asset in the inaccessible structure is still persisted, never dropped"
-      );
-      assert!(
-        sde::is_structure_inaccessible(&db, 44, store::model::OwnerType::Character, STRUCTURE_ID)
-          .await
-          .unwrap(),
-        "the 403 structure is durably marked inaccessible for the owner"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_lands_a_top_level_citadel_asset_as_a_resolved_structure_root() {
+    async fn it_syncs_with_the_persisted_row_count() {
       let server = MockServer::start().await;
       mount_assets(
         &server,
         "/characters/47/assets/",
         serde_json::json!([
-          { "is_singleton": true, "item_id": 600, "location_flag": "Hangar", "location_id": CITADEL_ID,
-            "location_type": "item", "quantity": 1, "type_id": 587 },
-          { "is_singleton": false, "item_id": 601, "location_flag": "Cargo", "location_id": 600,
-            "location_type": "item", "quantity": 3, "type_id": 34 },
+          { "is_singleton": false, "item_id": 101, "location_flag": "Hangar", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 34 },
         ]),
       )
       .await;
       mount_ship(
         &server,
         47,
-        serde_json::json!({ "ship_item_id": 9004, "ship_name": "Capsule", "ship_type_id": 587 }),
+        serde_json::json!({ "ship_item_id": 9002, "ship_name": "Pod", "ship_type_id": 670 }),
       )
       .await;
       mount_asset_names(&server, "/characters/47/assets/names/", serde_json::json!([])).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 47).await;
-      seed_item_types(&db, &[34, 587]).await;
-      seed_citadel(&db, CITADEL_ID, "Test Citadel").await;
+      seed_item_types(&db, &[34, 670]).await;
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
       let image = eve_image::Client::with_base_url(http, server.uri());
       let images_dir = tempfile::tempdir().unwrap();
       let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 47, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
+      let grant = Grant::new_test("token", 47);
       let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(47));
 
-      run(&ctx).await.unwrap();
+      let outcome = run(&ctx).await.unwrap();
 
-      let rows = assets::for_character(&db, 47).await.unwrap();
-
-      let root = rows.iter().find(|row| row.item_id() == 600).unwrap();
       assert_eq!(
-        root.location_type(),
-        "structure",
-        "the 'item' citadel root is stored as a structure"
-      );
-      assert_eq!(root.depth(), 0);
-      assert_eq!(root.container_id(), None);
-      assert!(root.is_container(), "the citadel root holds 601");
-
-      let child = rows.iter().find(|row| row.item_id() == 601).unwrap();
-      assert_eq!(child.depth(), 1);
-      assert_eq!(child.container_id(), Some(600));
-
-      let rendered = assets::render_for_character(&db, 47).await.unwrap();
-      let rendered_root = rendered.iter().find(|row| row.item_id == 600).unwrap();
-      assert_eq!(
-        rendered_root.location_label.as_deref(),
-        Some("Test Citadel"),
-        "the resolved citadel renders its name"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_persists_a_top_level_citadel_asset_in_an_inaccessible_structure_and_marks_it() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/48/assets/",
-        serde_json::json!([
-          { "is_singleton": true, "item_id": 700, "location_flag": "Hangar", "location_id": STRUCTURE_ID,
-            "location_type": "item", "quantity": 1, "type_id": 587 },
-          { "is_singleton": false, "item_id": 701, "location_flag": "Cargo", "location_id": 700,
-            "location_type": "item", "quantity": 2, "type_id": 34 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        48,
-        serde_json::json!({ "ship_item_id": 9005, "ship_name": "Capsule", "ship_type_id": 587 }),
-      )
-      .await;
-      mount_asset_names(&server, "/characters/48/assets/names/", serde_json::json!([])).await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{STRUCTURE_ID}/")))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 48).await;
-      seed_item_types(&db, &[34, 587]).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 48, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(48));
-
-      run(&ctx).await.unwrap();
-
-      let rows = assets::for_character(&db, 48).await.unwrap();
-
-      let root = rows.iter().find(|row| row.item_id() == 700).unwrap();
-      assert_eq!(
-        root.location_type(),
-        "structure",
-        "the inaccessible 'item' root is stored as a structure"
-      );
-      assert_eq!(root.depth(), 0);
-      assert_eq!(root.container_id(), None);
-
-      let child = rows.iter().find(|row| row.item_id() == 701).unwrap();
-      assert_eq!(
-        child.depth(),
-        1,
-        "nested contents still land even when the structure is inaccessible"
-      );
-      assert_eq!(child.container_id(), Some(700));
-
-      assert!(
-        sde::is_structure_inaccessible(&db, 48, store::model::OwnerType::Character, STRUCTURE_ID)
-          .await
-          .unwrap(),
-        "the 403 citadel is durably marked inaccessible for the owner"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_type_name_when_esi_returns_a_literal_none_name() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/49/assets/",
-        serde_json::json!([
-          { "is_singleton": true, "item_id": 100, "location_flag": "Hangar", "location_id": 60003760,
-            "location_type": "station", "quantity": 1, "type_id": 587 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        49,
-        serde_json::json!({ "ship_item_id": 9009, "ship_name": "Pod", "ship_type_id": 587 }),
-      )
-      .await;
-      mount_asset_names(
-        &server,
-        "/characters/49/assets/names/",
-        serde_json::json!([{ "item_id": 100, "name": "None" }]),
-      )
-      .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 49).await;
-      seed_item_types(&db, &[587]).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("token", 49);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(49));
-
-      run(&ctx).await.unwrap();
-
-      let rows = assets::for_character(&db, 49).await.unwrap();
-      let item = rows.iter().find(|row| row.item_id() == 100).unwrap();
-      assert_eq!(
-        item.name().as_deref(),
-        None,
-        "a literal \"None\" name is normalized to no custom name"
-      );
-
-      let rendered = assets::render_for_character(&db, 49).await.unwrap();
-      let rendered_item = rendered.iter().find(|row| row.item_id == 100).unwrap();
-      assert_eq!(
-        rendered_item.type_name, "Test Item",
-        "the UI shows the type name rather than \"None\""
+        outcome,
+        Outcome::Synced {
+          rows_touched: 2
+        },
+        "the held item plus the boarded ship are both persisted"
       );
     }
   }
@@ -1160,6 +1313,84 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    async fn seed_corporation(db: &store::Database) {
+      seed_character(db, 42).await;
+      seed_item_types(db, &[34, 587]).await;
+      crate::store::repo::infra::upsert(
+        db,
+        90_000_001,
+        crate::store::model::OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(42),
+        None,
+      )
+      .await
+      .unwrap();
+      crate::store::repo::org::replace_for_corporation(
+        db,
+        90_000_001,
+        &[crate::store::model::CorporationMemberRole::from((
+          90_000_001_i64,
+          42_i64,
+          "Director".to_string(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_persists_corp_assets_when_the_names_endpoint_returns_invalid_ids() {
+      let server = MockServer::start().await;
+      mount_assets(
+        &server,
+        "/corporations/90000001/assets/",
+        serde_json::json!([
+          { "is_singleton": true, "item_id": 300, "location_flag": "CorpDeliveries", "location_id": 60003760,
+            "location_type": "station", "quantity": 1, "type_id": 587 },
+          { "is_singleton": false, "item_id": 301, "location_flag": "Cargo", "location_id": 300,
+            "location_type": "item", "quantity": 9, "type_id": 34 },
+        ]),
+      )
+      .await;
+      Mock::given(method("POST"))
+        .and(path("/corporations/90000001/assets/names/"))
+        .respond_with(
+          ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "Invalid IDs in the request" })),
+        )
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      run(&ctx).await.unwrap();
+
+      let rows = assets::for_corporation(&db, 90_000_001).await.unwrap();
+      assert_eq!(rows.len(), 2, "corp assets persist even though the names endpoint 404s");
+      let root = rows.iter().find(|row| row.item_id() == 300).unwrap();
+      assert_eq!(
+        root.name().as_deref(),
+        None,
+        "an unsalvageable singleton keeps a null name rather than aborting the job"
+      );
+    }
 
     #[tokio::test]
     async fn it_persists_corp_assets_with_hierarchy() {
@@ -1244,32 +1475,30 @@ mod tests {
       );
     }
 
-    async fn seed_corporation(db: &store::Database) {
-      seed_character(db, 42).await;
-      seed_item_types(db, &[34, 587]).await;
-      crate::store::repo::infra::upsert(
-        db,
-        90_000_001,
-        crate::store::model::OwnerType::Corporation,
-        "tok",
-        "rt",
-        4_102_444_800,
-        Some(42),
-        None,
-      )
-      .await
-      .unwrap();
-      crate::store::repo::org::replace_for_corporation(
-        db,
-        90_000_001,
-        &[crate::store::model::CorporationMemberRole::from((
-          90_000_001_i64,
-          42_i64,
-          "Director".to_string(),
-        ))],
-      )
-      .await
-      .unwrap();
+    #[tokio::test]
+    async fn it_reports_empty_when_the_corporation_owns_no_assets() {
+      let server = MockServer::start().await;
+      mount_assets(&server, "/corporations/90000001/assets/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", 90_000_001);
+      let ctx = ctx_with_grant(
+        &db,
+        &esi,
+        &image,
+        &image_store,
+        &grant,
+        Subject::Corporation(90_000_001),
+      );
+
+      let outcome = run(&ctx).await.unwrap();
+
+      assert_eq!(outcome, Outcome::Empty);
     }
 
     #[tokio::test]
@@ -1306,234 +1535,6 @@ mod tests {
       assert!(
         matches!(result, Err(Error::NotReady)),
         "a re-added corp whose parent row has not yet landed must guard with NotReady, not 787"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_persists_corp_assets_when_the_names_endpoint_returns_invalid_ids() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/corporations/90000001/assets/",
-        serde_json::json!([
-          { "is_singleton": true, "item_id": 300, "location_flag": "CorpDeliveries", "location_id": 60003760,
-            "location_type": "station", "quantity": 1, "type_id": 587 },
-          { "is_singleton": false, "item_id": 301, "location_flag": "Cargo", "location_id": 300,
-            "location_type": "item", "quantity": 9, "type_id": 34 },
-        ]),
-      )
-      .await;
-      Mock::given(method("POST"))
-        .and(path("/corporations/90000001/assets/names/"))
-        .respond_with(
-          ResponseTemplate::new(404).set_body_json(serde_json::json!({ "error": "Invalid IDs in the request" })),
-        )
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_corporation(&db).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 90_000_001);
-      let ctx = ctx_with_grant(
-        &db,
-        &esi,
-        &image,
-        &image_store,
-        &grant,
-        Subject::Corporation(90_000_001),
-      );
-
-      run(&ctx).await.unwrap();
-
-      let rows = assets::for_corporation(&db, 90_000_001).await.unwrap();
-      assert_eq!(rows.len(), 2, "corp assets persist even though the names endpoint 404s");
-      let root = rows.iter().find(|row| row.item_id() == 300).unwrap();
-      assert_eq!(
-        root.name().as_deref(),
-        None,
-        "an unsalvageable singleton keeps a null name rather than aborting the job"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_reports_empty_when_the_corporation_owns_no_assets() {
-      let server = MockServer::start().await;
-      mount_assets(&server, "/corporations/90000001/assets/", serde_json::json!([])).await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test("corp-token", 90_000_001);
-      let ctx = ctx_with_grant(
-        &db,
-        &esi,
-        &image,
-        &image_store,
-        &grant,
-        Subject::Corporation(90_000_001),
-      );
-
-      let outcome = run(&ctx).await.unwrap();
-
-      assert_eq!(outcome, Outcome::Empty);
-    }
-  }
-
-  mod readiness_invariant {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::{
-      store::model::{Constellation, OwnerType, Region, SolarSystem, Structure},
-      sync::{event::Event, job::JobKey, status::SyncStatus},
-    };
-
-    const INACCESSIBLE_ID: i64 = 1_021_000_000_001;
-    const RESOLVED_ID: i64 = 1_021_000_000_002;
-
-    async fn seed_named_structure(db: &store::Database, id: i64, name: &str) {
-      sde::upsert_region(
-        db,
-        &Region {
-          description: None,
-          id: 10_000_002,
-          name: "The Forge".to_owned(),
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_constellation(
-        db,
-        &Constellation {
-          id: 20_000_020,
-          name: "Kimotoro".to_owned(),
-          position_x: 0.0,
-          position_y: 0.0,
-          position_z: 0.0,
-          region_id: 10_000_002,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_solar_system(
-        db,
-        &SolarSystem {
-          constellation_id: 20_000_020,
-          id: 30_000_142,
-          name: "Jita".to_owned(),
-          position_x: 0.0,
-          position_y: 0.0,
-          position_z: 0.0,
-          security_class: None,
-          security_status: 0.9,
-          star_id: None,
-        },
-      )
-      .await
-      .unwrap();
-      sde::upsert_structure(
-        db,
-        &Structure {
-          id,
-          name: name.to_owned(),
-          owner_id: 90_000_001,
-          position_x: None,
-          position_y: None,
-          position_z: None,
-          solar_system_id: 30_000_142,
-          type_id: None,
-        },
-      )
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_keeps_the_chip_in_progress_until_assets_are_displayable_then_done() {
-      let server = MockServer::start().await;
-      mount_assets(
-        &server,
-        "/characters/44/assets/",
-        serde_json::json!([
-          { "is_singleton": true, "item_id": 500, "location_flag": "Hangar", "location_id": INACCESSIBLE_ID,
-            "location_type": "structure", "quantity": 1, "type_id": 587 },
-          { "is_singleton": true, "item_id": 501, "location_flag": "Hangar", "location_id": RESOLVED_ID,
-            "location_type": "structure", "quantity": 1, "type_id": 587 },
-        ]),
-      )
-      .await;
-      mount_ship(
-        &server,
-        44,
-        serde_json::json!({ "ship_item_id": 9003, "ship_name": "Capsule", "ship_type_id": 587 }),
-      )
-      .await;
-      mount_asset_names(&server, "/characters/44/assets/names/", serde_json::json!([])).await;
-      Mock::given(method("GET"))
-        .and(path(format!("/universe/structures/{INACCESSIBLE_ID}/")))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 44).await;
-      seed_item_types(&db, &[587]).await;
-      seed_named_structure(&db, RESOLVED_ID, "Some Citadel").await;
-      let http = http::Client::builder(http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http.clone(), server.uri());
-      let image = eve_image::Client::with_base_url(http, server.uri());
-      let images_dir = tempfile::tempdir().unwrap();
-      let image_store = images::Store::new(images_dir.path().to_path_buf());
-      let grant = Grant::new_test_with_scopes("token", 44, vec![scopes::UNIVERSE_STRUCTURES.to_owned()]);
-      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, Subject::Character(44));
-      let key = JobKey::new(JobKind::AssetSync, Subject::Character(44));
-
-      let mut status = SyncStatus::new();
-      status.apply(&Event::Started {
-        key,
-      });
-
-      assert!(status.is_syncing(), "the chip reads In Progress while AssetSync runs");
-      assert!(
-        assets::render_for_character(&db, 44).await.unwrap().is_empty(),
-        "the screen is blank until AssetSync finishes"
-      );
-
-      run(&ctx).await.unwrap();
-      status.apply(&Event::Finished {
-        key,
-        outcome: crate::sync::Outcome::synced(),
-      });
-
-      assert!(!status.is_syncing(), "Finished clears the In Progress chip");
-
-      let rows = assets::render_for_character(&db, 44).await.unwrap();
-      assert_eq!(rows.len(), 3, "two assets plus the synthetic ship are displayable");
-      assert!(
-        rows.iter().all(|row| !row.type_name.is_empty()),
-        "every displayable row is named"
-      );
-
-      let inaccessible = rows.iter().find(|row| row.item_id == 500).unwrap();
-      assert_eq!(
-        inaccessible.location_label.as_deref(),
-        Some("Inaccessible Structure"),
-        "a 403 structure renders Inaccessible Structure rather than hanging the chip In Progress"
-      );
-      let resolved = rows.iter().find(|row| row.item_id == 501).unwrap();
-      assert_eq!(resolved.location_label.as_deref(), Some("Some Citadel"));
-
-      assert!(
-        sde::is_structure_inaccessible(&db, 44, OwnerType::Character, INACCESSIBLE_ID)
-          .await
-          .unwrap(),
-        "the inaccessible structure is durably marked for the owner"
       );
     }
   }

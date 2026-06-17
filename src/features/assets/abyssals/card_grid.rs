@@ -313,12 +313,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_never_returns_fewer_than_one() {
-      assert_eq!(cards_per_row(0.0), 1);
-      assert_eq!(cards_per_row(CARD_WIDTH - 1.0), 1);
-    }
-
-    #[test]
     fn it_fits_as_many_whole_cards_plus_gaps_as_the_width_allows() {
       assert_eq!(cards_per_row(CARD_WIDTH), 1);
       assert_eq!(cards_per_row(CARD_WIDTH * 2.0 + CARD_GAP), 2);
@@ -326,33 +320,18 @@ mod tests {
       // A hair under three cards' worth still only fits two.
       assert_eq!(cards_per_row(CARD_WIDTH * 3.0 + CARD_GAP * 2.0 - 1.0), 2);
     }
+
+    #[test]
+    fn it_never_returns_fewer_than_one() {
+      assert_eq!(cards_per_row(0.0), 1);
+      assert_eq!(cards_per_row(CARD_WIDTH - 1.0), 1);
+    }
   }
 
   mod grid_layout {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_pads_each_group_to_a_whole_row_so_groups_never_share_a_row() {
-      let cards = [
-        card(1, "Launcher", 2410),
-        card(2, "Launcher", 2410),
-        card(3, "Launcher", 2410),
-        card(4, "Field", 2281),
-      ];
-      let refs: Vec<&AbyssalCard> = cards.iter().collect();
-
-      let layout = GridLayout::build(&refs, 2);
-
-      // Group A (3 cards) -> 2 rows (one trailing pad); group B (1 card) -> 1 row.
-      assert_eq!(layout.total_rows(), 3);
-      assert_eq!(layout.slots.len(), 6);
-      assert!(matches!(layout.slots[3], Slot::Pad));
-      assert_eq!(layout.group_headers[0], (0, "Launcher".to_owned()));
-      // Group B starts on its own fresh row, never sharing group A's padded row.
-      assert_eq!(layout.group_headers[1], (2, "Field".to_owned()));
-    }
 
     #[test]
     fn it_attaches_a_header_only_to_each_groups_first_row() {
@@ -393,6 +372,27 @@ mod tests {
     }
 
     #[test]
+    fn it_pads_each_group_to_a_whole_row_so_groups_never_share_a_row() {
+      let cards = [
+        card(1, "Launcher", 2410),
+        card(2, "Launcher", 2410),
+        card(3, "Launcher", 2410),
+        card(4, "Field", 2281),
+      ];
+      let refs: Vec<&AbyssalCard> = cards.iter().collect();
+
+      let layout = GridLayout::build(&refs, 2);
+
+      // Group A (3 cards) -> 2 rows (one trailing pad); group B (1 card) -> 1 row.
+      assert_eq!(layout.total_rows(), 3);
+      assert_eq!(layout.slots.len(), 6);
+      assert!(matches!(layout.slots[3], Slot::Pad));
+      assert_eq!(layout.group_headers[0], (0, "Launcher".to_owned()));
+      // Group B starts on its own fresh row, never sharing group A's padded row.
+      assert_eq!(layout.group_headers[1], (2, "Field".to_owned()));
+    }
+
+    #[test]
     fn it_renders_a_windowed_row() {
       let cards = [card(1, "Launcher", 2410), card(2, "Launcher", 2410)];
       let refs: Vec<&AbyssalCard> = cards.iter().collect();
@@ -430,6 +430,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_rebuilds_the_plan_when_the_card_set_changes() {
+      let before = [card(1, "Launcher", 2410)];
+      let before_refs: Vec<&AbyssalCard> = before.iter().collect();
+      let _ = grouped_indices(&before_refs);
+
+      let after = [card(1, "Launcher", 2410), card(2, "Field", 2281)];
+      let after_refs: Vec<&AbyssalCard> = after.iter().collect();
+      let plan = grouped_indices(&after_refs);
+
+      assert_eq!(plan, group_indices_by_type(&after_refs));
+      assert_eq!(plan.len(), 2);
+    }
+
+    #[test]
     fn it_returns_the_same_grouping_whether_or_not_the_plan_is_cached() {
       let cards = [
         card(1, "Launcher", 2410),
@@ -443,20 +457,6 @@ mod tests {
 
       assert_eq!(first, cached);
       assert_eq!(first, group_indices_by_type(&refs));
-    }
-
-    #[test]
-    fn it_rebuilds_the_plan_when_the_card_set_changes() {
-      let before = [card(1, "Launcher", 2410)];
-      let before_refs: Vec<&AbyssalCard> = before.iter().collect();
-      let _ = grouped_indices(&before_refs);
-
-      let after = [card(1, "Launcher", 2410), card(2, "Field", 2281)];
-      let after_refs: Vec<&AbyssalCard> = after.iter().collect();
-      let plan = grouped_indices(&after_refs);
-
-      assert_eq!(plan, group_indices_by_type(&after_refs));
-      assert_eq!(plan.len(), 2);
     }
   }
 

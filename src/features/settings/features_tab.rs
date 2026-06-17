@@ -357,6 +357,13 @@ mod tests {
   }
 
   #[test]
+  fn an_empty_query_matches_every_capability() {
+    for entry in &CATALOG {
+      assert!(matches(entry, ""), "{:?} should match the empty query", entry.feature);
+    }
+  }
+
+  #[test]
   fn badge_reports_enabled_over_total() {
     let settings = Settings::default();
 
@@ -367,24 +374,48 @@ mod tests {
   }
 
   #[test]
-  fn the_panel_blurb_describes_live_behavior_not_a_restart() {
-    assert!(
-      PANEL_BLURB.contains("live") && PANEL_BLURB.contains("no restart"),
-      "the features blurb must reflect the live toggle behavior"
-    );
-    assert!(
-      !PANEL_BLURB.contains("next restart"),
-      "the stale 'applies on next restart' copy must be gone"
-    );
-  }
-
-  #[test]
   fn catalog_covers_every_capability_once() {
     for feature in Feature::ALL {
       let count = CATALOG.iter().filter(|entry| entry.feature == feature).count();
       assert_eq!(count, 1, "{feature:?} should appear exactly once in the catalog");
     }
     assert_eq!(CATALOG.len(), Feature::ALL.len());
+  }
+
+  #[test]
+  fn editing_the_search_query_updates_state_without_persisting() {
+    let mut state = state();
+    let mut settings = Settings::default();
+
+    let outcome = update(&mut state, Message::SearchChanged("wallet".to_owned()), &mut settings);
+
+    assert_eq!(outcome, Outcome::None);
+    assert_eq!(state.query, "wallet");
+    assert_eq!(
+      settings.features(),
+      &Settings::default().features().to_owned(),
+      "a search edit must not touch the flags"
+    );
+  }
+
+  #[test]
+  fn search_matches_a_word_only_in_the_description() {
+    let clones = CATALOG
+      .iter()
+      .find(|entry| entry.feature == Feature::CloneMonitoring)
+      .unwrap();
+
+    assert!(matches(clones, "implants"));
+    assert!(!clones.title.to_lowercase().contains("implants"));
+  }
+
+  #[test]
+  fn search_matches_title_case_insensitively() {
+    let wallet = CATALOG.iter().find(|entry| entry.feature == Feature::Wallet).unwrap();
+
+    assert!(matches(wallet, "WALLET"));
+    assert!(matches(wallet, "wal"));
+    assert!(!matches(wallet, "no-such-feature"));
   }
 
   #[test]
@@ -404,6 +435,18 @@ mod tests {
         Feature::EveNotifications,
         Feature::Standings,
       ]
+    );
+  }
+
+  #[test]
+  fn the_panel_blurb_describes_live_behavior_not_a_restart() {
+    assert!(
+      PANEL_BLURB.contains("live") && PANEL_BLURB.contains("no restart"),
+      "the features blurb must reflect the live toggle behavior"
+    );
+    assert!(
+      !PANEL_BLURB.contains("next restart"),
+      "the stale 'applies on next restart' copy must be gone"
     );
   }
 
@@ -430,6 +473,18 @@ mod tests {
   }
 
   #[test]
+  fn toggling_a_flag_back_on_persists() {
+    let mut state = state();
+    let mut settings = Settings::default();
+    settings.features_mut().set_enabled(Feature::Mail, false);
+
+    let outcome = update(&mut state, Message::Toggled(Feature::Mail, true), &mut settings);
+
+    assert_eq!(outcome, Outcome::Persist);
+    assert!(settings.features().is_enabled(Feature::Mail));
+  }
+
+  #[test]
   fn toggling_a_flag_off_flips_only_that_capability_and_persists() {
     let mut state = state();
     let mut settings = Settings::default();
@@ -445,73 +500,18 @@ mod tests {
   }
 
   #[test]
-  fn toggling_a_flag_back_on_persists() {
+  fn view_renders_the_empty_state_for_an_unmatched_query() {
+    let settings = Settings::default();
     let mut state = state();
-    let mut settings = Settings::default();
-    settings.features_mut().set_enabled(Feature::Mail, false);
+    state.query = "zzz-no-match".to_owned();
 
-    let outcome = update(&mut state, Message::Toggled(Feature::Mail, true), &mut settings);
-
-    assert_eq!(outcome, Outcome::Persist);
-    assert!(settings.features().is_enabled(Feature::Mail));
-  }
-
-  #[test]
-  fn editing_the_search_query_updates_state_without_persisting() {
-    let mut state = state();
-    let mut settings = Settings::default();
-
-    let outcome = update(&mut state, Message::SearchChanged("wallet".to_owned()), &mut settings);
-
-    assert_eq!(outcome, Outcome::None);
-    assert_eq!(state.query, "wallet");
-    assert_eq!(
-      settings.features(),
-      &Settings::default().features().to_owned(),
-      "a search edit must not touch the flags"
-    );
-  }
-
-  #[test]
-  fn search_matches_title_case_insensitively() {
-    let wallet = CATALOG.iter().find(|entry| entry.feature == Feature::Wallet).unwrap();
-
-    assert!(matches(wallet, "WALLET"));
-    assert!(matches(wallet, "wal"));
-    assert!(!matches(wallet, "no-such-feature"));
-  }
-
-  #[test]
-  fn an_empty_query_matches_every_capability() {
-    for entry in &CATALOG {
-      assert!(matches(entry, ""), "{:?} should match the empty query", entry.feature);
-    }
-  }
-
-  #[test]
-  fn search_matches_a_word_only_in_the_description() {
-    let clones = CATALOG
-      .iter()
-      .find(|entry| entry.feature == Feature::CloneMonitoring)
-      .unwrap();
-
-    assert!(matches(clones, "implants"));
-    assert!(!clones.title.to_lowercase().contains("implants"));
+    let _el: Element<'_, Message> = view(&state, &settings);
   }
 
   #[test]
   fn view_renders_with_an_empty_query() {
     let settings = Settings::default();
     let state = state();
-
-    let _el: Element<'_, Message> = view(&state, &settings);
-  }
-
-  #[test]
-  fn view_renders_the_empty_state_for_an_unmatched_query() {
-    let settings = Settings::default();
-    let mut state = state();
-    state.query = "zzz-no-match".to_owned();
 
     let _el: Element<'_, Message> = view(&state, &settings);
   }

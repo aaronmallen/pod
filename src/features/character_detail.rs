@@ -1946,189 +1946,6 @@ mod tests {
     state
   }
 
-  mod state {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_selects_the_first_enabled_tab_on_open() {
-      let state = State::new(42, &Feature::ALL);
-
-      assert_eq!(state.active_tab, Tab::Clones);
-      assert_eq!(state.active(), 42);
-    }
-
-    #[test]
-    fn it_falls_back_to_clones_when_no_gated_tab_is_enabled() {
-      let state = State::new(42, &[]);
-
-      assert_eq!(state.active_tab, Tab::Clones);
-    }
-
-    #[test]
-    fn sync_features_rebuilds_the_enabled_tab_strip() {
-      let mut state = State::new(42, &Feature::ALL);
-
-      state.sync_features(&[Feature::Standings]);
-
-      assert_eq!(state.enabled_tabs, vec![Tab::Standings]);
-    }
-
-    #[test]
-    fn sync_features_reselects_the_active_tab_when_it_is_disabled() {
-      let mut state = State::new(42, &Feature::ALL);
-      state.active_tab = Tab::Standings;
-
-      state.sync_features(&[Feature::CombatLog]);
-
-      assert_eq!(
-        state.active_tab,
-        Tab::Killlog,
-        "disabling the active tab's feature re-resolves to the first remaining tab"
-      );
-    }
-
-    #[test]
-    fn sync_features_keeps_a_still_enabled_active_tab() {
-      let mut state = State::new(42, &Feature::ALL);
-      state.active_tab = Tab::Standings;
-
-      state.sync_features(&[Feature::CloneMonitoring, Feature::Standings]);
-
-      assert_eq!(state.active_tab, Tab::Standings);
-    }
-
-    #[test]
-    fn it_surfaces_stale_roster_portraits_as_image_keys() {
-      let mut state = State::new(42, &[]);
-      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
-
-      let stale = state.stale_images();
-
-      assert_eq!(
-        stale,
-        vec![
-          (images::ImageKind::CharacterPortrait, 42),
-          (images::ImageKind::CharacterPortrait, 7),
-        ]
-      );
-    }
-
-    #[test]
-    fn it_omits_fresh_roster_portraits_from_the_stale_keys() {
-      let mut state = State::new(42, &[]);
-      let mut fresh = pilot(42, "Test Pilot");
-      fresh.portrait = images::ImageState::Fresh(std::path::PathBuf::from("/tmp/42.jpg"));
-      state.roster = vec![fresh];
-
-      assert!(state.stale_images().is_empty());
-    }
-  }
-
-  mod contacts_write_enabled {
-    use super::*;
-
-    #[test]
-    fn it_is_enabled_when_the_write_scope_is_granted() {
-      use crate::clients::esi::scopes;
-      let mut state = State::new(42, &Feature::ALL);
-      state.granted_scopes = Some(format!(
-        "{} {}",
-        scopes::CHARACTER_CONTACTS,
-        scopes::CHARACTER_CONTACTS_WRITE
-      ));
-
-      assert!(state.contacts_write_enabled());
-    }
-
-    #[test]
-    fn it_is_gated_when_only_the_read_scope_is_granted() {
-      use crate::clients::esi::scopes;
-      let mut state = State::new(42, &Feature::ALL);
-      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
-
-      assert!(
-        !state.contacts_write_enabled(),
-        "a pilot authorized before write_contacts existed must be surfaced for re-auth"
-      );
-    }
-
-    #[test]
-    fn it_is_gated_when_no_scopes_are_granted() {
-      let mut state = State::new(42, &Feature::ALL);
-      state.granted_scopes = None;
-
-      assert!(!state.contacts_write_enabled());
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_records_the_active_pilot_and_closes_the_picker_on_a_switch() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      state.picker_open = true;
-
-      let _ = update(&mut state, Message::CharacterChanged(7), &db);
-
-      assert_eq!(state.active, 7);
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_switches_the_active_tab() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::TabChanged(Tab::Standings), &db);
-
-      assert_eq!(state.active_tab, Tab::Standings);
-    }
-
-    #[tokio::test]
-    async fn it_treats_a_reauth_request_as_a_noop_for_the_app_shell_to_intercept() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::ReauthRequested(42), &db);
-
-      assert_eq!(state.active(), 42);
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_picker_dropdown() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(state.picker_open);
-
-      let _ = update(&mut state, Message::PickerToggled, &db);
-      assert!(!state.picker_open);
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_closes_the_killmail_detail_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(
-        &mut state,
-        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_killmail.is_some());
-
-      let _ = update(&mut state, Message::CloseKillmailDetail, &db);
-      assert!(state.selected_killmail.is_none());
-    }
-  }
-
   fn killmail_detail_fixture() -> killmail_detail::KillmailDetail {
     killmail_detail::KillmailDetail {
       attackers: Vec::new(),
@@ -2151,977 +1968,6 @@ mod tests {
         id: 3,
         kind: images::ImageKind::CharacterPortrait,
       },
-    }
-  }
-
-  mod pagination {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::store::model::CharacterContact;
-
-    fn killlog_entry(killmail_id: i64, kill_time: &str) -> KillLogEntry {
-      KillLogEntry {
-        attacker_count: 1,
-        final_blow: true,
-        is_kill: true,
-        kill_time: kill_time.to_owned(),
-        killmail_id,
-        ship_icon: images::IconResolution::Missing,
-        ship_name: "Rifter".to_owned(),
-        ship_type_id: 587,
-        system_name: Some("Jita".to_owned()),
-        system_security: 0.9,
-        value_destroyed_isk: 0.0,
-        value_isk: 0.0,
-        victim_corp: String::new(),
-        victim_name: "Unknown".to_owned(),
-      }
-    }
-
-    fn contact_row(contact_id: i64) -> ContactRow {
-      ContactRow {
-        contact: CharacterContact {
-          character_id: 42,
-          contact_id,
-          contact_name: format!("Contact {contact_id}"),
-          contact_type: "character".to_owned(),
-          is_blocked: false,
-          is_watched: false,
-          label_ids: String::new(),
-          standing: 0.0,
-        },
-        image: images::ImageState::Stale {
-          id: contact_id,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-      }
-    }
-
-    fn contacts_page(count: i64) -> ContactsPage {
-      ContactsPage::for_test((0..count).map(|n| contact_row(95_000 + n)).collect(), Vec::new(), false)
-    }
-
-    fn killlog_page(count: i64) -> Vec<KillLogEntry> {
-      (0..count)
-        .map(|n| killlog_entry(1000 + n, "2024-01-01T00:00:00Z"))
-        .collect()
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_standings_scroll_below_the_threshold() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_has_more = true;
-      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
-
-      let _ = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 0.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert!(!state.standings_loading_more, "a sub-threshold scroll is a no-op");
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_standings_scroll_with_no_more_pages() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_has_more = false;
-      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
-
-      let _ = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(!state.standings_loading_more, "exhausted agents do not fetch");
-    }
-
-    #[tokio::test]
-    async fn it_marks_loading_and_clears_the_cursor_guard_on_a_standings_page_fetch() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_has_more = true;
-      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
-
-      let _ = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(state.standings_loading_more, "a qualifying scroll starts a load");
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_standings_scroll_while_already_loading() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_has_more = true;
-      state.standings_loading_more = true;
-      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
-
-      let _ = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(state.standings_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_standings_scroll_when_the_filter_does_not_surface_agents() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_filter = tabs::standings::StandingsFilter::Factions;
-      state.standings_has_more = true;
-      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
-
-      let _ = update(
-        &mut state,
-        Message::StandingsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(
-        !state.standings_loading_more,
-        "a non-agent filter does not paginate agents"
-      );
-      assert!(state.standings_has_more, "the cursor and has_more are left untouched");
-      assert_eq!(state.standings_agent_cursor, Some(("Agent".to_owned(), 1)));
-    }
-
-    #[tokio::test]
-    async fn it_appends_a_standings_page_and_recomputes_has_more() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      let before = match &state.standings {
-        LoadState::Loaded(rows) => rows.len(),
-        _ => 0,
-      };
-      state.standings_loading_more = true;
-
-      let page = StandingsAgentsPage {
-        generation: state.standings_generation,
-        next_cursor: Some(("Next".to_owned(), 9)),
-        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
-      };
-      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
-
-      assert!(!state.standings_loading_more);
-      assert!(state.standings_has_more, "a carried cursor means more pages remain");
-      assert_eq!(state.standings_agent_cursor, Some(("Next".to_owned(), 9)));
-      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before + 1));
-    }
-
-    #[tokio::test]
-    async fn it_exhausts_standings_when_a_page_carries_no_cursor() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_has_more = true;
-      state.standings_loading_more = true;
-
-      let page = StandingsAgentsPage {
-        generation: state.standings_generation,
-        next_cursor: None,
-        rows: Vec::new(),
-      };
-      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
-
-      assert!(!state.standings_has_more);
-      assert_eq!(state.standings_agent_cursor, None);
-    }
-
-    #[tokio::test]
-    async fn it_drops_a_stale_standings_page_from_an_old_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_generation = 5;
-      state.standings_loading_more = true;
-      let before = match &state.standings {
-        LoadState::Loaded(rows) => rows.len(),
-        _ => 0,
-      };
-
-      let page = StandingsAgentsPage {
-        generation: 4,
-        next_cursor: Some(("Next".to_owned(), 9)),
-        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
-      };
-      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
-
-      assert!(!state.standings_loading_more, "loading clears even for a stale page");
-      assert!(
-        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before),
-        "a stale generation does not append rows"
-      );
-      assert!(
-        state.standings_agent_cursor.is_none(),
-        "the stale cursor is not adopted"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_killlog_scroll_below_the_threshold() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
-      reset_killlog_pagination(&mut state);
-
-      let _ = update(
-        &mut state,
-        Message::KilllogScrolled {
-          absolute: 0.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert!(!state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_killlog_scroll_with_no_more_pages() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.killlog = LoadState::Loaded(killlog_page(3));
-      reset_killlog_pagination(&mut state);
-
-      let _ = update(
-        &mut state,
-        Message::KilllogScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(!state.killlog_has_more, "a short page is the last page");
-      assert!(!state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_marks_loading_on_a_qualifying_killlog_scroll() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
-      reset_killlog_pagination(&mut state);
-
-      let _ = update(
-        &mut state,
-        Message::KilllogScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_appends_a_killlog_page_and_recomputes_has_more() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
-      state.killlog_loading_more = true;
-
-      let _ = update(&mut state, Message::KilllogPageLoaded(killlog_page(3)), &db);
-
-      assert!(!state.killlog_loading_more);
-      assert!(!state.killlog_has_more, "a short appended page exhausts the log");
-      assert!(matches!(state.killlog, LoadState::Loaded(ref rows) if rows.len() == KILLLOG_PAGE_SIZE as usize + 3));
-    }
-
-    #[tokio::test]
-    async fn it_tracks_the_contacts_scroll_offset_for_windowing() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
-
-      let _ = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 1_234.0,
-          relative: 0.1,
-        },
-        &db,
-      );
-
-      assert_eq!(state.contacts_scroll_offset(), 1_234.0);
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_full_contacts_page_with_no_more_pages() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(3));
-      state.contacts_has_more = false;
-
-      let _ = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(!state.contacts_loading_more, "an exhausted set does not fetch");
-    }
-
-    #[tokio::test]
-    async fn it_starts_a_contacts_fetch_past_the_threshold_with_more_pages() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
-      state.contacts_has_more = true;
-      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
-
-      let _ = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 0.0,
-          relative: 0.95,
-        },
-        &db,
-      );
-
-      assert!(state.contacts_loading_more, "a qualifying scroll starts a load");
-    }
-
-    #[tokio::test]
-    async fn it_ignores_a_contacts_scroll_below_the_threshold() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
-      state.contacts_has_more = true;
-      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
-
-      let _ = update(
-        &mut state,
-        Message::ContactsScrolled {
-          absolute: 0.0,
-          relative: 0.5,
-        },
-        &db,
-      );
-
-      assert!(!state.contacts_loading_more, "a sub-threshold scroll is a no-op");
-    }
-
-    #[tokio::test]
-    async fn it_restarts_contacts_pagination_on_a_filter_change() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
-      state.contacts_scroll_offset = 900.0;
-
-      let _ = update(
-        &mut state,
-        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
-        &db,
-      );
-
-      assert!(
-        matches!(state.contacts, LoadState::Loading),
-        "switching filters re-runs the first page from SQL"
-      );
-      assert_eq!(state.contacts_scroll_offset(), 0.0, "the window snaps back to the top");
-      assert!(state.contacts_loading_more, "a fresh first page is in flight");
-    }
-
-    #[tokio::test]
-    async fn it_appends_a_contacts_page_and_recomputes_has_more() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
-      state.contacts_loading_more = true;
-
-      let mut page = contacts_page(3);
-      page.has_more = false;
-      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
-
-      assert!(!state.contacts_loading_more);
-      assert!(!state.contacts_has_more, "a short appended page exhausts the set");
-      assert!(
-        matches!(state.contacts, LoadState::Loaded(ref page) if page.rows().len() == CONTACTS_PAGE_SIZE as usize + 3)
-      );
-    }
-  }
-
-  mod standings_search {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_records_the_query_and_advances_the_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(
-        &mut state,
-        Message::StandingsSearchChanged("faction:caldari".to_owned()),
-        &db,
-      );
-
-      assert_eq!(state.standings_query, "faction:caldari");
-      assert_eq!(state.standings_generation, 1);
-      assert!(matches!(state.standings, LoadState::Loading));
-    }
-
-    #[tokio::test]
-    async fn it_clears_the_query_and_re_runs_the_default_catalog() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      let _ = update(&mut state, Message::StandingsSearchChanged("corp:navy".to_owned()), &db);
-
-      let _ = update(&mut state, Message::StandingsClearSearch, &db);
-
-      assert!(state.standings_query.is_empty());
-      assert!(matches!(state.standings, LoadState::Loading));
-    }
-
-    #[tokio::test]
-    async fn it_appends_an_inserted_fragment_and_closes_the_help() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      state.standings_help_open = true;
-      state.standings_query = "faction:caldari".to_owned();
-
-      let _ = update(&mut state, Message::StandingsInsertQuery("corp:navy".to_owned()), &db);
-
-      assert_eq!(state.standings_query, "faction:caldari corp:navy");
-      assert!(!state.standings_help_open);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_facet_filter_without_reloading() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      let before = state.standings_generation;
-
-      let _ = update(
-        &mut state,
-        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Corps),
-        &db,
-      );
-
-      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Corps);
-      assert_eq!(state.standings_generation, before, "filtering is in-memory only");
-    }
-
-    #[tokio::test]
-    async fn it_keeps_an_agent_filter_in_memory_when_agents_are_already_loaded() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_filter = tabs::standings::StandingsFilter::Factions;
-      state.standings = LoadState::Loaded(vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)]);
-      let before = state.standings_generation;
-
-      let _ = update(
-        &mut state,
-        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
-        &db,
-      );
-
-      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Agents);
-      assert_eq!(
-        state.standings_generation, before,
-        "agents already loaded means no reload"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_reloads_an_agent_filter_when_no_agents_are_loaded() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      state.standings_filter = tabs::standings::StandingsFilter::Factions;
-      state.standings = LoadState::Loaded(vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)]);
-      let before = state.standings_generation;
-
-      let _ = update(
-        &mut state,
-        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
-        &db,
-      );
-
-      assert_eq!(
-        state.standings_generation,
-        before + 1,
-        "switching to agents with none loaded triggers a reload"
-      );
-      assert!(matches!(state.standings, LoadState::Loading));
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_help_popover() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
-      assert!(state.standings_help_open);
-
-      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
-      assert!(!state.standings_help_open);
-    }
-
-    #[tokio::test]
-    async fn it_applies_results_only_for_the_current_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      state.standings_generation = 5;
-
-      let stale = StandingsResult {
-        generation: 4,
-        result: Ok(StandingsCatalog {
-          agent_cursor: None,
-          rows: Vec::new(),
-        }),
-      };
-      let _ = update(&mut state, Message::StandingsResults(Box::new(stale)), &db);
-      assert!(matches!(state.standings, LoadState::Loading), "stale result is dropped");
-
-      let fresh = StandingsResult {
-        generation: 5,
-        result: Ok(StandingsCatalog {
-          agent_cursor: None,
-          rows: vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)],
-        }),
-      };
-      let _ = update(&mut state, Message::StandingsResults(Box::new(fresh)), &db);
-
-      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 1));
-    }
-  }
-
-  mod load_standings_catalog {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn seed_faction(db: &Database) {
-      sqlx::query(
-        "INSERT INTO factions (id, corporation_id, description, is_unique, name, size_factor, station_count, \
-        station_system_count) VALUES (500001, 1000099, '', 1, 'Caldari State', 1.0, 0, 0)",
-      )
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_maps_a_faction_to_a_corporation_logo_of_its_corporation_id() {
-      let db = crate::store::open_test().await.unwrap();
-      seed_faction(&db).await;
-
-      let catalog = load_standings_catalog(&db, 42, "", false).await.unwrap();
-      let faction = catalog.rows.iter().find(|row| row.name == "Caldari State").unwrap();
-
-      assert_eq!(faction.kind, StandingKind::Faction);
-      let resolved = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, 1_000_099);
-      assert_eq!(faction.image.stale_key(), resolved.stale_key());
-      assert_eq!(faction.image.path(), resolved.path());
-    }
-  }
-
-  mod view {
-    use super::*;
-
-    #[test]
-    fn it_renders_the_empty_state_with_no_roster() {
-      let state = State::new(42, &Feature::ALL);
-
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_a_loaded_detail_with_the_standings_tab() {
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Standings;
-
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_an_empty_tab_body_for_a_not_yet_implemented_tab() {
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Clones;
-
-      let _el: Element<'_, Message> = view(&state);
-    }
-
-    #[test]
-    fn it_renders_with_the_picker_dropdown_open() {
-      let mut state = loaded_state(42);
-      state.picker_open = true;
-
-      let _el: Element<'_, Message> = view(&state);
-    }
-  }
-
-  mod data_type_mapping {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_each_rendered_kind_to_its_detail_type() {
-      assert_eq!(
-        DetailDataType::for_job_kind(JobKind::CharacterClones),
-        Some(DetailDataType::Clones)
-      );
-      assert_eq!(
-        DetailDataType::for_job_kind(JobKind::CharacterContacts),
-        Some(DetailDataType::Contacts)
-      );
-      assert_eq!(
-        DetailDataType::for_job_kind(JobKind::CharacterKillmails),
-        Some(DetailDataType::Killlog)
-      );
-      assert_eq!(
-        DetailDataType::for_job_kind(JobKind::CharacterNotifications),
-        Some(DetailDataType::Notifications)
-      );
-      assert_eq!(
-        DetailDataType::for_job_kind(JobKind::CharacterStandings),
-        Some(DetailDataType::Standings)
-      );
-    }
-
-    #[test]
-    fn it_maps_unrendered_kinds_to_none() {
-      for kind in [
-        JobKind::AssetSync,
-        JobKind::CharacterAbyssals,
-        JobKind::CharacterMarketOrders,
-        JobKind::CharacterProfile,
-        JobKind::CharacterSkills,
-        JobKind::CharacterTelemetry,
-        JobKind::CharacterWallet,
-        JobKind::CorporationProfile,
-        JobKind::CorporationWallet,
-        JobKind::MarketPrices,
-        JobKind::NetWorthSnapshot,
-      ] {
-        assert_eq!(
-          DetailDataType::for_job_kind(kind),
-          None,
-          "{kind:?} should not reload the detail"
-        );
-      }
-    }
-  }
-
-  mod mark_dirty {
-    use super::*;
-
-    const PILOT: i64 = 42;
-
-    fn finished(kind: JobKind, subject: Subject) -> JobKey {
-      JobKey::new(kind, subject)
-    }
-
-    #[test]
-    fn it_marks_the_matching_type_for_the_drilled_in_pilot() {
-      let mut state = State::new(PILOT, &[]);
-
-      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT)));
-
-      assert!(state.is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_a_finished_job_for_a_different_pilot() {
-      let mut state = State::new(PILOT, &[]);
-
-      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT + 1)));
-
-      assert!(!state.is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_a_corporation_subject_job() {
-      let mut state = State::new(PILOT, &[]);
-
-      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Corporation(PILOT)));
-
-      assert!(!state.is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_a_kind_this_screen_does_not_render() {
-      let mut state = State::new(PILOT, &[]);
-
-      state.mark_dirty(finished(JobKind::CharacterWallet, Subject::Character(PILOT)));
-      state.mark_dirty(finished(JobKind::CharacterTelemetry, Subject::Character(PILOT)));
-
-      assert!(!state.is_dirty());
-    }
-  }
-
-  mod reload_arm {
-    use super::*;
-
-    fn contacts() -> ContactsPage {
-      ContactsPage::for_test(Vec::new(), Vec::new(), false)
-    }
-
-    #[tokio::test]
-    async fn it_replaces_only_the_reloaded_field_and_leaves_the_rest() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2));
-      assert!(matches!(state.clones, LoadState::Loading));
-
-      let _ = update(
-        &mut state,
-        Message::Reloaded(Box::new(Reloaded::Clones(LoadState::Loaded(None)))),
-        &db,
-      );
-
-      assert!(matches!(state.clones, LoadState::Loaded(None)), "clones replaced");
-      assert!(
-        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
-        "standings left intact"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_replaces_a_contacts_reload_without_touching_standings() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-
-      let _ = update(
-        &mut state,
-        Message::Reloaded(Box::new(Reloaded::Contacts(LoadState::Loaded(contacts())))),
-        &db,
-      );
-
-      assert!(matches!(state.contacts, LoadState::Loaded(_)), "contacts replaced");
-      assert!(
-        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
-        "standings left intact"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_replaces_a_killlog_reload_without_touching_standings() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-
-      let _ = update(
-        &mut state,
-        Message::Reloaded(Box::new(Reloaded::Killlog(LoadState::Loaded(Vec::new())))),
-        &db,
-      );
-
-      assert!(matches!(state.killlog, LoadState::Loaded(_)), "killlog replaced");
-      assert!(
-        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
-        "standings left intact"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_replaces_a_notifications_reload() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-
-      let _ = update(
-        &mut state,
-        Message::Reloaded(Box::new(Reloaded::Notifications(LoadState::Loaded(Vec::new())))),
-        &db,
-      );
-
-      assert!(
-        matches!(state.notifications, LoadState::Loaded(_)),
-        "notifications replaced"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_retriggers_the_standings_catalog_on_a_standings_reload() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      let before = state.standings_generation;
-
-      let _ = update(&mut state, Message::Reloaded(Box::new(Reloaded::Standings)), &db);
-
-      assert!(
-        matches!(state.standings, LoadState::Loading),
-        "a standings reload re-runs the catalog query"
-      );
-      assert_eq!(state.standings_generation, before + 1);
-    }
-  }
-
-  mod update_filters {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_records_the_contact_filter() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(
-        &mut state,
-        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
-        &db,
-      );
-
-      assert_eq!(state.contact_filter, tabs::contacts::ContactFilter::Character);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_contact_sort() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      let sort = tabs::contacts::ContactSort::default().toggled(tabs::contacts::SortColumn::Entity);
-
-      let _ = update(&mut state, Message::ContactSortChanged(sort), &db);
-
-      assert_eq!(state.contact_sort, sort);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_contact_search_query_and_clears_it() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::ContactsSearchChanged("vex".to_owned()), &db);
-      assert_eq!(state.contacts_query(), "vex");
-
-      let _ = update(&mut state, Message::ContactsSearchCleared, &db);
-      assert_eq!(state.contacts_query(), "");
-    }
-
-    #[tokio::test]
-    async fn it_records_the_killlog_filter() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
-
-      assert_eq!(state.killlog_filter, KilllogFilter::Kills);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_notifications_filter() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(
-        &mut state,
-        Message::NotificationsFilterChanged(NotificationsFilter::Unread),
-        &db,
-      );
-
-      assert_eq!(state.notifications_filter, NotificationsFilter::Unread);
-    }
-
-    #[tokio::test]
-    async fn it_marks_a_notification_read_and_updates_the_unread_count() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", None).await;
-      let mut unread = CharacterNotification {
-        character_id: 42,
-        is_read: false,
-        notif_type: "KillReportFinalBlow".to_owned(),
-        notification_id: 99,
-        sender_id: Some(1001),
-        sender_type: Some("character".to_owned()),
-        synced_at: "2024-01-02T00:00:00Z".to_owned(),
-        text: Some("body".to_owned()),
-        timestamp: "2024-01-01T00:00:00Z".to_owned(),
-      };
-      character::upsert_notification(&db, &unread).await.unwrap();
-      unread.notification_id = 100;
-      character::upsert_notification(&db, &unread).await.unwrap();
-
-      let mut state = State::new(42, &Feature::ALL);
-      state.notifications = load_notifications(&db, 42).await;
-      assert_eq!(unread_count_from(&state.notifications), 2);
-
-      let reloaded = mark_notification_read(db.clone(), 42, 99).await;
-      let _ = update(&mut state, Message::Reloaded(Box::new(reloaded)), &db);
-
-      assert_eq!(unread_count_from(&state.notifications), 1);
-      let read = match &state.notifications {
-        LoadState::Loaded(rows) => rows.iter().find(|n| n.notification_id() == 99).unwrap().is_read(),
-        _ => panic!("expected loaded notifications"),
-      };
-      assert!(read);
-
-      let reloaded = load_notifications(&db, 42).await;
-      let persisted_unread = match &reloaded {
-        LoadState::Loaded(rows) => tabs::notifications::unread_count(rows),
-        _ => panic!("expected loaded notifications"),
-      };
-      assert_eq!(persisted_unread, 1);
-    }
-
-    fn unread_count_from(state: &LoadState<Vec<CharacterNotification>>) -> usize {
-      match state {
-        LoadState::Loaded(rows) => tabs::notifications::unread_count(rows),
-        _ => panic!("expected loaded notifications"),
-      }
-    }
-
-    #[tokio::test]
-    async fn it_applies_a_full_load_to_every_field() {
-      let db = store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-      let loaded = Loaded {
-        clones: LoadState::Loaded(None),
-        contacts: LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false)),
-        granted_scopes: None,
-        head: HeadStats {
-          total_sp: Some(1_000),
-          ..HeadStats::default()
-        },
-        killlog: LoadState::Loaded(Vec::new()),
-        notifications: LoadState::Loaded(Vec::new()),
-        roster: vec![pilot(42, "Pilot")],
-      };
-
-      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
-
-      assert_eq!(state.roster.len(), 1);
-      assert_eq!(state.head.total_sp, Some(1_000));
-      assert!(matches!(state.clones, LoadState::Loaded(None)));
-      assert!(
-        matches!(state.standings, LoadState::Loading),
-        "a full load kicks off the standings catalog query"
-      );
     }
   }
 
@@ -3171,72 +2017,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_opens_and_closes_the_add_modal() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-
-      let _ = update(&mut state, Message::ContactAddOpened, &db);
-      assert!(state.contact_modal().is_some());
-      assert!(!state.contact_modal().unwrap().is_edit());
-
-      let _ = update(&mut state, Message::ContactModalClosed, &db);
-      assert!(state.contact_modal().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_opens_the_edit_modal_with_the_entity_locked() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-
-      let row = contact(95_001, "character", "Test Pilot", 5.0, true, "[1]");
-      let _ = update(&mut state, Message::ContactEditOpened(Box::new(row)), &db);
-
-      let modal = state.contact_modal().expect("modal open");
-      assert!(modal.is_edit());
-      assert_eq!(modal.entity().map(|e| e.id), Some(95_001));
-      assert_eq!(modal.standing(), 5.0);
-    }
-
-    #[tokio::test]
-    async fn it_tracks_field_edits_in_the_open_modal() {
+    async fn it_builds_a_submit_task_and_clears_the_modal_on_success() {
       let db = store::open_test().await.unwrap();
       let mut state = loaded_state(42);
       let _ = update(&mut state, Message::ContactAddOpened, &db);
-
       let _ = update(
         &mut state,
-        Message::ContactEntityChanged(Some(entity(95_002, EntityKind::Character, "New Pilot"))),
+        Message::ContactEntityChanged(Some(entity(95_010, EntityKind::Character, "New Friend"))),
         &db,
       );
-      let _ = update(&mut state, Message::ContactStandingChanged(-10.0), &db);
-      let _ = update(&mut state, Message::ContactLabelToggled(2), &db);
-      let _ = update(&mut state, Message::ContactWatchToggled, &db);
 
-      let modal = state.contact_modal().expect("modal open");
-      assert_eq!(modal.entity().map(|e| e.id), Some(95_002));
-      assert_eq!(modal.standing(), -10.0);
-      assert_eq!(modal.labels(), &[2]);
-      assert!(modal.watch());
-      assert!(modal.can_submit());
-    }
-
-    #[tokio::test]
-    async fn it_forces_watch_off_for_non_character_entities() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      let _ = update(&mut state, Message::ContactAddOpened, &db);
-
-      let _ = update(
-        &mut state,
-        Message::ContactEntityChanged(Some(entity(98_001, EntityKind::Corporation, "Test Corp"))),
-        &db,
-      );
-      let _ = update(&mut state, Message::ContactWatchToggled, &db);
-
+      let task = update(&mut state, Message::ContactModalSubmitted, &db);
+      drop(task);
       assert!(
-        !state.contact_modal().unwrap().watch(),
-        "a corporation can never be watchlisted"
+        state.contact_modal().is_some(),
+        "the modal stays open until the enqueue resolves"
       );
+
+      let _ = update(&mut state, Message::ContactSubmitted(Ok(())), &db);
+      assert!(state.contact_modal().is_none(), "a successful enqueue closes the modal");
+    }
+
+    #[tokio::test]
+    async fn it_cancels_a_pending_delete() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_040, "character", "Spared", 0.0, false, "[]");
+      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
+      let _ = update(&mut state, Message::ContactDeleteCancelled, &db);
+
+      assert!(state.contact_delete().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_confirms_a_delete_and_drops_the_row_immediately() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      character::upsert_contact(&db, &contact(95_030, "character", "Doomed", 0.0, false, "[]"))
+        .await
+        .unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_030, "character", "Doomed", 0.0, false, "[]");
+      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
+      assert!(state.contact_delete().is_some());
+
+      let task = update(&mut state, Message::ContactDeleteConfirmed, &db);
+      drop(task);
+      enqueue_contact_remove(db.clone(), 42, contact(95_030, "character", "Doomed", 0.0, false, "[]"))
+        .await
+        .unwrap();
+
+      assert!(state.contact_delete().is_none(), "the confirm dialog closes");
+      assert_eq!(outbox_count(&db, "contact.remove").await, 1);
+      assert!(!contact_present(&db, 95_030).await, "the row drops optimistically");
     }
 
     #[tokio::test]
@@ -3262,28 +2097,6 @@ mod tests {
         state.contact_modal().unwrap().entity().is_none(),
         "a stale results message does not populate the picker"
       );
-    }
-
-    #[tokio::test]
-    async fn it_builds_a_submit_task_and_clears_the_modal_on_success() {
-      let db = store::open_test().await.unwrap();
-      let mut state = loaded_state(42);
-      let _ = update(&mut state, Message::ContactAddOpened, &db);
-      let _ = update(
-        &mut state,
-        Message::ContactEntityChanged(Some(entity(95_010, EntityKind::Character, "New Friend"))),
-        &db,
-      );
-
-      let task = update(&mut state, Message::ContactModalSubmitted, &db);
-      drop(task);
-      assert!(
-        state.contact_modal().is_some(),
-        "the modal stays open until the enqueue resolves"
-      );
-
-      let _ = update(&mut state, Message::ContactSubmitted(Ok(())), &db);
-      assert!(state.contact_modal().is_none(), "a successful enqueue closes the modal");
     }
 
     #[tokio::test]
@@ -3353,39 +2166,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_confirms_a_delete_and_drops_the_row_immediately() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Owner", None).await;
-      character::upsert_contact(&db, &contact(95_030, "character", "Doomed", 0.0, false, "[]"))
-        .await
-        .unwrap();
-      let mut state = loaded_state(42);
-
-      let row = contact(95_030, "character", "Doomed", 0.0, false, "[]");
-      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
-      assert!(state.contact_delete().is_some());
-
-      let task = update(&mut state, Message::ContactDeleteConfirmed, &db);
-      drop(task);
-      enqueue_contact_remove(db.clone(), 42, contact(95_030, "character", "Doomed", 0.0, false, "[]"))
-        .await
-        .unwrap();
-
-      assert!(state.contact_delete().is_none(), "the confirm dialog closes");
-      assert_eq!(outbox_count(&db, "contact.remove").await, 1);
-      assert!(!contact_present(&db, 95_030).await, "the row drops optimistically");
-    }
-
-    #[tokio::test]
-    async fn it_cancels_a_pending_delete() {
+    async fn it_forces_watch_off_for_non_character_entities() {
       let db = store::open_test().await.unwrap();
       let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
 
-      let row = contact(95_040, "character", "Spared", 0.0, false, "[]");
-      let _ = update(&mut state, Message::ContactDeleteRequested(Box::new(row)), &db);
-      let _ = update(&mut state, Message::ContactDeleteCancelled, &db);
+      let _ = update(
+        &mut state,
+        Message::ContactEntityChanged(Some(entity(98_001, EntityKind::Corporation, "Test Corp"))),
+        &db,
+      );
+      let _ = update(&mut state, Message::ContactWatchToggled, &db);
 
-      assert!(state.contact_delete().is_none());
+      assert!(
+        !state.contact_modal().unwrap().watch(),
+        "a corporation can never be watchlisted"
+      );
     }
 
     #[tokio::test]
@@ -3403,58 +2199,357 @@ mod tests {
         "the modal stays open until an entity is chosen"
       );
     }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_add_modal() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+      assert!(state.contact_modal().is_some());
+      assert!(!state.contact_modal().unwrap().is_edit());
+
+      let _ = update(&mut state, Message::ContactModalClosed, &db);
+      assert!(state.contact_modal().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_edit_modal_with_the_entity_locked() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let row = contact(95_001, "character", "Test Pilot", 5.0, true, "[1]");
+      let _ = update(&mut state, Message::ContactEditOpened(Box::new(row)), &db);
+
+      let modal = state.contact_modal().expect("modal open");
+      assert!(modal.is_edit());
+      assert_eq!(modal.entity().map(|e| e.id), Some(95_001));
+      assert_eq!(modal.standing(), 5.0);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_field_edits_in_the_open_modal() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let _ = update(&mut state, Message::ContactAddOpened, &db);
+
+      let _ = update(
+        &mut state,
+        Message::ContactEntityChanged(Some(entity(95_002, EntityKind::Character, "New Pilot"))),
+        &db,
+      );
+      let _ = update(&mut state, Message::ContactStandingChanged(-10.0), &db);
+      let _ = update(&mut state, Message::ContactLabelToggled(2), &db);
+      let _ = update(&mut state, Message::ContactWatchToggled, &db);
+
+      let modal = state.contact_modal().expect("modal open");
+      assert_eq!(modal.entity().map(|e| e.id), Some(95_002));
+      assert_eq!(modal.standing(), -10.0);
+      assert_eq!(modal.labels(), &[2]);
+      assert!(modal.watch());
+      assert!(modal.can_submit());
+    }
   }
 
-  mod write_gating {
+  mod contacts_write_enabled {
     use super::*;
 
     #[test]
-    fn it_renders_the_contacts_tab_with_write_actions_when_the_scope_is_granted() {
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
+    fn it_is_enabled_when_the_write_scope_is_granted() {
+      use crate::clients::esi::scopes;
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = Some(format!(
+        "{} {}",
+        scopes::CHARACTER_CONTACTS,
+        scopes::CHARACTER_CONTACTS_WRITE
+      ));
 
       assert!(state.contacts_write_enabled());
-      let _el: Element<'_, Message> = view(&state);
     }
 
     #[test]
-    fn it_renders_the_contacts_tab_read_only_when_the_write_scope_is_absent() {
-      use crate::clients::esi::scopes;
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
+    fn it_is_gated_when_no_scopes_are_granted() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = None;
 
       assert!(!state.contacts_write_enabled());
-      let _el: Element<'_, Message> = view(&state);
     }
 
     #[test]
-    fn it_renders_the_open_add_modal_overlay() {
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contact_modal = Some(tabs::contact_modal::ContactModal::add(Vec::new(), Vec::new()));
+    fn it_is_gated_when_only_the_read_scope_is_granted() {
+      use crate::clients::esi::scopes;
+      let mut state = State::new(42, &Feature::ALL);
+      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
 
-      let _el: Element<'_, Message> = view(&state);
+      assert!(
+        !state.contacts_write_enabled(),
+        "a pilot authorized before write_contacts existed must be surfaced for re-auth"
+      );
+    }
+  }
+
+  mod data_type_mapping {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_each_rendered_kind_to_its_detail_type() {
+      assert_eq!(
+        DetailDataType::for_job_kind(JobKind::CharacterClones),
+        Some(DetailDataType::Clones)
+      );
+      assert_eq!(
+        DetailDataType::for_job_kind(JobKind::CharacterContacts),
+        Some(DetailDataType::Contacts)
+      );
+      assert_eq!(
+        DetailDataType::for_job_kind(JobKind::CharacterKillmails),
+        Some(DetailDataType::Killlog)
+      );
+      assert_eq!(
+        DetailDataType::for_job_kind(JobKind::CharacterNotifications),
+        Some(DetailDataType::Notifications)
+      );
+      assert_eq!(
+        DetailDataType::for_job_kind(JobKind::CharacterStandings),
+        Some(DetailDataType::Standings)
+      );
     }
 
     #[test]
-    fn it_renders_the_delete_confirm_overlay() {
-      let mut state = loaded_state(42);
-      state.active_tab = Tab::Contacts;
-      state.contact_delete = Some(tabs::contact_modal::DeleteConfirm {
-        contact: CharacterContact {
-          character_id: 42,
-          contact_id: 95_050,
-          contact_name: "Doomed".to_owned(),
-          contact_type: "character".to_owned(),
-          is_blocked: false,
-          is_watched: false,
-          label_ids: "[]".to_owned(),
-          standing: 0.0,
-        },
-      });
+    fn it_maps_unrendered_kinds_to_none() {
+      for kind in [
+        JobKind::AssetSync,
+        JobKind::CharacterAbyssals,
+        JobKind::CharacterMarketOrders,
+        JobKind::CharacterProfile,
+        JobKind::CharacterSkills,
+        JobKind::CharacterTelemetry,
+        JobKind::CharacterWallet,
+        JobKind::CorporationProfile,
+        JobKind::CorporationWallet,
+        JobKind::MarketPrices,
+        JobKind::NetWorthSnapshot,
+      ] {
+        assert_eq!(
+          DetailDataType::for_job_kind(kind),
+          None,
+          "{kind:?} should not reload the detail"
+        );
+      }
+    }
+  }
 
-      let _el: Element<'_, Message> = view(&state);
+  mod load_contacts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_contact(db: &Database, contact_id: i64, kind: &str, name: &str) {
+      sqlx::query(
+        "INSERT INTO character_contacts \
+          (character_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
+        VALUES (42, ?, ?, 0.0, 0, 0, '[]', ?)",
+      )
+      .bind(contact_id)
+      .bind(kind)
+      .bind(name)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn seed_label(db: &Database, label_id: i64, name: &str) {
+      sqlx::query("INSERT INTO character_contact_labels (character_id, label_id, label_name) VALUES (42, ?, ?)")
+        .bind(label_id)
+        .bind(name)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_labels_through_a_filter_restart() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      seed_label(&db, 1, "Fleet").await;
+      seed_contact(&db, 100, "character", "Wingmate").await;
+
+      let mut state = State::new(42, &Feature::ALL);
+      state.contacts = load_contacts(&db, 42).await;
+      reset_contacts_pagination(&mut state);
+
+      // A filter change re-runs the first page; its labels must survive so the address-book notes still resolve.
+      let task = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+      // Drive the dispatched first-page load to completion and apply it.
+      let page = load_contacts_page(
+        db.clone(),
+        42,
+        Some("character"),
+        None,
+        ContactSortColumn::Standing,
+        ContactSortDir::Desc,
+        None,
+      )
+      .await;
+      drop(task);
+      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
+
+      let LoadState::Loaded(page) = &state.contacts else {
+        panic!("expected a loaded contacts page");
+      };
+      assert_eq!(
+        page
+          .labels()
+          .iter()
+          .map(|l| l.label_name().as_str())
+          .collect::<Vec<_>>(),
+        ["Fleet"],
+        "labels survive a sort/filter restart"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_first_page_with_resolved_rows_and_labels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      seed_label(&db, 1, "Fleet").await;
+      seed_contact(&db, 100, "character", "Wingmate").await;
+
+      let LoadState::Loaded(page) = load_contacts(&db, 42).await else {
+        panic!("expected a loaded contacts page");
+      };
+
+      assert_eq!(page.rows().len(), 1);
+      assert_eq!(page.rows()[0].contact.contact_name(), "Wingmate");
+      assert_eq!(
+        page
+          .labels()
+          .iter()
+          .map(|l| l.label_name().as_str())
+          .collect::<Vec<_>>(),
+        ["Fleet"]
+      );
+    }
+  }
+
+  mod load_detail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_the_roster_head_and_every_tab() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot", Some(2.5)).await;
+      seed_telemetry(&db, 42, Some(60_003_760)).await;
+      character::upsert_killmail(&db, &kill_entry(42, 100, None, None))
+        .await
+        .unwrap();
+
+      let loaded = load_detail(db.clone(), 42, vec![42]).await;
+
+      assert_eq!(loaded.roster.len(), 1);
+      assert_eq!(loaded.roster[0].name, "Test Pilot");
+      assert_eq!(loaded.head.sec_status, Some(2.5));
+      assert!(matches!(loaded.clones, LoadState::Loaded(_)));
+      assert!(matches!(loaded.contacts, LoadState::Loaded(_)));
+      assert!(matches!(loaded.killlog, LoadState::Loaded(ref rows) if rows.len() == 1));
+      assert!(matches!(loaded.notifications, LoadState::Loaded(_)));
+    }
+
+    #[tokio::test]
+    async fn it_loads_with_an_empty_owned_roster() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot", None).await;
+
+      let loaded = load_detail(db.clone(), 42, Vec::new()).await;
+
+      assert!(loaded.roster.is_empty());
+      assert!(matches!(loaded.clones, LoadState::Loaded(_)));
+    }
+  }
+
+  mod load_granted_scopes {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_none_when_the_character_has_no_credential() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(load_granted_scopes(&db, 42).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_credential_scopes_for_the_character() {
+      let db = store::open_test().await.unwrap();
+      infra::upsert(
+        &db,
+        42,
+        OwnerType::Character,
+        "tok",
+        "rt",
+        9999,
+        None,
+        Some("esi-clones.read_clones.v1 esi-characters.read_standings.v1"),
+      )
+      .await
+      .unwrap();
+
+      let scopes = load_granted_scopes(&db, 42).await;
+
+      assert_eq!(
+        scopes.as_deref(),
+        Some("esi-clones.read_clones.v1 esi-characters.read_standings.v1")
+      );
+    }
+  }
+
+  mod load_head_stats {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_infers_docked_from_a_present_station_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", Some(1.0)).await;
+      seed_telemetry(&db, 42, Some(60_003_760)).await;
+
+      let head = load_head_stats(&db, 42).await;
+
+      assert!(head.docked, "a present station id means docked");
+      assert_eq!(head.sec_status, Some(1.0));
+    }
+
+    #[tokio::test]
+    async fn it_is_undocked_with_no_station_or_structure() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      seed_telemetry(&db, 42, None).await;
+
+      let head = load_head_stats(&db, 42).await;
+
+      assert!(!head.docked);
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_the_sec_status_when_no_state_row_exists() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", Some(4.8)).await;
+
+      let head = load_head_stats(&db, 42).await;
+
+      assert_eq!(head.sec_status, Some(4.8));
+      assert!(head.location.is_none());
+      assert!(!head.docked);
     }
   }
 
@@ -3462,6 +2557,17 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_is_an_empty_loaded_list_when_there_are_no_killmails() {
+      let db = store::open_test().await.unwrap();
+
+      let LoadState::Loaded(entries) = load_killlog(&db, 42).await else {
+        panic!("expected a loaded killlog");
+      };
+
+      assert!(entries.is_empty());
+    }
 
     #[tokio::test]
     async fn it_resolves_each_killmail_into_a_render_ready_entry() {
@@ -3515,224 +2621,6 @@ mod tests {
       assert_eq!(entries[0].victim_name, "Unknown");
       assert_eq!(entries[0].victim_corp, "");
     }
-
-    #[tokio::test]
-    async fn it_is_an_empty_loaded_list_when_there_are_no_killmails() {
-      let db = store::open_test().await.unwrap();
-
-      let LoadState::Loaded(entries) = load_killlog(&db, 42).await else {
-        panic!("expected a loaded killlog");
-      };
-
-      assert!(entries.is_empty());
-    }
-  }
-
-  mod load_contacts {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn seed_contact(db: &Database, contact_id: i64, kind: &str, name: &str) {
-      sqlx::query(
-        "INSERT INTO character_contacts \
-          (character_id, contact_id, contact_type, standing, is_watched, is_blocked, label_ids, contact_name) \
-        VALUES (42, ?, ?, 0.0, 0, 0, '[]', ?)",
-      )
-      .bind(contact_id)
-      .bind(kind)
-      .bind(name)
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    async fn seed_label(db: &Database, label_id: i64, name: &str) {
-      sqlx::query("INSERT INTO character_contact_labels (character_id, label_id, label_name) VALUES (42, ?, ?)")
-        .bind(label_id)
-        .bind(name)
-        .execute(&db.0)
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_loads_the_first_page_with_resolved_rows_and_labels() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", None).await;
-      seed_label(&db, 1, "Fleet").await;
-      seed_contact(&db, 100, "character", "Wingmate").await;
-
-      let LoadState::Loaded(page) = load_contacts(&db, 42).await else {
-        panic!("expected a loaded contacts page");
-      };
-
-      assert_eq!(page.rows().len(), 1);
-      assert_eq!(page.rows()[0].contact.contact_name(), "Wingmate");
-      assert_eq!(
-        page
-          .labels()
-          .iter()
-          .map(|l| l.label_name().as_str())
-          .collect::<Vec<_>>(),
-        ["Fleet"]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_keeps_the_labels_through_a_filter_restart() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", None).await;
-      seed_label(&db, 1, "Fleet").await;
-      seed_contact(&db, 100, "character", "Wingmate").await;
-
-      let mut state = State::new(42, &Feature::ALL);
-      state.contacts = load_contacts(&db, 42).await;
-      reset_contacts_pagination(&mut state);
-
-      // A filter change re-runs the first page; its labels must survive so the address-book notes still resolve.
-      let task = update(
-        &mut state,
-        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
-        &db,
-      );
-      // Drive the dispatched first-page load to completion and apply it.
-      let page = load_contacts_page(
-        db.clone(),
-        42,
-        Some("character"),
-        None,
-        ContactSortColumn::Standing,
-        ContactSortDir::Desc,
-        None,
-      )
-      .await;
-      drop(task);
-      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
-
-      let LoadState::Loaded(page) = &state.contacts else {
-        panic!("expected a loaded contacts page");
-      };
-      assert_eq!(
-        page
-          .labels()
-          .iter()
-          .map(|l| l.label_name().as_str())
-          .collect::<Vec<_>>(),
-        ["Fleet"],
-        "labels survive a sort/filter restart"
-      );
-    }
-  }
-
-  mod load_head_stats {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_only_the_sec_status_when_no_state_row_exists() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", Some(4.8)).await;
-
-      let head = load_head_stats(&db, 42).await;
-
-      assert_eq!(head.sec_status, Some(4.8));
-      assert!(head.location.is_none());
-      assert!(!head.docked);
-    }
-
-    #[tokio::test]
-    async fn it_infers_docked_from_a_present_station_id() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", Some(1.0)).await;
-      seed_telemetry(&db, 42, Some(60_003_760)).await;
-
-      let head = load_head_stats(&db, 42).await;
-
-      assert!(head.docked, "a present station id means docked");
-      assert_eq!(head.sec_status, Some(1.0));
-    }
-
-    #[tokio::test]
-    async fn it_is_undocked_with_no_station_or_structure() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Pilot", None).await;
-      seed_telemetry(&db, 42, None).await;
-
-      let head = load_head_stats(&db, 42).await;
-
-      assert!(!head.docked);
-    }
-  }
-
-  mod picker_pilot {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_resolves_identity_and_corp_ticker() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot", None).await;
-
-      let pilot = picker_pilot(&db, 42, None).await;
-
-      assert_eq!(pilot.id, 42);
-      assert_eq!(pilot.name, "Test Pilot");
-      assert_eq!(pilot.corp, "TSC");
-      assert_eq!(pilot.total_sp, 0);
-    }
-
-    #[tokio::test]
-    async fn it_falls_back_to_empty_fields_for_an_unknown_pilot() {
-      let db = store::open_test().await.unwrap();
-
-      let pilot = picker_pilot(&db, 999, None).await;
-
-      assert_eq!(pilot.id, 999);
-      assert_eq!(pilot.name, "");
-      assert_eq!(pilot.corp, "");
-      assert_eq!(pilot.total_sp, 0);
-      assert!(pilot.portrait.path().is_none());
-    }
-  }
-
-  mod load_detail {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_loads_the_roster_head_and_every_tab() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot", Some(2.5)).await;
-      seed_telemetry(&db, 42, Some(60_003_760)).await;
-      character::upsert_killmail(&db, &kill_entry(42, 100, None, None))
-        .await
-        .unwrap();
-
-      let loaded = load_detail(db.clone(), 42, vec![42]).await;
-
-      assert_eq!(loaded.roster.len(), 1);
-      assert_eq!(loaded.roster[0].name, "Test Pilot");
-      assert_eq!(loaded.head.sec_status, Some(2.5));
-      assert!(matches!(loaded.clones, LoadState::Loaded(_)));
-      assert!(matches!(loaded.contacts, LoadState::Loaded(_)));
-      assert!(matches!(loaded.killlog, LoadState::Loaded(ref rows) if rows.len() == 1));
-      assert!(matches!(loaded.notifications, LoadState::Loaded(_)));
-    }
-
-    #[tokio::test]
-    async fn it_loads_with_an_empty_owned_roster() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Test Pilot", None).await;
-
-      let loaded = load_detail(db.clone(), 42, Vec::new()).await;
-
-      assert!(loaded.roster.is_empty());
-      assert!(matches!(loaded.clones, LoadState::Loaded(_)));
-    }
   }
 
   mod load_killmail_detail {
@@ -3769,6 +2657,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_flags_the_viewing_character_among_the_attackers() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Owner", None).await;
+      character::upsert_killmail(&db, &kill_entry(42, 100, Some(9), None))
+        .await
+        .unwrap();
+      let attackers = vec![attacker(100, 0, 42, 100, true)];
+      character::upsert_killmail_detail(&db, 42, 100, &attackers, &[])
+        .await
+        .unwrap();
+
+      let detail = load_killmail_detail(db.clone(), 42, 100).await.expect("detail loads");
+
+      assert!(detail.attackers[0].is_self);
+    }
+
+    #[tokio::test]
     async fn it_groups_items_by_slot_and_sorts_attackers_final_blow_then_share() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42, "Owner", None).await;
@@ -3801,23 +2706,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_flags_the_viewing_character_among_the_attackers() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42, "Owner", None).await;
-      character::upsert_killmail(&db, &kill_entry(42, 100, Some(9), None))
-        .await
-        .unwrap();
-      let attackers = vec![attacker(100, 0, 42, 100, true)];
-      character::upsert_killmail_detail(&db, 42, 100, &attackers, &[])
-        .await
-        .unwrap();
-
-      let detail = load_killmail_detail(db.clone(), 42, 100).await.expect("detail loads");
-
-      assert!(detail.attackers[0].is_self);
-    }
-
-    #[tokio::test]
     async fn it_returns_none_for_an_unknown_killmail() {
       let db = store::open_test().await.unwrap();
 
@@ -3825,40 +2713,629 @@ mod tests {
     }
   }
 
-  mod load_granted_scopes {
+  mod load_standings_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_faction(db: &Database) {
+      sqlx::query(
+        "INSERT INTO factions (id, corporation_id, description, is_unique, name, size_factor, station_count, \
+        station_system_count) VALUES (500001, 1000099, '', 1, 'Caldari State', 1.0, 0, 0)",
+      )
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_maps_a_faction_to_a_corporation_logo_of_its_corporation_id() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_faction(&db).await;
+
+      let catalog = load_standings_catalog(&db, 42, "", false).await.unwrap();
+      let faction = catalog.rows.iter().find(|row| row.name == "Caldari State").unwrap();
+
+      assert_eq!(faction.kind, StandingKind::Faction);
+      let resolved = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, 1_000_099);
+      assert_eq!(faction.image.stale_key(), resolved.stale_key());
+      assert_eq!(faction.image.path(), resolved.path());
+    }
+  }
+
+  mod mark_dirty {
+    use super::*;
+
+    const PILOT: i64 = 42;
+
+    fn finished(kind: JobKind, subject: Subject) -> JobKey {
+      JobKey::new(kind, subject)
+    }
+
+    #[test]
+    fn it_ignores_a_corporation_subject_job() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Corporation(PILOT)));
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_finished_job_for_a_different_pilot() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT + 1)));
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_ignores_a_kind_this_screen_does_not_render() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterWallet, Subject::Character(PILOT)));
+      state.mark_dirty(finished(JobKind::CharacterTelemetry, Subject::Character(PILOT)));
+
+      assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn it_marks_the_matching_type_for_the_drilled_in_pilot() {
+      let mut state = State::new(PILOT, &[]);
+
+      state.mark_dirty(finished(JobKind::CharacterClones, Subject::Character(PILOT)));
+
+      assert!(state.is_dirty());
+    }
+  }
+
+  mod pagination {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::CharacterContact;
+
+    fn killlog_entry(killmail_id: i64, kill_time: &str) -> KillLogEntry {
+      KillLogEntry {
+        attacker_count: 1,
+        final_blow: true,
+        is_kill: true,
+        kill_time: kill_time.to_owned(),
+        killmail_id,
+        ship_icon: images::IconResolution::Missing,
+        ship_name: "Rifter".to_owned(),
+        ship_type_id: 587,
+        system_name: Some("Jita".to_owned()),
+        system_security: 0.9,
+        value_destroyed_isk: 0.0,
+        value_isk: 0.0,
+        victim_corp: String::new(),
+        victim_name: "Unknown".to_owned(),
+      }
+    }
+
+    fn contact_row(contact_id: i64) -> ContactRow {
+      ContactRow {
+        contact: CharacterContact {
+          character_id: 42,
+          contact_id,
+          contact_name: format!("Contact {contact_id}"),
+          contact_type: "character".to_owned(),
+          is_blocked: false,
+          is_watched: false,
+          label_ids: String::new(),
+          standing: 0.0,
+        },
+        image: images::ImageState::Stale {
+          id: contact_id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      }
+    }
+
+    fn contacts_page(count: i64) -> ContactsPage {
+      ContactsPage::for_test((0..count).map(|n| contact_row(95_000 + n)).collect(), Vec::new(), false)
+    }
+
+    fn killlog_page(count: i64) -> Vec<KillLogEntry> {
+      (0..count)
+        .map(|n| killlog_entry(1000 + n, "2024-01-01T00:00:00Z"))
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_contacts_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_loading_more = true;
+
+      let mut page = contacts_page(3);
+      page.has_more = false;
+      let _ = update(&mut state, Message::ContactsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.contacts_loading_more);
+      assert!(!state.contacts_has_more, "a short appended page exhausts the set");
+      assert!(
+        matches!(state.contacts, LoadState::Loaded(ref page) if page.rows().len() == CONTACTS_PAGE_SIZE as usize + 3)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_killlog_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      state.killlog_loading_more = true;
+
+      let _ = update(&mut state, Message::KilllogPageLoaded(killlog_page(3)), &db);
+
+      assert!(!state.killlog_loading_more);
+      assert!(!state.killlog_has_more, "a short appended page exhausts the log");
+      assert!(matches!(state.killlog, LoadState::Loaded(ref rows) if rows.len() == KILLLOG_PAGE_SIZE as usize + 3));
+    }
+
+    #[tokio::test]
+    async fn it_appends_a_standings_page_and_recomputes_has_more() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let before = match &state.standings {
+        LoadState::Loaded(rows) => rows.len(),
+        _ => 0,
+      };
+      state.standings_loading_more = true;
+
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: Some(("Next".to_owned(), 9)),
+        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_loading_more);
+      assert!(state.standings_has_more, "a carried cursor means more pages remain");
+      assert_eq!(state.standings_agent_cursor, Some(("Next".to_owned(), 9)));
+      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before + 1));
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_stale_standings_page_from_an_old_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_generation = 5;
+      state.standings_loading_more = true;
+      let before = match &state.standings {
+        LoadState::Loaded(rows) => rows.len(),
+        _ => 0,
+      };
+
+      let page = StandingsAgentsPage {
+        generation: 4,
+        next_cursor: Some(("Next".to_owned(), 9)),
+        rows: vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)],
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_loading_more, "loading clears even for a stale page");
+      assert!(
+        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == before),
+        "a stale generation does not append rows"
+      );
+      assert!(
+        state.standings_agent_cursor.is_none(),
+        "the stale cursor is not adopted"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_exhausts_standings_when_a_page_carries_no_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_loading_more = true;
+
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: None,
+        rows: Vec::new(),
+      };
+      let _ = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_has_more);
+      assert_eq!(state.standings_agent_cursor, None);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_contacts_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert!(!state.contacts_loading_more, "a sub-threshold scroll is a no-op");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_full_contacts_page_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(3));
+      state.contacts_has_more = false;
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(!state.contacts_loading_more, "an exhausted set does not fetch");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_killlog_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_killlog_scroll_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(3));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(!state.killlog_has_more, "a short page is the last page");
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_below_the_threshold() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.5,
+        },
+        &db,
+      );
+
+      assert!(!state.standings_loading_more, "a sub-threshold scroll is a no-op");
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_when_the_filter_does_not_surface_agents() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(
+        !state.standings_loading_more,
+        "a non-agent filter does not paginate agents"
+      );
+      assert!(state.standings_has_more, "the cursor and has_more are left untouched");
+      assert_eq!(state.standings_agent_cursor, Some(("Agent".to_owned(), 1)));
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_while_already_loading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_loading_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_standings_scroll_with_no_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = false;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(!state.standings_loading_more, "exhausted agents do not fetch");
+    }
+
+    #[tokio::test]
+    async fn it_marks_loading_and_clears_the_cursor_guard_on_a_standings_page_fetch() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("Agent".to_owned(), 1));
+
+      let _ = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(state.standings_loading_more, "a qualifying scroll starts a load");
+    }
+
+    #[tokio::test]
+    async fn it_marks_loading_on_a_qualifying_killlog_scroll() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.killlog = LoadState::Loaded(killlog_page(KILLLOG_PAGE_SIZE));
+      reset_killlog_pagination(&mut state);
+
+      let _ = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_restarts_contacts_pagination_on_a_filter_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_scroll_offset = 900.0;
+
+      let _ = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+
+      assert!(
+        matches!(state.contacts, LoadState::Loading),
+        "switching filters re-runs the first page from SQL"
+      );
+      assert_eq!(state.contacts_scroll_offset(), 0.0, "the window snaps back to the top");
+      assert!(state.contacts_loading_more, "a fresh first page is in flight");
+    }
+
+    #[tokio::test]
+    async fn it_starts_a_contacts_fetch_past_the_threshold_with_more_pages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(0.0, 95_099));
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 0.0,
+          relative: 0.95,
+        },
+        &db,
+      );
+
+      assert!(state.contacts_loading_more, "a qualifying scroll starts a load");
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_contacts_scroll_offset_for_windowing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contacts = LoadState::Loaded(contacts_page(CONTACTS_PAGE_SIZE));
+
+      let _ = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 1_234.0,
+          relative: 0.1,
+        },
+        &db,
+      );
+
+      assert_eq!(state.contacts_scroll_offset(), 1_234.0);
+    }
+  }
+
+  mod picker_pilot {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[tokio::test]
-    async fn it_returns_the_credential_scopes_for_the_character() {
+    async fn it_falls_back_to_empty_fields_for_an_unknown_pilot() {
       let db = store::open_test().await.unwrap();
-      infra::upsert(
+
+      let pilot = picker_pilot(&db, 999, None).await;
+
+      assert_eq!(pilot.id, 999);
+      assert_eq!(pilot.name, "");
+      assert_eq!(pilot.corp, "");
+      assert_eq!(pilot.total_sp, 0);
+      assert!(pilot.portrait.path().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_identity_and_corp_ticker() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Test Pilot", None).await;
+
+      let pilot = picker_pilot(&db, 42, None).await;
+
+      assert_eq!(pilot.id, 42);
+      assert_eq!(pilot.name, "Test Pilot");
+      assert_eq!(pilot.corp, "TSC");
+      assert_eq!(pilot.total_sp, 0);
+    }
+  }
+
+  mod reload_arm {
+    use super::*;
+
+    fn contacts() -> ContactsPage {
+      ContactsPage::for_test(Vec::new(), Vec::new(), false)
+    }
+
+    #[tokio::test]
+    async fn it_replaces_a_contacts_reload_without_touching_standings() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let _ = update(
+        &mut state,
+        Message::Reloaded(Box::new(Reloaded::Contacts(LoadState::Loaded(contacts())))),
         &db,
-        42,
-        OwnerType::Character,
-        "tok",
-        "rt",
-        9999,
-        None,
-        Some("esi-clones.read_clones.v1 esi-characters.read_standings.v1"),
-      )
-      .await
-      .unwrap();
+      );
 
-      let scopes = load_granted_scopes(&db, 42).await;
-
-      assert_eq!(
-        scopes.as_deref(),
-        Some("esi-clones.read_clones.v1 esi-characters.read_standings.v1")
+      assert!(matches!(state.contacts, LoadState::Loaded(_)), "contacts replaced");
+      assert!(
+        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
+        "standings left intact"
       );
     }
 
     #[tokio::test]
-    async fn it_is_none_when_the_character_has_no_credential() {
+    async fn it_replaces_a_killlog_reload_without_touching_standings() {
       let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
 
-      assert!(load_granted_scopes(&db, 42).await.is_none());
+      let _ = update(
+        &mut state,
+        Message::Reloaded(Box::new(Reloaded::Killlog(LoadState::Loaded(Vec::new())))),
+        &db,
+      );
+
+      assert!(matches!(state.killlog, LoadState::Loaded(_)), "killlog replaced");
+      assert!(
+        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
+        "standings left intact"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_a_notifications_reload() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+
+      let _ = update(
+        &mut state,
+        Message::Reloaded(Box::new(Reloaded::Notifications(LoadState::Loaded(Vec::new())))),
+        &db,
+      );
+
+      assert!(
+        matches!(state.notifications, LoadState::Loaded(_)),
+        "notifications replaced"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_replaces_only_the_reloaded_field_and_leaves_the_rest() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2));
+      assert!(matches!(state.clones, LoadState::Loading));
+
+      let _ = update(
+        &mut state,
+        Message::Reloaded(Box::new(Reloaded::Clones(LoadState::Loaded(None)))),
+        &db,
+      );
+
+      assert!(matches!(state.clones, LoadState::Loaded(None)), "clones replaced");
+      assert!(
+        matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 2),
+        "standings left intact"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_retriggers_the_standings_catalog_on_a_standings_reload() {
+      let db = store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      let before = state.standings_generation;
+
+      let _ = update(&mut state, Message::Reloaded(Box::new(Reloaded::Standings)), &db);
+
+      assert!(
+        matches!(state.standings, LoadState::Loading),
+        "a standings reload re-runs the catalog query"
+      );
+      assert_eq!(state.standings_generation, before + 1);
     }
   }
 
@@ -3893,6 +3370,529 @@ mod tests {
         reload_type(db.clone(), 42, DetailDataType::Standings).await,
         Reloaded::Standings
       ));
+    }
+  }
+
+  mod standings_search {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_an_inserted_fragment_and_closes_the_help() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      state.standings_help_open = true;
+      state.standings_query = "faction:caldari".to_owned();
+
+      let _ = update(&mut state, Message::StandingsInsertQuery("corp:navy".to_owned()), &db);
+
+      assert_eq!(state.standings_query, "faction:caldari corp:navy");
+      assert!(!state.standings_help_open);
+    }
+
+    #[tokio::test]
+    async fn it_applies_results_only_for_the_current_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      state.standings_generation = 5;
+
+      let stale = StandingsResult {
+        generation: 4,
+        result: Ok(StandingsCatalog {
+          agent_cursor: None,
+          rows: Vec::new(),
+        }),
+      };
+      let _ = update(&mut state, Message::StandingsResults(Box::new(stale)), &db);
+      assert!(matches!(state.standings, LoadState::Loading), "stale result is dropped");
+
+      let fresh = StandingsResult {
+        generation: 5,
+        result: Ok(StandingsCatalog {
+          agent_cursor: None,
+          rows: vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)],
+        }),
+      };
+      let _ = update(&mut state, Message::StandingsResults(Box::new(fresh)), &db);
+
+      assert!(matches!(state.standings, LoadState::Loaded(ref rows) if rows.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_query_and_re_runs_the_default_catalog() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let _ = update(&mut state, Message::StandingsSearchChanged("corp:navy".to_owned()), &db);
+
+      let _ = update(&mut state, Message::StandingsClearSearch, &db);
+
+      assert!(state.standings_query.is_empty());
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_keeps_an_agent_filter_in_memory_when_agents_are_already_loaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings = LoadState::Loaded(vec![standings_row_fixture(3_000_001, StandingKind::Agent, 1.0)]);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Agents);
+      assert_eq!(
+        state.standings_generation, before,
+        "agents already loaded means no reload"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_records_the_facet_filter_without_reloading() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Corps),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter, tabs::standings::StandingsFilter::Corps);
+      assert_eq!(state.standings_generation, before, "filtering is in-memory only");
+    }
+
+    #[tokio::test]
+    async fn it_records_the_query_and_advances_the_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::StandingsSearchChanged("faction:caldari".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.standings_query, "faction:caldari");
+      assert_eq!(state.standings_generation, 1);
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_reloads_an_agent_filter_when_no_agents_are_loaded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = loaded_state(42);
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings = LoadState::Loaded(vec![standings_row_fixture(500_001, StandingKind::Faction, 5.0)]);
+      let before = state.standings_generation;
+
+      let _ = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Agents),
+        &db,
+      );
+
+      assert_eq!(
+        state.standings_generation,
+        before + 1,
+        "switching to agents with none loaded triggers a reload"
+      );
+      assert!(matches!(state.standings, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_help_popover() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
+      assert!(state.standings_help_open);
+
+      let _ = update(&mut state, Message::StandingsToggleHelp, &db);
+      assert!(!state.standings_help_open);
+    }
+  }
+
+  mod state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_clones_when_no_gated_tab_is_enabled() {
+      let state = State::new(42, &[]);
+
+      assert_eq!(state.active_tab, Tab::Clones);
+    }
+
+    #[test]
+    fn it_omits_fresh_roster_portraits_from_the_stale_keys() {
+      let mut state = State::new(42, &[]);
+      let mut fresh = pilot(42, "Test Pilot");
+      fresh.portrait = images::ImageState::Fresh(std::path::PathBuf::from("/tmp/42.jpg"));
+      state.roster = vec![fresh];
+
+      assert!(state.stale_images().is_empty());
+    }
+
+    #[test]
+    fn it_selects_the_first_enabled_tab_on_open() {
+      let state = State::new(42, &Feature::ALL);
+
+      assert_eq!(state.active_tab, Tab::Clones);
+      assert_eq!(state.active(), 42);
+    }
+
+    #[test]
+    fn it_surfaces_stale_roster_portraits_as_image_keys() {
+      let mut state = State::new(42, &[]);
+      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
+
+      let stale = state.stale_images();
+
+      assert_eq!(
+        stale,
+        vec![
+          (images::ImageKind::CharacterPortrait, 42),
+          (images::ImageKind::CharacterPortrait, 7),
+        ]
+      );
+    }
+
+    #[test]
+    fn sync_features_keeps_a_still_enabled_active_tab() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.active_tab = Tab::Standings;
+
+      state.sync_features(&[Feature::CloneMonitoring, Feature::Standings]);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+
+    #[test]
+    fn sync_features_rebuilds_the_enabled_tab_strip() {
+      let mut state = State::new(42, &Feature::ALL);
+
+      state.sync_features(&[Feature::Standings]);
+
+      assert_eq!(state.enabled_tabs, vec![Tab::Standings]);
+    }
+
+    #[test]
+    fn sync_features_reselects_the_active_tab_when_it_is_disabled() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.active_tab = Tab::Standings;
+
+      state.sync_features(&[Feature::CombatLog]);
+
+      assert_eq!(
+        state.active_tab,
+        Tab::Killlog,
+        "disabling the active tab's feature re-resolves to the first remaining tab"
+      );
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_killmail_detail_modal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
+        &db,
+      );
+      assert!(state.selected_killmail.is_some());
+
+      let _ = update(&mut state, Message::CloseKillmailDetail, &db);
+      assert!(state.selected_killmail.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_records_the_active_pilot_and_closes_the_picker_on_a_switch() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      state.picker_open = true;
+
+      let _ = update(&mut state, Message::CharacterChanged(7), &db);
+
+      assert_eq!(state.active, 7);
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::TabChanged(Tab::Standings), &db);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_picker_dropdown() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(state.picker_open);
+
+      let _ = update(&mut state, Message::PickerToggled, &db);
+      assert!(!state.picker_open);
+    }
+
+    #[tokio::test]
+    async fn it_treats_a_reauth_request_as_a_noop_for_the_app_shell_to_intercept() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::ReauthRequested(42), &db);
+
+      assert_eq!(state.active(), 42);
+    }
+  }
+
+  mod update_filters {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn unread_count_from(state: &LoadState<Vec<CharacterNotification>>) -> usize {
+      match state {
+        LoadState::Loaded(rows) => tabs::notifications::unread_count(rows),
+        _ => panic!("expected loaded notifications"),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_full_load_to_every_field() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let loaded = Loaded {
+        clones: LoadState::Loaded(None),
+        contacts: LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false)),
+        granted_scopes: None,
+        head: HeadStats {
+          total_sp: Some(1_000),
+          ..HeadStats::default()
+        },
+        killlog: LoadState::Loaded(Vec::new()),
+        notifications: LoadState::Loaded(Vec::new()),
+        roster: vec![pilot(42, "Pilot")],
+      };
+
+      let _ = update(&mut state, Message::Loaded(Box::new(loaded)), &db);
+
+      assert_eq!(state.roster.len(), 1);
+      assert_eq!(state.head.total_sp, Some(1_000));
+      assert!(matches!(state.clones, LoadState::Loaded(None)));
+      assert!(
+        matches!(state.standings, LoadState::Loading),
+        "a full load kicks off the standings catalog query"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_marks_a_notification_read_and_updates_the_unread_count() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42, "Pilot", None).await;
+      let mut unread = CharacterNotification {
+        character_id: 42,
+        is_read: false,
+        notif_type: "KillReportFinalBlow".to_owned(),
+        notification_id: 99,
+        sender_id: Some(1001),
+        sender_type: Some("character".to_owned()),
+        synced_at: "2024-01-02T00:00:00Z".to_owned(),
+        text: Some("body".to_owned()),
+        timestamp: "2024-01-01T00:00:00Z".to_owned(),
+      };
+      character::upsert_notification(&db, &unread).await.unwrap();
+      unread.notification_id = 100;
+      character::upsert_notification(&db, &unread).await.unwrap();
+
+      let mut state = State::new(42, &Feature::ALL);
+      state.notifications = load_notifications(&db, 42).await;
+      assert_eq!(unread_count_from(&state.notifications), 2);
+
+      let reloaded = mark_notification_read(db.clone(), 42, 99).await;
+      let _ = update(&mut state, Message::Reloaded(Box::new(reloaded)), &db);
+
+      assert_eq!(unread_count_from(&state.notifications), 1);
+      let read = match &state.notifications {
+        LoadState::Loaded(rows) => rows.iter().find(|n| n.notification_id() == 99).unwrap().is_read(),
+        _ => panic!("expected loaded notifications"),
+      };
+      assert!(read);
+
+      let reloaded = load_notifications(&db, 42).await;
+      let persisted_unread = match &reloaded {
+        LoadState::Loaded(rows) => tabs::notifications::unread_count(rows),
+        _ => panic!("expected loaded notifications"),
+      };
+      assert_eq!(persisted_unread, 1);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_contact_filter() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Character),
+        &db,
+      );
+
+      assert_eq!(state.contact_filter, tabs::contacts::ContactFilter::Character);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_contact_search_query_and_clears_it() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::ContactsSearchChanged("vex".to_owned()), &db);
+      assert_eq!(state.contacts_query(), "vex");
+
+      let _ = update(&mut state, Message::ContactsSearchCleared, &db);
+      assert_eq!(state.contacts_query(), "");
+    }
+
+    #[tokio::test]
+    async fn it_records_the_contact_sort() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+      let sort = tabs::contacts::ContactSort::default().toggled(tabs::contacts::SortColumn::Entity);
+
+      let _ = update(&mut state, Message::ContactSortChanged(sort), &db);
+
+      assert_eq!(state.contact_sort, sort);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_killlog_filter() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
+
+      assert_eq!(state.killlog_filter, KilllogFilter::Kills);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_notifications_filter() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new(42, &Feature::ALL);
+
+      let _ = update(
+        &mut state,
+        Message::NotificationsFilterChanged(NotificationsFilter::Unread),
+        &db,
+      );
+
+      assert_eq!(state.notifications_filter, NotificationsFilter::Unread);
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_loaded_detail_with_the_standings_tab() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Standings;
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_an_empty_tab_body_for_a_not_yet_implemented_tab() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Clones;
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_with_no_roster() {
+      let state = State::new(42, &Feature::ALL);
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_with_the_picker_dropdown_open() {
+      let mut state = loaded_state(42);
+      state.picker_open = true;
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod write_gating {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_contacts_tab_read_only_when_the_write_scope_is_absent() {
+      use crate::clients::esi::scopes;
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.granted_scopes = Some(scopes::CHARACTER_CONTACTS.to_owned());
+
+      assert!(!state.contacts_write_enabled());
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_contacts_tab_with_write_actions_when_the_scope_is_granted() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+
+      assert!(state.contacts_write_enabled());
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_delete_confirm_overlay() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contact_delete = Some(tabs::contact_modal::DeleteConfirm {
+        contact: CharacterContact {
+          character_id: 42,
+          contact_id: 95_050,
+          contact_name: "Doomed".to_owned(),
+          contact_type: "character".to_owned(),
+          is_blocked: false,
+          is_watched: false,
+          label_ids: "[]".to_owned(),
+          standing: 0.0,
+        },
+      });
+
+      let _el: Element<'_, Message> = view(&state);
+    }
+
+    #[test]
+    fn it_renders_the_open_add_modal_overlay() {
+      let mut state = loaded_state(42);
+      state.active_tab = Tab::Contacts;
+      state.contact_modal = Some(tabs::contact_modal::ContactModal::add(Vec::new(), Vec::new()));
+
+      let _el: Element<'_, Message> = view(&state);
     }
   }
 }

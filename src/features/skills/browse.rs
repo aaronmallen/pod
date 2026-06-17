@@ -227,18 +227,18 @@ mod tests {
       use super::*;
 
       #[test]
+      fn it_falls_back_to_perception_for_an_unknown_id() {
+        assert_eq!(AttrKey::from_eve_id(0), AttrKey::Perception);
+        assert_eq!(AttrKey::from_eve_id(255), AttrKey::Perception);
+      }
+
+      #[test]
       fn it_maps_each_dogma_id_to_its_attr() {
         assert_eq!(AttrKey::from_eve_id(164), AttrKey::Charisma);
         assert_eq!(AttrKey::from_eve_id(165), AttrKey::Intelligence);
         assert_eq!(AttrKey::from_eve_id(166), AttrKey::Memory);
         assert_eq!(AttrKey::from_eve_id(167), AttrKey::Perception);
         assert_eq!(AttrKey::from_eve_id(168), AttrKey::Willpower);
-      }
-
-      #[test]
-      fn it_falls_back_to_perception_for_an_unknown_id() {
-        assert_eq!(AttrKey::from_eve_id(0), AttrKey::Perception);
-        assert_eq!(AttrKey::from_eve_id(255), AttrKey::Perception);
       }
     }
 
@@ -329,25 +329,97 @@ mod tests {
     }
 
     #[test]
-    fn it_returns_one_group_per_catalog_group_sorted_by_name() {
-      let cat = catalog(vec![
-        SkillCatalogGroup {
-          id: 257,
-          name: "Spaceship Command".to_owned(),
-          skills: vec![entry(3327, "Spaceship Command", vec![])],
-        },
-        SkillCatalogGroup {
-          id: 255,
-          name: "Gunnery".to_owned(),
-          skills: vec![entry(3300, "Gunnery", vec![])],
-        },
-      ]);
+    fn it_advances_the_eta_target_past_the_queued_level() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "Gunnery", vec![])],
+      }]);
+      let skills = [skill(3300, 2, 100)];
+      let queue = [queued(3300, 4)];
 
-      let tree = build_browser_tree(&cat, &[], &[], ATTRS, now());
+      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
 
-      assert_eq!(tree.len(), 2);
-      assert_eq!(tree[0].name, "Gunnery");
-      assert_eq!(tree[1].name, "Spaceship Command");
+      let rate = sp_per_sec(27, 21);
+      let expected = fmt_dur_short((sp_cost(1.0, 5) as f64 / rate).round() as i64);
+      assert_eq!(tree[0].leaves[0].next_eta, expected);
+    }
+
+    #[test]
+    fn it_computes_the_next_level_eta_from_cost_over_rate() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "Gunnery", vec![])],
+      }]);
+      let skills = [skill(3300, 2, 100)];
+
+      let tree = build_browser_tree(&cat, &skills, &[], ATTRS, now());
+
+      let rate = sp_per_sec(27, 21);
+      let expected = fmt_dur_short((sp_cost(1.0, 3) as f64 / rate).round() as i64);
+      assert_eq!(tree[0].leaves[0].next_eta, expected);
+      assert_ne!(tree[0].leaves[0].next_eta, "\u{2014}");
+    }
+
+    #[test]
+    fn it_derives_the_queue_delta_as_max_queued_minus_trained() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "Gunnery", vec![])],
+      }]);
+      let skills = [skill(3300, 2, 100)];
+      let queue = [queued(3300, 4), queued(3300, 5)];
+
+      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
+
+      assert_eq!(tree[0].leaves[0].queue_delta, 3, "5 queued − 2 trained = 3");
+    }
+
+    #[test]
+    fn it_guards_against_a_non_positive_sp_rate() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "Gunnery", vec![])],
+      }]);
+
+      let tree = build_browser_tree(&cat, &[], &[], [0; 5], now());
+
+      assert_eq!(tree[0].leaves[0].next_eta, "\u{2014}");
+    }
+
+    #[test]
+    fn it_renders_a_dash_when_already_at_level_five() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "MaxedTrained", vec![]), entry(3301, "QueuedToFive", vec![])],
+      }]);
+      let skills = [skill(3300, 5, 256_000), skill(3301, 1, 100)];
+      let queue = [queued(3301, 5)];
+
+      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
+
+      let leaves = &tree[0].leaves;
+      assert_eq!(leaves[0].next_eta, "\u{2014}", "trained to 5 → no next level");
+      assert_eq!(leaves[1].next_eta, "\u{2014}", "queued to 5 → no next level");
+    }
+
+    #[test]
+    fn it_reports_no_queue_delta_when_the_queue_does_not_raise_the_skill() {
+      let cat = catalog(vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![entry(3300, "Gunnery", vec![])],
+      }]);
+      let skills = [skill(3300, 4, 100)];
+      let queue = [queued(3300, 4)];
+
+      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
+
+      assert_eq!(tree[0].leaves[0].queue_delta, 0);
     }
 
     #[test]
@@ -367,33 +439,25 @@ mod tests {
     }
 
     #[test]
-    fn it_derives_the_queue_delta_as_max_queued_minus_trained() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "Gunnery", vec![])],
-      }]);
-      let skills = [skill(3300, 2, 100)];
-      let queue = [queued(3300, 4), queued(3300, 5)];
+    fn it_returns_one_group_per_catalog_group_sorted_by_name() {
+      let cat = catalog(vec![
+        SkillCatalogGroup {
+          id: 257,
+          name: "Spaceship Command".to_owned(),
+          skills: vec![entry(3327, "Spaceship Command", vec![])],
+        },
+        SkillCatalogGroup {
+          id: 255,
+          name: "Gunnery".to_owned(),
+          skills: vec![entry(3300, "Gunnery", vec![])],
+        },
+      ]);
 
-      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
+      let tree = build_browser_tree(&cat, &[], &[], ATTRS, now());
 
-      assert_eq!(tree[0].leaves[0].queue_delta, 3, "5 queued − 2 trained = 3");
-    }
-
-    #[test]
-    fn it_reports_no_queue_delta_when_the_queue_does_not_raise_the_skill() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "Gunnery", vec![])],
-      }]);
-      let skills = [skill(3300, 4, 100)];
-      let queue = [queued(3300, 4)];
-
-      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
-
-      assert_eq!(tree[0].leaves[0].queue_delta, 0);
+      assert_eq!(tree.len(), 2);
+      assert_eq!(tree[0].name, "Gunnery");
+      assert_eq!(tree[1].name, "Spaceship Command");
     }
 
     #[test]
@@ -436,70 +500,6 @@ mod tests {
       assert_eq!(tree[0].total_sp, 256_000 + 9_414);
       assert_eq!(tree[0].total_skills, 3);
       assert_eq!(tree[0].trained_count, 1, "only the level-5 skill counts as trained");
-    }
-
-    #[test]
-    fn it_computes_the_next_level_eta_from_cost_over_rate() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "Gunnery", vec![])],
-      }]);
-      let skills = [skill(3300, 2, 100)];
-
-      let tree = build_browser_tree(&cat, &skills, &[], ATTRS, now());
-
-      let rate = sp_per_sec(27, 21);
-      let expected = fmt_dur_short((sp_cost(1.0, 3) as f64 / rate).round() as i64);
-      assert_eq!(tree[0].leaves[0].next_eta, expected);
-      assert_ne!(tree[0].leaves[0].next_eta, "\u{2014}");
-    }
-
-    #[test]
-    fn it_advances_the_eta_target_past_the_queued_level() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "Gunnery", vec![])],
-      }]);
-      let skills = [skill(3300, 2, 100)];
-      let queue = [queued(3300, 4)];
-
-      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
-
-      let rate = sp_per_sec(27, 21);
-      let expected = fmt_dur_short((sp_cost(1.0, 5) as f64 / rate).round() as i64);
-      assert_eq!(tree[0].leaves[0].next_eta, expected);
-    }
-
-    #[test]
-    fn it_renders_a_dash_when_already_at_level_five() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "MaxedTrained", vec![]), entry(3301, "QueuedToFive", vec![])],
-      }]);
-      let skills = [skill(3300, 5, 256_000), skill(3301, 1, 100)];
-      let queue = [queued(3301, 5)];
-
-      let tree = build_browser_tree(&cat, &skills, &queue, ATTRS, now());
-
-      let leaves = &tree[0].leaves;
-      assert_eq!(leaves[0].next_eta, "\u{2014}", "trained to 5 → no next level");
-      assert_eq!(leaves[1].next_eta, "\u{2014}", "queued to 5 → no next level");
-    }
-
-    #[test]
-    fn it_guards_against_a_non_positive_sp_rate() {
-      let cat = catalog(vec![SkillCatalogGroup {
-        id: 255,
-        name: "Gunnery".to_owned(),
-        skills: vec![entry(3300, "Gunnery", vec![])],
-      }]);
-
-      let tree = build_browser_tree(&cat, &[], &[], [0; 5], now());
-
-      assert_eq!(tree[0].leaves[0].next_eta, "\u{2014}");
     }
   }
 }

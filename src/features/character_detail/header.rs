@@ -149,28 +149,6 @@ mod tests {
     }
   }
 
-  mod sec_status_color {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_reads_highsec_as_positive() {
-      assert_eq!(sec_status_color(Some(5.0)), color::status::ONLINE);
-    }
-
-    #[test]
-    fn it_reads_negative_as_danger() {
-      assert_eq!(sec_status_color(Some(-1.2)), color::status::DANGER);
-    }
-
-    #[test]
-    fn it_reads_the_middle_band_as_ink() {
-      assert_eq!(sec_status_color(Some(2.5)), color::text::PRIMARY);
-      assert_eq!(sec_status_color(None), color::text::PRIMARY);
-    }
-  }
-
   mod header {
     use super::*;
     use crate::{config::Feature, features::character_detail::HeadStats, store::images};
@@ -190,6 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_the_dropdown_with_an_open_picker() {
+      let mut state = State::new(42, &Feature::ALL);
+      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
+      state.picker_open = true;
+
+      let _el: Element<'_, Message> = picker_dropdown(&state);
+    }
+
+    #[test]
     fn it_renders_with_a_closed_picker() {
       let mut state = State::new(42, &Feature::ALL);
       state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
@@ -203,14 +190,27 @@ mod tests {
 
       let _el: Element<'_, Message> = header(&state);
     }
+  }
+
+  mod sec_status_color {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     #[test]
-    fn it_renders_the_dropdown_with_an_open_picker() {
-      let mut state = State::new(42, &Feature::ALL);
-      state.roster = vec![pilot(42, "Test Pilot"), pilot(7, "Wingmate")];
-      state.picker_open = true;
+    fn it_reads_highsec_as_positive() {
+      assert_eq!(sec_status_color(Some(5.0)), color::status::ONLINE);
+    }
 
-      let _el: Element<'_, Message> = picker_dropdown(&state);
+    #[test]
+    fn it_reads_negative_as_danger() {
+      assert_eq!(sec_status_color(Some(-1.2)), color::status::DANGER);
+    }
+
+    #[test]
+    fn it_reads_the_middle_band_as_ink() {
+      assert_eq!(sec_status_color(Some(2.5)), color::text::PRIMARY);
+      assert_eq!(sec_status_color(None), color::text::PRIMARY);
     }
   }
 }

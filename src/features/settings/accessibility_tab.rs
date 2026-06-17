@@ -802,27 +802,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_reports_a_bare_percentage_for_a_preset_value() {
-      let mut settings = Settings::default();
-      settings.accessibility_mut().set_scale(125);
-
-      assert_eq!(badge(&settings), "125%");
-    }
-
-    #[test]
-    fn it_marks_a_non_preset_value_as_custom() {
-      let mut settings = Settings::default();
-      settings.accessibility_mut().set_scale(112);
-
-      assert_eq!(badge(&settings), "112% \u{00b7} custom");
-    }
-
-    #[test]
-    fn it_reports_the_default_scale_as_a_preset() {
-      assert_eq!(badge(&Settings::default()), "100%");
-    }
-
-    #[test]
     fn it_appends_an_hc_suffix_when_high_contrast_is_on() {
       let mut settings = Settings::default();
       settings.accessibility_mut().set_high_contrast(true);
@@ -838,77 +817,26 @@ mod tests {
 
       assert_eq!(badge(&settings), "112% \u{00b7} custom \u{00b7} HC");
     }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
 
     #[test]
-    fn selecting_a_preset_sets_the_scale_and_signals_a_live_change() {
-      let mut state = State;
+    fn it_marks_a_non_preset_value_as_custom() {
       let mut settings = Settings::default();
+      settings.accessibility_mut().set_scale(112);
 
-      let outcome = update(&mut state, Message::ScaleChanged(125), &mut settings);
-
-      assert_eq!(outcome, Outcome::AccessibilityChanged);
-      assert_eq!(*settings.accessibility().scale(), 125);
-    }
-
-    #[test]
-    fn dragging_to_a_custom_value_sets_the_same_scale_the_badge_reads() {
-      let mut state = State;
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::ScaleChanged(112), &mut settings);
-
-      assert_eq!(outcome, Outcome::AccessibilityChanged);
-      assert_eq!(*settings.accessibility().scale(), 112);
       assert_eq!(badge(&settings), "112% \u{00b7} custom");
     }
 
     #[test]
-    fn it_clamps_a_scale_below_the_minimum() {
-      let mut state = State;
+    fn it_reports_a_bare_percentage_for_a_preset_value() {
       let mut settings = Settings::default();
+      settings.accessibility_mut().set_scale(125);
 
-      update(&mut state, Message::ScaleChanged(10), &mut settings);
-
-      assert_eq!(*settings.accessibility().scale(), SCALE_MIN);
+      assert_eq!(badge(&settings), "125%");
     }
 
     #[test]
-    fn it_clamps_a_scale_above_the_maximum() {
-      let mut state = State;
-      let mut settings = Settings::default();
-
-      update(&mut state, Message::ScaleChanged(240), &mut settings);
-
-      assert_eq!(*settings.accessibility().scale(), SCALE_MAX);
-    }
-
-    #[test]
-    fn toggling_high_contrast_on_flips_the_flag_and_signals_a_live_change() {
-      let mut state = State;
-      let mut settings = Settings::default();
-
-      let outcome = update(&mut state, Message::HighContrastToggled(true), &mut settings);
-
-      assert_eq!(outcome, Outcome::AccessibilityChanged);
-      assert!(*settings.accessibility().high_contrast());
-    }
-
-    #[test]
-    fn toggling_high_contrast_off_clears_the_flag_and_signals_a_live_change() {
-      let mut state = State;
-      let mut settings = Settings::default();
-      settings.accessibility_mut().set_high_contrast(true);
-
-      let outcome = update(&mut state, Message::HighContrastToggled(false), &mut settings);
-
-      assert_eq!(outcome, Outcome::AccessibilityChanged);
-      assert!(!*settings.accessibility().high_contrast());
+    fn it_reports_the_default_scale_as_a_preset() {
+      assert_eq!(badge(&Settings::default()), "100%");
     }
   }
 
@@ -930,6 +858,78 @@ mod tests {
     }
   }
 
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn dragging_to_a_custom_value_sets_the_same_scale_the_badge_reads() {
+      let mut state = State;
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::ScaleChanged(112), &mut settings);
+
+      assert_eq!(outcome, Outcome::AccessibilityChanged);
+      assert_eq!(*settings.accessibility().scale(), 112);
+      assert_eq!(badge(&settings), "112% \u{00b7} custom");
+    }
+
+    #[test]
+    fn it_clamps_a_scale_above_the_maximum() {
+      let mut state = State;
+      let mut settings = Settings::default();
+
+      update(&mut state, Message::ScaleChanged(240), &mut settings);
+
+      assert_eq!(*settings.accessibility().scale(), SCALE_MAX);
+    }
+
+    #[test]
+    fn it_clamps_a_scale_below_the_minimum() {
+      let mut state = State;
+      let mut settings = Settings::default();
+
+      update(&mut state, Message::ScaleChanged(10), &mut settings);
+
+      assert_eq!(*settings.accessibility().scale(), SCALE_MIN);
+    }
+
+    #[test]
+    fn selecting_a_preset_sets_the_scale_and_signals_a_live_change() {
+      let mut state = State;
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::ScaleChanged(125), &mut settings);
+
+      assert_eq!(outcome, Outcome::AccessibilityChanged);
+      assert_eq!(*settings.accessibility().scale(), 125);
+    }
+
+    #[test]
+    fn toggling_high_contrast_off_clears_the_flag_and_signals_a_live_change() {
+      let mut state = State;
+      let mut settings = Settings::default();
+      settings.accessibility_mut().set_high_contrast(true);
+
+      let outcome = update(&mut state, Message::HighContrastToggled(false), &mut settings);
+
+      assert_eq!(outcome, Outcome::AccessibilityChanged);
+      assert!(!*settings.accessibility().high_contrast());
+    }
+
+    #[test]
+    fn toggling_high_contrast_on_flips_the_flag_and_signals_a_live_change() {
+      let mut state = State;
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::HighContrastToggled(true), &mut settings);
+
+      assert_eq!(outcome, Outcome::AccessibilityChanged);
+      assert!(*settings.accessibility().high_contrast());
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -942,18 +942,18 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_with_a_custom_scale() {
+    fn it_renders_the_contrast_preview_with_high_contrast_on() {
       let mut settings = Settings::default();
-      settings.accessibility_mut().set_scale(112);
+      settings.accessibility_mut().set_high_contrast(true);
       let state = State;
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }
 
     #[test]
-    fn it_renders_the_contrast_preview_with_high_contrast_on() {
+    fn it_renders_with_a_custom_scale() {
       let mut settings = Settings::default();
-      settings.accessibility_mut().set_high_contrast(true);
+      settings.accessibility_mut().set_scale(112);
       let state = State;
 
       let _el: Element<'_, Message> = view(&state, &settings);

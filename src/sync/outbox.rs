@@ -248,10 +248,114 @@ mod tests {
   use super::{test_support::*, *};
   use crate::store;
 
+  mod dispatch {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn registry(kind: OutboxKind, calls: StubCalls) -> Registry {
+      Registry::new().with(Box::new(StubHandler::new(kind, calls)))
+    }
+
+    #[tokio::test]
+    async fn it_drives_a_successful_esi_execute() {
+      let calls = StubCalls::default();
+      let registry = registry(OutboxKind::MailSend, calls.clone());
+      let db = store::open_test().await.unwrap();
+      let http = crate::clients::http::Client::builder(crate::clients::http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http, "http://localhost");
+      let grant = Grant::new_test("tok", 42);
+
+      registry
+        .handler(OutboxKind::MailSend)
+        .unwrap()
+        .execute(&db, &esi, &grant, "{}")
+        .await
+        .unwrap();
+
+      assert_eq!(calls.executes(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_drives_compensation_on_permanent_failure() {
+      let calls = StubCalls::default();
+      let registry = registry(OutboxKind::MailDelete, calls.clone());
+      let db = store::open_test().await.unwrap();
+
+      registry
+        .handler(OutboxKind::MailDelete)
+        .unwrap()
+        .compensate(&db, "{\"mail_id\":7}")
+        .await
+        .unwrap();
+
+      assert_eq!(calls.compensates(), 1);
+      assert_eq!(calls.payloads(), ["{\"mail_id\":7}"]);
+    }
+
+    #[tokio::test]
+    async fn it_drives_the_optimistic_apply_with_the_payload() {
+      let calls = StubCalls::default();
+      let registry = registry(OutboxKind::MailSetRead, calls.clone());
+      let db = store::open_test().await.unwrap();
+
+      registry
+        .handler(OutboxKind::MailSetRead)
+        .unwrap()
+        .apply(&db, "{\"mail_id\":1}")
+        .await
+        .unwrap();
+
+      assert_eq!(calls.applies(), 1);
+      assert_eq!(calls.payloads(), ["{\"mail_id\":1}"]);
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_a_primed_execute_error_for_the_drainer_to_classify() {
+      let calls = StubCalls::default();
+      let handler =
+        StubHandler::new(OutboxKind::MailSend, calls.clone()).failing_execute(|| clients::Error::RateLimit {
+          retry_after_secs: 30,
+        });
+      let registry = Registry::new().with(Box::new(handler));
+      let db = store::open_test().await.unwrap();
+      let http = crate::clients::http::Client::builder(crate::clients::http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http, "http://localhost");
+      let grant = Grant::new_test("tok", 42);
+
+      let error = registry
+        .handler(OutboxKind::MailSend)
+        .unwrap()
+        .execute(&db, &esi, &grant, "{}")
+        .await
+        .expect_err("primed to fail");
+
+      assert!(matches!(
+        error,
+        clients::Error::RateLimit {
+          retry_after_secs: 30
+        }
+      ));
+    }
+  }
+
   mod kind {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn it_displays_as_its_discriminant_string() {
+      assert_eq!(OutboxKind::MailSetRead.to_string(), "mail.set_read");
+    }
+
+    #[test]
+    fn it_rejects_an_unknown_kind_explicitly() {
+      assert_eq!(
+        "mail.archive".parse::<OutboxKind>(),
+        Err(ParseKindError("mail.archive".to_string()))
+      );
+    }
 
     #[test]
     fn it_round_trips_every_kind_through_its_string() {
@@ -278,71 +382,12 @@ mod tests {
         ]
       );
     }
-
-    #[test]
-    fn it_rejects_an_unknown_kind_explicitly() {
-      assert_eq!(
-        "mail.archive".parse::<OutboxKind>(),
-        Err(ParseKindError("mail.archive".to_string()))
-      );
-    }
-
-    #[test]
-    fn it_displays_as_its_discriminant_string() {
-      assert_eq!(OutboxKind::MailSetRead.to_string(), "mail.set_read");
-    }
   }
 
   mod registry {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_resolves_a_registered_handler_by_kind() {
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
-
-      let handler = registry.handler(OutboxKind::MailSend).expect("handler registered");
-
-      assert_eq!(handler.kind(), OutboxKind::MailSend);
-    }
-
-    #[test]
-    fn it_returns_none_for_an_unregistered_kind() {
-      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
-
-      assert!(registry.handler(OutboxKind::MailDelete).is_none());
-    }
-
-    #[test]
-    fn it_resolves_a_raw_kind_string_to_its_handler() {
-      let registry = Registry::new().with(Box::new(StubHandler::new(
-        OutboxKind::MailSetRead,
-        StubCalls::default(),
-      )));
-
-      let handler = registry.resolve("mail.set_read").expect("resolved");
-
-      assert_eq!(handler.kind(), OutboxKind::MailSetRead);
-    }
-
-    #[test]
-    fn it_reports_an_unknown_kind_string_distinctly() {
-      let registry = Registry::new();
-
-      let error = registry.resolve("mail.archive").err().expect("unknown kind");
-
-      assert_eq!(error, ResolveError::Unknown(ParseKindError("mail.archive".to_string())));
-    }
-
-    #[test]
-    fn it_reports_a_known_kind_with_no_handler_distinctly() {
-      let registry = Registry::new();
-
-      let error = registry.resolve("mail.send").err().expect("no handler");
-
-      assert_eq!(error, ResolveError::Unregistered(OutboxKind::MailSend));
-    }
 
     #[test]
     fn it_folds_another_registrys_handlers_in_via_extend() {
@@ -376,96 +421,51 @@ mod tests {
       assert_eq!(first.applies(), 0);
       assert_eq!(second.applies(), 1);
     }
-  }
 
-  mod dispatch {
-    use pretty_assertions::assert_eq;
+    #[test]
+    fn it_reports_a_known_kind_with_no_handler_distinctly() {
+      let registry = Registry::new();
 
-    use super::*;
+      let error = registry.resolve("mail.send").err().expect("no handler");
 
-    fn registry(kind: OutboxKind, calls: StubCalls) -> Registry {
-      Registry::new().with(Box::new(StubHandler::new(kind, calls)))
+      assert_eq!(error, ResolveError::Unregistered(OutboxKind::MailSend));
     }
 
-    #[tokio::test]
-    async fn it_drives_the_optimistic_apply_with_the_payload() {
-      let calls = StubCalls::default();
-      let registry = registry(OutboxKind::MailSetRead, calls.clone());
-      let db = store::open_test().await.unwrap();
+    #[test]
+    fn it_reports_an_unknown_kind_string_distinctly() {
+      let registry = Registry::new();
 
-      registry
-        .handler(OutboxKind::MailSetRead)
-        .unwrap()
-        .apply(&db, "{\"mail_id\":1}")
-        .await
-        .unwrap();
+      let error = registry.resolve("mail.archive").err().expect("unknown kind");
 
-      assert_eq!(calls.applies(), 1);
-      assert_eq!(calls.payloads(), ["{\"mail_id\":1}"]);
+      assert_eq!(error, ResolveError::Unknown(ParseKindError("mail.archive".to_string())));
     }
 
-    #[tokio::test]
-    async fn it_drives_a_successful_esi_execute() {
-      let calls = StubCalls::default();
-      let registry = registry(OutboxKind::MailSend, calls.clone());
-      let db = store::open_test().await.unwrap();
-      let http = crate::clients::http::Client::builder(crate::clients::http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http, "http://localhost");
-      let grant = Grant::new_test("tok", 42);
+    #[test]
+    fn it_resolves_a_raw_kind_string_to_its_handler() {
+      let registry = Registry::new().with(Box::new(StubHandler::new(
+        OutboxKind::MailSetRead,
+        StubCalls::default(),
+      )));
 
-      registry
-        .handler(OutboxKind::MailSend)
-        .unwrap()
-        .execute(&db, &esi, &grant, "{}")
-        .await
-        .unwrap();
+      let handler = registry.resolve("mail.set_read").expect("resolved");
 
-      assert_eq!(calls.executes(), 1);
+      assert_eq!(handler.kind(), OutboxKind::MailSetRead);
     }
 
-    #[tokio::test]
-    async fn it_surfaces_a_primed_execute_error_for_the_drainer_to_classify() {
-      let calls = StubCalls::default();
-      let handler =
-        StubHandler::new(OutboxKind::MailSend, calls.clone()).failing_execute(|| clients::Error::RateLimit {
-          retry_after_secs: 30,
-        });
-      let registry = Registry::new().with(Box::new(handler));
-      let db = store::open_test().await.unwrap();
-      let http = crate::clients::http::Client::builder(crate::clients::http::Cache::new(db.clone())).build();
-      let esi = esi::Client::with_base_url(http, "http://localhost");
-      let grant = Grant::new_test("tok", 42);
+    #[test]
+    fn it_resolves_a_registered_handler_by_kind() {
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
 
-      let error = registry
-        .handler(OutboxKind::MailSend)
-        .unwrap()
-        .execute(&db, &esi, &grant, "{}")
-        .await
-        .expect_err("primed to fail");
+      let handler = registry.handler(OutboxKind::MailSend).expect("handler registered");
 
-      assert!(matches!(
-        error,
-        clients::Error::RateLimit {
-          retry_after_secs: 30
-        }
-      ));
+      assert_eq!(handler.kind(), OutboxKind::MailSend);
     }
 
-    #[tokio::test]
-    async fn it_drives_compensation_on_permanent_failure() {
-      let calls = StubCalls::default();
-      let registry = registry(OutboxKind::MailDelete, calls.clone());
-      let db = store::open_test().await.unwrap();
+    #[test]
+    fn it_returns_none_for_an_unregistered_kind() {
+      let registry = Registry::new().with(Box::new(StubHandler::new(OutboxKind::MailSend, StubCalls::default())));
 
-      registry
-        .handler(OutboxKind::MailDelete)
-        .unwrap()
-        .compensate(&db, "{\"mail_id\":7}")
-        .await
-        .unwrap();
-
-      assert_eq!(calls.compensates(), 1);
-      assert_eq!(calls.payloads(), ["{\"mail_id\":7}"]);
+      assert!(registry.handler(OutboxKind::MailDelete).is_none());
     }
   }
 }

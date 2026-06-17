@@ -258,8 +258,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_shows_no_chrome_when_idle() {
-      assert_eq!(presentation(&State::Idle), None);
+    fn it_flags_the_error_state_and_surfaces_its_message() {
+      let p = presentation(&State::Error {
+        message: "download failed".to_owned(),
+      })
+      .expect("error state has chrome");
+      assert_eq!(p.action, None);
+      assert!(p.is_error);
+      assert_eq!(p.message, "download failed");
     }
 
     #[test]
@@ -294,14 +300,8 @@ mod tests {
     }
 
     #[test]
-    fn it_flags_the_error_state_and_surfaces_its_message() {
-      let p = presentation(&State::Error {
-        message: "download failed".to_owned(),
-      })
-      .expect("error state has chrome");
-      assert_eq!(p.action, None);
-      assert!(p.is_error);
-      assert_eq!(p.message, "download failed");
+    fn it_shows_no_chrome_when_idle() {
+      assert_eq!(presentation(&State::Idle), None);
     }
   }
 

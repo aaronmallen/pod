@@ -215,18 +215,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn it_guards_out_of_range_and_negative_input() {
+      assert_eq!(fmt_time_long(f64::INFINITY), "0m");
+      assert_eq!(fmt_time_long(f64::NAN), "0m");
+      assert_eq!(fmt_time_long(-5.0), "0m");
+    }
+
+    #[test]
     fn it_renders_a_normal_duration() {
       assert_eq!(
         fmt_time_long(14.0 * 86_400.0 + 3.0 * 3_600.0 + 22.0 * 60.0),
         "14d 3h 22m"
       );
-    }
-
-    #[test]
-    fn it_guards_out_of_range_and_negative_input() {
-      assert_eq!(fmt_time_long(f64::INFINITY), "0m");
-      assert_eq!(fmt_time_long(f64::NAN), "0m");
-      assert_eq!(fmt_time_long(-5.0), "0m");
     }
   }
 
@@ -236,15 +236,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_renders_a_normal_duration() {
-      assert_eq!(fmt_time_short(14.0 * 86_400.0 + 3.0 * 3_600.0), "14d 3h");
-    }
-
-    #[test]
     fn it_guards_out_of_range_and_negative_input() {
       assert_eq!(fmt_time_short(f64::INFINITY), "0m");
       assert_eq!(fmt_time_short(f64::NAN), "0m");
       assert_eq!(fmt_time_short(-5.0), "0m");
+    }
+
+    #[test]
+    fn it_renders_a_normal_duration() {
+      assert_eq!(fmt_time_short(14.0 * 86_400.0 + 3.0 * 3_600.0), "14d 3h");
     }
   }
 }

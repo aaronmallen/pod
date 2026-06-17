@@ -231,11 +231,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_marks_the_single_highest_value() {
-      assert_eq!(leaders(&[10.0, 42.0, 7.0]), vec![false, true, false]);
-    }
-
-    #[test]
     fn it_marks_every_column_tied_for_the_top() {
       assert_eq!(leaders(&[5.0, 5.0, 1.0]), vec![true, true, false]);
     }
@@ -243,6 +238,11 @@ mod tests {
     #[test]
     fn it_marks_no_column_when_every_value_is_zero() {
       assert_eq!(leaders(&[0.0, 0.0]), vec![false, false]);
+    }
+
+    #[test]
+    fn it_marks_the_single_highest_value() {
+      assert_eq!(leaders(&[10.0, 42.0, 7.0]), vec![false, true, false]);
     }
   }
 }

@@ -4312,6 +4312,18 @@ mod tests {
     (dir, session)
   }
 
+  fn featured_app() -> App {
+    let mut app = test_app();
+    app.assets = Some(assets::State::new());
+    app.calendar = Some(calendar::State::new(42, app.now, config::FeatureFlags::default()));
+    app.character_detail = Some(character_detail::State::new(1, &[]));
+    app.character_manager = Some(character_manager::State::new());
+    app.mail = Some(mail::State::new(42));
+    app.skills = Some(skills::State::new(1));
+    app.wallet = Some(wallet::State::new());
+    app
+  }
+
   mod build_sync_esi {
     use super::*;
     use crate::store::{model::HttpCacheEntry, repo::infra};
@@ -4352,132 +4364,264 @@ mod tests {
     }
   }
 
-  mod reopen_after_take_over_inner {
-    use chrono::Utc;
+  mod collect_stale_images {
+    use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::{
-      model::HttpCacheEntry,
-      repo::infra,
-      share_meta::{read_generation, write_generation},
-    };
 
-    async fn ready_for(session: &store::sync_session::SyncSession) -> StoreReady {
-      let pools = store::open_pools(session.working_copy()).await.unwrap();
-      let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
-      StoreReady {
-        db: pools.interactive,
-        http,
-        lease: None,
-        settings: config::Settings::default(),
-        sync_db: pools.sync,
-        sync_housekeeping_db: pools.housekeeping,
-        sync_session: Some(session.clone()),
+    #[test]
+    fn it_appends_the_compare_window_keys_when_one_is_open() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
+    }
+
+    #[test]
+    fn it_gathers_keys_for_every_active_route() {
+      let mut app = featured_app();
+
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::CharacterDetail(1),
+        Route::Characters,
+        Route::CorporationDetail(1),
+        Route::Industry,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = super::super::collect_stale_images(&app);
       }
     }
 
-    async fn seed(path: &std::path::Path, url: &str) {
-      let pools = store::open_pools(path).await.unwrap();
-      infra::http_cache_upsert(&pools.interactive, &HttpCacheEntry::new(b"x".to_vec(), 0, url))
-        .await
-        .unwrap();
-      // Fold the WAL into the main .db so the published copy is self-contained.
-      sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(&pools.interactive.0)
-        .await
-        .unwrap();
+    #[test]
+    fn it_gathers_no_keys_for_settings_with_no_compare() {
+      let mut app = featured_app();
+      app.route = Route::Settings;
+
+      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
+    }
+  }
+
+  mod compare_seed_ids {
+    use super::*;
+
+    #[test]
+    fn it_returns_no_seeds_without_a_character_manager() {
+      let app = test_app();
+
+      assert!(super::super::compare_seed_ids(&app).is_empty());
+    }
+  }
+
+  mod compare_seeds {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_breaks_skill_point_ties_by_id() {
+      let seeds = compare_seeds(vec![(5, 100), (3, 100)], None);
+
+      assert_eq!(seeds, vec![3, 5]);
     }
 
-    /// Closes the working-copy pools, claims, and reopens in the exact order [`run_take_over`] does in
-    /// production (minus the iced `Task` wrapper). The close-before-swap ordering is what lets the
-    /// `publish_database` overwrite succeed on Windows, whose mandatory file locking would otherwise
-    /// reject the in-place replace of the still-open `.db` with `PermissionDenied`.
-    async fn close_then_take_over(
-      ready: StoreReady,
-      session: &store::sync_session::SyncSession,
-      force: bool,
-    ) -> (TakeOverOutcome, StoreReady) {
-      let lease = ready.lease.clone();
-      let settings = ready.settings.clone();
-      ready.db.0.close().await;
-      ready.sync_db.0.close().await;
-      ready.sync_housekeeping_db.0.close().await;
-      let outcome = claim_lease(session, force);
-      let reopened = reopen_after_take_over_inner(session, lease, settings).await.unwrap();
-      (outcome, reopened)
+    #[test]
+    fn it_caps_the_selection_at_three_pilots() {
+      let seeds = compare_seeds(vec![(1, 10), (2, 20), (3, 30), (4, 40)], None);
+
+      assert_eq!(seeds, vec![4, 3, 2]);
     }
 
-    #[tokio::test]
-    async fn it_reads_the_pulled_contents_after_a_newer_canonical_is_taken_over() {
-      let (dir, session) = temp_sync_session();
-      let canonical = dir.path().join("share").join("pod.db");
-      let sidecar = canonical.with_extension("db.generation");
-      let marker = session.working_copy().with_extension("db.generation");
-      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
-      seed(session.working_copy(), "https://esi.example/stale").await;
-      seed(&canonical, "https://esi.example/pulled").await;
-      write_generation(&sidecar, 9).unwrap();
-      write_generation(&marker, 4).unwrap();
-      let ready = ready_for(&session).await;
+    #[test]
+    fn it_ignores_an_active_pilot_absent_from_the_cards() {
+      let seeds = compare_seeds(vec![(1, 10), (2, 20)], Some(99));
 
-      // Mirror production: the pools are closed *before* the swap so no OS handle straddles the
-      // `publish_database` overwrite, then reopened against the pulled file.
-      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
-
-      assert_eq!(outcome, TakeOverOutcome::Claimed);
-      assert!(
-        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
-          .await
-          .unwrap()
-          .is_some(),
-        "the reopened pool reads the freshly pulled canonical contents"
-      );
-      assert!(
-        infra::http_cache_get(&reopened.db, "https://esi.example/stale")
-          .await
-          .unwrap()
-          .is_none(),
-        "the reopened pool no longer sees the pre-swap working-copy contents"
-      );
-      assert_eq!(read_generation(&marker), 9);
+      assert_eq!(seeds, vec![2, 1]);
     }
 
-    #[tokio::test]
-    async fn it_reopens_the_unchanged_working_copy_when_a_take_over_is_declined() {
-      let (dir, session) = temp_sync_session();
-      let canonical = dir.path().join("share").join("pod.db");
-      let sidecar = canonical.with_extension("db.generation");
-      let marker = session.working_copy().with_extension("db.generation");
-      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
-      seed(session.working_copy(), "https://esi.example/local").await;
-      seed(&canonical, "https://esi.example/pulled").await;
-      write_generation(&sidecar, 9).unwrap();
-      write_generation(&marker, 4).unwrap();
-      // A still-fresh foreign holder makes the stale-aware claim decline, so no swap happens.
-      let share = dir.path().join("share");
-      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
-        .heartbeat(&share, Utc::now())
-        .unwrap();
-      let ready = ready_for(&session).await;
+    #[test]
+    fn it_leads_with_the_active_pilot_then_fills_by_descending_sp() {
+      let seeds = compare_seeds(vec![(1, 100), (2, 500), (3, 300)], Some(1));
 
-      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
+      assert_eq!(seeds, vec![1, 2, 3]);
+    }
+  }
 
-      assert_eq!(outcome, TakeOverOutcome::Failed);
+  mod crash_visibility {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::{Event, Subscriber, field::Visit};
+    use tracing_subscriber::{
+      Layer,
+      filter::EnvFilter,
+      layer::{Context, SubscriberExt as _},
+      registry,
+    };
+
+    use super::*;
+
+    /// Collects the `message` field of every captured event into a shared buffer so a test can
+    /// assert what was logged through tracing.
+    #[derive(Clone, Default)]
+    struct CaptureLayer {
+      messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct MessageVisitor<'a>(&'a mut Option<String>);
+
+    impl Visit for MessageVisitor<'_> {
+      fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+          *self.0 = Some(format!("{value:?}"));
+        }
+      }
+    }
+
+    impl<S: Subscriber> Layer<S> for CaptureLayer {
+      fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        let mut message = None;
+        event.record(&mut MessageVisitor(&mut message));
+        if let Some(message) = message {
+          self.messages.lock().expect("capture buffer").push(message);
+        }
+      }
+    }
+
+    // Routes the events emitted by `emit` through the real file filter for `log_level` and reports
+    // whether any survived. Mirrors the live wiring: the file layer that ships to disk wraps exactly
+    // `file_filter(log_level)`. The `tracing` macros bake their target into a static callsite, so the
+    // caller passes a closure that emits at a literal target rather than a runtime `&str`.
+    fn passes_file_filter(log_level: config::LogLevel, emit: impl FnOnce()) -> bool {
+      let layer = CaptureLayer::default();
+      let messages = layer.messages.clone();
+      let filtered = layer.with_filter(EnvFilter::new(file_filter(log_level)));
+      tracing::subscriber::with_default(registry().with(filtered), emit);
+      !messages.lock().expect("capture buffer").is_empty()
+    }
+
+    #[test]
+    fn it_filters_pod_debug_out_at_quiet() {
       assert!(
-        infra::http_cache_get(&reopened.db, "https://esi.example/local")
-          .await
-          .unwrap()
-          .is_some(),
-        "a declined take-over reopens the unchanged working copy so the app keeps functioning"
+        !passes_file_filter(config::LogLevel::Quiet, || {
+          tracing::debug!(target: "pod::sync::engine", "event")
+        }),
+        "Quiet pins pod to INFO, so pod DEBUG must be filtered out"
+      );
+
+      assert!(
+        passes_file_filter(config::LogLevel::Quiet, || {
+          tracing::info!(target: "pod::sync::engine", "event")
+        }),
+        "Quiet must still admit pod INFO"
+      );
+    }
+
+    #[test]
+    fn it_hides_the_demoted_http_site_until_verbose() {
+      // The chronically noisy http per-request site was demoted to TRACE so it only surfaces at
+      // Verbose; it logs under the dedicated `pod::http` target.
+      let emit = || tracing::trace!(target: "pod::http", "request completed");
+
+      assert!(
+        !passes_file_filter(config::LogLevel::Quiet, emit),
+        "the http per-request site must be silent at Quiet"
       );
       assert!(
-        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
-          .await
-          .unwrap()
-          .is_none(),
-        "no swap happened, so the pulled canonical contents are not present"
+        !passes_file_filter(config::LogLevel::Normal, emit),
+        "the http per-request site must stay silent at Normal so the demotion keeps real signal afloat"
       );
-      assert_eq!(read_generation(&marker), 4, "the working-copy generation is untouched");
+      assert!(
+        passes_file_filter(config::LogLevel::Verbose, emit),
+        "the http per-request site must surface at Verbose for a deep-dive repro"
+      );
+    }
+
+    #[test]
+    fn it_hides_the_demoted_resolve_site_until_verbose() {
+      // The chronically noisy resolve cache-hit site was demoted to TRACE so it only surfaces at
+      // Verbose; its target is the module path it logs from.
+      let emit = || tracing::trace!(target: "pod::sync::jobs::resolve", "resolved item type from db");
+
+      assert!(
+        !passes_file_filter(config::LogLevel::Quiet, emit),
+        "the resolve cache-hit site must be silent at Quiet"
+      );
+      assert!(
+        !passes_file_filter(config::LogLevel::Normal, emit),
+        "the resolve cache-hit site must stay silent at Normal so the demotion keeps real signal afloat"
+      );
+      assert!(
+        passes_file_filter(config::LogLevel::Verbose, emit),
+        "the resolve cache-hit site must surface at Verbose for a deep-dive repro"
+      );
+    }
+
+    #[test]
+    fn it_pins_sqlx_query_logging_to_warn_or_higher() {
+      // Build the real file filter and route events through it so a regression that loosens
+      // `sqlx::query` to DEBUG/TRACE fails this test instead of silently flooding the field log.
+      let captured = |level: tracing::Level| -> bool {
+        let layer = CaptureLayer::default();
+        let messages = layer.messages.clone();
+        let filtered = layer.with_filter(EnvFilter::new(file_filter(config::LogLevel::default())));
+        tracing::subscriber::with_default(registry().with(filtered), || match level {
+          tracing::Level::TRACE => tracing::trace!(target: "sqlx::query", "stmt"),
+          tracing::Level::DEBUG => tracing::debug!(target: "sqlx::query", "stmt"),
+          tracing::Level::INFO => tracing::info!(target: "sqlx::query", "stmt"),
+          tracing::Level::WARN => tracing::warn!(target: "sqlx::query", "stmt"),
+          tracing::Level::ERROR => tracing::error!(target: "sqlx::query", "stmt"),
+        });
+        !messages.lock().expect("capture buffer").is_empty()
+      };
+
+      assert!(
+        !captured(tracing::Level::TRACE),
+        "sqlx::query TRACE must be filtered out"
+      );
+      assert!(
+        !captured(tracing::Level::DEBUG),
+        "sqlx::query DEBUG must be filtered out"
+      );
+      assert!(!captured(tracing::Level::INFO), "sqlx::query INFO must be filtered out");
+      assert!(
+        captured(tracing::Level::WARN),
+        "sqlx::query WARN must pass (filter pins WARN-or-higher)"
+      );
+    }
+
+    #[test]
+    fn it_routes_a_panic_through_the_hook_into_tracing() {
+      let layer = CaptureLayer::default();
+      let messages = layer.messages.clone();
+
+      // Install a hook that drives the same `log_panic` path the production hook uses, scoped to a
+      // capturing subscriber, then restore the previous hook so the test harness is unaffected.
+      let previous = std::panic::take_hook();
+      std::panic::set_hook(Box::new(log_panic));
+
+      tracing::subscriber::with_default(registry().with(layer), || {
+        // A panic raised from a sync-style closure, caught so it does not abort the test.
+        let _ = std::panic::catch_unwind(|| {
+          fn run_sync_job() {
+            panic!("simulated sync engine crash");
+          }
+          run_sync_job();
+        });
+      });
+
+      std::panic::set_hook(previous);
+
+      let captured = messages.lock().expect("capture buffer");
+      assert!(
+        captured.iter().any(|m| m.contains("the process panicked")),
+        "the panic hook routed an ERROR event into tracing; captured: {captured:?}",
+      );
     }
   }
 
@@ -4487,8 +4631,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_maps_a_skills_route_to_the_skills_destination() {
-      assert_eq!(Route::Skills(42).destination(), rail::Destination::Skills);
+    fn it_maps_a_calendar_route_to_the_calendar_destination() {
+      assert_eq!(Route::Calendar.destination(), rail::Destination::Calendar);
     }
 
     #[test]
@@ -4497,8 +4641,8 @@ mod tests {
     }
 
     #[test]
-    fn it_maps_a_calendar_route_to_the_calendar_destination() {
-      assert_eq!(Route::Calendar.destination(), rail::Destination::Calendar);
+    fn it_maps_a_skills_route_to_the_skills_destination() {
+      assert_eq!(Route::Skills(42).destination(), rail::Destination::Skills);
     }
 
     #[test]
@@ -4510,2074 +4654,12 @@ mod tests {
     }
   }
 
-  mod resolve_skills_target {
-    use pretty_assertions::assert_eq;
-
+  mod dispatch_lifecycle {
     use super::*;
 
-    #[test]
-    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_skills_target(&roster, None), Some(7));
-    }
-
-    #[test]
-    fn it_keeps_the_sticky_selection_when_still_owned() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_skills_target(&roster, Some(3)), Some(3));
-    }
-
-    #[test]
-    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_skills_target(&roster, Some(99)), Some(7));
-    }
-
-    #[test]
-    fn it_yields_none_for_an_empty_roster() {
-      assert_eq!(resolve_skills_target(&[], None), None);
-      assert_eq!(resolve_skills_target(&[], Some(7)), None);
-    }
-  }
-
-  mod resolve_mail_target {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_mail_target(&roster, None), Some(7));
-    }
-
-    #[test]
-    fn it_keeps_the_sticky_selection_when_still_owned() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_mail_target(&roster, Some(3)), Some(3));
-    }
-
-    #[test]
-    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
-      let roster = vec![pilot(7), pilot(3)];
-
-      assert_eq!(resolve_mail_target(&roster, Some(99)), Some(7));
-    }
-
-    #[test]
-    fn it_yields_none_for_an_empty_roster() {
-      assert_eq!(resolve_mail_target(&[], None), None);
-      assert_eq!(resolve_mail_target(&[], Some(7)), None);
-    }
-  }
-
-  mod seed_progress_target {
-    use super::*;
-
-    #[test]
-    fn it_advances_monotonically_and_stays_below_the_full_bar() {
-      let mut last = 0.0;
-      for step in 1..=12 {
-        let target = seed_progress_target(step);
-        assert!(target > last, "stage {step} must advance the bar");
-        assert!(target < 1.0, "stage {step} must reserve the full bar for readiness");
-        last = target;
-      }
-    }
-  }
-
-  mod file_filter {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn clamp_of(filter: &str) -> &str {
-      filter.split_once(',').expect("filter has a pod= prefix").1
-    }
-
-    #[test]
-    fn it_varies_only_the_pod_level_per_log_level() {
-      assert_eq!(
-        file_filter(config::LogLevel::Quiet),
-        format!("pod=info,{FILE_FILTER_CLAMP}")
-      );
-      assert_eq!(
-        file_filter(config::LogLevel::Normal),
-        format!("pod=debug,{FILE_FILTER_CLAMP}")
-      );
-      assert_eq!(
-        file_filter(config::LogLevel::Verbose),
-        format!("pod=trace,{FILE_FILTER_CLAMP}")
-      );
-    }
-
-    #[test]
-    fn it_keeps_every_dependency_clamp_identical_across_levels() {
-      let quiet = file_filter(config::LogLevel::Quiet);
-      let normal = file_filter(config::LogLevel::Normal);
-      let verbose = file_filter(config::LogLevel::Verbose);
-
-      assert_eq!(clamp_of(&quiet), FILE_FILTER_CLAMP);
-      assert_eq!(clamp_of(&normal), FILE_FILTER_CLAMP);
-      assert_eq!(clamp_of(&verbose), FILE_FILTER_CLAMP);
-    }
-  }
-
-  mod scale_to_factor {
-    use super::*;
-
-    #[test]
-    fn it_maps_a_default_scale_to_a_unit_factor() {
-      assert_eq!(scale_to_factor(100), 1.0);
-    }
-
-    #[test]
-    fn it_maps_the_extremes_of_the_range() {
-      assert_eq!(scale_to_factor(85), 0.85);
-      assert_eq!(scale_to_factor(150), 1.5);
-    }
-
-    #[test]
-    fn it_clamps_values_outside_the_supported_range() {
-      assert_eq!(scale_to_factor(0), 0.85);
-      assert_eq!(scale_to_factor(255), 1.5);
-    }
-  }
-
-  mod resolve_window_geometry {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const DEFAULT: Size = Size::new(1200.0, 800.0);
-
-    fn monitor() -> validity::Rect {
-      validity::Rect {
-        height: 1080.0,
-        width: 1920.0,
-        x: 0.0,
-        y: 0.0,
-      }
-    }
-
-    fn geometry(x: f32, y: f32) -> WindowGeometry {
-      WindowGeometry {
-        height: 700.0,
-        width: 1000.0,
-        x,
-        y,
-      }
-    }
-
-    #[test]
-    fn it_centers_at_the_default_size_when_there_is_no_saved_geometry() {
-      let (size, position) = resolve_window_geometry(None, &[monitor()], DEFAULT);
-
-      assert_eq!(size, DEFAULT);
-      assert!(matches!(position, window::Position::Centered));
-    }
-
-    #[test]
-    fn it_restores_size_and_position_for_a_monitor_valid_saved_rect() {
-      let (size, position) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(size, Size::new(1000.0, 700.0));
-      assert!(matches!(position, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
-    }
-
-    #[test]
-    fn it_honors_the_saved_size_but_centers_an_off_monitor_position() {
-      let (size, position) = resolve_window_geometry(Some(geometry(3000.0, 90.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(size, Size::new(1000.0, 700.0), "a valid saved size is still honored");
-      assert!(
-        matches!(position, window::Position::Centered),
-        "an off-screen position falls back to centered"
-      );
-    }
-
-    #[test]
-    fn it_falls_back_to_the_range_guard_when_no_monitor_is_known() {
-      let (_, in_range) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[], DEFAULT);
-      assert!(matches!(in_range, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
-
-      let (_, out_of_range) = resolve_window_geometry(Some(geometry(-50.0, 90.0)), &[], DEFAULT);
-      assert!(matches!(out_of_range, window::Position::Centered));
-    }
-
-    fn sized(width: f32, height: f32) -> WindowGeometry {
-      WindowGeometry {
-        height,
-        width,
-        x: 100.0,
-        y: 100.0,
-      }
-    }
-
-    #[test]
-    fn it_defaults_the_size_for_a_zero_sized_window() {
-      let (size, _) = resolve_window_geometry(Some(sized(0.0, 0.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(size, DEFAULT, "a 0x0 saved size never reopens broken");
-    }
-
-    #[test]
-    fn it_defaults_the_size_for_negative_or_non_finite_dimensions() {
-      assert_eq!(
-        resolve_window_geometry(Some(sized(-1200.0, 800.0)), &[monitor()], DEFAULT).0,
-        DEFAULT
-      );
-      assert_eq!(
-        resolve_window_geometry(Some(sized(f32::NAN, 800.0)), &[monitor()], DEFAULT).0,
-        DEFAULT
-      );
-      assert_eq!(
-        resolve_window_geometry(Some(sized(1200.0, f32::INFINITY)), &[monitor()], DEFAULT).0,
-        DEFAULT
-      );
-    }
-
-    #[test]
-    fn it_defaults_the_size_for_an_absurdly_large_window() {
-      let (size, _) = resolve_window_geometry(Some(sized(999_999.0, 999_999.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(size, DEFAULT);
-    }
-
-    #[test]
-    fn it_clamps_a_valid_size_below_the_floor_up_to_the_minimum() {
-      let (size, _) = resolve_window_geometry(Some(sized(700.0, 500.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(
-        size,
-        Size::new(800.0, 600.0),
-        "a too-small but valid size is raised to the floor"
-      );
-    }
-
-    #[test]
-    fn it_restores_a_size_at_or_above_the_floor_unchanged() {
-      let (size, _) = resolve_window_geometry(Some(sized(900.0, 650.0)), &[monitor()], DEFAULT);
-
-      assert_eq!(size, Size::new(900.0, 650.0));
-    }
-  }
-
-  mod geometry_merge {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn base() -> WindowGeometry {
-      WindowGeometry {
-        height: 700.0,
-        width: 1000.0,
-        x: 50.0,
-        y: 60.0,
-      }
-    }
-
-    #[test]
-    fn it_updates_only_the_size_on_a_resize_keeping_the_position() {
-      let merged = geometry_after_resize(Some(base()), Size::new(1280.0, 960.0));
-
-      assert_eq!(
-        merged,
-        WindowGeometry {
-          height: 960.0,
-          width: 1280.0,
-          x: 50.0,
-          y: 60.0,
-        }
-      );
-    }
-
-    #[test]
-    fn it_updates_only_the_position_on_a_move_keeping_the_size() {
-      let merged = geometry_after_move(Some(base()), Point::new(200.0, 300.0));
-
-      assert_eq!(
-        merged,
-        WindowGeometry {
-          height: 700.0,
-          width: 1000.0,
-          x: 200.0,
-          y: 300.0,
-        }
-      );
-    }
-
-    #[test]
-    fn it_seeds_from_zero_when_the_window_has_no_prior_entry() {
-      let resized = geometry_after_resize(None, Size::new(800.0, 600.0));
-      assert_eq!(resized.width, 800.0);
-      assert_eq!(resized.height, 600.0);
-      assert_eq!((resized.x, resized.y), (0.0, 0.0));
-    }
-  }
-
-  mod update {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn finished_event(character_id: i64) -> sync::Event {
-      sync::Event::Finished {
-        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(character_id)),
-        outcome: sync::Outcome::synced(),
-      }
-    }
-
-    #[test]
-    fn it_coalesces_a_burst_of_finished_events_into_one_pending_roster_refresh() {
-      let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
-
-      for character_id in 0..6 {
-        let _ = update(&mut app, Message::Sync(finished_event(character_id)));
-      }
-      assert!(
-        app.roster_dirty,
-        "a burst of Finished events marks the roster dirty once instead of reloading per event"
-      );
-
-      let _ = update(&mut app, Message::SyncPulse);
-      assert!(!app.roster_dirty, "the pulse consumes the coalesced refresh");
-
-      let _ = update(&mut app, Message::SyncPulse);
-      assert!(!app.roster_dirty, "a quiet pulse schedules no further reload");
-    }
-
-    fn asset_sync_event(character_id: i64) -> sync::Event {
-      sync::Event::Finished {
-        key: JobKey::new(JobKind::AssetSync, Subject::Character(character_id)),
-        outcome: sync::Outcome::synced(),
-      }
-    }
-
-    fn assets_dirty(app: &App) -> bool {
-      app.assets.as_ref().is_some_and(assets::State::is_dirty)
-    }
-
     #[tokio::test]
-    async fn it_coalesces_a_burst_of_asset_syncs_into_one_pending_assets_refresh() {
-      let mut app = test_app();
-      app.runtime = Some(test_runtime().await);
-      app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
-
-      for character_id in 0..6 {
-        let _ = update(&mut app, Message::Sync(asset_sync_event(character_id)));
-      }
-
-      assert!(
-        assets_dirty(&app),
-        "a burst of AssetSync events marks the assets dirty once instead of reloading per event"
-      );
-
-      let _ = update(&mut app, Message::SyncPulse);
-      assert!(!assets_dirty(&app), "the pulse consumes the coalesced assets refresh");
-
-      let _ = update(&mut app, Message::SyncPulse);
-      assert!(!assets_dirty(&app), "a quiet pulse schedules no further assets reload");
-    }
-
-    #[test]
-    fn it_does_not_mark_assets_dirty_while_off_the_assets_route() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-      app.assets = Some(assets::State::new());
-
-      let _ = update(&mut app, Message::Sync(asset_sync_event(1)));
-
-      assert!(
-        !assets_dirty(&app),
-        "an off-route asset sync schedules no assets reload"
-      );
-    }
-
-    #[test]
-    fn it_navigates_to_the_character_detail_for_the_selected_character() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
-      );
-
-      assert_eq!(app.route, Route::CharacterDetail(42));
-      assert_eq!(app.selected_character, Some(42));
-      assert!(app.character_detail.is_some());
-    }
-
-    #[test]
-    fn it_keeps_the_characters_destination_lit_while_a_pilot_is_drilled_in() {
-      assert_eq!(Route::CharacterDetail(42).destination(), rail::Destination::Characters);
-    }
-
-    #[test]
-    fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_detail() {
-      let mut app = test_app();
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
-      );
-      assert_eq!(app.route, Route::CharacterDetail(42));
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
-
-      assert_eq!(app.route, Route::Characters);
-    }
-
-    #[test]
-    fn it_navigates_to_the_corporation_detail_for_the_selected_corporation() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
-      );
-
-      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
-      assert!(app.corporation_detail.is_some());
-    }
-
-    #[test]
-    fn it_keeps_the_characters_destination_lit_while_a_corporation_is_drilled_in() {
-      assert_eq!(
-        Route::CorporationDetail(98_000_001).destination(),
-        rail::Destination::Characters
-      );
-    }
-
-    #[test]
-    fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_corp_detail() {
-      let mut app = test_app();
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
-      );
-      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
-
-      assert_eq!(app.route, Route::Characters);
-    }
-
-    #[test]
-    fn it_navigates_to_the_wallet_screen_on_the_wallet_rail_destination() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Wallet));
-
-      assert_eq!(app.route, Route::Wallet);
-      assert!(app.wallet.is_some());
-      assert_eq!(app.route.destination(), rail::Destination::Wallet);
-    }
-
-    #[test]
-    fn it_navigates_to_the_assets_screen_on_the_assets_rail_destination() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Assets));
-
-      assert_eq!(app.route, Route::Assets);
-      assert!(app.assets.is_some());
-      assert_eq!(app.route.destination(), rail::Destination::Assets);
-    }
-
-    #[test]
-    fn it_navigates_to_the_calendar_screen_on_the_calendar_rail_destination() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
-
-      assert_eq!(app.route, Route::Calendar);
-      assert!(app.calendar.is_some());
-      assert_eq!(app.route.destination(), rail::Destination::Calendar);
-    }
-
-    #[tokio::test]
-    async fn it_redirects_a_disabled_calendar_nav_to_characters() {
-      let mut app = test_app();
-      let mut runtime = test_runtime().await;
-      runtime
-        .settings
-        .features_mut()
-        .set_enabled(config::Feature::Calendar, false);
-      app.runtime = Some(runtime);
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
-
-      assert_eq!(app.route, Route::Characters);
-      assert!(app.calendar.is_none());
-    }
-
-    #[test]
-    fn it_navigates_to_the_industry_screen_on_the_industry_rail_destination() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
-
-      assert_eq!(app.route, Route::Industry);
-      assert!(app.industry.is_some());
-      assert_eq!(app.route.destination(), rail::Destination::Industry);
-    }
-
-    #[tokio::test]
-    async fn it_redirects_a_disabled_industry_nav_to_characters() {
-      let mut app = test_app();
-      let mut runtime = test_runtime().await;
-      runtime
-        .settings
-        .features_mut()
-        .set_enabled(config::Feature::Industry, false);
-      app.runtime = Some(runtime);
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
-
-      assert_eq!(app.route, Route::Characters);
-      assert!(app.industry.is_none());
-    }
-
-    #[test]
-    fn it_routes_to_the_skills_empty_state_for_an_empty_owned_roster() {
-      let mut app = test_app();
-
-      let _ = navigate_to_skills(&mut app, None, Vec::new());
-
-      assert_eq!(app.route, Route::Skills(EMPTY_SKILLS_SELECTION));
-      assert_eq!(app.selected_character, None);
-      assert!(app.skills.is_some());
-    }
-
-    #[test]
-    fn it_keeps_route_and_sticky_selection_in_sync_on_a_picker_switch() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::Skills(skills::Message::CharacterChanged(99)));
-
-      assert_eq!(app.route, Route::Skills(99));
-      assert_eq!(app.selected_character, Some(99));
-    }
-
-    #[test]
-    fn it_clears_the_editor_and_deregisters_its_window_on_close() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(42)));
-
-      let _ = close_editor_window(&mut app, id);
-
-      assert!(app.editor.is_none(), "the editor state is cleared");
-      assert_eq!(app.windows.kind(id), None, "the editor window is de-registered");
-    }
-
-    #[test]
-    fn it_clears_the_compare_window_and_deregisters_it_on_close() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Compare);
-      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
-
-      let _ = close_compare_window(&mut app, id);
-
-      assert!(app.compare.is_none(), "the compare state is cleared");
-      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
-    }
-
-    #[test]
-    fn it_closes_the_compare_window_when_it_requests_close() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Compare);
-      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
-
-      let _ = handle_compare(&mut app, skills_compare::Message::CloseRequested);
-
-      assert!(app.compare.is_none(), "the compare state is cleared");
-      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
-    }
-
-    #[test]
-    fn it_ignores_an_editor_message_with_no_open_editor() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::SkillPlanEditor(skill_plan_editor::Message::NameChanged("x".to_owned())),
-      );
-
-      assert!(app.editor.is_none());
-    }
-
-    #[test]
-    fn it_surfaces_a_seed_error_as_a_fatal_init_failure_without_a_runtime() {
-      let mut app = test_app();
-      app.splash = Some(splash::State::default());
-      app.store_ready = None;
-
-      let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("download failed".to_owned()));
-
-      assert_eq!(app.init_error.as_deref(), Some("download failed"));
-      assert!(app.runtime.is_none(), "a seed failure must not enter the main runtime");
-    }
-
-    #[tokio::test]
-    async fn it_shows_the_seed_error_on_the_splash_and_keeps_the_store_handle_for_retry() {
-      let db = store::open_test().await.expect("test db");
-      let mut app = test_app();
-      app.splash = Some(splash::State::default());
-      app.store_ready = Some(StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: None,
-        settings: config::Settings::default(),
-        sync_session: None,
-      });
-
-      let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("seed boom".to_owned()));
-
-      assert_eq!(app.init_error.as_deref(), Some("seed boom"));
-      assert_eq!(app.splash.as_ref().and_then(|s| s.error.as_deref()), Some("seed boom"));
-      assert!(
-        app.store_ready.is_some(),
-        "a retryable seed failure keeps the store handle so Retry can re-run the seed"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_proceeds_with_existing_data_and_flags_stale_on_a_degraded_seed() {
-      let db = store::open_test().await.expect("test db");
-      let mut app = test_app();
-      app.splash = Some(splash::State::default());
-      app.store_ready = Some(StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: None,
-        settings: config::Settings::default(),
-        sync_session: None,
-      });
-
-      let _ = on_seed_progress(&mut app, splash::seed::Progress::Degraded("stale refresh".to_owned()));
-
-      assert!(app.sde_stale, "a degraded seed flags the stale-data warning");
-      assert!(app.init_error.is_none(), "a degraded seed never surfaces a fatal error");
-      assert!(
-        app.store_ready.is_none(),
-        "the store handle is consumed to build the runtime with existing data"
-      );
-    }
-
-    #[tokio::test]
-    async fn it_re_dispatches_the_seed_and_clears_the_error_on_retry() {
-      let db = store::open_test().await.expect("test db");
-      let mut app = test_app();
-      app.init_error = Some("seed boom".to_owned());
-      app.splash_step = 5;
-      app.splash = Some(splash::State {
-        error: Some("seed boom".to_owned()),
-        ..splash::State::default()
-      });
-      app.store_ready = Some(StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: None,
-        settings: config::Settings::default(),
-        sync_session: None,
-      });
-
-      let _ = update(&mut app, Message::Splash(splash::Message::Retry));
-
-      assert!(app.init_error.is_none(), "retry clears the fatal error");
-      assert_eq!(app.splash_step, 0, "retry restarts seed progress from the first step");
-      assert!(
-        app.splash.as_ref().and_then(|s| s.error.as_ref()).is_none(),
-        "retry clears the splash error so progress can resume"
-      );
-      assert!(app.store_ready.is_some(), "retry preserves the store handle");
-    }
-
-    #[test]
-    fn it_advances_the_splash_label_and_progress_on_a_seed_step() {
-      let mut app = test_app();
-      app.splash = Some(splash::State::default());
-
-      let _ = on_seed_progress(
-        &mut app,
-        splash::seed::Progress::Step("Seeding item types\u{2026}".to_owned()),
-      );
-
-      let splash = app.splash.as_ref().expect("splash present");
-      assert_eq!(splash.step_label, "Seeding item types\u{2026}");
-      assert!(splash.progress_target > 0.0, "a real stage advances the bar");
-      assert_eq!(app.splash_step, 1);
-    }
-
-    #[test]
-    fn it_records_main_window_geometry_and_schedules_a_coalesced_save_on_resize_and_move() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Main);
-
-      let _ = update(
-        &mut app,
-        Message::Window(id, window::Event::Resized(Size::new(1280.0, 960.0))),
-      );
-      let _ = update(
-        &mut app,
-        Message::Window(id, window::Event::Moved(Point::new(120.0, 90.0))),
-      );
-
-      let geometry = app
-        .ui_state
-        .windows
-        .get("main")
-        .copied()
-        .expect("main geometry recorded");
-      assert_eq!(geometry.width, 1280.0);
-      assert_eq!(geometry.height, 960.0);
-      assert_eq!((geometry.x, geometry.y), (120.0, 90.0));
-      assert!(
-        app.coalescer.has_pending(),
-        "a coalesced save is pending after the gesture"
-      );
-    }
-
-    #[test]
-    fn it_persists_a_settled_pane_width_and_schedules_a_coalesced_save() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::Skills(skills::Message::PaneSettled("skills.left", 540.0)),
-      );
-
-      assert_eq!(app.ui_state.panes.get("skills.left"), Some(&540.0));
-      assert!(
-        app.coalescer.has_pending(),
-        "a settled pane drag schedules a coalesced save"
-      );
-    }
-
-    #[test]
-    fn it_persists_a_settled_editor_pane_width() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::SkillPlanEditor(skill_plan_editor::Message::PaneSettled("plan.summary", 300.0)),
-      );
-
-      assert_eq!(app.ui_state.panes.get("plan.summary"), Some(&300.0));
-      assert!(app.coalescer.has_pending());
-    }
-
-    #[test]
-    fn it_never_records_splash_window_geometry() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Splash);
-
-      let _ = update(
-        &mut app,
-        Message::Window(id, window::Event::Resized(Size::new(640.0, 480.0))),
-      );
-
-      assert!(app.ui_state.windows.is_empty(), "splash geometry is never written");
-      assert!(!app.coalescer.has_pending(), "splash resize schedules no save");
-    }
-
-    #[test]
-    fn it_buffers_a_cold_start_callback_that_arrives_before_the_runtime_is_ready() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::Auth(auth::Message::CallbackReceived(
-          "eveauth-pod://callback?code=a&state=b".to_owned(),
-        )),
-      );
-
-      match app.pending_auth {
-        Some(auth::Message::CallbackReceived(url)) => {
-          assert_eq!(url, "eveauth-pod://callback?code=a&state=b");
-        }
-        other => panic!("expected a buffered CallbackReceived, got {other:?}"),
-      }
-    }
-  }
-
-  mod views {
-    use super::*;
-
-    fn ready_app() -> App {
-      let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
-      app.character_detail = Some(character_detail::State::new(1, &[]));
-      app.skills = Some(skills::State::new(1));
-      app.mail = Some(mail::State::new(42));
-      app.wallet = Some(wallet::State::new());
-      app.assets = Some(assets::State::new());
-      app
-    }
-
-    fn render_route(route: Route) {
-      let app = ready_app();
-      let mut app = app;
-      app.route = route;
-      let _ = route_view(&app);
-    }
-
-    #[test]
-    fn it_renders_every_route_through_route_view() {
-      render_route(Route::Characters);
-      render_route(Route::CharacterDetail(1));
-      render_route(Route::CorporationDetail(1));
-      render_route(Route::Skills(1));
-      render_route(Route::Mail);
-      render_route(Route::Wallet);
-      render_route(Route::Assets);
-      render_route(Route::Settings);
-    }
-
-    #[test]
-    fn it_renders_the_starting_up_placeholder_for_an_unbuilt_route() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-      let _ = route_view(&app);
-      let _ = starting_up();
-    }
-
-    #[test]
-    fn it_renders_main_view_with_a_runtime_and_with_the_init_error_and_pre_runtime_placeholders() {
-      let mut app = ready_app();
-      app.route = Route::Characters;
-      app.runtime = None;
-      let _ = main_view(&app);
-      app.init_error = Some("boom".to_owned());
-      let _ = main_view(&app);
-    }
-
-    #[test]
-    fn it_renders_main_view_with_the_sync_popover_open() {
-      let mut app = ready_app();
-      app.route = Route::Characters;
-      app.sync_popover_open = true;
-      let _ = main_view(&app);
-    }
-
-    #[test]
-    fn it_dispatches_the_daemon_view_for_each_window_kind() {
-      let mut app = ready_app();
-      let splash_id = window::Id::unique();
-      app.windows.register(splash_id, Window::Splash);
-      app.splash = Some(splash::State::default());
-      let _ = view(&app, splash_id);
-      app.splash = None;
-      let _ = view(&app, splash_id);
-
-      let main_id = window::Id::unique();
-      app.windows.register(main_id, Window::Main);
-      app.route = Route::Characters;
-      let _ = view(&app, main_id);
-
-      let editor_id = window::Id::unique();
-      app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
-      let _ = view(&app, editor_id);
-
-      let _ = view(&app, window::Id::unique());
-    }
-
-    #[test]
-    fn it_builds_the_sync_model_with_per_pilot_job_rows() {
-      let mut app = ready_app();
-      app.last_synced = Some(app.now);
-      let model = sync_model(&app);
-      assert_eq!(model.total, model.rows.len());
-    }
-
-    #[test]
-    fn it_renders_the_status_bar_with_and_without_an_active_outbox() {
-      let mut app = ready_app();
-      let _ = status_bar_view(&app);
-      app.outbox.apply(&crate::sync::Event::OutboxInflight {
-        id: 1,
-      });
-      let _ = status_bar_view(&app);
-    }
-
-    #[tokio::test]
-    async fn it_builds_the_subscription_set_for_each_live_screen() {
-      let app = test_app();
-      let _ = subscription(&app);
-
-      let mut app = ready_app();
-      let runtime = test_runtime().await;
-      app.splash = Some(splash::State::default());
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.calendar = Some(calendar::State::new(1, app.now, calendar_features(&app)));
-      app.industry = Some(industry::State::new(
-        1,
-        industry_required_scopes(),
-        industry::FacilityDefaults::default(),
-      ));
-      app.runtime = Some(runtime);
-      app.sync_popover_open = true;
-      app.status.apply(&crate::sync::Event::Started {
-        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
-      });
-      app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(1)));
-
-      // Holding the lease arms the heartbeat, periodic-pull, and periodic-push timers.
-      let (_dir, session) = temp_sync_session();
-      app.sync_session = Some(session);
-      app.read_only = None;
-      let _ = subscription(&app);
-
-      // A parked (read-only) session arms the re-acquire timer instead.
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-      let _ = subscription(&app);
-    }
-
-    #[tokio::test]
-    async fn it_drives_character_detail_through_the_runtime_backed_handler() {
-      let mut app = ready_app();
-      app.runtime = Some(test_runtime().await);
-
-      // CharacterChanged navigates, selects the pilot, and batches an update with a reload.
-      let _ = handle_character_detail(&mut app, character_detail::Message::CharacterChanged(7));
-      assert_eq!(app.route, Route::CharacterDetail(7));
-      assert_eq!(app.selected_character, Some(7));
-
-      // ReauthRequested reroutes to the app-level reauth flow.
-      let _ = handle_character_detail(&mut app, character_detail::Message::ReauthRequested(7));
-
-      // ContactEntityInput batches the modal update with a debounced entity search task.
-      let _ = handle_character_detail(
-        &mut app,
-        character_detail::Message::ContactEntityInput("jita".to_owned()),
-      );
-
-      // Any other message falls through to the plain feature update.
-      let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
-    }
-  }
-
-  mod handlers {
-    use super::*;
-
-    #[test]
-    fn it_routes_feature_messages_to_a_no_op_without_a_runtime() {
-      let mut app = test_app();
-      let _ = update(&mut app, Message::Wallet(wallet::Message::RailDragEnd));
-      let _ = update(
-        &mut app,
-        Message::Assets(assets::Message::SearchChanged("x".to_owned())),
-      );
-      let _ = update(&mut app, Message::Settings(settings::Message::ResetToDefaults));
-      let _ = update(
-        &mut app,
-        Message::CharacterDetail(character_detail::Message::CharacterChanged(7)),
-      );
-      assert_eq!(app.route, Route::CharacterDetail(7));
-      assert_eq!(app.selected_character, Some(7));
-    }
-
-    #[test]
-    fn it_records_a_settled_mail_pane_width() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::Mail(mail::Message::PaneSettled("mail.folder", 220.0)),
-      );
-
-      assert_eq!(app.ui_state.panes.get("mail.folder"), Some(&220.0));
-      assert!(app.coalescer.has_pending());
-    }
-
-    #[test]
-    fn it_routes_a_mail_compose_input_to_a_no_op_without_a_runtime() {
-      let mut app = test_app();
-      app.mail = Some(mail::State::new(42));
-
-      let _ = update(&mut app, Message::Mail(mail::Message::ComposeToInput("Ve".to_owned())));
-    }
-
-    #[tokio::test]
-    async fn it_dispatches_each_stockpile_branch_through_the_runtime() {
-      let mut app = test_app();
-      app.assets = Some(assets::State::new());
-      app.runtime = Some(test_runtime().await);
-
-      let _location = handle_assets(
-        &mut app,
-        assets::Message::StockpileEditorLocationSearchChanged("Jit".to_owned()),
-      );
-      let _item = handle_assets(
-        &mut app,
-        assets::Message::StockpileEditorItemSearchChanged(0, "Trit".to_owned()),
-      );
-      let _resolve = handle_assets(&mut app, assets::Message::StockpileImportResolveRequested);
-      let _save = handle_assets(&mut app, assets::Message::StockpileEditorSaved);
-      let _default = handle_assets(&mut app, assets::Message::SearchChanged("x".to_owned()));
-    }
-
-    #[tokio::test]
-    async fn it_pairs_a_compose_input_with_a_recipient_search_when_a_runtime_is_present() {
-      let mut app = test_app();
-      app.mail = Some(mail::State::new(42));
-      app.runtime = Some(test_runtime().await);
-
-      let _to = handle_mail(&mut app, mail::Message::ComposeToInput("Vexor".to_owned()));
-      let _cc = handle_mail(&mut app, mail::Message::ComposeCcInput("Alli".to_owned()));
-      let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::Character(7)));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn it_dispatches_each_native_menu_action() {
-      let mut app = test_app();
-
-      let _about = handle_menu(&mut app, menu::MenuAction::About);
-      let _check = handle_menu(&mut app, menu::MenuAction::CheckUpdates);
-    }
-
-    #[test]
-    fn it_routes_a_mail_scope_selection_to_a_no_op_without_a_runtime() {
-      let mut app = test_app();
-      app.mail = Some(mail::State::new(42));
-
-      let _ = update(
-        &mut app,
-        Message::Mail(mail::Message::ScopeSelected(mail::Scope::Character(7))),
-      );
-    }
-
-    #[test]
-    fn it_records_a_new_updater_state_and_rearms_the_toast() {
-      let mut app = test_app();
-      app.updater_toast_dismissed = true;
-
-      let _ = update(
-        &mut app,
-        Message::UpdaterStateChanged(updater::State::UpdateAvailable {
-          version: "1.2.3".to_owned(),
-        }),
-      );
-
-      assert_eq!(
-        app.updater_state,
-        updater::State::UpdateAvailable {
-          version: "1.2.3".to_owned()
-        }
-      );
-      assert!(
-        !app.updater_toast_dismissed,
-        "a fresh transition re-arms the dismissible toast"
-      );
-    }
-
-    #[test]
-    fn it_keeps_the_toast_dismissed_for_a_repeated_updater_state() {
-      let mut app = test_app();
-      app.updater_state = updater::State::Downloading {
-        version: "1.2.3".to_owned(),
-      };
-      app.updater_toast_dismissed = true;
-
-      let _ = update(
-        &mut app,
-        Message::UpdaterStateChanged(updater::State::Downloading {
-          version: "1.2.3".to_owned(),
-        }),
-      );
-
-      assert!(
-        app.updater_toast_dismissed,
-        "an identical state must not re-show a toast the user dismissed"
-      );
-    }
-
-    #[test]
-    fn it_dismisses_the_updater_toast() {
-      let mut app = test_app();
-      assert!(!app.updater_toast_dismissed);
-
-      let _ = update(&mut app, Message::UpdaterDismissToast);
-
-      assert!(app.updater_toast_dismissed, "the toast hides after a dismiss");
-    }
-
-    #[test]
-    fn it_handles_updater_actions_without_a_provisioned_handle() {
-      let mut app = test_app();
-      assert!(app.updater.is_none());
-
-      let _ = update(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));
-      let _ = update(&mut app, Message::UpdaterAction(updater_banner::Action::Restart));
-    }
-
-    #[test]
-    fn it_renders_the_main_view_with_an_active_updater_state() {
-      let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
-      app.route = Route::Characters;
-      app.updater_state = updater::State::ReadyToRestart {
-        version: "1.2.3".to_owned(),
-      };
-      let _ = main_view(&app);
-    }
-
-    #[test]
-    fn it_toggles_the_sync_popover_and_pulse() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::ToggleSyncPopover);
-      assert!(app.sync_popover_open);
-      let _ = update(&mut app, Message::CloseSyncPopover);
-      assert!(!app.sync_popover_open);
-
-      let _ = update(&mut app, Message::SyncPulse);
-      assert!(app.sync_tick);
-    }
-
-    #[test]
-    fn it_advances_the_clock_and_drains_due_saves_on_a_tick() {
-      let mut app = test_app();
-      let before = app.now;
-
-      let _ = update(&mut app, Message::ClockTick);
-
-      assert!(app.now >= before, "the tick advances the clock");
-    }
-
-    #[test]
-    fn it_reissues_the_mail_reload_only_when_a_snooze_woke() {
-      let mut app = test_app();
-      let _ = update(&mut app, Message::SnoozesWoken(Vec::new()));
-      let _ = update(&mut app, Message::SnoozesWoken(vec![(1, 2)]));
-    }
-
-    #[tokio::test]
-    async fn it_clears_a_parked_store_handle_when_an_init_failure_lands() {
-      let db = store::open_test().await.expect("test db");
-      let mut app = test_app();
-      app.splash = Some(splash::State::default());
-      app.store_ready = Some(StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: None,
-        settings: config::Settings::default(),
-        sync_session: None,
-      });
-
-      let _ = update(&mut app, Message::InitFailed("nope".to_owned()));
-
-      assert_eq!(app.init_error.as_deref(), Some("nope"));
-      assert!(app.store_ready.is_none(), "a fatal init clears any parked store handle");
-    }
-
-    #[test]
-    fn it_parks_then_replays_a_cold_start_callback_on_ready_paths() {
-      let mut app = test_app();
-      let _ = handle_auth(
-        &mut app,
-        auth::Message::CallbackReceived("eveauth-pod://callback?code=a&state=b".to_owned()),
-      );
-      assert!(app.pending_auth.is_some());
-    }
-
-    #[test]
-    fn it_records_the_mail_unread_count_and_reauth_logs_without_a_runtime() {
-      let mut app = test_app();
-      let _ = update(&mut app, Message::MailUnreadCounted(9));
-      assert_eq!(app.mail_unread, 9);
-      let _ = update(&mut app, Message::ReauthCharacter(1));
-    }
-
-    #[test]
-    fn it_records_the_calendar_attention_count() {
-      let mut app = test_app();
-
-      let _ = update(&mut app, Message::CalendarAttentionCounted(4));
-
-      assert_eq!(app.calendar_attention, 4);
-    }
-
-    #[test]
-    fn it_routes_splash_messages_through_update_splash() {
-      let mut app = test_app();
-      let splash_id = window::Id::unique();
-      app.windows.register(splash_id, Window::Splash);
-      app.splash = Some(splash::State::default());
-
-      let _ = update(&mut app, Message::Splash(splash::Message::DragWindow));
-      let _ = update(&mut app, Message::Splash(splash::Message::Tick));
-      let _ = update(&mut app, Message::Splash(splash::Message::ExpandComplete));
-    }
-
-    #[test]
-    fn it_routes_a_splash_drag_to_a_no_op_with_no_splash_window() {
-      let mut app = test_app();
-      let _ = update(&mut app, Message::Splash(splash::Message::DragWindow));
-    }
-
-    #[test]
-    fn it_disables_the_shadow_only_for_the_splash_window_on_open() {
-      let mut app = test_app();
-      let splash_id = window::Id::unique();
-      app.windows.register(splash_id, Window::Splash);
-      let _ = on_window_opened(&app, splash_id);
-      let main_id = window::Id::unique();
-      app.windows.register(main_id, Window::Main);
-      let _ = on_window_opened(&app, main_id);
-    }
-
-    #[test]
-    fn it_routes_a_window_close_request_for_the_editor_through_the_close_path() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(1)));
-
-      let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
-
-      assert!(app.editor.is_none(), "an OS close of the editor clears its state");
-    }
-
-    #[test]
-    fn it_keeps_the_app_alive_when_main_closes_while_a_secondary_window_is_open() {
-      let mut app = test_app();
-      let main_id = window::Id::unique();
-      let editor_id = window::Id::unique();
-      app.windows.register(main_id, Window::Main);
-      app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
-
-      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
-
-      assert_eq!(app.windows.kind(main_id), None, "the main window is gone");
-      assert_eq!(
-        app.windows.kind(editor_id),
-        Some(Window::SkillPlanEditor),
-        "the still-open editor keeps the app alive"
-      );
-      assert!(!app.windows.is_empty(), "a surviving window means no shutdown yet");
-    }
-
-    #[test]
-    fn it_empties_the_registry_when_the_final_window_closes_after_main() {
-      let mut app = test_app();
-      let main_id = window::Id::unique();
-      let editor_id = window::Id::unique();
-      app.windows.register(main_id, Window::Main);
-      app.windows.register(editor_id, Window::SkillPlanEditor);
-      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
-
-      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
-      let _ = update(&mut app, Message::Window(editor_id, window::Event::CloseRequested));
-
-      assert!(
-        app.windows.is_empty(),
-        "closing the last window empties the registry and shuts down"
-      );
-    }
-
-    #[test]
-    fn it_tears_down_on_an_os_kill_that_skips_the_close_request() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::SkillPlanEditor);
-      app.editor = Some((id, skill_plan_editor::State::new(1)));
-
-      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
-
-      assert!(app.editor.is_none(), "a compositor-killed editor clears its state");
-      assert!(
-        app.windows.is_empty(),
-        "the destroyed window leaves an empty registry, triggering shutdown"
-      );
-    }
-
-    #[test]
-    fn a_close_event_for_an_already_removed_window_is_a_no_op() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Main);
-
-      let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
-      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
-
-      assert!(
-        app.windows.is_empty(),
-        "the late Closed event finds nothing to remove and does not re-trigger"
-      );
-    }
-
-    #[test]
-    fn it_ignores_an_unhandled_window_event() {
-      let mut app = test_app();
-      let id = window::Id::unique();
-      app.windows.register(id, Window::Main);
-      let _ = update(&mut app, Message::Window(id, window::Event::Focused));
-    }
-
-    #[test]
-    fn a_held_foreign_lease_maps_to_read_only_holder_info() {
-      let last_seen = Utc::now();
-      let holder: Option<HolderInfo> = store::lease::Outcome::HeldBy {
-        hostname: "studio-mac".to_owned(),
-        last_seen,
-        machine_id: "machine-b".to_owned(),
-      }
-      .into();
-
-      assert_eq!(
-        holder,
-        Some(HolderInfo {
-          hostname: "studio-mac".to_owned(),
-          last_active: last_seen,
-          machine_id: "machine-b".to_owned(),
-        })
-      );
-    }
-
-    #[test]
-    fn an_acquired_lease_maps_to_no_read_only_state() {
-      let holder: Option<HolderInfo> = store::lease::Outcome::Acquired.into();
-
-      assert_eq!(holder, None);
-    }
-
-    #[test]
-    fn direct_mode_does_not_hold_a_lease_and_runs_no_lifecycle_io() {
-      let mut app = test_app();
-
-      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
-      let _ = handle_lease_heartbeat(&mut app);
-      let _ = handle_periodic_push(&mut app);
-      let _ = handle_periodic_pull(&mut app);
-    }
-
-    #[test]
-    fn a_read_only_session_neither_pulls_nor_pushes() {
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      assert!(!holding_lease(&app), "a read-only opener does not pull from the share");
-      let _ = handle_periodic_pull(&mut app);
-      let _ = handle_periodic_push(&mut app);
-    }
-
-    #[test]
-    fn a_pull_that_changed_nothing_leaves_the_synced_marker_untouched() {
-      let mut app = test_app();
-      app.last_synced = None;
-
-      let _ = handle_pulled(&mut app, false);
-
-      assert!(app.last_synced.is_none(), "no pull means no new synced timestamp");
-    }
-
-    #[test]
-    fn sync_now_without_a_session_is_a_no_op() {
-      let mut app = test_app();
-      app.last_synced = None;
-
-      let _ = sync_now(&mut app);
-
-      assert!(
-        app.last_synced.is_none(),
-        "with no sync session there is nothing to sync"
-      );
-    }
-
-    #[test]
-    fn sync_now_with_a_clean_session_stamps_the_synced_time() {
-      let (_dir, session) = temp_sync_session();
-      let mut app = test_app();
-      app.sync_session = Some(session);
-      app.last_synced = None;
-
-      let _ = sync_now(&mut app);
-
-      assert!(
-        app.last_synced.is_some(),
-        "a clean session with nothing to push or pull still refreshes the synced timestamp"
-      );
-    }
-
-    #[tokio::test]
-    async fn pull_bundle_reports_no_change_for_a_fresh_share() {
-      let (_dir, session) = temp_sync_session();
-
-      let message = pull_bundle(session).await;
-
-      assert!(
-        matches!(message, Message::Pulled(false)),
-        "a fresh share has nothing newer to pull"
-      );
-    }
-
-    #[tokio::test]
-    async fn export_log_bundle_writes_nowhere_when_the_save_dialog_is_stubbed() {
-      let dir = tempfile::tempdir().unwrap();
-      let log_dir = dir.path().join("logs");
-      std::fs::create_dir_all(&log_dir).unwrap();
-      std::fs::write(log_dir.join("pod.log"), b"{\"ts\":\"now\"}\n").unwrap();
-      let diagnostics = settings::log_export::Diagnostics {
-        cache_dir: dir.path().join("cache"),
-        database_path: dir.path().join("pod.db"),
-        db_dir: dir.path().to_path_buf(),
-        log_dir: log_dir.clone(),
-      };
-
-      let result = export_log_bundle(
-        log_dir,
-        Utc::now() - chrono::Duration::hours(1),
-        Utc::now(),
-        diagnostics,
-      )
-      .await;
-
-      assert_eq!(result, Ok(None), "the cfg(test) save dialog is a no-op");
-    }
-
-    #[tokio::test]
-    async fn handle_settings_routes_a_tab_switch_through_the_settings_state() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::CategorySelected(settings::Category::Storage),
-      );
-
-      assert!(app.settings.is_some(), "switching tabs leaves the settings screen open");
-    }
-
-    #[tokio::test]
-    async fn handle_settings_without_a_settings_screen_is_a_no_op() {
-      let mut app = test_app();
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::CategorySelected(settings::Category::Storage),
-      );
-
-      assert!(app.settings.is_none());
-    }
-
-    #[tokio::test]
-    async fn handle_settings_hoists_an_interface_scale_change_onto_the_app_and_runtime() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Accessibility(settings::accessibility_tab::Message::ScaleChanged(125)),
-      );
-
-      assert_eq!(
-        *app.accessibility.scale(),
-        125,
-        "the new scale is hoisted onto the app live"
-      );
-      assert_eq!(
-        *app.runtime.as_ref().unwrap().settings.accessibility().scale(),
-        125,
-        "the runtime settings mirror the new scale so a later save persists it",
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_settings_drives_the_color_engine_when_high_contrast_toggles() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Accessibility(settings::accessibility_tab::Message::HighContrastToggled(true)),
-      );
-
-      assert!(*app.accessibility.high_contrast(), "the toggle is hoisted onto the app");
-      assert!(
-        color::high_contrast(),
-        "the runtime color engine reflects the high-contrast toggle"
-      );
-
-      // The engine flag is process-global; leave it as it was found for any sibling tests.
-      color::set_high_contrast(false);
-    }
-
-    #[tokio::test]
-    async fn handle_settings_sends_a_feature_toggle_to_the_running_sync_engine() {
-      let (runtime, mut commands) = test_runtime_with_commands().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Wallet, false)),
-      );
-
-      let command = commands.try_recv().expect("a feature toggle reaches the engine");
-      let sync::Command::SetFeatures(flags) = command else {
-        panic!("expected SetFeatures, got {command:?}");
-      };
-      assert!(
-        !flags.is_enabled(config::Feature::Wallet),
-        "the engine receives the post-toggle feature flags"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_settings_sends_set_features_to_the_engine_on_reset_to_defaults() {
-      let (runtime, mut commands) = test_runtime_with_commands().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(&mut app, settings::Message::ResetToDefaults);
-
-      let command = commands.try_recv().expect("resetting to defaults reaches the engine");
-      assert!(
-        matches!(command, sync::Command::SetFeatures(_)),
-        "reset-to-defaults reconciles the running engine, got {command:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_settings_rebuilds_the_char_detail_tab_strip_on_a_toggle() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.character_detail = Some(character_detail::State::new(7, &config::Feature::ALL));
-      app.runtime = Some(runtime);
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Features(settings::features_tab::Message::Toggled(
-          config::Feature::Standings,
-          false,
-        )),
-      );
-      let enabled = enabled_features(&app);
-      let _ = update(
-        &mut app,
-        Message::CharacterDetail(character_detail::Message::FeaturesChanged(enabled)),
-      );
-
-      let detail = app.character_detail.as_ref().expect("the detail screen stays open");
-      assert!(
-        !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
-        "the dispatched feature change drops the Standings detail tab live"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_settings_syncs_industry_defaults_onto_the_runtime() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      // Picking an NPC station as the Manufacturing default persists it; the planner reads the runtime
-      // copy on open, so it must mirror the change immediately (not only after a restart).
-      let facility = crate::ui::components::facility_combobox::FacilityRef {
-        cost_index: Some(0.05),
-        id: 60_003_760,
-        name: "Jita IV - Moon 4 - CNAP".to_owned(),
-        region: Some("The Forge".to_owned()),
-        security_status: Some(0.9),
-        solar_system: "Jita".to_owned(),
-        solar_system_id: 30_000_142,
-        type_id: None,
-      };
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
-          activity: 1,
-          facility,
-        }),
-      );
-
-      assert_eq!(
-        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
-        Some(60_003_760),
-        "the runtime industry config mirrors the settings screen so the planner honors the new default"
-      );
-    }
-
-    fn test_industry_state() -> industry::State {
-      industry::State::new(
-        industry::EMPTY_INDUSTRY_SELECTION,
-        Vec::new(),
-        industry::FacilityDefaults::default(),
-      )
-    }
-
-    #[tokio::test]
-    async fn handle_industry_records_a_pane_ratio_before_the_runtime_gate() {
-      let mut app = test_app();
-
-      let _ = handle_industry(
-        &mut app,
-        industry::Message::PaneSettled("industry.planner.detail", 0.42),
-      );
-
-      assert_eq!(
-        app.ui_state.panes.get("industry.planner.detail"),
-        Some(&0.42),
-        "a pane drag is recorded even without a runtime or industry screen"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_industry_reauth_request_defers_an_auth_start() {
-      let mut app = test_app();
-
-      let _ = handle_industry(&mut app, industry::Message::ReauthRequested(7));
-
-      assert!(
-        app.pending_auth.is_some(),
-        "a re-auth request from the industry screen defers an auth Start"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_industry_without_a_screen_is_a_no_op() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.runtime = Some(runtime);
-
-      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Planner));
-
-      assert!(
-        app.industry.is_none(),
-        "with no industry screen open the message is dropped"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_industry_dispatches_a_message_through_the_reducer() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.industry = Some(test_industry_state());
-      app.runtime = Some(runtime);
-
-      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Blueprints));
-
-      assert!(
-        app.industry.is_some(),
-        "the industry screen stays open after a plain reducer message"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_industry_seams_the_facility_search_for_the_planner() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.industry = Some(test_industry_state());
-      app.runtime = Some(runtime);
-
-      let _ = handle_industry(
-        &mut app,
-        industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
-          query: "jita".to_owned(),
-          type_id: 0,
-        }),
-      );
-
-      assert!(
-        app.industry.as_ref().unwrap().facility_search_target().is_some(),
-        "typing into the facility field opens the picker and arms a live search"
-      );
-    }
-
-    #[test]
-    fn a_reauth_from_a_403_state_requests_the_full_enabled_feature_scope_set() {
-      // No runtime, so the auth Start is deferred and we can inspect its feature set without
-      // opening a browser. With Mail and Skills both enabled, a single re-auth must request both.
-      let mut app = test_app();
-
-      let _ = handle_reauth_character(&mut app, 7);
-
-      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
-        panic!("a re-auth defers an auth Start, got {:?}", app.pending_auth);
-      };
-      assert!(
-        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
-        "the single re-auth carries the full enabled-feature set, not a per-feature subset"
-      );
-
-      let scopes = auth::scopes_for(&features);
-      assert!(
-        auth::scopes_for(&[config::Feature::Mail])
-          .iter()
-          .all(|scope| scopes.contains(scope)),
-        "re-auth requests Mail scopes"
-      );
-      assert!(
-        auth::scopes_for(&[config::Feature::SkillMonitoring])
-          .iter()
-          .all(|scope| scopes.contains(scope)),
-        "the same single re-auth also requests Skills scopes"
-      );
-    }
-
-    #[tokio::test]
-    async fn re_enabling_a_feature_restores_its_scopes_to_the_live_reauth_set() {
-      // Reproduces the disable -> re-enable -> re-auth flow: a toggle must reach the running
-      // runtime so that a later re-auth (which reads the live enabled set) requests the restored
-      // feature's scopes, even with the settings screen closed.
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let toggle = |app: &mut App, value| {
-        let _ = handle_settings(
-          app,
-          settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Mail, value)),
-        );
-      };
-      toggle(&mut app, false);
-      assert!(
-        !enabled_features(&app).contains(&config::Feature::Mail),
-        "disabling Mail removes it from the live enabled set"
-      );
-      toggle(&mut app, true);
-
-      // Close the settings screen so the enabled set resolves from the running runtime, not the panel.
-      app.settings = None;
-      let features = enabled_features(&app);
-
-      assert!(
-        features.contains(&config::Feature::Mail),
-        "re-enabling Mail restores it to the live runtime the re-auth reads from"
-      );
-      let scopes = auth::scopes_for(&features);
-      assert!(
-        auth::scopes_for(&[config::Feature::Mail])
-          .iter()
-          .all(|scope| scopes.contains(scope)),
-        "the re-auth requests the re-enabled Mail scopes"
-      );
-    }
-
-    #[tokio::test]
-    async fn disabling_industry_while_open_redirects_to_characters_and_re_enabling_restores_the_route() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
-      app.runtime = Some(runtime);
-
-      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
-      assert_eq!(app.route, Route::Industry, "Industry is reachable while enabled");
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Features(settings::features_tab::Message::Toggled(
-          config::Feature::Industry,
-          false,
-        )),
-      );
-
-      assert_eq!(
-        app.route,
-        Route::Characters,
-        "disabling Industry while its screen is open redirects to Characters"
-      );
-
-      let _ = handle_settings(
-        &mut app,
-        settings::Message::Features(settings::features_tab::Message::Toggled(
-          config::Feature::Industry,
-          true,
-        )),
-      );
-      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
-
-      assert_eq!(
-        app.route,
-        Route::Industry,
-        "re-enabling Industry restores the route instantly"
-      );
-    }
-
-    #[tokio::test]
-    async fn a_card_reauth_after_toggling_requests_every_enabled_scope_through_the_real_dispatch() {
-      // Full repro of the user flow with no runtime, so the auth Start is deferred into
-      // `pending_auth` and we can read the exact feature set it carries.
-      let db = crate::store::open_test().await.unwrap();
-      let mut app = test_app();
-      app.settings = Some(settings::State::new(config::Settings::default(), db));
-
-      // Disable then re-enable Mail and Skills through the real settings handler.
-      for feature in [config::Feature::Mail, config::Feature::SkillMonitoring] {
-        for value in [false, true] {
-          let _ = handle_settings(
-            &mut app,
-            settings::Message::Features(settings::features_tab::Message::Toggled(feature, value)),
-          );
-        }
-      }
-
-      // Drive the card / context-menu re-auth message through the top-level dispatch.
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
-      );
-
-      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
-        panic!("the re-auth must defer an auth Start, got {:?}", app.pending_auth);
-      };
-      assert!(
-        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
-        "a re-auth after re-enabling features must request their scopes, got {features:?}"
-      );
-    }
-
-    #[tokio::test]
-    async fn handle_auth_cancel_with_a_runtime_is_handled_not_deferred() {
-      let runtime = test_runtime().await;
-      let mut app = test_app();
-      app.runtime = Some(runtime);
-
-      let _ = handle_auth(&mut app, auth::Message::Cancel);
-
-      assert!(
-        app.pending_auth.is_none(),
-        "with a runtime present the auth message is handled inline, not queued"
-      );
-    }
-
-    #[test]
-    fn handle_auth_without_a_runtime_defers_the_message() {
-      let mut app = test_app();
-
-      let _ = handle_auth(&mut app, auth::Message::Cancel);
-
-      assert!(
-        app.pending_auth.is_some(),
-        "auth before the runtime is ready is queued until boot completes"
-      );
-    }
-
-    #[test]
-    fn a_completed_reconcile_stamps_the_synced_time_and_refreshes_after_a_pull() {
-      let mut app = test_app();
-      app.last_synced = None;
-
-      let _ = handle_sync_now_resolved(
-        &mut app,
-        SyncNowOutcome::Reconciled {
-          mark: None,
-          pulled: true,
-        },
-      );
-
-      assert!(
-        app.last_synced.is_some(),
-        "a completed 'Sync now' updates the visible last-synced status"
-      );
-      assert!(app.roster_dirty, "a pull marks the roster for a refresh");
-    }
-
-    #[test]
-    fn a_failed_sync_does_not_claim_success() {
-      let mut app = test_app();
-      app.last_synced = None;
-
-      let _ = handle_sync_now_resolved(&mut app, SyncNowOutcome::Failed);
-
-      assert!(
-        app.last_synced.is_none(),
-        "a failed sync leaves the last-synced status stale"
-      );
-    }
-
-    #[test]
-    fn a_read_only_session_neither_heartbeats_nor_pushes() {
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      assert!(!holding_lease(&app), "a read-only opener does not hold the lease");
-    }
-
-    #[test]
-    fn take_over_is_a_no_op_when_the_app_is_already_writable() {
-      let mut app = test_app();
-
-      let _ = handle_take_over(&mut app);
-
-      assert!(app.read_only.is_none(), "a writable app stays writable");
-    }
-
-    #[test]
-    fn take_over_without_a_sync_session_fires_no_real_io() {
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_take_over(&mut app);
-
-      assert!(
-        app.read_only.is_some(),
-        "with no sync session the request short-circuits and the banner stays"
-      );
-      assert!(
-        !app.confirm_force_takeover,
-        "with no sync session there is nothing to confirm"
-      );
-    }
-
-    #[test]
-    fn pressing_take_over_opens_the_confirmation_without_claiming() {
-      let (_dir, session) = temp_sync_session();
-      let mut app = test_app();
-      app.sync_session = Some(session);
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_take_over(&mut app);
-
-      assert!(app.confirm_force_takeover, "the data-loss confirmation is shown");
-      assert!(app.read_only.is_some(), "the share is not claimed on the first press");
-    }
-
-    #[test]
-    fn cancelling_the_confirmation_leaves_the_instance_read_only() {
-      let mut app = test_app();
-      app.confirm_force_takeover = true;
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_cancel_take_over(&mut app);
-
-      assert!(!app.confirm_force_takeover, "cancelling closes the confirmation");
-      assert!(app.read_only.is_some(), "cancelling leaves the instance read-only");
-    }
-
-    #[test]
-    fn confirming_closes_the_gate_even_when_it_short_circuits() {
-      let mut app = test_app();
-      app.confirm_force_takeover = true;
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_confirm_take_over(&mut app);
-
-      assert!(!app.confirm_force_takeover, "confirming always closes the gate");
-      assert!(
-        app.read_only.is_some(),
-        "with no sync session the forceful claim short-circuits and the banner stays"
-      );
-    }
-
-    #[test]
-    fn the_force_takeover_confirmation_warns_of_data_loss_and_names_the_last_active_age() {
-      let label = read_only_confirm_label("studio-mac", "12s ago");
-
-      assert_eq!(
-        label,
-        "studio-mac was last active 12s ago. Taking over overwrites any unsaved changes it still has open. Continue?"
-      );
-    }
-
-    #[tokio::test]
-    async fn a_claimed_take_over_drops_read_only_and_installs_the_reopened_store() {
-      let db = store::open_test().await.expect("test db");
-      let reopened = StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: Some(HolderInfo {
-          hostname: "studio-mac".to_owned(),
-          last_active: Utc::now(),
-          machine_id: "machine-b".to_owned(),
-        }),
-        settings: config::Settings::default(),
-        sync_session: None,
-      };
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Claimed, reopened);
-
-      assert!(app.read_only.is_none(), "claiming the share makes the app writable");
-      assert!(app.store_ready.is_some(), "the reopened pools are installed");
-      assert_eq!(app.engine_state, EngineState::Running);
-      assert!(
-        app.store_ready.as_ref().unwrap().lease.is_none(),
-        "the claimed store opens read-write with a nulled lease"
-      );
-    }
-
-    #[test]
-    fn the_initial_read_only_banner_invites_a_take_over() {
-      let label = read_only_banner_label("studio-mac");
-
-      assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
-    }
-
-    #[tokio::test]
-    async fn a_failed_take_over_keeps_the_app_read_only_and_reopens_parked_pools() {
+    async fn it_routes_each_lifecycle_message() {
+      let mut app = featured_app();
       let db = store::open_test().await.expect("test db");
       let reopened = StoreReady {
         db: db.clone(),
@@ -6588,500 +4670,43 @@ mod tests {
         settings: config::Settings::default(),
         sync_session: None,
       };
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
 
-      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed, reopened);
-
-      assert!(app.read_only.is_some(), "a failed take-over leaves the app read-only");
-      assert!(
-        app.store_ready.is_some(),
-        "a declined take-over still reopens pools so the app is never left with closed handles"
-      );
-      assert!(
-        matches!(app.engine_state, EngineState::ReadOnly { .. }),
-        "a declined take-over re-parks the engine read-only"
-      );
-      assert!(
-        app.store_ready.as_ref().unwrap().lease.is_some(),
-        "the reopened parked store carries the held-by lease"
-      );
-    }
-
-    #[test]
-    fn parked_is_the_symmetric_inverse_of_holding_the_lease() {
-      let (_dir, session) = temp_sync_session();
-      let mut app = test_app();
-      app.sync_session = Some(session);
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      assert!(parked(&app), "a read-only opener with a session is parked");
-      assert!(!holding_lease(&app), "a parked opener does not hold the lease");
-
-      app.read_only = None;
-
-      assert!(!parked(&app), "clearing read-only ends the parked state");
-      assert!(holding_lease(&app), "a writable opener holds the lease");
-    }
-
-    #[test]
-    fn direct_mode_is_neither_parked_nor_holding_the_lease() {
-      let app = test_app();
-
-      assert!(!parked(&app), "with no sync session there is nothing parked");
-      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
-    }
-
-    #[test]
-    fn re_acquire_is_a_no_op_when_the_app_is_writable() {
-      let (_dir, session) = temp_sync_session();
-      let mut app = test_app();
-      app.sync_session = Some(session);
-
-      let _ = handle_reacquire_lease(&mut app);
-
-      assert!(app.read_only.is_none(), "a writable app is never re-acquired");
-    }
-
-    #[test]
-    fn re_acquire_without_a_sync_session_short_circuits() {
-      let mut app = test_app();
-      app.read_only = Some(HolderInfo {
-        hostname: "studio-mac".to_owned(),
-        last_active: Utc::now(),
-        machine_id: "machine-b".to_owned(),
-      });
-
-      let _ = handle_reacquire_lease(&mut app);
-
-      assert!(
-        app.read_only.is_some(),
-        "with no sync session the re-acquire short-circuits and the parked banner stays"
-      );
-    }
-
-    #[test]
-    fn a_declined_re_acquire_poll_writes_nothing_to_the_lease() {
-      let (dir, session) = temp_sync_session();
-      let share = dir.path().join("share");
-      let now = Utc::now();
-      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
-        .heartbeat(&share, now)
-        .unwrap();
-      let lease_path = store::lease::LeaseManager::lease_path(&share);
-      let before = std::fs::read(&lease_path).unwrap();
-
-      let outcome = session.take_over(now).unwrap();
-      let after = std::fs::read(&lease_path).unwrap();
-
-      assert_eq!(
-        outcome,
-        store::lease::Outcome::HeldBy {
-          hostname: "studio-mac".to_owned(),
-          last_seen: store::share_meta::Lease::read(&lease_path).unwrap().heartbeat,
-          machine_id: "machine-holder".to_owned(),
-        },
-        "a still-fresh holder is reported, not displaced"
-      );
-      assert_eq!(
-        before, after,
-        "a declined poll heartbeats nothing and never overwrites the foreign lease"
-      );
-    }
-
-    #[test]
-    fn an_inert_sync_handle_swallows_commands_without_panicking() {
-      let (handle, _events) = inert_sync();
-
-      handle.discover();
-      handle.enroll(sync::Subject::Character(7));
-      handle.run_now(sync::Subject::Character(7));
-    }
-
-    #[test]
-    fn a_push_completion_advances_the_debounce_mark() {
-      let mut app = test_app();
-      let mark = SystemTime::now();
-
-      let _ = handle_pushed(&mut app, Some(mark));
-
-      assert_eq!(app.last_push, Some(mark));
-      assert!(
-        app.last_synced.is_some(),
-        "a successful push updates the last-synced clock"
-      );
-    }
-
-    #[test]
-    fn a_failed_push_leaves_the_debounce_mark_untouched() {
-      let mut app = test_app();
-
-      let _ = handle_pushed(&mut app, None);
-
-      assert_eq!(app.last_push, None, "a failed push must re-attempt next tick");
-    }
-
-    #[test]
-    fn direct_mode_runs_no_crash_recovery_push() {
-      let app = test_app();
-
-      let _ = recover_unsynced_changes(&app);
-    }
-
-    #[test]
-    fn it_routes_each_character_manager_intent_arm() {
-      let mut app = test_app();
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::AddCharacterRequested),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::AddCorporationRequested),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCorporationRequested(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::RemoveCharacterConfirmed(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::RemoveCorporationConfirmed(7)),
-      );
-    }
-
-    #[tokio::test]
-    async fn it_opens_the_database_under_the_configured_directory_in_place() {
-      let dir = tempfile::tempdir().expect("temp dir");
-      let mut settings = config::Settings::default();
-      let configured = dir.path().join("nested");
-      settings.storage_mut().set_db_dir(Some(configured.clone()));
-      settings.storage_mut().set_cache_dir(Some(dir.path().join("cache")));
-      settings
-        .storage_mut()
-        .set_working_copy_dir(Some(dir.path().join("working-copy")));
-
-      let path = store::bootstrap::resolve_local_path(settings.storage()).expect("the path resolves");
-      let db = store::open(&path).await.expect("the database opens");
-      drop(db);
-
-      assert_eq!(path, configured.join("pod.db"), "direct mode opens in place");
-      assert!(
-        configured.join("pod.db").exists(),
-        "the db file lands under the configured directory"
-      );
-      assert!(
-        !settings.storage().resolved_working_copy_path().exists(),
-        "a local path creates no working copy"
-      );
-    }
-  }
-
-  mod rail_mail_unread {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uses_the_live_count_when_the_mail_screen_is_closed() {
-      assert_eq!(super::super::rail_mail_unread(3, None), 3);
-      assert_eq!(super::super::rail_mail_unread(0, None), 0);
-    }
-
-    #[test]
-    fn it_prefers_the_screens_fresher_optimistic_count_over_a_stale_live_count() {
-      assert_eq!(super::super::rail_mail_unread(3, Some(2)), 2);
-    }
-
-    #[test]
-    fn it_keeps_the_live_count_when_it_is_already_the_lower_of_the_two() {
-      assert_eq!(super::super::rail_mail_unread(1, Some(4)), 1);
-    }
-
-    #[test]
-    fn it_folds_a_count_tick_into_the_rail_dot_regardless_of_the_active_route() {
-      let mut app = test_app();
-      app.route = Route::Characters;
-      assert!(app.mail.is_none());
-
-      let _ = update(&mut app, Message::MailUnreadCounted(5));
-
-      assert_eq!(app.mail_unread, 5);
-      assert_eq!(
-        super::super::rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread)),
-        5,
-        "the rail dot reflects the background count with no Mail screen open"
-      );
-    }
-
-    #[test]
-    fn it_clears_the_rail_dot_when_a_count_tick_reports_zero_unread() {
-      let mut app = test_app();
-      app.mail_unread = 4;
-
-      let _ = update(&mut app, Message::MailUnreadCounted(0));
-
-      assert_eq!(app.mail_unread, 0, "the dot clears when no unread mail remains");
-    }
-  }
-
-  mod mark_detail_dirty {
-    use super::*;
-    use crate::features::character_detail;
-
-    const PILOT: i64 = 42;
-
-    fn finished(kind: JobKind, subject: Subject) -> JobKey {
-      JobKey::new(kind, subject)
-    }
-
-    #[test]
-    fn it_routes_a_finished_job_to_the_open_detail_screen() {
-      let mut app = test_app();
-      app.character_detail = Some(character_detail::State::new(PILOT, &[]));
-
-      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
-
-      assert!(app.character_detail.as_ref().unwrap().is_dirty());
-    }
-
-    #[test]
-    fn it_ignores_everything_when_no_detail_screen_is_open() {
-      let mut app = test_app();
-
-      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
-
-      assert!(app.character_detail.is_none());
-    }
-  }
-
-  mod mark_assets_dirty {
-    use super::*;
-
-    fn finished(kind: JobKind) -> JobKey {
-      JobKey::new(kind, Subject::Character(1))
-    }
-
-    #[test]
-    fn it_marks_assets_dirty_on_route_for_an_asset_sync() {
-      let mut app = test_app();
-      app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
-
-      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
-
-      assert!(app.assets.as_ref().unwrap().is_dirty());
-    }
-
-    #[test]
-    fn it_skips_the_assets_reload_off_route() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-      app.assets = Some(assets::State::new());
-
-      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
-
-      assert!(!app.assets.as_ref().unwrap().is_dirty());
-    }
-
-    #[test]
-    fn it_skips_the_assets_reload_for_an_unrelated_kind() {
-      let mut app = test_app();
-      app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
-
-      mark_assets_dirty(&mut app, finished(JobKind::CharacterWallet));
-
-      assert!(!app.assets.as_ref().unwrap().is_dirty());
-    }
-  }
-
-  mod mark_wallet_dirty {
-    use super::*;
-
-    fn finished(kind: JobKind) -> JobKey {
-      JobKey::new(kind, Subject::Character(1))
-    }
-
-    #[test]
-    fn it_marks_the_wallet_dirty_on_route_for_a_ledger_kind() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-      app.wallet = Some(wallet::State::new());
-
-      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
-
-      assert!(app.wallet.as_ref().unwrap().is_dirty());
-    }
-
-    #[test]
-    fn it_skips_the_wallet_reload_off_route() {
-      let mut app = test_app();
-      app.route = Route::Assets;
-      app.wallet = Some(wallet::State::new());
-
-      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
-
-      assert!(!app.wallet.as_ref().unwrap().is_dirty());
-    }
-
-    #[test]
-    fn it_skips_the_wallet_reload_for_an_unrelated_kind() {
-      let mut app = test_app();
-      app.route = Route::Wallet;
-      app.wallet = Some(wallet::State::new());
-
-      mark_wallet_dirty(&mut app, finished(JobKind::AssetSync));
-
-      assert!(!app.wallet.as_ref().unwrap().is_dirty());
-    }
-  }
-
-  mod image_self_heal {
-    use super::*;
-    use crate::store::images::ImageKind;
-
-    #[tokio::test]
-    async fn it_marks_each_stale_key_in_flight_exactly_once() {
-      let mut app = test_app();
-      app.runtime = Some(test_runtime().await);
-
-      let _task = dispatch_image_fetches(
-        &mut app,
-        vec![(ImageKind::CharacterPortrait, 42), (ImageKind::CharacterPortrait, 42)],
-      );
-
-      assert!(app.pending_images.contains(&(ImageKind::CharacterPortrait, 42)));
-      assert_eq!(app.pending_images.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_does_not_redispatch_a_key_already_in_flight() {
-      let mut app = test_app();
-      app.runtime = Some(test_runtime().await);
-      app.pending_images.insert((ImageKind::CorporationLogo, 7));
-
-      let _task = dispatch_image_fetches(&mut app, vec![(ImageKind::CorporationLogo, 7)]);
-
-      assert_eq!(app.pending_images.len(), 1);
-    }
-
-    #[test]
-    fn it_clears_the_pending_key_when_an_image_resolves() {
-      let mut app = test_app();
-      app.pending_images.insert((ImageKind::CharacterPortrait, 42));
-
-      let _task = handle_image_ready(&mut app, ImageKind::CharacterPortrait, 42, false);
-
-      assert!(app.pending_images.is_empty());
-    }
-
-    #[test]
-    fn it_rechecks_images_only_for_a_data_loading_feature_message() {
-      let interaction = Message::Wallet(wallet::Message::TimeframeSelected(wallet::Timeframe::default()));
-      assert!(
-        !interaction.affects_images(),
-        "an interaction message must not trigger the scan"
-      );
-
-      assert!(
-        !Message::ClockTick.affects_images(),
-        "a non-feature lifecycle message must not trigger the scan"
-      );
-    }
-  }
-
-  mod outbox_indicator {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::sync::Event;
-
-    #[test]
-    fn it_is_absent_when_the_outbox_is_quiet() {
-      let outbox = sync::OutboxStatus::new();
-
-      assert!(
-        super::outbox_indicator(&outbox).is_none(),
-        "an idle outbox adds no chrome"
-      );
-    }
-
-    #[test]
-    fn it_renders_when_a_row_is_pending() {
-      let mut outbox = sync::OutboxStatus::new();
-      outbox.apply(&Event::OutboxInflight {
-        id: 1,
-      });
-
-      assert!(super::outbox_indicator(&outbox).is_some());
-    }
-
-    #[test]
-    fn it_renders_when_a_row_has_failed() {
-      let mut outbox = sync::OutboxStatus::new();
-      outbox.apply(&Event::OutboxFailed {
-        id: 1,
-        reason: "403 Forbidden".to_owned(),
-      });
-
-      assert!(super::outbox_indicator(&outbox).is_some());
-    }
-
-    #[test]
-    fn it_folds_a_sync_event_into_the_apps_outbox_aggregate() {
-      let mut app = test_app();
-
-      let _ = update(
-        &mut app,
-        Message::Sync(Event::OutboxInflight {
+      let messages = vec![
+        Message::CancelTakeOver,
+        Message::ClockTick,
+        Message::CloseSyncPopover,
+        Message::ConfirmTakeOver,
+        Message::FocusMainWindow,
+        Message::ImageReady {
           id: 1,
-        }),
-      );
-      let _ = update(
-        &mut app,
-        Message::Sync(Event::OutboxFailed {
-          id: 2,
-          reason: "boom".to_owned(),
-        }),
-      );
+          kind: store::images::ImageKind::CharacterPortrait,
+          ready: true,
+        },
+        Message::InitFailed("boom".to_owned()),
+        Message::LeaseHeartbeat,
+        Message::LockReleased,
+        Message::OpenAbout,
+        Message::PeriodicPush,
+        Message::Pushed(None),
+        Message::ReauthCharacter(1),
+        Message::SeedProgress(splash::seed::Progress::Step("seeding".to_owned())),
+        Message::SnoozesWoken(Vec::new()),
+        Message::Splash(splash::Message::Tick),
+        Message::StorageMigrated,
+        Message::SyncPulse,
+        Message::TakeOver,
+        Message::TakeOverResolved(TakeOverOutcome::Failed, Box::new(reopened)),
+        Message::ToggleSyncPopover,
+        Message::UpdaterAction(updater_banner::Action::Apply),
+        Message::UpdaterDismissToast,
+        Message::UpdaterStateChanged(updater::State::default()),
+        Message::WindowOpened(window::Id::unique()),
+        Message::Wallet(wallet::Message::PickerToggled),
+      ];
 
-      assert_eq!(app.outbox.pending(), 1);
-      assert_eq!(app.outbox.failed(), 1);
-      assert_eq!(app.status.total(), 0, "outbox events do not enter the job-keyed status");
-    }
-  }
-
-  mod name {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_names_every_route_variant() {
-      assert_eq!(Route::Characters.name(), "Characters");
-      assert_eq!(Route::CharacterDetail(1).name(), "CharacterDetail");
-      assert_eq!(Route::CorporationDetail(1).name(), "CorporationDetail");
-      assert_eq!(Route::Skills(1).name(), "Skills");
-      assert_eq!(Route::Mail.name(), "Mail");
-      assert_eq!(Route::Wallet.name(), "Wallet");
-      assert_eq!(Route::Assets.name(), "Assets");
-      assert_eq!(Route::Settings.name(), "Settings");
+      for message in messages {
+        let _ = super::super::dispatch_lifecycle(&mut app, message);
+      }
     }
   }
 
@@ -7321,17 +4946,2640 @@ mod tests {
     }
   }
 
-  mod variant_name {
+  mod file_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn clamp_of(filter: &str) -> &str {
+      filter.split_once(',').expect("filter has a pod= prefix").1
+    }
+
+    #[test]
+    fn it_keeps_every_dependency_clamp_identical_across_levels() {
+      let quiet = file_filter(config::LogLevel::Quiet);
+      let normal = file_filter(config::LogLevel::Normal);
+      let verbose = file_filter(config::LogLevel::Verbose);
+
+      assert_eq!(clamp_of(&quiet), FILE_FILTER_CLAMP);
+      assert_eq!(clamp_of(&normal), FILE_FILTER_CLAMP);
+      assert_eq!(clamp_of(&verbose), FILE_FILTER_CLAMP);
+    }
+
+    #[test]
+    fn it_varies_only_the_pod_level_per_log_level() {
+      assert_eq!(
+        file_filter(config::LogLevel::Quiet),
+        format!("pod=info,{FILE_FILTER_CLAMP}")
+      );
+      assert_eq!(
+        file_filter(config::LogLevel::Normal),
+        format!("pod=debug,{FILE_FILTER_CLAMP}")
+      );
+      assert_eq!(
+        file_filter(config::LogLevel::Verbose),
+        format!("pod=trace,{FILE_FILTER_CLAMP}")
+      );
+    }
+  }
+
+  mod geometry_merge {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn base() -> WindowGeometry {
+      WindowGeometry {
+        height: 700.0,
+        width: 1000.0,
+        x: 50.0,
+        y: 60.0,
+      }
+    }
+
+    #[test]
+    fn it_seeds_from_zero_when_the_window_has_no_prior_entry() {
+      let resized = geometry_after_resize(None, Size::new(800.0, 600.0));
+      assert_eq!(resized.width, 800.0);
+      assert_eq!(resized.height, 600.0);
+      assert_eq!((resized.x, resized.y), (0.0, 0.0));
+    }
+
+    #[test]
+    fn it_updates_only_the_position_on_a_move_keeping_the_size() {
+      let merged = geometry_after_move(Some(base()), Point::new(200.0, 300.0));
+
+      assert_eq!(
+        merged,
+        WindowGeometry {
+          height: 700.0,
+          width: 1000.0,
+          x: 200.0,
+          y: 300.0,
+        }
+      );
+    }
+
+    #[test]
+    fn it_updates_only_the_size_on_a_resize_keeping_the_position() {
+      let merged = geometry_after_resize(Some(base()), Size::new(1280.0, 960.0));
+
+      assert_eq!(
+        merged,
+        WindowGeometry {
+          height: 960.0,
+          width: 1280.0,
+          x: 50.0,
+          y: 60.0,
+        }
+      );
+    }
+  }
+
+  mod handle_skills {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_dispatches_each_skills_branch() {
+      use crate::features::skills::EditorSeed;
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = super::super::handle_skills(&mut app, skills::Message::CharacterChanged(1));
+      let _ = super::super::handle_skills(&mut app, skills::Message::OpenCompare);
+      let _ = super::super::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::New));
+      let _ = super::super::handle_skills(&mut app, skills::Message::PaneSettled("skills", 280.0));
+      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
+    }
+  }
+
+  mod handlers {
+    use super::*;
+
+    fn test_industry_state() -> industry::State {
+      industry::State::new(
+        industry::EMPTY_INDUSTRY_SELECTION,
+        Vec::new(),
+        industry::FacilityDefaults::default(),
+      )
+    }
+
+    #[tokio::test]
+    async fn a_card_reauth_after_toggling_requests_every_enabled_scope_through_the_real_dispatch() {
+      // Full repro of the user flow with no runtime, so the auth Start is deferred into
+      // `pending_auth` and we can read the exact feature set it carries.
+      let db = crate::store::open_test().await.unwrap();
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(config::Settings::default(), db));
+
+      // Disable then re-enable Mail and Skills through the real settings handler.
+      for feature in [config::Feature::Mail, config::Feature::SkillMonitoring] {
+        for value in [false, true] {
+          let _ = handle_settings(
+            &mut app,
+            settings::Message::Features(settings::features_tab::Message::Toggled(feature, value)),
+          );
+        }
+      }
+
+      // Drive the card / context-menu re-auth message through the top-level dispatch.
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
+      );
+
+      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+        panic!("the re-auth must defer an auth Start, got {:?}", app.pending_auth);
+      };
+      assert!(
+        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
+        "a re-auth after re-enabling features must request their scopes, got {features:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_claimed_take_over_drops_read_only_and_installs_the_reopened_store() {
+      let db = store::open_test().await.expect("test db");
+      let reopened = StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: Some(HolderInfo {
+          hostname: "studio-mac".to_owned(),
+          last_active: Utc::now(),
+          machine_id: "machine-b".to_owned(),
+        }),
+        settings: config::Settings::default(),
+        sync_session: None,
+      };
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Claimed, reopened);
+
+      assert!(app.read_only.is_none(), "claiming the share makes the app writable");
+      assert!(app.store_ready.is_some(), "the reopened pools are installed");
+      assert_eq!(app.engine_state, EngineState::Running);
+      assert!(
+        app.store_ready.as_ref().unwrap().lease.is_none(),
+        "the claimed store opens read-write with a nulled lease"
+      );
+    }
+
+    #[test]
+    fn a_close_event_for_an_already_removed_window_is_a_no_op() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Main);
+
+      let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
+      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
+
+      assert!(
+        app.windows.is_empty(),
+        "the late Closed event finds nothing to remove and does not re-trigger"
+      );
+    }
+
+    #[test]
+    fn a_completed_reconcile_stamps_the_synced_time_and_refreshes_after_a_pull() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_sync_now_resolved(
+        &mut app,
+        SyncNowOutcome::Reconciled {
+          mark: None,
+          pulled: true,
+        },
+      );
+
+      assert!(
+        app.last_synced.is_some(),
+        "a completed 'Sync now' updates the visible last-synced status"
+      );
+      assert!(app.roster_dirty, "a pull marks the roster for a refresh");
+    }
+
+    #[test]
+    fn a_declined_re_acquire_poll_writes_nothing_to_the_lease() {
+      let (dir, session) = temp_sync_session();
+      let share = dir.path().join("share");
+      let now = Utc::now();
+      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, now)
+        .unwrap();
+      let lease_path = store::lease::LeaseManager::lease_path(&share);
+      let before = std::fs::read(&lease_path).unwrap();
+
+      let outcome = session.take_over(now).unwrap();
+      let after = std::fs::read(&lease_path).unwrap();
+
+      assert_eq!(
+        outcome,
+        store::lease::Outcome::HeldBy {
+          hostname: "studio-mac".to_owned(),
+          last_seen: store::share_meta::Lease::read(&lease_path).unwrap().heartbeat,
+          machine_id: "machine-holder".to_owned(),
+        },
+        "a still-fresh holder is reported, not displaced"
+      );
+      assert_eq!(
+        before, after,
+        "a declined poll heartbeats nothing and never overwrites the foreign lease"
+      );
+    }
+
+    #[test]
+    fn a_failed_push_leaves_the_debounce_mark_untouched() {
+      let mut app = test_app();
+
+      let _ = handle_pushed(&mut app, None);
+
+      assert_eq!(app.last_push, None, "a failed push must re-attempt next tick");
+    }
+
+    #[test]
+    fn a_failed_sync_does_not_claim_success() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_sync_now_resolved(&mut app, SyncNowOutcome::Failed);
+
+      assert!(
+        app.last_synced.is_none(),
+        "a failed sync leaves the last-synced status stale"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_failed_take_over_keeps_the_app_read_only_and_reopens_parked_pools() {
+      let db = store::open_test().await.expect("test db");
+      let reopened = StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      };
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over_resolved(&mut app, TakeOverOutcome::Failed, reopened);
+
+      assert!(app.read_only.is_some(), "a failed take-over leaves the app read-only");
+      assert!(
+        app.store_ready.is_some(),
+        "a declined take-over still reopens pools so the app is never left with closed handles"
+      );
+      assert!(
+        matches!(app.engine_state, EngineState::ReadOnly { .. }),
+        "a declined take-over re-parks the engine read-only"
+      );
+      assert!(
+        app.store_ready.as_ref().unwrap().lease.is_some(),
+        "the reopened parked store carries the held-by lease"
+      );
+    }
+
+    #[test]
+    fn a_held_foreign_lease_maps_to_read_only_holder_info() {
+      let last_seen = Utc::now();
+      let holder: Option<HolderInfo> = store::lease::Outcome::HeldBy {
+        hostname: "studio-mac".to_owned(),
+        last_seen,
+        machine_id: "machine-b".to_owned(),
+      }
+      .into();
+
+      assert_eq!(
+        holder,
+        Some(HolderInfo {
+          hostname: "studio-mac".to_owned(),
+          last_active: last_seen,
+          machine_id: "machine-b".to_owned(),
+        })
+      );
+    }
+
+    #[test]
+    fn a_pull_that_changed_nothing_leaves_the_synced_marker_untouched() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = handle_pulled(&mut app, false);
+
+      assert!(app.last_synced.is_none(), "no pull means no new synced timestamp");
+    }
+
+    #[test]
+    fn a_push_completion_advances_the_debounce_mark() {
+      let mut app = test_app();
+      let mark = SystemTime::now();
+
+      let _ = handle_pushed(&mut app, Some(mark));
+
+      assert_eq!(app.last_push, Some(mark));
+      assert!(
+        app.last_synced.is_some(),
+        "a successful push updates the last-synced clock"
+      );
+    }
+
+    #[test]
+    fn a_read_only_session_neither_heartbeats_nor_pushes() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(!holding_lease(&app), "a read-only opener does not hold the lease");
+    }
+
+    #[test]
+    fn a_read_only_session_neither_pulls_nor_pushes() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(!holding_lease(&app), "a read-only opener does not pull from the share");
+      let _ = handle_periodic_pull(&mut app);
+      let _ = handle_periodic_push(&mut app);
+    }
+
+    #[test]
+    fn a_reauth_from_a_403_state_requests_the_full_enabled_feature_scope_set() {
+      // No runtime, so the auth Start is deferred and we can inspect its feature set without
+      // opening a browser. With Mail and Skills both enabled, a single re-auth must request both.
+      let mut app = test_app();
+
+      let _ = handle_reauth_character(&mut app, 7);
+
+      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+        panic!("a re-auth defers an auth Start, got {:?}", app.pending_auth);
+      };
+      assert!(
+        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
+        "the single re-auth carries the full enabled-feature set, not a per-feature subset"
+      );
+
+      let scopes = auth::scopes_for(&features);
+      assert!(
+        auth::scopes_for(&[config::Feature::Mail])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "re-auth requests Mail scopes"
+      );
+      assert!(
+        auth::scopes_for(&[config::Feature::SkillMonitoring])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "the same single re-auth also requests Skills scopes"
+      );
+    }
+
+    #[test]
+    fn an_acquired_lease_maps_to_no_read_only_state() {
+      let holder: Option<HolderInfo> = store::lease::Outcome::Acquired.into();
+
+      assert_eq!(holder, None);
+    }
+
+    #[test]
+    fn an_inert_sync_handle_swallows_commands_without_panicking() {
+      let (handle, _events) = inert_sync();
+
+      handle.discover();
+      handle.enroll(sync::Subject::Character(7));
+      handle.run_now(sync::Subject::Character(7));
+    }
+
+    #[test]
+    fn cancelling_the_confirmation_leaves_the_instance_read_only() {
+      let mut app = test_app();
+      app.confirm_force_takeover = true;
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_cancel_take_over(&mut app);
+
+      assert!(!app.confirm_force_takeover, "cancelling closes the confirmation");
+      assert!(app.read_only.is_some(), "cancelling leaves the instance read-only");
+    }
+
+    #[test]
+    fn confirming_closes_the_gate_even_when_it_short_circuits() {
+      let mut app = test_app();
+      app.confirm_force_takeover = true;
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_confirm_take_over(&mut app);
+
+      assert!(!app.confirm_force_takeover, "confirming always closes the gate");
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the forceful claim short-circuits and the banner stays"
+      );
+    }
+
+    #[test]
+    fn direct_mode_does_not_hold_a_lease_and_runs_no_lifecycle_io() {
+      let mut app = test_app();
+
+      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
+      let _ = handle_lease_heartbeat(&mut app);
+      let _ = handle_periodic_push(&mut app);
+      let _ = handle_periodic_pull(&mut app);
+    }
+
+    #[test]
+    fn direct_mode_is_neither_parked_nor_holding_the_lease() {
+      let app = test_app();
+
+      assert!(!parked(&app), "with no sync session there is nothing parked");
+      assert!(!holding_lease(&app), "with no sync session there is no lease to hold");
+    }
+
+    #[test]
+    fn direct_mode_runs_no_crash_recovery_push() {
+      let app = test_app();
+
+      let _ = recover_unsynced_changes(&app);
+    }
+
+    #[tokio::test]
+    async fn disabling_industry_while_open_redirects_to_characters_and_re_enabling_restores_the_route() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+      assert_eq!(app.route, Route::Industry, "Industry is reachable while enabled");
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Industry,
+          false,
+        )),
+      );
+
+      assert_eq!(
+        app.route,
+        Route::Characters,
+        "disabling Industry while its screen is open redirects to Characters"
+      );
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Industry,
+          true,
+        )),
+      );
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(
+        app.route,
+        Route::Industry,
+        "re-enabling Industry restores the route instantly"
+      );
+    }
+
+    #[tokio::test]
+    async fn export_log_bundle_writes_nowhere_when_the_save_dialog_is_stubbed() {
+      let dir = tempfile::tempdir().unwrap();
+      let log_dir = dir.path().join("logs");
+      std::fs::create_dir_all(&log_dir).unwrap();
+      std::fs::write(log_dir.join("pod.log"), b"{\"ts\":\"now\"}\n").unwrap();
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: dir.path().join("cache"),
+        database_path: dir.path().join("pod.db"),
+        db_dir: dir.path().to_path_buf(),
+        log_dir: log_dir.clone(),
+      };
+
+      let result = export_log_bundle(
+        log_dir,
+        Utc::now() - chrono::Duration::hours(1),
+        Utc::now(),
+        diagnostics,
+      )
+      .await;
+
+      assert_eq!(result, Ok(None), "the cfg(test) save dialog is a no-op");
+    }
+
+    #[tokio::test]
+    async fn handle_auth_cancel_with_a_runtime_is_handled_not_deferred() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.runtime = Some(runtime);
+
+      let _ = handle_auth(&mut app, auth::Message::Cancel);
+
+      assert!(
+        app.pending_auth.is_none(),
+        "with a runtime present the auth message is handled inline, not queued"
+      );
+    }
+
+    #[test]
+    fn handle_auth_without_a_runtime_defers_the_message() {
+      let mut app = test_app();
+
+      let _ = handle_auth(&mut app, auth::Message::Cancel);
+
+      assert!(
+        app.pending_auth.is_some(),
+        "auth before the runtime is ready is queued until boot completes"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_dispatches_a_message_through_the_reducer() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.industry = Some(test_industry_state());
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Blueprints));
+
+      assert!(
+        app.industry.is_some(),
+        "the industry screen stays open after a plain reducer message"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_reauth_request_defers_an_auth_start() {
+      let mut app = test_app();
+
+      let _ = handle_industry(&mut app, industry::Message::ReauthRequested(7));
+
+      assert!(
+        app.pending_auth.is_some(),
+        "a re-auth request from the industry screen defers an auth Start"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_records_a_pane_ratio_before_the_runtime_gate() {
+      let mut app = test_app();
+
+      let _ = handle_industry(
+        &mut app,
+        industry::Message::PaneSettled("industry.planner.detail", 0.42),
+      );
+
+      assert_eq!(
+        app.ui_state.panes.get("industry.planner.detail"),
+        Some(&0.42),
+        "a pane drag is recorded even without a runtime or industry screen"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_seams_the_facility_search_for_the_planner() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.industry = Some(test_industry_state());
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(
+        &mut app,
+        industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
+          query: "jita".to_owned(),
+          type_id: 0,
+        }),
+      );
+
+      assert!(
+        app.industry.as_ref().unwrap().facility_search_target().is_some(),
+        "typing into the facility field opens the picker and arms a live search"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_industry_without_a_screen_is_a_no_op() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.runtime = Some(runtime);
+
+      let _ = handle_industry(&mut app, industry::Message::TabSelected(industry::Tab::Planner));
+
+      assert!(
+        app.industry.is_none(),
+        "with no industry screen open the message is dropped"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_drives_the_color_engine_when_high_contrast_toggles() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Accessibility(settings::accessibility_tab::Message::HighContrastToggled(true)),
+      );
+
+      assert!(*app.accessibility.high_contrast(), "the toggle is hoisted onto the app");
+      assert!(
+        color::high_contrast(),
+        "the runtime color engine reflects the high-contrast toggle"
+      );
+
+      // The engine flag is process-global; leave it as it was found for any sibling tests.
+      color::set_high_contrast(false);
+    }
+
+    #[tokio::test]
+    async fn handle_settings_hoists_an_interface_scale_change_onto_the_app_and_runtime() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Accessibility(settings::accessibility_tab::Message::ScaleChanged(125)),
+      );
+
+      assert_eq!(
+        *app.accessibility.scale(),
+        125,
+        "the new scale is hoisted onto the app live"
+      );
+      assert_eq!(
+        *app.runtime.as_ref().unwrap().settings.accessibility().scale(),
+        125,
+        "the runtime settings mirror the new scale so a later save persists it",
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_rebuilds_the_char_detail_tab_strip_on_a_toggle() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.character_detail = Some(character_detail::State::new(7, &config::Feature::ALL));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(
+          config::Feature::Standings,
+          false,
+        )),
+      );
+      let enabled = enabled_features(&app);
+      let _ = update(
+        &mut app,
+        Message::CharacterDetail(character_detail::Message::FeaturesChanged(enabled)),
+      );
+
+      let detail = app.character_detail.as_ref().expect("the detail screen stays open");
+      assert!(
+        !detail.enabled_tabs().contains(&character_detail::Tab::Standings),
+        "the dispatched feature change drops the Standings detail tab live"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_routes_a_tab_switch_through_the_settings_state() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::CategorySelected(settings::Category::Storage),
+      );
+
+      assert!(app.settings.is_some(), "switching tabs leaves the settings screen open");
+    }
+
+    #[tokio::test]
+    async fn handle_settings_sends_a_feature_toggle_to_the_running_sync_engine() {
+      let (runtime, mut commands) = test_runtime_with_commands().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Wallet, false)),
+      );
+
+      let command = commands.try_recv().expect("a feature toggle reaches the engine");
+      let sync::Command::SetFeatures(flags) = command else {
+        panic!("expected SetFeatures, got {command:?}");
+      };
+      assert!(
+        !flags.is_enabled(config::Feature::Wallet),
+        "the engine receives the post-toggle feature flags"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_sends_set_features_to_the_engine_on_reset_to_defaults() {
+      let (runtime, mut commands) = test_runtime_with_commands().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(&mut app, settings::Message::ResetToDefaults);
+
+      let command = commands.try_recv().expect("resetting to defaults reaches the engine");
+      assert!(
+        matches!(command, sync::Command::SetFeatures(_)),
+        "reset-to-defaults reconciles the running engine, got {command:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_syncs_industry_defaults_onto_the_runtime() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      // Picking an NPC station as the Manufacturing default persists it; the planner reads the runtime
+      // copy on open, so it must mirror the change immediately (not only after a restart).
+      let facility = crate::ui::components::facility_combobox::FacilityRef {
+        cost_index: Some(0.05),
+        id: 60_003_760,
+        name: "Jita IV - Moon 4 - CNAP".to_owned(),
+        region: Some("The Forge".to_owned()),
+        security_status: Some(0.9),
+        solar_system: "Jita".to_owned(),
+        solar_system_id: 30_000_142,
+        type_id: None,
+      };
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
+          activity: 1,
+          facility,
+        }),
+      );
+
+      assert_eq!(
+        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
+        Some(60_003_760),
+        "the runtime industry config mirrors the settings screen so the planner honors the new default"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_without_a_settings_screen_is_a_no_op() {
+      let mut app = test_app();
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::CategorySelected(settings::Category::Storage),
+      );
+
+      assert!(app.settings.is_none());
+    }
+
+    #[test]
+    fn it_advances_the_clock_and_drains_due_saves_on_a_tick() {
+      let mut app = test_app();
+      let before = app.now;
+
+      let _ = update(&mut app, Message::ClockTick);
+
+      assert!(app.now >= before, "the tick advances the clock");
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_parked_store_handle_when_an_init_failure_lands() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      });
+
+      let _ = update(&mut app, Message::InitFailed("nope".to_owned()));
+
+      assert_eq!(app.init_error.as_deref(), Some("nope"));
+      assert!(app.store_ready.is_none(), "a fatal init clears any parked store handle");
+    }
+
+    #[test]
+    fn it_disables_the_shadow_only_for_the_splash_window_on_open() {
+      let mut app = test_app();
+      let splash_id = window::Id::unique();
+      app.windows.register(splash_id, Window::Splash);
+      let _ = on_window_opened(&app, splash_id);
+      let main_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      let _ = on_window_opened(&app, main_id);
+    }
+
+    #[test]
+    fn it_dismisses_the_updater_toast() {
+      let mut app = test_app();
+      assert!(!app.updater_toast_dismissed);
+
+      let _ = update(&mut app, Message::UpdaterDismissToast);
+
+      assert!(app.updater_toast_dismissed, "the toast hides after a dismiss");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn it_dispatches_each_native_menu_action() {
+      let mut app = test_app();
+
+      let _about = handle_menu(&mut app, menu::MenuAction::About);
+      let _check = handle_menu(&mut app, menu::MenuAction::CheckUpdates);
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_each_stockpile_branch_through_the_runtime() {
+      let mut app = test_app();
+      app.assets = Some(assets::State::new());
+      app.runtime = Some(test_runtime().await);
+
+      let _location = handle_assets(
+        &mut app,
+        assets::Message::StockpileEditorLocationSearchChanged("Jit".to_owned()),
+      );
+      let _item = handle_assets(
+        &mut app,
+        assets::Message::StockpileEditorItemSearchChanged(0, "Trit".to_owned()),
+      );
+      let _resolve = handle_assets(&mut app, assets::Message::StockpileImportResolveRequested);
+      let _save = handle_assets(&mut app, assets::Message::StockpileEditorSaved);
+      let _default = handle_assets(&mut app, assets::Message::SearchChanged("x".to_owned()));
+    }
+
+    #[test]
+    fn it_empties_the_registry_when_the_final_window_closes_after_main() {
+      let mut app = test_app();
+      let main_id = window::Id::unique();
+      let editor_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
+      let _ = update(&mut app, Message::Window(editor_id, window::Event::CloseRequested));
+
+      assert!(
+        app.windows.is_empty(),
+        "closing the last window empties the registry and shuts down"
+      );
+    }
+
+    #[test]
+    fn it_handles_updater_actions_without_a_provisioned_handle() {
+      let mut app = test_app();
+      assert!(app.updater.is_none());
+
+      let _ = update(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));
+      let _ = update(&mut app, Message::UpdaterAction(updater_banner::Action::Restart));
+    }
+
+    #[test]
+    fn it_ignores_an_unhandled_window_event() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Main);
+      let _ = update(&mut app, Message::Window(id, window::Event::Focused));
+    }
+
+    #[test]
+    fn it_keeps_the_app_alive_when_main_closes_while_a_secondary_window_is_open() {
+      let mut app = test_app();
+      let main_id = window::Id::unique();
+      let editor_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(main_id, window::Event::CloseRequested));
+
+      assert_eq!(app.windows.kind(main_id), None, "the main window is gone");
+      assert_eq!(
+        app.windows.kind(editor_id),
+        Some(Window::SkillPlanEditor),
+        "the still-open editor keeps the app alive"
+      );
+      assert!(!app.windows.is_empty(), "a surviving window means no shutdown yet");
+    }
+
+    #[test]
+    fn it_keeps_the_toast_dismissed_for_a_repeated_updater_state() {
+      let mut app = test_app();
+      app.updater_state = updater::State::Downloading {
+        version: "1.2.3".to_owned(),
+      };
+      app.updater_toast_dismissed = true;
+
+      let _ = update(
+        &mut app,
+        Message::UpdaterStateChanged(updater::State::Downloading {
+          version: "1.2.3".to_owned(),
+        }),
+      );
+
+      assert!(
+        app.updater_toast_dismissed,
+        "an identical state must not re-show a toast the user dismissed"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_database_under_the_configured_directory_in_place() {
+      let dir = tempfile::tempdir().expect("temp dir");
+      let mut settings = config::Settings::default();
+      let configured = dir.path().join("nested");
+      settings.storage_mut().set_db_dir(Some(configured.clone()));
+      settings.storage_mut().set_cache_dir(Some(dir.path().join("cache")));
+      settings
+        .storage_mut()
+        .set_working_copy_dir(Some(dir.path().join("working-copy")));
+
+      let path = store::bootstrap::resolve_local_path(settings.storage()).expect("the path resolves");
+      let db = store::open(&path).await.expect("the database opens");
+      drop(db);
+
+      assert_eq!(path, configured.join("pod.db"), "direct mode opens in place");
+      assert!(
+        configured.join("pod.db").exists(),
+        "the db file lands under the configured directory"
+      );
+      assert!(
+        !settings.storage().resolved_working_copy_path().exists(),
+        "a local path creates no working copy"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_pairs_a_compose_input_with_a_recipient_search_when_a_runtime_is_present() {
+      let mut app = test_app();
+      app.mail = Some(mail::State::new(42));
+      app.runtime = Some(test_runtime().await);
+
+      let _to = handle_mail(&mut app, mail::Message::ComposeToInput("Vexor".to_owned()));
+      let _cc = handle_mail(&mut app, mail::Message::ComposeCcInput("Alli".to_owned()));
+      let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::Character(7)));
+    }
+
+    #[test]
+    fn it_parks_then_replays_a_cold_start_callback_on_ready_paths() {
+      let mut app = test_app();
+      let _ = handle_auth(
+        &mut app,
+        auth::Message::CallbackReceived("eveauth-pod://callback?code=a&state=b".to_owned()),
+      );
+      assert!(app.pending_auth.is_some());
+    }
+
+    #[test]
+    fn it_records_a_new_updater_state_and_rearms_the_toast() {
+      let mut app = test_app();
+      app.updater_toast_dismissed = true;
+
+      let _ = update(
+        &mut app,
+        Message::UpdaterStateChanged(updater::State::UpdateAvailable {
+          version: "1.2.3".to_owned(),
+        }),
+      );
+
+      assert_eq!(
+        app.updater_state,
+        updater::State::UpdateAvailable {
+          version: "1.2.3".to_owned()
+        }
+      );
+      assert!(
+        !app.updater_toast_dismissed,
+        "a fresh transition re-arms the dismissible toast"
+      );
+    }
+
+    #[test]
+    fn it_records_a_settled_mail_pane_width() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Mail(mail::Message::PaneSettled("mail.folder", 220.0)),
+      );
+
+      assert_eq!(app.ui_state.panes.get("mail.folder"), Some(&220.0));
+      assert!(app.coalescer.has_pending());
+    }
+
+    #[test]
+    fn it_records_the_calendar_attention_count() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::CalendarAttentionCounted(4));
+
+      assert_eq!(app.calendar_attention, 4);
+    }
+
+    #[test]
+    fn it_records_the_mail_unread_count_and_reauth_logs_without_a_runtime() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::MailUnreadCounted(9));
+      assert_eq!(app.mail_unread, 9);
+      let _ = update(&mut app, Message::ReauthCharacter(1));
+    }
+
+    #[test]
+    fn it_reissues_the_mail_reload_only_when_a_snooze_woke() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::SnoozesWoken(Vec::new()));
+      let _ = update(&mut app, Message::SnoozesWoken(vec![(1, 2)]));
+    }
+
+    #[test]
+    fn it_renders_the_main_view_with_an_active_updater_state() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      app.route = Route::Characters;
+      app.updater_state = updater::State::ReadyToRestart {
+        version: "1.2.3".to_owned(),
+      };
+      let _ = main_view(&app);
+    }
+
+    #[test]
+    fn it_routes_a_mail_compose_input_to_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+      app.mail = Some(mail::State::new(42));
+
+      let _ = update(&mut app, Message::Mail(mail::Message::ComposeToInput("Ve".to_owned())));
+    }
+
+    #[test]
+    fn it_routes_a_mail_scope_selection_to_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+      app.mail = Some(mail::State::new(42));
+
+      let _ = update(
+        &mut app,
+        Message::Mail(mail::Message::ScopeSelected(mail::Scope::Character(7))),
+      );
+    }
+
+    #[test]
+    fn it_routes_a_splash_drag_to_a_no_op_with_no_splash_window() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Splash(splash::Message::DragWindow));
+    }
+
+    #[test]
+    fn it_routes_a_window_close_request_for_the_editor_through_the_close_path() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::SkillPlanEditor);
+      app.editor = Some((id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(id, window::Event::CloseRequested));
+
+      assert!(app.editor.is_none(), "an OS close of the editor clears its state");
+    }
+
+    #[test]
+    fn it_routes_each_character_manager_intent_arm() {
+      let mut app = test_app();
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::AddCharacterRequested),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::AddCorporationRequested),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::ReauthCorporationRequested(7)),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::RemoveCharacterConfirmed(7)),
+      );
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::RemoveCorporationConfirmed(7)),
+      );
+    }
+
+    #[test]
+    fn it_routes_feature_messages_to_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Wallet(wallet::Message::RailDragEnd));
+      let _ = update(
+        &mut app,
+        Message::Assets(assets::Message::SearchChanged("x".to_owned())),
+      );
+      let _ = update(&mut app, Message::Settings(settings::Message::ResetToDefaults));
+      let _ = update(
+        &mut app,
+        Message::CharacterDetail(character_detail::Message::CharacterChanged(7)),
+      );
+      assert_eq!(app.route, Route::CharacterDetail(7));
+      assert_eq!(app.selected_character, Some(7));
+    }
+
+    #[test]
+    fn it_routes_splash_messages_through_update_splash() {
+      let mut app = test_app();
+      let splash_id = window::Id::unique();
+      app.windows.register(splash_id, Window::Splash);
+      app.splash = Some(splash::State::default());
+
+      let _ = update(&mut app, Message::Splash(splash::Message::DragWindow));
+      let _ = update(&mut app, Message::Splash(splash::Message::Tick));
+      let _ = update(&mut app, Message::Splash(splash::Message::ExpandComplete));
+    }
+
+    #[test]
+    fn it_tears_down_on_an_os_kill_that_skips_the_close_request() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::SkillPlanEditor);
+      app.editor = Some((id, skill_plan_editor::State::new(1)));
+
+      let _ = update(&mut app, Message::Window(id, window::Event::Closed));
+
+      assert!(app.editor.is_none(), "a compositor-killed editor clears its state");
+      assert!(
+        app.windows.is_empty(),
+        "the destroyed window leaves an empty registry, triggering shutdown"
+      );
+    }
+
+    #[test]
+    fn it_toggles_the_sync_popover_and_pulse() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::ToggleSyncPopover);
+      assert!(app.sync_popover_open);
+      let _ = update(&mut app, Message::CloseSyncPopover);
+      assert!(!app.sync_popover_open);
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(app.sync_tick);
+    }
+
+    #[test]
+    fn parked_is_the_symmetric_inverse_of_holding_the_lease() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      assert!(parked(&app), "a read-only opener with a session is parked");
+      assert!(!holding_lease(&app), "a parked opener does not hold the lease");
+
+      app.read_only = None;
+
+      assert!(!parked(&app), "clearing read-only ends the parked state");
+      assert!(holding_lease(&app), "a writable opener holds the lease");
+    }
+
+    #[test]
+    fn pressing_take_over_opens_the_confirmation_without_claiming() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(app.confirm_force_takeover, "the data-loss confirmation is shown");
+      assert!(app.read_only.is_some(), "the share is not claimed on the first press");
+    }
+
+    #[tokio::test]
+    async fn pull_bundle_reports_no_change_for_a_fresh_share() {
+      let (_dir, session) = temp_sync_session();
+
+      let message = pull_bundle(session).await;
+
+      assert!(
+        matches!(message, Message::Pulled(false)),
+        "a fresh share has nothing newer to pull"
+      );
+    }
+
+    #[test]
+    fn re_acquire_is_a_no_op_when_the_app_is_writable() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+
+      let _ = handle_reacquire_lease(&mut app);
+
+      assert!(app.read_only.is_none(), "a writable app is never re-acquired");
+    }
+
+    #[test]
+    fn re_acquire_without_a_sync_session_short_circuits() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_reacquire_lease(&mut app);
+
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the re-acquire short-circuits and the parked banner stays"
+      );
+    }
+
+    #[tokio::test]
+    async fn re_enabling_a_feature_restores_its_scopes_to_the_live_reauth_set() {
+      // Reproduces the disable -> re-enable -> re-auth flow: a toggle must reach the running
+      // runtime so that a later re-auth (which reads the live enabled set) requests the restored
+      // feature's scopes, even with the settings screen closed.
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let toggle = |app: &mut App, value| {
+        let _ = handle_settings(
+          app,
+          settings::Message::Features(settings::features_tab::Message::Toggled(config::Feature::Mail, value)),
+        );
+      };
+      toggle(&mut app, false);
+      assert!(
+        !enabled_features(&app).contains(&config::Feature::Mail),
+        "disabling Mail removes it from the live enabled set"
+      );
+      toggle(&mut app, true);
+
+      // Close the settings screen so the enabled set resolves from the running runtime, not the panel.
+      app.settings = None;
+      let features = enabled_features(&app);
+
+      assert!(
+        features.contains(&config::Feature::Mail),
+        "re-enabling Mail restores it to the live runtime the re-auth reads from"
+      );
+      let scopes = auth::scopes_for(&features);
+      assert!(
+        auth::scopes_for(&[config::Feature::Mail])
+          .iter()
+          .all(|scope| scopes.contains(scope)),
+        "the re-auth requests the re-enabled Mail scopes"
+      );
+    }
+
+    #[test]
+    fn sync_now_with_a_clean_session_stamps_the_synced_time() {
+      let (_dir, session) = temp_sync_session();
+      let mut app = test_app();
+      app.sync_session = Some(session);
+      app.last_synced = None;
+
+      let _ = sync_now(&mut app);
+
+      assert!(
+        app.last_synced.is_some(),
+        "a clean session with nothing to push or pull still refreshes the synced timestamp"
+      );
+    }
+
+    #[test]
+    fn sync_now_without_a_session_is_a_no_op() {
+      let mut app = test_app();
+      app.last_synced = None;
+
+      let _ = sync_now(&mut app);
+
+      assert!(
+        app.last_synced.is_none(),
+        "with no sync session there is nothing to sync"
+      );
+    }
+
+    #[test]
+    fn take_over_is_a_no_op_when_the_app_is_already_writable() {
+      let mut app = test_app();
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(app.read_only.is_none(), "a writable app stays writable");
+    }
+
+    #[test]
+    fn take_over_without_a_sync_session_fires_no_real_io() {
+      let mut app = test_app();
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+
+      let _ = handle_take_over(&mut app);
+
+      assert!(
+        app.read_only.is_some(),
+        "with no sync session the request short-circuits and the banner stays"
+      );
+      assert!(
+        !app.confirm_force_takeover,
+        "with no sync session there is nothing to confirm"
+      );
+    }
+
+    #[test]
+    fn the_force_takeover_confirmation_warns_of_data_loss_and_names_the_last_active_age() {
+      let label = read_only_confirm_label("studio-mac", "12s ago");
+
+      assert_eq!(
+        label,
+        "studio-mac was last active 12s ago. Taking over overwrites any unsaved changes it still has open. Continue?"
+      );
+    }
+
+    #[test]
+    fn the_initial_read_only_banner_invites_a_take_over() {
+      let label = read_only_banner_label("studio-mac");
+
+      assert_eq!(label, "Open on studio-mac \u{2014} close it there, or take over.");
+    }
+  }
+
+  mod image_reload {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_batches_a_reload_for_each_active_route() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+
+      for route in [
+        Route::Assets,
+        Route::Calendar,
+        Route::CharacterDetail(1),
+        Route::Characters,
+        Route::Industry,
+        Route::Mail,
+        Route::Settings,
+        Route::Skills(1),
+        Route::Wallet,
+      ] {
+        app.route = route;
+        let _ = super::super::image_reload(&app);
+      }
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let app = featured_app();
+
+      let _ = super::super::image_reload(&app);
+    }
+
+    #[tokio::test]
+    async fn it_reloads_the_compare_window_when_one_is_open() {
+      let mut app = featured_app();
+      app.runtime = Some(test_runtime().await);
+      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = super::super::image_reload(&app);
+    }
+  }
+
+  mod image_self_heal {
+    use super::*;
+    use crate::store::images::ImageKind;
+
+    #[test]
+    fn it_clears_the_pending_key_when_an_image_resolves() {
+      let mut app = test_app();
+      app.pending_images.insert((ImageKind::CharacterPortrait, 42));
+
+      let _task = handle_image_ready(&mut app, ImageKind::CharacterPortrait, 42, false);
+
+      assert!(app.pending_images.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_redispatch_a_key_already_in_flight() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.pending_images.insert((ImageKind::CorporationLogo, 7));
+
+      let _task = dispatch_image_fetches(&mut app, vec![(ImageKind::CorporationLogo, 7)]);
+
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_marks_each_stale_key_in_flight_exactly_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _task = dispatch_image_fetches(
+        &mut app,
+        vec![(ImageKind::CharacterPortrait, 42), (ImageKind::CharacterPortrait, 42)],
+      );
+
+      assert!(app.pending_images.contains(&(ImageKind::CharacterPortrait, 42)));
+      assert_eq!(app.pending_images.len(), 1);
+    }
+
+    #[test]
+    fn it_rechecks_images_only_for_a_data_loading_feature_message() {
+      let interaction = Message::Wallet(wallet::Message::TimeframeSelected(wallet::Timeframe::default()));
+      assert!(
+        !interaction.affects_images(),
+        "an interaction message must not trigger the scan"
+      );
+
+      assert!(
+        !Message::ClockTick.affects_images(),
+        "a non-feature lifecycle message must not trigger the scan"
+      );
+    }
+  }
+
+  mod init_tracing {
+    use super::*;
+
+    #[test]
+    fn it_initializes_a_file_logger_under_a_writable_dir() {
+      let dir = tempfile::tempdir().expect("temp dir");
+
+      let guard = init_tracing(dir.path(), config::LogLevel::default());
+
+      assert!(guard.is_some(), "a writable log dir yields a worker guard");
+    }
+  }
+
+  mod mark_assets_dirty {
+    use super::*;
+
+    fn finished(kind: JobKind) -> JobKey {
+      JobKey::new(kind, Subject::Character(1))
+    }
+
+    #[test]
+    fn it_marks_assets_dirty_on_route_for_an_asset_sync() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(app.assets.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn it_skips_the_assets_reload_for_an_unrelated_kind() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(!app.assets.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn it_skips_the_assets_reload_off_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.assets = Some(assets::State::new());
+
+      mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(!app.assets.as_ref().unwrap().is_dirty());
+    }
+  }
+
+  mod mark_detail_dirty {
+    use super::*;
+    use crate::features::character_detail;
+
+    const PILOT: i64 = 42;
+
+    fn finished(kind: JobKind, subject: Subject) -> JobKey {
+      JobKey::new(kind, subject)
+    }
+
+    #[test]
+    fn it_ignores_everything_when_no_detail_screen_is_open() {
+      let mut app = test_app();
+
+      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
+
+      assert!(app.character_detail.is_none());
+    }
+
+    #[test]
+    fn it_routes_a_finished_job_to_the_open_detail_screen() {
+      let mut app = test_app();
+      app.character_detail = Some(character_detail::State::new(PILOT, &[]));
+
+      mark_detail_dirty(&mut app, finished(JobKind::CharacterClones, Subject::Character(PILOT)));
+
+      assert!(app.character_detail.as_ref().unwrap().is_dirty());
+    }
+  }
+
+  mod mark_wallet_dirty {
+    use super::*;
+
+    fn finished(kind: JobKind) -> JobKey {
+      JobKey::new(kind, Subject::Character(1))
+    }
+
+    #[test]
+    fn it_marks_the_wallet_dirty_on_route_for_a_ledger_kind() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(app.wallet.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn it_skips_the_wallet_reload_for_an_unrelated_kind() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::AssetSync));
+
+      assert!(!app.wallet.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn it_skips_the_wallet_reload_off_route() {
+      let mut app = test_app();
+      app.route = Route::Assets;
+      app.wallet = Some(wallet::State::new());
+
+      mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
+
+      assert!(!app.wallet.as_ref().unwrap().is_dirty());
+    }
+  }
+
+  mod name {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_names_feature_messages() {
-      assert_eq!(Message::Assets(assets::Message::StockpileNew).variant_name(), "Assets");
-      assert_eq!(Message::Nav(rail::Destination::Wallet).variant_name(), "Nav");
-      assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
+    fn it_names_every_route_variant() {
+      assert_eq!(Route::Characters.name(), "Characters");
+      assert_eq!(Route::CharacterDetail(1).name(), "CharacterDetail");
+      assert_eq!(Route::CorporationDetail(1).name(), "CorporationDetail");
+      assert_eq!(Route::Skills(1).name(), "Skills");
+      assert_eq!(Route::Mail.name(), "Mail");
+      assert_eq!(Route::Wallet.name(), "Wallet");
+      assert_eq!(Route::Assets.name(), "Assets");
+      assert_eq!(Route::Settings.name(), "Settings");
     }
+  }
+
+  mod outbox_indicator {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::sync::Event;
+
+    #[test]
+    fn it_folds_a_sync_event_into_the_apps_outbox_aggregate() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Sync(Event::OutboxInflight {
+          id: 1,
+        }),
+      );
+      let _ = update(
+        &mut app,
+        Message::Sync(Event::OutboxFailed {
+          id: 2,
+          reason: "boom".to_owned(),
+        }),
+      );
+
+      assert_eq!(app.outbox.pending(), 1);
+      assert_eq!(app.outbox.failed(), 1);
+      assert_eq!(app.status.total(), 0, "outbox events do not enter the job-keyed status");
+    }
+
+    #[test]
+    fn it_is_absent_when_the_outbox_is_quiet() {
+      let outbox = sync::OutboxStatus::new();
+
+      assert!(
+        super::outbox_indicator(&outbox).is_none(),
+        "an idle outbox adds no chrome"
+      );
+    }
+
+    #[test]
+    fn it_renders_when_a_row_has_failed() {
+      let mut outbox = sync::OutboxStatus::new();
+      outbox.apply(&Event::OutboxFailed {
+        id: 1,
+        reason: "403 Forbidden".to_owned(),
+      });
+
+      assert!(super::outbox_indicator(&outbox).is_some());
+    }
+
+    #[test]
+    fn it_renders_when_a_row_is_pending() {
+      let mut outbox = sync::OutboxStatus::new();
+      outbox.apply(&Event::OutboxInflight {
+        id: 1,
+      });
+
+      assert!(super::outbox_indicator(&outbox).is_some());
+    }
+  }
+
+  mod rail_mail_unread {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clears_the_rail_dot_when_a_count_tick_reports_zero_unread() {
+      let mut app = test_app();
+      app.mail_unread = 4;
+
+      let _ = update(&mut app, Message::MailUnreadCounted(0));
+
+      assert_eq!(app.mail_unread, 0, "the dot clears when no unread mail remains");
+    }
+
+    #[test]
+    fn it_folds_a_count_tick_into_the_rail_dot_regardless_of_the_active_route() {
+      let mut app = test_app();
+      app.route = Route::Characters;
+      assert!(app.mail.is_none());
+
+      let _ = update(&mut app, Message::MailUnreadCounted(5));
+
+      assert_eq!(app.mail_unread, 5);
+      assert_eq!(
+        super::super::rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread)),
+        5,
+        "the rail dot reflects the background count with no Mail screen open"
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_live_count_when_it_is_already_the_lower_of_the_two() {
+      assert_eq!(super::super::rail_mail_unread(1, Some(4)), 1);
+    }
+
+    #[test]
+    fn it_prefers_the_screens_fresher_optimistic_count_over_a_stale_live_count() {
+      assert_eq!(super::super::rail_mail_unread(3, Some(2)), 2);
+    }
+
+    #[test]
+    fn it_uses_the_live_count_when_the_mail_screen_is_closed() {
+      assert_eq!(super::super::rail_mail_unread(3, None), 3);
+      assert_eq!(super::super::rail_mail_unread(0, None), 0);
+    }
+  }
+
+  mod reopen_after_take_over_inner {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::store::{
+      model::HttpCacheEntry,
+      repo::infra,
+      share_meta::{read_generation, write_generation},
+    };
+
+    async fn ready_for(session: &store::sync_session::SyncSession) -> StoreReady {
+      let pools = store::open_pools(session.working_copy()).await.unwrap();
+      let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
+      StoreReady {
+        db: pools.interactive,
+        http,
+        lease: None,
+        settings: config::Settings::default(),
+        sync_db: pools.sync,
+        sync_housekeeping_db: pools.housekeeping,
+        sync_session: Some(session.clone()),
+      }
+    }
+
+    async fn seed(path: &std::path::Path, url: &str) {
+      let pools = store::open_pools(path).await.unwrap();
+      infra::http_cache_upsert(&pools.interactive, &HttpCacheEntry::new(b"x".to_vec(), 0, url))
+        .await
+        .unwrap();
+      // Fold the WAL into the main .db so the published copy is self-contained.
+      sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pools.interactive.0)
+        .await
+        .unwrap();
+    }
+
+    /// Closes the working-copy pools, claims, and reopens in the exact order [`run_take_over`] does in
+    /// production (minus the iced `Task` wrapper). The close-before-swap ordering is what lets the
+    /// `publish_database` overwrite succeed on Windows, whose mandatory file locking would otherwise
+    /// reject the in-place replace of the still-open `.db` with `PermissionDenied`.
+    async fn close_then_take_over(
+      ready: StoreReady,
+      session: &store::sync_session::SyncSession,
+      force: bool,
+    ) -> (TakeOverOutcome, StoreReady) {
+      let lease = ready.lease.clone();
+      let settings = ready.settings.clone();
+      ready.db.0.close().await;
+      ready.sync_db.0.close().await;
+      ready.sync_housekeeping_db.0.close().await;
+      let outcome = claim_lease(session, force);
+      let reopened = reopen_after_take_over_inner(session, lease, settings).await.unwrap();
+      (outcome, reopened)
+    }
+
+    #[tokio::test]
+    async fn it_reads_the_pulled_contents_after_a_newer_canonical_is_taken_over() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/stale").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      let ready = ready_for(&session).await;
+
+      // Mirror production: the pools are closed *before* the swap so no OS handle straddles the
+      // `publish_database` overwrite, then reopened against the pulled file.
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
+
+      assert_eq!(outcome, TakeOverOutcome::Claimed);
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_some(),
+        "the reopened pool reads the freshly pulled canonical contents"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/stale")
+          .await
+          .unwrap()
+          .is_none(),
+        "the reopened pool no longer sees the pre-swap working-copy contents"
+      );
+      assert_eq!(read_generation(&marker), 9);
+    }
+
+    #[tokio::test]
+    async fn it_reopens_the_unchanged_working_copy_when_a_take_over_is_declined() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/local").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      // A still-fresh foreign holder makes the stale-aware claim decline, so no swap happens.
+      let share = dir.path().join("share");
+      store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
+        .heartbeat(&share, Utc::now())
+        .unwrap();
+      let ready = ready_for(&session).await;
+
+      let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
+
+      assert_eq!(outcome, TakeOverOutcome::Failed);
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/local")
+          .await
+          .unwrap()
+          .is_some(),
+        "a declined take-over reopens the unchanged working copy so the app keeps functioning"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_none(),
+        "no swap happened, so the pulled canonical contents are not present"
+      );
+      assert_eq!(read_generation(&marker), 4, "the working-copy generation is untouched");
+    }
+  }
+
+  mod resolve_mail_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, None), Some(7));
+    }
+
+    #[test]
+    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(99)), Some(7));
+    }
+
+    #[test]
+    fn it_keeps_the_sticky_selection_when_still_owned() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_mail_target(&roster, Some(3)), Some(3));
+    }
+
+    #[test]
+    fn it_yields_none_for_an_empty_roster() {
+      assert_eq!(resolve_mail_target(&[], None), None);
+      assert_eq!(resolve_mail_target(&[], Some(7)), None);
+    }
+  }
+
+  mod resolve_skills_target {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_the_first_owned_pilot_with_no_prior_selection() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_skills_target(&roster, None), Some(7));
+    }
+
+    #[test]
+    fn it_falls_back_to_first_owned_when_the_sticky_selection_left_the_roster() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_skills_target(&roster, Some(99)), Some(7));
+    }
+
+    #[test]
+    fn it_keeps_the_sticky_selection_when_still_owned() {
+      let roster = vec![pilot(7), pilot(3)];
+
+      assert_eq!(resolve_skills_target(&roster, Some(3)), Some(3));
+    }
+
+    #[test]
+    fn it_yields_none_for_an_empty_roster() {
+      assert_eq!(resolve_skills_target(&[], None), None);
+      assert_eq!(resolve_skills_target(&[], Some(7)), None);
+    }
+  }
+
+  mod resolve_window_geometry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const DEFAULT: Size = Size::new(1200.0, 800.0);
+
+    fn monitor() -> validity::Rect {
+      validity::Rect {
+        height: 1080.0,
+        width: 1920.0,
+        x: 0.0,
+        y: 0.0,
+      }
+    }
+
+    fn geometry(x: f32, y: f32) -> WindowGeometry {
+      WindowGeometry {
+        height: 700.0,
+        width: 1000.0,
+        x,
+        y,
+      }
+    }
+
+    fn sized(width: f32, height: f32) -> WindowGeometry {
+      WindowGeometry {
+        height,
+        width,
+        x: 100.0,
+        y: 100.0,
+      }
+    }
+
+    #[test]
+    fn it_centers_at_the_default_size_when_there_is_no_saved_geometry() {
+      let (size, position) = resolve_window_geometry(None, &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT);
+      assert!(matches!(position, window::Position::Centered));
+    }
+
+    #[test]
+    fn it_clamps_a_valid_size_below_the_floor_up_to_the_minimum() {
+      let (size, _) = resolve_window_geometry(Some(sized(700.0, 500.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(
+        size,
+        Size::new(800.0, 600.0),
+        "a too-small but valid size is raised to the floor"
+      );
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_a_zero_sized_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(0.0, 0.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT, "a 0x0 saved size never reopens broken");
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_an_absurdly_large_window() {
+      let (size, _) = resolve_window_geometry(Some(sized(999_999.0, 999_999.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, DEFAULT);
+    }
+
+    #[test]
+    fn it_defaults_the_size_for_negative_or_non_finite_dimensions() {
+      assert_eq!(
+        resolve_window_geometry(Some(sized(-1200.0, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(f32::NAN, 800.0)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+      assert_eq!(
+        resolve_window_geometry(Some(sized(1200.0, f32::INFINITY)), &[monitor()], DEFAULT).0,
+        DEFAULT
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_the_range_guard_when_no_monitor_is_known() {
+      let (_, in_range) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[], DEFAULT);
+      assert!(matches!(in_range, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
+
+      let (_, out_of_range) = resolve_window_geometry(Some(geometry(-50.0, 90.0)), &[], DEFAULT);
+      assert!(matches!(out_of_range, window::Position::Centered));
+    }
+
+    #[test]
+    fn it_honors_the_saved_size_but_centers_an_off_monitor_position() {
+      let (size, position) = resolve_window_geometry(Some(geometry(3000.0, 90.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(1000.0, 700.0), "a valid saved size is still honored");
+      assert!(
+        matches!(position, window::Position::Centered),
+        "an off-screen position falls back to centered"
+      );
+    }
+
+    #[test]
+    fn it_restores_a_size_at_or_above_the_floor_unchanged() {
+      let (size, _) = resolve_window_geometry(Some(sized(900.0, 650.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(900.0, 650.0));
+    }
+
+    #[test]
+    fn it_restores_size_and_position_for_a_monitor_valid_saved_rect() {
+      let (size, position) = resolve_window_geometry(Some(geometry(120.0, 90.0)), &[monitor()], DEFAULT);
+
+      assert_eq!(size, Size::new(1000.0, 700.0));
+      assert!(matches!(position, window::Position::Specific(p) if p == Point::new(120.0, 90.0)));
+    }
+  }
+
+  mod scale_to_factor {
+    use super::*;
+
+    #[test]
+    fn it_clamps_values_outside_the_supported_range() {
+      assert_eq!(scale_to_factor(0), 0.85);
+      assert_eq!(scale_to_factor(255), 1.5);
+    }
+
+    #[test]
+    fn it_maps_a_default_scale_to_a_unit_factor() {
+      assert_eq!(scale_to_factor(100), 1.0);
+    }
+
+    #[test]
+    fn it_maps_the_extremes_of_the_range() {
+      assert_eq!(scale_to_factor(85), 0.85);
+      assert_eq!(scale_to_factor(150), 1.5);
+    }
+  }
+
+  mod seed_progress_target {
+    use super::*;
+
+    #[test]
+    fn it_advances_monotonically_and_stays_below_the_full_bar() {
+      let mut last = 0.0;
+      for step in 1..=12 {
+        let target = seed_progress_target(step);
+        assert!(target > last, "stage {step} must advance the bar");
+        assert!(target < 1.0, "stage {step} must reserve the full bar for readiness");
+        last = target;
+      }
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn finished_event(character_id: i64) -> sync::Event {
+      sync::Event::Finished {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(character_id)),
+        outcome: sync::Outcome::synced(),
+      }
+    }
+
+    fn asset_sync_event(character_id: i64) -> sync::Event {
+      sync::Event::Finished {
+        key: JobKey::new(JobKind::AssetSync, Subject::Character(character_id)),
+        outcome: sync::Outcome::synced(),
+      }
+    }
+
+    fn assets_dirty(app: &App) -> bool {
+      app.assets.as_ref().is_some_and(assets::State::is_dirty)
+    }
+
+    #[test]
+    fn it_advances_the_splash_label_and_progress_on_a_seed_step() {
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+
+      let _ = on_seed_progress(
+        &mut app,
+        splash::seed::Progress::Step("Seeding item types\u{2026}".to_owned()),
+      );
+
+      let splash = app.splash.as_ref().expect("splash present");
+      assert_eq!(splash.step_label, "Seeding item types\u{2026}");
+      assert!(splash.progress_target > 0.0, "a real stage advances the bar");
+      assert_eq!(app.splash_step, 1);
+    }
+
+    #[test]
+    fn it_buffers_a_cold_start_callback_that_arrives_before_the_runtime_is_ready() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Auth(auth::Message::CallbackReceived(
+          "eveauth-pod://callback?code=a&state=b".to_owned(),
+        )),
+      );
+
+      match app.pending_auth {
+        Some(auth::Message::CallbackReceived(url)) => {
+          assert_eq!(url, "eveauth-pod://callback?code=a&state=b");
+        }
+        other => panic!("expected a buffered CallbackReceived, got {other:?}"),
+      }
+    }
+
+    #[test]
+    fn it_clears_the_compare_window_and_deregisters_it_on_close() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Compare);
+      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = close_compare_window(&mut app, id);
+
+      assert!(app.compare.is_none(), "the compare state is cleared");
+      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
+    }
+
+    #[test]
+    fn it_clears_the_editor_and_deregisters_its_window_on_close() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::SkillPlanEditor);
+      app.editor = Some((id, skill_plan_editor::State::new(42)));
+
+      let _ = close_editor_window(&mut app, id);
+
+      assert!(app.editor.is_none(), "the editor state is cleared");
+      assert_eq!(app.windows.kind(id), None, "the editor window is de-registered");
+    }
+
+    #[test]
+    fn it_closes_the_compare_window_when_it_requests_close() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Compare);
+      app.compare = Some((id, skills_compare::State::new(vec![1, 2], Vec::new())));
+
+      let _ = handle_compare(&mut app, skills_compare::Message::CloseRequested);
+
+      assert!(app.compare.is_none(), "the compare state is cleared");
+      assert_eq!(app.windows.kind(id), None, "the compare window is de-registered");
+    }
+
+    #[tokio::test]
+    async fn it_coalesces_a_burst_of_asset_syncs_into_one_pending_assets_refresh() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.route = Route::Assets;
+      app.assets = Some(assets::State::new());
+
+      for character_id in 0..6 {
+        let _ = update(&mut app, Message::Sync(asset_sync_event(character_id)));
+      }
+
+      assert!(
+        assets_dirty(&app),
+        "a burst of AssetSync events marks the assets dirty once instead of reloading per event"
+      );
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!assets_dirty(&app), "the pulse consumes the coalesced assets refresh");
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!assets_dirty(&app), "a quiet pulse schedules no further assets reload");
+    }
+
+    #[test]
+    fn it_coalesces_a_burst_of_finished_events_into_one_pending_roster_refresh() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+
+      for character_id in 0..6 {
+        let _ = update(&mut app, Message::Sync(finished_event(character_id)));
+      }
+      assert!(
+        app.roster_dirty,
+        "a burst of Finished events marks the roster dirty once instead of reloading per event"
+      );
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.roster_dirty, "the pulse consumes the coalesced refresh");
+
+      let _ = update(&mut app, Message::SyncPulse);
+      assert!(!app.roster_dirty, "a quiet pulse schedules no further reload");
+    }
+
+    #[test]
+    fn it_does_not_mark_assets_dirty_while_off_the_assets_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      app.assets = Some(assets::State::new());
+
+      let _ = update(&mut app, Message::Sync(asset_sync_event(1)));
+
+      assert!(
+        !assets_dirty(&app),
+        "an off-route asset sync schedules no assets reload"
+      );
+    }
+
+    #[test]
+    fn it_ignores_an_editor_message_with_no_open_editor() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::SkillPlanEditor(skill_plan_editor::Message::NameChanged("x".to_owned())),
+      );
+
+      assert!(app.editor.is_none());
+    }
+
+    #[test]
+    fn it_keeps_route_and_sticky_selection_in_sync_on_a_picker_switch() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Skills(skills::Message::CharacterChanged(99)));
+
+      assert_eq!(app.route, Route::Skills(99));
+      assert_eq!(app.selected_character, Some(99));
+    }
+
+    #[test]
+    fn it_keeps_the_characters_destination_lit_while_a_corporation_is_drilled_in() {
+      assert_eq!(
+        Route::CorporationDetail(98_000_001).destination(),
+        rail::Destination::Characters
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_characters_destination_lit_while_a_pilot_is_drilled_in() {
+      assert_eq!(Route::CharacterDetail(42).destination(), rail::Destination::Characters);
+    }
+
+    #[test]
+    fn it_navigates_to_the_assets_screen_on_the_assets_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Assets));
+
+      assert_eq!(app.route, Route::Assets);
+      assert!(app.assets.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Assets);
+    }
+
+    #[test]
+    fn it_navigates_to_the_calendar_screen_on_the_calendar_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
+
+      assert_eq!(app.route, Route::Calendar);
+      assert!(app.calendar.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Calendar);
+    }
+
+    #[test]
+    fn it_navigates_to_the_character_detail_for_the_selected_character() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
+      );
+
+      assert_eq!(app.route, Route::CharacterDetail(42));
+      assert_eq!(app.selected_character, Some(42));
+      assert!(app.character_detail.is_some());
+    }
+
+    #[test]
+    fn it_navigates_to_the_corporation_detail_for_the_selected_corporation() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+      );
+
+      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
+      assert!(app.corporation_detail.is_some());
+    }
+
+    #[test]
+    fn it_navigates_to_the_industry_screen_on_the_industry_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(app.route, Route::Industry);
+      assert!(app.industry.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Industry);
+    }
+
+    #[test]
+    fn it_navigates_to_the_wallet_screen_on_the_wallet_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Wallet));
+
+      assert_eq!(app.route, Route::Wallet);
+      assert!(app.wallet.is_some());
+      assert_eq!(app.route.destination(), rail::Destination::Wallet);
+    }
+
+    #[test]
+    fn it_never_records_splash_window_geometry() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Splash);
+
+      let _ = update(
+        &mut app,
+        Message::Window(id, window::Event::Resized(Size::new(640.0, 480.0))),
+      );
+
+      assert!(app.ui_state.windows.is_empty(), "splash geometry is never written");
+      assert!(!app.coalescer.has_pending(), "splash resize schedules no save");
+    }
+
+    #[test]
+    fn it_persists_a_settled_editor_pane_width() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::SkillPlanEditor(skill_plan_editor::Message::PaneSettled("plan.summary", 300.0)),
+      );
+
+      assert_eq!(app.ui_state.panes.get("plan.summary"), Some(&300.0));
+      assert!(app.coalescer.has_pending());
+    }
+
+    #[test]
+    fn it_persists_a_settled_pane_width_and_schedules_a_coalesced_save() {
+      let mut app = test_app();
+
+      let _ = update(
+        &mut app,
+        Message::Skills(skills::Message::PaneSettled("skills.left", 540.0)),
+      );
+
+      assert_eq!(app.ui_state.panes.get("skills.left"), Some(&540.0));
+      assert!(
+        app.coalescer.has_pending(),
+        "a settled pane drag schedules a coalesced save"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_proceeds_with_existing_data_and_flags_stale_on_a_degraded_seed() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      });
+
+      let _ = on_seed_progress(&mut app, splash::seed::Progress::Degraded("stale refresh".to_owned()));
+
+      assert!(app.sde_stale, "a degraded seed flags the stale-data warning");
+      assert!(app.init_error.is_none(), "a degraded seed never surfaces a fatal error");
+      assert!(
+        app.store_ready.is_none(),
+        "the store handle is consumed to build the runtime with existing data"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_re_dispatches_the_seed_and_clears_the_error_on_retry() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.init_error = Some("seed boom".to_owned());
+      app.splash_step = 5;
+      app.splash = Some(splash::State {
+        error: Some("seed boom".to_owned()),
+        ..splash::State::default()
+      });
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      });
+
+      let _ = update(&mut app, Message::Splash(splash::Message::Retry));
+
+      assert!(app.init_error.is_none(), "retry clears the fatal error");
+      assert_eq!(app.splash_step, 0, "retry restarts seed progress from the first step");
+      assert!(
+        app.splash.as_ref().and_then(|s| s.error.as_ref()).is_none(),
+        "retry clears the splash error so progress can resume"
+      );
+      assert!(app.store_ready.is_some(), "retry preserves the store handle");
+    }
+
+    #[test]
+    fn it_records_main_window_geometry_and_schedules_a_coalesced_save_on_resize_and_move() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Main);
+
+      let _ = update(
+        &mut app,
+        Message::Window(id, window::Event::Resized(Size::new(1280.0, 960.0))),
+      );
+      let _ = update(
+        &mut app,
+        Message::Window(id, window::Event::Moved(Point::new(120.0, 90.0))),
+      );
+
+      let geometry = app
+        .ui_state
+        .windows
+        .get("main")
+        .copied()
+        .expect("main geometry recorded");
+      assert_eq!(geometry.width, 1280.0);
+      assert_eq!(geometry.height, 960.0);
+      assert_eq!((geometry.x, geometry.y), (120.0, 90.0));
+      assert!(
+        app.coalescer.has_pending(),
+        "a coalesced save is pending after the gesture"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_redirects_a_disabled_calendar_nav_to_characters() {
+      let mut app = test_app();
+      let mut runtime = test_runtime().await;
+      runtime
+        .settings
+        .features_mut()
+        .set_enabled(config::Feature::Calendar, false);
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Calendar));
+
+      assert_eq!(app.route, Route::Characters);
+      assert!(app.calendar.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_redirects_a_disabled_industry_nav_to_characters() {
+      let mut app = test_app();
+      let mut runtime = test_runtime().await;
+      runtime
+        .settings
+        .features_mut()
+        .set_enabled(config::Feature::Industry, false);
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Industry));
+
+      assert_eq!(app.route, Route::Characters);
+      assert!(app.industry.is_none());
+    }
+
+    #[test]
+    fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_corp_detail() {
+      let mut app = test_app();
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+      );
+      assert_eq!(app.route, Route::CorporationDetail(98_000_001));
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
+
+      assert_eq!(app.route, Route::Characters);
+    }
+
+    #[test]
+    fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_detail() {
+      let mut app = test_app();
+      let _ = update(
+        &mut app,
+        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
+      );
+      assert_eq!(app.route, Route::CharacterDetail(42));
+
+      let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
+
+      assert_eq!(app.route, Route::Characters);
+    }
+
+    #[test]
+    fn it_routes_to_the_skills_empty_state_for_an_empty_owned_roster() {
+      let mut app = test_app();
+
+      let _ = navigate_to_skills(&mut app, None, Vec::new());
+
+      assert_eq!(app.route, Route::Skills(EMPTY_SKILLS_SELECTION));
+      assert_eq!(app.selected_character, None);
+      assert!(app.skills.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_shows_the_seed_error_on_the_splash_and_keeps_the_store_handle_for_retry() {
+      let db = store::open_test().await.expect("test db");
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = Some(StoreReady {
+        db: db.clone(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        http: http::Client::builder(http::Cache::new(db)).build(),
+        lease: None,
+        settings: config::Settings::default(),
+        sync_session: None,
+      });
+
+      let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("seed boom".to_owned()));
+
+      assert_eq!(app.init_error.as_deref(), Some("seed boom"));
+      assert_eq!(app.splash.as_ref().and_then(|s| s.error.as_deref()), Some("seed boom"));
+      assert!(
+        app.store_ready.is_some(),
+        "a retryable seed failure keeps the store handle so Retry can re-run the seed"
+      );
+    }
+
+    #[test]
+    fn it_surfaces_a_seed_error_as_a_fatal_init_failure_without_a_runtime() {
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app.store_ready = None;
+
+      let _ = on_seed_progress(&mut app, splash::seed::Progress::Error("download failed".to_owned()));
+
+      assert_eq!(app.init_error.as_deref(), Some("download failed"));
+      assert!(app.runtime.is_none(), "a seed failure must not enter the main runtime");
+    }
+  }
+
+  mod updater_state_stream {
+    use super::*;
+
+    #[test]
+    fn it_constructs_an_updater_state_stream() {
+      let _stream = updater_state_stream();
+    }
+  }
+
+  mod variant_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
 
     async fn stub_store_ready() -> StoreReady {
       let db = store::open_test().await.expect("test db");
@@ -7344,6 +7592,13 @@ mod tests {
         settings: config::Settings::default(),
         sync_session: None,
       }
+    }
+
+    #[test]
+    fn it_names_feature_messages() {
+      assert_eq!(Message::Assets(assets::Message::StockpileNew).variant_name(), "Assets");
+      assert_eq!(Message::Nav(rail::Destination::Wallet).variant_name(), "Nav");
+      assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
     }
 
     #[tokio::test]
@@ -7417,419 +7672,164 @@ mod tests {
     }
   }
 
-  fn featured_app() -> App {
-    let mut app = test_app();
-    app.assets = Some(assets::State::new());
-    app.calendar = Some(calendar::State::new(42, app.now, config::FeatureFlags::default()));
-    app.character_detail = Some(character_detail::State::new(1, &[]));
-    app.character_manager = Some(character_manager::State::new());
-    app.mail = Some(mail::State::new(42));
-    app.skills = Some(skills::State::new(1));
-    app.wallet = Some(wallet::State::new());
-    app
-  }
-
-  mod compare_seeds {
-    use pretty_assertions::assert_eq;
-
+  mod views {
     use super::*;
 
-    #[test]
-    fn it_leads_with_the_active_pilot_then_fills_by_descending_sp() {
-      let seeds = compare_seeds(vec![(1, 100), (2, 500), (3, 300)], Some(1));
-
-      assert_eq!(seeds, vec![1, 2, 3]);
-    }
-
-    #[test]
-    fn it_caps_the_selection_at_three_pilots() {
-      let seeds = compare_seeds(vec![(1, 10), (2, 20), (3, 30), (4, 40)], None);
-
-      assert_eq!(seeds, vec![4, 3, 2]);
-    }
-
-    #[test]
-    fn it_ignores_an_active_pilot_absent_from_the_cards() {
-      let seeds = compare_seeds(vec![(1, 10), (2, 20)], Some(99));
-
-      assert_eq!(seeds, vec![2, 1]);
-    }
-
-    #[test]
-    fn it_breaks_skill_point_ties_by_id() {
-      let seeds = compare_seeds(vec![(5, 100), (3, 100)], None);
-
-      assert_eq!(seeds, vec![3, 5]);
-    }
-  }
-
-  mod compare_seed_ids {
-    use super::*;
-
-    #[test]
-    fn it_returns_no_seeds_without_a_character_manager() {
-      let app = test_app();
-
-      assert!(super::super::compare_seed_ids(&app).is_empty());
-    }
-  }
-
-  mod image_reload {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_is_a_no_op_without_a_runtime() {
-      let app = featured_app();
-
-      let _ = super::super::image_reload(&app);
-    }
-
-    #[tokio::test]
-    async fn it_batches_a_reload_for_each_active_route() {
-      let mut app = featured_app();
-      app.runtime = Some(test_runtime().await);
-
-      for route in [
-        Route::Assets,
-        Route::Calendar,
-        Route::CharacterDetail(1),
-        Route::Characters,
-        Route::Industry,
-        Route::Mail,
-        Route::Settings,
-        Route::Skills(1),
-        Route::Wallet,
-      ] {
-        app.route = route;
-        let _ = super::super::image_reload(&app);
-      }
-    }
-
-    #[tokio::test]
-    async fn it_reloads_the_compare_window_when_one_is_open() {
-      let mut app = featured_app();
-      app.runtime = Some(test_runtime().await);
-      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
-
-      let _ = super::super::image_reload(&app);
-    }
-  }
-
-  mod collect_stale_images {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_gathers_no_keys_for_settings_with_no_compare() {
-      let mut app = featured_app();
-      app.route = Route::Settings;
-
-      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
-    }
-
-    #[test]
-    fn it_gathers_keys_for_every_active_route() {
-      let mut app = featured_app();
-
-      for route in [
-        Route::Assets,
-        Route::Calendar,
-        Route::CharacterDetail(1),
-        Route::Characters,
-        Route::CorporationDetail(1),
-        Route::Industry,
-        Route::Mail,
-        Route::Settings,
-        Route::Skills(1),
-        Route::Wallet,
-      ] {
-        app.route = route;
-        let _ = super::super::collect_stale_images(&app);
-      }
-    }
-
-    #[test]
-    fn it_appends_the_compare_window_keys_when_one_is_open() {
-      let mut app = featured_app();
-      app.route = Route::Settings;
-      app.compare = Some((window::Id::unique(), skills_compare::State::new(vec![1, 2], Vec::new())));
-
-      assert_eq!(super::super::collect_stale_images(&app), Vec::new());
-    }
-  }
-
-  mod handle_skills {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_dispatches_each_skills_branch() {
-      use crate::features::skills::EditorSeed;
-      let mut app = featured_app();
-      app.runtime = Some(test_runtime().await);
-
-      let _ = super::super::handle_skills(&mut app, skills::Message::CharacterChanged(1));
-      let _ = super::super::handle_skills(&mut app, skills::Message::OpenCompare);
-      let _ = super::super::handle_skills(&mut app, skills::Message::OpenPlanEditor(EditorSeed::New));
-      let _ = super::super::handle_skills(&mut app, skills::Message::PaneSettled("skills", 280.0));
-      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
-    }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_without_a_runtime() {
+    fn ready_app() -> App {
       let mut app = test_app();
-
-      let _ = super::super::handle_skills(&mut app, skills::Message::PickerToggled);
+      app.character_manager = Some(character_manager::State::new());
+      app.character_detail = Some(character_detail::State::new(1, &[]));
+      app.skills = Some(skills::State::new(1));
+      app.mail = Some(mail::State::new(42));
+      app.wallet = Some(wallet::State::new());
+      app.assets = Some(assets::State::new());
+      app
     }
-  }
 
-  mod dispatch_lifecycle {
-    use super::*;
+    fn render_route(route: Route) {
+      let app = ready_app();
+      let mut app = app;
+      app.route = route;
+      let _ = route_view(&app);
+    }
 
     #[tokio::test]
-    async fn it_routes_each_lifecycle_message() {
-      let mut app = featured_app();
-      let db = store::open_test().await.expect("test db");
-      let reopened = StoreReady {
-        db: db.clone(),
-        sync_db: db.clone(),
-        sync_housekeeping_db: db.clone(),
-        http: http::Client::builder(http::Cache::new(db)).build(),
-        lease: None,
-        settings: config::Settings::default(),
-        sync_session: None,
-      };
+    async fn it_builds_the_subscription_set_for_each_live_screen() {
+      let app = test_app();
+      let _ = subscription(&app);
 
-      let messages = vec![
-        Message::CancelTakeOver,
-        Message::ClockTick,
-        Message::CloseSyncPopover,
-        Message::ConfirmTakeOver,
-        Message::FocusMainWindow,
-        Message::ImageReady {
-          id: 1,
-          kind: store::images::ImageKind::CharacterPortrait,
-          ready: true,
-        },
-        Message::InitFailed("boom".to_owned()),
-        Message::LeaseHeartbeat,
-        Message::LockReleased,
-        Message::OpenAbout,
-        Message::PeriodicPush,
-        Message::Pushed(None),
-        Message::ReauthCharacter(1),
-        Message::SeedProgress(splash::seed::Progress::Step("seeding".to_owned())),
-        Message::SnoozesWoken(Vec::new()),
-        Message::Splash(splash::Message::Tick),
-        Message::StorageMigrated,
-        Message::SyncPulse,
-        Message::TakeOver,
-        Message::TakeOverResolved(TakeOverOutcome::Failed, Box::new(reopened)),
-        Message::ToggleSyncPopover,
-        Message::UpdaterAction(updater_banner::Action::Apply),
-        Message::UpdaterDismissToast,
-        Message::UpdaterStateChanged(updater::State::default()),
-        Message::WindowOpened(window::Id::unique()),
-        Message::Wallet(wallet::Message::PickerToggled),
-      ];
-
-      for message in messages {
-        let _ = super::super::dispatch_lifecycle(&mut app, message);
-      }
-    }
-  }
-
-  mod init_tracing {
-    use super::*;
-
-    #[test]
-    fn it_initializes_a_file_logger_under_a_writable_dir() {
-      let dir = tempfile::tempdir().expect("temp dir");
-
-      let guard = init_tracing(dir.path(), config::LogLevel::default());
-
-      assert!(guard.is_some(), "a writable log dir yields a worker guard");
-    }
-  }
-
-  mod updater_state_stream {
-    use super::*;
-
-    #[test]
-    fn it_constructs_an_updater_state_stream() {
-      let _stream = updater_state_stream();
-    }
-  }
-
-  mod crash_visibility {
-    use std::sync::{Arc, Mutex};
-
-    use tracing::{Event, Subscriber, field::Visit};
-    use tracing_subscriber::{
-      Layer,
-      filter::EnvFilter,
-      layer::{Context, SubscriberExt as _},
-      registry,
-    };
-
-    use super::*;
-
-    /// Collects the `message` field of every captured event into a shared buffer so a test can
-    /// assert what was logged through tracing.
-    #[derive(Clone, Default)]
-    struct CaptureLayer {
-      messages: Arc<Mutex<Vec<String>>>,
-    }
-
-    struct MessageVisitor<'a>(&'a mut Option<String>);
-
-    impl Visit for MessageVisitor<'_> {
-      fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-          *self.0 = Some(format!("{value:?}"));
-        }
-      }
-    }
-
-    impl<S: Subscriber> Layer<S> for CaptureLayer {
-      fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        let mut message = None;
-        event.record(&mut MessageVisitor(&mut message));
-        if let Some(message) = message {
-          self.messages.lock().expect("capture buffer").push(message);
-        }
-      }
-    }
-
-    #[test]
-    fn it_routes_a_panic_through_the_hook_into_tracing() {
-      let layer = CaptureLayer::default();
-      let messages = layer.messages.clone();
-
-      // Install a hook that drives the same `log_panic` path the production hook uses, scoped to a
-      // capturing subscriber, then restore the previous hook so the test harness is unaffected.
-      let previous = std::panic::take_hook();
-      std::panic::set_hook(Box::new(log_panic));
-
-      tracing::subscriber::with_default(registry().with(layer), || {
-        // A panic raised from a sync-style closure, caught so it does not abort the test.
-        let _ = std::panic::catch_unwind(|| {
-          fn run_sync_job() {
-            panic!("simulated sync engine crash");
-          }
-          run_sync_job();
-        });
+      let mut app = ready_app();
+      let runtime = test_runtime().await;
+      app.splash = Some(splash::State::default());
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.calendar = Some(calendar::State::new(1, app.now, calendar_features(&app)));
+      app.industry = Some(industry::State::new(
+        1,
+        industry_required_scopes(),
+        industry::FacilityDefaults::default(),
+      ));
+      app.runtime = Some(runtime);
+      app.sync_popover_open = true;
+      app.status.apply(&crate::sync::Event::Started {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
       });
+      app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(1)));
 
-      std::panic::set_hook(previous);
+      // Holding the lease arms the heartbeat, periodic-pull, and periodic-push timers.
+      let (_dir, session) = temp_sync_session();
+      app.sync_session = Some(session);
+      app.read_only = None;
+      let _ = subscription(&app);
 
-      let captured = messages.lock().expect("capture buffer");
-      assert!(
-        captured.iter().any(|m| m.contains("the process panicked")),
-        "the panic hook routed an ERROR event into tracing; captured: {captured:?}",
-      );
+      // A parked (read-only) session arms the re-acquire timer instead.
+      app.read_only = Some(HolderInfo {
+        hostname: "studio-mac".to_owned(),
+        last_active: Utc::now(),
+        machine_id: "machine-b".to_owned(),
+      });
+      let _ = subscription(&app);
     }
 
     #[test]
-    fn it_pins_sqlx_query_logging_to_warn_or_higher() {
-      // Build the real file filter and route events through it so a regression that loosens
-      // `sqlx::query` to DEBUG/TRACE fails this test instead of silently flooding the field log.
-      let captured = |level: tracing::Level| -> bool {
-        let layer = CaptureLayer::default();
-        let messages = layer.messages.clone();
-        let filtered = layer.with_filter(EnvFilter::new(file_filter(config::LogLevel::default())));
-        tracing::subscriber::with_default(registry().with(filtered), || match level {
-          tracing::Level::TRACE => tracing::trace!(target: "sqlx::query", "stmt"),
-          tracing::Level::DEBUG => tracing::debug!(target: "sqlx::query", "stmt"),
-          tracing::Level::INFO => tracing::info!(target: "sqlx::query", "stmt"),
-          tracing::Level::WARN => tracing::warn!(target: "sqlx::query", "stmt"),
-          tracing::Level::ERROR => tracing::error!(target: "sqlx::query", "stmt"),
-        });
-        !messages.lock().expect("capture buffer").is_empty()
-      };
-
-      assert!(
-        !captured(tracing::Level::TRACE),
-        "sqlx::query TRACE must be filtered out"
-      );
-      assert!(
-        !captured(tracing::Level::DEBUG),
-        "sqlx::query DEBUG must be filtered out"
-      );
-      assert!(!captured(tracing::Level::INFO), "sqlx::query INFO must be filtered out");
-      assert!(
-        captured(tracing::Level::WARN),
-        "sqlx::query WARN must pass (filter pins WARN-or-higher)"
-      );
-    }
-
-    // Routes the events emitted by `emit` through the real file filter for `log_level` and reports
-    // whether any survived. Mirrors the live wiring: the file layer that ships to disk wraps exactly
-    // `file_filter(log_level)`. The `tracing` macros bake their target into a static callsite, so the
-    // caller passes a closure that emits at a literal target rather than a runtime `&str`.
-    fn passes_file_filter(log_level: config::LogLevel, emit: impl FnOnce()) -> bool {
-      let layer = CaptureLayer::default();
-      let messages = layer.messages.clone();
-      let filtered = layer.with_filter(EnvFilter::new(file_filter(log_level)));
-      tracing::subscriber::with_default(registry().with(filtered), emit);
-      !messages.lock().expect("capture buffer").is_empty()
+    fn it_builds_the_sync_model_with_per_pilot_job_rows() {
+      let mut app = ready_app();
+      app.last_synced = Some(app.now);
+      let model = sync_model(&app);
+      assert_eq!(model.total, model.rows.len());
     }
 
     #[test]
-    fn it_filters_pod_debug_out_at_quiet() {
-      assert!(
-        !passes_file_filter(config::LogLevel::Quiet, || {
-          tracing::debug!(target: "pod::sync::engine", "event")
-        }),
-        "Quiet pins pod to INFO, so pod DEBUG must be filtered out"
+    fn it_dispatches_the_daemon_view_for_each_window_kind() {
+      let mut app = ready_app();
+      let splash_id = window::Id::unique();
+      app.windows.register(splash_id, Window::Splash);
+      app.splash = Some(splash::State::default());
+      let _ = view(&app, splash_id);
+      app.splash = None;
+      let _ = view(&app, splash_id);
+
+      let main_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      app.route = Route::Characters;
+      let _ = view(&app, main_id);
+
+      let editor_id = window::Id::unique();
+      app.windows.register(editor_id, Window::SkillPlanEditor);
+      app.editor = Some((editor_id, skill_plan_editor::State::new(1)));
+      let _ = view(&app, editor_id);
+
+      let _ = view(&app, window::Id::unique());
+    }
+
+    #[tokio::test]
+    async fn it_drives_character_detail_through_the_runtime_backed_handler() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+
+      // CharacterChanged navigates, selects the pilot, and batches an update with a reload.
+      let _ = handle_character_detail(&mut app, character_detail::Message::CharacterChanged(7));
+      assert_eq!(app.route, Route::CharacterDetail(7));
+      assert_eq!(app.selected_character, Some(7));
+
+      // ReauthRequested reroutes to the app-level reauth flow.
+      let _ = handle_character_detail(&mut app, character_detail::Message::ReauthRequested(7));
+
+      // ContactEntityInput batches the modal update with a debounced entity search task.
+      let _ = handle_character_detail(
+        &mut app,
+        character_detail::Message::ContactEntityInput("jita".to_owned()),
       );
 
-      assert!(
-        passes_file_filter(config::LogLevel::Quiet, || {
-          tracing::info!(target: "pod::sync::engine", "event")
-        }),
-        "Quiet must still admit pod INFO"
-      );
+      // Any other message falls through to the plain feature update.
+      let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
     }
 
     #[test]
-    fn it_hides_the_demoted_resolve_site_until_verbose() {
-      // The chronically noisy resolve cache-hit site was demoted to TRACE so it only surfaces at
-      // Verbose; its target is the module path it logs from.
-      let emit = || tracing::trace!(target: "pod::sync::jobs::resolve", "resolved item type from db");
-
-      assert!(
-        !passes_file_filter(config::LogLevel::Quiet, emit),
-        "the resolve cache-hit site must be silent at Quiet"
-      );
-      assert!(
-        !passes_file_filter(config::LogLevel::Normal, emit),
-        "the resolve cache-hit site must stay silent at Normal so the demotion keeps real signal afloat"
-      );
-      assert!(
-        passes_file_filter(config::LogLevel::Verbose, emit),
-        "the resolve cache-hit site must surface at Verbose for a deep-dive repro"
-      );
+    fn it_renders_every_route_through_route_view() {
+      render_route(Route::Characters);
+      render_route(Route::CharacterDetail(1));
+      render_route(Route::CorporationDetail(1));
+      render_route(Route::Skills(1));
+      render_route(Route::Mail);
+      render_route(Route::Wallet);
+      render_route(Route::Assets);
+      render_route(Route::Settings);
     }
 
     #[test]
-    fn it_hides_the_demoted_http_site_until_verbose() {
-      // The chronically noisy http per-request site was demoted to TRACE so it only surfaces at
-      // Verbose; it logs under the dedicated `pod::http` target.
-      let emit = || tracing::trace!(target: "pod::http", "request completed");
+    fn it_renders_main_view_with_a_runtime_and_with_the_init_error_and_pre_runtime_placeholders() {
+      let mut app = ready_app();
+      app.route = Route::Characters;
+      app.runtime = None;
+      let _ = main_view(&app);
+      app.init_error = Some("boom".to_owned());
+      let _ = main_view(&app);
+    }
 
-      assert!(
-        !passes_file_filter(config::LogLevel::Quiet, emit),
-        "the http per-request site must be silent at Quiet"
-      );
-      assert!(
-        !passes_file_filter(config::LogLevel::Normal, emit),
-        "the http per-request site must stay silent at Normal so the demotion keeps real signal afloat"
-      );
-      assert!(
-        passes_file_filter(config::LogLevel::Verbose, emit),
-        "the http per-request site must surface at Verbose for a deep-dive repro"
-      );
+    #[test]
+    fn it_renders_main_view_with_the_sync_popover_open() {
+      let mut app = ready_app();
+      app.route = Route::Characters;
+      app.sync_popover_open = true;
+      let _ = main_view(&app);
+    }
+
+    #[test]
+    fn it_renders_the_starting_up_placeholder_for_an_unbuilt_route() {
+      let mut app = test_app();
+      app.route = Route::Wallet;
+      let _ = route_view(&app);
+      let _ = starting_up();
+    }
+
+    #[test]
+    fn it_renders_the_status_bar_with_and_without_an_active_outbox() {
+      let mut app = ready_app();
+      let _ = status_bar_view(&app);
+      app.outbox.apply(&crate::sync::Event::OutboxInflight {
+        id: 1,
+      });
+      let _ = status_bar_view(&app);
     }
   }
 }

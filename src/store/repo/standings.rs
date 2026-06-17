@@ -1180,102 +1180,10 @@ fn row_in_faction(row: &CatalogRow, value: &str, names: &NameIndex) -> bool {
 mod tests {
   use super::*;
 
-  mod effective_standing {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    const CALDARI: i64 = 500_001;
-    const ANGEL_CARTEL: i64 = 500_011;
-
-    #[test]
-    fn it_returns_the_raw_value_with_no_social_skills() {
-      assert_eq!(effective_standing(4.0, Some(CALDARI), SocialSkills::default()), 4.0);
-    }
-
-    #[test]
-    fn it_raises_positive_empire_standings_with_connections() {
-      let skills = SocialSkills {
-        connections: 5,
-        ..SocialSkills::default()
-      };
-
-      // 4 + (10 - 4) * 0.04 * 5 = 4 + 1.2 = 5.2
-      assert!((effective_standing(4.0, Some(CALDARI), skills) - 5.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn it_ignores_connections_for_a_pirate_faction() {
-      let skills = SocialSkills {
-        connections: 5,
-        ..SocialSkills::default()
-      };
-
-      assert_eq!(effective_standing(4.0, Some(ANGEL_CARTEL), skills), 4.0);
-    }
-
-    #[test]
-    fn it_raises_positive_pirate_standings_with_criminal_connections() {
-      let skills = SocialSkills {
-        criminal_connections: 5,
-        ..SocialSkills::default()
-      };
-
-      assert!((effective_standing(4.0, Some(ANGEL_CARTEL), skills) - 5.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn it_raises_negative_standings_toward_zero_with_diplomacy() {
-      let skills = SocialSkills {
-        diplomacy: 5,
-        ..SocialSkills::default()
-      };
-
-      // -4 + (0 - -4) * 0.04 * 5 = -4 + 0.8 = -3.2
-      assert!((effective_standing(-4.0, Some(CALDARI), skills) - -3.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn it_uses_diplomacy_not_criminal_connections_for_negative_pirate_standings() {
-      let skills = SocialSkills {
-        criminal_connections: 5,
-        diplomacy: 5,
-        ..SocialSkills::default()
-      };
-
-      assert!((effective_standing(-4.0, Some(ANGEL_CARTEL), skills) - -3.2).abs() < 1e-9);
-    }
-  }
-
-  mod required_standing {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_the_threshold_for_each_level() {
-      assert_eq!(required_standing(1), -2.0);
-      assert_eq!(required_standing(2), 1.0);
-      assert_eq!(required_standing(3), 3.0);
-      assert_eq!(required_standing(4), 5.0);
-      assert_eq!(required_standing(5), 7.0);
-    }
-
-    #[test]
-    fn it_falls_back_to_zero_for_an_unknown_level() {
-      assert_eq!(required_standing(9), 0.0);
-    }
-  }
-
   mod accessibility {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_is_none_without_a_level() {
-      assert_eq!(accessibility(10.0, None), None);
-    }
 
     #[test]
     fn it_is_accessible_when_effective_meets_the_requirement() {
@@ -1286,6 +1194,11 @@ mod tests {
     fn it_is_locked_when_effective_falls_short() {
       assert_eq!(accessibility(4.99, Some(4)), Some(false));
     }
+
+    #[test]
+    fn it_is_none_without_a_level() {
+      assert_eq!(accessibility(10.0, None), None);
+    }
   }
 
   mod catalog {
@@ -1295,10 +1208,15 @@ mod tests {
     use crate::store;
 
     const ANGEL_CARTEL_FACTION: i64 = 500_011;
+
     const ANGEL_CORP: i64 = 1_000_002;
+
     const CALDARI_FACTION: i64 = 500_001;
+
     const CHARACTER: i64 = 90_000_001;
+
     const NAVY_CORP: i64 = 1_000_001;
+
     const SOE_CORP: i64 = 1_000_003;
 
     async fn exec(db: &store::Database, sql: &'static str) {
@@ -1427,225 +1345,6 @@ mod tests {
         .collect()
     }
 
-    #[tokio::test]
-    async fn it_returns_all_factions_and_corps_with_no_agents_by_default() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
-      assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
-      assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
-      assert!(rows.iter().all(|row| row.raw_standing == 0.0));
-    }
-
-    #[tokio::test]
-    async fn it_surfaces_agents_on_an_empty_query_when_forced() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = catalog(&db, CHARACTER, &parse(""), true, Some(500)).await.unwrap();
-
-      // Forced agents bypass the facet gate but must still survive `keeps`, so the full catalog appears.
-      assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
-      assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
-      assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
-    }
-
-    #[tokio::test]
-    async fn it_scopes_a_faction_to_its_faction_corps_and_agents() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "faction:Caldari").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Faction), vec!["Caldari State"]);
-      assert_eq!(
-        of_kind(&rows, CatalogKind::Corporation),
-        vec!["Caldari Navy", "Sisters of EVE"]
-      );
-      let agents = of_kind(&rows, CatalogKind::Agent);
-      assert!(agents.contains(&"Navy Sec Agent"));
-      assert!(!agents.contains(&"Angel Dist Agent"));
-    }
-
-    #[tokio::test]
-    async fn it_excludes_a_negated_corp_and_its_agents() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "faction:Caldari -corp:\"Sisters of EVE\"").await;
-
-      let corps = of_kind(&rows, CatalogKind::Corporation);
-      assert!(!corps.contains(&"Sisters of EVE"));
-      assert!(corps.contains(&"Caldari Navy"));
-      assert!(!names(&rows).contains(&"Sisters Agent"));
-    }
-
-    #[tokio::test]
-    async fn it_intersects_a_positive_corp_within_a_faction() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "faction:Caldari corp:Navy").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Corporation), vec!["Caldari Navy"]);
-      let agents = of_kind(&rows, CatalogKind::Agent);
-      assert!(agents.contains(&"Navy Sec Agent"));
-      assert!(!agents.contains(&"Sisters Agent"));
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_level() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "level:4").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Sec Agent"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_division() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "division:Distribution").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_type() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "type:Research").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_research_field() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "field:Caldari").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_region() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "region:\"The Forge\"").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_security_class() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "sec:low").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_agents_by_system() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "system:Rancer").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
-    }
-
-    #[tokio::test]
-    async fn it_filters_by_effective_standing_threshold() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-      exec(
-        &db,
-        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
-        (90000001, 500001, 'Caldari State', 'faction', 6.0)",
-      )
-      .await;
-
-      let rows = run(&db, "faction:Caldari standing:>=6").await;
-
-      assert!(
-        rows
-          .iter()
-          .filter(|r| r.kind == CatalogKind::Corporation)
-          .all(|r| r.effective_standing >= 6.0)
-      );
-      assert!(
-        rows
-          .iter()
-          .any(|r| r.kind == CatalogKind::Faction && r.name == "Caldari State")
-      );
-    }
-
-    #[tokio::test]
-    async fn it_cascades_corp_standing_to_an_agent_and_applies_social_skills() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-      exec(
-        &db,
-        "INSERT INTO character_skills (character_id, skill_id, active_skill_level, skillpoints_in_skill, \
-        trained_skill_level) VALUES (90000001, 3359, 5, 0, 5)",
-      )
-      .await;
-      exec(
-        &db,
-        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
-        (90000001, 1000001, 'Caldari Navy', 'npc_corp', 5.0)",
-      )
-      .await;
-
-      let rows = run(&db, "corp:Navy level:4").await;
-
-      let agent = rows.iter().find(|r| r.name == "Navy Sec Agent").unwrap();
-      assert_eq!(agent.raw_standing, 5.0);
-      assert!((agent.effective_standing - 6.0).abs() < 1e-9);
-      assert_eq!(agent.accessible, Some(true));
-    }
-
-    #[tokio::test]
-    async fn it_filters_accessible_agents_by_best_of_corp_and_faction() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-      exec(
-        &db,
-        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
-        (90000001, 1000001, 'Caldari Navy', 'npc_corp', 6.0)",
-      )
-      .await;
-
-      let accessible = run(&db, "corp:Navy reachable").await;
-      assert!(accessible.iter().any(|r| r.name == "Navy Sec Agent"));
-
-      let locked = run(&db, "corp:Navy locked").await;
-      assert!(!locked.iter().any(|r| r.name == "Navy Sec Agent"));
-    }
-
-    #[tokio::test]
-    async fn it_matches_an_agent_name_facet() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = run(&db, "agent:Researcher").await;
-
-      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
-      assert!(of_kind(&rows, CatalogKind::Faction).is_empty());
-    }
-
     mod agent_page {
       use pretty_assertions::assert_eq;
 
@@ -1656,27 +1355,16 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_returns_no_rows_when_the_query_does_not_surface_agents() {
+      async fn it_exhausts_the_cursor_on_a_short_final_page() {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let page = agent_page(&db, CHARACTER, &parse(""), false, None, 100).await.unwrap();
+        let only = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), false, None, 10)
+          .await
+          .unwrap();
 
-        assert!(page.rows.is_empty());
-        assert_eq!(page.next_cursor, None);
-      }
-
-      #[tokio::test]
-      async fn it_returns_agents_on_an_empty_query_when_forced() {
-        let db = store::open_test().await.unwrap();
-        seed(&db).await;
-
-        let page = agent_page(&db, CHARACTER, &parse(""), true, None, 100).await.unwrap();
-
-        assert_eq!(
-          page_names(&page),
-          vec!["Angel Dist Agent", "Navy Researcher", "Navy Sec Agent", "Sisters Agent"]
-        );
+        assert_eq!(only.rows.len(), 4);
+        assert_eq!(only.next_cursor, None);
       }
 
       #[tokio::test]
@@ -1735,17 +1423,247 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_exhausts_the_cursor_on_a_short_final_page() {
+      async fn it_returns_agents_on_an_empty_query_when_forced() {
         let db = store::open_test().await.unwrap();
         seed(&db).await;
 
-        let only = agent_page(&db, CHARACTER, &parse("region:\"The Forge\""), false, None, 10)
-          .await
-          .unwrap();
+        let page = agent_page(&db, CHARACTER, &parse(""), true, None, 100).await.unwrap();
 
-        assert_eq!(only.rows.len(), 4);
-        assert_eq!(only.next_cursor, None);
+        assert_eq!(
+          page_names(&page),
+          vec!["Angel Dist Agent", "Navy Researcher", "Navy Sec Agent", "Sisters Agent"]
+        );
       }
+
+      #[tokio::test]
+      async fn it_returns_no_rows_when_the_query_does_not_surface_agents() {
+        let db = store::open_test().await.unwrap();
+        seed(&db).await;
+
+        let page = agent_page(&db, CHARACTER, &parse(""), false, None, 100).await.unwrap();
+
+        assert!(page.rows.is_empty());
+        assert_eq!(page.next_cursor, None);
+      }
+    }
+
+    #[tokio::test]
+    async fn it_cascades_corp_standing_to_an_agent_and_applies_social_skills() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO character_skills (character_id, skill_id, active_skill_level, skillpoints_in_skill, \
+        trained_skill_level) VALUES (90000001, 3359, 5, 0, 5)",
+      )
+      .await;
+      exec(
+        &db,
+        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
+        (90000001, 1000001, 'Caldari Navy', 'npc_corp', 5.0)",
+      )
+      .await;
+
+      let rows = run(&db, "corp:Navy level:4").await;
+
+      let agent = rows.iter().find(|r| r.name == "Navy Sec Agent").unwrap();
+      assert_eq!(agent.raw_standing, 5.0);
+      assert!((agent.effective_standing - 6.0).abs() < 1e-9);
+      assert_eq!(agent.accessible, Some(true));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_negated_corp_and_its_agents() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "faction:Caldari -corp:\"Sisters of EVE\"").await;
+
+      let corps = of_kind(&rows, CatalogKind::Corporation);
+      assert!(!corps.contains(&"Sisters of EVE"));
+      assert!(corps.contains(&"Caldari Navy"));
+      assert!(!names(&rows).contains(&"Sisters Agent"));
+    }
+
+    #[tokio::test]
+    async fn it_filters_accessible_agents_by_best_of_corp_and_faction() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
+        (90000001, 1000001, 'Caldari Navy', 'npc_corp', 6.0)",
+      )
+      .await;
+
+      let accessible = run(&db, "corp:Navy reachable").await;
+      assert!(accessible.iter().any(|r| r.name == "Navy Sec Agent"));
+
+      let locked = run(&db, "corp:Navy locked").await;
+      assert!(!locked.iter().any(|r| r.name == "Navy Sec Agent"));
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_division() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "division:Distribution").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_level() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "level:4").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Sec Agent"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_region() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "region:\"The Forge\"").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_research_field() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "field:Caldari").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_security_class() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "sec:low").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_system() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "system:Rancer").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Angel Dist Agent"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_agents_by_type() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "type:Research").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_effective_standing_threshold() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO character_standings (character_id, from_id, from_name, from_type, standing) VALUES \
+        (90000001, 500001, 'Caldari State', 'faction', 6.0)",
+      )
+      .await;
+
+      let rows = run(&db, "faction:Caldari standing:>=6").await;
+
+      assert!(
+        rows
+          .iter()
+          .filter(|r| r.kind == CatalogKind::Corporation)
+          .all(|r| r.effective_standing >= 6.0)
+      );
+      assert!(
+        rows
+          .iter()
+          .any(|r| r.kind == CatalogKind::Faction && r.name == "Caldari State")
+      );
+    }
+
+    #[tokio::test]
+    async fn it_intersects_a_positive_corp_within_a_faction() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "faction:Caldari corp:Navy").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation), vec!["Caldari Navy"]);
+      let agents = of_kind(&rows, CatalogKind::Agent);
+      assert!(agents.contains(&"Navy Sec Agent"));
+      assert!(!agents.contains(&"Sisters Agent"));
+    }
+
+    #[tokio::test]
+    async fn it_matches_an_agent_name_facet() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "agent:Researcher").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Agent), vec!["Navy Researcher"]);
+      assert!(of_kind(&rows, CatalogKind::Faction).is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_all_factions_and_corps_with_no_agents_by_default() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
+      assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
+      assert!(rows.iter().all(|row| row.raw_standing == 0.0));
+    }
+
+    #[tokio::test]
+    async fn it_scopes_a_faction_to_its_faction_corps_and_agents() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = run(&db, "faction:Caldari").await;
+
+      assert_eq!(of_kind(&rows, CatalogKind::Faction), vec!["Caldari State"]);
+      assert_eq!(
+        of_kind(&rows, CatalogKind::Corporation),
+        vec!["Caldari Navy", "Sisters of EVE"]
+      );
+      let agents = of_kind(&rows, CatalogKind::Agent);
+      assert!(agents.contains(&"Navy Sec Agent"));
+      assert!(!agents.contains(&"Angel Dist Agent"));
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_agents_on_an_empty_query_when_forced() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = catalog(&db, CHARACTER, &parse(""), true, Some(500)).await.unwrap();
+
+      // Forced agents bypass the facet gate but must still survive `keeps`, so the full catalog appears.
+      assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
+      assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
     }
   }
 
@@ -1756,6 +1674,7 @@ mod tests {
     use crate::store;
 
     const CALDARI_FACTION: i64 = 500_001;
+
     const CORPORATION: i64 = 98_000_001;
 
     async fn exec(db: &store::Database, sql: &'static str) {
@@ -1840,42 +1759,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_returns_the_full_catalog_with_no_standings_by_default() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-
-      let rows = corporation_catalog(&db, CORPORATION, &parse(""), false, Some(500))
-        .await
-        .unwrap();
-
-      assert_eq!(of_kind(&rows, CatalogKind::Faction), vec!["Caldari State"]);
-      assert_eq!(of_kind(&rows, CatalogKind::Corporation), vec!["Caldari Navy"]);
-      assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
-      assert!(rows.iter().all(|row| row.raw_standing == 0.0));
-    }
-
-    #[tokio::test]
-    async fn it_uses_the_corporation_raw_standing_and_treats_effective_as_raw() {
-      let db = store::open_test().await.unwrap();
-      seed(&db).await;
-      exec(
-        &db,
-        "INSERT INTO corporation_standings (corporation_id, from_id, from_type, standing, from_name) VALUES \
-        (98000001, 500001, 'faction', 6.0, 'Caldari State')",
-      )
-      .await;
-
-      let rows = corporation_catalog(&db, CORPORATION, &parse("faction:Caldari"), false, Some(500))
-        .await
-        .unwrap();
-
-      let faction = rows.iter().find(|row| row.id == CALDARI_FACTION).unwrap();
-      assert_eq!(faction.raw_standing, 6.0);
-      // No social-skill modifiers for a corporation: effective equals raw even with a positive empire standing.
-      assert_eq!(faction.effective_standing, 6.0);
-    }
-
-    #[tokio::test]
     async fn it_cascades_a_corp_standing_to_an_agent_without_social_skills() {
       let db = store::open_test().await.unwrap();
       seed(&db).await;
@@ -1917,6 +1800,110 @@ mod tests {
         vec!["Navy Sec Agent"]
       );
     }
+
+    #[tokio::test]
+    async fn it_returns_the_full_catalog_with_no_standings_by_default() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+
+      let rows = corporation_catalog(&db, CORPORATION, &parse(""), false, Some(500))
+        .await
+        .unwrap();
+
+      assert_eq!(of_kind(&rows, CatalogKind::Faction), vec!["Caldari State"]);
+      assert_eq!(of_kind(&rows, CatalogKind::Corporation), vec!["Caldari Navy"]);
+      assert!(of_kind(&rows, CatalogKind::Agent).is_empty());
+      assert!(rows.iter().all(|row| row.raw_standing == 0.0));
+    }
+
+    #[tokio::test]
+    async fn it_uses_the_corporation_raw_standing_and_treats_effective_as_raw() {
+      let db = store::open_test().await.unwrap();
+      seed(&db).await;
+      exec(
+        &db,
+        "INSERT INTO corporation_standings (corporation_id, from_id, from_type, standing, from_name) VALUES \
+        (98000001, 500001, 'faction', 6.0, 'Caldari State')",
+      )
+      .await;
+
+      let rows = corporation_catalog(&db, CORPORATION, &parse("faction:Caldari"), false, Some(500))
+        .await
+        .unwrap();
+
+      let faction = rows.iter().find(|row| row.id == CALDARI_FACTION).unwrap();
+      assert_eq!(faction.raw_standing, 6.0);
+      // No social-skill modifiers for a corporation: effective equals raw even with a positive empire standing.
+      assert_eq!(faction.effective_standing, 6.0);
+    }
+  }
+
+  mod effective_standing {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CALDARI: i64 = 500_001;
+
+    const ANGEL_CARTEL: i64 = 500_011;
+
+    #[test]
+    fn it_ignores_connections_for_a_pirate_faction() {
+      let skills = SocialSkills {
+        connections: 5,
+        ..SocialSkills::default()
+      };
+
+      assert_eq!(effective_standing(4.0, Some(ANGEL_CARTEL), skills), 4.0);
+    }
+
+    #[test]
+    fn it_raises_negative_standings_toward_zero_with_diplomacy() {
+      let skills = SocialSkills {
+        diplomacy: 5,
+        ..SocialSkills::default()
+      };
+
+      // -4 + (0 - -4) * 0.04 * 5 = -4 + 0.8 = -3.2
+      assert!((effective_standing(-4.0, Some(CALDARI), skills) - -3.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_raises_positive_empire_standings_with_connections() {
+      let skills = SocialSkills {
+        connections: 5,
+        ..SocialSkills::default()
+      };
+
+      // 4 + (10 - 4) * 0.04 * 5 = 4 + 1.2 = 5.2
+      assert!((effective_standing(4.0, Some(CALDARI), skills) - 5.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_raises_positive_pirate_standings_with_criminal_connections() {
+      let skills = SocialSkills {
+        criminal_connections: 5,
+        ..SocialSkills::default()
+      };
+
+      assert!((effective_standing(4.0, Some(ANGEL_CARTEL), skills) - 5.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_returns_the_raw_value_with_no_social_skills() {
+      assert_eq!(effective_standing(4.0, Some(CALDARI), SocialSkills::default()), 4.0);
+    }
+
+    #[test]
+    fn it_uses_diplomacy_not_criminal_connections_for_negative_pirate_standings() {
+      let skills = SocialSkills {
+        criminal_connections: 5,
+        diplomacy: 5,
+        ..SocialSkills::default()
+      };
+
+      assert!((effective_standing(-4.0, Some(ANGEL_CARTEL), skills) - -3.2).abs() < 1e-9);
+    }
   }
 
   mod facets {
@@ -1929,13 +1916,43 @@ mod tests {
     }
 
     #[test]
-    fn it_collects_positive_faction_facets() {
-      let mut facets = Facets::default();
-      facets.absorb("faction", false, &vals(&["Caldari"]));
+    fn it_builds_facets_from_a_parsed_query() {
+      let query = parse("reachable name:Kaalakiota faction:Caldari -corp:Navy level:4");
+      let facets = Facets::from_query(&query);
 
-      assert_eq!(facets.faction_positives, vec!["Caldari".to_string()]);
-      assert!(facets.faction_negatives.is_empty());
+      assert_eq!(facets.accessible, Some(true));
+      assert_eq!(facets.names, vec!["kaalakiota".to_string()]);
+      assert_eq!(facets.faction_positives, vec!["caldari".to_string()]);
+      assert_eq!(facets.corp_negatives, vec!["navy".to_string()]);
+      assert_eq!(facets.levels, vec![vec![4]]);
+    }
+
+    #[test]
+    fn it_collects_agent_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("agent", false, &vals(&["Researcher"]));
+
+      assert_eq!(facets.agent_names, vec!["Researcher".to_string()]);
       assert!(facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_name_facets_without_marking_positive_type() {
+      let mut facets = Facets::default();
+      facets.absorb("name", false, &vals(&["Kaalakiota"]));
+
+      assert_eq!(facets.names, vec!["Kaalakiota".to_string()]);
+      assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_collects_negative_corp_facets() {
+      let mut facets = Facets::default();
+      facets.absorb("corp", true, &vals(&["Navy"]));
+
+      assert_eq!(facets.corp_negatives, vec!["Navy".to_string()]);
+      assert!(facets.corp_positives.is_empty());
+      assert!(!facets.has_positive_type);
     }
 
     #[test]
@@ -1959,47 +1976,13 @@ mod tests {
     }
 
     #[test]
-    fn it_collects_negative_corp_facets() {
+    fn it_collects_positive_faction_facets() {
       let mut facets = Facets::default();
-      facets.absorb("corp", true, &vals(&["Navy"]));
+      facets.absorb("faction", false, &vals(&["Caldari"]));
 
-      assert_eq!(facets.corp_negatives, vec!["Navy".to_string()]);
-      assert!(facets.corp_positives.is_empty());
-      assert!(!facets.has_positive_type);
-    }
-
-    #[test]
-    fn it_collects_agent_facets() {
-      let mut facets = Facets::default();
-      facets.absorb("agent", false, &vals(&["Researcher"]));
-
-      assert_eq!(facets.agent_names, vec!["Researcher".to_string()]);
+      assert_eq!(facets.faction_positives, vec!["Caldari".to_string()]);
+      assert!(facets.faction_negatives.is_empty());
       assert!(facets.has_positive_type);
-    }
-
-    #[test]
-    fn it_collects_name_facets_without_marking_positive_type() {
-      let mut facets = Facets::default();
-      facets.absorb("name", false, &vals(&["Kaalakiota"]));
-
-      assert_eq!(facets.names, vec!["Kaalakiota".to_string()]);
-      assert!(!facets.has_positive_type);
-    }
-
-    #[test]
-    fn it_parses_numeric_levels_and_drops_invalid_ones() {
-      let mut facets = Facets::default();
-      facets.absorb("level", false, &vals(&["3", "x", "4"]));
-
-      assert_eq!(facets.levels, vec![vec![3, 4]]);
-    }
-
-    #[test]
-    fn it_ignores_a_level_facet_with_no_valid_values() {
-      let mut facets = Facets::default();
-      facets.absorb("level", false, &vals(&["abc"]));
-
-      assert!(facets.levels.is_empty());
     }
 
     #[test]
@@ -2019,42 +2002,6 @@ mod tests {
     }
 
     #[test]
-    fn it_parses_security_classes_and_drops_unknown_ones() {
-      let mut facets = Facets::default();
-      facets.absorb("sec", false, &vals(&["high", "bogus", "null"]));
-
-      assert_eq!(facets.security_classes, vec![SecurityClass::High, SecurityClass::Null]);
-    }
-
-    #[test]
-    fn it_sets_near_me_only_for_the_me_value() {
-      let mut facets = Facets::default();
-      facets.absorb("near", false, &vals(&["jita"]));
-      assert!(!facets.near_me);
-
-      facets.absorb("near", false, &vals(&["me"]));
-      assert!(facets.near_me);
-    }
-
-    #[test]
-    fn it_resolves_accessible_true_yes_one() {
-      for value in ["true", "yes", "1"] {
-        let mut facets = Facets::default();
-        facets.absorb("accessible", false, &vals(&[value]));
-        assert_eq!(facets.accessible, Some(true));
-      }
-    }
-
-    #[test]
-    fn it_resolves_accessible_false_no_zero() {
-      for value in ["false", "no", "0"] {
-        let mut facets = Facets::default();
-        facets.absorb("accessible", false, &vals(&[value]));
-        assert_eq!(facets.accessible, Some(false));
-      }
-    }
-
-    #[test]
     fn it_defaults_a_bare_accessible_facet_to_true_when_not_negated() {
       let mut facets = Facets::default();
       facets.absorb("accessible", false, &vals(&["maybe"]));
@@ -2069,13 +2016,11 @@ mod tests {
     }
 
     #[test]
-    fn it_parses_standing_thresholds_and_drops_unparseable_ones() {
+    fn it_ignores_a_level_facet_with_no_valid_values() {
       let mut facets = Facets::default();
-      facets.absorb("standing", false, &vals(&[">=5", "nonsense"]));
+      facets.absorb("level", false, &vals(&["abc"]));
 
-      assert_eq!(facets.standing_thresholds.len(), 1);
-      assert_eq!(facets.standing_thresholds[0].0, StandingComparison::AtLeast);
-      assert!((facets.standing_thresholds[0].1 - 5.0).abs() < 1e-9);
+      assert!(facets.levels.is_empty());
     }
 
     #[test]
@@ -2086,6 +2031,20 @@ mod tests {
       assert!(facets.names.is_empty());
       assert!(facets.free_text.is_empty());
       assert!(!facets.has_positive_type);
+    }
+
+    #[test]
+    fn it_keeps_unrecognized_free_text() {
+      let query = parse("zephyr");
+      let facets = Facets::from_query(&query);
+      assert_eq!(facets.free_text, vec!["zephyr".to_string()]);
+    }
+
+    #[test]
+    fn it_maps_locked_free_text_to_inaccessible() {
+      let query = parse("locked");
+      let facets = Facets::from_query(&query);
+      assert_eq!(facets.accessible, Some(false));
     }
 
     #[test]
@@ -2103,29 +2062,77 @@ mod tests {
     }
 
     #[test]
-    fn it_builds_facets_from_a_parsed_query() {
-      let query = parse("reachable name:Kaalakiota faction:Caldari -corp:Navy level:4");
-      let facets = Facets::from_query(&query);
+    fn it_parses_numeric_levels_and_drops_invalid_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("level", false, &vals(&["3", "x", "4"]));
 
-      assert_eq!(facets.accessible, Some(true));
-      assert_eq!(facets.names, vec!["kaalakiota".to_string()]);
-      assert_eq!(facets.faction_positives, vec!["caldari".to_string()]);
-      assert_eq!(facets.corp_negatives, vec!["navy".to_string()]);
-      assert_eq!(facets.levels, vec![vec![4]]);
+      assert_eq!(facets.levels, vec![vec![3, 4]]);
     }
 
     #[test]
-    fn it_maps_locked_free_text_to_inaccessible() {
-      let query = parse("locked");
-      let facets = Facets::from_query(&query);
-      assert_eq!(facets.accessible, Some(false));
+    fn it_parses_security_classes_and_drops_unknown_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("sec", false, &vals(&["high", "bogus", "null"]));
+
+      assert_eq!(facets.security_classes, vec![SecurityClass::High, SecurityClass::Null]);
     }
 
     #[test]
-    fn it_keeps_unrecognized_free_text() {
-      let query = parse("zephyr");
-      let facets = Facets::from_query(&query);
-      assert_eq!(facets.free_text, vec!["zephyr".to_string()]);
+    fn it_parses_standing_thresholds_and_drops_unparseable_ones() {
+      let mut facets = Facets::default();
+      facets.absorb("standing", false, &vals(&[">=5", "nonsense"]));
+
+      assert_eq!(facets.standing_thresholds.len(), 1);
+      assert_eq!(facets.standing_thresholds[0].0, StandingComparison::AtLeast);
+      assert!((facets.standing_thresholds[0].1 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn it_resolves_accessible_false_no_zero() {
+      for value in ["false", "no", "0"] {
+        let mut facets = Facets::default();
+        facets.absorb("accessible", false, &vals(&[value]));
+        assert_eq!(facets.accessible, Some(false));
+      }
+    }
+
+    #[test]
+    fn it_resolves_accessible_true_yes_one() {
+      for value in ["true", "yes", "1"] {
+        let mut facets = Facets::default();
+        facets.absorb("accessible", false, &vals(&[value]));
+        assert_eq!(facets.accessible, Some(true));
+      }
+    }
+
+    #[test]
+    fn it_sets_near_me_only_for_the_me_value() {
+      let mut facets = Facets::default();
+      facets.absorb("near", false, &vals(&["jita"]));
+      assert!(!facets.near_me);
+
+      facets.absorb("near", false, &vals(&["me"]));
+      assert!(facets.near_me);
+    }
+  }
+
+  mod required_standing {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_zero_for_an_unknown_level() {
+      assert_eq!(required_standing(9), 0.0);
+    }
+
+    #[test]
+    fn it_returns_the_threshold_for_each_level() {
+      assert_eq!(required_standing(1), -2.0);
+      assert_eq!(required_standing(2), 1.0);
+      assert_eq!(required_standing(3), 3.0);
+      assert_eq!(required_standing(4), 5.0);
+      assert_eq!(required_standing(5), 7.0);
     }
   }
 }

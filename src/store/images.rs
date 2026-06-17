@@ -234,6 +234,62 @@ mod tests {
     }
   }
 
+  mod corporation_logo_path {
+    use super::*;
+
+    #[test]
+    fn it_derives_a_flat_per_corporation_png_path() {
+      let store = Store::new(PathBuf::from("/data/images"));
+
+      let path = store.corporation_logo_path(98_000_001);
+
+      assert!(path.ends_with("corporations/98000001.png"), "got {path:?}");
+    }
+  }
+
+  mod icon_variant {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_the_blueprint_copy_flag_to_a_variant() {
+      assert_eq!(IconVariant::from_blueprint_copy(Some(true)), IconVariant::Bpc);
+      assert_eq!(IconVariant::from_blueprint_copy(Some(false)), IconVariant::Bpo);
+      assert_eq!(IconVariant::from_blueprint_copy(None), IconVariant::Icon);
+    }
+  }
+
+  mod is_fresh {
+    use super::*;
+
+    #[test]
+    fn it_treats_a_file_older_than_the_max_age_as_stale() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("portrait.jpg");
+      std::fs::write(&path, [0u8]).unwrap();
+
+      assert!(!super::super::is_fresh(&path, Duration::ZERO));
+    }
+
+    #[test]
+    fn it_treats_a_missing_file_as_stale() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("missing.jpg");
+
+      assert!(!super::super::is_fresh(&path, STALE_AFTER));
+    }
+
+    #[test]
+    fn it_treats_a_recently_written_file_as_fresh() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("portrait.jpg");
+      std::fs::write(&path, [0u8]).unwrap();
+
+      assert!(super::super::is_fresh(&path, STALE_AFTER));
+    }
+  }
+
   mod resolve {
     use pretty_assertions::assert_eq;
 
@@ -272,103 +328,21 @@ mod tests {
     }
   }
 
-  mod corporation_logo_path {
-    use super::*;
-
-    #[test]
-    fn it_derives_a_flat_per_corporation_png_path() {
-      let store = Store::new(PathBuf::from("/data/images"));
-
-      let path = store.corporation_logo_path(98_000_001);
-
-      assert!(path.ends_with("corporations/98000001.png"), "got {path:?}");
-    }
-  }
-
-  mod type_icon_path {
-    use super::*;
-
-    #[test]
-    fn it_derives_a_flat_per_type_png_path() {
-      let store = Store::new(PathBuf::from("/data/images"));
-
-      let path = store.type_icon_path(587, Size::S64);
-
-      assert!(path.ends_with("types/587.png"), "got {path:?}");
-    }
-  }
-
-  mod icon_variant {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_the_blueprint_copy_flag_to_a_variant() {
-      assert_eq!(IconVariant::from_blueprint_copy(Some(true)), IconVariant::Bpc);
-      assert_eq!(IconVariant::from_blueprint_copy(Some(false)), IconVariant::Bpo);
-      assert_eq!(IconVariant::from_blueprint_copy(None), IconVariant::Icon);
-    }
-  }
-
-  mod type_icon_variant_path {
-    use super::*;
-
-    #[test]
-    fn it_uses_a_flat_path_regardless_of_variant() {
-      let store = Store::new(PathBuf::from("/data/images"));
-
-      let path = store.type_icon_variant_path(587, IconVariant::Bpc, Size::S64);
-
-      assert!(path.ends_with("types/587.png"), "got {path:?}");
-    }
-
-    #[test]
-    fn it_matches_type_icon_path_for_the_icon_variant() {
-      let store = Store::new(PathBuf::from("/data/images"));
-
-      assert_eq!(
-        store.type_icon_variant_path(587, IconVariant::Icon, Size::S64),
-        store.type_icon_path(587, Size::S64),
-      );
-    }
-  }
-
   mod resolve_type_icon {
     use super::*;
 
     #[test]
-    fn it_resolves_the_runtime_icon_when_present() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = Store::new(dir.path().to_path_buf());
-      let icon = store.type_icon_path(587, Size::S64);
-      store.write(&icon, &[1]).unwrap();
+    fn it_does_not_use_a_bpc_render_for_a_blueprint_original() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      let shared = committed.path().join("587.png");
+      std::fs::write(&shared, [1]).unwrap();
+      std::fs::write(committed.path().join("587_bpc.png"), [2]).unwrap();
 
-      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
+      let resolved = store.resolve_type_icon(587, Some(false), Size::S64);
 
-      assert_eq!(resolved, IconResolution::Found(icon));
-    }
-
-    #[test]
-    fn it_signals_missing_when_neither_the_variant_nor_the_icon_is_on_disk() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = Store::new(dir.path().to_path_buf());
-
-      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
-
-      assert_eq!(resolved, IconResolution::Missing);
-    }
-
-    #[test]
-    fn it_resolves_a_non_blueprint_directly_from_the_icon_variant() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = Store::new(dir.path().to_path_buf());
-      let icon = store.type_icon_path(587, Size::S64);
-      store.write(&icon, &[1]).unwrap();
-
-      let resolved = store.resolve_type_icon(587, None, Size::S64);
-
-      assert_eq!(resolved, IconResolution::Found(icon));
+      assert_eq!(resolved, IconResolution::Found(shared));
     }
 
     #[test]
@@ -382,6 +356,31 @@ mod tests {
       let resolved = store.resolve_type_icon(587, None, Size::S64);
 
       assert_eq!(resolved, IconResolution::Found(committed_icon));
+    }
+
+    #[test]
+    fn it_falls_back_to_the_shared_blueprint_icon_when_no_bpc_render_is_committed() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      let shared = committed.path().join("587.png");
+      std::fs::write(&shared, [1]).unwrap();
+
+      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(shared));
+    }
+
+    #[test]
+    fn it_ignores_the_committed_tier_for_sizes_other_than_64px() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("587.png"), [1]).unwrap();
+
+      let resolved = store.resolve_type_icon(587, None, Size::S128);
+
+      assert_eq!(resolved, IconResolution::Missing);
     }
 
     #[test]
@@ -413,33 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn it_falls_back_to_the_shared_blueprint_icon_when_no_bpc_render_is_committed() {
-      let data = tempfile::tempdir().unwrap();
-      let committed = tempfile::tempdir().unwrap();
-      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
-      let shared = committed.path().join("587.png");
-      std::fs::write(&shared, [1]).unwrap();
-
-      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
-
-      assert_eq!(resolved, IconResolution::Found(shared));
-    }
-
-    #[test]
-    fn it_does_not_use_a_bpc_render_for_a_blueprint_original() {
-      let data = tempfile::tempdir().unwrap();
-      let committed = tempfile::tempdir().unwrap();
-      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
-      let shared = committed.path().join("587.png");
-      std::fs::write(&shared, [1]).unwrap();
-      std::fs::write(committed.path().join("587_bpc.png"), [2]).unwrap();
-
-      let resolved = store.resolve_type_icon(587, Some(false), Size::S64);
-
-      assert_eq!(resolved, IconResolution::Found(shared));
-    }
-
-    #[test]
     fn it_prefers_the_data_dir_tier_over_the_committed_tier() {
       let data = tempfile::tempdir().unwrap();
       let committed = tempfile::tempdir().unwrap();
@@ -454,6 +426,40 @@ mod tests {
     }
 
     #[test]
+    fn it_resolves_a_non_blueprint_directly_from_the_icon_variant() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = Store::new(dir.path().to_path_buf());
+      let icon = store.type_icon_path(587, Size::S64);
+      store.write(&icon, &[1]).unwrap();
+
+      let resolved = store.resolve_type_icon(587, None, Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(icon));
+    }
+
+    #[test]
+    fn it_resolves_the_runtime_icon_when_present() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = Store::new(dir.path().to_path_buf());
+      let icon = store.type_icon_path(587, Size::S64);
+      store.write(&icon, &[1]).unwrap();
+
+      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(icon));
+    }
+
+    #[test]
+    fn it_signals_missing_when_neither_the_variant_nor_the_icon_is_on_disk() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = Store::new(dir.path().to_path_buf());
+
+      let resolved = store.resolve_type_icon(587, Some(true), Size::S64);
+
+      assert_eq!(resolved, IconResolution::Missing);
+    }
+
+    #[test]
     fn it_signals_missing_when_neither_tier_has_the_icon() {
       let data = tempfile::tempdir().unwrap();
       let committed = tempfile::tempdir().unwrap();
@@ -463,17 +469,41 @@ mod tests {
 
       assert_eq!(resolved, IconResolution::Missing);
     }
+  }
+
+  mod type_icon_path {
+    use super::*;
 
     #[test]
-    fn it_ignores_the_committed_tier_for_sizes_other_than_64px() {
-      let data = tempfile::tempdir().unwrap();
-      let committed = tempfile::tempdir().unwrap();
-      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
-      std::fs::write(committed.path().join("587.png"), [1]).unwrap();
+    fn it_derives_a_flat_per_type_png_path() {
+      let store = Store::new(PathBuf::from("/data/images"));
 
-      let resolved = store.resolve_type_icon(587, None, Size::S128);
+      let path = store.type_icon_path(587, Size::S64);
 
-      assert_eq!(resolved, IconResolution::Missing);
+      assert!(path.ends_with("types/587.png"), "got {path:?}");
+    }
+  }
+
+  mod type_icon_variant_path {
+    use super::*;
+
+    #[test]
+    fn it_matches_type_icon_path_for_the_icon_variant() {
+      let store = Store::new(PathBuf::from("/data/images"));
+
+      assert_eq!(
+        store.type_icon_variant_path(587, IconVariant::Icon, Size::S64),
+        store.type_icon_path(587, Size::S64),
+      );
+    }
+
+    #[test]
+    fn it_uses_a_flat_path_regardless_of_variant() {
+      let store = Store::new(PathBuf::from("/data/images"));
+
+      let path = store.type_icon_variant_path(587, IconVariant::Bpc, Size::S64);
+
+      assert!(path.ends_with("types/587.png"), "got {path:?}");
     }
   }
 
@@ -491,36 +521,6 @@ mod tests {
       store.write(&path, &[1, 2, 3]).unwrap();
 
       assert_eq!(std::fs::read(&path).unwrap(), vec![1, 2, 3]);
-    }
-  }
-
-  mod is_fresh {
-    use super::*;
-
-    #[test]
-    fn it_treats_a_recently_written_file_as_fresh() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("portrait.jpg");
-      std::fs::write(&path, [0u8]).unwrap();
-
-      assert!(super::super::is_fresh(&path, STALE_AFTER));
-    }
-
-    #[test]
-    fn it_treats_a_file_older_than_the_max_age_as_stale() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("portrait.jpg");
-      std::fs::write(&path, [0u8]).unwrap();
-
-      assert!(!super::super::is_fresh(&path, Duration::ZERO));
-    }
-
-    #[test]
-    fn it_treats_a_missing_file_as_stale() {
-      let dir = tempfile::tempdir().unwrap();
-      let path = dir.path().join("missing.jpg");
-
-      assert!(!super::super::is_fresh(&path, STALE_AFTER));
     }
   }
 }

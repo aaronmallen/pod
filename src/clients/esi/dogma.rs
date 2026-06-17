@@ -45,6 +45,21 @@ mod tests {
     const DYNAMIC_ITEM_FIXTURE: &str = include_str!("../../../test/fixtures/esi/dogma_dynamic_item.json");
 
     #[tokio::test]
+    async fn it_returns_http_error_on_4xx() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/dogma/dynamic/items/1/2/"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+      let esi = make_esi(&server.uri()).await;
+
+      let result = esi.dogma().dynamic_item(1, 2).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+
+    #[tokio::test]
     async fn it_returns_source_mutator_and_rolled_attributes() {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -61,21 +76,6 @@ mod tests {
       assert_eq!(item.dogma_attributes.len(), 3);
       assert_eq!(item.dogma_attributes[0].attribute_id, 6);
       assert_eq!(item.dogma_attributes[0].value, 1.2);
-    }
-
-    #[tokio::test]
-    async fn it_returns_http_error_on_4xx() {
-      let server = MockServer::start().await;
-      Mock::given(method("GET"))
-        .and(path("/dogma/dynamic/items/1/2/"))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-      let esi = make_esi(&server.uri()).await;
-
-      let result = esi.dogma().dynamic_item(1, 2).await;
-
-      assert!(matches!(result, Err(clients::Error::Http(_))));
     }
   }
 }

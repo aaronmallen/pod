@@ -416,7 +416,9 @@ mod tests {
   };
 
   const CHARACTER_ID: i64 = 42;
+
   const CORPORATION_ID: i64 = 90_000_001;
+
   const DIRECTOR_ID: i64 = 100;
 
   async fn seed_character(db: &Database, id: i64) {
@@ -530,10 +532,403 @@ mod tests {
     .unwrap();
   }
 
+  mod activity_meta {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
+      sqlx::query(
+        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
+        VALUES (?, ?, ?, ?)",
+      )
+      .bind(blueprint_type_id)
+      .bind(activity_id)
+      .bind(time)
+      .bind(max)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_activity_is_absent() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+
+      let meta = super::activity_meta(&db, 939, 11).await.unwrap();
+
+      assert_eq!(meta, None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_time_and_max_run_limit_for_a_blueprint_activity() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+
+      let meta = super::activity_meta(&db, 939, 1).await.unwrap();
+
+      assert_eq!(meta, Some((600, 300)));
+    }
+  }
+
+  mod activity_meta_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
+      sqlx::query(
+        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
+        VALUES (?, ?, ?, ?)",
+      )
+      .bind(blueprint_type_id)
+      .bind(activity_id)
+      .bind(time)
+      .bind(max)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_meta_for_the_requested_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_meta(&db, 939, 1, 600, 300).await;
+      insert_meta(&db, 1_001, 11, 90, 1).await;
+      insert_meta(&db, 1_002, 7, 10, 1).await;
+
+      let rows = super::activity_meta_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![
+          ActivityMeta {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            max_production_limit: 300,
+            time: 600,
+          },
+          ActivityMeta {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            max_production_limit: 1,
+            time: 90,
+          },
+        ]
+      );
+    }
+  }
+
+  mod blueprint_product {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_when_the_blueprint_activity_is_absent() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::blueprint_product(&db, 939, 1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_product_for_a_blueprint_activity() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      let product = super::blueprint_product(&db, 939, 1).await.unwrap();
+
+      assert_eq!(product, Some(938));
+    }
+  }
+
+  mod list_all {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_both_character_and_corporation_blueprints() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      seed_character(&db, DIRECTOR_ID).await;
+      super::replace_for_character(&db, CHARACTER_ID, &[character_blueprint(CHARACTER_ID, 1, 1_000)])
+        .await
+        .unwrap();
+      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
+        .await
+        .unwrap();
+
+      let all = super::list_all(&db).await.unwrap();
+
+      assert_eq!(
+        all
+          .character_blueprints
+          .iter()
+          .map(CharacterBlueprint::item_id)
+          .collect::<Vec<_>>(),
+        [1]
+      );
+      assert_eq!(
+        all
+          .corporation_blueprints
+          .iter()
+          .map(CorporationBlueprint::item_id)
+          .collect::<Vec<_>>(),
+        [10]
+      );
+    }
+  }
+
+  mod list_for_corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_hides_blueprints_for_an_unauthorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
+        .await
+        .unwrap();
+
+      assert!(
+        super::list_for_corporation(&db, CORPORATION_ID)
+          .await
+          .unwrap()
+          .is_empty()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_blueprints_for_an_authorized_corp() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corporation(&db).await;
+      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
+        .await
+        .unwrap();
+
+      let blueprints = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
+
+      assert_eq!(blueprints.len(), 1);
+      assert_eq!(blueprints[0].item_id(), 10);
+    }
+  }
+
+  mod materials_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 34, 100).await;
+
+      assert!(super::materials_for_activities(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_rows_for_every_requested_activity_grouped_by_blueprint() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 35, 200).await;
+      insert_material(&db, 939, 1, 34, 100).await;
+      insert_material(&db, 1_001, 11, 16_634, 5).await;
+      insert_material(&db, 1_002, 7, 99, 1).await;
+
+      let rows = super::materials_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![
+          ActivityMaterial {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            material_type_id: 34,
+            quantity: 100,
+          },
+          ActivityMaterial {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            material_type_id: 35,
+            quantity: 200,
+          },
+          ActivityMaterial {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            material_type_id: 16_634,
+            quantity: 5,
+          },
+        ]
+      );
+    }
+  }
+
+  mod materials_for_activity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_materials_ordered_by_type_id() {
+      let db = store::open_test().await.unwrap();
+      insert_material(&db, 939, 1, 35, 200).await;
+      insert_material(&db, 939, 1, 34, 100).await;
+
+      let materials = super::materials_for_activity(&db, 939, 1).await.unwrap();
+
+      assert_eq!(materials, vec![(34, 100), (35, 200)]);
+    }
+  }
+
+  mod output_per_run {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_the_product_quantity() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 11, 16_634, 200).await;
+
+      assert_eq!(super::output_per_run(&db, 939, 11).await.unwrap(), Some(200));
+    }
+  }
+
+  mod products_for_activities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      assert!(super::products_for_activities(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_products_for_the_given_activities_ordered() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+      insert_product(&db, 1_001, 11, 16_634, 200).await;
+      insert_product(&db, 1_002, 7, 99, 1).await;
+
+      let products = super::products_for_activities(&db, &[1, 11]).await.unwrap();
+
+      assert_eq!(
+        products,
+        vec![
+          ActivityProduct {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            product_type_id: 938,
+            quantity: 1,
+          },
+          ActivityProduct {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            product_type_id: 16_634,
+            quantity: 200,
+          },
+        ]
+      );
+    }
+  }
+
+  mod products_for_blueprints {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_filters_to_the_requested_blueprints_and_activities() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+      insert_product(&db, 1_001, 11, 16_634, 200).await;
+      insert_product(&db, 1_002, 1, 50, 1).await;
+      insert_product(&db, 939, 7, 77, 1).await;
+
+      let products = super::products_for_blueprints(&db, &[939, 1_001], &[1, 11])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        products,
+        vec![
+          ActivityProduct {
+            activity_id: 1,
+            blueprint_type_id: 939,
+            product_type_id: 938,
+            quantity: 1,
+          },
+          ActivityProduct {
+            activity_id: 11,
+            blueprint_type_id: 1_001,
+            product_type_id: 16_634,
+            quantity: 200,
+          },
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_when_no_blueprints_are_given() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      assert!(super::products_for_blueprints(&db, &[], &[1]).await.unwrap().is_empty());
+    }
+  }
+
+  mod recipe_for_activity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_unbuildable_product() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(super::recipe_for_activity(&db, 938, 1).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_blueprint_and_quantity_for_a_product() {
+      let db = store::open_test().await.unwrap();
+      insert_product(&db, 939, 1, 938, 1).await;
+
+      let recipe = super::recipe_for_activity(&db, 938, 1).await.unwrap();
+
+      assert_eq!(recipe, Some((939, 1)));
+    }
+  }
+
   mod replace_for_character {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn it_cascades_when_the_character_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      super::replace_for_character(&db, CHARACTER_ID, &[character_blueprint(CHARACTER_ID, 1, 1_000)])
+        .await
+        .unwrap();
+
+      sqlx::query("DELETE FROM characters WHERE id = ?")
+        .bind(CHARACTER_ID)
+        .execute(&db.0)
+        .await
+        .unwrap();
+
+      assert!(super::list_for_character(&db, CHARACTER_ID).await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn it_inserts_the_full_blueprint_set() {
@@ -597,23 +992,6 @@ mod tests {
       let blueprints = super::list_for_character(&db, CHARACTER_ID).await.unwrap();
       assert_eq!(blueprints, vec![blueprint]);
     }
-
-    #[tokio::test]
-    async fn it_cascades_when_the_character_is_deleted() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      super::replace_for_character(&db, CHARACTER_ID, &[character_blueprint(CHARACTER_ID, 1, 1_000)])
-        .await
-        .unwrap();
-
-      sqlx::query("DELETE FROM characters WHERE id = ?")
-        .bind(CHARACTER_ID)
-        .execute(&db.0)
-        .await
-        .unwrap();
-
-      assert!(super::list_for_character(&db, CHARACTER_ID).await.unwrap().is_empty());
-    }
   }
 
   mod replace_for_corporation {
@@ -645,382 +1023,6 @@ mod tests {
       assert_eq!(
         blueprints.iter().map(CorporationBlueprint::item_id).collect::<Vec<_>>(),
         [11]
-      );
-    }
-  }
-
-  mod list_for_corporation {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_blueprints_for_an_authorized_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      authorize_corporation(&db).await;
-      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
-        .await
-        .unwrap();
-
-      let blueprints = super::list_for_corporation(&db, CORPORATION_ID).await.unwrap();
-
-      assert_eq!(blueprints.len(), 1);
-      assert_eq!(blueprints[0].item_id(), 10);
-    }
-
-    #[tokio::test]
-    async fn it_hides_blueprints_for_an_unauthorized_corp() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, DIRECTOR_ID).await;
-      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
-        .await
-        .unwrap();
-
-      assert!(
-        super::list_for_corporation(&db, CORPORATION_ID)
-          .await
-          .unwrap()
-          .is_empty()
-      );
-    }
-  }
-
-  mod activity_meta {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
-      sqlx::query(
-        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
-        VALUES (?, ?, ?, ?)",
-      )
-      .bind(blueprint_type_id)
-      .bind(activity_id)
-      .bind(time)
-      .bind(max)
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_returns_time_and_max_run_limit_for_a_blueprint_activity() {
-      let db = store::open_test().await.unwrap();
-      insert_meta(&db, 939, 1, 600, 300).await;
-
-      let meta = super::activity_meta(&db, 939, 1).await.unwrap();
-
-      assert_eq!(meta, Some((600, 300)));
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_when_the_activity_is_absent() {
-      let db = store::open_test().await.unwrap();
-      insert_meta(&db, 939, 1, 600, 300).await;
-
-      let meta = super::activity_meta(&db, 939, 11).await.unwrap();
-
-      assert_eq!(meta, None);
-    }
-  }
-
-  mod blueprint_product {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_product_for_a_blueprint_activity() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-
-      let product = super::blueprint_product(&db, 939, 1).await.unwrap();
-
-      assert_eq!(product, Some(938));
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_when_the_blueprint_activity_is_absent() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(super::blueprint_product(&db, 939, 1).await.unwrap(), None);
-    }
-  }
-
-  mod materials_for_activity {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_materials_ordered_by_type_id() {
-      let db = store::open_test().await.unwrap();
-      insert_material(&db, 939, 1, 35, 200).await;
-      insert_material(&db, 939, 1, 34, 100).await;
-
-      let materials = super::materials_for_activity(&db, 939, 1).await.unwrap();
-
-      assert_eq!(materials, vec![(34, 100), (35, 200)]);
-    }
-  }
-
-  mod output_per_run {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_product_quantity() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 11, 16_634, 200).await;
-
-      assert_eq!(super::output_per_run(&db, 939, 11).await.unwrap(), Some(200));
-    }
-  }
-
-  mod products_for_activities {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_products_for_the_given_activities_ordered() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-      insert_product(&db, 1_001, 11, 16_634, 200).await;
-      insert_product(&db, 1_002, 7, 99, 1).await;
-
-      let products = super::products_for_activities(&db, &[1, 11]).await.unwrap();
-
-      assert_eq!(
-        products,
-        vec![
-          ActivityProduct {
-            activity_id: 1,
-            blueprint_type_id: 939,
-            product_type_id: 938,
-            quantity: 1,
-          },
-          ActivityProduct {
-            activity_id: 11,
-            blueprint_type_id: 1_001,
-            product_type_id: 16_634,
-            quantity: 200,
-          },
-        ]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_activities() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-
-      assert!(super::products_for_activities(&db, &[]).await.unwrap().is_empty());
-    }
-  }
-
-  mod materials_for_activities {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_rows_for_every_requested_activity_grouped_by_blueprint() {
-      let db = store::open_test().await.unwrap();
-      insert_material(&db, 939, 1, 35, 200).await;
-      insert_material(&db, 939, 1, 34, 100).await;
-      insert_material(&db, 1_001, 11, 16_634, 5).await;
-      insert_material(&db, 1_002, 7, 99, 1).await;
-
-      let rows = super::materials_for_activities(&db, &[1, 11]).await.unwrap();
-
-      assert_eq!(
-        rows,
-        vec![
-          ActivityMaterial {
-            activity_id: 1,
-            blueprint_type_id: 939,
-            material_type_id: 34,
-            quantity: 100,
-          },
-          ActivityMaterial {
-            activity_id: 1,
-            blueprint_type_id: 939,
-            material_type_id: 35,
-            quantity: 200,
-          },
-          ActivityMaterial {
-            activity_id: 11,
-            blueprint_type_id: 1_001,
-            material_type_id: 16_634,
-            quantity: 5,
-          },
-        ]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_for_no_activities() {
-      let db = store::open_test().await.unwrap();
-      insert_material(&db, 939, 1, 34, 100).await;
-
-      assert!(super::materials_for_activities(&db, &[]).await.unwrap().is_empty());
-    }
-  }
-
-  mod activity_meta_for_activities {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    async fn insert_meta(db: &Database, blueprint_type_id: i64, activity_id: i64, time: i64, max: i64) {
-      sqlx::query(
-        "INSERT INTO blueprint_activity_meta (blueprint_type_id, activity_id, time, max_production_limit) \
-        VALUES (?, ?, ?, ?)",
-      )
-      .bind(blueprint_type_id)
-      .bind(activity_id)
-      .bind(time)
-      .bind(max)
-      .execute(&db.0)
-      .await
-      .unwrap();
-    }
-
-    #[tokio::test]
-    async fn it_returns_meta_for_the_requested_activities() {
-      let db = store::open_test().await.unwrap();
-      insert_meta(&db, 939, 1, 600, 300).await;
-      insert_meta(&db, 1_001, 11, 90, 1).await;
-      insert_meta(&db, 1_002, 7, 10, 1).await;
-
-      let rows = super::activity_meta_for_activities(&db, &[1, 11]).await.unwrap();
-
-      assert_eq!(
-        rows,
-        vec![
-          ActivityMeta {
-            activity_id: 1,
-            blueprint_type_id: 939,
-            max_production_limit: 300,
-            time: 600,
-          },
-          ActivityMeta {
-            activity_id: 11,
-            blueprint_type_id: 1_001,
-            max_production_limit: 1,
-            time: 90,
-          },
-        ]
-      );
-    }
-  }
-
-  mod products_for_blueprints {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_filters_to_the_requested_blueprints_and_activities() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-      insert_product(&db, 1_001, 11, 16_634, 200).await;
-      insert_product(&db, 1_002, 1, 50, 1).await;
-      insert_product(&db, 939, 7, 77, 1).await;
-
-      let products = super::products_for_blueprints(&db, &[939, 1_001], &[1, 11])
-        .await
-        .unwrap();
-
-      assert_eq!(
-        products,
-        vec![
-          ActivityProduct {
-            activity_id: 1,
-            blueprint_type_id: 939,
-            product_type_id: 938,
-            quantity: 1,
-          },
-          ActivityProduct {
-            activity_id: 11,
-            blueprint_type_id: 1_001,
-            product_type_id: 16_634,
-            quantity: 200,
-          },
-        ]
-      );
-    }
-
-    #[tokio::test]
-    async fn it_returns_empty_when_no_blueprints_are_given() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-
-      assert!(super::products_for_blueprints(&db, &[], &[1]).await.unwrap().is_empty());
-    }
-  }
-
-  mod recipe_for_activity {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_the_blueprint_and_quantity_for_a_product() {
-      let db = store::open_test().await.unwrap();
-      insert_product(&db, 939, 1, 938, 1).await;
-
-      let recipe = super::recipe_for_activity(&db, 938, 1).await.unwrap();
-
-      assert_eq!(recipe, Some((939, 1)));
-    }
-
-    #[tokio::test]
-    async fn it_returns_none_for_an_unbuildable_product() {
-      let db = store::open_test().await.unwrap();
-
-      assert_eq!(super::recipe_for_activity(&db, 938, 1).await.unwrap(), None);
-    }
-  }
-
-  mod list_all {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn it_returns_both_character_and_corporation_blueprints() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, CHARACTER_ID).await;
-      seed_character(&db, DIRECTOR_ID).await;
-      super::replace_for_character(&db, CHARACTER_ID, &[character_blueprint(CHARACTER_ID, 1, 1_000)])
-        .await
-        .unwrap();
-      super::replace_for_corporation(&db, CORPORATION_ID, &[corporation_blueprint(CORPORATION_ID, 10, 3_000)])
-        .await
-        .unwrap();
-
-      let all = super::list_all(&db).await.unwrap();
-
-      assert_eq!(
-        all
-          .character_blueprints
-          .iter()
-          .map(CharacterBlueprint::item_id)
-          .collect::<Vec<_>>(),
-        [1]
-      );
-      assert_eq!(
-        all
-          .corporation_blueprints
-          .iter()
-          .map(CorporationBlueprint::item_id)
-          .collect::<Vec<_>>(),
-        [10]
       );
     }
   }

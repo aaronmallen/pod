@@ -106,6 +106,14 @@ mod tests {
     }
 
     #[test]
+    fn it_leaves_optional_fields_none_when_absent() {
+      let model = Model::from((42, make_info()));
+
+      assert_eq!(model.executor_corporation_id(), None);
+      assert_eq!(model.faction_id(), None);
+    }
+
+    #[test]
     fn it_maps_optional_fields_when_present() {
       let mut info = make_info();
       info.executor_corporation_id = Some(500);
@@ -115,14 +123,6 @@ mod tests {
 
       assert_eq!(model.executor_corporation_id(), Some(500));
       assert_eq!(model.faction_id(), Some(600));
-    }
-
-    #[test]
-    fn it_leaves_optional_fields_none_when_absent() {
-      let model = Model::from((42, make_info()));
-
-      assert_eq!(model.executor_corporation_id(), None);
-      assert_eq!(model.faction_id(), None);
     }
   }
 }

@@ -155,166 +155,6 @@ mod tests {
     }]
   }
 
-  mod optimize_remap {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn base(perception: u32, memory: u32, willpower: u32, intelligence: u32, charisma: u32) -> Attributes {
-      Attributes {
-        charisma,
-        intelligence,
-        memory,
-        perception,
-        willpower,
-      }
-    }
-
-    #[test]
-    fn it_only_ever_emits_an_in_spec_base() {
-      let plans = [
-        per_wil_plan(1_000_000),
-        vec![
-          PairWeight {
-            primary: Attribute::Intelligence,
-            secondary: Attribute::Memory,
-            sp: 5_000_000,
-          },
-          PairWeight {
-            primary: Attribute::Charisma,
-            secondary: Attribute::Willpower,
-            sp: 200_000,
-          },
-        ],
-      ];
-      let currents = [
-        base(20, 20, 20, 20, 19),
-        base(99, 99, 99, 99, 99),
-        base(17, 17, 17, 17, 31),
-      ];
-
-      for plan in &plans {
-        for &current in &currents {
-          let rec = optimize_remap(plan, current, base(5, 5, 5, 5, 5));
-
-          assert!(rec.base.is_in_spec(), "emitted base {:?} is out of spec", rec.base);
-        }
-      }
-    }
-
-    #[test]
-    fn it_never_clamps_effective_attributes_above_the_max() {
-      let implants = Attributes {
-        charisma: 5,
-        intelligence: 5,
-        memory: 5,
-        perception: 5,
-        willpower: 5,
-      };
-      let weights = per_wil_plan(1_000_000);
-
-      let rec = optimize_remap(&weights, base(20, 20, 20, 20, 19), implants);
-
-      assert_eq!(rec.base.perception, 27);
-      let effective = rec.base.plus(implants);
-      let clamped_rate = sp_per_sec(27, effective.willpower.min(27));
-      let real_rate = sp_per_sec(effective.perception, effective.willpower);
-      assert!(real_rate > clamped_rate, "effective {effective:?} appears clamped");
-      let expected = 1_000_000.0 / real_rate;
-      assert!((rec.total_sec - expected).abs() < 1e-6);
-    }
-
-    #[test]
-    fn it_never_recommends_a_config_slower_than_current() {
-      let weights = per_wil_plan(2_000_000);
-      let current = base(20, 20, 20, 20, 19);
-      let current_time = {
-        let effective = current.plus(no_implants());
-        2_000_000.0 / sp_per_sec(effective.perception, effective.willpower)
-      };
-
-      let rec = optimize_remap(&weights, current, no_implants());
-
-      assert!(rec.total_sec <= current_time);
-    }
-
-    #[test]
-    fn it_reports_is_current_when_the_current_base_is_already_optimal() {
-      let weights = per_wil_plan(1_000_000);
-      let optimal = best_per_wil_base();
-
-      let rec = optimize_remap(&weights, optimal, no_implants());
-
-      assert!(rec.is_current);
-      assert_eq!(rec.base, optimal);
-    }
-
-    #[test]
-    fn it_flags_an_out_of_spec_current_and_still_emits_an_in_spec_base() {
-      let current = base(17, 17, 17, 17, 31);
-      let weights = vec![PairWeight {
-        primary: Attribute::Charisma,
-        secondary: Attribute::Willpower,
-        sp: 1_000_000,
-      }];
-      let current_effective = current.plus(no_implants());
-      let current_time = 1_000_000.0 / sp_per_sec(current_effective.charisma, current_effective.willpower);
-
-      let rec = optimize_remap(&weights, current, no_implants());
-
-      assert!(rec.current_out_of_spec);
-      assert!(rec.base.is_in_spec());
-      assert!(rec.is_current);
-      assert!(rec.total_sec >= current_time);
-    }
-
-    #[test]
-    fn it_does_not_flag_an_in_spec_current() {
-      let rec = optimize_remap(&per_wil_plan(1_000_000), base(20, 20, 20, 20, 19), no_implants());
-
-      assert!(!rec.current_out_of_spec);
-    }
-
-    #[test]
-    fn it_returns_the_current_baseline_for_an_empty_plan() {
-      let current = base(20, 20, 20, 20, 19);
-
-      let rec = optimize_remap(&[], current, no_implants());
-
-      assert!(rec.is_current);
-      assert_eq!(rec.base, current);
-      assert_eq!(rec.total_sec, 0.0);
-    }
-
-    fn best_per_wil_base() -> Attributes {
-      base(27, 17, 21, 17, 17)
-    }
-
-    #[test]
-    fn it_finds_the_known_optimum_for_a_single_pair() {
-      let rec = optimize_remap(&per_wil_plan(1_000_000), base(20, 20, 20, 20, 19), no_implants());
-
-      assert_eq!(rec.base, best_per_wil_base());
-      assert!(!rec.is_current);
-    }
-  }
-
-  mod formulas {
-    use pretty_assertions::assert_eq;
-
-    use super::{super::super::format::sp_cost, *};
-
-    #[test]
-    fn sp_cost_is_256000_at_level_five_rank_one() {
-      assert_eq!(sp_cost(1.0, 5), 256_000);
-    }
-
-    #[test]
-    fn sp_per_sec_matches_the_pod_rate_formula() {
-      assert_eq!(sp_per_sec(27, 21), (27.0 + 10.5) / 60.0);
-    }
-  }
-
   mod fixture_gate {
     use pretty_assertions::assert_eq;
 
@@ -325,12 +165,17 @@ mod tests {
     use crate::clients::esi::models::{character, universe};
 
     const ATTRIBUTES_FIXTURE: &str = include_str!("../../../test/fixtures/esi/character_attributes.json");
+
     const IMPLANT_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_9899.json");
 
     const CHARISMA_BONUS_ID: i32 = 175;
+
     const INTELLIGENCE_BONUS_ID: i32 = 176;
+
     const MEMORY_BONUS_ID: i32 = 177;
+
     const PERCEPTION_BONUS_ID: i32 = 178;
+
     const WILLPOWER_BONUS_ID: i32 = 179;
 
     fn base_from_esi(attributes: &character::Attributes) -> Attributes {
@@ -390,58 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn it_resolves_the_real_implant_as_a_plus_three_memory_bonus() {
-      let (_, implants) = fixtures();
-
-      assert_eq!(implants.memory, 3);
-      assert_eq!(implants.charisma, 0);
-      assert_eq!(implants.intelligence, 0);
-      assert_eq!(implants.perception, 0);
-      assert_eq!(implants.willpower, 0);
-    }
-
-    #[test]
-    fn it_flags_the_out_of_spec_fixture_base_and_still_emits_an_in_spec_recommendation() {
-      let (base, implants) = fixtures();
-
-      assert_eq!(
-        base.charisma + base.intelligence + base.memory + base.perception + base.willpower,
-        103
-      );
-      assert!(
-        !base.is_in_spec(),
-        "fixture base {base:?} is expected to be out of spec"
-      );
-
-      let rec = optimize_remap(&plan(), base, implants);
-
-      assert!(rec.current_out_of_spec);
-
-      let emitted = [
-        rec.base.charisma,
-        rec.base.intelligence,
-        rec.base.memory,
-        rec.base.perception,
-        rec.base.willpower,
-      ];
-      assert_eq!(emitted.iter().sum::<u32>(), 99);
-      assert!(
-        emitted.iter().all(|&value| (17..=27).contains(&value)),
-        "emitted base {:?} has an attribute outside [17, 27]",
-        rec.base
-      );
-      assert!(rec.base.is_in_spec());
-
-      let baseline_time = plan_time(&plan(), base.plus(implants));
-      assert!(
-        rec.total_sec <= baseline_time,
-        "recommendation {} must not be slower than the real baseline {}",
-        rec.total_sec,
-        baseline_time
-      );
-    }
-
-    #[test]
     fn it_computes_effective_as_base_plus_implant_without_clamping_in_both_paths() {
       let (base, implants) = fixtures();
 
@@ -488,6 +281,47 @@ mod tests {
     }
 
     #[test]
+    fn it_flags_the_out_of_spec_fixture_base_and_still_emits_an_in_spec_recommendation() {
+      let (base, implants) = fixtures();
+
+      assert_eq!(
+        base.charisma + base.intelligence + base.memory + base.perception + base.willpower,
+        103
+      );
+      assert!(
+        !base.is_in_spec(),
+        "fixture base {base:?} is expected to be out of spec"
+      );
+
+      let rec = optimize_remap(&plan(), base, implants);
+
+      assert!(rec.current_out_of_spec);
+
+      let emitted = [
+        rec.base.charisma,
+        rec.base.intelligence,
+        rec.base.memory,
+        rec.base.perception,
+        rec.base.willpower,
+      ];
+      assert_eq!(emitted.iter().sum::<u32>(), 99);
+      assert!(
+        emitted.iter().all(|&value| (17..=27).contains(&value)),
+        "emitted base {:?} has an attribute outside [17, 27]",
+        rec.base
+      );
+      assert!(rec.base.is_in_spec());
+
+      let baseline_time = plan_time(&plan(), base.plus(implants));
+      assert!(
+        rec.total_sec <= baseline_time,
+        "recommendation {} must not be slower than the real baseline {}",
+        rec.total_sec,
+        baseline_time
+      );
+    }
+
+    #[test]
     fn it_marks_the_active_pair_in_the_projection_for_the_emitted_recommendation() {
       let (base, implants) = fixtures();
       let rec = optimize_remap(&plan(), base, implants);
@@ -502,6 +336,177 @@ mod tests {
       assert_eq!(intelligence_row.role, Role::Primary);
       assert_eq!(memory_row.role, Role::Secondary);
       assert_eq!(memory_row.effective, rec.base.memory + 3);
+    }
+
+    #[test]
+    fn it_resolves_the_real_implant_as_a_plus_three_memory_bonus() {
+      let (_, implants) = fixtures();
+
+      assert_eq!(implants.memory, 3);
+      assert_eq!(implants.charisma, 0);
+      assert_eq!(implants.intelligence, 0);
+      assert_eq!(implants.perception, 0);
+      assert_eq!(implants.willpower, 0);
+    }
+  }
+
+  mod formulas {
+    use pretty_assertions::assert_eq;
+
+    use super::{super::super::format::sp_cost, *};
+
+    #[test]
+    fn sp_cost_is_256000_at_level_five_rank_one() {
+      assert_eq!(sp_cost(1.0, 5), 256_000);
+    }
+
+    #[test]
+    fn sp_per_sec_matches_the_pod_rate_formula() {
+      assert_eq!(sp_per_sec(27, 21), (27.0 + 10.5) / 60.0);
+    }
+  }
+
+  mod optimize_remap {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn base(perception: u32, memory: u32, willpower: u32, intelligence: u32, charisma: u32) -> Attributes {
+      Attributes {
+        charisma,
+        intelligence,
+        memory,
+        perception,
+        willpower,
+      }
+    }
+
+    fn best_per_wil_base() -> Attributes {
+      base(27, 17, 21, 17, 17)
+    }
+
+    #[test]
+    fn it_does_not_flag_an_in_spec_current() {
+      let rec = optimize_remap(&per_wil_plan(1_000_000), base(20, 20, 20, 20, 19), no_implants());
+
+      assert!(!rec.current_out_of_spec);
+    }
+
+    #[test]
+    fn it_finds_the_known_optimum_for_a_single_pair() {
+      let rec = optimize_remap(&per_wil_plan(1_000_000), base(20, 20, 20, 20, 19), no_implants());
+
+      assert_eq!(rec.base, best_per_wil_base());
+      assert!(!rec.is_current);
+    }
+
+    #[test]
+    fn it_flags_an_out_of_spec_current_and_still_emits_an_in_spec_base() {
+      let current = base(17, 17, 17, 17, 31);
+      let weights = vec![PairWeight {
+        primary: Attribute::Charisma,
+        secondary: Attribute::Willpower,
+        sp: 1_000_000,
+      }];
+      let current_effective = current.plus(no_implants());
+      let current_time = 1_000_000.0 / sp_per_sec(current_effective.charisma, current_effective.willpower);
+
+      let rec = optimize_remap(&weights, current, no_implants());
+
+      assert!(rec.current_out_of_spec);
+      assert!(rec.base.is_in_spec());
+      assert!(rec.is_current);
+      assert!(rec.total_sec >= current_time);
+    }
+
+    #[test]
+    fn it_never_clamps_effective_attributes_above_the_max() {
+      let implants = Attributes {
+        charisma: 5,
+        intelligence: 5,
+        memory: 5,
+        perception: 5,
+        willpower: 5,
+      };
+      let weights = per_wil_plan(1_000_000);
+
+      let rec = optimize_remap(&weights, base(20, 20, 20, 20, 19), implants);
+
+      assert_eq!(rec.base.perception, 27);
+      let effective = rec.base.plus(implants);
+      let clamped_rate = sp_per_sec(27, effective.willpower.min(27));
+      let real_rate = sp_per_sec(effective.perception, effective.willpower);
+      assert!(real_rate > clamped_rate, "effective {effective:?} appears clamped");
+      let expected = 1_000_000.0 / real_rate;
+      assert!((rec.total_sec - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_never_recommends_a_config_slower_than_current() {
+      let weights = per_wil_plan(2_000_000);
+      let current = base(20, 20, 20, 20, 19);
+      let current_time = {
+        let effective = current.plus(no_implants());
+        2_000_000.0 / sp_per_sec(effective.perception, effective.willpower)
+      };
+
+      let rec = optimize_remap(&weights, current, no_implants());
+
+      assert!(rec.total_sec <= current_time);
+    }
+
+    #[test]
+    fn it_only_ever_emits_an_in_spec_base() {
+      let plans = [
+        per_wil_plan(1_000_000),
+        vec![
+          PairWeight {
+            primary: Attribute::Intelligence,
+            secondary: Attribute::Memory,
+            sp: 5_000_000,
+          },
+          PairWeight {
+            primary: Attribute::Charisma,
+            secondary: Attribute::Willpower,
+            sp: 200_000,
+          },
+        ],
+      ];
+      let currents = [
+        base(20, 20, 20, 20, 19),
+        base(99, 99, 99, 99, 99),
+        base(17, 17, 17, 17, 31),
+      ];
+
+      for plan in &plans {
+        for &current in &currents {
+          let rec = optimize_remap(plan, current, base(5, 5, 5, 5, 5));
+
+          assert!(rec.base.is_in_spec(), "emitted base {:?} is out of spec", rec.base);
+        }
+      }
+    }
+
+    #[test]
+    fn it_reports_is_current_when_the_current_base_is_already_optimal() {
+      let weights = per_wil_plan(1_000_000);
+      let optimal = best_per_wil_base();
+
+      let rec = optimize_remap(&weights, optimal, no_implants());
+
+      assert!(rec.is_current);
+      assert_eq!(rec.base, optimal);
+    }
+
+    #[test]
+    fn it_returns_the_current_baseline_for_an_empty_plan() {
+      let current = base(20, 20, 20, 20, 19);
+
+      let rec = optimize_remap(&[], current, no_implants());
+
+      assert!(rec.is_current);
+      assert_eq!(rec.base, current);
+      assert_eq!(rec.total_sec, 0.0);
     }
   }
 }

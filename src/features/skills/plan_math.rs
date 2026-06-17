@@ -402,123 +402,77 @@ mod tests {
     }
   }
 
-  mod step_sp {
+  mod bump_attr {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[test]
-    fn it_discounts_a_partially_trained_head_by_its_banked_sp() {
-      assert_eq!(step_sp(1.0, 4, 5, 100_000), 156_000);
+    fn base() -> Attributes {
+      attrs(22, 20, 19, 21, 17)
     }
 
     #[test]
-    fn it_floors_an_over_banked_head_at_zero() {
-      assert_eq!(step_sp(1.0, 4, 5, 300_000), 0);
+    fn it_adds_to_the_highest_other_when_decrementing() {
+      let bumped = bump_attr(base(), Attribute::Willpower, -1).expect("a -1 swap exists");
+
+      assert_eq!(bumped.willpower, 19);
+      assert_eq!(bumped.perception, 23);
     }
 
     #[test]
-    fn it_saturates_against_a_huge_banked_value_without_wrapping() {
-      assert_eq!(step_sp(1.0, 4, 5, u64::MAX), 0);
-      assert_eq!(step_sp(1.0, 0, 5, i64::MAX as u64 + 1), 0);
-    }
+    fn it_clamps_each_attribute_to_the_legal_range_after_the_swap() {
+      let base = attrs(26, 18, 18, 20, 17);
 
-    #[test]
-    fn it_yields_the_level_delta_when_passed_the_from_level_cost() {
-      assert_eq!(step_sp(1.0, 4, 5, sp_cost(1.0, 4)), 256_000 - 45_255);
-    }
+      let bumped = bump_attr(base, Attribute::Perception, 1).expect("a +1 swap exists");
 
-    #[test]
-    fn it_yields_the_full_target_cost_with_no_banked_sp() {
-      assert_eq!(step_sp(1.0, 0, 5, 0), 256_000);
-    }
-
-    #[test]
-    fn it_scales_with_rank() {
-      assert_eq!(step_sp(2.0, 4, 5, sp_cost(2.0, 4)), 2 * (256_000 - 45_255));
-    }
-  }
-
-  mod expand_wishes {
-    use std::collections::HashMap;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn wish(skill_id: i64, to_level: u8) -> Wish {
-      Wish {
-        skill_id,
-        to_level,
+      for value in [
+        bumped.charisma,
+        bumped.intelligence,
+        bumped.memory,
+        bumped.perception,
+        bumped.willpower,
+      ] {
+        assert!((ATTR_MIN..=ATTR_MAX).contains(&value), "{value} is outside [17, 27]");
       }
     }
 
     #[test]
-    fn it_expands_a_fresh_wish_into_one_level_steps() {
-      let out = expand_wishes(&[wish(3300, 3)], &PrereqCatalog::new(), &HashMap::new());
+    fn it_holds_the_base_total_constant() {
+      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
 
-      assert_eq!(out.len(), 3);
-      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [1, 2, 3]);
-      assert!(out.iter().all(|e| e.skill_id == 3300));
-      assert!(out.iter().all(|e| !e.is_auto), "explicit wish levels are not auto");
+      let total = bumped.charisma + bumped.intelligence + bumped.memory + bumped.perception + bumped.willpower;
+      assert_eq!(total, 99);
+      assert_eq!(bumped.perception, 23);
     }
 
     #[test]
-    fn it_only_schedules_levels_above_the_trained_level() {
-      let trained = HashMap::from([(3300, 3)]);
-      let out = expand_wishes(&[wish(3300, 5)], &PrereqCatalog::new(), &trained);
+    fn it_pulls_from_the_lowest_other_when_incrementing() {
+      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
 
-      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [4, 5]);
+      assert_eq!(bumped.perception, 23);
+      assert_eq!(bumped.intelligence, 18);
+      assert_eq!(bumped.charisma, 17, "the floored attribute is left untouched");
     }
 
     #[test]
-    fn it_produces_no_entries_when_already_at_or_above_the_target() {
-      let trained = HashMap::from([(3300, 5)]);
-      let out = expand_wishes(&[wish(3300, 4)], &PrereqCatalog::new(), &trained);
+    fn it_refuses_to_decrement_an_attribute_already_at_the_min() {
+      let base = attrs(27, 18, 19, 18, 17);
 
-      assert!(out.is_empty(), "an already-trained target schedules nothing");
+      assert_eq!(bump_attr(base, Attribute::Charisma, -1), None);
     }
 
     #[test]
-    fn it_inserts_direct_prerequisites_as_auto_entries_before_the_target() {
-      let catalog = PrereqCatalog::from([(3330, vec![(3300, 3)])]);
-      let out = expand_wishes(&[wish(3330, 1)], &catalog, &HashMap::new());
+    fn it_refuses_to_increment_an_attribute_already_at_the_max() {
+      let base = attrs(27, 18, 19, 18, 17);
 
-      let by_skill: Vec<(i64, u8, bool)> = out.iter().map(|e| (e.skill_id, e.to_level, e.is_auto)).collect();
-      assert_eq!(
-        by_skill,
-        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3330, 1, false)]
-      );
+      assert_eq!(bump_attr(base, Attribute::Perception, 1), None);
     }
 
     #[test]
-    fn it_treats_a_prereq_that_is_also_an_explicit_wish_as_not_auto() {
-      let catalog = PrereqCatalog::from([(3330, vec![(3300, 3)])]);
-      let out = expand_wishes(&[wish(3300, 3), wish(3330, 1)], &catalog, &HashMap::new());
+    fn it_refuses_when_no_counterpart_can_absorb_the_swap() {
+      let base = attrs(20, 27, 27, 27, 27);
 
-      let three_hundred: Vec<bool> = out.iter().filter(|e| e.skill_id == 3300).map(|e| e.is_auto).collect();
-      assert_eq!(
-        three_hundred,
-        vec![false, false, false],
-        "explicit wish wins over the prereq path"
-      );
-    }
-
-    #[test]
-    fn it_never_schedules_a_skill_level_twice_across_wishes() {
-      let out = expand_wishes(&[wish(3300, 3), wish(3300, 5)], &PrereqCatalog::new(), &HashMap::new());
-
-      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn it_terminates_on_a_malformed_prerequisite_cycle() {
-      let catalog = PrereqCatalog::from([(1, vec![(2, 1)]), (2, vec![(1, 1)])]);
-      let out = expand_wishes(&[wish(1, 1)], &catalog, &HashMap::new());
-
-      assert_eq!(out.len(), 2);
-      assert!(out.iter().any(|e| e.skill_id == 1 && e.to_level == 1));
-      assert!(out.iter().any(|e| e.skill_id == 2 && e.to_level == 1));
+      assert_eq!(bump_attr(base, Attribute::Perception, -1), None);
     }
   }
 
@@ -533,6 +487,40 @@ mod tests {
 
     fn fast_attrs() -> Attributes {
       attrs(27, 21, 17, 17, 17)
+    }
+
+    #[test]
+    fn it_adds_the_implant_to_each_remap_points_base() {
+      let implant = attrs(5, 5, 5, 5, 5);
+      let entries = [entry(3300, 5), entry(3301, 5)];
+      let options = PlanOptions {
+        implant: Some(implant),
+        remap_points: vec![RemapPoint {
+          after_index: 0,
+          base: attrs(22, 16, 17, 17, 17),
+        }],
+      };
+
+      let plan = compute_plan(&entries, attrs(20, 20, 17, 17, 25), &options, 0.0);
+
+      let sec1 = 256_000.0 / sp_per_sec(27, 21);
+      assert!((plan.items[1].sec - sec1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_applies_an_initial_segment_remap_before_the_first_entry() {
+      let entries = [entry(3300, 5)];
+      let options = PlanOptions {
+        implant: None,
+        remap_points: vec![RemapPoint {
+          after_index: -1,
+          base: fast_attrs(),
+        }],
+      };
+
+      let plan = compute_plan(&entries, attrs(17, 17, 17, 17, 31), &options, 0.0);
+
+      assert!((plan.items[0].sec - 256_000.0 / sp_per_sec(27, 21)).abs() < 1e-6);
     }
 
     #[test]
@@ -564,40 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn it_yields_zero_remaining_for_a_head_banked_above_the_target() {
-      let mut head = entry(3300, 5);
-      head.synced_trained_level = 4;
-      head.partial_sp_at_from = u64::MAX;
-
-      let plan = compute_plan(&[head], fast_attrs(), &opts(), 0.0);
-
-      assert_eq!(plan.items[0].sp, 0, "over-banked head charges zero remaining SP");
-      assert_eq!(plan.items[0].sec, 0.0, "zero remaining SP means zero remaining time");
-      assert_eq!(plan.total_sp, 0);
-      assert_eq!(plan.total_sec, 0.0);
-    }
-
-    #[test]
-    fn it_handles_a_prereq_expanded_plan_as_running_level_deltas() {
-      let entries = [
-        entry(3300, 1),
-        entry(3300, 2),
-        entry(3300, 3),
-        entry(3300, 4),
-        entry(3300, 5),
-      ];
-      let plan = compute_plan(&entries, fast_attrs(), &opts(), 0.0);
-
-      assert_eq!(plan.items[0].sp, { sp_cost(1.0, 1) });
-      assert_eq!(plan.items[1].sp, { sp_cost(1.0, 2) - sp_cost(1.0, 1) });
-      assert_eq!(plan.items[4].sp, { sp_cost(1.0, 5) - sp_cost(1.0, 4) });
-      assert_eq!(plan.total_sp, { sp_cost(1.0, 5) });
-
-      let rate = sp_per_sec(27, 21);
-      assert!((plan.total_sec - sp_cost(1.0, 5) as f64 / rate).abs() < 1e-6);
-    }
-
-    #[test]
     fn it_emits_zero_cost_skipped_rows_for_already_trained_entries() {
       let mut entries = [
         entry(3300, 1),
@@ -625,44 +579,23 @@ mod tests {
     }
 
     #[test]
-    fn it_swaps_to_per_segment_attrs_across_a_remap_point() {
-      let slow = attrs(20, 20, 17, 17, 25);
-      let fast = fast_attrs();
-      let entries = [entry(3300, 5), entry(3301, 5)];
-      let options = PlanOptions {
-        implant: None,
-        remap_points: vec![RemapPoint {
-          after_index: 0,
-          base: fast,
-        }],
-      };
+    fn it_handles_a_prereq_expanded_plan_as_running_level_deltas() {
+      let entries = [
+        entry(3300, 1),
+        entry(3300, 2),
+        entry(3300, 3),
+        entry(3300, 4),
+        entry(3300, 5),
+      ];
+      let plan = compute_plan(&entries, fast_attrs(), &opts(), 0.0);
 
-      let plan = compute_plan(&entries, slow, &options, 0.0);
+      assert_eq!(plan.items[0].sp, { sp_cost(1.0, 1) });
+      assert_eq!(plan.items[1].sp, { sp_cost(1.0, 2) - sp_cost(1.0, 1) });
+      assert_eq!(plan.items[4].sp, { sp_cost(1.0, 5) - sp_cost(1.0, 4) });
+      assert_eq!(plan.total_sp, { sp_cost(1.0, 5) });
 
-      let sp = 256_000.0;
-      let sec0 = sp / sp_per_sec(20, 20);
-      let sec1 = sp / sp_per_sec(27, 21);
-      assert!((plan.items[0].sec - sec0).abs() < 1e-6);
-      assert!((plan.items[1].sec - sec1).abs() < 1e-6);
-      assert!((plan.total_sec - (sec0 + sec1)).abs() < 1e-6);
-    }
-
-    #[test]
-    fn it_adds_the_implant_to_each_remap_points_base() {
-      let implant = attrs(5, 5, 5, 5, 5);
-      let entries = [entry(3300, 5), entry(3301, 5)];
-      let options = PlanOptions {
-        implant: Some(implant),
-        remap_points: vec![RemapPoint {
-          after_index: 0,
-          base: attrs(22, 16, 17, 17, 17),
-        }],
-      };
-
-      let plan = compute_plan(&entries, attrs(20, 20, 17, 17, 25), &options, 0.0);
-
-      let sec1 = 256_000.0 / sp_per_sec(27, 21);
-      assert!((plan.items[1].sec - sec1).abs() < 1e-6);
+      let rate = sp_per_sec(27, 21);
+      assert!((plan.total_sec - sp_cost(1.0, 5) as f64 / rate).abs() < 1e-6);
     }
 
     #[test]
@@ -694,19 +627,40 @@ mod tests {
     }
 
     #[test]
-    fn it_applies_an_initial_segment_remap_before_the_first_entry() {
-      let entries = [entry(3300, 5)];
+    fn it_swaps_to_per_segment_attrs_across_a_remap_point() {
+      let slow = attrs(20, 20, 17, 17, 25);
+      let fast = fast_attrs();
+      let entries = [entry(3300, 5), entry(3301, 5)];
       let options = PlanOptions {
         implant: None,
         remap_points: vec![RemapPoint {
-          after_index: -1,
-          base: fast_attrs(),
+          after_index: 0,
+          base: fast,
         }],
       };
 
-      let plan = compute_plan(&entries, attrs(17, 17, 17, 17, 31), &options, 0.0);
+      let plan = compute_plan(&entries, slow, &options, 0.0);
 
-      assert!((plan.items[0].sec - 256_000.0 / sp_per_sec(27, 21)).abs() < 1e-6);
+      let sp = 256_000.0;
+      let sec0 = sp / sp_per_sec(20, 20);
+      let sec1 = sp / sp_per_sec(27, 21);
+      assert!((plan.items[0].sec - sec0).abs() < 1e-6);
+      assert!((plan.items[1].sec - sec1).abs() < 1e-6);
+      assert!((plan.total_sec - (sec0 + sec1)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn it_yields_zero_remaining_for_a_head_banked_above_the_target() {
+      let mut head = entry(3300, 5);
+      head.synced_trained_level = 4;
+      head.partial_sp_at_from = u64::MAX;
+
+      let plan = compute_plan(&[head], fast_attrs(), &opts(), 0.0);
+
+      assert_eq!(plan.items[0].sp, 0, "over-banked head charges zero remaining SP");
+      assert_eq!(plan.items[0].sec, 0.0, "zero remaining SP means zero remaining time");
+      assert_eq!(plan.total_sp, 0);
+      assert_eq!(plan.total_sec, 0.0);
     }
 
     #[test]
@@ -716,6 +670,306 @@ mod tests {
 
       assert_eq!(plan.items[0].sec, 0.0);
       assert_eq!(plan.items[0].sp, 256_000);
+    }
+  }
+
+  mod expand_wishes {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn wish(skill_id: i64, to_level: u8) -> Wish {
+      Wish {
+        skill_id,
+        to_level,
+      }
+    }
+
+    #[test]
+    fn it_expands_a_fresh_wish_into_one_level_steps() {
+      let out = expand_wishes(&[wish(3300, 3)], &PrereqCatalog::new(), &HashMap::new());
+
+      assert_eq!(out.len(), 3);
+      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [1, 2, 3]);
+      assert!(out.iter().all(|e| e.skill_id == 3300));
+      assert!(out.iter().all(|e| !e.is_auto), "explicit wish levels are not auto");
+    }
+
+    #[test]
+    fn it_inserts_direct_prerequisites_as_auto_entries_before_the_target() {
+      let catalog = PrereqCatalog::from([(3330, vec![(3300, 3)])]);
+      let out = expand_wishes(&[wish(3330, 1)], &catalog, &HashMap::new());
+
+      let by_skill: Vec<(i64, u8, bool)> = out.iter().map(|e| (e.skill_id, e.to_level, e.is_auto)).collect();
+      assert_eq!(
+        by_skill,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3330, 1, false)]
+      );
+    }
+
+    #[test]
+    fn it_never_schedules_a_skill_level_twice_across_wishes() {
+      let out = expand_wishes(&[wish(3300, 3), wish(3300, 5)], &PrereqCatalog::new(), &HashMap::new());
+
+      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn it_only_schedules_levels_above_the_trained_level() {
+      let trained = HashMap::from([(3300, 3)]);
+      let out = expand_wishes(&[wish(3300, 5)], &PrereqCatalog::new(), &trained);
+
+      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [4, 5]);
+    }
+
+    #[test]
+    fn it_produces_no_entries_when_already_at_or_above_the_target() {
+      let trained = HashMap::from([(3300, 5)]);
+      let out = expand_wishes(&[wish(3300, 4)], &PrereqCatalog::new(), &trained);
+
+      assert!(out.is_empty(), "an already-trained target schedules nothing");
+    }
+
+    #[test]
+    fn it_terminates_on_a_malformed_prerequisite_cycle() {
+      let catalog = PrereqCatalog::from([(1, vec![(2, 1)]), (2, vec![(1, 1)])]);
+      let out = expand_wishes(&[wish(1, 1)], &catalog, &HashMap::new());
+
+      assert_eq!(out.len(), 2);
+      assert!(out.iter().any(|e| e.skill_id == 1 && e.to_level == 1));
+      assert!(out.iter().any(|e| e.skill_id == 2 && e.to_level == 1));
+    }
+
+    #[test]
+    fn it_treats_a_prereq_that_is_also_an_explicit_wish_as_not_auto() {
+      let catalog = PrereqCatalog::from([(3330, vec![(3300, 3)])]);
+      let out = expand_wishes(&[wish(3300, 3), wish(3330, 1)], &catalog, &HashMap::new());
+
+      let three_hundred: Vec<bool> = out.iter().filter(|e| e.skill_id == 3300).map(|e| e.is_auto).collect();
+      assert_eq!(
+        three_hundred,
+        vec![false, false, false],
+        "explicit wish wins over the prereq path"
+      );
+    }
+  }
+
+  mod injector_yield {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_holds_the_second_band_just_below_50m() {
+      assert_eq!(
+        injector_yield(49_999_999),
+        InjectorYield {
+          large: 400_000,
+          small: 80_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_holds_the_third_band_just_below_80m() {
+      assert_eq!(
+        injector_yield(79_999_999),
+        InjectorYield {
+          large: 300_000,
+          small: 60_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_steps_to_the_second_band_at_exactly_5m() {
+      assert_eq!(
+        injector_yield(5_000_000),
+        InjectorYield {
+          large: 400_000,
+          small: 80_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_steps_to_the_third_band_at_exactly_50m() {
+      assert_eq!(
+        injector_yield(50_000_000),
+        InjectorYield {
+          large: 300_000,
+          small: 60_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_steps_to_the_top_band_at_exactly_80m() {
+      assert_eq!(
+        injector_yield(80_000_000),
+        InjectorYield {
+          large: 150_000,
+          small: 30_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_uses_the_lowest_band_just_below_5m() {
+      assert_eq!(
+        injector_yield(4_999_999),
+        InjectorYield {
+          large: 500_000,
+          small: 100_000,
+        }
+      );
+    }
+  }
+
+  mod injectors_for_plan {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_bands_on_the_characters_current_total_sp() {
+      let estimate = injectors_for_plan(600_000, 100_000_000);
+
+      assert_eq!(
+        estimate.large, 4,
+        "ceil(600k / 30k) == 20 small-equivalents == 4 larges"
+      );
+      assert_eq!(estimate.small, 0);
+      assert_eq!(
+        estimate.yield_per,
+        InjectorYield {
+          large: 150_000,
+          small: 30_000,
+        }
+      );
+    }
+
+    #[test]
+    fn it_does_not_overflow_for_a_near_max_remaining_sp() {
+      let estimate = injectors_for_plan(u64::MAX, 1_000_000);
+
+      let small_equivalents = u64::MAX / 100_000 + 1;
+      assert_eq!(estimate.large, small_equivalents / 5);
+      assert_eq!(estimate.small, small_equivalents % 5);
+      assert!(estimate.small < 5, "smalls are always capped below one large");
+    }
+
+    #[test]
+    fn it_does_not_round_up_an_exact_multiple() {
+      let estimate = injectors_for_plan(500_000, 1_000_000);
+
+      assert_eq!(estimate.large, 1);
+      assert_eq!(estimate.small, 0);
+    }
+
+    #[test]
+    fn it_fills_the_bulk_with_larges_and_the_remainder_with_smalls() {
+      let estimate = injectors_for_plan(600_000, 1_000_000);
+
+      assert_eq!(estimate.large, 1, "one large covers 500k");
+      assert_eq!(estimate.small, 1, "one small covers the remaining 100k");
+    }
+
+    #[test]
+    fn it_never_recommends_five_or_more_smalls() {
+      let estimate = injectors_for_plan(450_000, 1_000_000);
+
+      assert_eq!(estimate.large, 1, "five smalls collapse into one large");
+      assert_eq!(estimate.small, 0);
+    }
+
+    #[test]
+    fn it_uses_only_smalls_when_less_than_a_large_remains() {
+      let estimate = injectors_for_plan(350_000, 1_000_000);
+
+      assert_eq!(estimate.large, 0);
+      assert_eq!(estimate.small, 4, "ceil(350k / 100k) == 4 smalls");
+    }
+
+    #[test]
+    fn it_yields_zero_of_both_when_nothing_remains_to_train() {
+      let estimate = injectors_for_plan(0, 2_000_000);
+
+      assert_eq!(estimate.large, 0);
+      assert_eq!(estimate.small, 0);
+    }
+  }
+
+  mod remap_availability {
+    use chrono::TimeZone as _;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn now() -> DateTime<Utc> {
+      Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn it_adds_bonus_remaps_to_the_annual_remap() {
+      let availability = remap_availability(2, Some("2025-01-01T00:00:00Z"), Some("2026-01-01T00:00:00Z"), now());
+
+      assert_eq!(availability.count, 3);
+      assert!(availability.reason.is_empty());
+    }
+
+    #[test]
+    fn it_counts_only_bonus_remaps_while_the_annual_is_on_cooldown() {
+      let availability = remap_availability(1, Some("2026-04-01T12:00:00Z"), Some("2026-09-01T12:00:00Z"), now());
+
+      assert_eq!(availability.count, 1);
+      assert!(availability.reason.is_empty());
+    }
+
+    #[test]
+    fn it_counts_the_annual_remap_once_the_cooldown_has_passed() {
+      let availability = remap_availability(0, Some("2025-01-01T00:00:00Z"), Some("2026-01-01T00:00:00Z"), now());
+
+      assert_eq!(availability.count, 1);
+      assert!(availability.reason.is_empty());
+    }
+
+    #[test]
+    fn it_floors_a_negative_bonus_remap_count_at_zero() {
+      let availability = remap_availability(-3, None, Some("2026-09-01T12:00:00Z"), now());
+
+      assert_eq!(availability.count, 0);
+      assert!(!availability.reason.is_empty());
+    }
+
+    #[test]
+    fn it_treats_an_unparsable_cooldown_date_as_available() {
+      let availability = remap_availability(0, Some("not-a-date"), Some("garbage"), now());
+
+      assert_eq!(availability.count, 1);
+    }
+
+    #[test]
+    fn it_treats_none_dates_as_available_without_panicking() {
+      let availability = remap_availability(0, None, None, now());
+
+      assert_eq!(availability.count, 1);
+      assert!(availability.reason.is_empty());
+    }
+
+    #[test]
+    fn it_yields_zero_with_a_non_empty_reason_when_on_cooldown_and_no_bonus() {
+      let availability = remap_availability(0, Some("2026-04-01T12:00:00Z"), Some("2026-08-30T12:00:00Z"), now());
+
+      assert_eq!(availability.count, 0);
+      assert!(!availability.reason.is_empty());
+      assert!(
+        availability.reason.contains("90"),
+        "reason should name the remaining days: {}",
+        availability.reason
+      );
     }
   }
 
@@ -731,7 +985,9 @@ mod tests {
     use crate::store::model::CharacterSkillqueue;
 
     const RANK: f64 = 1.0;
+
     const TO_LEVEL: u8 = 5;
+
     const BANKED_SP: u64 = 100_000;
 
     fn queue_entry() -> CharacterSkillqueue {
@@ -780,294 +1036,40 @@ mod tests {
     }
   }
 
-  mod remap_availability {
-    use chrono::TimeZone as _;
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn now() -> DateTime<Utc> {
-      Utc.with_ymd_and_hms(2026, 6, 1, 12, 0, 0).unwrap()
-    }
-
-    #[test]
-    fn it_yields_zero_with_a_non_empty_reason_when_on_cooldown_and_no_bonus() {
-      let availability = remap_availability(0, Some("2026-04-01T12:00:00Z"), Some("2026-08-30T12:00:00Z"), now());
-
-      assert_eq!(availability.count, 0);
-      assert!(!availability.reason.is_empty());
-      assert!(
-        availability.reason.contains("90"),
-        "reason should name the remaining days: {}",
-        availability.reason
-      );
-    }
-
-    #[test]
-    fn it_counts_the_annual_remap_once_the_cooldown_has_passed() {
-      let availability = remap_availability(0, Some("2025-01-01T00:00:00Z"), Some("2026-01-01T00:00:00Z"), now());
-
-      assert_eq!(availability.count, 1);
-      assert!(availability.reason.is_empty());
-    }
-
-    #[test]
-    fn it_adds_bonus_remaps_to_the_annual_remap() {
-      let availability = remap_availability(2, Some("2025-01-01T00:00:00Z"), Some("2026-01-01T00:00:00Z"), now());
-
-      assert_eq!(availability.count, 3);
-      assert!(availability.reason.is_empty());
-    }
-
-    #[test]
-    fn it_counts_only_bonus_remaps_while_the_annual_is_on_cooldown() {
-      let availability = remap_availability(1, Some("2026-04-01T12:00:00Z"), Some("2026-09-01T12:00:00Z"), now());
-
-      assert_eq!(availability.count, 1);
-      assert!(availability.reason.is_empty());
-    }
-
-    #[test]
-    fn it_treats_none_dates_as_available_without_panicking() {
-      let availability = remap_availability(0, None, None, now());
-
-      assert_eq!(availability.count, 1);
-      assert!(availability.reason.is_empty());
-    }
-
-    #[test]
-    fn it_treats_an_unparsable_cooldown_date_as_available() {
-      let availability = remap_availability(0, Some("not-a-date"), Some("garbage"), now());
-
-      assert_eq!(availability.count, 1);
-    }
-
-    #[test]
-    fn it_floors_a_negative_bonus_remap_count_at_zero() {
-      let availability = remap_availability(-3, None, Some("2026-09-01T12:00:00Z"), now());
-
-      assert_eq!(availability.count, 0);
-      assert!(!availability.reason.is_empty());
-    }
-  }
-
-  mod bump_attr {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    fn base() -> Attributes {
-      attrs(22, 20, 19, 21, 17)
-    }
-
-    #[test]
-    fn it_holds_the_base_total_constant() {
-      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
-
-      let total = bumped.charisma + bumped.intelligence + bumped.memory + bumped.perception + bumped.willpower;
-      assert_eq!(total, 99);
-      assert_eq!(bumped.perception, 23);
-    }
-
-    #[test]
-    fn it_pulls_from_the_lowest_other_when_incrementing() {
-      let bumped = bump_attr(base(), Attribute::Perception, 1).expect("a +1 swap exists");
-
-      assert_eq!(bumped.perception, 23);
-      assert_eq!(bumped.intelligence, 18);
-      assert_eq!(bumped.charisma, 17, "the floored attribute is left untouched");
-    }
-
-    #[test]
-    fn it_adds_to_the_highest_other_when_decrementing() {
-      let bumped = bump_attr(base(), Attribute::Willpower, -1).expect("a -1 swap exists");
-
-      assert_eq!(bumped.willpower, 19);
-      assert_eq!(bumped.perception, 23);
-    }
-
-    #[test]
-    fn it_refuses_to_increment_an_attribute_already_at_the_max() {
-      let base = attrs(27, 18, 19, 18, 17);
-
-      assert_eq!(bump_attr(base, Attribute::Perception, 1), None);
-    }
-
-    #[test]
-    fn it_refuses_to_decrement_an_attribute_already_at_the_min() {
-      let base = attrs(27, 18, 19, 18, 17);
-
-      assert_eq!(bump_attr(base, Attribute::Charisma, -1), None);
-    }
-
-    #[test]
-    fn it_refuses_when_no_counterpart_can_absorb_the_swap() {
-      let base = attrs(20, 27, 27, 27, 27);
-
-      assert_eq!(bump_attr(base, Attribute::Perception, -1), None);
-    }
-
-    #[test]
-    fn it_clamps_each_attribute_to_the_legal_range_after_the_swap() {
-      let base = attrs(26, 18, 18, 20, 17);
-
-      let bumped = bump_attr(base, Attribute::Perception, 1).expect("a +1 swap exists");
-
-      for value in [
-        bumped.charisma,
-        bumped.intelligence,
-        bumped.memory,
-        bumped.perception,
-        bumped.willpower,
-      ] {
-        assert!((ATTR_MIN..=ATTR_MAX).contains(&value), "{value} is outside [17, 27]");
-      }
-    }
-  }
-
-  mod injector_yield {
+  mod step_sp {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_uses_the_lowest_band_just_below_5m() {
-      assert_eq!(
-        injector_yield(4_999_999),
-        InjectorYield {
-          large: 500_000,
-          small: 100_000,
-        }
-      );
+    fn it_discounts_a_partially_trained_head_by_its_banked_sp() {
+      assert_eq!(step_sp(1.0, 4, 5, 100_000), 156_000);
     }
 
     #[test]
-    fn it_steps_to_the_second_band_at_exactly_5m() {
-      assert_eq!(
-        injector_yield(5_000_000),
-        InjectorYield {
-          large: 400_000,
-          small: 80_000,
-        }
-      );
+    fn it_floors_an_over_banked_head_at_zero() {
+      assert_eq!(step_sp(1.0, 4, 5, 300_000), 0);
     }
 
     #[test]
-    fn it_holds_the_second_band_just_below_50m() {
-      assert_eq!(
-        injector_yield(49_999_999),
-        InjectorYield {
-          large: 400_000,
-          small: 80_000,
-        }
-      );
+    fn it_saturates_against_a_huge_banked_value_without_wrapping() {
+      assert_eq!(step_sp(1.0, 4, 5, u64::MAX), 0);
+      assert_eq!(step_sp(1.0, 0, 5, i64::MAX as u64 + 1), 0);
     }
 
     #[test]
-    fn it_steps_to_the_third_band_at_exactly_50m() {
-      assert_eq!(
-        injector_yield(50_000_000),
-        InjectorYield {
-          large: 300_000,
-          small: 60_000,
-        }
-      );
+    fn it_scales_with_rank() {
+      assert_eq!(step_sp(2.0, 4, 5, sp_cost(2.0, 4)), 2 * (256_000 - 45_255));
     }
 
     #[test]
-    fn it_holds_the_third_band_just_below_80m() {
-      assert_eq!(
-        injector_yield(79_999_999),
-        InjectorYield {
-          large: 300_000,
-          small: 60_000,
-        }
-      );
+    fn it_yields_the_full_target_cost_with_no_banked_sp() {
+      assert_eq!(step_sp(1.0, 0, 5, 0), 256_000);
     }
 
     #[test]
-    fn it_steps_to_the_top_band_at_exactly_80m() {
-      assert_eq!(
-        injector_yield(80_000_000),
-        InjectorYield {
-          large: 150_000,
-          small: 30_000,
-        }
-      );
-    }
-  }
-
-  mod injectors_for_plan {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_yields_zero_of_both_when_nothing_remains_to_train() {
-      let estimate = injectors_for_plan(0, 2_000_000);
-
-      assert_eq!(estimate.large, 0);
-      assert_eq!(estimate.small, 0);
-    }
-
-    #[test]
-    fn it_fills_the_bulk_with_larges_and_the_remainder_with_smalls() {
-      let estimate = injectors_for_plan(600_000, 1_000_000);
-
-      assert_eq!(estimate.large, 1, "one large covers 500k");
-      assert_eq!(estimate.small, 1, "one small covers the remaining 100k");
-    }
-
-    #[test]
-    fn it_uses_only_smalls_when_less_than_a_large_remains() {
-      let estimate = injectors_for_plan(350_000, 1_000_000);
-
-      assert_eq!(estimate.large, 0);
-      assert_eq!(estimate.small, 4, "ceil(350k / 100k) == 4 smalls");
-    }
-
-    #[test]
-    fn it_never_recommends_five_or_more_smalls() {
-      let estimate = injectors_for_plan(450_000, 1_000_000);
-
-      assert_eq!(estimate.large, 1, "five smalls collapse into one large");
-      assert_eq!(estimate.small, 0);
-    }
-
-    #[test]
-    fn it_does_not_round_up_an_exact_multiple() {
-      let estimate = injectors_for_plan(500_000, 1_000_000);
-
-      assert_eq!(estimate.large, 1);
-      assert_eq!(estimate.small, 0);
-    }
-
-    #[test]
-    fn it_bands_on_the_characters_current_total_sp() {
-      let estimate = injectors_for_plan(600_000, 100_000_000);
-
-      assert_eq!(
-        estimate.large, 4,
-        "ceil(600k / 30k) == 20 small-equivalents == 4 larges"
-      );
-      assert_eq!(estimate.small, 0);
-      assert_eq!(
-        estimate.yield_per,
-        InjectorYield {
-          large: 150_000,
-          small: 30_000,
-        }
-      );
-    }
-
-    #[test]
-    fn it_does_not_overflow_for_a_near_max_remaining_sp() {
-      let estimate = injectors_for_plan(u64::MAX, 1_000_000);
-
-      let small_equivalents = u64::MAX / 100_000 + 1;
-      assert_eq!(estimate.large, small_equivalents / 5);
-      assert_eq!(estimate.small, small_equivalents % 5);
-      assert!(estimate.small < 5, "smalls are always capped below one large");
+    fn it_yields_the_level_delta_when_passed_the_from_level_cost() {
+      assert_eq!(step_sp(1.0, 4, 5, sp_cost(1.0, 4)), 256_000 - 45_255);
     }
   }
 }

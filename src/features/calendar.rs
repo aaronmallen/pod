@@ -507,83 +507,6 @@ mod tests {
     state_with(Scope::All, roster, events)
   }
 
-  mod rendering {
-    use super::*;
-
-    fn render_every_view(state: &mut State) {
-      for selected in View::ALL {
-        state.view = selected;
-        let _el: Element<'_, Message> = view(state, now());
-      }
-    }
-
-    #[test]
-    fn it_renders_every_view_with_the_default_tweaks() {
-      let mut state = populated();
-      render_every_view(&mut state);
-    }
-
-    #[test]
-    fn it_renders_every_view_with_owner_coloring_dots_and_a_compact_week() {
-      let mut state = populated();
-      state.tweaks.set_color_by_pilot(false);
-      state.tweaks.set_local_time(false);
-      state.tweaks.set_month_chips(false);
-      state.tweaks.set_show_weekends(false);
-      state.tweaks.set_density(crate::config::CalendarDensity::Compact);
-      state.tweaks.set_week_start(crate::config::CalendarWeekStart::Sunday);
-      render_every_view(&mut state);
-    }
-
-    #[test]
-    fn it_renders_the_account_picker_overlay() {
-      let mut state = populated();
-      state.picker_open = true;
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_the_respondable_event_detail_with_attendees() {
-      let mut state = populated();
-      state.detail = Some(Detail {
-        attendees: Some(AttendeeTally {
-          accepted: 3,
-          declined: 1,
-          invited: 6,
-          tentative: 2,
-        }),
-        character_id: 1,
-        event_id: 10,
-      });
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_the_pod_overlay_event_detail() {
-      let mut state = populated();
-      state.detail = Some(Detail {
-        attendees: None,
-        character_id: 1,
-        event_id: 14,
-      });
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_the_forbidden_gate_for_an_unauthorized_pilot() {
-      let mut state = populated();
-      state.active = Scope::Mine(2);
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-
-    #[test]
-    fn it_renders_the_empty_agenda_state() {
-      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
-      state.view = View::Agenda;
-      let _el: Element<'_, Message> = view(&state, now());
-    }
-  }
-
   mod dispatch {
     use super::*;
 
@@ -664,6 +587,83 @@ mod tests {
     }
   }
 
+  mod rendering {
+    use super::*;
+
+    fn render_every_view(state: &mut State) {
+      for selected in View::ALL {
+        state.view = selected;
+        let _el: Element<'_, Message> = view(state, now());
+      }
+    }
+
+    #[test]
+    fn it_renders_every_view_with_owner_coloring_dots_and_a_compact_week() {
+      let mut state = populated();
+      state.tweaks.set_color_by_pilot(false);
+      state.tweaks.set_local_time(false);
+      state.tweaks.set_month_chips(false);
+      state.tweaks.set_show_weekends(false);
+      state.tweaks.set_density(crate::config::CalendarDensity::Compact);
+      state.tweaks.set_week_start(crate::config::CalendarWeekStart::Sunday);
+      render_every_view(&mut state);
+    }
+
+    #[test]
+    fn it_renders_every_view_with_the_default_tweaks() {
+      let mut state = populated();
+      render_every_view(&mut state);
+    }
+
+    #[test]
+    fn it_renders_the_account_picker_overlay() {
+      let mut state = populated();
+      state.picker_open = true;
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_empty_agenda_state() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.view = View::Agenda;
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_forbidden_gate_for_an_unauthorized_pilot() {
+      let mut state = populated();
+      state.active = Scope::Mine(2);
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_pod_overlay_event_detail() {
+      let mut state = populated();
+      state.detail = Some(Detail {
+        attendees: None,
+        character_id: 1,
+        event_id: 14,
+      });
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_respondable_event_detail_with_attendees() {
+      let mut state = populated();
+      state.detail = Some(Detail {
+        attendees: Some(AttendeeTally {
+          accepted: 3,
+          declined: 1,
+          invited: 6,
+          tentative: 2,
+        }),
+        character_id: 1,
+        event_id: 10,
+      });
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+  }
+
   mod state {
     use super::*;
     use crate::clients::esi::scopes;
@@ -680,13 +680,6 @@ mod tests {
       use super::*;
 
       #[test]
-      fn it_gates_a_mine_scope_when_the_active_pilot_lacks_the_scope() {
-        let state = state_with(Scope::Mine(1), vec![pilot(1, None)], Vec::new());
-
-        assert!(state.scope_gate().is_some());
-      }
-
-      #[test]
       fn it_does_not_gate_an_authorized_mine_scope() {
         let granted = granted();
         let state = state_with(Scope::Mine(1), vec![pilot(1, Some(&granted))], Vec::new());
@@ -695,10 +688,34 @@ mod tests {
       }
 
       #[test]
+      fn it_gates_a_mine_scope_when_the_active_pilot_lacks_the_scope() {
+        let state = state_with(Scope::Mine(1), vec![pilot(1, None)], Vec::new());
+
+        assert!(state.scope_gate().is_some());
+      }
+
+      #[test]
       fn it_never_gates_the_combined_scope() {
         let state = state_with(Scope::All, vec![pilot(1, None)], Vec::new());
 
         assert!(state.scope_gate().is_none());
+      }
+    }
+
+    mod unauthorized_pilots {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_names_pilots_missing_the_calendar_scope() {
+        let granted = granted();
+        let state = state_with(Scope::All, vec![pilot(1, Some(&granted)), pilot(2, None)], Vec::new());
+
+        let unauthorized = state.unauthorized_pilots();
+
+        assert_eq!(unauthorized.len(), 1);
+        assert_eq!(unauthorized[0].id, 2);
       }
     }
 
@@ -742,23 +759,6 @@ mod tests {
 
         state.tweaks.set_pod_overlays(true);
         assert_eq!(state.visible_events().len(), 2);
-      }
-    }
-
-    mod unauthorized_pilots {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[test]
-      fn it_names_pilots_missing_the_calendar_scope() {
-        let granted = granted();
-        let state = state_with(Scope::All, vec![pilot(1, Some(&granted)), pilot(2, None)], Vec::new());
-
-        let unauthorized = state.unauthorized_pilots();
-
-        assert_eq!(unauthorized.len(), 1);
-        assert_eq!(unauthorized[0].id, 2);
       }
     }
   }

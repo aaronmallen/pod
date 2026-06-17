@@ -307,26 +307,101 @@ mod tests {
     body
   }
 
-  mod transition {
+  mod abort_safety {
+    use super::*;
+
+    struct Guard {
+      _dir: TempDir,
+    }
+
+    #[tokio::test]
+    async fn a_failed_direct_to_sync_keeps_the_old_direct_database() {
+      let root = tempdir().unwrap();
+      let _guard = Guard {
+        _dir: root,
+      };
+      let dir = _guard._dir.path();
+      let local_db = dir.join("local");
+      let cache = dir.join("cache");
+      let old = config(&local_db, &cache, false);
+      fs::create_dir_all(&local_db).unwrap();
+      fs::write(old.resolved_database_path(), b"live bytes").unwrap();
+      // A file where the share directory must go forces the copy onto the share to fail.
+      let blocker = dir.join("share-blocker");
+      fs::write(&blocker, b"blocking file").unwrap();
+      let mut new = StorageConfig::default();
+      new.set_db_dir(Some(blocker.join("nested")));
+      new.set_cache_dir(Some(cache));
+      new.set_network(true);
+
+      let result = migrate(&old, &new, StorageMode::Direct, StorageMode::Sync).await;
+
+      assert!(result.is_err());
+      assert_eq!(
+        fs::read(old.resolved_database_path()).unwrap(),
+        b"live bytes",
+        "the original direct database is untouched after a failed switch"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_failed_sync_to_direct_leaves_the_old_layout_intact() {
+      let root = tempdir().unwrap();
+      let _guard = Guard {
+        _dir: root,
+      };
+      let dir = _guard._dir.path();
+      let share = dir.join("share");
+      let cache = dir.join("cache");
+      let old = config(&share, &cache, true);
+      // Point the new local location at a path whose parent cannot be created (a file blocks it),
+      // so checkpoint_into fails and the migration must abort without destroying the old layout.
+      let blocker = dir.join("blocked");
+      fs::write(&blocker, b"i am a file, not a directory").unwrap();
+      let mut new = StorageConfig::default();
+      new.set_db_dir(Some(blocker.join("nested")));
+      new.set_cache_dir(Some(cache.clone()));
+      seed_wal_database(&old.resolved_working_copy_path()).await;
+      write_generation(&generation_marker(&old.resolved_working_copy_path()), 5).unwrap();
+
+      let result = migrate(&old, &new, StorageMode::Sync, StorageMode::Direct).await;
+
+      assert!(result.is_err(), "the migration reports the failure");
+      assert!(
+        old.resolved_working_copy_path().exists(),
+        "the working copy — the freshest data — survives a failed switch"
+      );
+      assert!(
+        generation_marker(&old.resolved_working_copy_path()).exists(),
+        "its marker survives too"
+      );
+    }
+  }
+
+  mod direct_to_direct {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[test]
-    fn it_maps_each_mode_pair_to_a_case() {
-      assert_eq!(
-        transition(StorageMode::Direct, StorageMode::Direct),
-        Transition::DirectToDirect
+    #[tokio::test]
+    async fn it_moves_the_database_in_place_without_a_working_copy() {
+      let root = tempdir().unwrap();
+      let cache = root.path().join("cache");
+      let old = config(&root.path().join("a"), &cache, false);
+      let new = config(&root.path().join("b"), &cache, false);
+      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
+      fs::write(old.resolved_database_path(), b"db").unwrap();
+
+      migrate(&old, &new, StorageMode::Direct, StorageMode::Direct)
+        .await
+        .unwrap();
+
+      assert_eq!(fs::read(new.resolved_database_path()).unwrap(), b"db");
+      assert!(!old.resolved_database_path().exists());
+      assert!(
+        !new.resolved_working_copy_path().exists(),
+        "direct mode keeps no working copy"
       );
-      assert_eq!(
-        transition(StorageMode::Direct, StorageMode::Sync),
-        Transition::DirectToSync
-      );
-      assert_eq!(
-        transition(StorageMode::Sync, StorageMode::Direct),
-        Transition::SyncToDirect
-      );
-      assert_eq!(transition(StorageMode::Sync, StorageMode::Sync), Transition::SyncToSync);
     }
   }
 
@@ -334,6 +409,20 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[tokio::test]
+    async fn a_fresh_install_with_no_database_is_a_no_op() {
+      let root = tempdir().unwrap();
+      let old = config(&root.path().join("local"), &root.path().join("cache"), false);
+      let new = config(&root.path().join("share"), &root.path().join("cache"), true);
+
+      migrate(&old, &new, StorageMode::Direct, StorageMode::Sync)
+        .await
+        .unwrap();
+
+      assert!(!new.resolved_database_path().exists());
+      assert!(!new.resolved_working_copy_path().exists());
+    }
 
     #[tokio::test]
     async fn it_seeds_the_share_and_a_working_copy_and_removes_the_old_direct_db() {
@@ -390,20 +479,6 @@ mod tests {
         read_generation(&generation_marker(&new.resolved_database_path())),
       );
     }
-
-    #[tokio::test]
-    async fn a_fresh_install_with_no_database_is_a_no_op() {
-      let root = tempdir().unwrap();
-      let old = config(&root.path().join("local"), &root.path().join("cache"), false);
-      let new = config(&root.path().join("share"), &root.path().join("cache"), true);
-
-      migrate(&old, &new, StorageMode::Direct, StorageMode::Sync)
-        .await
-        .unwrap();
-
-      assert!(!new.resolved_database_path().exists());
-      assert!(!new.resolved_working_copy_path().exists());
-    }
   }
 
   mod sync_to_direct {
@@ -457,6 +532,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_falls_back_to_the_share_copy_when_no_working_copy_exists() {
+      let root = tempdir().unwrap();
+      let share = root.path().join("share");
+      let cache = root.path().join("cache");
+      let local_db = root.path().join("local");
+      let old = config(&share, &cache, true);
+      let new = config(&local_db, &cache, false);
+      seed_wal_database(&old.resolved_database_path()).await;
+
+      migrate(&old, &new, StorageMode::Sync, StorageMode::Direct)
+        .await
+        .unwrap();
+
+      assert_eq!(note_body(&new.resolved_database_path()).await, "hello");
+      assert!(!old.resolved_database_path().exists());
+    }
+
+    #[tokio::test]
     async fn toggling_sync_off_in_place_consolidates_into_the_canonical_path() {
       let root = tempdir().unwrap();
       let db_dir = root.path().join("data");
@@ -492,24 +585,6 @@ mod tests {
         "no wal trails the consolidated file"
       );
     }
-
-    #[tokio::test]
-    async fn it_falls_back_to_the_share_copy_when_no_working_copy_exists() {
-      let root = tempdir().unwrap();
-      let share = root.path().join("share");
-      let cache = root.path().join("cache");
-      let local_db = root.path().join("local");
-      let old = config(&share, &cache, true);
-      let new = config(&local_db, &cache, false);
-      seed_wal_database(&old.resolved_database_path()).await;
-
-      migrate(&old, &new, StorageMode::Sync, StorageMode::Direct)
-        .await
-        .unwrap();
-
-      assert_eq!(note_body(&new.resolved_database_path()).await, "hello");
-      assert!(!old.resolved_database_path().exists());
-    }
   }
 
   mod sync_to_sync {
@@ -534,6 +609,25 @@ mod tests {
       assert_eq!(fs::read(new.resolved_database_path()).unwrap(), b"canonical");
       assert_eq!(read_generation(&generation_marker(&new.resolved_database_path())), 6);
       assert!(!old.resolved_database_path().exists(), "the old share copy is moved");
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_share_path_is_unchanged() {
+      let root = tempdir().unwrap();
+      let share = root.path().join("share");
+      let cache = root.path().join("cache");
+      let old = config(&share, &cache, true);
+      let new = config(&share, &cache, true);
+      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
+      fs::write(old.resolved_database_path(), b"canonical").unwrap();
+
+      migrate(&old, &new, StorageMode::Sync, StorageMode::Sync).await.unwrap();
+
+      assert_eq!(
+        fs::read(old.resolved_database_path()).unwrap(),
+        b"canonical",
+        "an in-place share keeps its canonical copy untouched"
+      );
     }
 
     #[tokio::test]
@@ -566,122 +660,28 @@ mod tests {
       );
       assert!(!with_suffix(&old.resolved_working_copy_path(), "-shm").exists());
     }
-
-    #[tokio::test]
-    async fn it_is_a_no_op_when_the_share_path_is_unchanged() {
-      let root = tempdir().unwrap();
-      let share = root.path().join("share");
-      let cache = root.path().join("cache");
-      let old = config(&share, &cache, true);
-      let new = config(&share, &cache, true);
-      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
-      fs::write(old.resolved_database_path(), b"canonical").unwrap();
-
-      migrate(&old, &new, StorageMode::Sync, StorageMode::Sync).await.unwrap();
-
-      assert_eq!(
-        fs::read(old.resolved_database_path()).unwrap(),
-        b"canonical",
-        "an in-place share keeps its canonical copy untouched"
-      );
-    }
   }
 
-  mod direct_to_direct {
+  mod transition {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[tokio::test]
-    async fn it_moves_the_database_in_place_without_a_working_copy() {
-      let root = tempdir().unwrap();
-      let cache = root.path().join("cache");
-      let old = config(&root.path().join("a"), &cache, false);
-      let new = config(&root.path().join("b"), &cache, false);
-      fs::create_dir_all(old.resolved_database_path().parent().unwrap()).unwrap();
-      fs::write(old.resolved_database_path(), b"db").unwrap();
-
-      migrate(&old, &new, StorageMode::Direct, StorageMode::Direct)
-        .await
-        .unwrap();
-
-      assert_eq!(fs::read(new.resolved_database_path()).unwrap(), b"db");
-      assert!(!old.resolved_database_path().exists());
-      assert!(
-        !new.resolved_working_copy_path().exists(),
-        "direct mode keeps no working copy"
-      );
-    }
-  }
-
-  mod abort_safety {
-    use super::*;
-
-    struct Guard {
-      _dir: TempDir,
-    }
-
-    #[tokio::test]
-    async fn a_failed_sync_to_direct_leaves_the_old_layout_intact() {
-      let root = tempdir().unwrap();
-      let _guard = Guard {
-        _dir: root,
-      };
-      let dir = _guard._dir.path();
-      let share = dir.join("share");
-      let cache = dir.join("cache");
-      let old = config(&share, &cache, true);
-      // Point the new local location at a path whose parent cannot be created (a file blocks it),
-      // so checkpoint_into fails and the migration must abort without destroying the old layout.
-      let blocker = dir.join("blocked");
-      fs::write(&blocker, b"i am a file, not a directory").unwrap();
-      let mut new = StorageConfig::default();
-      new.set_db_dir(Some(blocker.join("nested")));
-      new.set_cache_dir(Some(cache.clone()));
-      seed_wal_database(&old.resolved_working_copy_path()).await;
-      write_generation(&generation_marker(&old.resolved_working_copy_path()), 5).unwrap();
-
-      let result = migrate(&old, &new, StorageMode::Sync, StorageMode::Direct).await;
-
-      assert!(result.is_err(), "the migration reports the failure");
-      assert!(
-        old.resolved_working_copy_path().exists(),
-        "the working copy — the freshest data — survives a failed switch"
-      );
-      assert!(
-        generation_marker(&old.resolved_working_copy_path()).exists(),
-        "its marker survives too"
-      );
-    }
-
-    #[tokio::test]
-    async fn a_failed_direct_to_sync_keeps_the_old_direct_database() {
-      let root = tempdir().unwrap();
-      let _guard = Guard {
-        _dir: root,
-      };
-      let dir = _guard._dir.path();
-      let local_db = dir.join("local");
-      let cache = dir.join("cache");
-      let old = config(&local_db, &cache, false);
-      fs::create_dir_all(&local_db).unwrap();
-      fs::write(old.resolved_database_path(), b"live bytes").unwrap();
-      // A file where the share directory must go forces the copy onto the share to fail.
-      let blocker = dir.join("share-blocker");
-      fs::write(&blocker, b"blocking file").unwrap();
-      let mut new = StorageConfig::default();
-      new.set_db_dir(Some(blocker.join("nested")));
-      new.set_cache_dir(Some(cache));
-      new.set_network(true);
-
-      let result = migrate(&old, &new, StorageMode::Direct, StorageMode::Sync).await;
-
-      assert!(result.is_err());
+    #[test]
+    fn it_maps_each_mode_pair_to_a_case() {
       assert_eq!(
-        fs::read(old.resolved_database_path()).unwrap(),
-        b"live bytes",
-        "the original direct database is untouched after a failed switch"
+        transition(StorageMode::Direct, StorageMode::Direct),
+        Transition::DirectToDirect
       );
+      assert_eq!(
+        transition(StorageMode::Direct, StorageMode::Sync),
+        Transition::DirectToSync
+      );
+      assert_eq!(
+        transition(StorageMode::Sync, StorageMode::Direct),
+        Transition::SyncToDirect
+      );
+      assert_eq!(transition(StorageMode::Sync, StorageMode::Sync), Transition::SyncToSync);
     }
   }
 }

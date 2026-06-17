@@ -626,34 +626,65 @@ mod tests {
     }
   }
 
+  mod facility_combobox {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_popover_with_results_and_a_footer() {
+      let results = vec![sample(1, "Jita Keepstar"), sample(2, "Perimeter Tranquility")];
+
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .query("Jita")
+        .results(results)
+        .on_input(Message::Input)
+        .on_pick(|f| Message::Picked(f.id))
+        .highlight(Some(0))
+        .on_clear(Message::Cleared)
+        .popover();
+    }
+
+    #[test]
+    fn it_renders_a_selected_trigger_without_a_region() {
+      let mut facility = sample(1, "Jita Keepstar");
+      facility.region = None;
+
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .selection(Some(facility))
+        .on_toggle(Message::Cleared)
+        .trigger();
+    }
+
+    #[test]
+    fn it_renders_a_trigger_with_a_selection() {
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .selection(Some(sample(1, "Jita Keepstar")))
+        .on_toggle(Message::Cleared)
+        .trigger();
+    }
+
+    #[test]
+    fn it_renders_an_empty_trigger() {
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .placeholder("Ask each install")
+        .on_toggle(Message::Cleared)
+        .trigger();
+    }
+
+    #[test]
+    fn it_renders_the_searching_state() {
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .query("Jita")
+        .on_input(Message::Input)
+        .on_pick(|f| Message::Picked(f.id))
+        .searching(true)
+        .popover();
+    }
+  }
+
   mod facility_search {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn it_bumps_the_generation_and_marks_searching_above_min_chars() {
-      let mut search = FacilitySearch::default();
-
-      let generation = search.set_query("Jita".to_owned());
-
-      assert_eq!(generation, 1);
-      assert_eq!(search.generation(), 1);
-      assert_eq!(search.query(), "Jita");
-      assert!(search.searching());
-    }
-
-    #[test]
-    fn it_clears_results_below_min_chars_without_searching() {
-      let mut search = FacilitySearch::default();
-      let generation = search.set_query("Jita".to_owned());
-      search.accept_results(generation, vec![sample(1, "Jita Keepstar")]);
-
-      search.set_query("Ji".to_owned());
-
-      assert!(search.results().is_empty());
-      assert!(!search.searching());
-    }
 
     #[test]
     fn it_accepts_results_only_for_the_current_generation() {
@@ -671,6 +702,18 @@ mod tests {
     }
 
     #[test]
+    fn it_bumps_the_generation_and_marks_searching_above_min_chars() {
+      let mut search = FacilitySearch::default();
+
+      let generation = search.set_query("Jita".to_owned());
+
+      assert_eq!(generation, 1);
+      assert_eq!(search.generation(), 1);
+      assert_eq!(search.query(), "Jita");
+      assert!(search.searching());
+    }
+
+    #[test]
     fn it_clears_query_results_and_bumps_the_generation() {
       let mut search = FacilitySearch::default();
       let generation = search.set_query("Jita".to_owned());
@@ -682,6 +725,38 @@ mod tests {
       assert!(search.results().is_empty());
       assert!(!search.searching());
       assert_eq!(search.generation(), 2);
+    }
+
+    #[test]
+    fn it_clears_results_below_min_chars_without_searching() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "Jita Keepstar")]);
+
+      search.set_query("Ji".to_owned());
+
+      assert!(search.results().is_empty());
+      assert!(!search.searching());
+    }
+
+    #[test]
+    fn it_clears_the_highlight_when_results_are_empty() {
+      let mut search = FacilitySearch::default();
+
+      search.highlight_next();
+
+      assert_eq!(search.highlight(), None);
+    }
+
+    #[test]
+    fn it_resolves_the_highlighted_result() {
+      let mut search = FacilitySearch::default();
+      let generation = search.set_query("Jita".to_owned());
+      search.accept_results(generation, vec![sample(1, "A"), sample(2, "B")]);
+      search.highlight_next();
+      search.highlight_next();
+
+      assert_eq!(search.highlighted(), Some(&sample(2, "B")));
     }
 
     #[test]
@@ -704,81 +779,6 @@ mod tests {
 
       search.highlight_prev();
       assert_eq!(search.highlight(), Some(0));
-    }
-
-    #[test]
-    fn it_resolves_the_highlighted_result() {
-      let mut search = FacilitySearch::default();
-      let generation = search.set_query("Jita".to_owned());
-      search.accept_results(generation, vec![sample(1, "A"), sample(2, "B")]);
-      search.highlight_next();
-      search.highlight_next();
-
-      assert_eq!(search.highlighted(), Some(&sample(2, "B")));
-    }
-
-    #[test]
-    fn it_clears_the_highlight_when_results_are_empty() {
-      let mut search = FacilitySearch::default();
-
-      search.highlight_next();
-
-      assert_eq!(search.highlight(), None);
-    }
-  }
-
-  mod facility_combobox {
-    use super::*;
-
-    #[test]
-    fn it_renders_an_empty_trigger() {
-      let _el: Element<'_, Message> = FacilityCombobox::new()
-        .placeholder("Ask each install")
-        .on_toggle(Message::Cleared)
-        .trigger();
-    }
-
-    #[test]
-    fn it_renders_a_trigger_with_a_selection() {
-      let _el: Element<'_, Message> = FacilityCombobox::new()
-        .selection(Some(sample(1, "Jita Keepstar")))
-        .on_toggle(Message::Cleared)
-        .trigger();
-    }
-
-    #[test]
-    fn it_renders_a_selected_trigger_without_a_region() {
-      let mut facility = sample(1, "Jita Keepstar");
-      facility.region = None;
-
-      let _el: Element<'_, Message> = FacilityCombobox::new()
-        .selection(Some(facility))
-        .on_toggle(Message::Cleared)
-        .trigger();
-    }
-
-    #[test]
-    fn it_renders_a_popover_with_results_and_a_footer() {
-      let results = vec![sample(1, "Jita Keepstar"), sample(2, "Perimeter Tranquility")];
-
-      let _el: Element<'_, Message> = FacilityCombobox::new()
-        .query("Jita")
-        .results(results)
-        .on_input(Message::Input)
-        .on_pick(|f| Message::Picked(f.id))
-        .highlight(Some(0))
-        .on_clear(Message::Cleared)
-        .popover();
-    }
-
-    #[test]
-    fn it_renders_the_searching_state() {
-      let _el: Element<'_, Message> = FacilityCombobox::new()
-        .query("Jita")
-        .on_input(Message::Input)
-        .on_pick(|f| Message::Picked(f.id))
-        .searching(true)
-        .popover();
     }
   }
 

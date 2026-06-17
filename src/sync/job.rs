@@ -409,6 +409,21 @@ mod tests {
   mod job_kind {
     use super::*;
 
+    mod is_global {
+      use super::*;
+
+      #[test]
+      fn it_marks_only_subjectless_kinds_as_global() {
+        assert!(JobKind::KillmailReconcile.is_global());
+        assert!(JobKind::MarketPrices.is_global());
+        assert!(JobKind::NetWorthSnapshot.is_global());
+
+        assert!(!JobKind::AssetSync.is_global());
+        assert!(!JobKind::CharacterAbyssals.is_global());
+        assert!(!JobKind::CorporationWallet.is_global());
+      }
+    }
+
     mod on_success_triggers {
       use pretty_assertions::assert_eq;
 
@@ -416,14 +431,26 @@ mod tests {
 
       const GATHERS: [JobKind; 3] = [JobKind::AssetSync, JobKind::CharacterWallet, JobKind::CorporationWallet];
 
+      const PROFILES: [JobKind; 2] = [JobKind::CharacterProfile, JobKind::CorporationProfile];
+
       #[test]
-      fn it_chains_wallet_gathers_to_prices_only() {
-        for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
-          assert_eq!(
-            gather.on_success_triggers(),
-            [JobKind::MarketPrices],
-            "{gather:?} should chain prices, then let prices cascade to the snapshot",
-          );
+      fn it_chains_a_per_subject_kind_only_to_a_subject_its_source_shares() {
+        for kind in JobKind::ALL.iter().copied() {
+          if PROFILES.contains(&kind) {
+            continue;
+          }
+          for &triggered in kind.on_success_triggers() {
+            if triggered.is_global() {
+              continue;
+            }
+            let shares_subject = [Subject::Character(1), Subject::Corporation(1)]
+              .into_iter()
+              .any(|subject| kind.applies_to(subject) && triggered.applies_to(subject));
+            assert!(
+              shares_subject,
+              "{kind:?} chains per-subject {triggered:?}, but shares no subject for the engine to route it to"
+            );
+          }
         }
       }
 
@@ -450,28 +477,22 @@ mod tests {
       }
 
       #[test]
+      fn it_chains_wallet_gathers_to_prices_only() {
+        for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
+          assert_eq!(
+            gather.on_success_triggers(),
+            [JobKind::MarketPrices],
+            "{gather:?} should chain prices, then let prices cascade to the snapshot",
+          );
+        }
+      }
+
+      #[test]
       fn it_drops_the_direct_gather_to_snapshot_edge() {
         for gather in GATHERS {
           assert!(
             !gather.on_success_triggers().contains(&JobKind::NetWorthSnapshot),
             "{gather:?} must reach the snapshot through prices, never directly",
-          );
-        }
-      }
-
-      const PROFILES: [JobKind; 2] = [JobKind::CharacterProfile, JobKind::CorporationProfile];
-
-      #[test]
-      fn it_triggers_nothing_for_other_kinds() {
-        for kind in JobKind::ALL.iter().copied() {
-          if matches!(kind, JobKind::MarketPrices) || GATHERS.contains(&kind) || PROFILES.contains(&kind) {
-            continue;
-          }
-
-          assert!(
-            kind.on_success_triggers().is_empty(),
-            "{kind:?} should chain no follow-up jobs, got {:?}",
-            kind.on_success_triggers()
           );
         }
       }
@@ -490,39 +511,68 @@ mod tests {
       }
 
       #[test]
-      fn it_chains_a_per_subject_kind_only_to_a_subject_its_source_shares() {
+      fn it_triggers_nothing_for_other_kinds() {
         for kind in JobKind::ALL.iter().copied() {
-          if PROFILES.contains(&kind) {
+          if matches!(kind, JobKind::MarketPrices) || GATHERS.contains(&kind) || PROFILES.contains(&kind) {
             continue;
           }
-          for &triggered in kind.on_success_triggers() {
-            if triggered.is_global() {
-              continue;
-            }
-            let shares_subject = [Subject::Character(1), Subject::Corporation(1)]
-              .into_iter()
-              .any(|subject| kind.applies_to(subject) && triggered.applies_to(subject));
-            assert!(
-              shares_subject,
-              "{kind:?} chains per-subject {triggered:?}, but shares no subject for the engine to route it to"
-            );
-          }
+
+          assert!(
+            kind.on_success_triggers().is_empty(),
+            "{kind:?} should chain no follow-up jobs, got {:?}",
+            kind.on_success_triggers()
+          );
         }
       }
     }
 
-    mod is_global {
+    mod required_scope {
+      use pretty_assertions::assert_eq;
+
       use super::*;
 
       #[test]
-      fn it_marks_only_subjectless_kinds_as_global() {
-        assert!(JobKind::KillmailReconcile.is_global());
-        assert!(JobKind::MarketPrices.is_global());
-        assert!(JobKind::NetWorthSnapshot.is_global());
+      fn it_pairs_corporation_jobs_with_the_roles_scope() {
+        assert!(
+          JobKind::CorporationWallet
+            .required_scope()
+            .contains(&scopes::CORPORATION_ROLES)
+        );
+        assert!(
+          JobKind::CorporationBlueprints
+            .required_scope()
+            .contains(&scopes::CORPORATION_ROLES)
+        );
+        assert!(
+          JobKind::CharacterWallet
+            .required_scope()
+            .contains(&scopes::CHARACTER_WALLET)
+        );
+      }
 
-        assert!(!JobKind::AssetSync.is_global());
-        assert!(!JobKind::CharacterAbyssals.is_global());
-        assert!(!JobKind::CorporationWallet.is_global());
+      #[test]
+      fn it_resolves_a_static_scope_list_for_every_job_kind() {
+        for kind in JobKind::ALL.iter().copied() {
+          let scopes = kind.required_scope();
+          // Public kinds run without any granted scope; everything else lists at least one.
+          let is_public = matches!(
+            kind,
+            JobKind::CharacterAbyssals
+              | JobKind::CharacterProfile
+              | JobKind::IndustryCostIndices
+              | JobKind::KillmailDetailBackfill
+              | JobKind::KillmailReconcile
+              | JobKind::MarketPrices
+              | JobKind::NetWorthSnapshot
+              | JobKind::TokenAudit
+          );
+
+          assert_eq!(
+            scopes.is_empty(),
+            is_public,
+            "{kind:?} scope-emptiness must match its public status"
+          );
+        }
       }
     }
 
@@ -572,56 +622,6 @@ mod tests {
         assert!(JobKind::AssetSync.is_scope_granted(Subject::Character(7), &character_grant));
         assert!(!JobKind::AssetSync.is_scope_granted(Subject::Character(7), &corp_grant));
         assert!(JobKind::AssetSync.is_scope_granted(Subject::Corporation(2), &corp_grant));
-      }
-    }
-
-    mod required_scope {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[test]
-      fn it_resolves_a_static_scope_list_for_every_job_kind() {
-        for kind in JobKind::ALL.iter().copied() {
-          let scopes = kind.required_scope();
-          // Public kinds run without any granted scope; everything else lists at least one.
-          let is_public = matches!(
-            kind,
-            JobKind::CharacterAbyssals
-              | JobKind::CharacterProfile
-              | JobKind::IndustryCostIndices
-              | JobKind::KillmailDetailBackfill
-              | JobKind::KillmailReconcile
-              | JobKind::MarketPrices
-              | JobKind::NetWorthSnapshot
-              | JobKind::TokenAudit
-          );
-
-          assert_eq!(
-            scopes.is_empty(),
-            is_public,
-            "{kind:?} scope-emptiness must match its public status"
-          );
-        }
-      }
-
-      #[test]
-      fn it_pairs_corporation_jobs_with_the_roles_scope() {
-        assert!(
-          JobKind::CorporationWallet
-            .required_scope()
-            .contains(&scopes::CORPORATION_ROLES)
-        );
-        assert!(
-          JobKind::CorporationBlueprints
-            .required_scope()
-            .contains(&scopes::CORPORATION_ROLES)
-        );
-        assert!(
-          JobKind::CharacterWallet
-            .required_scope()
-            .contains(&scopes::CHARACTER_WALLET)
-        );
       }
     }
   }

@@ -1165,168 +1165,6 @@ mod tests {
     }
   }
 
-  mod state {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_fractured_once_the_decay_time_has_passed() {
-      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-13T10:00:00Z"));
-
-      assert_eq!(extraction.state(now()), ExtractionState::Fractured);
-    }
-
-    #[test]
-    fn it_is_ready_when_the_chunk_has_arrived_but_decay_is_future() {
-      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-14T00:00:00Z"));
-
-      assert_eq!(extraction.state(now()), ExtractionState::Ready);
-    }
-
-    #[test]
-    fn it_is_imminent_when_arrival_is_under_a_day_out() {
-      let extraction = extraction(Some("2026-06-13T18:00:00Z"), Some("2026-06-15T00:00:00Z"));
-
-      assert_eq!(extraction.state(now()), ExtractionState::Imminent);
-    }
-
-    #[test]
-    fn it_is_extracting_when_arrival_is_more_than_a_day_out() {
-      let extraction = extraction(Some("2026-06-20T00:00:00Z"), Some("2026-06-22T00:00:00Z"));
-
-      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
-    }
-
-    #[test]
-    fn it_is_extracting_when_no_timestamps_are_known() {
-      let extraction = extraction(None, None);
-
-      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
-    }
-  }
-
-  mod structure_label {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_prefers_the_resolved_name() {
-      let location = ResolvedLocation {
-        name: Some("Athanor Alpha".to_owned()),
-        security: None,
-        system_name: Some("Tama".to_owned()),
-      };
-
-      assert_eq!(super::super::structure_label(&location, 1_000), "Athanor Alpha");
-    }
-
-    #[test]
-    fn it_falls_back_to_the_system_name() {
-      let location = ResolvedLocation {
-        name: None,
-        security: None,
-        system_name: Some("Tama".to_owned()),
-      };
-
-      assert_eq!(super::super::structure_label(&location, 1_000), "Tama");
-    }
-
-    #[test]
-    fn it_falls_back_to_a_synthetic_structure_label() {
-      let location = ResolvedLocation::default();
-
-      assert_eq!(super::super::structure_label(&location, 1_000), "Structure 1000");
-    }
-  }
-
-  mod progress {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_fifty_percent_at_the_midpoint() {
-      let job = job("2026-06-13T11:00:00Z", "2026-06-13T13:00:00Z");
-
-      assert_eq!(job.progress(now()), 50.0);
-    }
-
-    #[test]
-    fn it_clamps_to_one_hundred_when_past_the_end() {
-      let job = job("2026-06-13T10:00:00Z", "2026-06-13T11:00:00Z");
-
-      assert_eq!(job.progress(now()), 100.0);
-    }
-  }
-
-  mod is_ready {
-    use super::*;
-
-    #[test]
-    fn it_is_ready_once_the_end_is_reached() {
-      let ready = job("2026-06-13T10:00:00Z", "2026-06-13T11:00:00Z");
-      let running = job("2026-06-13T11:00:00Z", "2026-06-13T13:00:00Z");
-
-      assert!(ready.is_ready(now()));
-      assert!(!running.is_ready(now()));
-    }
-  }
-
-  mod activity {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_maps_ids_to_activities() {
-      assert_eq!(Activity::from_id(1), Activity::Manufacturing);
-      assert_eq!(Activity::from_id(5), Activity::Copy);
-      assert_eq!(Activity::from_id(8), Activity::Invention);
-      assert_eq!(Activity::from_id(9), Activity::Reactions);
-      assert_eq!(Activity::from_id(99), Activity::Other);
-    }
-
-    #[test]
-    fn it_buckets_activities_for_slot_usage() {
-      assert_eq!(Activity::Manufacturing.bucket(), SlotBucket::Manufacturing);
-      assert_eq!(Activity::Reactions.bucket(), SlotBucket::Reactions);
-      assert_eq!(Activity::Invention.bucket(), SlotBucket::Science);
-    }
-  }
-
-  mod job_value {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_multiplies_average_price_by_runs() {
-      let prices = HashMap::from([(587, 100.0)]);
-
-      assert_eq!(
-        super::job_value(Activity::Manufacturing, Some(587), 10, &prices),
-        Some(1_000.0)
-      );
-    }
-
-    #[test]
-    fn it_is_none_for_invention_and_copy() {
-      let prices = HashMap::from([(587, 100.0)]);
-
-      assert_eq!(super::job_value(Activity::Invention, Some(587), 10, &prices), None);
-      assert_eq!(super::job_value(Activity::Copy, Some(587), 10, &prices), None);
-    }
-
-    #[test]
-    fn it_is_none_when_the_product_has_no_price() {
-      let prices = HashMap::new();
-
-      assert_eq!(super::job_value(Activity::Manufacturing, Some(587), 10, &prices), None);
-    }
-  }
-
   fn roster_owner(id: i64, is_corporation: bool, name: &str) -> RosterOwner {
     RosterOwner {
       corp: "CORP".to_owned(),
@@ -1338,6 +1176,28 @@ mod tests {
       name: name.to_owned(),
       portrait: None,
       slots: SlotCaps::default(),
+    }
+  }
+
+  mod activity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_buckets_activities_for_slot_usage() {
+      assert_eq!(Activity::Manufacturing.bucket(), SlotBucket::Manufacturing);
+      assert_eq!(Activity::Reactions.bucket(), SlotBucket::Reactions);
+      assert_eq!(Activity::Invention.bucket(), SlotBucket::Science);
+    }
+
+    #[test]
+    fn it_maps_ids_to_activities() {
+      assert_eq!(Activity::from_id(1), Activity::Manufacturing);
+      assert_eq!(Activity::from_id(5), Activity::Copy);
+      assert_eq!(Activity::from_id(8), Activity::Invention);
+      assert_eq!(Activity::from_id(9), Activity::Reactions);
+      assert_eq!(Activity::from_id(99), Activity::Other);
     }
   }
 
@@ -1377,6 +1237,52 @@ mod tests {
           science: 4,
         }
       );
+    }
+  }
+
+  mod blueprint_reference {
+    #[tokio::test]
+    async fn it_returns_no_product_for_an_unseeded_blueprint() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let reference = super::blueprint_reference(&db, 681).await;
+
+      assert!(reference.product_type_id.is_none());
+      assert!(!reference.reaction);
+    }
+  }
+
+  mod build_blueprint {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_falls_back_to_placeholder_labels_when_nothing_resolves() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut resolvers = BlueprintResolvers::new();
+      let input = BlueprintInput {
+        item_id: 100,
+        location_id: 60_003_760,
+        material_efficiency: 10,
+        owner: Owner::Character(7),
+        runs: 5,
+        time_efficiency: 20,
+        type_id: 587,
+      };
+
+      let blueprint = super::build_blueprint(&db, &mut resolvers, input).await;
+
+      assert_eq!(blueprint.name, "Type 587");
+      assert_eq!(blueprint.location, "Location 60003760");
+      assert!(blueprint.product_name.is_none());
+      assert!(blueprint.group_name.is_empty());
+      assert!(!blueprint.reaction);
+      assert_eq!(blueprint.item_id, 100);
+      assert_eq!(blueprint.material_efficiency, 10);
+      assert_eq!(blueprint.time_efficiency, 20);
+      assert_eq!(blueprint.runs, 5);
+      assert_eq!(blueprint.owner, Owner::Character(7));
     }
   }
 
@@ -1439,25 +1345,47 @@ mod tests {
     }
   }
 
-  mod owner_name {
+  mod is_ready {
+    use super::*;
+
+    #[test]
+    fn it_is_ready_once_the_end_is_reached() {
+      let ready = job("2026-06-13T10:00:00Z", "2026-06-13T11:00:00Z");
+      let running = job("2026-06-13T11:00:00Z", "2026-06-13T13:00:00Z");
+
+      assert!(ready.is_ready(now()));
+      assert!(!running.is_ready(now()));
+    }
+  }
+
+  mod job_value {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_resolves_the_matching_roster_entry() {
-      let roster = vec![roster_owner(1, false, "Pilot One"), roster_owner(1, true, "Corp One")];
+    fn it_is_none_for_invention_and_copy() {
+      let prices = HashMap::from([(587, 100.0)]);
 
-      assert_eq!(super::owner_name(&roster, Owner::Character(1)), "Pilot One");
-      assert_eq!(super::owner_name(&roster, Owner::Corporation(1)), "Corp One");
+      assert_eq!(super::job_value(Activity::Invention, Some(587), 10, &prices), None);
+      assert_eq!(super::job_value(Activity::Copy, Some(587), 10, &prices), None);
     }
 
     #[test]
-    fn it_falls_back_to_placeholder_labels_when_absent() {
-      let roster: Vec<RosterOwner> = Vec::new();
+    fn it_is_none_when_the_product_has_no_price() {
+      let prices = HashMap::new();
 
-      assert_eq!(super::owner_name(&roster, Owner::Character(42)), "Pilot 42");
-      assert_eq!(super::owner_name(&roster, Owner::Corporation(7)), "Corp 7");
+      assert_eq!(super::job_value(Activity::Manufacturing, Some(587), 10, &prices), None);
+    }
+
+    #[test]
+    fn it_multiplies_average_price_by_runs() {
+      let prices = HashMap::from([(587, 100.0)]);
+
+      assert_eq!(
+        super::job_value(Activity::Manufacturing, Some(587), 10, &prices),
+        Some(1_000.0)
+      );
     }
   }
 
@@ -1476,50 +1404,121 @@ mod tests {
     }
   }
 
-  mod blueprint_reference {
-
-    #[tokio::test]
-    async fn it_returns_no_product_for_an_unseeded_blueprint() {
-      let db = crate::store::open_test().await.unwrap();
-
-      let reference = super::blueprint_reference(&db, 681).await;
-
-      assert!(reference.product_type_id.is_none());
-      assert!(!reference.reaction);
-    }
-  }
-
-  mod build_blueprint {
+  mod owner_name {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
-    #[tokio::test]
-    async fn it_falls_back_to_placeholder_labels_when_nothing_resolves() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut resolvers = BlueprintResolvers::new();
-      let input = BlueprintInput {
-        item_id: 100,
-        location_id: 60_003_760,
-        material_efficiency: 10,
-        owner: Owner::Character(7),
-        runs: 5,
-        time_efficiency: 20,
-        type_id: 587,
+    #[test]
+    fn it_falls_back_to_placeholder_labels_when_absent() {
+      let roster: Vec<RosterOwner> = Vec::new();
+
+      assert_eq!(super::owner_name(&roster, Owner::Character(42)), "Pilot 42");
+      assert_eq!(super::owner_name(&roster, Owner::Corporation(7)), "Corp 7");
+    }
+
+    #[test]
+    fn it_resolves_the_matching_roster_entry() {
+      let roster = vec![roster_owner(1, false, "Pilot One"), roster_owner(1, true, "Corp One")];
+
+      assert_eq!(super::owner_name(&roster, Owner::Character(1)), "Pilot One");
+      assert_eq!(super::owner_name(&roster, Owner::Corporation(1)), "Corp One");
+    }
+  }
+
+  mod progress {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_to_one_hundred_when_past_the_end() {
+      let job = job("2026-06-13T10:00:00Z", "2026-06-13T11:00:00Z");
+
+      assert_eq!(job.progress(now()), 100.0);
+    }
+
+    #[test]
+    fn it_is_fifty_percent_at_the_midpoint() {
+      let job = job("2026-06-13T11:00:00Z", "2026-06-13T13:00:00Z");
+
+      assert_eq!(job.progress(now()), 50.0);
+    }
+  }
+
+  mod state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_extracting_when_arrival_is_more_than_a_day_out() {
+      let extraction = extraction(Some("2026-06-20T00:00:00Z"), Some("2026-06-22T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
+    }
+
+    #[test]
+    fn it_is_extracting_when_no_timestamps_are_known() {
+      let extraction = extraction(None, None);
+
+      assert_eq!(extraction.state(now()), ExtractionState::Extracting);
+    }
+
+    #[test]
+    fn it_is_fractured_once_the_decay_time_has_passed() {
+      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-13T10:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Fractured);
+    }
+
+    #[test]
+    fn it_is_imminent_when_arrival_is_under_a_day_out() {
+      let extraction = extraction(Some("2026-06-13T18:00:00Z"), Some("2026-06-15T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Imminent);
+    }
+
+    #[test]
+    fn it_is_ready_when_the_chunk_has_arrived_but_decay_is_future() {
+      let extraction = extraction(Some("2026-06-13T06:00:00Z"), Some("2026-06-14T00:00:00Z"));
+
+      assert_eq!(extraction.state(now()), ExtractionState::Ready);
+    }
+  }
+
+  mod structure_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_a_synthetic_structure_label() {
+      let location = ResolvedLocation::default();
+
+      assert_eq!(super::super::structure_label(&location, 1_000), "Structure 1000");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_system_name() {
+      let location = ResolvedLocation {
+        name: None,
+        security: None,
+        system_name: Some("Tama".to_owned()),
       };
 
-      let blueprint = super::build_blueprint(&db, &mut resolvers, input).await;
+      assert_eq!(super::super::structure_label(&location, 1_000), "Tama");
+    }
 
-      assert_eq!(blueprint.name, "Type 587");
-      assert_eq!(blueprint.location, "Location 60003760");
-      assert!(blueprint.product_name.is_none());
-      assert!(blueprint.group_name.is_empty());
-      assert!(!blueprint.reaction);
-      assert_eq!(blueprint.item_id, 100);
-      assert_eq!(blueprint.material_efficiency, 10);
-      assert_eq!(blueprint.time_efficiency, 20);
-      assert_eq!(blueprint.runs, 5);
-      assert_eq!(blueprint.owner, Owner::Character(7));
+    #[test]
+    fn it_prefers_the_resolved_name() {
+      let location = ResolvedLocation {
+        name: Some("Athanor Alpha".to_owned()),
+        security: None,
+        system_name: Some("Tama".to_owned()),
+      };
+
+      assert_eq!(super::super::structure_label(&location, 1_000), "Athanor Alpha");
     }
   }
 }

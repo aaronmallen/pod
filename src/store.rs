@@ -159,26 +159,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn it_creates_the_database_file_on_a_fresh_path() {
-      let dir = tempdir().unwrap();
-      let path = dir.path().join("test.db");
-
-      assert!(!path.exists());
-      open(&path).await.unwrap();
-
-      assert!(path.exists());
-    }
-
-    #[tokio::test]
-    async fn it_runs_zero_migrations_on_an_existing_schema() {
-      let dir = tempdir().unwrap();
-      let path = dir.path().join("test.db");
-
-      open(&path).await.unwrap();
-      open(&path).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn it_always_opens_in_wal_mode() {
       let dir = tempdir().unwrap();
       let path = dir.path().join("test.db");
@@ -210,6 +190,54 @@ mod tests {
       );
       assert_eq!(synchronous, 1, "NORMAL synchronous (1) trims fsync round-trips");
       assert_eq!(temp_store, 2, "MEMORY temp store (2) keeps temp b-trees off the drive");
+    }
+
+    #[tokio::test]
+    async fn it_creates_the_database_file_on_a_fresh_path() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+
+      assert!(!path.exists());
+      open(&path).await.unwrap();
+
+      assert!(path.exists());
+    }
+
+    #[tokio::test]
+    async fn it_runs_zero_migrations_on_an_existing_schema() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+
+      open(&path).await.unwrap();
+      open(&path).await.unwrap();
+    }
+  }
+
+  mod open_housekeeping_pool {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_serves_a_connection_while_every_sync_worker_connection_is_held() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+      open(&path).await.unwrap();
+      let sync = open_sync_pool(&path).await.unwrap();
+      let housekeeping = open_housekeeping_pool(&path).await.unwrap();
+
+      // Saturate the worker pool: hold every one of its connections, mirroring MAX_CONCURRENT_JOBS
+      // workers each mid-write. The housekeeping pool is a separate set of connections, so it must
+      // still hand one out immediately rather than queue behind the busy worker pool.
+      let mut held = Vec::new();
+      for _ in 0..SYNC_MAX_CONNECTIONS {
+        held.push(sync.0.acquire().await.unwrap());
+      }
+
+      let connection = tokio::time::timeout(Duration::from_secs(1), housekeeping.0.acquire()).await;
+
+      assert!(
+        connection.is_ok(),
+        "housekeeping must get a connection even when all {SYNC_MAX_CONNECTIONS} worker connections are held"
+      );
     }
   }
 
@@ -262,34 +290,6 @@ mod tests {
       assert!(
         migrations > 0,
         "the sync pool sees the migrations open() applied, and reruns none"
-      );
-    }
-  }
-
-  mod open_housekeeping_pool {
-    use super::*;
-
-    #[tokio::test]
-    async fn it_serves_a_connection_while_every_sync_worker_connection_is_held() {
-      let dir = tempdir().unwrap();
-      let path = dir.path().join("test.db");
-      open(&path).await.unwrap();
-      let sync = open_sync_pool(&path).await.unwrap();
-      let housekeeping = open_housekeeping_pool(&path).await.unwrap();
-
-      // Saturate the worker pool: hold every one of its connections, mirroring MAX_CONCURRENT_JOBS
-      // workers each mid-write. The housekeeping pool is a separate set of connections, so it must
-      // still hand one out immediately rather than queue behind the busy worker pool.
-      let mut held = Vec::new();
-      for _ in 0..SYNC_MAX_CONNECTIONS {
-        held.push(sync.0.acquire().await.unwrap());
-      }
-
-      let connection = tokio::time::timeout(Duration::from_secs(1), housekeeping.0.acquire()).await;
-
-      assert!(
-        connection.is_ok(),
-        "housekeeping must get a connection even when all {SYNC_MAX_CONNECTIONS} worker connections are held"
       );
     }
   }

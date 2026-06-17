@@ -196,6 +196,35 @@ where
 mod tests {
   use super::*;
 
+  mod avatar_struct {
+    use super::*;
+    use crate::ui::style::color;
+
+    const HEIGHT: f32 = 48.0;
+
+    const PILOT_ID: i64 = 12_345_678;
+
+    #[test]
+    fn it_renders_a_plain_framed_avatar() {
+      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None).view();
+    }
+
+    #[test]
+    fn it_renders_with_a_border_and_radius() {
+      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
+        .border(color::accent::PLASMA, 1.0)
+        .radius(8.0)
+        .view();
+    }
+
+    #[test]
+    fn it_renders_with_a_status_dot() {
+      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
+        .status_dot(color::status::ONLINE)
+        .view();
+    }
+  }
+
   mod hsl {
     use pretty_assertions::assert_eq;
 
@@ -232,6 +261,7 @@ mod tests {
     use super::*;
 
     const HEIGHT: f32 = 140.0;
+
     const PILOT_ID: i64 = 12_345_678;
 
     #[test]
@@ -240,34 +270,6 @@ mod tests {
 
       let _with_portrait: Element<'_, ()> = avatar(PILOT_ID, "Test Pilot", Length::Fill, HEIGHT, portrait);
       let _no_portrait: Element<'_, ()> = avatar(PILOT_ID, "Test Pilot", Length::Fill, HEIGHT, None);
-    }
-  }
-
-  mod avatar_struct {
-    use super::*;
-    use crate::ui::style::color;
-
-    const HEIGHT: f32 = 48.0;
-    const PILOT_ID: i64 = 12_345_678;
-
-    #[test]
-    fn it_renders_a_plain_framed_avatar() {
-      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None).view();
-    }
-
-    #[test]
-    fn it_renders_with_a_border_and_radius() {
-      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
-        .border(color::accent::PLASMA, 1.0)
-        .radius(8.0)
-        .view();
-    }
-
-    #[test]
-    fn it_renders_with_a_status_dot() {
-      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
-        .status_dot(color::status::ONLINE)
-        .view();
     }
   }
 }

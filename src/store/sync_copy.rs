@@ -144,7 +144,15 @@ pub fn publish_database(source: &Path, destination: &Path, back_up: bool) -> io:
   if back_up && is_non_empty(destination) {
     self::back_up(destination)?;
   }
-  copy_file(source, destination)
+  copy_file(source, destination)?;
+  // Any -wal/-shm beside the destination still describes the pre-overwrite database; SQLite would
+  // replay them onto the new file on the next open and corrupt it. Sources are already
+  // checkpointed into a self-contained .db, so the destination needs no sidecars.
+  for suffix in WAL_SIDECARS {
+    let _ = fs::remove_file(with_suffix(destination, suffix));
+  }
+
+  Ok(())
 }
 
 fn back_up(database: &Path) -> io::Result<()> {

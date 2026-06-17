@@ -289,6 +289,7 @@ enum Message {
   SyncNowResolved(SyncNowOutcome),
   SyncPulse,
   TakeOver,
+  TakeOverReopened(Box<StoreReady>),
   TakeOverResolved(TakeOverOutcome),
   ToggleSyncPopover,
   UpdaterAction(updater_banner::Action),
@@ -380,6 +381,7 @@ impl Message {
       Message::SyncNowResolved(_) => "SyncNowResolved",
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
+      Message::TakeOverReopened(_) => "TakeOverReopened",
       Message::TakeOverResolved(_) => "TakeOverResolved",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
       _ => return None,
@@ -871,6 +873,42 @@ async fn open_store_inner() -> Result<StoreReady, String> {
     sync_db: pools.sync,
     sync_housekeeping_db: pools.housekeeping,
     sync_session: prepared.sync_session,
+  })
+}
+
+/// Reopens fresh pools against the working-copy file after a take-over pulled the newer canonical
+/// copy over it, then forwards the rebuilt [`StoreReady`] as [`Message::TakeOverReopened`]. Spawned
+/// off the iced runtime because reopening the pools is async I/O.
+fn reopen_after_take_over(ready: StoreReady) -> Task<Message> {
+  Task::future(async move {
+    match reopen_after_take_over_inner(ready).await {
+      Ok(ready) => Message::TakeOverReopened(Box::new(ready)),
+      Err(error) => {
+        tracing::error!(target: "pod::lifecycle", %error, "reopening the database after take-over failed");
+        Message::InitFailed(error)
+      }
+    }
+  })
+}
+
+/// Builds a `StoreReady` whose pools are opened against the freshly pulled working copy, so no
+/// connection from the boot-time pools straddles the `publish_database` file swap that take-over
+/// performed. Single-instance builds carry no `sync_session` (no file swap occurs) and reuse the
+/// parked pools unchanged.
+async fn reopen_after_take_over_inner(ready: StoreReady) -> Result<StoreReady, String> {
+  let Some(session) = ready.sync_session.as_ref() else {
+    return Ok(ready);
+  };
+  let pools = store::open_pools(session.working_copy()).await.map_err(store_err)?;
+  let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
+  Ok(StoreReady {
+    db: pools.interactive,
+    http,
+    lease: ready.lease,
+    settings: ready.settings,
+    sync_db: pools.sync,
+    sync_housekeeping_db: pools.housekeeping,
+    sync_session: ready.sync_session,
   })
 }
 
@@ -2686,6 +2724,7 @@ fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::CancelTakeOver => handle_cancel_take_over(app),
     Message::ConfirmTakeOver => handle_confirm_take_over(app),
     Message::TakeOver => handle_take_over(app),
+    Message::TakeOverReopened(ready) => handle_take_over_reopened(app, *ready),
     Message::TakeOverResolved(outcome) => handle_take_over_resolved(app, outcome),
     other => dispatch_window_lifecycle(app, other),
   }
@@ -3406,9 +3445,21 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-/// Applies a resolved take-over. A claim rebuilds the runtime from the parked `store_ready`: the
-/// database must reopen so the connection picks up the freshly pulled working copy (swapping the
-/// file under a live connection would corrupt it) and the real sync engine replaces the inert one.
+/// Installs the pools reopened against the freshly pulled file and rebuilds the runtime: the parked
+/// boot-time pools (held in `store_ready`/`runtime`) are dropped as this replaces them, so no live
+/// connection survives the `publish_database` swap. The real sync engine replaces the inert one and
+/// the lease is nulled so [`build_runtime_inner`] starts read-write.
+fn handle_take_over_reopened(app: &mut App, mut ready: StoreReady) -> Task<Message> {
+  ready.lease = None;
+  app.store_ready = Some(ready.clone());
+  build_runtime(ready)
+}
+
+/// Applies a resolved take-over. A successful claim has already pulled the newer canonical copy over
+/// the working-copy file (`take_over`/`force_take_over` -> `pull_if_newer` -> `publish_database`),
+/// so the boot-time pools — still connected to that file — now straddle the swap and would corrupt
+/// the database if reused. The claim therefore hands off to [`reopen_after_take_over`], which reopens
+/// fresh pools against the pulled file before the runtime is rebuilt in [`handle_take_over_reopened`].
 fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Message> {
   app.confirm_force_takeover = false;
   match outcome {
@@ -3418,13 +3469,11 @@ fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome) -> Task<Me
         .sync_session
         .as_ref()
         .and_then(store::sync_session::SyncSession::last_write);
-      let Some(mut ready) = app.store_ready.clone() else {
+      let Some(ready) = app.store_ready.clone() else {
         return Task::none();
       };
-      ready.lease = None;
-      app.store_ready = Some(ready.clone());
       app.engine_state = EngineState::Running;
-      build_runtime(ready)
+      reopen_after_take_over(ready)
     }
     TakeOverOutcome::Failed => Task::none(),
   }
@@ -4442,6 +4491,95 @@ mod tests {
         !Arc::ptr_eq(&sync_esi.http(), &ui_esi.http()),
         "the sync engine no longer shares the interactive-pool-backed HTTP client"
       );
+    }
+  }
+
+  mod reopen_after_take_over_inner {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::store::{
+      model::HttpCacheEntry,
+      repo::infra,
+      share_meta::{read_generation, write_generation},
+    };
+
+    async fn ready_for(session: &store::sync_session::SyncSession) -> StoreReady {
+      let pools = store::open_pools(session.working_copy()).await.unwrap();
+      let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
+      StoreReady {
+        db: pools.interactive,
+        http,
+        lease: None,
+        settings: config::Settings::default(),
+        sync_db: pools.sync,
+        sync_housekeeping_db: pools.housekeeping,
+        sync_session: Some(session.clone()),
+      }
+    }
+
+    async fn seed(path: &std::path::Path, url: &str) {
+      let pools = store::open_pools(path).await.unwrap();
+      infra::http_cache_upsert(&pools.interactive, &HttpCacheEntry::new(b"x".to_vec(), 0, url))
+        .await
+        .unwrap();
+      // Fold the WAL into the main .db so the published copy is self-contained.
+      sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&pools.interactive.0)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_reads_the_pulled_contents_after_a_newer_canonical_is_taken_over() {
+      let (dir, session) = temp_sync_session();
+      let canonical = dir.path().join("share").join("pod.db");
+      let sidecar = canonical.with_extension("db.generation");
+      let marker = session.working_copy().with_extension("db.generation");
+      std::fs::create_dir_all(session.working_copy().parent().unwrap()).unwrap();
+      seed(session.working_copy(), "https://esi.example/stale").await;
+      seed(&canonical, "https://esi.example/pulled").await;
+      write_generation(&sidecar, 9).unwrap();
+      write_generation(&marker, 4).unwrap();
+      let ready = ready_for(&session).await;
+
+      assert_eq!(session.take_over(Utc::now()).unwrap(), store::lease::Outcome::Acquired);
+      let reopened = reopen_after_take_over_inner(ready).await.unwrap();
+
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/pulled")
+          .await
+          .unwrap()
+          .is_some(),
+        "the reopened pool reads the freshly pulled canonical contents"
+      );
+      assert!(
+        infra::http_cache_get(&reopened.db, "https://esi.example/stale")
+          .await
+          .unwrap()
+          .is_none(),
+        "the reopened pool no longer sees the pre-swap working-copy contents"
+      );
+      assert_eq!(read_generation(&marker), 9);
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_parked_store_unchanged_without_a_sync_session() {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let ready = StoreReady {
+        db: db.clone(),
+        http,
+        lease: None,
+        settings: config::Settings::default(),
+        sync_db: db.clone(),
+        sync_housekeeping_db: db.clone(),
+        sync_session: None,
+      };
+
+      let reopened = reopen_after_take_over_inner(ready).await.unwrap();
+
+      assert!(reopened.sync_session.is_none());
     }
   }
 

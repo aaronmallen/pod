@@ -125,6 +125,10 @@ impl SyncSession {
 
     Ok(outcome)
   }
+
+  pub fn working_copy(&self) -> &Path {
+    &self.working_copy
+  }
 }
 
 fn host_label(os_hostname: &str, machine_id: &str) -> String {

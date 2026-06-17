@@ -4,9 +4,14 @@ use iced::{
   widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
-use crate::ui::{
-  components::status::{dot, format_since},
-  style::{color, radius, shadow, spacing, typography},
+use crate::{
+  config::Feature,
+  features::character_manager::OwnedPilot,
+  sync::{self, JobKey, JobKind, Phase, Subject},
+  ui::{
+    components::status::{dot, format_since},
+    style::{color, radius, shadow, spacing, typography},
+  },
 };
 
 const CARD_WIDTH: f32 = 460.0;
@@ -17,6 +22,18 @@ const COUNTDOWN_WIDTH: f32 = 72.0;
 const GLYPH_WIDTH: f32 = 36.0;
 const INSET_X: f32 = 16.0;
 const LIST_MAX_HEIGHT: f32 = 360.0;
+/// The per-pilot sync jobs the popover surfaces, paired with their display labels. A featureless job
+/// (e.g. Profile) always runs and is always shown; a feature-gated job is only shown when its feature
+/// is enabled.
+const POPOVER_JOBS: [(JobKind, &str); 7] = [
+  (JobKind::AssetSync, "Assets"),
+  (JobKind::CharacterClones, "Clones"),
+  (JobKind::CharacterContacts, "Contacts"),
+  (JobKind::CharacterProfile, "Profile"),
+  (JobKind::CharacterSkills, "Skills"),
+  (JobKind::CharacterTelemetry, "Telemetry"),
+  (JobKind::CharacterWallet, "Wallet"),
+];
 const PROGRESS_WIDTH: f32 = 96.0;
 const PULSE_OFF: f32 = 0.4;
 const QUEUED_OPACITY: f32 = 0.5;
@@ -41,6 +58,22 @@ pub struct JobRow {
   pub state: RowState,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct JobStats {
+  pub active: usize,
+  pub attention: usize,
+  pub done: usize,
+  pub errors: usize,
+  pub total: usize,
+}
+
+impl JobStats {
+  pub fn in_progress(&self) -> bool {
+    let settled = self.done + self.errors + self.attention;
+    self.active > 0 || (self.errors == 0 && self.total > 0 && settled < self.total)
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct Model {
   pub done: usize,
@@ -59,6 +92,96 @@ pub enum RowState {
   Error,
   Queued,
   Syncing,
+}
+
+pub fn build_model(
+  pilots: &[OwnedPilot],
+  status: &sync::SyncStatus,
+  enabled: &[Feature],
+  last_synced_secs: Option<u64>,
+  pulse_on: bool,
+) -> Model {
+  let mut rows = Vec::with_capacity(pilots.len() * POPOVER_JOBS.len());
+  for_each_job(pilots, enabled, |pilot, label, key| {
+    let (state, error) = row_state(status, &key);
+    rows.push(JobRow {
+      character_color: pilot.color,
+      character_name: pilot.name.clone(),
+      error,
+      label: label.to_owned(),
+      next_in_secs: status.next_in_secs(&key),
+      state,
+    });
+  });
+
+  let total = rows.len();
+  let done = rows.iter().filter(|row| row.state == RowState::Done).count();
+  let errors = rows.iter().filter(|row| row.state == RowState::Error).count();
+  let active = rows.iter().filter(|row| row.state == RowState::Syncing).count();
+  let queued = rows.iter().filter(|row| row.state == RowState::Queued).count();
+
+  let header = if active > 0 {
+    let percent = (done * 100).checked_div(total).unwrap_or(100) as u8;
+    Header::Syncing {
+      active,
+      percent,
+      queued,
+    }
+  } else {
+    Header::Idle {
+      last_synced_secs,
+    }
+  };
+
+  Model {
+    done,
+    errors,
+    header,
+    pulse_on,
+    rows,
+    total,
+  }
+}
+
+pub fn job_stats(pilots: &[OwnedPilot], status: &sync::SyncStatus, enabled: &[Feature]) -> JobStats {
+  let mut stats = JobStats::default();
+  for_each_job(pilots, enabled, |_pilot, _label, key| {
+    let (state, _) = row_state(status, &key);
+    stats.total += 1;
+    match state {
+      RowState::Attention => stats.attention += 1,
+      RowState::Done | RowState::Empty => stats.done += 1,
+      RowState::Error => stats.errors += 1,
+      RowState::Syncing => stats.active += 1,
+      RowState::Queued => {}
+    }
+  });
+  stats
+}
+
+pub fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<String>) {
+  match status.phase(key) {
+    None => (RowState::Queued, None),
+    Some(Phase::Done) => (RowState::Done, None),
+    Some(Phase::Syncing) => (RowState::Syncing, None),
+    Some(Phase::Failed) => (RowState::Error, status.reason(key).map(str::to_owned)),
+    Some(Phase::BackingOff) => {
+      let detail = status
+        .retry_secs(key)
+        .map(|secs| format!("Backing off {secs}s"))
+        .or_else(|| status.reason(key).map(str::to_owned));
+      (RowState::Error, detail)
+    }
+    Some(Phase::Blocked) => (
+      RowState::Attention,
+      status
+        .reason(key)
+        .map(str::to_owned)
+        .or_else(|| Some("Blocked".to_owned())),
+    ),
+    Some(Phase::Empty) => (RowState::Empty, Some("No data".to_owned())),
+    Some(Phase::NotReady) => (RowState::Attention, Some("Waiting on dependencies".to_owned())),
+  }
 }
 
 pub fn sync_popover<'a, M>(model: &Model, on_close: M) -> Element<'a, M>
@@ -177,6 +300,20 @@ where
       ..container::Style::default()
     })
     .into()
+}
+
+fn for_each_job(pilots: &[OwnedPilot], enabled: &[Feature], mut visit: impl FnMut(&OwnedPilot, &str, JobKey)) {
+  for pilot in pilots {
+    let subject = Subject::Character(pilot.id);
+    for (kind, label) in POPOVER_JOBS {
+      // A feature-gated job whose feature is disabled is not syncing, so it must not appear queued;
+      // featureless jobs (e.g. Profile) always run and are always shown.
+      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
+        continue;
+      }
+      visit(pilot, label, JobKey::new(kind, subject));
+    }
+  }
 }
 
 fn format_next_in(secs: u64) -> String {
@@ -531,6 +668,64 @@ where
 mod tests {
   use super::*;
 
+  fn pilot(id: i64) -> OwnedPilot {
+    OwnedPilot {
+      color: color::accent::PLASMA,
+      granted_scopes: None,
+      id,
+      name: format!("Pilot {id}"),
+    }
+  }
+
+  mod build_model {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_emits_one_row_per_pilot_and_enabled_job() {
+      let pilots = vec![pilot(1), pilot(2)];
+      let status = sync::SyncStatus::new();
+
+      let model = build_model(&pilots, &status, &Feature::ALL, Some(5), false);
+
+      assert_eq!(model.total, model.rows.len());
+      assert_eq!(model.rows.len(), pilots.len() * POPOVER_JOBS.len());
+    }
+
+    #[test]
+    fn it_drops_jobs_whose_feature_is_disabled() {
+      let pilots = vec![pilot(1)];
+      let status = sync::SyncStatus::new();
+
+      let with_all = build_model(&pilots, &status, &Feature::ALL, None, false);
+      let with_none = build_model(&pilots, &status, &[], None, false);
+
+      assert!(with_none.rows.len() < with_all.rows.len());
+    }
+  }
+
+  mod job_stats {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::sync::Event;
+
+    #[test]
+    fn it_counts_an_active_job_against_the_total() {
+      let pilots = vec![pilot(1)];
+      let mut status = sync::SyncStatus::new();
+      status.apply(&Event::Started {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+      });
+
+      let stats = job_stats(&pilots, &status, &Feature::ALL);
+
+      assert_eq!(stats.active, 1);
+      assert_eq!(stats.total, POPOVER_JOBS.len());
+    }
+  }
+
   mod needs_scroll {
     use pretty_assertions::assert_eq;
 
@@ -622,6 +817,96 @@ mod tests {
         total: 8,
       };
       let _overflowing: Element<'_, ()> = sync_popover(&overflowing, ());
+    }
+  }
+
+  mod row_state {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::sync::Event;
+
+    fn key() -> JobKey {
+      JobKey::new(JobKind::CharacterProfile, Subject::Character(1))
+    }
+
+    #[test]
+    fn it_reads_an_unreported_job_as_queued() {
+      let status = sync::SyncStatus::new();
+
+      assert_eq!(row_state(&status, &key()), (RowState::Queued, None));
+    }
+
+    #[test]
+    fn it_maps_done_and_syncing_phases() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Started {
+        key: key(),
+      });
+      assert_eq!(row_state(&status, &key()), (RowState::Syncing, None));
+
+      status.apply(&Event::Finished {
+        key: key(),
+        outcome: crate::sync::Outcome::synced(),
+      });
+      assert_eq!(row_state(&status, &key()), (RowState::Done, None));
+    }
+
+    #[test]
+    fn it_surfaces_a_failure_reason_as_error_text() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Failed {
+        key: key(),
+        reason: "token expired".to_owned(),
+      });
+
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Error, Some("token expired".to_owned()))
+      );
+    }
+
+    #[test]
+    fn it_renders_a_backoff_countdown_as_error_text() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::BackingOff {
+        key: key(),
+        retry_secs: 30,
+      });
+
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Error, Some("Backing off 30s".to_owned()))
+      );
+    }
+
+    #[test]
+    fn it_surfaces_an_empty_outcome_as_benign_and_a_blocked_outcome_as_attention() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Finished {
+        key: key(),
+        outcome: crate::sync::Outcome::Empty,
+      });
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Empty, Some("No data".to_owned())),
+        "a successful empty sync is benign, not an amber attention chip"
+      );
+
+      status.apply(&Event::Finished {
+        key: key(),
+        outcome: crate::sync::Outcome::Blocked {
+          reason: "missing scope".to_owned(),
+        },
+      });
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Attention, Some("missing scope".to_owned()))
+      );
     }
   }
 }

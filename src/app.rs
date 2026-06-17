@@ -30,7 +30,7 @@ use crate::{
   },
   services::updater,
   store,
-  sync::{self, JobKey, JobKind, Phase, Subject},
+  sync::{self, JobKey, JobKind, Subject},
   ui::{
     components::{
       backdrop,
@@ -38,7 +38,7 @@ use crate::{
       eve_time::eve_time,
       rail::{self, rail},
       status, sync_chip,
-      sync_popover::{self, Header, JobRow, Model, RowState},
+      sync_popover::{self, JobStats, Model},
       updater_banner,
     },
     style::{color, control, spacing, typography},
@@ -68,15 +68,6 @@ const FILE_FILTER_CLAMP: &str = "warn,\
   sqlx=warn,\
   sqlx::query=warn";
 const POPOVER_BOTTOM_OFFSET: f32 = spacing::layout::STATUS_BAR_HEIGHT + 1.0 + 4.0;
-const POPOVER_JOBS: [(JobKind, &str); 7] = [
-  (JobKind::AssetSync, "Assets"),
-  (JobKind::CharacterClones, "Clones"),
-  (JobKind::CharacterContacts, "Contacts"),
-  (JobKind::CharacterProfile, "Profile"),
-  (JobKind::CharacterSkills, "Skills"),
-  (JobKind::CharacterTelemetry, "Telemetry"),
-  (JobKind::CharacterWallet, "Wallet"),
-];
 const PERIODIC_PULL_INTERVAL: Duration = Duration::from_secs(60);
 const PERIODIC_PUSH_INTERVAL: Duration = Duration::from_secs(60);
 const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
@@ -214,22 +205,6 @@ impl From<store::lease::Outcome> for Option<HolderInfo> {
         machine_id,
       }),
     }
-  }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct JobStats {
-  active: usize,
-  attention: usize,
-  done: usize,
-  errors: usize,
-  total: usize,
-}
-
-impl JobStats {
-  fn in_progress(&self) -> bool {
-    let settled = self.done + self.errors + self.attention;
-    self.active > 0 || (self.errors == 0 && self.total > 0 && settled < self.total)
   }
 }
 
@@ -1964,115 +1939,27 @@ fn placeholder<'a>(message: String) -> Element<'a, Message> {
 }
 
 fn sync_model(app: &App) -> Model {
-  let pilots = app
-    .character_manager
-    .as_ref()
-    .map(character_manager::owned_roster)
-    .unwrap_or_default();
-
-  let enabled = enabled_features(app);
-  let mut rows = Vec::with_capacity(pilots.len() * POPOVER_JOBS.len());
-  for pilot in &pilots {
-    let subject = Subject::Character(pilot.id);
-    for (kind, label) in POPOVER_JOBS {
-      // A feature-gated job whose feature is disabled is not syncing, so it must not appear queued;
-      // featureless jobs (e.g. Profile) always run and are always shown.
-      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
-        continue;
-      }
-      let key = JobKey::new(kind, subject);
-      let (state, error) = row_state(&app.status, &key);
-      rows.push(JobRow {
-        character_color: pilot.color,
-        character_name: pilot.name.clone(),
-        error,
-        label: label.to_owned(),
-        next_in_secs: app.status.next_in_secs(&key),
-        state,
-      });
-    }
-  }
-
-  let total = rows.len();
-  let done = rows.iter().filter(|row| row.state == RowState::Done).count();
-  let errors = rows.iter().filter(|row| row.state == RowState::Error).count();
-  let active = rows.iter().filter(|row| row.state == RowState::Syncing).count();
-  let queued = rows.iter().filter(|row| row.state == RowState::Queued).count();
-
-  let header = if active > 0 {
-    let percent = (done * 100).checked_div(total).unwrap_or(100) as u8;
-    Header::Syncing {
-      active,
-      percent,
-      queued,
-    }
-  } else {
-    Header::Idle {
-      last_synced_secs: app.last_synced.map(|at| (app.now - at).num_seconds().max(0) as u64),
-    }
-  };
-
-  Model {
-    done,
-    errors,
-    header,
-    pulse_on: app.sync_tick,
-    rows,
-    total,
-  }
-}
-
-fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<String>) {
-  match status.phase(key) {
-    None => (RowState::Queued, None),
-    Some(Phase::Done) => (RowState::Done, None),
-    Some(Phase::Syncing) => (RowState::Syncing, None),
-    Some(Phase::Failed) => (RowState::Error, status.reason(key).map(str::to_owned)),
-    Some(Phase::BackingOff) => {
-      let detail = status
-        .retry_secs(key)
-        .map(|secs| format!("Backing off {secs}s"))
-        .or_else(|| status.reason(key).map(str::to_owned));
-      (RowState::Error, detail)
-    }
-    Some(Phase::Blocked) => (
-      RowState::Attention,
-      status
-        .reason(key)
-        .map(str::to_owned)
-        .or_else(|| Some("Blocked".to_owned())),
-    ),
-    Some(Phase::Empty) => (RowState::Empty, Some("No data".to_owned())),
-    Some(Phase::NotReady) => (RowState::Attention, Some("Waiting on dependencies".to_owned())),
-  }
+  let pilots = roster(app);
+  let last_synced_secs = app.last_synced.map(|at| (app.now - at).num_seconds().max(0) as u64);
+  sync_popover::build_model(
+    &pilots,
+    &app.status,
+    &enabled_features(app),
+    last_synced_secs,
+    app.sync_tick,
+  )
 }
 
 fn expected_job_stats(app: &App) -> JobStats {
-  let pilots = app
+  sync_popover::job_stats(&roster(app), &app.status, &enabled_features(app))
+}
+
+fn roster(app: &App) -> Vec<OwnedPilot> {
+  app
     .character_manager
     .as_ref()
     .map(character_manager::owned_roster)
-    .unwrap_or_default();
-  let enabled = enabled_features(app);
-  let mut stats = JobStats::default();
-  for pilot in &pilots {
-    let subject = Subject::Character(pilot.id);
-    for (kind, _label) in POPOVER_JOBS {
-      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
-        continue;
-      }
-      let (state, _) = row_state(&app.status, &JobKey::new(kind, subject));
-      stats.total += 1;
-      match state {
-        RowState::Attention => stats.attention += 1,
-        RowState::Done | RowState::Empty => stats.done += 1,
-        RowState::Error => stats.errors += 1,
-        RowState::Syncing => stats.active += 1,
-        RowState::Queued => {}
-      }
-    }
-  }
-  stats
+    .unwrap_or_default()
 }
 
 fn engine_syncing(app: &App) -> bool {
@@ -6884,96 +6771,6 @@ mod tests {
       let _ = update(&mut app, Message::MailUnreadCounted(0));
 
       assert_eq!(app.mail_unread, 0, "the dot clears when no unread mail remains");
-    }
-  }
-
-  mod row_state {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-    use crate::sync::Event;
-
-    fn key() -> JobKey {
-      JobKey::new(JobKind::CharacterProfile, Subject::Character(1))
-    }
-
-    #[test]
-    fn it_reads_an_unreported_job_as_queued() {
-      let status = sync::SyncStatus::new();
-
-      assert_eq!(row_state(&status, &key()), (RowState::Queued, None));
-    }
-
-    #[test]
-    fn it_maps_done_and_syncing_phases() {
-      let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::Started {
-        key: key(),
-      });
-      assert_eq!(row_state(&status, &key()), (RowState::Syncing, None));
-
-      status.apply(&Event::Finished {
-        key: key(),
-        outcome: crate::sync::Outcome::synced(),
-      });
-      assert_eq!(row_state(&status, &key()), (RowState::Done, None));
-    }
-
-    #[test]
-    fn it_surfaces_a_failure_reason_as_error_text() {
-      let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::Failed {
-        key: key(),
-        reason: "token expired".to_owned(),
-      });
-
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Error, Some("token expired".to_owned()))
-      );
-    }
-
-    #[test]
-    fn it_renders_a_backoff_countdown_as_error_text() {
-      let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::BackingOff {
-        key: key(),
-        retry_secs: 30,
-      });
-
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Error, Some("Backing off 30s".to_owned()))
-      );
-    }
-
-    #[test]
-    fn it_surfaces_an_empty_outcome_as_benign_and_a_blocked_outcome_as_attention() {
-      let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::Finished {
-        key: key(),
-        outcome: crate::sync::Outcome::Empty,
-      });
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Empty, Some("No data".to_owned())),
-        "a successful empty sync is benign, not an amber attention chip"
-      );
-
-      status.apply(&Event::Finished {
-        key: key(),
-        outcome: crate::sync::Outcome::Blocked {
-          reason: "missing scope".to_owned(),
-        },
-      });
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Attention, Some("missing scope".to_owned()))
-      );
     }
   }
 

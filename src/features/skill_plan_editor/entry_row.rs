@@ -35,7 +35,7 @@ pub(super) fn entry_row<'a>(
     Space::new().width(spacing::SPACE_2).into(),
     time_col(entry),
     Space::new().width(spacing::SPACE_2).into(),
-    actions_col(entry.id, is_dragging),
+    actions_col(entry.id, is_dragging, entry.is_auto),
     Space::new().width(spacing::SPACE_3).into(),
   ])
   .align_y(Vertical::Center)
@@ -243,20 +243,40 @@ fn time_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
   .into()
 }
 
-fn actions_col<'a>(id: i64, is_dragging: bool) -> Element<'a, Message> {
+fn actions_col<'a>(id: i64, is_dragging: bool, is_auto: bool) -> Element<'a, Message> {
+  let remove: Element<'a, Message> = if is_auto { locked_remove() } else { remove_btn(id) };
+
   container(
     row(vec![
       note_btn(id),
       Space::new().width(4.0).into(),
       drag_handle(id, is_dragging),
       Space::new().width(4.0).into(),
-      remove_btn(id),
+      remove,
     ])
     .align_y(Vertical::Center),
   )
   .width(Length::Fixed(ACTIONS_COL_WIDTH))
   .align_x(Horizontal::Right)
   .align_y(Vertical::Center)
+  .into()
+}
+
+fn locked_remove<'a>() -> Element<'a, Message> {
+  container(
+    text("\u{1f512}")
+      .font(typography::mono::REGULAR)
+      .size(11.0)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      }),
+  )
+  .padding(Padding {
+    top: 4.0,
+    bottom: 4.0,
+    left: 6.0,
+    right: 6.0,
+  })
   .into()
 }
 

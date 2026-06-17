@@ -1841,6 +1841,9 @@ fn remove_entry_cascade(state: &mut State, id: i64) {
   let Some(target) = state.entries.iter().find(|e| e.id == id) else {
     return;
   };
+  if target.is_auto {
+    return;
+  }
   let skill_id = target.skill_id;
   let from_level = target.to_level;
 
@@ -1930,8 +1933,7 @@ fn add_auto_skills(state: &mut State, skills: &[(i64, u8)]) {
   let catalog = state.prereq_catalog();
   let expanded = plan_math::expand_wishes(&wishes, &catalog, &trained);
 
-  for mut entry in expanded {
-    entry.is_auto = true;
+  for entry in expanded {
     let edit = edit_entry_from_expanded(state, entry);
     state.entries.push(edit);
   }
@@ -3677,8 +3679,8 @@ mod tests {
       rows.sort();
       assert_eq!(
         rows,
-        vec![(3300, 1, true), (3301, 1, true), (3301, 2, true)],
-        "the mastery skill set expands into one-level steps, all flagged is_auto"
+        vec![(3300, 1, false), (3301, 1, false), (3301, 2, false)],
+        "the mastery's directly-required skills are removable wishes, not locked prereqs"
       );
       assert!(state.dirty(), "adding a ship flips the dirty dot");
     }
@@ -3701,8 +3703,8 @@ mod tests {
       rows.sort();
       assert_eq!(
         rows,
-        vec![(3300, 1, true), (3300, 2, true), (3301, 1, true), (3301, 2, true)],
-        "the cert's improved-column skills expand into one-level steps, all flagged is_auto"
+        vec![(3300, 1, false), (3300, 2, false), (3301, 1, false), (3301, 2, false)],
+        "the cert's improved-column skills are removable wishes, not locked prereqs"
       );
     }
 
@@ -3727,8 +3729,41 @@ mod tests {
         .collect();
       assert_eq!(
         rows,
-        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true)],
-        "the module's required skill expands into one-level steps, all flagged is_auto"
+        vec![(3300, 1, false), (3300, 2, false), (3300, 3, false)],
+        "the module's required skill is a removable wish, not a locked prereq"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_locks_only_the_expanded_prereqs_pulled_behind_a_mastery_skill() {
+      use crate::features::skill_plan_editor::picker::PickerShip;
+
+      let mut state = state_with_catalog(vec![
+        catalog_entry(3300, "Gunnery", 1, vec![]),
+        catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+      ]);
+      state.picker.ships = Some(vec![PickerShip {
+        id: 587,
+        name: "Rifter".to_owned(),
+        group_id: 25,
+        group_name: "Frigate".to_owned(),
+        own_requirements: vec![],
+        tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+      }]);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+      let mut rows: Vec<(i64, u8, bool)> = state
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      rows.sort();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3301, 1, false)],
+        "the directly-required turret is a removable wish; its Gunnery prereqs are locked"
       );
     }
 
@@ -3880,6 +3915,115 @@ mod tests {
           rows(&state),
           vec![(3300, 1, false), (3300, 2, false)],
           "nothing removed"
+        );
+      }
+
+      fn ship_with_two_required_skills() -> State {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![]),
+        ]);
+        state.picker.ships = Some(vec![PickerShip {
+          id: 587,
+          name: "Rifter".to_owned(),
+          group_id: 25,
+          group_name: "Frigate".to_owned(),
+          own_requirements: vec![],
+          tier_cert_skills: vec![vec![cert_skill(3300, 1, 2, 3, 5), cert_skill(3301, 1, 2, 3, 5)]],
+        }]);
+        state
+      }
+
+      #[tokio::test]
+      async fn it_keeps_the_rest_when_removing_one_skill_from_a_pure_mastery_plan() {
+        let mut state = ship_with_two_required_skills();
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+        let id = entry_id_for(&state, 3300, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3301, 1, false)],
+          "only the removed mastery skill is dropped; the other survives"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_does_not_individually_remove_a_locked_prereq_row() {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        state.picker.ships = Some(vec![PickerShip {
+          id: 587,
+          name: "Rifter".to_owned(),
+          group_id: 25,
+          group_name: "Frigate".to_owned(),
+          own_requirements: vec![],
+          tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+        }]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+
+        let prereq_id = entry_id_for(&state, 3300, 2);
+        let before = rows(&state);
+        let _ = update(&mut state, Message::EntryRemoved(prereq_id), &db);
+
+        assert_eq!(
+          rows(&state),
+          before,
+          "an is_auto prereq row cannot be removed on its own"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_keeps_other_masteries_when_removing_one_masterys_wish() {
+        use crate::features::skill_plan_editor::picker::PickerShip;
+
+        let mut state = state_with_catalog(vec![
+          catalog_entry(3300, "Gunnery", 1, vec![]),
+          catalog_entry(3301, "Small Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+          catalog_entry(3302, "Medium Hybrid Turret", 1, vec![("Gunnery".to_owned(), 3)]),
+        ]);
+        state.picker.ships = Some(vec![
+          PickerShip {
+            id: 587,
+            name: "Rifter".to_owned(),
+            group_id: 25,
+            group_name: "Frigate".to_owned(),
+            own_requirements: vec![],
+            tier_cert_skills: vec![vec![cert_skill(3301, 1, 2, 3, 5)]],
+          },
+          PickerShip {
+            id: 588,
+            name: "Thrasher".to_owned(),
+            group_id: 25,
+            group_name: "Destroyer".to_owned(),
+            own_requirements: vec![],
+            tier_cert_skills: vec![vec![cert_skill(3302, 1, 2, 3, 5)]],
+          },
+        ]);
+        let db = crate::store::open_test().await.unwrap();
+        let _ = update(&mut state, Message::PickerShipSelected(587, 1), &db);
+        let _ = update(&mut state, Message::PickerShipSelected(588, 1), &db);
+
+        let id = entry_id_for(&state, 3301, 1);
+        let _ = update(&mut state, Message::EntryRemoved(id), &db);
+
+        let mut remaining = rows(&state);
+        remaining.sort();
+        assert_eq!(
+          remaining,
+          vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3302, 1, false)],
+          "the second ship's wish and its still-needed Gunnery prereq are retained"
         );
       }
     }

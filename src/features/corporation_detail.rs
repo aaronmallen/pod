@@ -330,10 +330,36 @@ pub fn load(db: &Database, corporation_id: i64) -> Task<Message> {
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::CloseKillmailDetail => {
-      state.selected_killmail = None;
-      Task::none()
+    Message::ContactFilterChanged(_)
+    | Message::ContactSortChanged(_)
+    | Message::ContactsPageLoaded(_)
+    | Message::ContactsScrolled {
+      ..
     }
+    | Message::ContactsSearchChanged(_)
+    | Message::ContactsSearchCleared => update_contacts(state, message, db),
+    Message::CloseKillmailDetail
+    | Message::KilllogFilterChanged(_)
+    | Message::KilllogPageLoaded(_)
+    | Message::KilllogScrolled {
+      ..
+    }
+    | Message::KillmailDetailLoaded(_)
+    | Message::KillmailSelected(_) => update_killlog(state, message, db),
+    Message::StandingsAgentsPageLoaded(_)
+    | Message::StandingsClearSearch
+    | Message::StandingsFilterChanged(_)
+    | Message::StandingsResults(_)
+    | Message::StandingsScrolled {
+      ..
+    }
+    | Message::StandingsSearchChanged(_) => update_standings(state, message, db),
+    Message::Loaded(_) | Message::TabChanged(_) => update_head(state, message, db),
+  }
+}
+
+fn update_contacts(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::ContactFilterChanged(filter) => {
       state.contact_filter = filter;
       restart_contacts(state, db)
@@ -343,35 +369,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       restart_contacts(state, db)
     }
     Message::ContactsPageLoaded(page) => {
-      let ContactsPage {
-        cursor,
-        has_more,
-        labels,
-        rows,
-      } = *page;
-      state.contacts_loading_more = false;
-      state.contacts_has_more = has_more;
-      state.contacts_cursor = cursor.clone();
-      // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
-      // (a fresh first page from initial load or a sort/filter restart).
-      match &mut state.contacts {
-        LoadState::Loaded(existing) => {
-          existing.cursor = cursor;
-          existing.has_more = has_more;
-          existing.rows.extend(rows);
-          if existing.labels.is_empty() {
-            existing.labels = labels;
-          }
-        }
-        _ => {
-          state.contacts = LoadState::Loaded(ContactsPage {
-            cursor,
-            has_more,
-            labels,
-            rows,
-          });
-        }
-      }
+      apply_contacts_page(state, *page);
       Task::none()
     }
     Message::ContactsScrolled {
@@ -405,6 +403,48 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       state.contacts_query.clear();
       restart_contacts(state, db)
+    }
+    _ => Task::none(),
+  }
+}
+
+fn apply_contacts_page(state: &mut State, page: ContactsPage) {
+  let ContactsPage {
+    cursor,
+    has_more,
+    labels,
+    rows,
+  } = page;
+  state.contacts_loading_more = false;
+  state.contacts_has_more = has_more;
+  state.contacts_cursor = cursor.clone();
+  // Extend the existing page on a scroll-driven fetch; replace it outright when the prior state was Loading
+  // (a fresh first page from initial load or a sort/filter restart).
+  match &mut state.contacts {
+    LoadState::Loaded(existing) => {
+      existing.cursor = cursor;
+      existing.has_more = has_more;
+      existing.rows.extend(rows);
+      if existing.labels.is_empty() {
+        existing.labels = labels;
+      }
+    }
+    _ => {
+      state.contacts = LoadState::Loaded(ContactsPage {
+        cursor,
+        has_more,
+        labels,
+        rows,
+      });
+    }
+  }
+}
+
+fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::CloseKillmailDetail => {
+      state.selected_killmail = None;
+      Task::none()
     }
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
@@ -445,34 +485,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         Message::KillmailDetailLoaded(Box::new(detail))
       })
     }
-    Message::Loaded(detail) => {
-      let CorpDetail {
-        contacts,
-        head,
-        killlog,
-      } = *detail;
-      state.contacts = LoadState::Loaded(contacts);
-      state.head = head;
-      state.killlog = killlog;
-      reset_contacts_pagination(state);
-      reset_killlog_pagination(state);
-      trigger_standings_search(state, db)
-    }
+    _ => Task::none(),
+  }
+}
+
+fn update_standings(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::StandingsAgentsPageLoaded(page) => {
-      let StandingsAgentsPage {
-        generation,
-        next_cursor,
-        rows,
-      } = *page;
-      state.standings_loading_more = false;
-      if generation != state.standings_generation {
-        return Task::none();
-      }
-      state.standings_has_more = next_cursor.is_some();
-      state.standings_agent_cursor = next_cursor;
-      if let LoadState::Loaded(existing) = &mut state.standings {
-        existing.extend(rows);
-      }
+      apply_standings_agents_page(state, *page);
       Task::none()
     }
     Message::StandingsClearSearch => {
@@ -493,24 +513,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
     }
     Message::StandingsResults(results) => {
-      let StandingsResult {
-        generation,
-        result,
-      } = *results;
-      if generation == state.standings_generation {
-        state.standings = match result {
-          Ok(catalog) => {
-            state.standings_has_more = catalog.agent_cursor.is_some();
-            state.standings_agent_cursor = catalog.agent_cursor;
-            LoadState::Loaded(catalog.rows)
-          }
-          Err(error) => {
-            state.standings_has_more = false;
-            state.standings_agent_cursor = None;
-            LoadState::Error(error)
-          }
-        };
-      }
+      apply_standings_results(state, *results);
       Task::none()
     }
     Message::StandingsScrolled {
@@ -544,10 +547,69 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.standings_query = query;
       trigger_standings_search(state, db)
     }
+    _ => Task::none(),
+  }
+}
+
+fn apply_standings_agents_page(state: &mut State, page: StandingsAgentsPage) {
+  let StandingsAgentsPage {
+    generation,
+    next_cursor,
+    rows,
+  } = page;
+  state.standings_loading_more = false;
+  if generation != state.standings_generation {
+    return;
+  }
+  state.standings_has_more = next_cursor.is_some();
+  state.standings_agent_cursor = next_cursor;
+  if let LoadState::Loaded(existing) = &mut state.standings {
+    existing.extend(rows);
+  }
+}
+
+fn apply_standings_results(state: &mut State, results: StandingsResult) {
+  let StandingsResult {
+    generation,
+    result,
+  } = results;
+  if generation != state.standings_generation {
+    return;
+  }
+  state.standings = match result {
+    Ok(catalog) => {
+      state.standings_has_more = catalog.agent_cursor.is_some();
+      state.standings_agent_cursor = catalog.agent_cursor;
+      LoadState::Loaded(catalog.rows)
+    }
+    Err(error) => {
+      state.standings_has_more = false;
+      state.standings_agent_cursor = None;
+      LoadState::Error(error)
+    }
+  };
+}
+
+fn update_head(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::Loaded(detail) => {
+      let CorpDetail {
+        contacts,
+        head,
+        killlog,
+      } = *detail;
+      state.contacts = LoadState::Loaded(contacts);
+      state.head = head;
+      state.killlog = killlog;
+      reset_contacts_pagination(state);
+      reset_killlog_pagination(state);
+      trigger_standings_search(state, db)
+    }
     Message::TabChanged(tab) => {
       state.active_tab = tab;
       Task::none()
     }
+    _ => Task::none(),
   }
 }
 
@@ -833,54 +895,72 @@ async fn resolve_killlog_entries(
 ) -> Vec<KillLogEntry> {
   let mut entries = Vec::with_capacity(rows.len());
   for row in rows {
-    let ship_name = sde::get_item_type(db, row.ship_type_id())
+    entries.push(killlog_entry(db, row).await);
+  }
+  entries
+}
+
+async fn killlog_entry(db: &Database, row: crate::store::model::CorporationKillEntry) -> KillLogEntry {
+  let ship_name = killlog_ship_name(db, row.ship_type_id()).await;
+  let (system_name, system_security) = killlog_system(db, row.system_id()).await;
+  let victim_name = killlog_victim_name(db, row.victim_id()).await;
+  let victim_corp = killlog_victim_corp(db, row.victim_corp_id()).await;
+
+  KillLogEntry {
+    attacker_count: row.attacker_count(),
+    final_blow: row.final_blow(),
+    is_kill: row.is_kill(),
+    kill_time: row.kill_time().clone(),
+    killmail_id: row.killmail_id(),
+    ship_name,
+    ship_type_id: row.ship_type_id(),
+    system_name,
+    system_security,
+    value_destroyed_isk: row.value_destroyed_isk(),
+    value_isk: row.value_isk(),
+    victim_corp,
+    victim_name,
+  }
+}
+
+async fn killlog_ship_name(db: &Database, ship_type_id: i64) -> String {
+  sde::get_item_type(db, ship_type_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|item| item.name().clone())
+    .unwrap_or_else(|| format!("Type {ship_type_id}"))
+}
+
+async fn killlog_system(db: &Database, system_id: i64) -> (Option<String>, f64) {
+  match sde::get_solar_system(db, system_id).await.ok().flatten() {
+    Some(system) => (Some(system.name().clone()), system.security_status()),
+    None => (None, 0.0),
+  }
+}
+
+async fn killlog_victim_name(db: &Database, victim_id: Option<i64>) -> String {
+  match victim_id {
+    Some(id) => character::get(db, id)
       .await
       .ok()
       .flatten()
-      .map(|item| item.name().clone())
-      .unwrap_or_else(|| format!("Type {}", row.ship_type_id()));
-
-    let (system_name, system_security) = match sde::get_solar_system(db, row.system_id()).await.ok().flatten() {
-      Some(system) => (Some(system.name().clone()), system.security_status()),
-      None => (None, 0.0),
-    };
-
-    let victim_name = match row.victim_id() {
-      Some(id) => character::get(db, id)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.name().to_owned())
-        .unwrap_or_else(|| format!("Pilot {id}")),
-      None => "Unknown".to_owned(),
-    };
-    let victim_corp = match row.victim_corp_id() {
-      Some(id) => org::get_corporation(db, id)
-        .await
-        .ok()
-        .flatten()
-        .map(|c| c.name().to_owned())
-        .unwrap_or_else(|| format!("Corp {id}")),
-      None => String::new(),
-    };
-
-    entries.push(KillLogEntry {
-      attacker_count: row.attacker_count(),
-      final_blow: row.final_blow(),
-      is_kill: row.is_kill(),
-      kill_time: row.kill_time().clone(),
-      killmail_id: row.killmail_id(),
-      ship_name,
-      ship_type_id: row.ship_type_id(),
-      system_name,
-      system_security,
-      value_destroyed_isk: row.value_destroyed_isk(),
-      value_isk: row.value_isk(),
-      victim_corp,
-      victim_name,
-    });
+      .map(|c| c.name().to_owned())
+      .unwrap_or_else(|| format!("Pilot {id}")),
+    None => "Unknown".to_owned(),
   }
-  entries
+}
+
+async fn killlog_victim_corp(db: &Database, victim_corp_id: Option<i64>) -> String {
+  match victim_corp_id {
+    Some(id) => org::get_corporation(db, id)
+      .await
+      .ok()
+      .flatten()
+      .map(|c| c.name().to_owned())
+      .unwrap_or_else(|| format!("Corp {id}")),
+    None => String::new(),
+  }
 }
 
 async fn load_head(db: &Database, corporation_id: i64) -> Option<CorpHead> {
@@ -893,30 +973,9 @@ async fn load_head(db: &Database, corporation_id: i64) -> Option<CorpHead> {
     }
   };
 
-  let alliance = match corp.alliance_id() {
-    Some(alliance_id) => org::get_alliance(db, alliance_id)
-      .await
-      .ok()
-      .flatten()
-      .map(|alliance| alliance.name().to_owned()),
-    None => None,
-  };
-  let ceo = match corp.ceo_id() {
-    Some(ceo_id) => character::get(db, ceo_id)
-      .await
-      .ok()
-      .flatten()
-      .map(|character| character.name().to_owned()),
-    None => None,
-  };
-  let hq = match corp.home_station_id() {
-    Some(station_id) => sde::get_station(db, station_id)
-      .await
-      .ok()
-      .flatten()
-      .map(|station| station.name().to_owned()),
-    None => None,
-  };
+  let alliance = head_alliance(db, corp.alliance_id()).await;
+  let ceo = head_ceo(db, corp.ceo_id()).await;
+  let hq = head_hq(db, corp.home_station_id()).await;
   let store = images::default_store();
 
   Some(CorpHead {
@@ -930,6 +989,33 @@ async fn load_head(db: &Database, corporation_id: i64) -> Option<CorpHead> {
     tax_rate: corp.tax_rate(),
     ticker: corp.ticker().to_owned(),
   })
+}
+
+async fn head_alliance(db: &Database, alliance_id: Option<i64>) -> Option<String> {
+  let alliance_id = alliance_id?;
+  org::get_alliance(db, alliance_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|alliance| alliance.name().to_owned())
+}
+
+async fn head_ceo(db: &Database, ceo_id: Option<i64>) -> Option<String> {
+  let ceo_id = ceo_id?;
+  character::get(db, ceo_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|character| character.name().to_owned())
+}
+
+async fn head_hq(db: &Database, station_id: Option<i64>) -> Option<String> {
+  let station_id = station_id?;
+  sde::get_station(db, station_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|station| station.name().to_owned())
 }
 
 fn header(state: &State) -> Element<'_, Message> {
@@ -1321,6 +1407,530 @@ mod tests {
 
       assert_eq!(state.standings_query(), "faction:caldari");
       assert!(state.standings_has_filters());
+    }
+  }
+
+  fn contacts_page(has_more: bool) -> ContactsPage {
+    ContactsPage {
+      cursor: Some(ContactCursor::Number(1.0, 5)),
+      has_more,
+      labels: Vec::new(),
+      rows: Vec::new(),
+    }
+  }
+
+  fn standings_catalog(agent_cursor: Option<(String, i64)>) -> StandingsCatalog {
+    StandingsCatalog {
+      agent_cursor,
+      rows: Vec::new(),
+    }
+  }
+
+  mod update_contacts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_restarts_the_page_on_a_filter_change() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactFilterChanged(tabs::contacts::ContactFilter::Corp),
+        &db,
+      );
+
+      assert_eq!(state.contact_filter(), tabs::contacts::ContactFilter::Corp);
+      assert!(matches!(state.contacts, LoadState::Loading));
+      assert!(state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_restarts_the_page_on_a_sort_change() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let sort = state.contact_sort().toggled(tabs::contacts::SortColumn::Entity);
+
+      let _task = update(&mut state, Message::ContactSortChanged(sort), &db);
+
+      assert_eq!(state.contact_sort(), sort);
+      assert!(matches!(state.contacts, LoadState::Loading));
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_page_when_the_prior_state_was_loading() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactsPageLoaded(Box::new(contacts_page(true))),
+        &db,
+      );
+
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+      assert!(state.contacts_has_more);
+      assert!(!state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_extends_an_already_loaded_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), true));
+
+      let _task = update(
+        &mut state,
+        Message::ContactsPageLoaded(Box::new(contacts_page(false))),
+        &db,
+      );
+
+      assert!(!state.contacts_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_short_scroll_with_no_more_pages() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 12.0,
+          relative: 0.99,
+        },
+        &db,
+      );
+
+      assert_eq!(state.contacts_scroll_offset(), 12.0);
+      assert!(!state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_contacts_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.contacts_has_more = true;
+      state.contacts_cursor = Some(ContactCursor::Number(1.0, 5));
+
+      let _task = update(
+        &mut state,
+        Message::ContactsScrolled {
+          absolute: 99.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.contacts_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_restarts_only_when_the_search_query_actually_changes() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
+      assert!(matches!(state.contacts, LoadState::Loading));
+
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+      let _task = update(&mut state, Message::ContactsSearchChanged(String::new()), &db);
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_search_only_when_a_query_is_present() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
+      assert!(matches!(state.contacts, LoadState::Loading) || matches!(state.contacts, LoadState::Loaded(_)));
+
+      let _task = update(&mut state, Message::ContactsSearchChanged("foo".to_owned()), &db);
+      state.contacts = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
+      let _task = update(&mut state, Message::ContactsSearchCleared, &db);
+
+      assert!(state.contacts_query().is_empty());
+      assert!(matches!(state.contacts, LoadState::Loading));
+    }
+  }
+
+  mod update_killlog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_a_loaded_killlog_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.killlog = LoadState::Loaded(Vec::new());
+
+      let _task = update(
+        &mut state,
+        Message::KilllogPageLoaded(vec![killlog_entry_fixture(7)]),
+        &db,
+      );
+
+      let LoadState::Loaded(entries) = &state.killlog else {
+        panic!("expected a loaded killlog");
+      };
+      assert_eq!(entries.len(), 1);
+      assert!(!state.killlog_has_more);
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_short_killlog_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 5.0,
+          relative: 0.1,
+        },
+        &db,
+      );
+
+      assert_eq!(state.killlog_scroll_offset(), 5.0);
+      assert!(!state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_killlog_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.killlog_has_more = true;
+      state.killlog_cursor = Some(("2024-01-01T00:00:00Z".to_owned(), 7));
+
+      let _task = update(
+        &mut state,
+        Message::KilllogScrolled {
+          absolute: 80.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.killlog_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_killmail_for_detail() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::KillmailSelected(42), &db);
+
+      assert!(state.selected_killmail.is_none());
+    }
+  }
+
+  mod update_standings {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_appends_an_agent_page_for_the_current_generation() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings = LoadState::Loaded(Vec::new());
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation,
+        next_cursor: Some(("a".to_owned(), 1)),
+        rows: Vec::new(),
+      };
+
+      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(state.standings_has_more);
+      assert!(!state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_discards_a_stale_generation_agent_page() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_has_more = false;
+      let page = StandingsAgentsPage {
+        generation: state.standings_generation.wrapping_add(9),
+        next_cursor: Some(("a".to_owned(), 1)),
+        rows: Vec::new(),
+      };
+
+      let _task = update(&mut state, Message::StandingsAgentsPageLoaded(Box::new(page)), &db);
+
+      assert!(!state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_loads_results_for_the_current_generation() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let results = StandingsResult {
+        generation: state.standings_generation,
+        result: Ok(standings_catalog(Some(("a".to_owned(), 1)))),
+      };
+
+      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
+
+      assert!(matches!(state.standings, LoadState::Loaded(_)));
+      assert!(state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_records_an_error_result() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let results = StandingsResult {
+        generation: state.standings_generation,
+        result: Err("boom".to_owned()),
+      };
+
+      let _task = update(&mut state, Message::StandingsResults(Box::new(results)), &db);
+
+      assert!(matches!(state.standings, LoadState::Error(_)));
+      assert!(!state.standings_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_an_in_memory_filter_change_with_agents_loaded() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      let before = state.standings_generation;
+
+      let _task = update(
+        &mut state,
+        Message::StandingsFilterChanged(tabs::standings::StandingsFilter::Factions),
+        &db,
+      );
+
+      assert_eq!(state.standings_filter(), tabs::standings::StandingsFilter::Factions);
+      assert_eq!(state.standings_generation, before);
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_search_and_reruns() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_query = "caldari".to_owned();
+      let before = state.standings_generation;
+
+      let _task = update(&mut state, Message::StandingsClearSearch, &db);
+
+      assert!(state.standings_query().is_empty());
+      assert_eq!(state.standings_generation, before.wrapping_add(1));
+    }
+
+    #[tokio::test]
+    async fn it_skips_a_standings_scroll_under_a_non_agent_filter() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_filter = tabs::standings::StandingsFilter::Factions;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("a".to_owned(), 1));
+
+      let _task = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 90.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(!state.standings_loading_more);
+    }
+
+    #[tokio::test]
+    async fn it_fetches_the_next_agent_page_on_a_deep_scroll() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+      state.standings_filter = tabs::standings::StandingsFilter::Agents;
+      state.standings_has_more = true;
+      state.standings_agent_cursor = Some(("a".to_owned(), 1));
+
+      let _task = update(
+        &mut state,
+        Message::StandingsScrolled {
+          absolute: 90.0,
+          relative: 1.0,
+        },
+        &db,
+      );
+
+      assert!(state.standings_loading_more);
+    }
+  }
+
+  mod update_head {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_the_detail_and_resets_pagination() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::Loaded(Box::new(detail())), &db);
+
+      assert!(matches!(state.contacts, LoadState::Loaded(_)));
+      assert!(state.head.is_some());
+      assert!(!state.contacts_has_more);
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_active_tab() {
+      let mut state = State::new(98_000_001);
+      let db = crate::store::open_test().await.unwrap();
+
+      let _task = update(&mut state, Message::TabChanged(Tab::Standings), &db);
+
+      assert_eq!(state.active_tab, Tab::Standings);
+    }
+  }
+
+  mod load_standings_catalog {
+
+    #[tokio::test]
+    async fn it_returns_an_empty_catalog_for_an_unseeded_corporation() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let catalog = super::super::load_standings_catalog(&db, 98_000_001, "", false)
+        .await
+        .unwrap();
+
+      assert!(catalog.rows.is_empty());
+      assert!(catalog.agent_cursor.is_none());
+    }
+  }
+
+  mod load_killlog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{Alliance, Bloodline, Character, Corporation, CorporationKillEntry, Gender, Race};
+
+    const CEO_ID: i64 = 7001;
+    const CORP_ID: i64 = 98_000_001;
+
+    async fn seed_corporation(db: &Database) {
+      let alliance = Alliance::new(CORP_ID, CORP_ID, CEO_ID, "2020-01-01", "Test Alliance", "TST");
+      let mut corp = Corporation::new(CORP_ID, "Cobalt Syndicate", "COBSY");
+      corp.set_ceo_id(CEO_ID);
+      corp.set_creator_id(CEO_ID);
+      corp.set_member_count(100);
+      corp.set_tax_rate(0.05);
+      let race = Race::new(1, CORP_ID, "A race.", "Test Race");
+      let bloodline = Bloodline::new(1, CORP_ID, 1, 3, "A bloodline.", 7, 5, "Test", 6, 4);
+      let char = Character::new(CEO_ID, 1, CORP_ID, 1, "1990-01-01", Gender::Male, "Test CEO");
+      character::insert_with_org(db, &char, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    fn kill(killmail_id: i64, victim_id: Option<i64>, victim_corp_id: Option<i64>) -> CorporationKillEntry {
+      CorporationKillEntry {
+        attacker_count: 2,
+        corporation_id: CORP_ID,
+        final_blow: true,
+        is_kill: true,
+        kill_hash: format!("hash{killmail_id}"),
+        kill_time: "2024-01-01T00:00:00Z".to_owned(),
+        killmail_id,
+        ship_type_id: 587,
+        synced_at: "2024-01-02T00:00:00Z".to_owned(),
+        system_id: 30_000_142,
+        value_destroyed_isk: 0.0,
+        value_final: false,
+        value_isk: 1.0,
+        value_recheck_count: 0,
+        value_source: "local".to_owned(),
+        victim_alliance_id: None,
+        victim_corp_id,
+        victim_damage_taken: 0,
+        victim_id,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_resolves_each_killmail_into_a_render_ready_entry() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      org::upsert_corporation_killmail(&db, &kill(100, Some(2002), Some(3003)))
+        .await
+        .unwrap();
+
+      let LoadState::Loaded(entries) = load_killlog(&db, CORP_ID).await else {
+        panic!("expected a loaded killlog");
+      };
+
+      assert_eq!(entries.len(), 1);
+      assert_eq!(entries[0].ship_name, "Type 587");
+      assert_eq!(entries[0].system_name, None);
+      assert_eq!(entries[0].victim_name, "Pilot 2002");
+      assert_eq!(entries[0].victim_corp, "Corp 3003");
+    }
+
+    #[tokio::test]
+    async fn it_uses_unknown_placeholders_when_victim_ids_are_absent() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+      org::upsert_corporation_killmail(&db, &kill(200, None, None))
+        .await
+        .unwrap();
+
+      let LoadState::Loaded(entries) = load_killlog(&db, CORP_ID).await else {
+        panic!("expected a loaded killlog");
+      };
+
+      assert_eq!(entries[0].victim_name, "Unknown");
+      assert_eq!(entries[0].victim_corp, "");
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_corporation_head_with_resolved_fields() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_corporation(&db).await;
+
+      let head = load_head(&db, CORP_ID).await.unwrap();
+
+      assert_eq!(head.name, "Cobalt Syndicate");
+      assert_eq!(head.ceo.as_deref(), Some("Test CEO"));
+      assert_eq!(head.members, Some(100));
+    }
+
+    #[tokio::test]
+    async fn it_returns_no_head_for_an_unknown_corporation() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let head = load_head(&db, CORP_ID).await;
+
+      assert!(head.is_none());
+    }
+  }
+
+  fn killlog_entry_fixture(killmail_id: i64) -> KillLogEntry {
+    KillLogEntry {
+      attacker_count: 1,
+      final_blow: true,
+      is_kill: true,
+      kill_time: "2024-01-01T00:00:00Z".to_owned(),
+      killmail_id,
+      ship_name: "Rifter".to_owned(),
+      ship_type_id: 587,
+      system_name: Some("Jita".to_owned()),
+      system_security: 0.9,
+      value_destroyed_isk: 0.0,
+      value_isk: 1.0,
+      victim_corp: String::new(),
+      victim_name: "Unknown".to_owned(),
     }
   }
 

@@ -125,6 +125,10 @@ struct App {
   engine_state: EngineState,
   esi_connected: bool,
   industry: Option<industry::State>,
+  /// Session-lived cache of the planner's static catalog (recipes, names, icons), built once on the first
+  /// planner load and handed to every later Industry navigation so the costly "Loading build catalog" build
+  /// runs at most once per app session. The cheap per-entry data (prices, owned blueprints) is always refreshed.
+  industry_catalog: Option<industry::StaticCatalog>,
   init_error: Option<String>,
   last_push: Option<SystemTime>,
   last_synced: Option<DateTime<Utc>>,
@@ -787,6 +791,7 @@ fn boot() -> (App, Task<Message>) {
     engine_state: EngineState::default(),
     esi_connected: true,
     industry: None,
+    industry_catalog: None,
     init_error: None,
     last_push: None,
     last_synced: None,
@@ -1362,8 +1367,15 @@ fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
     .as_ref()
     .map(|runtime| industry::FacilityDefaults::from(runtime.settings.industry()))
     .unwrap_or_default();
-  app.industry =
-    Some(industry::State::new(selection, required.clone(), facility_defaults).with_restored_panes(&app.ui_state));
+  app.industry = Some(
+    industry::State::new(
+      selection,
+      required.clone(),
+      facility_defaults,
+      app.industry_catalog.clone(),
+    )
+    .with_restored_panes(&app.ui_state),
+  );
   match app.runtime.as_ref() {
     Some(runtime) => industry::load(&runtime.db, selection, &required).map(Message::Industry),
     None => Task::none(),
@@ -3757,7 +3769,7 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
 
   // The facility picker's live ESI search and structure-pin persistence need the runtime's esi/sso/db,
   // so they are seamed here rather than in the pure planner reducer (mirrors stockpile location search).
-  match msg {
+  let task = match msg {
     industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
       ref query,
       type_id,
@@ -3784,13 +3796,24 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
       let pin = pin.clone();
       let scope = state.active();
       let update = industry::update(state, msg, &runtime.db, app.now).map(Message::Industry);
+      let catalog = state.planner_catalog().cloned();
       Task::batch([
         update,
-        industry::facility_pin(&runtime.db, scope, pin).map(Message::Industry),
+        industry::facility_pin(&runtime.db, scope, pin, catalog).map(Message::Industry),
       ])
     }
     _ => industry::update(state, msg, &runtime.db, app.now).map(Message::Industry),
+  };
+
+  // Hoist the static catalog the state captured on its first planner load into the session cache, so the next
+  // Industry navigation reuses it instead of rebuilding from scratch.
+  if app.industry_catalog.is_none()
+    && let Some(catalog) = app.industry.as_ref().and_then(industry::State::planner_catalog)
+  {
+    app.industry_catalog = Some(catalog.clone());
   }
+
+  task
 }
 
 fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
@@ -4218,6 +4241,7 @@ mod tests {
       engine_state: EngineState::default(),
       esi_connected: true,
       industry: None,
+      industry_catalog: None,
       init_error: None,
       last_push: None,
       last_synced: None,
@@ -5068,6 +5092,7 @@ mod tests {
         industry::EMPTY_INDUSTRY_SELECTION,
         Vec::new(),
         industry::FacilityDefaults::default(),
+        None,
       )
     }
 
@@ -7707,6 +7732,7 @@ mod tests {
         1,
         industry_required_scopes(),
         industry::FacilityDefaults::default(),
+        None,
       ));
       app.runtime = Some(runtime);
       app.sync_popover_open = true;

@@ -15,6 +15,8 @@ use crate::store::{
 const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_name, high_is_good, icon_id, name, \
   published, stackable, unit_id";
 
+const SQLITE_MAX_BIND_PARAMS: usize = 999;
+
 /// An `item_types` row joined to group and category names in one scan; LEFT JOIN ensures types with no group
 /// still appear with blank group/category strings rather than being silently excluded.
 #[derive(Clone, Debug, FromRow, PartialEq)]
@@ -894,17 +896,27 @@ pub async fn pin_structure(
   Ok(())
 }
 
-/// Returns every item type with denormalized group and category names; LEFT JOIN (not INNER) keeps types whose
-/// group_id points to a missing group, emitting blank strings rather than dropping the row.
-pub async fn catalog_types(db: &Database) -> Result<Vec<CatalogType>, Error> {
-  let rows = sqlx::query_as::<_, CatalogType>(
-    "SELECT t.id, t.name, COALESCE(g.name, '') AS group_name, COALESCE(c.name, '') AS category_name, \
-    t.packaged_volume, t.volume FROM item_types t \
-    LEFT JOIN item_groups g ON g.id = t.group_id \
-    LEFT JOIN item_categories c ON c.id = g.category_id",
-  )
-  .fetch_all(&db.0)
-  .await?;
+/// Returns the requested item types with denormalized group and category names; LEFT JOIN (not INNER) keeps types
+/// whose group_id points to a missing group, emitting blank strings rather than dropping the row. Filtering to the
+/// caller's ids in SQL avoids scanning the whole ~50k `item_types` table; the id list is chunked under SQLite's
+/// bind-parameter ceiling.
+pub async fn catalog_types(db: &Database, type_ids: &[i64]) -> Result<Vec<CatalogType>, Error> {
+  let mut rows = Vec::with_capacity(type_ids.len());
+  for chunk in type_ids.chunks(SQLITE_MAX_BIND_PARAMS) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "SELECT t.id, t.name, COALESCE(g.name, '') AS group_name, COALESCE(c.name, '') AS category_name, \
+      t.packaged_volume, t.volume FROM item_types t \
+      LEFT JOIN item_groups g ON g.id = t.group_id \
+      LEFT JOIN item_categories c ON c.id = g.category_id \
+      WHERE t.id IN (",
+    );
+    let mut separated = builder.separated(", ");
+    for &id in chunk {
+      separated.push_bind(id);
+    }
+    separated.push_unseparated(")");
+    rows.extend(builder.build_query_as::<CatalogType>().fetch_all(&db.0).await?);
+  }
   Ok(rows)
 }
 
@@ -1617,7 +1629,7 @@ mod items_tests {
       item_type.volume = Some(5.0);
       upsert_item_type(&db, &item_type).await.unwrap();
 
-      let rows = catalog_types(&db).await.unwrap();
+      let rows = catalog_types(&db, &[587]).await.unwrap();
 
       assert_eq!(rows[0].packaged_volume, None);
       assert_eq!(rows[0].volume, Some(5.0));
@@ -1633,7 +1645,7 @@ mod items_tests {
       item_type.volume = Some(27_289.0);
       upsert_item_type(&db, &item_type).await.unwrap();
 
-      let rows = catalog_types(&db).await.unwrap();
+      let rows = catalog_types(&db, &[587]).await.unwrap();
 
       assert_eq!(
         rows,
@@ -1646,6 +1658,31 @@ mod items_tests {
           volume: Some(27_289.0),
         }]
       );
+    }
+
+    #[tokio::test]
+    async fn it_returns_an_empty_vec_for_no_requested_ids() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+
+      assert!(catalog_types(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_only_the_requested_types() {
+      let db = store::open_test().await.unwrap();
+      upsert_item_category(&db, &make_category(6, "Ship")).await.unwrap();
+      upsert_item_group(&db, &make_group(25, 6, "Frigate")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(587, 25, "Rifter")).await.unwrap();
+      upsert_item_type(&db, &make_item_type(588, 25, "Slasher"))
+        .await
+        .unwrap();
+
+      let rows = catalog_types(&db, &[587]).await.unwrap();
+
+      assert_eq!(rows.iter().map(|row| row.id).collect::<Vec<_>>(), vec![587]);
     }
   }
 

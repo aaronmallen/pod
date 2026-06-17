@@ -8,7 +8,7 @@ use crate::{
   clients::eve_image::Size,
   store::{
     Database,
-    images::{self, IconResolution},
+    images::{self, IconIndex, IconResolution},
     model::Facility,
     repo::{blueprints, finance, industry, sde},
   },
@@ -219,6 +219,36 @@ pub struct Recipe {
   pub time_per_run: i64,
 }
 
+/// The scope-independent, session-lived half of [`PlannerData`]: everything sourced from the SDE (recipes,
+/// catalog, names, volumes) and the icon cache (type/blueprint icons). Built once per app session by
+/// [`load_static_catalog`] — the expensive part of a planner load — and reused across Industry navigation so the
+/// "Loading build catalog" screen appears at most once. The cheap, per-entry half (prices, owned blueprints,
+/// facilities) is layered on by [`load_data_with_catalog`].
+#[derive(Clone, Debug, Default)]
+pub struct StaticCatalog {
+  pub blueprint_icons: HashMap<(i64, bool), IconResolution>,
+  pub catalog: Vec<CatalogEntry>,
+  pub names: HashMap<i64, String>,
+  pub recipes: HashMap<i64, Recipe>,
+  pub type_icons: HashMap<i64, IconResolution>,
+  pub volumes: HashMap<i64, f64>,
+}
+
+impl StaticCatalog {
+  /// Extracts the scope-independent half of an assembled [`PlannerData`], so the first full load can be cached
+  /// and reused without re-running the SDE scan and icon resolution.
+  pub fn from_planner_data(data: &PlannerData) -> Self {
+    StaticCatalog {
+      blueprint_icons: data.blueprint_icons.clone(),
+      catalog: data.catalog.clone(),
+      names: data.names.clone(),
+      recipes: data.recipes.clone(),
+      type_icons: data.type_icons.clone(),
+      volumes: data.volumes.clone(),
+    }
+  }
+}
+
 pub async fn average_price(db: &Database, type_id: i64) -> Option<f64> {
   prices(db).await.get(&type_id).copied()
 }
@@ -321,62 +351,93 @@ fn rank_best_owned(mut owned: Vec<OwnedBlueprint>) -> Option<OwnedBlueprint> {
   owned.into_iter().next()
 }
 
+/// Builds a full [`PlannerData`] from scratch: the expensive static catalog plus the cheap per-scope dynamic
+/// data. Prefer [`load_data_with_catalog`] on the hot navigation path, reusing a cached [`StaticCatalog`] so the
+/// SDE scan and icon resolution run only once per session.
 pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
+  let catalog = load_static_catalog(db).await;
+  load_data_with_catalog(db, scope, catalog).await
+}
+
+/// Layers the cheap, per-entry dynamic data (prices, owned blueprints, facilities) onto an already-built
+/// [`StaticCatalog`], assembling the [`PlannerData`] the planner consumes. Re-entering Industry or changing
+/// scope runs only this half; the static catalog is reused untouched.
+pub async fn load_data_with_catalog(db: &Database, scope: Scope, catalog: StaticCatalog) -> PlannerData {
+  let owned = owned_index(db, &catalog.recipes, scope).await;
+  let facilities = planner_facilities(db).await;
+  let prices = prices(db).await;
+
+  PlannerData {
+    blueprint_icons: catalog.blueprint_icons,
+    catalog: catalog.catalog,
+    facilities,
+    names: catalog.names,
+    owned,
+    prices,
+    recipes: catalog.recipes,
+    type_icons: catalog.type_icons,
+    volumes: catalog.volumes,
+  }
+}
+
+/// Builds the scope-independent half of the planner data: recipes, the buildable-product catalog, names,
+/// volumes, and the pre-resolved type/blueprint icons. The costly part of a planner load — a full recipe walk,
+/// an SDE catalog query restricted to referenced types, and a single batched scan of the icon cache.
+pub async fn load_static_catalog(db: &Database) -> StaticCatalog {
+  let started = std::time::Instant::now();
   let recipes = recipes(db).await;
-  let referenced = referenced_type_ids(&recipes);
-  let types = sde::catalog_types(db).await.unwrap_or_default();
+  let referenced: Vec<i64> = referenced_type_ids(&recipes).into_iter().collect();
+  let types = sde::catalog_types(db, &referenced).await.unwrap_or_default();
 
   let mut names: HashMap<i64, String> = HashMap::new();
   let mut volumes: HashMap<i64, f64> = HashMap::new();
   let mut categories: HashMap<i64, (String, String)> = HashMap::new();
   for row in types {
-    if !referenced.contains(&row.id) {
-      continue;
-    }
     names.insert(row.id, row.name);
     volumes.insert(row.id, row.packaged_volume.or(row.volume).unwrap_or(0.0));
     categories.insert(row.id, (row.group_name, row.category_name));
   }
 
   let catalog = catalog(&recipes, &names, &volumes, &categories);
-  let owned = owned_index(db, &recipes, scope).await;
-  let facilities = planner_facilities(db).await;
-  let prices = prices(db).await;
-  let type_icons = type_icons(&names);
-  let blueprint_icons = blueprint_icons(&recipes);
+  let icons = images::default_store().icon_index();
+  let type_icons = type_icons(&icons, &names);
+  let blueprint_icons = blueprint_icons(&icons, &recipes);
 
-  PlannerData {
+  tracing::debug!(
+    target: "pod::industry",
+    elapsed_ms = started.elapsed().as_millis(),
+    recipes = recipes.len(),
+    referenced = referenced.len(),
+    "built planner static catalog"
+  );
+
+  StaticCatalog {
     blueprint_icons,
     catalog,
-    facilities,
     names,
-    owned,
-    prices,
     recipes,
     type_icons,
     volumes,
   }
 }
 
-fn blueprint_icons(recipes: &HashMap<i64, Recipe>) -> HashMap<(i64, bool), IconResolution> {
-  let store = images::default_store();
-  let mut icons = HashMap::new();
+fn blueprint_icons(icons: &IconIndex, recipes: &HashMap<i64, Recipe>) -> HashMap<(i64, bool), IconResolution> {
+  let mut resolved = HashMap::new();
   for recipe in recipes.values() {
     let blueprint_type_id = recipe.blueprint_type_id;
     for is_copy in [false, true] {
-      icons
+      resolved
         .entry((blueprint_type_id, is_copy))
-        .or_insert_with(|| store.resolve_type_icon(blueprint_type_id, Some(is_copy), TILE_ICON_SIZE));
+        .or_insert_with(|| icons.resolve_type_icon(blueprint_type_id, Some(is_copy), TILE_ICON_SIZE));
     }
   }
-  icons
+  resolved
 }
 
-fn type_icons(names: &HashMap<i64, String>) -> HashMap<i64, IconResolution> {
-  let store = images::default_store();
+fn type_icons(icons: &IconIndex, names: &HashMap<i64, String>) -> HashMap<i64, IconResolution> {
   names
     .keys()
-    .map(|&type_id| (type_id, store.resolve_type_icon(type_id, None, TILE_ICON_SIZE)))
+    .map(|&type_id| (type_id, icons.resolve_type_icon(type_id, None, TILE_ICON_SIZE)))
     .collect()
 }
 
@@ -884,6 +945,62 @@ mod tests {
       let entry = data.catalog.iter().find(|entry| entry.type_id == HULK).unwrap();
       assert_eq!(entry.category, Category::Ship);
       assert_eq!(entry.name, "Hulk");
+    }
+  }
+
+  mod load_data_with_catalog {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_hulk(db: &Database) {
+      insert_product(db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
+      insert_material(db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
+      sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (463, 6, 'Mining Barge', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, volume) VALUES \
+        (?, 463, 'A Hulk.', 'Hulk', 1, 3750.0)",
+      )
+      .bind(HULK)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_reuses_the_static_catalog_and_refreshes_the_owned_index() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER_ID).await;
+      seed_hulk(&db).await;
+
+      let catalog = super::load_static_catalog(&db).await;
+      assert!(catalog.recipes.contains_key(&HULK));
+      assert_eq!(catalog.names.get(&HULK).map(String::as_str), Some("Hulk"));
+
+      // No blueprint owned yet: the dynamic owned index is empty even though the static catalog has the recipe.
+      let before = super::load_data_with_catalog(&db, Scope::All, catalog.clone()).await;
+      assert!(before.recipe(HULK).is_some());
+      assert!(!before.owned.contains_key(&HULK));
+
+      blueprints::replace_for_character(
+        &db,
+        CHARACTER_ID,
+        &[character_blueprint(CHARACTER_ID, 1, HULK_BLUEPRINT, -1, 9)],
+      )
+      .await
+      .unwrap();
+
+      // Reusing the same static catalog still picks up the freshly owned blueprint via the dynamic half.
+      let after = super::load_data_with_catalog(&db, Scope::All, catalog).await;
+      let owned = after.owned.get(&HULK).unwrap();
+      assert_eq!(owned.material_efficiency, 9);
     }
   }
 

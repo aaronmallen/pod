@@ -1413,8 +1413,20 @@ pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64) -> f64 {
   }
 }
 
-pub fn load(db: crate::store::Database, scope: Scope) -> iced::Task<PlannerData> {
-  iced::Task::perform(async move { planner_loaders::load_data(&db, scope).await }, |data| data)
+pub fn load(
+  db: crate::store::Database,
+  scope: Scope,
+  catalog: Option<planner_loaders::StaticCatalog>,
+) -> iced::Task<PlannerData> {
+  iced::Task::perform(
+    async move {
+      match catalog {
+        Some(catalog) => planner_loaders::load_data_with_catalog(&db, scope, catalog).await,
+        None => planner_loaders::load_data(&db, scope).await,
+      }
+    },
+    |data| data,
+  )
 }
 
 pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Message> {

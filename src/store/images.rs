@@ -1,4 +1,5 @@
 use std::{
+  collections::HashSet,
   fs, io,
   path::{Path, PathBuf},
   sync::OnceLock,
@@ -16,6 +17,47 @@ pub const STALE_AFTER: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 static DEFAULT_STORE: OnceLock<Store> = OnceLock::new();
 
 static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// A snapshot of the icon cache directories' filenames, read once via `read_dir` so a bulk caller can resolve many
+/// type icons with in-memory membership checks instead of a `Path::exists` stat per type. Built by [`Store::icon_index`]
+/// and resolves identically to [`Store::resolve_type_icon`] for the directory layout in effect at snapshot time.
+#[derive(Clone, Debug, Default)]
+pub struct IconIndex {
+  committed_dir: Option<PathBuf>,
+  committed_files: HashSet<String>,
+  data_dir: PathBuf,
+  data_files: HashSet<String>,
+}
+
+impl IconIndex {
+  /// Resolves a type icon against the cached filename sets, mirroring [`Store::resolve_type_icon`]: the runtime
+  /// data tier wins, then (only at [`Size::S64`]) the committed tier, preferring a `_bpc` render for a blueprint
+  /// copy. Returns the same paths the per-call resolver would have hit, without touching the filesystem.
+  pub fn resolve_type_icon(&self, type_id: i64, is_blueprint_copy: Option<bool>, size: Size) -> IconResolution {
+    let variant = IconVariant::from_blueprint_copy(is_blueprint_copy);
+
+    let name = format!("{type_id}.png");
+    if self.data_files.contains(&name) {
+      return IconResolution::Found(self.data_dir.join(&name));
+    }
+
+    if size == Size::S64
+      && let Some(committed) = &self.committed_dir
+    {
+      if variant == IconVariant::Bpc {
+        let bpc = format!("{type_id}_bpc.png");
+        if self.committed_files.contains(&bpc) {
+          return IconResolution::Found(committed.join(bpc));
+        }
+      }
+      if self.committed_files.contains(&name) {
+        return IconResolution::Found(committed.join(name));
+      }
+    }
+
+    IconResolution::Missing
+  }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum IconResolution {
@@ -99,6 +141,24 @@ impl Store {
 
   pub fn corporation_logo_path(&self, corporation_id: i64) -> PathBuf {
     self.root.join("corporations").join(format!("{corporation_id}.png"))
+  }
+
+  /// Snapshots the type-icon cache directories (the runtime `types` dir and, when configured, the committed items
+  /// dir) into an [`IconIndex`], issuing one `read_dir` per directory. Lets a bulk caller resolve thousands of
+  /// icons with in-memory lookups rather than a stat storm.
+  pub fn icon_index(&self) -> IconIndex {
+    let data_dir = self.root.join("types");
+    let data_files = read_dir_file_names(&data_dir);
+    let (committed_dir, committed_files) = match &self.committed_items {
+      Some(dir) => (Some(dir.clone()), read_dir_file_names(dir)),
+      None => (None, HashSet::new()),
+    };
+    IconIndex {
+      committed_dir,
+      committed_files,
+      data_dir,
+      data_files,
+    }
   }
 
   pub fn image_path(&self, kind: ImageKind, id: i64) -> PathBuf {
@@ -204,6 +264,17 @@ pub fn resolve(store: &Store, kind: ImageKind, id: i64) -> ImageState {
   }
 }
 
+/// The set of file names directly under `dir`; an empty set when the directory is absent or unreadable (a cache
+/// not yet populated), so a membership check degrades to "missing" exactly as a `Path::exists` would.
+fn read_dir_file_names(dir: &Path) -> HashSet<String> {
+  fs::read_dir(dir)
+    .into_iter()
+    .flatten()
+    .flatten()
+    .filter_map(|entry| entry.file_name().into_string().ok())
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -244,6 +315,86 @@ mod tests {
       let path = store.corporation_logo_path(98_000_001);
 
       assert!(path.ends_with("corporations/98000001.png"), "got {path:?}");
+    }
+  }
+
+  mod icon_index {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_the_committed_tier_when_the_data_dir_has_no_match() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      let committed_icon = committed.path().join("587.png");
+      std::fs::write(&committed_icon, [1]).unwrap();
+
+      let resolved = store.icon_index().resolve_type_icon(587, None, Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(committed_icon));
+    }
+
+    #[test]
+    fn it_ignores_the_committed_tier_for_sizes_other_than_64px() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("587.png"), [1]).unwrap();
+
+      let resolved = store.icon_index().resolve_type_icon(587, None, Size::S128);
+
+      assert_eq!(resolved, IconResolution::Missing);
+    }
+
+    #[test]
+    fn it_matches_the_per_call_resolver_for_every_tier() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      store.write(&store.type_icon_path(100, Size::S64), &[1]).unwrap();
+      std::fs::write(committed.path().join("200.png"), [1]).unwrap();
+      std::fs::write(committed.path().join("300_bpc.png"), [1]).unwrap();
+      let index = store.icon_index();
+
+      for type_id in [100, 200, 300, 999] {
+        for is_copy in [None, Some(false), Some(true)] {
+          assert_eq!(
+            index.resolve_type_icon(type_id, is_copy, Size::S64),
+            store.resolve_type_icon(type_id, is_copy, Size::S64),
+            "type {type_id} copy {is_copy:?}"
+          );
+        }
+      }
+    }
+
+    #[test]
+    fn it_prefers_a_committed_bpc_render_for_a_copy() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      std::fs::write(committed.path().join("587.png"), [1]).unwrap();
+      let bpc = committed.path().join("587_bpc.png");
+      std::fs::write(&bpc, [2]).unwrap();
+
+      let resolved = store.icon_index().resolve_type_icon(587, Some(true), Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(bpc));
+    }
+
+    #[test]
+    fn it_prefers_the_data_dir_tier_over_the_committed_tier() {
+      let data = tempfile::tempdir().unwrap();
+      let committed = tempfile::tempdir().unwrap();
+      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
+      let data_icon = store.type_icon_path(587, Size::S64);
+      store.write(&data_icon, &[1]).unwrap();
+      std::fs::write(committed.path().join("587.png"), [2]).unwrap();
+
+      let resolved = store.icon_index().resolve_type_icon(587, None, Size::S64);
+
+      assert_eq!(resolved, IconResolution::Found(data_icon));
     }
   }
 

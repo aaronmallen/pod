@@ -21,7 +21,7 @@ use self::planner::Planner;
 pub use self::{
   loaders::{Activity, Blueprint, Extraction, IndustryJob, Loaded, Owner, RosterOwner},
   planner::{FacilityDefaults, Message as PlannerMessage, PinnedStructure},
-  planner_loaders::PlannerFacility,
+  planner_loaders::{PlannerFacility, StaticCatalog},
   planner_search::{pin_facility, search_facilities},
 };
 use crate::{
@@ -180,6 +180,10 @@ pub struct State {
   on_hand_epoch: LoadEpoch,
   picker_open: bool,
   planner: Planner,
+  /// The session-lived static catalog reused across planner loads (rail re-entry, scope change) so the costly
+  /// SDE/icon build runs only once. Seeded from the app-level cache at construction, or populated from the first
+  /// full load when no cache existed yet.
+  planner_catalog: Option<StaticCatalog>,
   rail_pane: PaneDrag,
   required_scopes: Vec<&'static str>,
   roster: Vec<RosterOwner>,
@@ -187,7 +191,12 @@ pub struct State {
 }
 
 impl State {
-  pub fn new(active: i64, required_scopes: Vec<&'static str>, facility_defaults: FacilityDefaults) -> Self {
+  pub fn new(
+    active: i64,
+    required_scopes: Vec<&'static str>,
+    facility_defaults: FacilityDefaults,
+    planner_catalog: Option<StaticCatalog>,
+  ) -> Self {
     let mut planner = Planner::new();
     planner.set_facility_defaults(facility_defaults);
     State {
@@ -210,6 +219,7 @@ impl State {
       on_hand_epoch: LoadEpoch::default(),
       picker_open: false,
       planner,
+      planner_catalog,
       rail_pane: PaneDrag::with_min_width(
         RAIL_PANE_DEFAULT_WIDTH,
         RAIL_PANE_MIN_WIDTH,
@@ -347,6 +357,10 @@ impl State {
 
   pub(super) fn planner(&self) -> &Planner {
     &self.planner
+  }
+
+  pub(crate) fn planner_catalog(&self) -> Option<&StaticCatalog> {
+    self.planner_catalog.as_ref()
   }
 
   pub(super) fn rail_pane_width(&self) -> f32 {
@@ -507,8 +521,10 @@ fn load_plan(db: &Database, id: i64) -> Task<Message> {
   )
 }
 
-fn load_planner(db: &Database, scope: Scope) -> Task<Message> {
-  planner::load(db.clone(), scope).map(|data| Message::PlannerLoaded(Box::new(data)))
+/// Loads the planner data for `scope`. With a cached [`StaticCatalog`] only the cheap dynamic half (prices,
+/// owned blueprints, facilities) is queried; without one the full catalog is built (and later cached).
+fn load_planner(db: &Database, scope: Scope, catalog: Option<StaticCatalog>) -> Task<Message> {
+  planner::load(db.clone(), scope, catalog).map(|data| Message::PlannerLoaded(Box::new(data)))
 }
 
 /// Routes a planner sub-message: a few arms round-trip the database (clipboard, save/load/delete, pane
@@ -596,13 +612,21 @@ pub fn facility_search(
 }
 
 /// Reloads planner facilities after pinning so the structure appears locally even when no managed corp
-/// owns it.
-pub fn facility_pin(db: &Database, scope: Scope, pin: PinnedStructure) -> Task<Message> {
+/// owns it. Reuses the session static catalog when present so only the dynamic half is rebuilt.
+pub fn facility_pin(
+  db: &Database,
+  scope: Scope,
+  pin: PinnedStructure,
+  catalog: Option<StaticCatalog>,
+) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
       planner_search::pin_facility(db.clone(), pin).await;
-      planner_loaders::load_data(&db, scope).await
+      match catalog {
+        Some(catalog) => planner_loaders::load_data_with_catalog(&db, scope, catalog).await,
+        None => planner_loaders::load_data(&db, scope).await,
+      }
     },
     |data| Message::PlannerLoaded(Box::new(data)),
   )
@@ -690,7 +714,7 @@ fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -
     state.planner.seed_from_blueprint(blueprint_type_id);
   } else {
     state.planner.queue_blueprint_seed(blueprint_type_id);
-    tasks.push(load_planner(db, state.active));
+    tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
   }
   Task::batch(tasks)
 }
@@ -762,6 +786,11 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
     Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
     Message::Planner(planner_message) => handle_planner(state, db, planner_message),
     Message::PlannerLoaded(data) => {
+      // Capture the static catalog from the first full load so later loads (rail re-entry, scope change) reuse
+      // it instead of rebuilding it; the app layer hoists this into its session-lived cache.
+      if state.planner_catalog.is_none() {
+        state.planner_catalog = Some(StaticCatalog::from_planner_data(&data));
+      }
       state.planner.apply_data(*data);
       let epoch = state.on_hand_epoch.next();
       load_on_hand(db, state.planner.build_sites(), epoch)
@@ -802,7 +831,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.rebuild_job_view(now);
       let mut tasks = vec![reload(db, scope, &state.required_scopes)];
       if state.planner.is_loaded() {
-        tasks.push(load_planner(db, scope));
+        tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
       }
       Task::batch(tasks)
     }
@@ -811,7 +840,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       if tab == Tab::Planner {
         let mut tasks = vec![list_plans(db)];
         if !state.planner.is_loaded() {
-          tasks.push(load_planner(db, state.active));
+          tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
         }
         return Task::batch(tasks);
       }
@@ -914,7 +943,7 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>, jobs: Vec<IndustryJob>) -> State {
-    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required(), FacilityDefaults::default());
+    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required(), FacilityDefaults::default(), None);
     state.active = active;
     state.roster = roster;
     state.jobs = jobs;

@@ -352,6 +352,7 @@ mod tests {
       super::super::EMPTY_INDUSTRY_SELECTION,
       Vec::new(),
       super::super::FacilityDefaults::default(),
+      None,
     );
     state.active = active;
     state.roster = vec![owner(1, false), owner(2, false), owner(98, true)];

@@ -14,6 +14,7 @@ use crate::{
   clients::{esi, esi::scopes, eve_sso},
   config::Feature,
   features::registry,
+  services::corp_eligibility,
   store::Database,
   sync::Subject,
   ui::style::{color, control, spacing, typography},
@@ -158,11 +159,7 @@ pub fn update(
         Kind::AddCorporation => {
           let esi = Arc::clone(esi);
           Task::perform(
-            async move {
-              session::complete_add_corporation(&sso, &esi, &db, &pending, &callback)
-                .await
-                .map_err(|err| err.to_string())
-            },
+            async move { add_corporation(&sso, &esi, &db, &pending, &callback).await },
             Message::CorporationCompleted,
           )
         }
@@ -283,6 +280,24 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
     .into()
+}
+
+async fn add_corporation(
+  sso: &eve_sso::Client,
+  esi: &esi::Client,
+  db: &Database,
+  pending: &eve_sso::PendingAuth,
+  callback: &session::Callback,
+) -> Result<CorporationAdded, String> {
+  let grant = session::exchange_grant(sso, pending, callback)
+    .await
+    .map_err(|err| err.to_string())?;
+  let corporation_id = corp_eligibility::eligible_corporation(esi, &grant, *grant.character_id())
+    .await
+    .map_err(|err| err.to_string())?;
+  session::persist_corporation(db, &grant, corporation_id)
+    .await
+    .map_err(|err| err.to_string())
 }
 
 fn body_text<'a>(content: &'a str, fill: Color) -> Element<'a, Message> {

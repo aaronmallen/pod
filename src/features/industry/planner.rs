@@ -1414,7 +1414,7 @@ mod view {
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
   const FACILITY_PICKER_GAP: f32 = 6.0;
-  const FACILITY_PICKER_WIDTH: f32 = 320.0;
+  const FACILITY_PICKER_WIDTH: f32 = 450.0;
   /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
   /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
   /// SDE/corp-sync facility tables.

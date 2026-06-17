@@ -136,7 +136,6 @@ pub enum Message {
     me: i64,
     type_id: i64,
   },
-  MaterialPlanToggled,
   MaterialRightPressed {
     type_id: i64,
   },
@@ -161,6 +160,9 @@ pub enum Message {
   PlansListed(Vec<SavedPlanData>),
   ProductPicked(i64),
   RightTabSelected(RightTab),
+  RowCollapseToggled {
+    type_id: i64,
+  },
   RunsChanged(i64),
   RunsInputChanged(String),
   SearchChanged(String),
@@ -254,14 +256,15 @@ pub struct Planner {
   /// material only when its type is in this set; everything else is bought.
   built: BTreeSet<i64>,
   category: Category,
+  /// Built type ids whose nested material-plan subtree the user collapsed. Keyed per-TYPE (a type appears at
+  /// most once in the table). Absent means expanded — the table shows every breakdown by default.
+  collapsed_rows: BTreeSet<i64>,
   cursor: Option<Point>,
   data: PlannerData,
   detail_pane: PaneDrag,
   facility_defaults: FacilityDefaults,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
-  /// Whether the recursive Material Plan table is expanded. Collapsed on initial open.
-  material_plan_open: bool,
   menu: Option<MaterialMenu>,
   /// On-hand quantity at the build sites keyed by `(site, type_id)`, the input to [`allocate_stock`]. Loaded
   /// from `store::repo::assets::on_hand_at_build_sites`; empty until that load lands.
@@ -293,6 +296,7 @@ impl Planner {
     Planner {
       built: BTreeSet::new(),
       category: Category::Other,
+      collapsed_rows: BTreeSet::new(),
       cursor: None,
       data: PlannerData::default(),
       detail_pane: PaneDrag::with_min_width(
@@ -304,7 +308,6 @@ impl Planner {
       facility_defaults: FacilityDefaults::default(),
       facility_picker: None,
       loaded: false,
-      material_plan_open: false,
       menu: None,
       on_hand: std::collections::HashMap::new(),
       pending_blueprint_seed: None,
@@ -447,8 +450,9 @@ impl Planner {
     self.built.contains(&type_id)
   }
 
-  pub fn material_plan_open(&self) -> bool {
-    self.material_plan_open
+  /// Whether the user collapsed `type_id`'s nested material-plan subtree (hiding the rows it builds from).
+  pub fn is_row_collapsed(&self, type_id: i64) -> bool {
+    self.collapsed_rows.contains(&type_id)
   }
 
   pub fn menu(&self) -> Option<&MaterialMenu> {
@@ -554,7 +558,7 @@ impl Planner {
       .collect();
     self.restore_stock_selections(tree);
     self.facility_picker = None;
-    self.material_plan_open = false;
+    self.collapsed_rows.clear();
     self.push_recent(tree.product_type_id);
   }
 
@@ -629,11 +633,15 @@ impl Planner {
   /// stored system id is absent from the current data (e.g. after a reload).
   pub fn selected_facility(&self, type_id: i64, is_reaction: bool) -> Option<&PlannerFacility> {
     match self.settings_for(type_id).facility_system {
+      // Prefer a facility in the chosen system that can run THIS activity (a system may host both a
+      // manufacturing and a reaction structure); only then fall back to any facility in the system, then
+      // to the activity's cheapest default — so a reaction never resolves to a manufacturing-only site.
       Some(system) => self
         .data
         .facilities
         .iter()
-        .find(|f| f.solar_system_id == system)
+        .find(|f| f.solar_system_id == system && f.index_for(is_reaction).is_some())
+        .or_else(|| self.data.facilities.iter().find(|f| f.solar_system_id == system))
         .or_else(|| self.default_facility(is_reaction)),
       None => self.default_facility(is_reaction),
     }
@@ -769,7 +777,6 @@ impl Planner {
       | Message::TimeEfficiencyChanged {
         ..
       } => self.update_efficiency(message),
-      Message::MaterialPlanToggled => self.material_plan_open = !self.material_plan_open,
       Message::MaterialRightPressed {
         ..
       }
@@ -805,6 +812,9 @@ impl Planner {
         self.push_recent(type_id);
       }
       Message::RightTabSelected(tab) => self.right_tab = tab,
+      Message::RowCollapseToggled {
+        type_id,
+      } => self.toggle_row_collapse(type_id),
       Message::RunsChanged(runs) => self.set_runs(runs),
       Message::RunsInputChanged(raw) => self.edit_runs(raw),
       Message::SearchChanged(query) => {
@@ -1123,7 +1133,7 @@ impl Planner {
     self.settings.clear();
     self.built.clear();
     self.stock_selections.clear();
-    self.material_plan_open = false;
+    self.collapsed_rows.clear();
     self.facility_picker = None;
   }
 
@@ -1163,6 +1173,14 @@ impl Planner {
           .unwrap_or(0)
       })
       .unwrap_or(0)
+  }
+
+  /// Collapses or expands `type_id`'s nested material-plan subtree. Collapsing only hides the rows it builds
+  /// from; the type stays built and still rolls up into the bill of materials and build order.
+  fn toggle_row_collapse(&mut self, type_id: i64) {
+    if !self.collapsed_rows.insert(type_id) {
+      self.collapsed_rows.remove(&type_id);
+    }
   }
 
   fn toggle_facility_picker(&mut self, type_id: i64) {
@@ -1489,9 +1507,7 @@ mod view {
       planner,
       format!("{me_hint} \u{00B7} break down an item or right-click for options"),
     ));
-    if planner.material_plan_open() {
-      children.push(material_plan(planner, recipe));
-    }
+    children.push(material_plan(planner, recipe));
 
     if let Some(plan) = plan.as_ref() {
       children.push(bill_of_materials(planner, plan));
@@ -2184,40 +2200,18 @@ mod view {
   /// open) on the left and, when the plan has at least one buildable input, a warning-tinted "Break down all"
   /// button floated right that recursively builds every buildable input down to raw materials in one action.
   fn material_plan_header(planner: &Planner, hint: String) -> Element<'_, Message> {
-    let toggle = material_plan_toggle(planner.material_plan_open(), hint);
+    let label = section_label("Material plan", Some(hint));
     if !planner.has_buildable_inputs() {
-      return toggle;
+      return label;
     }
     Row::with_children(vec![
-      container(toggle).width(Length::Fill).into(),
+      container(label).width(Length::Fill).into(),
       break_down_all_button(),
     ])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .width(Length::Fill)
     .into()
-  }
-
-  /// The clickable "Material plan" heading that expands/collapses the recursive table. A rotating chevron
-  /// signals state; collapsed by default.
-  fn material_plan_toggle<'a>(open: bool, hint: String) -> Element<'a, Message> {
-    let chevron = if open {
-      Icon::chevron().color(color::text::secondary()).size(13.0)
-    } else {
-      Icon::chevron_right().color(color::text::secondary()).size(13.0)
-    };
-    let inner = Row::with_children(vec![
-      chevron.render::<Message>(),
-      section_label("Material plan", Some(hint)),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center);
-
-    button(inner)
-      .padding(Padding::ZERO)
-      .on_press(Message::MaterialPlanToggled)
-      .style(|_, _| button::Style::default())
-      .into()
   }
 
   fn break_down_all_button<'a>() -> Element<'a, Message> {
@@ -2318,6 +2312,7 @@ mod view {
       ));
 
       if child
+        && !planner.is_row_collapsed(material.type_id)
         && acc.seen.insert(material.type_id)
         && let Some(child_recipe) = data.recipe(material.type_id)
       {
@@ -2561,6 +2556,24 @@ mod view {
     }
   }
 
+  /// The per-row expand/collapse affordance shown on a built material-plan row: a rotating chevron that
+  /// hides or reveals just that row's nested subtree. Right-pointing when collapsed, down when expanded.
+  fn collapse_chevron<'a>(type_id: i64, collapsed: bool) -> Element<'a, Message> {
+    let glyph = if collapsed {
+      Icon::chevron_right()
+    } else {
+      Icon::chevron()
+    };
+
+    button(glyph.color(color::text::secondary()).size(12.0).render::<Message>())
+      .padding(Padding::ZERO)
+      .on_press(Message::RowCollapseToggled {
+        type_id,
+      })
+      .style(|_, _| button::Style::default())
+      .into()
+  }
+
   fn material_row<'a>(planner: &'a Planner, type_id: i64, line: MaterialLine) -> Element<'a, Message> {
     let MaterialLine {
       building,
@@ -2574,9 +2587,11 @@ mod view {
     let buildable = data.recipe(type_id).is_some();
     let split = stock_split(planner, type_id, qty, site);
 
-    let mut name_row = Row::with_children(vec![type_tile(type_id)])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center);
+    let mut name_row = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
+    if building {
+      name_row = name_row.push(collapse_chevron(type_id, planner.is_row_collapsed(type_id)));
+    }
+    name_row = name_row.push(type_tile(type_id));
     name_row = name_row.push(
       text(data.name(type_id))
         .font(typography::body::REGULAR)
@@ -2836,88 +2851,12 @@ mod view {
   }
 
   fn build_order<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
-    let data = planner.data();
     let jobs = plan.merged_build_order();
     let count = jobs.len();
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for (index, job) in jobs.iter().enumerate() {
-      let is_final = job.is_root;
-      let time = node_build_time(&recipe_for(data, job.type_id), job.runs, job.node.te);
-      let parent_name = merged_feeds_line(data, job);
-
-      let body = Row::with_children(vec![
-        text(format!("{:02}", index + 1))
-          .font(typography::mono::MEDIUM)
-          .size(typography::size::MD)
-          .style(typography::colored(if is_final {
-            color::accent::PLASMA
-          } else {
-            color::text::secondary()
-          }))
-          .into(),
-        type_tile(job.type_id),
-        Column::with_children(vec![
-          Row::with_children(vec![
-            text(data.name(job.type_id))
-              .font(typography::body::MEDIUM)
-              .size(typography::size::MD)
-              .style(typography::colored(color::text::PRIMARY))
-              .into(),
-            activity_badge(job.node.is_reaction),
-            text(format!(
-              "\u{00D7}{} {}",
-              fmt_num(job.runs),
-              if job.node.is_reaction { "cycles" } else { "runs" }
-            ))
-            .font(typography::mono::REGULAR)
-            .size(typography::size::XS_PLUS)
-            .style(typography::colored(color::text::secondary()))
-            .into(),
-          ])
-          .spacing(spacing::SPACE_2)
-          .align_y(Vertical::Center)
-          .into(),
-          text(parent_name)
-            .font(typography::mono::REGULAR)
-            .size(typography::size::XS_PLUS)
-            .style(typography::colored(color::text::tertiary()))
-            .into(),
-        ])
-        .spacing(spacing::UNIT)
-        .width(Length::Fill)
-        .into(),
-        text(fmt_duration(time))
-          .font(typography::mono::REGULAR)
-          .size(typography::size::MD)
-          .style(typography::colored(color::text::PRIMARY))
-          .into(),
-      ])
-      .spacing(spacing::SPACE_3)
-      .align_y(Vertical::Center)
-      .width(Length::Fill);
-
-      let highlight = is_final;
-      rows.push(
-        container(body)
-          .width(Length::Fill)
-          .padding(Padding {
-            top: spacing::SPACE_3,
-            bottom: spacing::SPACE_3,
-            left: spacing::SPACE_3,
-            right: spacing::SPACE_3,
-          })
-          .style(move |_| container::Style {
-            background: highlight.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))),
-            border: Border {
-              color: color::rule(),
-              radius: 0.0.into(),
-              width: 1.0,
-            },
-            ..container::Style::default()
-          })
-          .into(),
-      );
+      rows.push(build_order_row(planner, index, job));
     }
 
     Column::with_children(vec![
@@ -2935,6 +2874,136 @@ mod view {
     ])
     .spacing(spacing::SPACE_3)
     .into()
+  }
+
+  /// One build-order row: numbered index, item tile, name + activity badge with a `feeds →` / `final product`
+  /// subline, a prominent `×N` runs/cycles pill, and the build time. The final-product row is plasma-accented.
+  fn build_order_row<'a>(planner: &'a Planner, index: usize, job: &MergedBuildJob) -> Element<'a, Message> {
+    let data = planner.data();
+    let is_final = job.is_root;
+    let time = node_build_time(&recipe_for(data, job.type_id), job.runs, job.node.te);
+
+    let body = Row::with_children(vec![
+      text(format!("{:02}", index + 1))
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(if is_final {
+          color::accent::PLASMA
+        } else {
+          color::text::secondary()
+        }))
+        .into(),
+      type_tile(job.type_id),
+      Column::with_children(vec![
+        Row::with_children(vec![
+          text(data.name(job.type_id))
+            .font(typography::body::MEDIUM)
+            .size(typography::size::MD)
+            .style(typography::colored(color::text::PRIMARY))
+            .into(),
+          activity_badge(job.node.is_reaction),
+        ])
+        .spacing(spacing::SPACE_2)
+        .align_y(Vertical::Center)
+        .into(),
+        text(merged_feeds_line(data, job))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS_PLUS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill)
+      .into(),
+      runs_pill(job.runs, job.node.is_reaction, is_final),
+      text(fmt_duration(time))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+    container(body)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_3,
+        bottom: spacing::SPACE_3,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .style(move |_| container::Style {
+        background: is_final.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))),
+        border: Border {
+          color: color::rule(),
+          radius: 0.0.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+
+  /// The bordered `×N` runs (manufacturing) / cycles (reaction) pill for a build-order row: a large count over
+  /// an uppercase RUNS/CYCLES label. The final-product pill is plasma-accented to match its row.
+  fn runs_pill<'a>(runs: i64, is_reaction: bool, is_final: bool) -> Element<'a, Message> {
+    let accent = if is_final {
+      color::accent::PLASMA
+    } else {
+      color::text::PRIMARY
+    };
+    let label_color = if is_final {
+      color::accent::PLASMA
+    } else {
+      color::text::secondary()
+    };
+
+    let inner = Column::with_children(vec![
+      text(format!("\u{00D7}{}", fmt_num(runs)))
+        .font(typography::mono::SEMIBOLD)
+        .size(typography::size::LG)
+        .style(typography::colored(accent))
+        .into(),
+      text(if is_reaction { "CYCLES" } else { "RUNS" })
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(label_color))
+        .into(),
+    ])
+    .spacing(spacing::UNIT)
+    .align_x(Horizontal::Center);
+
+    let background = if is_final {
+      color::with_alpha(color::accent::PLASMA, 0.18)
+    } else {
+      color::surface::SUNKEN
+    };
+    let border_color = if is_final {
+      color::with_alpha(color::accent::PLASMA, 0.4)
+    } else {
+      color::rule()
+    };
+
+    container(inner)
+      .padding(Padding {
+        top: spacing::UNIT + 1.0,
+        bottom: spacing::UNIT + 1.0,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .align_x(Horizontal::Center)
+      .style(move |_| container::Style {
+        background: Some(Background::Color(background)),
+        border: Border {
+          color: border_color,
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
   }
 
   fn merged_feeds_line(data: &PlannerData, job: &MergedBuildJob) -> String {
@@ -4420,6 +4489,33 @@ mod tests {
     }
 
     #[test]
+    fn it_seeds_a_reaction_with_the_reactions_default_and_manufacturing_with_its_own() {
+      const SULFURIC: i64 = 16_011;
+      let mut reaction_planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+      let mut manufacturing_planner = planner_with_defaults(FacilityDefaults {
+        manufacturing: Some(60_000_002),
+        reactions: Some(1_021_000_000_009),
+      });
+
+      reaction_planner.update(Message::ProductPicked(SULFURIC));
+      manufacturing_planner.update(Message::ProductPicked(HULK));
+
+      // A reaction picks the reactions structure id, a manufacturing product picks the manufacturing one —
+      // the install structure (not just its system) must differ per activity.
+      assert_eq!(
+        reaction_planner.settings_for(SULFURIC).facility_structure,
+        Some(1_021_000_000_009)
+      );
+      assert_eq!(
+        manufacturing_planner.settings_for(HULK).facility_structure,
+        Some(60_000_002)
+      );
+    }
+
+    #[test]
     fn it_leaves_the_root_facility_unset_when_no_default_is_configured() {
       let mut planner = planner_with_defaults(FacilityDefaults::default());
 
@@ -4500,6 +4596,85 @@ mod tests {
 
       let totals = planner.plan().unwrap().raw_totals();
       assert!(totals.iter().any(|t| t.type_id == RETRIEVER));
+    }
+  }
+
+  mod row_collapse {
+    use iced::advanced::widget::Tree;
+
+    use super::*;
+
+    #[test]
+    fn it_starts_expanded_for_a_built_row() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
+
+    #[test]
+    fn it_toggles_a_built_rows_subtree_collapsed_and_expanded() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+      assert!(planner.is_row_collapsed(RETRIEVER));
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
+
+    #[test]
+    fn it_keeps_a_collapsed_row_built_and_in_the_raw_totals() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      // Collapsing only hides nested rows in the table; the type stays built and its raw inputs still roll up.
+      assert!(planner.is_built(RETRIEVER));
+      let totals = planner.plan().unwrap().raw_totals();
+      assert!(totals.iter().all(|total| total.type_id != RETRIEVER));
+    }
+
+    #[test]
+    fn it_resets_collapsed_rows_when_a_new_product_is_picked() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::ProductPicked(RETRIEVER));
+
+      assert!(!planner.is_row_collapsed(RETRIEVER));
+    }
+
+    #[test]
+    fn it_renders_a_collapsed_built_row_without_its_children() {
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+      planner.update(Message::RowCollapseToggled {
+        type_id: RETRIEVER,
+      });
+
+      let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
     }
   }
 
@@ -4765,11 +4940,9 @@ mod tests {
 
     #[test]
     fn it_renders_the_material_plan_grid_across_raw_and_buildable_rows() {
-      // Open the material plan on the HULK root: it emits the grid header plus a raw Tritanium row and a
+      // The always-visible material plan on the HULK root emits the grid header plus a raw Tritanium row and a
       // buildable Retriever row carrying the inline breakdown affordance.
-      let mut planner = planner();
-      planner.update(Message::MaterialPlanToggled);
-      assert!(planner.material_plan_open());
+      let planner = planner();
 
       let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
     }
@@ -4777,9 +4950,8 @@ mod tests {
     #[test]
     fn it_renders_the_material_plan_with_a_nested_building_row() {
       // Breaking down the buildable Retriever recurses the material plan into its own materials, so the row
-      // renders the BUILDING badge and the nested depth-tinted children.
+      // renders the BUILDING badge, the per-row collapse chevron, and the nested depth-tinted children.
       let mut planner = planner();
-      planner.update(Message::MaterialPlanToggled);
       planner.update(Message::NodeBrokenDown {
         type_id: RETRIEVER,
       });
@@ -4802,7 +4974,6 @@ mod tests {
         type_id: HULK,
       });
       planner.set_on_hand(std::collections::HashMap::from([((SITE, TRITANIUM), 4)]));
-      planner.update(Message::MaterialPlanToggled);
       let _ = Tree::new(super::super::view(&planner, Scope::All).as_widget());
 
       planner.update(Message::StockSelectionToggled {
@@ -4828,6 +4999,27 @@ mod tests {
 
       assert_eq!(facility.name, "Cheap Citadel");
       assert_eq!(facility.solar_system_id, 30_002_187);
+    }
+
+    #[test]
+    fn it_applies_a_picked_facility_to_only_that_types_settings() {
+      // Break down the buildable RETRIEVER, then pick a distinct facility on its sub-build card. The pick must
+      // write to RETRIEVER's per-type settings only, leaving the root HULK card on its own default.
+      let mut planner = planner();
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      planner.update(Message::FacilitySelected {
+        facility_structure: 60_000_001,
+        pin: None,
+        solar_system_id: 30_000_142,
+        type_id: RETRIEVER,
+      });
+
+      assert_eq!(planner.settings_for(RETRIEVER).facility_structure, Some(60_000_001));
+      assert_eq!(planner.settings_for(RETRIEVER).facility_system, Some(30_000_142));
+      assert_eq!(planner.settings_for(HULK).facility_structure, None);
     }
 
     #[test]

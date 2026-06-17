@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use iced::Point;
 
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan, RawTotal, StockAllocation, StockSelection, allocate_stock},
+  planner_model::{BuildNode, BuildPlan, MergedBuildJob, RawTotal, StockAllocation, StockSelection, allocate_stock},
 };
 use crate::{
   store::repo::industry::{PlanTree, PlanType},
@@ -250,8 +250,27 @@ fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
     .collect()
 }
 
+/// The derived build plan, memoized once per plan-affecting change instead of recomputed every render.
+/// iced re-runs `view` on every message/frame, so recomputing the recursive tree (and its deep-cloning
+/// roll-ups) per render janks the planner; [`Planner::recompute`] refreshes this whenever a plan input
+/// (product/runs/ME/TE/facility/built/stock) changes and `view` reads it.
+#[derive(Debug, Default)]
+struct Derived {
+  allocation: StockAllocation,
+  economics: Option<Economics>,
+  merged: Vec<MergedBuildJob>,
+  plan: Option<BuildPlan>,
+  /// `plan.raw_totals()` before stock netting, the input both the bill of materials and `raw_demand_for`
+  /// read. Cached so neither re-walks the tree per row.
+  raw_totals: Vec<RawTotal>,
+}
+
 #[derive(Debug)]
 pub struct Planner {
+  /// Reverse index from a recipe's `blueprint_type_id` to the product type it makes, built once in
+  /// [`apply_data`] from the recipe table (whose keys are product type ids). Turns `runs_me`'s former
+  /// linear scan of the whole recipe map into an O(1) lookup.
+  bp_to_product: HashMap<i64, i64>,
   /// The set of item types the user chose to produce in-house. The derived build tree descends into a
   /// material only when its type is in this set; everything else is bought.
   built: BTreeSet<i64>,
@@ -261,14 +280,18 @@ pub struct Planner {
   collapsed_rows: BTreeSet<i64>,
   cursor: Option<Point>,
   data: PlannerData,
+  derived: Derived,
   detail_pane: PaneDrag,
+  /// Set when an `update` arm changes a plan input; drained at the end of `update` to recompute
+  /// [`derived`] exactly once, mirroring the app-layer dirty-flag coalescing discipline.
+  dirty: bool,
   facility_defaults: FacilityDefaults,
   facility_picker: Option<FacilityPickerState>,
   loaded: bool,
   menu: Option<MaterialMenu>,
   /// On-hand quantity at the build sites keyed by `(site, type_id)`, the input to [`allocate_stock`]. Loaded
   /// from `store::repo::assets::on_hand_at_build_sites`; empty until that load lands.
-  on_hand: std::collections::HashMap<(i64, i64), i64>,
+  on_hand: HashMap<(i64, i64), i64>,
   /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
   /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
   pending_blueprint_seed: Option<i64>,
@@ -294,22 +317,25 @@ pub struct Planner {
 impl Planner {
   pub fn new() -> Self {
     Planner {
+      bp_to_product: HashMap::new(),
       built: BTreeSet::new(),
       category: Category::Other,
       collapsed_rows: BTreeSet::new(),
       cursor: None,
       data: PlannerData::default(),
+      derived: Derived::default(),
       detail_pane: PaneDrag::with_min_width(
         DETAIL_PANE_DEFAULT_WIDTH,
         DETAIL_PANE_MIN_WIDTH,
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       )
       .right_anchored(true),
+      dirty: false,
       facility_defaults: FacilityDefaults::default(),
       facility_picker: None,
       loaded: false,
       menu: None,
-      on_hand: std::collections::HashMap::new(),
+      on_hand: HashMap::new(),
       pending_blueprint_seed: None,
       picker_open: false,
       picker_scroll_offset: 0.0,
@@ -326,7 +352,31 @@ impl Planner {
     }
   }
 
+  /// Whether `message` changes a plan input (product, runs, ME/TE, facility, breakdown, or stock), so the
+  /// memoized [`Derived`] plan must be rebuilt. Excludes `PlanRestored`, whose `restore` handler recomputes
+  /// itself. Pure navigation/UI arms (cursor, search, picker, pane, tab) leave the plan untouched.
+  fn is_plan_affecting(message: &Message) -> bool {
+    matches!(
+      message,
+      Message::BreakDownAll
+        | Message::FacilitySelected { .. }
+        | Message::MaterialEfficiencyChanged { .. }
+        | Message::NodeBrokenDown { .. }
+        | Message::NodeCollapsed { .. }
+        | Message::ProductPicked(_)
+        | Message::RunsChanged(_)
+        | Message::RunsInputChanged(_)
+        | Message::StockSelectionToggled { .. }
+        | Message::TimeEfficiencyChanged { .. }
+    )
+  }
+
   pub fn apply_data(&mut self, data: PlannerData) {
+    self.bp_to_product = data
+      .recipes
+      .iter()
+      .map(|(&product, recipe)| (recipe.blueprint_type_id, product))
+      .collect();
     self.data = data;
     self.loaded = true;
     self.placeholder = format!(
@@ -341,6 +391,7 @@ impl Planner {
     if let Some(blueprint_type_id) = self.pending_blueprint_seed.take() {
       self.seed_from_blueprint(blueprint_type_id);
     }
+    self.recompute();
   }
 
   /// The distinct picked build-site structure/station ids across the current plan: the root product plus every
@@ -397,17 +448,21 @@ impl Planner {
     self.detail_pane.width()
   }
 
-  /// Whole-plan economics: `material_cost` is the rolled-up acquisition total of every raw input the
-  /// bill of materials says you must buy, plus the install fees of any in-house sub-builds. With no
-  /// component broken down this equals pricing the root recipe's materials; once a component is built
-  /// in-house it equals buying that component's constituent parts plus its sub-job fee. Net profit and
-  /// margin derive from this true cost so they match the bill of materials.
   pub fn economics(&self) -> Option<Economics> {
+    self.derived.economics.clone()
+  }
+
+  /// Whole-plan economics from the freshly memoized `plan`: `material_cost` is the rolled-up acquisition
+  /// total of every raw input the bill of materials says you must buy, plus the install fees of any in-house
+  /// sub-builds. With no component broken down this equals pricing the root recipe's materials; once a
+  /// component is built in-house it equals buying that component's constituent parts plus its sub-job fee.
+  /// Net profit and margin derive from this true cost so they match the bill of materials. Called from
+  /// [`recompute`], which reuses the plan it already assembled.
+  fn compute_economics(&self, plan: &BuildPlan) -> Option<Economics> {
     let product = self.product?;
     let recipe = self.data.recipe(product)?;
-    let plan = self.plan()?;
 
-    let material_cost = self.plan_material_cost(&plan, &|type_id| self.cost_index(type_id).unwrap_or(0.0));
+    let material_cost = self.plan_material_cost(plan, &|type_id| self.cost_index(type_id).unwrap_or(0.0));
 
     let output_qty = recipe.output_per_run * self.runs;
     let revenue = self.data.price(product) * output_qty as f64;
@@ -459,6 +514,23 @@ impl Planner {
     self.menu.as_ref()
   }
 
+  /// Whether a memoized plan is present (a product is chosen and its tree assembled). Lets `view` gate the
+  /// bill of materials / build order without cloning the cached [`BuildPlan`].
+  pub fn has_plan(&self) -> bool {
+    self.derived.plan.is_some()
+  }
+
+  /// The memoized merged build order (one row per `(type, ME, TE, facility)`), producer-before-consumer.
+  /// Recomputed only on a plan-affecting change, so `view` reads it without re-walking the tree.
+  pub fn merged_build_order(&self) -> &[MergedBuildJob] {
+    &self.derived.merged
+  }
+
+  /// The memoized raw totals before stock netting (every raw input the bill of materials must acquire).
+  pub fn raw_totals(&self) -> &[RawTotal] {
+    &self.derived.raw_totals
+  }
+
   /// The configured (or fresh-default) settings for `type_id`. Per-TYPE: the same settings back every
   /// occurrence of the type in the derived build tree.
   pub fn settings_for(&self, type_id: i64) -> TypeSettings {
@@ -478,6 +550,10 @@ impl Planner {
   }
 
   pub fn plan(&self) -> Option<BuildPlan> {
+    self.derived.plan.clone()
+  }
+
+  fn compute_plan(&self) -> Option<BuildPlan> {
     let product = self.product?;
     let root = self.assemble(product, &mut BTreeSet::new())?;
     Some(BuildPlan::new(root, self.runs))
@@ -508,6 +584,7 @@ impl Planner {
     self.search.clear();
     self.category = Category::Other;
     self.push_recent(product);
+    self.recompute();
     true
   }
 
@@ -520,12 +597,7 @@ impl Planner {
   /// The product type id a blueprint type manufactures (or reacts into), looked up in the loaded recipe
   /// table whose keys are product type ids carrying their producing `blueprint_type_id`.
   pub fn product_for_blueprint(&self, blueprint_type_id: i64) -> Option<i64> {
-    self
-      .data
-      .recipes
-      .iter()
-      .find(|(_, recipe)| recipe.blueprint_type_id == blueprint_type_id)
-      .map(|(&product, _)| product)
+    self.bp_to_product.get(&blueprint_type_id).copied()
   }
 
   pub fn recent(&self) -> &[i64] {
@@ -556,10 +628,14 @@ impl Planner {
       .filter(|kind| kind.built)
       .map(|kind| kind.type_id)
       .collect();
+    // Refresh the memoized plan from the restored product/settings/built before rehydrating stock intent:
+    // `restore_stock_selections` reads each type's raw demand from the cached pre-netting totals.
+    self.recompute();
     self.restore_stock_selections(tree);
     self.facility_picker = None;
     self.collapsed_rows.clear();
     self.push_recent(tree.product_type_id);
+    self.recompute();
   }
 
   /// Rebuilds the use-stock intent from a saved tree: each `use_stock` type with a pinned facility becomes a
@@ -621,8 +697,9 @@ impl Planner {
 
   /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass, loaded
   /// from `store::repo::assets::on_hand_at_build_sites` for the plan's build sites.
-  pub fn set_on_hand(&mut self, on_hand: std::collections::HashMap<(i64, i64), i64>) {
+  pub fn set_on_hand(&mut self, on_hand: HashMap<(i64, i64), i64>) {
     self.on_hand = on_hand;
+    self.recompute();
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
@@ -659,7 +736,7 @@ impl Planner {
   /// pool in selection order. Drives the netted [`BuildPlan::raw_totals_after_stock`] the buy list surfaces;
   /// empty (no draws) until the user opts a job into stock, leaving raw totals unchanged.
   pub fn stock_allocation(&self) -> StockAllocation {
-    allocate_stock(&self.on_hand, &self.stock_selections)
+    self.derived.allocation.clone()
   }
 
   /// Whether `(site, type_id)` is currently opted into on-hand stock.
@@ -680,7 +757,8 @@ impl Planner {
   /// (selected here, or consumed by an earlier toggle on the same shared pool) hides the button.
   pub fn remaining_pool(&self, site: i64, type_id: i64) -> i64 {
     let drawn = self
-      .stock_allocation()
+      .derived
+      .allocation
       .drawn_by_pool
       .get(&(site, type_id))
       .copied()
@@ -760,6 +838,10 @@ impl Planner {
   }
 
   pub fn update(&mut self, message: Message) {
+    // Mark the memoized plan stale before dispatch when this message changes a plan input, then recompute
+    // it exactly once at the end (the app-layer dirty-flag coalescing discipline). `PlanRestored` is excluded
+    // because `restore` recomputes itself (it needs a fresh plan mid-restore to rehydrate stock intent).
+    self.dirty |= Self::is_plan_affecting(&message);
     match message {
       Message::BreakDownAll => self.break_down_all(),
       Message::CategorySelected(category) => {
@@ -835,6 +917,9 @@ impl Planner {
         site,
         type_id,
       } => self.toggle_stock_selection(site, type_id),
+    }
+    if self.dirty {
+      self.recompute();
     }
   }
 
@@ -1118,6 +1203,26 @@ impl Planner {
     self.recent.truncate(RECENT_LIMIT);
   }
 
+  /// Rebuilds the memoized [`Derived`] plan from the current inputs (product, runs, settings, built, stock
+  /// selections, on-hand). Called whenever any of those change — every plan-affecting `update` arm, plus
+  /// `apply_data`/`set_on_hand`/`restore` — so `view` reads a ready plan instead of re-walking the tree per
+  /// frame. Clears the `dirty` flag.
+  fn recompute(&mut self) {
+    let plan = self.compute_plan();
+    let merged = plan.as_ref().map(BuildPlan::merged_build_order).unwrap_or_default();
+    let raw_totals = plan.as_ref().map(BuildPlan::raw_totals).unwrap_or_default();
+    let allocation = allocate_stock(&self.on_hand, &self.stock_selections);
+    let economics = plan.as_ref().and_then(|plan| self.compute_economics(plan));
+    self.derived = Derived {
+      allocation,
+      economics,
+      merged,
+      plan,
+      raw_totals,
+    };
+    self.dirty = false;
+  }
+
   /// Populates the initial recent list from owned blueprints in catalog order;
   /// falls back to the first catalog entries when no blueprints are owned.
   fn seed_recent(&self) -> Vec<i64> {
@@ -1168,18 +1273,16 @@ impl Planner {
   }
 
   /// The whole raw (to-acquire) demand of `type_id` across the current plan, before stock netting. Used as a
-  /// selection's `needed` so a use-stock toggle reaches for as much of the pool as the plan can absorb.
+  /// selection's `needed` so a use-stock toggle reaches for as much of the pool as the plan can absorb. Reads
+  /// the memoized pre-netting raw totals; stock selections do not change them, so the cache is always current
+  /// for a toggle (and [`restore`] refreshes the plan before rehydrating selections).
   fn raw_demand_for(&self, type_id: i64) -> i64 {
     self
-      .plan()
-      .map(|plan| {
-        plan
-          .raw_totals()
-          .iter()
-          .find(|total| total.type_id == type_id)
-          .map(|total| total.qty)
-          .unwrap_or(0)
-      })
+      .derived
+      .raw_totals
+      .iter()
+      .find(|total| total.type_id == type_id)
+      .map(|total| total.qty)
       .unwrap_or(0)
   }
 
@@ -1392,7 +1495,7 @@ mod view {
     clients::eve_image::Size,
     features::industry::{
       planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
-      planner_model::{MergedBuildJob, NeededBlueprint, eff_qty, runs_for},
+      planner_model::{MergedBuildJob, NeededBlueprint, eff_qty, needed_blueprints_from, runs_for},
     },
     store::images::{self, IconResolution},
     ui::{
@@ -1487,11 +1590,11 @@ mod view {
   }
 
   fn left_pane<'a>(planner: &'a Planner, product: i64, recipe: &'a Recipe) -> Element<'a, Message> {
-    let plan = planner.plan();
+    let has_plan = planner.has_plan();
     // One distinct card per built type: the deduped merged build order is the source of truth, so a type
     // built by several jobs shows a single summed card. Card count (built types + the root product) reads
     // as the step count.
-    let merged = plan.as_ref().map(|plan| plan.merged_build_order()).unwrap_or_default();
+    let merged = planner.merged_build_order();
     let steps = merged.len().max(1);
 
     let mut children: Vec<Element<'a, Message>> = vec![
@@ -1518,10 +1621,10 @@ mod view {
     ));
     children.push(material_plan(planner, recipe));
 
-    if let Some(plan) = plan.as_ref() {
-      children.push(bill_of_materials(planner, plan));
-      children.push(needed_blueprints(planner, plan));
-      children.push(build_order(planner, plan));
+    if has_plan {
+      children.push(bill_of_materials(planner));
+      children.push(needed_blueprints(planner));
+      children.push(build_order(planner));
     }
 
     Column::with_children(children)
@@ -2351,11 +2454,8 @@ mod view {
       return 0;
     }
     planner
-      .data()
-      .recipes
-      .iter()
-      .find(|(_, candidate)| candidate.blueprint_type_id == recipe.blueprint_type_id)
-      .map(|(&product, _)| planner.settings_for(product).me)
+      .product_for_blueprint(recipe.blueprint_type_id)
+      .map(|product| planner.settings_for(product).me)
       .unwrap_or(super::DEFAULT_ME)
   }
 
@@ -2690,10 +2790,10 @@ mod view {
     area.into()
   }
 
-  fn bill_of_materials<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
+  fn bill_of_materials<'a>(planner: &'a Planner) -> Element<'a, Message> {
     let data = planner.data();
     let allocation = planner.stock_allocation();
-    let mut totals = plan.raw_totals();
+    let mut totals = planner.raw_totals().to_vec();
     totals.sort_by(|a, b| (b.qty as f64 * data.price(b.type_id)).total_cmp(&(a.qty as f64 * data.price(a.type_id))));
 
     // To-buy cost subtracts the drawn-from-stock units from each type's buy quantity; the inventory value is
@@ -2870,8 +2970,8 @@ mod view {
     .into()
   }
 
-  fn build_order<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
-    let jobs = plan.merged_build_order();
+  fn build_order<'a>(planner: &'a Planner) -> Element<'a, Message> {
+    let jobs = planner.merged_build_order();
     let count = jobs.len();
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
@@ -3036,9 +3136,9 @@ mod view {
     }
   }
 
-  fn needed_blueprints<'a>(planner: &'a Planner, plan: &super::BuildPlan) -> Element<'a, Message> {
+  fn needed_blueprints<'a>(planner: &'a Planner) -> Element<'a, Message> {
     let data = planner.data();
-    let blueprints = plan.needed_blueprints();
+    let blueprints = needed_blueprints_from(planner.merged_build_order());
     let count = blueprints.len();
     let missing = blueprints
       .iter()
@@ -4723,6 +4823,70 @@ mod tests {
       let eco = planner.economics().unwrap();
 
       assert_eq!(eco.isk_per_hour(), 0.0);
+    }
+  }
+
+  mod memoization {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_refreshes_the_cached_plan_after_a_plan_affecting_update() {
+      let mut planner = planner();
+      let before = planner.merged_build_order().len();
+
+      planner.update(Message::NodeBrokenDown {
+        type_id: RETRIEVER,
+      });
+
+      // Building RETRIEVER in-house adds a job to the merged order, and the memoized accessors must reflect
+      // it without a fresh recompute in view().
+      assert!(planner.merged_build_order().len() > before);
+      assert_eq!(
+        planner.merged_build_order(),
+        planner.plan().unwrap().merged_build_order().as_slice()
+      );
+      assert_eq!(planner.raw_totals(), planner.plan().unwrap().raw_totals().as_slice());
+    }
+
+    #[test]
+    fn it_reflects_a_runs_change_in_the_cached_raw_totals() {
+      let mut planner = planner();
+      let one_run = planner.raw_totals().to_vec();
+
+      planner.update(Message::RunsChanged(3));
+
+      let three_runs = planner.raw_totals();
+      assert_eq!(three_runs, planner.plan().unwrap().raw_totals().as_slice());
+      assert_ne!(three_runs, one_run.as_slice());
+    }
+
+    #[test]
+    fn it_leaves_the_cached_plan_untouched_on_a_cursor_move() {
+      let mut planner = planner();
+      let before = planner.plan();
+
+      planner.update(Message::CursorMoved(Point::new(10.0, 20.0)));
+
+      assert_eq!(planner.plan(), before);
+    }
+
+    #[test]
+    fn it_refreshes_the_cached_allocation_when_on_hand_loads() {
+      let mut planner = planner();
+      let site = 60_000_002;
+      // Opt the root's raw Tritanium into stock; the pool is empty at toggle time, so nothing is drawn yet.
+      planner.update(Message::StockSelectionToggled {
+        site,
+        type_id: TRITANIUM,
+      });
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 0);
+
+      // Loading on-hand stock must re-run the allocation against the now-available pool.
+      planner.set_on_hand(HashMap::from([((site, TRITANIUM), 3)]));
+
+      assert_eq!(planner.stock_allocation().drawn_for_type(TRITANIUM), 3);
     }
   }
 

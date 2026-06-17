@@ -200,17 +200,7 @@ impl BuildPlan {
   }
 
   pub fn needed_blueprints(&self) -> Vec<NeededBlueprint> {
-    let mut acc: BTreeMap<i64, NeededBlueprint> = BTreeMap::new();
-    for row in self.merged_build_order() {
-      let entry = acc.entry(row.type_id).or_insert(NeededBlueprint {
-        jobs: 0,
-        runs: 0,
-        type_id: row.type_id,
-      });
-      entry.jobs += 1;
-      entry.runs += row.runs;
-    }
-    acc.into_values().collect()
+    needed_blueprints_from(&self.merged_build_order())
   }
 
   pub fn node_count(&self) -> usize {
@@ -393,6 +383,23 @@ pub fn eff_qty(base_qty: i64, runs: i64, me: i64, is_reaction: bool) -> i64 {
 
   let reduced = ((base_qty as f64) * (1.0 - (me as f64) / 100.0)).ceil() as i64;
   reduced.max(1) * runs
+}
+
+/// Aggregates a merged build order into the per-type blueprint summary the planner surfaces: one
+/// [`NeededBlueprint`] per distinct type with its job count and total runs. Split out so a caller holding an
+/// already-computed merged order (the memoized planner plan) can derive blueprints without re-merging.
+pub fn needed_blueprints_from(merged: &[MergedBuildJob]) -> Vec<NeededBlueprint> {
+  let mut acc: BTreeMap<i64, NeededBlueprint> = BTreeMap::new();
+  for row in merged {
+    let entry = acc.entry(row.type_id).or_insert(NeededBlueprint {
+      jobs: 0,
+      runs: 0,
+      type_id: row.type_id,
+    });
+    entry.jobs += 1;
+    entry.runs += row.runs;
+  }
+  acc.into_values().collect()
 }
 
 pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {

@@ -5,20 +5,25 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 use sqlx::{QueryBuilder, Sqlite};
 
-use crate::store::{
-  Database, Error, images,
-  model::{
-    Alliance, Bloodline, Character, CharacterAttributes, CharacterClone, CharacterCloneImplant, CharacterContact,
-    CharacterContactLabel, CharacterImplant, CharacterJumpClone, CharacterKillEntry, CharacterNotification,
-    CharacterSkill, CharacterSkillqueue, CharacterSquad, CharacterStanding, CharacterState, CharacterTelemetry,
-    Corporation, ENTITY_TYPE_CHARACTER, Faction, KillmailAttacker, KillmailItem, OwnerType, Race, Squad,
-    character_card::{CardRow, CardRowSql, CardTag, CardTraining, TagRowSql},
-    character_clone_view::{ActiveCloneRow, CharacterClones, CloneWithImplants},
-    character_contacts_view::CharacterContacts,
+use crate::{
+  clients::eve_image::Size,
+  store::{
+    Database, Error, images,
+    model::{
+      Alliance, Bloodline, Character, CharacterAttributes, CharacterClone, CharacterCloneImplant, CharacterContact,
+      CharacterContactLabel, CharacterImplant, CharacterJumpClone, CharacterKillEntry, CharacterNotification,
+      CharacterSkill, CharacterSkillqueue, CharacterSquad, CharacterStanding, CharacterState, CharacterTelemetry,
+      Corporation, ENTITY_TYPE_CHARACTER, Faction, KillmailAttacker, KillmailItem, OwnerType, Race, Squad,
+      character_card::{CardRow, CardRowSql, CardTag, CardTraining, TagRowSql},
+      character_clone_view::{ActiveCloneRow, CharacterClones, CloneWithImplants},
+      character_contacts_view::CharacterContacts,
+    },
+    repo::infra::like_pattern,
+    search::{FilterToken, ParsedQuery},
   },
-  repo::infra::like_pattern,
-  search::{FilterToken, ParsedQuery},
 };
+
+const IMPLANT_ICON_SIZE: Size = Size::S64;
 
 /// Sentinel squad name reserving the bucket for characters that belong to no user squad.
 pub const RESERVED_UNASSIGNED_NAME: &str = "__unassigned__";
@@ -1027,6 +1032,7 @@ async fn active_clone(db: &Database, character_id: i64) -> Result<Option<CloneWi
     last_station_change_date: first.last_station_change_date.clone(),
   };
 
+  let store = images::default_store();
   let implants = rows
     .iter()
     .filter_map(|row| {
@@ -1035,6 +1041,7 @@ async fn active_clone(db: &Database, character_id: i64) -> Result<Option<CloneWi
         clone_id: None,
         icon: row.implant_icon.clone(),
         name: row.implant_name.clone().unwrap_or_default(),
+        resolved_icon: store.resolve_type_icon(type_id, None, IMPLANT_ICON_SIZE),
         type_id,
       })
     })
@@ -1051,7 +1058,7 @@ async fn clone_implants(
   character_id: i64,
   clone_id: Option<i64>,
 ) -> Result<Vec<CharacterCloneImplant>, Error> {
-  let rows = sqlx::query_as::<_, CharacterCloneImplant>(
+  let mut rows = sqlx::query_as::<_, CharacterCloneImplant>(
     "SELECT character_id, clone_id, icon, name, type_id FROM character_clone_implants \
     WHERE character_id = ? AND clone_id IS ? ORDER BY type_id",
   )
@@ -1059,6 +1066,10 @@ async fn clone_implants(
   .bind(clone_id)
   .fetch_all(&db.0)
   .await?;
+  let store = images::default_store();
+  for row in &mut rows {
+    row.resolved_icon = store.resolve_type_icon(row.type_id(), None, IMPLANT_ICON_SIZE);
+  }
   Ok(rows)
 }
 
@@ -3636,6 +3647,7 @@ mod clone_tests {
         clone_id,
         icon: Some(format!("/data/types/{type_id}/icon_64.png")),
         name: format!("Implant {type_id}"),
+        resolved_icon: images::IconResolution::Missing,
         type_id,
       }
     }

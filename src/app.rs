@@ -273,6 +273,25 @@ enum Message {
 }
 
 impl Message {
+  /// Whether handling this message can surface new image-bearing rows, gating the stale-image scan to load/sync
+  /// messages instead of running it after every feature interaction (scroll, hover, filter). Each feature reports
+  /// its own data-loading variants via `Message::loads_data`.
+  fn affects_images(&self) -> bool {
+    match self {
+      Message::Assets(msg) => msg.loads_data(),
+      Message::Calendar(msg) => msg.loads_data(),
+      Message::CharacterDetail(msg) => msg.loads_data(),
+      Message::CharacterManager(msg) => msg.loads_data(),
+      Message::Compare(msg) => msg.loads_data(),
+      Message::CorporationDetail(msg) => msg.loads_data(),
+      Message::Industry(msg) => msg.loads_data(),
+      Message::Mail(msg) => msg.loads_data(),
+      Message::Skills(msg) => msg.loads_data(),
+      Message::Wallet(msg) => msg.loads_data(),
+      _ => false,
+    }
+  }
+
   fn variant_name(&self) -> &'static str {
     self
       .feature_variant_name()
@@ -2444,12 +2463,14 @@ fn handle_about(app: &mut App, msg: about::Message) -> Task<Message> {
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
-  let is_feature = message.feature_variant_name().is_some();
+  // Only a load/sync message can introduce new image-bearing rows; gating here keeps the staleness scan off the
+  // per-frame interaction path (scroll, hover, filter).
+  let recheck_images = message.affects_images();
   let task = match dispatch_feature(app, message) {
     Ok(task) => task,
     Err(message) => dispatch_lifecycle(app, *message),
   };
-  if !is_feature {
+  if !recheck_images {
     return task;
   }
   let stale = collect_stale_images(app);
@@ -6859,6 +6880,20 @@ mod tests {
       let _task = handle_image_ready(&mut app, ImageKind::CharacterPortrait, 42, false);
 
       assert!(app.pending_images.is_empty());
+    }
+
+    #[test]
+    fn it_rechecks_images_only_for_a_data_loading_feature_message() {
+      let interaction = Message::Wallet(wallet::Message::TimeframeSelected(wallet::Timeframe::default()));
+      assert!(
+        !interaction.affects_images(),
+        "an interaction message must not trigger the scan"
+      );
+
+      assert!(
+        !Message::ClockTick.affects_images(),
+        "a non-feature lifecycle message must not trigger the scan"
+      );
     }
   }
 

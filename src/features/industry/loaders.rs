@@ -3,14 +3,20 @@ use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Utc};
 
 use super::Scope;
-use crate::store::{
-  Database, images,
-  model::{
-    CharacterBlueprint, CharacterIndustryJob, CorporationBlueprint, CorporationIndustryJob,
-    OwnerType as CredentialOwner, Station, Structure,
+use crate::{
+  clients::eve_image::Size,
+  store::{
+    Database,
+    images::{self, IconResolution},
+    model::{
+      CharacterBlueprint, CharacterIndustryJob, CorporationBlueprint, CorporationIndustryJob,
+      OwnerType as CredentialOwner, Station, Structure,
+    },
+    repo::{assets, blueprints, character, finance, industry, org, sde},
   },
-  repo::{assets, blueprints, character, finance, industry, org, sde},
 };
+
+const JOB_TILE_ICON_SIZE: Size = Size::S64;
 
 /// Manufacturing activity id in the seeded `blueprint_activity_products` reference; resolves a blueprint's product.
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
@@ -199,7 +205,7 @@ impl ExtractionState {
 #[derive(Clone, Debug)]
 pub struct IndustryJob {
   pub activity: Activity,
-  pub blueprint_type_id: i64,
+  pub blueprint_icon: IconResolution,
   pub cost: f64,
   pub end_date: String,
   pub facility: String,
@@ -262,6 +268,7 @@ pub struct Blueprint {
   pub runs: i64,
   pub system_name: Option<String>,
   pub time_efficiency: i64,
+  pub type_icon: IconResolution,
   pub type_id: i64,
 }
 
@@ -674,6 +681,8 @@ async fn build_blueprint(db: &Database, resolvers: &mut BlueprintResolvers, inpu
     .or_else(|| location.system_name.clone())
     .unwrap_or_else(|| format!("Location {}", input.location_id));
 
+  let is_copy = input.runs >= 0;
+
   Blueprint {
     group_name,
     item_id: input.item_id,
@@ -686,6 +695,7 @@ async fn build_blueprint(db: &Database, resolvers: &mut BlueprintResolvers, inpu
     runs: input.runs,
     system_name: location.system_name,
     time_efficiency: input.time_efficiency,
+    type_icon: images::default_store().resolve_type_icon(input.type_id, Some(is_copy), JOB_TILE_ICON_SIZE),
     type_id: input.type_id,
   }
 }
@@ -883,7 +893,7 @@ async fn build_job(
 
   IndustryJob {
     activity,
-    blueprint_type_id: input.blueprint_type_id,
+    blueprint_icon: images::default_store().resolve_type_icon(input.blueprint_type_id, Some(false), JOB_TILE_ICON_SIZE),
     cost: input.cost,
     end_date: input.end_date,
     facility,
@@ -1116,7 +1126,7 @@ mod tests {
   fn job(start: &str, end: &str) -> IndustryJob {
     IndustryJob {
       activity: Activity::Manufacturing,
-      blueprint_type_id: 1,
+      blueprint_icon: IconResolution::Missing,
       cost: 0.0,
       end_date: end.to_owned(),
       facility: "Jita IV".to_owned(),

@@ -8,11 +8,7 @@ use iced::{
 
 use super::{HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, fmt_isk, owner_label};
 use crate::{
-  clients::eve_image::Size,
-  store::{
-    images::{self, IconResolution},
-    model::asset_query::InventoryRow,
-  },
+  store::{images::IconResolution, model::asset_query::InventoryRow},
   ui::{
     components::{
       card::card_padded, empty_state::empty_state as shared_empty_state, eyebrow::eyebrow, icon_tile::icon_tile,
@@ -21,7 +17,6 @@ use crate::{
   },
 };
 
-const ICON_SIZE: Size = Size::S64;
 const TOP_ITEM_ICON: f32 = 24.0;
 const TOP_ITEM_COUNT: usize = 10;
 
@@ -65,6 +60,7 @@ pub(super) struct MatrixRow {
 pub(super) struct TopItem {
   pub group_name: String,
   pub quantity: i64,
+  pub type_icon: IconResolution,
   pub type_id: i64,
   pub type_name: String,
   pub value: f64,
@@ -164,6 +160,7 @@ fn top_items(rows: &[InventoryRow]) -> Vec<TopItem> {
     .map(|row| TopItem {
       group_name: row.group_name.clone(),
       quantity: row.quantity,
+      type_icon: row.type_icon.clone(),
       type_id: row.type_id,
       type_name: row.type_name.clone(),
       value: row.value,
@@ -441,7 +438,7 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
             color: Some(color::text::tertiary()),
           })
           .into(),
-        top_item_icon(item.type_id),
+        top_item_icon(&item.type_icon),
         Column::with_children(vec![
           text(item.type_name.clone())
             .font(typography::body::REGULAR)
@@ -484,9 +481,9 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
   )
 }
 
-fn top_item_icon<'a>(type_id: i64) -> Element<'a, Message> {
-  let content: Element<'a, Message> = match images::default_store().resolve_type_icon(type_id, None, ICON_SIZE) {
-    IconResolution::Found(path) => image(image::Handle::from_path(path))
+fn top_item_icon<'a>(type_icon: &IconResolution) -> Element<'a, Message> {
+  let content: Element<'a, Message> = match type_icon {
+    IconResolution::Found(path) => image(image::Handle::from_path(path.clone()))
       .width(Length::Fill)
       .height(Length::Fill)
       .content_fit(iced::ContentFit::Contain)
@@ -519,6 +516,7 @@ fn empty_state<'a>() -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::store::images;
 
   fn row(type_name: &str, category: &str, owner_id: i64, location_id: i64, quantity: i64, value: f64) -> InventoryRow {
     labeled_row(type_name, category, owner_id, location_id, None, quantity, value)
@@ -548,6 +546,7 @@ mod tests {
       owner_id,
       quantity,
       row_volume: 10.0,
+      type_icon: IconResolution::Missing,
       type_id: 587,
       type_name: type_name.to_owned(),
       unit_price: value / quantity as f64,

@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iced::{Element, Task};
 
 pub use self::{
-  loaders::{ContractEntry, JournalEntry, MarketEntry},
+  loaders::{ContractEntry, JournalEntry, MarketEntry, PartyImage},
   side_filter::Side,
 };
 pub(crate) use crate::ui::format::fmt_isk_opt as fmt_isk;
@@ -225,6 +225,18 @@ pub enum Message {
   TimeframeSelected(Timeframe),
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows, so the shell should recheck for stale
+  /// icons/portraits. Interaction-only messages (scroll, hover, filter) return `false` to keep the staleness scan
+  /// off the per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(
+      self,
+      Message::ContractDetailLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
+    )
+  }
+}
+
 /// Cached filter/derived view data. The `*_indices` fields index into `journal`/`market`/`contracts`, so any mutation
 /// of those vecs must be followed by `recompute_derived()` or the indices go stale (out-of-bounds panic or wrong rows).
 #[derive(Debug, Default)]
@@ -392,12 +404,13 @@ impl State {
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
-    let store = images::default_store();
     let mut keys: Vec<(images::ImageKind, i64)> = Vec::new();
     keys.extend(self.roster.iter().filter_map(|pilot| pilot.portrait.stale_key()));
     keys.extend(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()));
-    for id in self.contracts.iter().flat_map(contract_party_ids) {
-      keys.extend(shell::party_image(&store, id).stale);
+    for contract in &self.contracts {
+      keys.extend(contract.acceptor_image.stale.iter().copied());
+      keys.extend(contract.assignee_image.stale.iter().copied());
+      keys.extend(contract.issuer_image.stale.iter().copied());
     }
     if let Some(detail) = &self.selected_contract {
       keys.extend(detail.stale_images());
@@ -994,14 +1007,6 @@ fn resolve_scope_ids(scope: Scope, roster: &[RosterPilot], _corporations: &[Rost
   }
 }
 
-fn contract_party_ids(entry: &ContractEntry) -> Vec<i64> {
-  [Some(entry.issuer_id), entry.acceptor_id, entry.assignee_id]
-    .into_iter()
-    .flatten()
-    .filter(|id| *id > 0)
-    .collect()
-}
-
 async fn load_roster(db: &Database) -> Vec<RosterPilot> {
   let characters = character::all_owned(db).await.unwrap_or_default();
   let financials = finance::financials_all(db).await.unwrap_or_default();
@@ -1420,6 +1425,40 @@ mod tests {
     images::ImageState::Stale {
       id,
       kind: images::ImageKind::CorporationLogo,
+    }
+  }
+
+  mod loads_data {
+    use super::*;
+
+    #[test]
+    fn it_flags_a_load_message_for_an_image_recheck() {
+      assert!(Message::Loaded(Box::new(load_wallet_for_test())).loads_data());
+    }
+
+    #[test]
+    fn it_does_not_flag_an_interaction_message() {
+      assert!(!Message::TabSelected(Tab::Market).loads_data());
+      assert!(!Message::SearchChanged("rifter".to_owned()).loads_data());
+      assert!(!Message::ChartHovered(Some(0.5)).loads_data());
+    }
+  }
+
+  fn load_wallet_for_test() -> Loaded {
+    Loaded {
+      contract_total: 0,
+      contracts: Vec::new(),
+      corp_divisions: Vec::new(),
+      corporations: Vec::new(),
+      financials: Vec::new(),
+      journal: Vec::new(),
+      journal_total: 0,
+      market: Vec::new(),
+      market_total: 0,
+      net_worth_series: Vec::new(),
+      periods: Vec::new(),
+      right_rail_width: 280.0,
+      roster: Vec::new(),
     }
   }
 
@@ -2238,6 +2277,7 @@ mod tests {
       quantity: 1,
       total: 1.0,
       transaction_id: 1,
+      type_icon: images::IconResolution::Missing,
       type_id: 34,
       unit_price: 1.0,
     }
@@ -2247,8 +2287,10 @@ mod tests {
     ContractEntry {
       acceptor: None,
       acceptor_id: None,
+      acceptor_image: PartyImage::default(),
       assignee: Some("Assignee Pilot".to_owned()),
       assignee_id: Some(98_765),
+      assignee_image: PartyImage::default(),
       character_id,
       collateral: Some(5_000.0),
       contract_id: 12_345,
@@ -2257,6 +2299,7 @@ mod tests {
       is_buy,
       issuer: Some("Issuer Pilot".to_owned()),
       issuer_id: 11_111,
+      issuer_image: PartyImage::default(),
       status: status.to_owned(),
       value: Some(200.0),
       r#type: contract_type.to_owned(),

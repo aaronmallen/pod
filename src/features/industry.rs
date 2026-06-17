@@ -154,6 +154,15 @@ pub enum Message {
   Tick,
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows (roster portraits/logos), so the shell
+  /// should recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
+  /// per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(self, Message::Loaded(_))
+  }
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,
@@ -878,7 +887,7 @@ mod tests {
   fn job(owner: Owner, job_id: i64, activity: Activity, end: &str) -> IndustryJob {
     IndustryJob {
       activity,
-      blueprint_type_id: 681,
+      blueprint_icon: crate::store::images::IconResolution::Missing,
       cost: 1_000.0,
       end_date: end.to_owned(),
       facility: "Jita IV - Moon 4".to_owned(),
@@ -981,6 +990,7 @@ mod tests {
       runs,
       system_name: Some("Jita".to_owned()),
       time_efficiency: te,
+      type_icon: crate::store::images::IconResolution::Missing,
       type_id: 681,
     }
   }

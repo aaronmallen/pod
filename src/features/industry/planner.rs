@@ -1492,12 +1492,11 @@ mod view {
 
   use super::{Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time};
   use crate::{
-    clients::eve_image::Size,
     features::industry::{
       planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
       planner_model::{MergedBuildJob, NeededBlueprint, eff_qty, needed_blueprints_from, runs_for},
     },
-    store::images::{self, IconResolution},
+    store::images::IconResolution,
     ui::{
       components::{
         badge::badge,
@@ -1530,8 +1529,6 @@ mod view {
   const RUNS_STEP_WIDTH: f32 = 30.0;
   const TAB_STRIP_HEIGHT: f32 = 40.0;
   const TILE_BOX: f32 = 30.0;
-  /// Must be S64 — `resolve_type_icon` only returns a bundled icon at this size; smaller sizes fall back to a placeholder glyph.
-  const TILE_ICON: Size = Size::S64;
   const TREE_INDENT: f32 = 22.0;
 
   const COL_BOM_QTY: f32 = 96.0;
@@ -1803,7 +1800,7 @@ mod view {
       .spacing(spacing::SPACE_2)
       .align_y(Vertical::Center);
 
-    let row = Row::with_children(vec![type_tile(type_id), details.into(), badges.into()])
+    let row = Row::with_children(vec![type_tile(data.type_icon(type_id)), details.into(), badges.into()])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill);
@@ -1986,7 +1983,7 @@ mod view {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-    let mut row = Row::with_children(vec![type_tile(type_id), details.into()])
+    let mut row = Row::with_children(vec![type_tile(data.type_icon(type_id)), details.into()])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill);
@@ -2711,7 +2708,7 @@ mod view {
     if building {
       name_row = name_row.push(collapse_chevron(type_id, planner.is_row_collapsed(type_id)));
     }
-    name_row = name_row.push(type_tile(type_id));
+    name_row = name_row.push(type_tile(data.type_icon(type_id)));
     name_row = name_row.push(
       text(data.name(type_id))
         .font(typography::body::REGULAR)
@@ -2866,7 +2863,7 @@ mod view {
 
     let name = container(
       Row::with_children(vec![
-        type_tile(total.type_id),
+        type_tile(data.type_icon(total.type_id)),
         text(data.name(total.type_id))
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
@@ -3013,7 +3010,7 @@ mod view {
           color::text::secondary()
         }))
         .into(),
-      type_tile(job.type_id),
+      type_tile(data.type_icon(job.type_id)),
       Column::with_children(vec![
         Row::with_children(vec![
           text(data.name(job.type_id))
@@ -3199,8 +3196,9 @@ mod view {
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
 
+    let is_copy = owned.map(|summary| !summary.is_original).unwrap_or(false);
     let body = Row::with_children(vec![
-      blueprint_tile(recipe.blueprint_type_id, owned.map(|summary| !summary.is_original)),
+      blueprint_tile(data.blueprint_icon(recipe.blueprint_type_id, is_copy)),
       Column::with_children(vec![
         name_row.into(),
         text(format!(
@@ -3276,12 +3274,11 @@ mod view {
   /// Resolves the blueprint (BPO/BPC) icon keyed on the recipe's `blueprint_type_id` — mirrors the Blueprints
   /// tab tile. `is_copy` selects the BPC variant; `None` falls back to the BPO variant (unowned defaults to
   /// BPO). Missing icons fall back to the copy glyph.
-  fn blueprint_tile<'a>(blueprint_type_id: i64, is_copy: Option<bool>) -> Element<'a, Message> {
-    let copy = is_copy.unwrap_or(false);
-    match images::default_store().resolve_type_icon(blueprint_type_id, Some(copy), TILE_ICON) {
+  fn blueprint_tile<'a>(resolution: &IconResolution) -> Element<'a, Message> {
+    match resolution {
       IconResolution::Found(path) => icon_tile(
         clip_layer(
-          image(image::Handle::from_path(path))
+          image(image::Handle::from_path(path.clone()))
             .width(Length::Fill)
             .height(Length::Fill)
             .content_fit(ContentFit::Cover),
@@ -3363,7 +3360,7 @@ mod view {
     let data = planner.data();
 
     let header = Row::with_children(vec![
-      type_tile(product),
+      type_tile(data.type_icon(product)),
       Column::with_children(vec![
         text(data.name(product))
           .font(typography::body::MEDIUM)
@@ -3611,7 +3608,7 @@ mod view {
 
   fn plan_row<'a>(planner: &'a Planner, plan: &'a SavedPlan) -> Element<'a, Message> {
     let header = Row::with_children(vec![
-      type_tile(plan.product_type_id),
+      type_tile(planner.data().type_icon(plan.product_type_id)),
       Column::with_children(vec![
         text(plan.name.clone())
           .font(typography::body::MEDIUM)
@@ -3990,11 +3987,11 @@ mod view {
     }
   }
 
-  fn type_tile<'a>(type_id: i64) -> Element<'a, Message> {
-    match images::default_store().resolve_type_icon(type_id, None, TILE_ICON) {
+  fn type_tile<'a>(resolution: &IconResolution) -> Element<'a, Message> {
+    match resolution {
       IconResolution::Found(path) => icon_tile(
         clip_layer(
-          image(image::Handle::from_path(path))
+          image(image::Handle::from_path(path.clone()))
             .width(Length::Fill)
             .height(Length::Fill)
             .content_fit(ContentFit::Cover),
@@ -4116,47 +4113,7 @@ mod view {
     use iced::advanced::widget::Tree;
 
     use super::*;
-    use crate::{features::industry::planner_model::BuildNode, store::images::Store};
-
-    #[test]
-    fn it_renders_type_tiles_at_the_bundled_icon_size() {
-      assert_eq!(TILE_ICON, Size::S64);
-    }
-
-    #[test]
-    fn it_resolves_a_bundled_icon_at_the_tile_size() {
-      let data = tempfile::tempdir().unwrap();
-      let committed = tempfile::tempdir().unwrap();
-      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
-      std::fs::write(committed.path().join("34.png"), [1]).unwrap();
-
-      let resolved = store.resolve_type_icon(34, None, TILE_ICON);
-
-      assert!(matches!(resolved, IconResolution::Found(_)));
-    }
-
-    #[test]
-    fn it_resolves_the_blueprint_tile_with_the_owned_copy_variant() {
-      // The Needed-blueprints tile keys on `Some(is_copy)`: an owned BPC resolves the `_bpc` variant, while a
-      // BPO resolves the plain icon — proving the tile asks for the blueprint variant, not the item icon.
-      let data = tempfile::tempdir().unwrap();
-      let committed = tempfile::tempdir().unwrap();
-      let store = Store::new(data.path().to_path_buf()).with_committed_items(committed.path().to_path_buf());
-      std::fs::write(committed.path().join("999_bpc.png"), [1]).unwrap();
-      std::fs::write(committed.path().join("999.png"), [1]).unwrap();
-
-      let copy = store.resolve_type_icon(999, Some(true), TILE_ICON);
-      let original = store.resolve_type_icon(999, Some(false), TILE_ICON);
-
-      let IconResolution::Found(copy_path) = copy else {
-        panic!("expected a resolved copy icon");
-      };
-      let IconResolution::Found(original_path) = original else {
-        panic!("expected a resolved original icon");
-      };
-      assert!(copy_path.ends_with("999_bpc.png"));
-      assert!(original_path.ends_with("999.png"));
-    }
+    use crate::features::industry::planner_model::BuildNode;
 
     #[test]
     fn it_renders_the_single_consumer_feeds_line() {

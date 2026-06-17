@@ -276,6 +276,7 @@ mod tests {
         unit_suffix: " tf".to_owned(),
       }],
       tier_label: "Gravid".to_owned(),
+      type_icon: crate::store::images::IconResolution::Missing,
     }
   }
 

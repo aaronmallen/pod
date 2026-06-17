@@ -7,14 +7,13 @@ use iced::{
 };
 
 use super::{
-  ContractEntry, CorpDivision, HEADER_SIDE_PADDING, JournalEntry, MarketEntry, Message, Scope, SignFilter, State, Tab,
-  fmt_isk, header, side_filter::side_filter,
+  ContractEntry, CorpDivision, HEADER_SIDE_PADDING, JournalEntry, MarketEntry, Message, PartyImage, Scope, SignFilter,
+  State, Tab, fmt_isk, header, side_filter::side_filter,
 };
 use crate::{
-  clients::eve_image::Size,
   config::Feature,
   features::contract_detail,
-  store::images::{self, IconResolution},
+  store::images::IconResolution,
   ui::{
     components::{
       avatar::Avatar,
@@ -40,7 +39,6 @@ use crate::{
   },
 };
 
-const MARKET_ICON_SIZE: Size = Size::S64;
 const MARKET_ICON_BOX: f32 = 28.0;
 const ROW_AVATAR: f32 = 22.0;
 
@@ -457,7 +455,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
 
   row_shell(vec![
     mono_cell(side_label, Length::FillPortion(1), Horizontal::Left, side_color),
-    item_cell(&entry.item, entry.type_id, Length::FillPortion(3)),
+    item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
     mono_cell(
       &entry.quantity.to_string(),
       Length::FillPortion(1),
@@ -491,9 +489,9 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   ])
 }
 
-fn item_cell<'a>(item: &str, type_id: i64, width: Length) -> Element<'a, Message> {
+fn item_cell<'a>(item: &str, type_icon_resolution: &IconResolution, width: Length) -> Element<'a, Message> {
   Row::with_children(vec![
-    type_icon(type_id),
+    type_icon(type_icon_resolution),
     text(item.to_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
@@ -508,10 +506,10 @@ fn item_cell<'a>(item: &str, type_id: i64, width: Length) -> Element<'a, Message
   .into()
 }
 
-fn type_icon<'a>(type_id: i64) -> Element<'a, Message> {
-  match images::default_store().resolve_type_icon(type_id, None, MARKET_ICON_SIZE) {
+fn type_icon<'a>(resolution: &IconResolution) -> Element<'a, Message> {
+  match resolution {
     IconResolution::Found(path) => container(
-      image(image::Handle::from_path(path))
+      image(image::Handle::from_path(path.clone()))
         .width(Length::Fill)
         .height(Length::Fill)
         .content_fit(ContentFit::Contain),
@@ -581,6 +579,7 @@ fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 
 fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a, Message> {
   let (counterparty_name, counterparty_id) = contract_counterparty(entry);
+  let counterparty_image = contract_counterparty_image(entry);
 
   let row = row_shell(vec![
     body_cell(
@@ -589,8 +588,18 @@ fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a,
       color::text::PRIMARY,
     ),
     contract_status_cell(&entry.derived_status(now), Length::FillPortion(2)),
-    party_cell(Some(entry.issuer_id), entry.issuer.as_deref(), Length::FillPortion(2)),
-    party_cell(counterparty_id, counterparty_name, Length::FillPortion(2)),
+    party_cell(
+      Some(entry.issuer_id),
+      entry.issuer.as_deref(),
+      &entry.issuer_image,
+      Length::FillPortion(2),
+    ),
+    party_cell(
+      counterparty_id,
+      counterparty_name,
+      counterparty_image,
+      Length::FillPortion(2),
+    ),
     amount_cell(&fmt_isk(entry.value), Length::FillPortion(2), color::text::PRIMARY),
     mono_cell(
       &fmt_isk(entry.collateral),
@@ -655,6 +664,13 @@ fn contract_counterparty(entry: &ContractEntry) -> (Option<&str>, Option<i64>) {
   }
 }
 
+fn contract_counterparty_image(entry: &ContractEntry) -> &PartyImage {
+  match entry.acceptor.as_deref().filter(|value| !value.is_empty()) {
+    Some(_) => &entry.acceptor_image,
+    None => &entry.assignee_image,
+  }
+}
+
 fn roster_portrait(state: &State, character_id: i64) -> Option<std::path::PathBuf> {
   state
     .roster
@@ -663,32 +679,7 @@ fn roster_portrait(state: &State, character_id: i64) -> Option<std::path::PathBu
     .and_then(|pilot| pilot.portrait.path())
 }
 
-pub(super) struct PartyImage {
-  pub(super) path: Option<std::path::PathBuf>,
-  pub(super) stale: Vec<(images::ImageKind, i64)>,
-}
-
-pub(super) fn party_image(store: &images::Store, id: i64) -> PartyImage {
-  if id <= 0 {
-    return PartyImage {
-      path: None,
-      stale: Vec::new(),
-    };
-  }
-  let portrait = images::resolve(store, images::ImageKind::CharacterPortrait, id);
-  let logo = images::resolve(store, images::ImageKind::CorporationLogo, id);
-  let path = portrait.path().or_else(|| logo.path());
-  let stale = match path {
-    Some(_) => Vec::new(),
-    None => [portrait.stale_key(), logo.stale_key()].into_iter().flatten().collect(),
-  };
-  PartyImage {
-    path,
-    stale,
-  }
-}
-
-fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element<'a, Message> {
+fn party_cell<'a>(id: Option<i64>, name: Option<&str>, image: &PartyImage, width: Length) -> Element<'a, Message> {
   let label = party_or_dash(name);
   let mut row_items: Vec<Element<'a, Message>> = Vec::new();
 
@@ -698,7 +689,7 @@ fn party_cell<'a>(id: Option<i64>, name: Option<&str>, width: Length) -> Element
       &label,
       Length::Fixed(ROW_AVATAR),
       ROW_AVATAR,
-      party_image(&images::default_store(), entity_id).path,
+      image.path.clone(),
     )
     .radius(radius::SUBTLE)
     .view();
@@ -1143,48 +1134,6 @@ mod tests {
     }
   }
 
-  mod party_image {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_yields_no_path_and_no_stale_keys_for_a_non_positive_id() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-
-      let resolved = super::super::party_image(&store, 0);
-
-      assert_eq!(resolved.path, None);
-      assert!(resolved.stale.is_empty());
-    }
-
-    #[test]
-    fn it_prefers_a_cached_portrait_over_a_logo() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-      let portrait = store.character_portrait_path(42);
-      store.write(&portrait, &[1]).unwrap();
-
-      let resolved = super::super::party_image(&store, 42);
-
-      assert_eq!(resolved.path, Some(portrait));
-      assert!(resolved.stale.is_empty());
-    }
-
-    #[test]
-    fn it_surfaces_both_candidate_keys_when_neither_image_is_cached() {
-      let dir = tempfile::tempdir().unwrap();
-      let store = images::Store::new(dir.path().to_path_buf());
-
-      let resolved = super::super::party_image(&store, 42);
-
-      assert_eq!(resolved.path, None);
-      assert!(resolved.stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
-      assert!(resolved.stale.contains(&(images::ImageKind::CorporationLogo, 42)));
-    }
-  }
-
   mod journal_tab {
     use pretty_assertions::assert_eq;
 
@@ -1263,8 +1212,10 @@ mod tests {
       ContractEntry {
         acceptor: None,
         acceptor_id: None,
+        acceptor_image: PartyImage::default(),
         assignee: Some("Assignee Pilot".to_owned()),
         assignee_id: Some(98_765),
+        assignee_image: PartyImage::default(),
         character_id: 1,
         collateral: Some(5_000.0),
         contract_id: 42,
@@ -1273,6 +1224,7 @@ mod tests {
         is_buy,
         issuer: Some("Issuer Pilot".to_owned()),
         issuer_id: 11_111,
+        issuer_image: PartyImage::default(),
         status: status.to_owned(),
         value: Some(200.0),
         r#type: contract_type.to_owned(),

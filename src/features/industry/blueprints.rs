@@ -6,8 +6,7 @@ use iced::{
 
 use super::{Blueprint, BlueprintKind, BlueprintSort, Message, State};
 use crate::{
-  clients::eve_image::Size,
-  store::images::{self, IconResolution},
+  store::images::IconResolution,
   ui::{
     components::{
       badge::badge,
@@ -30,7 +29,6 @@ const ROW_SIDE_PADDING: f32 = 24.0;
 const SEARCH_MAX_WIDTH: f32 = 360.0;
 const TE_MAX: i64 = 20;
 const TILE_BOX: f32 = 34.0;
-const TILE_ICON: Size = Size::S64;
 
 // Column widths mirror the design grid `1fr 96px 96px 130px 150px` plus a trailing action column.
 const COL_ACTION: f32 = 130.0;
@@ -371,12 +369,10 @@ fn kind_badge<'a>(original: bool) -> Element<'a, Message> {
 }
 
 fn blueprint_tile<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
-  // Resolve the BPO icon, or the `_bpc` variant for a copy.
-  let copy = !blueprint.is_original();
-  match images::default_store().resolve_type_icon(blueprint.type_id, Some(copy), TILE_ICON) {
+  match &blueprint.type_icon {
     IconResolution::Found(path) => icon_tile(
       clip_layer(
-        image(image::Handle::from_path(path))
+        image(image::Handle::from_path(path.clone()))
           .width(Length::Fill)
           .height(Length::Fill)
           .content_fit(ContentFit::Cover),
@@ -686,6 +682,7 @@ mod tests {
       runs,
       system_name: system.map(str::to_owned),
       time_efficiency: 0,
+      type_icon: crate::store::images::IconResolution::Missing,
       type_id: 681,
     }
   }

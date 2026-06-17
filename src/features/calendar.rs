@@ -84,6 +84,15 @@ pub enum Message {
   ViewSelected(View),
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows (roster portraits), so the shell should
+  /// recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
+  /// per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(self, Message::Loaded(_))
+  }
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,

@@ -191,6 +191,7 @@ mod tests {
         have: if full { 1000 } else { 400 },
         pct: if full { 1.0 } else { 0.4 },
         target: 1000,
+        type_icon: crate::store::images::IconResolution::Missing,
         type_id: 34,
         type_name: "Tritanium".to_owned(),
       }],

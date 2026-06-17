@@ -217,6 +217,21 @@ pub enum Message {
   Unsnooze(i64),
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows (roster portraits, mail sender portraits),
+  /// so the shell should recheck for stale images. Interaction-only messages return `false` to keep the staleness
+  /// scan off the per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(
+      self,
+      Message::Loaded(_)
+        | Message::MessagesPageLoaded { .. }
+        | Message::RenderLoaded { .. }
+        | Message::SearchPageLoaded { .. }
+    )
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LabelPicker {
   anchor: Option<Point>,

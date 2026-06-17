@@ -302,6 +302,25 @@ pub enum Message {
   TabSelected(Tab),
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows, so the shell should recheck for stale
+  /// icons. Interaction-only messages (scroll, hover, filter edits) return `false` to keep the staleness scan off
+  /// the per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(
+      self,
+      Message::AbyssalCardsReloaded(_)
+        | Message::AbyssalPageLoaded { .. }
+        | Message::ContainerChildrenLoaded(..)
+        | Message::InventoryPageLoaded { .. }
+        | Message::Loaded(_)
+        | Message::SearchReloaded { .. }
+        | Message::StockpilesReloaded(_)
+        | Message::SyncReloaded { .. }
+    )
+  }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Pane {
   AbyssalsFilter,
@@ -2207,6 +2226,7 @@ mod tests {
           price_unavailable: false,
           stats: Vec::new(),
           tier_label: "Gravid".to_owned(),
+          type_icon: images::IconResolution::Missing,
         }],
         Vec::new(),
         abyssals::Filters::default(),
@@ -2548,6 +2568,7 @@ mod tests {
           price_unavailable: false,
           stats: Vec::new(),
           tier_label: "Gravid".to_owned(),
+          type_icon: images::IconResolution::Missing,
         })
         .collect()
     }
@@ -3186,6 +3207,7 @@ mod tests {
         owner_id: 7,
         quantity: 1,
         row_volume: 10.0,
+        type_icon: images::IconResolution::Missing,
         type_id: 587,
         type_name: "Rifter".to_owned(),
         unit_price: 100.0,

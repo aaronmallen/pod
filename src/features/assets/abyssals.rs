@@ -17,8 +17,10 @@ pub(super) use crate::store::{
   repo::assets::AbyssalCursor,
 };
 use crate::{
+  clients::eve_image::Size,
   store::{
-    Database, images,
+    Database,
+    images::{self, IconResolution},
     model::AbyssalItem,
     repo::{assets, character, sde},
   },
@@ -27,6 +29,8 @@ use crate::{
 
 /// Number of cards fetched per cursor-paginated abyssal page.
 pub(super) const PAGE_SIZE: i64 = 60;
+
+const ICON_TILE_SIZE: Size = Size::S64;
 
 const UNIT_SUFFIX_TABLE: &[(i64, &str)] = &[
   (71, " GJ"),
@@ -54,6 +58,7 @@ pub struct AbyssalCard {
   pub(super) price_unavailable: bool,
   pub(super) stats: Vec<AbyssalStat>,
   pub(super) tier_label: String,
+  pub(super) type_icon: IconResolution,
 }
 
 impl AbyssalCard {
@@ -351,6 +356,7 @@ async fn build_card(
     price_unavailable: item.muta_price_synced().is_some() && item.muta_price_isk().is_none(),
     stats,
     tier_label: type_name_of(db, item.mutator_type_id()).await,
+    type_icon: images::default_store().resolve_type_icon(source_type_id, None, ICON_TILE_SIZE),
   }
 }
 
@@ -473,6 +479,7 @@ mod tests {
       price_unavailable: false,
       stats: vec![stat(50, 47.0, 41.0, (28.0, 56.0)), stat(51, 8.5, 7.1, (5.0, 12.0))],
       tier_label: tier.to_owned(),
+      type_icon: IconResolution::Missing,
     }
   }
 

@@ -3,16 +3,27 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 use crate::{
-  clients::{eve_image, http},
-  store::{Database, images, repo::finance},
+  clients::{
+    eve_image::{self, Size},
+    http,
+  },
+  store::{
+    Database,
+    images::{self, IconResolution},
+    repo::finance,
+  },
 };
+
+const MARKET_ICON_SIZE: Size = Size::S64;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContractEntry {
   pub acceptor: Option<String>,
   pub acceptor_id: Option<i64>,
+  pub acceptor_image: PartyImage,
   pub assignee: Option<String>,
   pub assignee_id: Option<i64>,
+  pub assignee_image: PartyImage,
   pub character_id: i64,
   pub collateral: Option<f64>,
   pub contract_id: i64,
@@ -21,6 +32,7 @@ pub struct ContractEntry {
   pub is_buy: bool,
   pub issuer: Option<String>,
   pub issuer_id: i64,
+  pub issuer_image: PartyImage,
   pub status: String,
   pub r#type: String,
   pub value: Option<f64>,
@@ -73,17 +85,47 @@ pub struct MarketEntry {
   pub quantity: i64,
   pub total: f64,
   pub transaction_id: i64,
+  pub type_icon: IconResolution,
   pub type_id: i64,
   pub unit_price: f64,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PartyImage {
+  pub path: Option<std::path::PathBuf>,
+  pub stale: Vec<(images::ImageKind, i64)>,
+}
+
+/// Resolves a contract party's portrait/logo once at load time so the row never stats the filesystem in `view`,
+/// and `stale_images` reads the cached candidate keys instead of re-resolving. A non-positive `id` (no party, or a
+/// missing acceptor/assignee passed as `0`) yields an empty result.
+pub(super) fn party_image(store: &images::Store, id: i64) -> PartyImage {
+  if id <= 0 {
+    return PartyImage::default();
+  }
+  let portrait = images::resolve(store, images::ImageKind::CharacterPortrait, id);
+  let logo = images::resolve(store, images::ImageKind::CorporationLogo, id);
+  let path = portrait.path().or_else(|| logo.path());
+  let stale = match path {
+    Some(_) => Vec::new(),
+    None => [portrait.stale_key(), logo.stale_key()].into_iter().flatten().collect(),
+  };
+  PartyImage {
+    path,
+    stale,
+  }
+}
+
 fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEntry {
   let price = row.price();
+  let store = images::default_store();
   ContractEntry {
     acceptor: row.acceptor_name().clone(),
     acceptor_id: row.acceptor_id(),
+    acceptor_image: party_image(&store, row.acceptor_id().unwrap_or(0)),
     assignee: row.assignee_name().clone(),
     assignee_id: row.assignee_id(),
+    assignee_image: party_image(&store, row.assignee_id().unwrap_or(0)),
     character_id: row.character_id(),
     collateral: row.collateral(),
     contract_id: row.contract_id(),
@@ -92,6 +134,7 @@ fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEnt
     is_buy: !price.is_some_and(|value| value > 0.0),
     issuer: row.issuer_name().clone(),
     issuer_id: row.issuer_id(),
+    issuer_image: party_image(&store, row.issuer_id()),
     status: row.status().clone(),
     value: price.or_else(|| row.reward()),
     r#type: row.r#type().clone(),
@@ -100,11 +143,14 @@ fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEnt
 
 fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> ContractEntry {
   let price = row.price();
+  let store = images::default_store();
   ContractEntry {
     acceptor: row.acceptor_name().clone(),
     acceptor_id: row.acceptor_id(),
+    acceptor_image: party_image(&store, row.acceptor_id().unwrap_or(0)),
     assignee: row.assignee_name().clone(),
     assignee_id: row.assignee_id(),
+    assignee_image: party_image(&store, row.assignee_id().unwrap_or(0)),
     character_id: row.corporation_id(),
     collateral: row.collateral(),
     contract_id: row.contract_id(),
@@ -113,6 +159,7 @@ fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> Cont
     is_buy: !price.is_some_and(|value| value > 0.0),
     issuer: row.issuer_name().clone(),
     issuer_id: row.issuer_id(),
+    issuer_image: party_image(&store, row.issuer_id()),
     status: row.status().clone(),
     value: price.or_else(|| row.reward()),
     r#type: row.r#type().clone(),
@@ -295,6 +342,7 @@ fn map_corp_txn_row(
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
     transaction_id: row.transaction_id(),
+    type_icon: images::default_store().resolve_type_icon(row.type_id(), None, MARKET_ICON_SIZE),
     type_id: row.type_id(),
     unit_price: row.unit_price(),
   })
@@ -329,6 +377,7 @@ fn map_txn_row(
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
     transaction_id: row.transaction_id(),
+    type_icon: images::default_store().resolve_type_icon(row.type_id(), None, MARKET_ICON_SIZE),
     type_id: row.type_id(),
     unit_price: row.unit_price(),
   })
@@ -527,8 +576,10 @@ mod tests {
       ContractEntry {
         acceptor: None,
         acceptor_id,
+        acceptor_image: PartyImage::default(),
         assignee: None,
         assignee_id,
+        assignee_image: PartyImage::default(),
         character_id: 42,
         collateral: None,
         contract_id: 1,
@@ -537,6 +588,7 @@ mod tests {
         is_buy: false,
         issuer: None,
         issuer_id,
+        issuer_image: PartyImage::default(),
         status: "outstanding".to_owned(),
         value: None,
         r#type: "item_exchange".to_owned(),
@@ -567,8 +619,10 @@ mod tests {
       ContractEntry {
         acceptor: None,
         acceptor_id: None,
+        acceptor_image: PartyImage::default(),
         assignee: None,
         assignee_id: None,
+        assignee_image: PartyImage::default(),
         character_id: 42,
         collateral: None,
         contract_id: 1,
@@ -577,6 +631,7 @@ mod tests {
         is_buy: false,
         issuer: None,
         issuer_id: 11,
+        issuer_image: PartyImage::default(),
         status: status.to_owned(),
         value: None,
         r#type: "item_exchange".to_owned(),
@@ -617,6 +672,48 @@ mod tests {
         entry("finished", Some("2026-06-01T00:00:00Z")).derived_status(now),
         "finished"
       );
+    }
+  }
+
+  mod party_image {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_yields_no_path_and_no_stale_keys_for_a_non_positive_id() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::party_image(&store, 0);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.is_empty());
+    }
+
+    #[test]
+    fn it_prefers_a_cached_portrait_over_a_logo() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+      let portrait = store.character_portrait_path(42);
+      store.write(&portrait, &[1]).unwrap();
+
+      let resolved = super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, Some(portrait));
+      assert!(resolved.stale.is_empty());
+    }
+
+    #[test]
+    fn it_surfaces_both_candidate_keys_when_neither_image_is_cached() {
+      let dir = tempfile::tempdir().unwrap();
+      let store = images::Store::new(dir.path().to_path_buf());
+
+      let resolved = super::party_image(&store, 42);
+
+      assert_eq!(resolved.path, None);
+      assert!(resolved.stale.contains(&(images::ImageKind::CharacterPortrait, 42)));
+      assert!(resolved.stale.contains(&(images::ImageKind::CorporationLogo, 42)));
     }
   }
 

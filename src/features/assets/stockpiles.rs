@@ -61,6 +61,7 @@ pub(super) struct StockpileItemLine {
   pub have: i64,
   pub pct: f64,
   pub target: i64,
+  pub type_icon: IconResolution,
   pub type_id: i64,
   pub type_name: String,
 }
@@ -436,6 +437,7 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
         have,
         pct,
         target: item.target_quantity(),
+        type_icon: images::default_store().resolve_type_icon(item.type_id(), None, ICON_SIZE),
         type_id: item.type_id(),
         type_name: type_name_of(db, item.type_id()).await,
       });
@@ -809,7 +811,7 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
   };
 
   let card = Row::with_children(vec![
-    type_icon(type_id),
+    type_icon_for_id(type_id),
     text(name.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
@@ -983,7 +985,7 @@ fn suggestion_row<'a>(
 
   let mut row = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
   if with_icon {
-    row = row.push(type_icon(id));
+    row = row.push(type_icon_for_id(id));
   }
   row = row.push(
     text(label)
@@ -1001,9 +1003,9 @@ fn suggestion_row<'a>(
   .into()
 }
 
-fn type_icon<'a>(type_id: i64) -> Element<'a, Message> {
-  let content: Element<'a, Message> = match images::default_store().resolve_type_icon(type_id, None, ICON_SIZE) {
-    IconResolution::Found(path) => image(image::Handle::from_path(path))
+fn type_icon<'a>(resolution: &IconResolution) -> Element<'a, Message> {
+  let content: Element<'a, Message> = match resolution {
+    IconResolution::Found(path) => image(image::Handle::from_path(path.clone()))
       .width(Length::Fill)
       .height(Length::Fill)
       .content_fit(ContentFit::Contain)
@@ -1011,6 +1013,10 @@ fn type_icon<'a>(type_id: i64) -> Element<'a, Message> {
     IconResolution::Missing => Space::new().into(),
   };
   icon_tile(content, ICON_BOX)
+}
+
+fn type_icon_for_id<'a>(type_id: i64) -> Element<'a, Message> {
+  type_icon(&images::default_store().resolve_type_icon(type_id, None, ICON_SIZE))
 }
 
 fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
@@ -1742,6 +1748,7 @@ mod tests {
         have,
         pct: 0.0,
         target,
+        type_icon: IconResolution::Missing,
         type_id: 0,
         type_name: type_name.to_owned(),
       }
@@ -1797,6 +1804,7 @@ mod tests {
         have,
         pct: 0.0,
         target,
+        type_icon: IconResolution::Missing,
         type_id: 0,
         type_name: type_name.to_owned(),
       }
@@ -1862,6 +1870,7 @@ mod tests {
         have,
         pct: 0.0,
         target,
+        type_icon: IconResolution::Missing,
         type_id: 34,
         type_name: "Tritanium".to_owned(),
       }
@@ -1892,6 +1901,7 @@ mod tests {
         have,
         pct: 0.0,
         target,
+        type_icon: IconResolution::Missing,
         type_id,
         type_name: format!("Type {type_id}"),
       }
@@ -1951,6 +1961,7 @@ mod tests {
           have: 400,
           pct: 0.4,
           target: 1000,
+          type_icon: IconResolution::Missing,
           type_id: 34,
           type_name: "Tritanium".to_owned(),
         }],

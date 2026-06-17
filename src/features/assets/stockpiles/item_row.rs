@@ -38,7 +38,7 @@ pub(super) fn view(item: &StockpileItemLine) -> Element<'_, Message> {
   .spacing(spacing::UNIT + 1.0)
   .width(Length::Fill);
 
-  let content = Row::with_children(vec![type_icon(item.type_id), name_and_bar.into(), readout(item, ok)])
+  let content = Row::with_children(vec![type_icon(&item.type_icon), name_and_bar.into(), readout(item, ok)])
     .spacing(spacing::SPACE_2_5)
     .align_y(Vertical::Center);
 
@@ -126,6 +126,7 @@ mod tests {
       have,
       pct,
       target,
+      type_icon: crate::store::images::IconResolution::Missing,
       type_id: 34,
       type_name: "Tritanium".to_owned(),
     }

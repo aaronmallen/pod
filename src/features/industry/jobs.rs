@@ -8,8 +8,7 @@ use iced::{
 use super::{Activity, Filter, GroupBy, IndustryJob, Message, State};
 pub(super) use crate::ui::format::{fmt_duration, fmt_isk};
 use crate::{
-  clients::eve_image::Size,
-  store::images::{self, IconResolution},
+  store::images::IconResolution,
   ui::{
     components::{
       clip::clip_layer,
@@ -29,7 +28,6 @@ const COUNTDOWN_WARNING_SECS: i64 = 3_600;
 const ESTIMATED_ROW_HEIGHT: f32 = 74.0;
 const ROW_SIDE_PADDING: f32 = 24.0;
 const TILE_BOX_COMFORTABLE: f32 = 40.0;
-const TILE_ICON: Size = Size::S64;
 const VALUE_WIDTH: f32 = 132.0;
 
 pub(super) fn tab<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -170,11 +168,11 @@ pub(super) fn sec_pill<'a>(security: Option<f64>) -> Element<'a, Message> {
     .into()
 }
 
-fn blueprint_tile<'a>(blueprint_type_id: i64, box_size: f32) -> Element<'a, Message> {
-  match images::default_store().resolve_type_icon(blueprint_type_id, Some(false), TILE_ICON) {
+fn blueprint_tile<'a>(blueprint_icon: &IconResolution, box_size: f32) -> Element<'a, Message> {
+  match blueprint_icon {
     IconResolution::Found(path) => icon_tile(
       clip_layer(
-        image(image::Handle::from_path(path))
+        image(image::Handle::from_path(path.clone()))
           .width(Length::Fill)
           .height(Length::Fill)
           .content_fit(ContentFit::Cover),
@@ -419,7 +417,7 @@ fn job_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message>
   };
 
   let identity = Row::with_children(vec![
-    blueprint_tile(job.blueprint_type_id, TILE_BOX_COMFORTABLE),
+    blueprint_tile(&job.blueprint_icon, TILE_BOX_COMFORTABLE),
     job_identity(job),
   ])
   .spacing(spacing::SPACE_3)

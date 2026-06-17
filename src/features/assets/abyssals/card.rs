@@ -104,7 +104,7 @@ fn header(card_data: &AbyssalCard) -> Element<'_, Message> {
 
   container(
     Row::with_children(vec![
-      type_icon_tile::view(card_data.group_type_id, &card_data.module_name),
+      type_icon_tile::view(&card_data.type_icon, card_data.group_type_id, &card_data.module_name),
       Space::new().width(spacing::SPACE_3).into(),
       title_col.into(),
       price_widget(card_data),
@@ -200,6 +200,7 @@ mod tests {
         unit_suffix: " tf".to_owned(),
       }],
       tier_label: "Gravid".to_owned(),
+      type_icon: crate::store::images::IconResolution::Missing,
     }
   }
 

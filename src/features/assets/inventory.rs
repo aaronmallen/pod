@@ -8,9 +8,8 @@ use super::{
   Category, HEADER_SIDE_PADDING, Message, RosterCorp, RosterPilot, State, fmt_count, fmt_isk, fmt_volume, owner_label,
 };
 use crate::{
-  clients::eve_image::Size,
   store::{
-    images::{self, IconResolution},
+    images::IconResolution,
     model::asset_query::{InventoryRow, SortColumn, SortDirection},
   },
   ui::{
@@ -30,7 +29,6 @@ use crate::{
   },
 };
 
-const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 26.0;
 const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
@@ -596,10 +594,8 @@ fn table_row<'a>(
 }
 
 fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
-  let resolution =
-    images::default_store().resolve_type_icon(inventory_row.type_id, inventory_row.is_blueprint_copy, ICON_SIZE);
-  let content: Element<'a, Message> = match resolution {
-    IconResolution::Found(path) => image(image::Handle::from_path(path))
+  let content: Element<'a, Message> = match &inventory_row.type_icon {
+    IconResolution::Found(path) => image(image::Handle::from_path(path.clone()))
       .width(Length::Fill)
       .height(Length::Fill)
       .content_fit(iced::ContentFit::Contain)
@@ -905,7 +901,7 @@ fn note_text<'a>(note: &'static str) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::features::assets::Scope;
+  use crate::{features::assets::Scope, store::images};
 
   fn sample_row(item_id: i64, type_name: &str, category: &str, owner_id: i64, value: f64) -> InventoryRow {
     InventoryRow {
@@ -923,6 +919,7 @@ mod tests {
       owner_id,
       quantity: 10,
       row_volume: 100.0,
+      type_icon: IconResolution::Missing,
       type_id: 587,
       type_name: type_name.to_owned(),
       unit_price: value / 10.0,

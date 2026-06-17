@@ -4,19 +4,17 @@ use iced::{
 };
 
 use crate::{
-  clients::eve_image::Size,
   features::assets::Message,
-  store::images::{self, IconResolution},
+  store::images::IconResolution,
   ui::style::{color, radius, typography},
 };
 
-const ICON_SIZE: Size = Size::S64;
 const TILE: f32 = 42.0;
 
-pub(super) fn view(type_id: i64, base_type_name: &str) -> Element<'static, Message> {
-  match images::default_store().resolve_type_icon(type_id, None, ICON_SIZE) {
+pub(super) fn view(type_icon: &IconResolution, type_id: i64, base_type_name: &str) -> Element<'static, Message> {
+  match type_icon {
     IconResolution::Found(path) => container(
-      image(image::Handle::from_path(path))
+      image(image::Handle::from_path(path.clone()))
         .width(Length::Fill)
         .height(Length::Fill)
         .content_fit(ContentFit::Contain),
@@ -148,7 +146,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_monogram_fallback_when_no_icon_is_present() {
-      let _el: Element<'static, Message> = view(-1, "Shield Booster");
+      let _el: Element<'static, Message> = view(&IconResolution::Missing, -1, "Shield Booster");
     }
   }
 

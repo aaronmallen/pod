@@ -10,8 +10,7 @@ use super::{
   shared,
 };
 use crate::{
-  clients::eve_image::Size,
-  store::images::{self, IconResolution},
+  store::images::IconResolution,
   ui::{
     components::{
       badge::badge,
@@ -32,7 +31,6 @@ use crate::{
 /// Nominal height of one kill-log row, in pixels. Rows have a two-line victim/ship cell, so this only feeds the
 /// [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 52.0;
-const SHIP_ICON_SIZE: Size = Size::S64;
 const SHIP_ICON_BOX: f32 = 32.0;
 const SYSTEM_WIDTH: f32 = 100.0;
 const VALUE_WIDTH: f32 = 110.0;
@@ -46,6 +44,7 @@ pub struct KillLogEntry {
   pub is_kill: bool,
   pub kill_time: String,
   pub killmail_id: i64,
+  pub ship_icon: IconResolution,
   pub ship_name: String,
   pub ship_type_id: i64,
   pub system_name: Option<String>,
@@ -358,7 +357,7 @@ fn kill_row<'a>(entry: &'a KillLogEntry, last: bool) -> Element<'a, Message> {
 
   let inner = Row::with_children(vec![
     color_bar(accent),
-    ship_icon(entry.ship_type_id),
+    ship_icon(&entry.ship_icon),
     ship_col(entry),
     victim_col(entry),
     cell(system_col(entry), SYSTEM_WIDTH),
@@ -424,11 +423,11 @@ fn color_bar<'a>(accent: iced::Color) -> Element<'a, Message> {
     .into()
 }
 
-fn ship_icon<'a>(ship_type_id: i64) -> Element<'a, Message> {
-  match images::default_store().resolve_type_icon(ship_type_id, None, SHIP_ICON_SIZE) {
+fn ship_icon<'a>(ship_icon: &IconResolution) -> Element<'a, Message> {
+  match ship_icon {
     IconResolution::Found(path) => icon_tile(
       clip_layer(
-        image(image::Handle::from_path(path))
+        image(image::Handle::from_path(path.clone()))
           .width(Length::Fill)
           .height(Length::Fill)
           .content_fit(ContentFit::Cover),
@@ -612,6 +611,7 @@ mod tests {
       is_kill,
       kill_time: "2024-01-01T00:00:00Z".to_owned(),
       killmail_id,
+      ship_icon: IconResolution::Missing,
       ship_name: "Rifter".to_owned(),
       ship_type_id: 587,
       system_name: Some("Jita".to_owned()),

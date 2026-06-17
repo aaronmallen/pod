@@ -317,6 +317,21 @@ pub enum Message {
   UngroupSquad(i64),
 }
 
+impl Message {
+  /// Whether handling this message can surface new image-bearing cards (portraits/logos), so the shell should
+  /// recheck for stale images. Interaction-only messages (drag, search edits, menu toggles) return `false` to keep
+  /// the staleness scan off the per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(
+      self,
+      Message::CharactersLoaded(_)
+        | Message::CorpSearchResults { .. }
+        | Message::SearchResults { .. }
+        | Message::SignedIn { .. }
+    )
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct OwnedPilot {
   pub color: Color,

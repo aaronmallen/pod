@@ -2,6 +2,13 @@
 
 use sqlx::FromRow;
 
+use crate::{
+  clients::eve_image::Size,
+  store::images::{self, IconResolution},
+};
+
+const INVENTORY_ICON_SIZE: Size = Size::S64;
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AssetCompleteness {
   pub distinct_type_ids: i64,
@@ -287,6 +294,7 @@ pub struct InventoryRow {
   pub owner_id: i64,
   pub quantity: i64,
   pub row_volume: f64,
+  pub type_icon: IconResolution,
   pub type_id: i64,
   pub type_name: String,
   pub unit_price: f64,
@@ -336,6 +344,8 @@ pub struct InventoryRowSql {
 
 impl InventoryRowSql {
   pub fn into_row(self) -> InventoryRow {
+    let type_icon =
+      images::default_store().resolve_type_icon(self.type_id, self.is_blueprint_copy, INVENTORY_ICON_SIZE);
     InventoryRow {
       category: self.category,
       container_id: self.container_id,
@@ -351,6 +361,7 @@ impl InventoryRowSql {
       owner_id: self.owner_id,
       quantity: self.quantity,
       row_volume: self.row_volume,
+      type_icon,
       type_id: self.type_id,
       type_name: self.type_name,
       unit_price: self.unit_price,

@@ -9,9 +9,8 @@ use super::{
   shared,
 };
 use crate::{
-  clients::eve_image::Size,
   store::{
-    images::{self, IconResolution},
+    images::IconResolution,
     model::{
       CharacterCloneImplant,
       character_clone_view::{CharacterClones, CloneWithImplants},
@@ -30,7 +29,6 @@ use crate::{
 };
 
 const IMPLANT_SLOTS: usize = 10;
-const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 32.0;
 
 pub(in crate::features::character_detail) fn body(clones: &LoadState<Option<CharacterClones>>) -> Element<'_, Message> {
@@ -183,7 +181,7 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
     });
 
   let icon: Element<'_, Message> = match implant {
-    Some(implant) => implant_icon(implant.type_id()),
+    Some(implant) => implant_icon(implant.resolved_icon()),
     None => empty_icon(),
   };
 
@@ -223,10 +221,10 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
   .into()
 }
 
-fn implant_icon<'a>(type_id: i64) -> Element<'a, Message> {
-  match images::default_store().resolve_type_icon(type_id, None, ICON_SIZE) {
+fn implant_icon<'a>(resolution: &IconResolution) -> Element<'a, Message> {
+  match resolution {
     IconResolution::Found(path) => icon_tile(
-      image(image::Handle::from_path(path))
+      image(image::Handle::from_path(path.clone()))
         .width(Length::Fill)
         .height(Length::Fill)
         .content_fit(ContentFit::Contain),
@@ -262,6 +260,7 @@ mod tests {
       clone_id: None,
       icon: None,
       name: name.to_owned(),
+      resolved_icon: IconResolution::Missing,
       type_id,
     }
   }

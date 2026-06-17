@@ -87,6 +87,7 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
       clone_id,
       icon,
       name,
+      resolved_icon: crate::store::images::IconResolution::Missing,
       type_id,
     }
   };

@@ -11,6 +11,7 @@ pub const LOGO_SIZE: Size = Size::S256;
 pub const PORTRAIT_SIZE: Size = Size::S512;
 pub const STALE_AFTER: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 
+static DEFAULT_STORE: OnceLock<Store> = OnceLock::new();
 static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 /// Initializes the process-wide image cache root from the loaded settings. Called once at boot; subsequent calls are ignored.
@@ -35,9 +36,10 @@ impl IconVariant {
   }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum IconResolution {
   Found(PathBuf),
+  #[default]
   Missing,
 }
 
@@ -166,6 +168,10 @@ impl Store {
 }
 
 pub fn default_store() -> Store {
+  DEFAULT_STORE.get_or_init(build_default_store).clone()
+}
+
+fn build_default_store() -> Store {
   let root = IMAGE_ROOT.get().cloned().unwrap_or_else(|| {
     config::load()
       .map(|settings| settings.storage().resolved_cache_dir())

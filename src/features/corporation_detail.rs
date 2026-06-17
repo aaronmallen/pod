@@ -16,6 +16,7 @@ use self::tabs::{
 };
 pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
+  clients::eve_image::Size,
   features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
@@ -37,6 +38,7 @@ use crate::{
 
 const CONTACTS_PAGE_SIZE: i64 = 100;
 const KILLLOG_PAGE_SIZE: i64 = 100;
+const KILLLOG_SHIP_ICON_SIZE: Size = Size::S64;
 
 pub(crate) const STANDINGS_SEARCH_INPUT_ID: &str = "corp-standings-search-input";
 
@@ -134,6 +136,22 @@ pub enum Message {
   StandingsScrolled { absolute: f32, relative: f32 },
   StandingsSearchChanged(String),
   TabChanged(Tab),
+}
+
+impl Message {
+  /// Whether handling this message can surface new image-bearing rows (logos, standings/contact avatars, killmail
+  /// detail), so the shell should recheck for stale images. Interaction-only messages return `false` to keep the
+  /// staleness scan off the per-frame path.
+  pub fn loads_data(&self) -> bool {
+    matches!(
+      self,
+      Message::ContactsPageLoaded(_)
+        | Message::KillmailDetailLoaded(_)
+        | Message::Loaded(_)
+        | Message::StandingsAgentsPageLoaded(_)
+        | Message::StandingsResults(_)
+    )
+  }
 }
 
 #[derive(Debug)]
@@ -902,6 +920,7 @@ async fn resolve_killlog_entries(
 
 async fn killlog_entry(db: &Database, row: crate::store::model::CorporationKillEntry) -> KillLogEntry {
   let ship_name = killlog_ship_name(db, row.ship_type_id()).await;
+  let ship_icon = images::default_store().resolve_type_icon(row.ship_type_id(), None, KILLLOG_SHIP_ICON_SIZE);
   let (system_name, system_security) = killlog_system(db, row.system_id()).await;
   let victim_name = killlog_victim_name(db, row.victim_id()).await;
   let victim_corp = killlog_victim_corp(db, row.victim_corp_id()).await;
@@ -912,6 +931,7 @@ async fn killlog_entry(db: &Database, row: crate::store::model::CorporationKillE
     is_kill: row.is_kill(),
     kill_time: row.kill_time().clone(),
     killmail_id: row.killmail_id(),
+    ship_icon,
     ship_name,
     ship_type_id: row.ship_type_id(),
     system_name,
@@ -1907,6 +1927,7 @@ mod tests {
       is_kill: true,
       kill_time: "2024-01-01T00:00:00Z".to_owned(),
       killmail_id,
+      ship_icon: images::IconResolution::Missing,
       ship_name: "Rifter".to_owned(),
       ship_type_id: 587,
       system_name: Some("Jita".to_owned()),

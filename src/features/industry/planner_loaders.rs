@@ -5,8 +5,10 @@ use super::{
   planner_model::{Material, REACTION_ACTIVITY_ID},
 };
 use crate::{
+  clients::eve_image::Size,
   store::{
     Database,
+    images::{self, IconResolution},
     model::Facility,
     repo::{blueprints, finance, industry, sde},
   },
@@ -14,6 +16,7 @@ use crate::{
 };
 
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+const TILE_ICON_SIZE: Size = Size::S64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlueprintRecipe {
@@ -117,16 +120,27 @@ pub struct OwnedSummary {
 
 #[derive(Clone, Debug, Default)]
 pub struct PlannerData {
+  pub blueprint_icons: HashMap<(i64, bool), IconResolution>,
   pub catalog: Vec<CatalogEntry>,
   pub facilities: Vec<PlannerFacility>,
   pub names: HashMap<i64, String>,
   pub owned: HashMap<i64, OwnedSummary>,
   pub prices: HashMap<i64, f64>,
   pub recipes: HashMap<i64, Recipe>,
+  pub type_icons: HashMap<i64, IconResolution>,
   pub volumes: HashMap<i64, f64>,
 }
 
 impl PlannerData {
+  /// The pre-resolved blueprint (BPO/BPC) icon keyed on `blueprint_type_id`; `is_copy` selects the BPC variant.
+  /// Resolved once at load so `view` never stats the filesystem; unknown keys read [`IconResolution::Missing`].
+  pub fn blueprint_icon(&self, blueprint_type_id: i64, is_copy: bool) -> &IconResolution {
+    self
+      .blueprint_icons
+      .get(&(blueprint_type_id, is_copy))
+      .unwrap_or(&IconResolution::Missing)
+  }
+
   pub fn name(&self, type_id: i64) -> String {
     self
       .names
@@ -141,6 +155,12 @@ impl PlannerData {
 
   pub fn recipe(&self, type_id: i64) -> Option<&Recipe> {
     self.recipes.get(&type_id)
+  }
+
+  /// The pre-resolved plain (non-blueprint) icon for a type, resolved once at load so `view` never stats the
+  /// filesystem; unknown ids read [`IconResolution::Missing`].
+  pub fn type_icon(&self, type_id: i64) -> &IconResolution {
+    self.type_icons.get(&type_id).unwrap_or(&IconResolution::Missing)
   }
 
   pub fn volume(&self, type_id: i64) -> f64 {
@@ -322,16 +342,42 @@ pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
   let owned = owned_index(db, &recipes, scope).await;
   let facilities = planner_facilities(db).await;
   let prices = prices(db).await;
+  let type_icons = type_icons(&names);
+  let blueprint_icons = blueprint_icons(&recipes);
 
   PlannerData {
+    blueprint_icons,
     catalog,
     facilities,
     names,
     owned,
     prices,
     recipes,
+    type_icons,
     volumes,
   }
+}
+
+fn blueprint_icons(recipes: &HashMap<i64, Recipe>) -> HashMap<(i64, bool), IconResolution> {
+  let store = images::default_store();
+  let mut icons = HashMap::new();
+  for recipe in recipes.values() {
+    let blueprint_type_id = recipe.blueprint_type_id;
+    for is_copy in [false, true] {
+      icons
+        .entry((blueprint_type_id, is_copy))
+        .or_insert_with(|| store.resolve_type_icon(blueprint_type_id, Some(is_copy), TILE_ICON_SIZE));
+    }
+  }
+  icons
+}
+
+fn type_icons(names: &HashMap<i64, String>) -> HashMap<i64, IconResolution> {
+  let store = images::default_store();
+  names
+    .keys()
+    .map(|&type_id| (type_id, store.resolve_type_icon(type_id, None, TILE_ICON_SIZE)))
+    .collect()
 }
 
 fn catalog(

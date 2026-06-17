@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use iced::{
   Background, Border, Color, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -143,9 +145,9 @@ fn injector_tile(
   tile_border: Color,
   tile_fg: Color,
 ) -> Element<'static, Message> {
-  match images::default_store().resolve_type_icon(type_id, None, INJECTOR_ICON_SIZE) {
+  match injector_icon(type_id) {
     IconResolution::Found(path) => container(
-      image(image::Handle::from_path(path))
+      image(image::Handle::from_path(path.clone()))
         .width(Length::Fill)
         .height(Length::Fill)
         .content_fit(ContentFit::Contain),
@@ -156,6 +158,18 @@ fn injector_tile(
     .into(),
     IconResolution::Missing => letter_tile(is_large, tile_bg, tile_border, tile_fg),
   }
+}
+
+fn injector_icon(type_id: i64) -> &'static IconResolution {
+  static LARGE: OnceLock<IconResolution> = OnceLock::new();
+  static SMALL: OnceLock<IconResolution> = OnceLock::new();
+
+  let cell = if type_id == LARGE_INJECTOR_TYPE_ID {
+    &LARGE
+  } else {
+    &SMALL
+  };
+  cell.get_or_init(|| images::default_store().resolve_type_icon(type_id, None, INJECTOR_ICON_SIZE))
 }
 
 fn letter_tile(is_large: bool, tile_bg: Color, tile_border: Color, tile_fg: Color) -> Element<'static, Message> {

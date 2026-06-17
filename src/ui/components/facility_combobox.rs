@@ -439,6 +439,22 @@ fn footer<'a, M: Clone + 'a>(on_clear: M) -> Element<'a, M> {
   .into()
 }
 
+fn location_subtitle(facility: &FacilityRef) -> Option<String> {
+  let region = facility
+    .region
+    .as_deref()
+    .map(str::trim)
+    .filter(|region| !region.is_empty());
+  let system = Some(facility.solar_system.trim()).filter(|system| !system.is_empty());
+
+  match (region, system) {
+    (Some(region), Some(system)) => Some(format!("{region} \u{00B7} {system}")),
+    (Some(region), None) => Some(region.to_owned()),
+    (None, Some(system)) => Some(system.to_owned()),
+    (None, None) => None,
+  }
+}
+
 fn result_row<'a, M: Clone + 'a>(
   facility: &FacilityRef,
   highlighted: bool,
@@ -555,32 +571,22 @@ fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
 }
 
 fn selected_card<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
-  let mut heading = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center).push(
-    text(facility.name.clone())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::LG)
-      .style(typography::colored(color::text::PRIMARY)),
-  );
-  heading = heading.push(sec_pill(facility.security_status));
-  let system = facility.solar_system.trim();
-  if !system.is_empty() {
-    heading = heading.push(
-      text(system.to_owned())
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::secondary())),
-    );
-  }
+  let heading = Row::new()
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .push(
+      text(facility.name.clone())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::LG)
+        .style(typography::colored(color::text::PRIMARY))
+        .width(Length::Fill), // bounded width is required for iced to wrap long names instead of clipping
+    )
+    .push(sec_pill(facility.security_status));
 
   let mut details = Column::new().spacing(spacing::UNIT).width(Length::Fill).push(heading);
-  if let Some(region) = facility
-    .region
-    .as_deref()
-    .map(str::trim)
-    .filter(|region| !region.is_empty())
-  {
+  if let Some(subtitle) = location_subtitle(facility) {
     details = details.push(
-      text(region.to_owned())
+      text(subtitle)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),
@@ -589,7 +595,7 @@ fn selected_card<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
 
   Row::with_children(vec![details.into(), cost_index_block(facility.cost_index)])
     .spacing(spacing::SPACE_3_5)
-    .align_y(Vertical::Center)
+    .align_y(Vertical::Top)
     .width(Length::Fill)
     .into()
 }
@@ -782,6 +788,47 @@ mod tests {
     }
   }
 
+  mod location_subtitle {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_joins_region_and_system_with_a_separator() {
+      let facility = sample(1, "Jita Keepstar");
+
+      assert_eq!(
+        super::super::location_subtitle(&facility),
+        Some("The Forge \u{00B7} Jita".to_owned())
+      );
+    }
+
+    #[test]
+    fn it_omits_the_separator_when_the_region_is_absent() {
+      let mut facility = sample(1, "Jita Keepstar");
+      facility.region = None;
+
+      assert_eq!(super::super::location_subtitle(&facility), Some("Jita".to_owned()));
+    }
+
+    #[test]
+    fn it_omits_the_separator_when_the_system_is_blank() {
+      let mut facility = sample(1, "Jita Keepstar");
+      facility.solar_system = "  ".to_owned();
+
+      assert_eq!(super::super::location_subtitle(&facility), Some("The Forge".to_owned()));
+    }
+
+    #[test]
+    fn it_returns_nothing_when_both_are_absent() {
+      let mut facility = sample(1, "Jita Keepstar");
+      facility.region = None;
+      facility.solar_system = String::new();
+
+      assert_eq!(super::super::location_subtitle(&facility), None);
+    }
+  }
+
   mod sec_pill {
     use super::*;
 
@@ -808,6 +855,29 @@ mod tests {
     #[test]
     fn it_renders_nothing_without_a_security_status() {
       let _el: Element<'_, Message> = super::super::sec_pill(None);
+    }
+  }
+
+  mod selected_card {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_long_player_structure_name() {
+      let facility = sample(
+        1,
+        "Police Weapons Facility - Outer Ring Excavations Strategic Reserve Depot",
+      );
+
+      let _el: Element<'_, Message> = super::super::selected_card(&facility);
+    }
+
+    #[test]
+    fn it_renders_an_npc_system_prefixed_facility() {
+      let mut facility = sample(1, "Jita IV - Moon 4 - Caldari Navy Assembly Plant");
+      facility.solar_system = "Jita".to_owned();
+      facility.region = Some("The Forge".to_owned());
+
+      let _el: Element<'_, Message> = super::super::selected_card(&facility);
     }
   }
 }

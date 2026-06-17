@@ -6,6 +6,7 @@ use iced::{
 };
 
 use super::{Activity, Filter, GroupBy, IndustryJob, Message, State};
+pub(super) use crate::ui::format::{fmt_duration, fmt_isk};
 use crate::{
   clients::eve_image::Size,
   store::images::{self, IconResolution},
@@ -87,25 +88,6 @@ pub(super) fn activity_color(activity: Activity) -> iced::Color {
     Activity::MaterialEfficiency => color::status::ONLINE,
     Activity::TimeEfficiency => color::status::WARNING,
     Activity::Other => color::text::secondary(),
-  }
-}
-
-pub(super) fn fmt_duration(seconds: i64) -> String {
-  if seconds <= 0 {
-    return "0m".to_owned();
-  }
-  let days = seconds / 86_400;
-  let hours = (seconds % 86_400) / 3_600;
-  let minutes = (seconds % 3_600) / 60;
-  let secs = seconds % 60;
-  if days > 0 {
-    format!("{days}d {hours}h")
-  } else if hours > 0 {
-    format!("{hours}h {minutes}m")
-  } else if minutes > 0 {
-    format!("{minutes}m {secs}s")
-  } else {
-    format!("{secs}s")
   }
 }
 
@@ -632,22 +614,6 @@ fn dot<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn fmt_isk(value: f64) -> String {
-  let sign = if value < 0.0 { "-" } else { "" };
-  let magnitude = value.abs();
-  if magnitude >= 1_000_000_000_000.0 {
-    format!("{sign}{:.1}T", magnitude / 1_000_000_000_000.0)
-  } else if magnitude >= 1_000_000_000.0 {
-    format!("{sign}{:.1}B", magnitude / 1_000_000_000.0)
-  } else if magnitude >= 1_000_000.0 {
-    format!("{sign}{:.1}M", magnitude / 1_000_000.0)
-  } else if magnitude >= 1_000.0 {
-    format!("{sign}{:.1}K", magnitude / 1_000.0)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
 struct Counts {
   active: usize,
   ready: usize,
@@ -720,33 +686,4 @@ fn grouped<'a>(jobs: &[&'a IndustryJob], group_by: GroupBy, now: DateTime<Utc>) 
       label: Some(label),
     })
     .collect()
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  mod fmt_isk {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_scales_positive_values_by_magnitude() {
-      assert_eq!(fmt_isk(2_500_000_000_000.0), "2.5T");
-      assert_eq!(fmt_isk(5_000_000_000.0), "5.0B");
-      assert_eq!(fmt_isk(7_500_000.0), "7.5M");
-      assert_eq!(fmt_isk(1_200.0), "1.2K");
-      assert_eq!(fmt_isk(500.0), "500");
-    }
-
-    #[test]
-    fn it_renders_negative_values_scaled_and_signed() {
-      assert_eq!(fmt_isk(-2_500_000_000_000.0), "-2.5T");
-      assert_eq!(fmt_isk(-5_000_000_000.0), "-5.0B");
-      assert_eq!(fmt_isk(-7_500_000.0), "-7.5M");
-      assert_eq!(fmt_isk(-1_200.0), "-1.2K");
-      assert_eq!(fmt_isk(-500.0), "-500");
-    }
-  }
 }

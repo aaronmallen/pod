@@ -29,7 +29,8 @@ const SEARCH_SELECT: &str = "\
   SELECT \
     oc.id AS character_id, \
     oc.name AS name, \
-    COALESCE(corp.ticker, 'CORP ' || oc.corporation_id) AS corp_ticker, \
+    corp.ticker AS corp_ticker, \
+    oc.corporation_id AS corporation_id, \
     CASE \
       WHEN cstate.online IS NULL THEN NULL \
       ELSE (cstate.station_id IS NOT NULL OR cstate.structure_id IS NOT NULL) \
@@ -39,10 +40,8 @@ const SEARCH_SELECT: &str = "\
     sq.color AS squad_accent_hex, \
     cstate.total_sp AS total_sp, \
     cstate.wallet_balance AS wallet_balance, \
-    CASE \
-      WHEN head.character_id IS NULL THEN NULL \
-      ELSE COALESCE(it.name, 'Skill ' || head.skill_id) \
-    END AS training_skill_name, \
+    head.skill_id AS training_skill_id, \
+    it.name AS training_skill_name, \
     head.finished_level AS training_finished_level, \
     head.start_date AS training_start_date, \
     head.finish_date AS training_finish_date \
@@ -143,19 +142,18 @@ async fn attach_tags(db: &Database, rows: &mut [CardRow]) -> Result<(), Error> {
 }
 
 fn into_card_row(sql: CardRowSql) -> CardRow {
-  let training = match sql.training_skill_name {
-    Some(skill_name) => Some(CardTraining {
-      finish_date: sql.training_finish_date,
-      finished_level: sql.training_finished_level.unwrap_or_default(),
-      skill_name,
-      start_date: sql.training_start_date,
-    }),
-    None => None,
-  };
+  let training = sql.training_skill_id.map(|skill_id| CardTraining {
+    finish_date: sql.training_finish_date,
+    finished_level: sql.training_finished_level.unwrap_or_default(),
+    skill_id,
+    skill_name: sql.training_skill_name,
+    start_date: sql.training_start_date,
+  });
 
   CardRow {
     character_id: sql.character_id,
     corp_ticker: sql.corp_ticker,
+    corporation_id: sql.corporation_id,
     docked: sql.docked,
     location: sql.location,
     name: sql.name,
@@ -179,7 +177,7 @@ fn push_free_text_predicate(builder: &mut QueryBuilder<Sqlite>, text: &str) {
   builder.push_bind(pattern.clone());
   builder.push(" ESCAPE '\\' OR COALESCE(st.name, sx.name, ss.name) LIKE ");
   builder.push_bind(pattern.clone());
-  builder.push(" ESCAPE '\\' OR COALESCE(it.name, 'Skill ' || head.skill_id) LIKE ");
+  builder.push(" ESCAPE '\\' OR it.name LIKE ");
   builder.push_bind(pattern.clone());
   builder.push(
     " ESCAPE '\\' OR EXISTS (SELECT 1 FROM entity_tags et \
@@ -2186,12 +2184,13 @@ mod tests {
 
       assert_eq!(rows.len(), 1);
       let scout = &rows[0];
-      assert_eq!(scout.corp_ticker, "CBLT");
+      assert_eq!(scout.corp_ticker.as_deref(), Some("CBLT"));
       assert_eq!(scout.docked, Some(true));
       assert_eq!(
-        scout.training.as_ref().map(|training| training.skill_name.as_str()),
-        Some("Skill 3300")
+        scout.training.as_ref().map(|training| training.skill_name.as_deref()),
+        Some(None)
       );
+      assert_eq!(scout.training.as_ref().map(|training| training.skill_id), Some(3300));
       assert_eq!(scout.training.as_ref().map(|training| training.finished_level), Some(4));
 
       assert_eq!(scout.tags.len(), 1);

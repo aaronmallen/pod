@@ -11,6 +11,7 @@ pub use self::{
   loaders::{ContractEntry, JournalEntry, MarketEntry},
   side_filter::Side,
 };
+pub(crate) use crate::ui::format::fmt_isk_opt as fmt_isk;
 use crate::{
   features::contract_detail,
   store::{
@@ -948,22 +949,6 @@ async fn load_corporations(db: &Database) -> Vec<RosterCorp> {
     });
   }
   roster
-}
-
-pub fn fmt_isk(balance: Option<f64>) -> String {
-  let Some(value) = balance else {
-    return "\u{2014}".to_owned();
-  };
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
 }
 
 pub fn scope_liquid(state: &State) -> Option<f64> {

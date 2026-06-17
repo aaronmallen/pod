@@ -14,6 +14,7 @@ use crate::ui::{
     rule,
     tab_select::{self, TabLayout},
   },
+  format::fmt_isk_opt,
   style::{color, control, radius, spacing, typography},
 };
 
@@ -144,9 +145,19 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
       "used / max",
     ),
     rule::vertical(44.0),
-    stat("In production", fmt_isk(stats.output_value), None, "est. output value"),
+    stat(
+      "In production",
+      fmt_isk_opt((stats.output_value != 0.0).then_some(stats.output_value)),
+      None,
+      "est. output value",
+    ),
     rule::vertical(44.0),
-    stat("Job fees", fmt_isk(stats.fees), None, "active jobs"),
+    stat(
+      "Job fees",
+      fmt_isk_opt((stats.fees != 0.0).then_some(stats.fees)),
+      None,
+      "active jobs",
+    ),
     Space::new().width(Length::Fill).into(),
   ])
   .spacing(spacing::SPACE_3)
@@ -167,25 +178,6 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
       ..container::Style::default()
     })
     .into()
-}
-
-fn fmt_isk(value: f64) -> String {
-  if value == 0.0 {
-    return "\u{2014}".to_owned();
-  }
-  let sign = if value < 0.0 { "-" } else { "" };
-  let magnitude = value.abs();
-  if magnitude >= 1_000_000_000_000.0 {
-    format!("{sign}{:.2}T", magnitude / 1_000_000_000_000.0)
-  } else if magnitude >= 1_000_000_000.0 {
-    format!("{sign}{:.2}B", magnitude / 1_000_000_000.0)
-  } else if magnitude >= 1_000_000.0 {
-    format!("{sign}{:.1}M", magnitude / 1_000_000.0)
-  } else if magnitude >= 1_000.0 {
-    format!("{sign}{:.1}K", magnitude / 1_000.0)
-  } else {
-    format!("{value:.0}")
-  }
 }
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
@@ -373,38 +365,4 @@ fn slot_totals(state: &State, jobs: &[&IndustryJob], now: DateTime<Utc>) -> (i64
       .unwrap_or(0),
   };
   (used, max)
-}
-
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  mod fmt_isk {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_an_em_dash_for_zero() {
-      assert_eq!(fmt_isk(0.0), "\u{2014}");
-    }
-
-    #[test]
-    fn it_scales_positive_values_by_magnitude() {
-      assert_eq!(fmt_isk(2_500_000_000_000.0), "2.50T");
-      assert_eq!(fmt_isk(5_000_000_000.0), "5.00B");
-      assert_eq!(fmt_isk(7_500_000.0), "7.5M");
-      assert_eq!(fmt_isk(1_200.0), "1.2K");
-      assert_eq!(fmt_isk(500.0), "500");
-    }
-
-    #[test]
-    fn it_renders_negative_values_scaled_and_signed() {
-      assert_eq!(fmt_isk(-2_500_000_000_000.0), "-2.50T");
-      assert_eq!(fmt_isk(-5_000_000_000.0), "-5.00B");
-      assert_eq!(fmt_isk(-7_500_000.0), "-7.5M");
-      assert_eq!(fmt_isk(-1_200.0), "-1.2K");
-      assert_eq!(fmt_isk(-500.0), "-500");
-    }
-  }
 }

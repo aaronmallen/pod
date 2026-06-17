@@ -6,7 +6,7 @@ use iced::{
 };
 
 use super::{
-  super::{LoadState, Message, fmt_isk},
+  super::{LoadState, Message},
   shared,
 };
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
       segmented::segment_button_style,
       virtual_list::{VirtualList, VirtualListConfig},
     },
+    format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
 };
@@ -181,7 +182,7 @@ fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
     summary_tile("Losses", stats.loss_count.to_string(), color::status::DANGER),
     summary_tile(
       "ISK Destroyed",
-      format!("{} ISK", fmt_isk(Some(stats.kill_isk))),
+      format!("{} ISK", fmt_isk(stats.kill_isk)),
       color::status::ONLINE,
     ),
     summary_tile("Efficiency", eff_label, eff_color),
@@ -526,7 +527,7 @@ fn system_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
 
 fn value_col<'a>(entry: &'a KillLogEntry, accent: iced::Color) -> Element<'a, Message> {
   let label = if entry.value_isk > 0.0 {
-    format!("{} ISK", fmt_isk(Some(entry.value_isk)))
+    format!("{} ISK", fmt_isk(entry.value_isk))
   } else {
     "\u{2014}".to_owned()
   };

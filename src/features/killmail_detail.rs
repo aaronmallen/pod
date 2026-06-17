@@ -9,6 +9,7 @@ use crate::{
   store::images,
   ui::{
     components::{backdrop, clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
+    format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
 };
@@ -151,22 +152,6 @@ fn parse_iso8601(s: &str) -> Option<i64> {
   }
   let days = days_since_epoch(date_parts[0], date_parts[1], date_parts[2]);
   Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
-}
-
-fn fmt_isk(balance: Option<f64>) -> String {
-  let Some(value) = balance else {
-    return "\u{2014}".to_owned();
-  };
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
 }
 
 fn modal<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
@@ -340,7 +325,7 @@ fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
 }
 
 fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
-  let total = text(format!("{} ISK", fmt_isk(Some(detail.value_isk))))
+  let total = text(format!("{} ISK", fmt_isk(detail.value_isk)))
     .font(typography::mono::MEDIUM)
     .size(24.0)
     .style(move |_| text::Style {
@@ -484,7 +469,7 @@ fn item_row<'a, M: 'a>(item: &'a ItemView) -> Element<'a, M> {
       .align_y(Vertical::Center)
       .width(Length::Fill)
       .into(),
-    text(fmt_isk(Some(item.value_isk)))
+    text(fmt_isk(item.value_isk))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -666,7 +651,7 @@ fn legend_cell<'a, M: 'a>(swatch: iced::Color, label: &str, value: f64, right: b
   .spacing(spacing::SPACE_2 - 2.0)
   .align_y(Vertical::Center);
 
-  let value = text(format!("{} ISK", fmt_isk(Some(value))))
+  let value = text(format!("{} ISK", fmt_isk(value)))
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {

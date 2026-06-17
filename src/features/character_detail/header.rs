@@ -1,6 +1,6 @@
 use iced::{Element, widget::text};
 
-use super::{HeadStats, Message, PickerPilot, State, fmt_isk, fmt_sp};
+use super::{HeadStats, Message, PickerPilot, State};
 use crate::ui::{
   components::{
     header::{header as header_band, header_divider, stat_block},
@@ -9,6 +9,7 @@ use crate::ui::{
       trigger_identity,
     },
   },
+  format::{fmt_isk_opt, fmt_sp_opt},
   style::{color, typography},
 };
 
@@ -22,14 +23,14 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
     header_divider(),
     stat_block(
       "Total SP",
-      format!("{} SP", fmt_sp(head.total_sp)),
+      format!("{} SP", fmt_sp_opt(head.total_sp)),
       color::text::PRIMARY,
       None,
     ),
     header_divider(),
     stat_block(
       "Liquid",
-      format!("{} ISK", fmt_isk(head.liquid_isk)),
+      format!("{} ISK", fmt_isk_opt(head.liquid_isk)),
       color::text::PRIMARY,
       None,
     ),
@@ -84,7 +85,7 @@ fn trigger(active: Option<&PickerPilot>, active_id: i64) -> Element<'_, Message>
 }
 
 fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
-  let trailing: Element<'_, Message> = text(format!("{} SP", fmt_sp(Some(pilot.total_sp))))
+  let trailing: Element<'_, Message> = text(format!("{} SP", fmt_sp_opt(Some(pilot.total_sp))))
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {

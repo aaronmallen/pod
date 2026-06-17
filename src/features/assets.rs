@@ -22,6 +22,7 @@ pub use self::{
   stockpile_search::{MultibuyResolution, resolve_multibuy, search_item_types, search_locations},
   stockpiles::{Editor, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, save_stockpile},
 };
+pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};
 use crate::{
   store::{
     Database, images,
@@ -1992,43 +1993,6 @@ async fn load_corporations(db: &Database) -> Vec<RosterCorp> {
     .collect()
 }
 
-pub fn fmt_isk(value: f64) -> String {
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
-pub fn fmt_volume(volume: f64) -> String {
-  let magnitude = volume.abs();
-  // \u{b3} is the superscript-three (cubic-metre) glyph, not an ASCII '3'.
-  if magnitude >= 1e6 {
-    format!("{:.1}Mm\u{b3}", volume / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}km\u{b3}", volume / 1e3)
-  } else {
-    format!("{volume:.0}m\u{b3}")
-  }
-}
-
-pub fn fmt_count(count: i64) -> String {
-  let digits = count.abs().to_string();
-  let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
-  for (index, ch) in digits.chars().enumerate() {
-    if index > 0 && (digits.len() - index).is_multiple_of(3) {
-      grouped.push(',');
-    }
-    grouped.push(ch);
-  }
-  if count < 0 { format!("-{grouped}") } else { grouped }
-}
-
 pub(super) fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterCorp]) -> String {
   roster
     .iter()
@@ -2220,35 +2184,6 @@ mod tests {
     #[test]
     fn it_resolves_an_unknown_corporation_scope_to_none() {
       assert_eq!(resolve_scope_owner(Scope::Corporation(404), &[], &[corp(98)]), None);
-    }
-  }
-
-  mod fmt {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_formats_isk_by_magnitude() {
-      assert_eq!(fmt_isk(2_500_000_000.0), "2.50B");
-      assert_eq!(fmt_isk(3_400_000.0), "3.4M");
-      assert_eq!(fmt_isk(1_200.0), "1.2K");
-      assert_eq!(fmt_isk(42.0), "42");
-    }
-
-    #[test]
-    fn it_formats_volume_by_magnitude() {
-      assert_eq!(fmt_volume(2_500_000.0), "2.5Mm\u{b3}");
-      assert_eq!(fmt_volume(3_400.0), "3.4km\u{b3}");
-      assert_eq!(fmt_volume(42.0), "42m\u{b3}");
-    }
-
-    #[test]
-    fn it_groups_counts_in_thousands() {
-      assert_eq!(fmt_count(0), "0");
-      assert_eq!(fmt_count(42), "42");
-      assert_eq!(fmt_count(1_234), "1,234");
-      assert_eq!(fmt_count(1_234_567), "1,234,567");
     }
   }
 

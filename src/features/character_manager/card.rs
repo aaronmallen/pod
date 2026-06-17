@@ -6,6 +6,7 @@ use iced::{
 };
 
 use super::Message;
+pub(super) use crate::ui::format::{fmt_isk_opt as format_isk, fmt_sp_opt as format_sp};
 use crate::{
   store::{images, model::ENTITY_TYPE_CHARACTER},
   sync::Phase,
@@ -552,39 +553,6 @@ fn name_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
   }
 }
 
-pub(super) fn format_isk(balance: Option<f64>) -> String {
-  let Some(value) = balance else {
-    return PLACEHOLDER.to_owned();
-  };
-
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
-pub(super) fn format_sp(total: Option<i64>) -> String {
-  match total {
-    None | Some(0) => PLACEHOLDER.to_owned(),
-    Some(value) => {
-      let n = value as f64;
-      if n >= 1e6 {
-        format!("{:.1}M", n / 1e6)
-      } else if n >= 1e3 {
-        format!("{:.0}K", n / 1e3)
-      } else {
-        value.to_string()
-      }
-    }
-  }
-}
-
 fn roman(level: i64) -> String {
   match level {
     1 => "I".to_owned(),
@@ -627,49 +595,6 @@ mod tests {
         skill: "Caldari Cruiser".to_owned(),
       }),
       wallet_balance: Some(4_820_000_000.0),
-    }
-  }
-
-  mod format_isk {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_uses_billions_millions_and_thousands_suffixes() {
-      assert_eq!(format_isk(Some(4_820_000_000.0)), "4.82B");
-      assert_eq!(format_isk(Some(890_000_000.0)), "890.0M");
-      assert_eq!(format_isk(Some(12_400.0)), "12.4K");
-      assert_eq!(format_isk(Some(42.0)), "42");
-    }
-
-    #[test]
-    fn it_returns_the_placeholder_for_a_null_balance() {
-      assert_eq!(format_isk(None), PLACEHOLDER);
-    }
-  }
-
-  mod format_sp {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_returns_the_placeholder_for_none_and_zero() {
-      assert_eq!(format_sp(None), PLACEHOLDER);
-      assert_eq!(format_sp(Some(0)), PLACEHOLDER);
-    }
-
-    #[test]
-    fn it_uses_millions_and_thousands_suffixes() {
-      assert_eq!(format_sp(Some(1_500_000)), "1.5M");
-      assert_eq!(format_sp(Some(2_500)), "2K");
-      assert_eq!(format_sp(Some(3_500)), "4K");
-    }
-
-    #[test]
-    fn it_renders_small_counts_raw() {
-      assert_eq!(format_sp(Some(420)), "420");
     }
   }
 

@@ -13,6 +13,7 @@ use crate::{
   },
   ui::{
     components::{backdrop, clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
+    format::{fmt_isk, fmt_volume},
     style::{color, radius, spacing, typography},
   },
 };
@@ -582,23 +583,6 @@ fn days_since_epoch(y: i64, m: i64, d: i64) -> i64 {
   let doy = (153 * m + 2) / 5 + d - 1;
   let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   era * 146_097 + doe - 719_468
-}
-
-fn fmt_isk(value: f64) -> String {
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
-fn fmt_volume(value: f64) -> String {
-  format!("{value:.1} m\u{00b3}")
 }
 
 fn parse_iso8601(s: &str) -> Option<i64> {

@@ -7,6 +7,7 @@ use iced::{
 };
 
 use super::Message;
+pub(super) use crate::ui::format::fmt_sp_labeled as fmt_sp;
 use crate::{
   features::skills::{
     optimizer::{Attributes, Recommendation},
@@ -90,16 +91,6 @@ pub(super) fn fmt_time_short(sec: f64) -> String {
   } else {
     let m = (s % 3_600) / 60;
     format!("{m}m")
-  }
-}
-
-pub(super) fn fmt_sp(sp: u64) -> String {
-  if sp >= 1_000_000 {
-    format!("{:.1}M SP", sp as f64 / 1_000_000.0)
-  } else if sp >= 1_000 {
-    format!("{:.0}k SP", sp as f64 / 1_000.0)
-  } else {
-    format!("{sp} SP")
   }
 }
 

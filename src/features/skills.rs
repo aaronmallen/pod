@@ -29,6 +29,7 @@ use self::{
   right_panel::Panel,
 };
 pub use crate::features::skill_plan_editor::Seed as EditorSeed;
+pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp};
 use crate::{
   store::{
     Database, images,
@@ -461,22 +462,6 @@ fn empty_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-pub(super) fn fmt_duration(seconds: i64) -> String {
-  if seconds <= 0 {
-    return "—".to_owned();
-  }
-  let days = seconds / SECONDS_PER_DAY;
-  let hours = (seconds % SECONDS_PER_DAY) / 3_600;
-  let minutes = (seconds % 3_600) / 60;
-  if days > 0 {
-    format!("{days}d {hours:02}h {minutes:02}m")
-  } else if hours > 0 {
-    format!("{hours}h {minutes:02}m")
-  } else {
-    format!("{minutes}m")
-  }
-}
-
 pub(super) fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   if seconds_from_now <= 0 {
     return "—".to_owned();
@@ -488,16 +473,6 @@ pub(super) fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   let hour = eta.hour();
   let minute = eta.minute();
   format!("{day} {month} {year} · {hour:02}:{minute:02}")
-}
-
-pub(super) fn fmt_sp(sp: i64) -> String {
-  if sp >= 1_000_000 {
-    format!("{:.2}M", sp as f64 / 1_000_000.0)
-  } else if sp >= 1_000 {
-    format!("{:.0}K", sp as f64 / 1_000.0)
-  } else {
-    sp.to_string()
-  }
 }
 
 fn panes<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -599,38 +574,6 @@ mod tests {
     }
   }
 
-  mod fmt_duration {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_pads_hours_and_minutes_when_days_are_present() {
-      assert_eq!(fmt_duration(3 * 86_400 + 4 * 3_600 + 9 * 60), "3d 04h 09m");
-    }
-
-    #[test]
-    fn it_pads_only_minutes_when_hours_are_present() {
-      assert_eq!(fmt_duration(2 * 3_600 + 5 * 60), "2h 05m");
-    }
-
-    #[test]
-    fn it_renders_an_em_dash_for_zero_or_negative() {
-      assert_eq!(fmt_duration(0), "—");
-      assert_eq!(fmt_duration(-5), "—");
-    }
-
-    #[test]
-    fn it_renders_bare_minutes_below_an_hour() {
-      assert_eq!(fmt_duration(7 * 60), "7m");
-    }
-
-    #[test]
-    fn it_truncates_a_sub_minute_remainder() {
-      assert_eq!(fmt_duration(59), "0m");
-    }
-  }
-
   mod fmt_eta {
     use pretty_assertions::assert_eq;
 
@@ -659,30 +602,6 @@ mod tests {
       let secs = 250 * 86_400;
 
       assert!(fmt_eta(now(), secs).ends_with("2027 · 12:00"));
-    }
-  }
-
-  mod fmt_sp {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_integers_below_one_thousand() {
-      assert_eq!(fmt_sp(0), "0");
-      assert_eq!(fmt_sp(999), "999");
-    }
-
-    #[test]
-    fn it_renders_millions_with_two_decimals() {
-      assert_eq!(fmt_sp(1_000_000), "1.00M");
-      assert_eq!(fmt_sp(47_320_400), "47.32M");
-    }
-
-    #[test]
-    fn it_renders_thousands_rounded_to_whole_k() {
-      assert_eq!(fmt_sp(1_000), "1K");
-      assert_eq!(fmt_sp(45_255), "45K");
     }
   }
 

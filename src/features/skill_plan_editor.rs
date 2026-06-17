@@ -18,6 +18,7 @@ use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{Element, Length, Task, widget::Column};
 use picker::PickerState;
 
+pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp_compact as fmt_sp};
 use crate::{
   features::{
     skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
@@ -50,7 +51,6 @@ const REMAP_ATTR_ORDER: [Attribute; 5] = [
 const MONTHS: [&str; 12] = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
-const SECONDS_PER_DAY: i64 = 86_400;
 const EDITOR_HOST_WIDTH: f32 = 900.0;
 const PICKER_WIDTH: f32 = 340.0;
 const SUMMARY_WIDTH: f32 = 360.0;
@@ -2360,22 +2360,6 @@ fn plan_time_for(weights: &[PairWeight], base: Attributes) -> f64 {
   total
 }
 
-fn fmt_duration(seconds: i64) -> String {
-  if seconds <= 0 {
-    return "\u{2014}".to_owned();
-  }
-  let days = seconds / SECONDS_PER_DAY;
-  let hours = (seconds % SECONDS_PER_DAY) / 3_600;
-  let minutes = (seconds % 3_600) / 60;
-  if days > 0 {
-    format!("{days}d {hours:02}h {minutes:02}m")
-  } else if hours > 0 {
-    format!("{hours}h {minutes:02}m")
-  } else {
-    format!("{minutes}m")
-  }
-}
-
 fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   if seconds_from_now <= 0 {
     return "\u{2014}".to_owned();
@@ -2387,16 +2371,6 @@ fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   let hour = eta.hour();
   let minute = eta.minute();
   format!("{day} {month} {year} · {hour:02}:{minute:02}")
-}
-
-fn fmt_sp(sp: u64) -> String {
-  if sp >= 1_000_000 {
-    format!("{:.1}M", sp as f64 / 1_000_000.0)
-  } else if sp >= 1_000 {
-    format!("{:.1}k", sp as f64 / 1_000.0)
-  } else {
-    sp.to_string()
-  }
 }
 
 #[cfg(test)]
@@ -2436,28 +2410,6 @@ mod tests {
     }
   }
 
-  mod fmt_duration {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_pads_hours_and_minutes_when_days_are_present() {
-      assert_eq!(fmt_duration(3 * 86_400 + 4 * 3_600 + 9 * 60), "3d 04h 09m");
-    }
-
-    #[test]
-    fn it_renders_an_em_dash_for_zero_or_negative() {
-      assert_eq!(fmt_duration(0), "—");
-      assert_eq!(fmt_duration(-5), "—");
-    }
-
-    #[test]
-    fn it_renders_bare_minutes_below_an_hour() {
-      assert_eq!(fmt_duration(7 * 60), "7m");
-    }
-  }
-
   mod fmt_eta {
     use pretty_assertions::assert_eq;
 
@@ -2476,23 +2428,6 @@ mod tests {
     #[test]
     fn it_rolls_into_a_later_year() {
       assert!(fmt_eta(now(), 250 * 86_400).ends_with("2027 · 12:00"));
-    }
-  }
-
-  mod fmt_sp {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_integers_below_one_thousand() {
-      assert_eq!(fmt_sp(999), "999");
-    }
-
-    #[test]
-    fn it_renders_thousands_and_millions() {
-      assert_eq!(fmt_sp(45_300), "45.3k");
-      assert_eq!(fmt_sp(1_200_000), "1.2M");
     }
   }
 

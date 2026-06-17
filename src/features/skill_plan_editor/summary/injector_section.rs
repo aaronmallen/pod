@@ -9,7 +9,10 @@ use crate::{
   clients::eve_image::Size,
   features::skills::plan_math::InjectorEstimate,
   store::images::{self, IconResolution},
-  ui::style::{color, spacing, typography},
+  ui::{
+    format::fmt_sp_short,
+    style::{color, spacing, typography},
+  },
 };
 
 const LARGE_INJECTOR_TYPE_ID: i64 = 40_520;
@@ -180,16 +183,6 @@ fn letter_tile(is_large: bool, tile_bg: Color, tile_border: Color, tile_fg: Colo
   .into()
 }
 
-fn fmt_sp_short(sp: u64) -> String {
-  if sp >= 1_000_000 {
-    format!("{:.1}M", sp as f64 / 1_000_000.0)
-  } else if sp >= 1_000 {
-    format!("{:.0}k", sp as f64 / 1_000.0)
-  } else {
-    sp.to_string()
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -219,29 +212,6 @@ mod tests {
         color::accent::PLASMA,
         color::accent::PLASMA,
       );
-    }
-  }
-
-  mod fmt_sp_short {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_the_band_yields_without_an_sp_suffix() {
-      assert_eq!(fmt_sp_short(500_000), "500k");
-      assert_eq!(fmt_sp_short(100_000), "100k");
-      assert_eq!(fmt_sp_short(30_000), "30k");
-    }
-
-    #[test]
-    fn it_renders_millions_with_one_decimal() {
-      assert_eq!(fmt_sp_short(1_500_000), "1.5M");
-    }
-
-    #[test]
-    fn it_renders_sub_thousand_values_raw() {
-      assert_eq!(fmt_sp_short(750), "750");
     }
   }
 }

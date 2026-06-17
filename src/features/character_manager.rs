@@ -42,6 +42,7 @@ use crate::{
       header,
       modal_overlay::modal_overlay,
     },
+    format::{corp_ticker_label, skill_label},
     style::{color, control, spacing, typography},
   },
 };
@@ -1657,10 +1658,7 @@ async fn build_card(
   Ok(CardModel {
     accent: inputs.squad_accent,
     character_id: id,
-    corp_ticker: inputs.corp.map_or_else(
-      || format!("CORP {}", character.corporation_id()),
-      |c| c.ticker().to_owned(),
-    ),
+    corp_ticker: corp_ticker_label(inputs.corp.map(|c| c.ticker().as_str()), character.corporation_id()),
     docked,
     location,
     name: character.name().to_owned(),
@@ -1828,9 +1826,8 @@ async fn resolve_training(
   entry: &CharacterSkillqueue,
   now: DateTime<Utc>,
 ) -> Result<Training, crate::store::Error> {
-  let skill = sde::get_item_type(db, entry.skill_id())
-    .await?
-    .map_or_else(|| format!("Skill {}", entry.skill_id()), |t| t.name().to_owned());
+  let item_type = sde::get_item_type(db, entry.skill_id()).await?;
+  let skill = skill_label(item_type.as_ref().map(|t| t.name().as_str()), entry.skill_id());
 
   let finish = entry.finish_date().as_deref().and_then(parse_timestamp);
   let start = entry.start_date().as_deref().and_then(parse_timestamp);
@@ -1963,7 +1960,7 @@ fn card_from_row_with_reauth(row: character_card::CardRow, now: DateTime<Utc>, n
   CardModel {
     accent: parse_hex(row.squad_accent_hex.as_deref()),
     character_id: row.character_id,
-    corp_ticker: row.corp_ticker,
+    corp_ticker: corp_ticker_label(row.corp_ticker.as_deref(), row.corporation_id),
     docked: row.docked,
     location: row.location,
     name: row.name,
@@ -2122,7 +2119,7 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
   };
 
   Training {
-    skill: training.skill_name,
+    skill: skill_label(training.skill_name.as_deref(), training.skill_id),
     level: training.finished_level,
     remaining,
     progress,
@@ -2972,7 +2969,8 @@ mod tests {
     fn sample_row(character_id: i64, name: &str) -> character_card::CardRow {
       character_card::CardRow {
         character_id,
-        corp_ticker: "CBLT".to_owned(),
+        corp_ticker: Some("CBLT".to_owned()),
+        corporation_id: 98_000_001,
         docked: Some(true),
         location: Some("Jita IV".to_owned()),
         name: name.to_owned(),
@@ -2987,7 +2985,8 @@ mod tests {
         training: Some(character_card::CardTraining {
           finish_date: Some("2026-06-01T01:00:00Z".to_owned()),
           finished_level: 4,
-          skill_name: "Gunnery".to_owned(),
+          skill_id: 3300,
+          skill_name: Some("Gunnery".to_owned()),
           start_date: Some("2026-05-31T23:00:00Z".to_owned()),
         }),
         wallet_balance: Some(50.0),

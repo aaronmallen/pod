@@ -1713,38 +1713,6 @@ fn empty_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-pub(super) fn fmt_isk(balance: Option<f64>) -> String {
-  let Some(value) = balance else {
-    return "\u{2014}".to_owned();
-  };
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
-pub(super) fn fmt_sp(total: Option<i64>) -> String {
-  match total {
-    None | Some(0) => "\u{2014}".to_owned(),
-    Some(value) => {
-      let n = value as f64;
-      if n >= 1e6 {
-        format!("{:.1}M", n / 1e6)
-      } else if n >= 1e3 {
-        format!("{:.0}K", n / 1e3)
-      } else {
-        value.to_string()
-      }
-    }
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -1913,44 +1881,6 @@ mod tests {
       total_sp: Some(47_320_400),
     };
     state
-  }
-
-  mod fmt_isk {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_billions_with_two_decimals() {
-      assert_eq!(fmt_isk(Some(1_234_567_890.0)), "1.23B");
-    }
-
-    #[test]
-    fn it_renders_millions_with_one_decimal() {
-      assert_eq!(fmt_isk(Some(2_500_000.0)), "2.5M");
-    }
-
-    #[test]
-    fn it_renders_an_em_dash_for_none() {
-      assert_eq!(fmt_isk(None), "\u{2014}");
-    }
-  }
-
-  mod fmt_sp {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_renders_millions_with_one_decimal() {
-      assert_eq!(fmt_sp(Some(47_320_400)), "47.3M");
-    }
-
-    #[test]
-    fn it_renders_an_em_dash_for_none_or_zero() {
-      assert_eq!(fmt_sp(None), "\u{2014}");
-      assert_eq!(fmt_sp(Some(0)), "\u{2014}");
-    }
   }
 
   mod state {

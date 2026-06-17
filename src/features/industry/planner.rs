@@ -1408,6 +1408,7 @@ mod view {
         text_input::{TextInput, inner_style as text_input_inner_style},
         virtual_list::{self, VirtualList, VirtualListConfig},
       },
+      format::{fmt_duration_coarse, fmt_isk, fmt_isk_full, fmt_volume},
       style::{color, radius, spacing, typography},
     },
   };
@@ -2205,7 +2206,11 @@ mod view {
         ),
         savings_color,
       ),
-      metric("Build time", &fmt_duration(build_time), color::text::secondary()),
+      metric(
+        "Build time",
+        &fmt_duration_coarse(build_time as i64),
+        color::text::secondary(),
+      ),
     ])
     .spacing(spacing::SPACE_6)
     .into()
@@ -2931,7 +2936,7 @@ mod view {
       .width(Length::Fill)
       .into(),
       runs_pill(job.runs, job.node.is_reaction, is_final),
-      text(fmt_duration(time))
+      text(fmt_duration_coarse(time as i64))
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY))
@@ -3355,7 +3360,11 @@ mod view {
     .spacing(spacing::SPACE_2);
 
     let meta = Column::with_children(vec![
-      meta_line(Icon::clock(), "Build time", &fmt_duration(eco.build_time_secs)),
+      meta_line(
+        Icon::clock(),
+        "Build time",
+        &fmt_duration_coarse(eco.build_time_secs as i64),
+      ),
       meta_line(Icon::wallet(), "ISK / hour", &fmt_isk(eco.isk_per_hour())),
       meta_line(Icon::assets(), "Output volume", &fmt_volume(eco.output_volume)),
     ])
@@ -3990,25 +3999,6 @@ mod view {
     if value < 0 { format!("-{out}") } else { out }
   }
 
-  fn fmt_isk(value: f64) -> String {
-    let v = value.abs();
-    if v >= 1_000_000_000_000.0 {
-      format!("{:.2}T", v / 1_000_000_000_000.0)
-    } else if v >= 1_000_000_000.0 {
-      format!("{:.2}B", v / 1_000_000_000.0)
-    } else if v >= 1_000_000.0 {
-      format!("{:.2}M", v / 1_000_000.0)
-    } else if v >= 1_000.0 {
-      format!("{:.1}K", v / 1_000.0)
-    } else {
-      format!("{v:.0}")
-    }
-  }
-
-  fn fmt_isk_full(value: f64) -> String {
-    fmt_num(value.round() as i64)
-  }
-
   fn fmt_price(value: f64) -> String {
     if value < 100.0 {
       format!("{value:.2}")
@@ -4019,24 +4009,6 @@ mod view {
 
   fn fmt_pct(value: f64) -> String {
     format!("{value:.1}%")
-  }
-
-  fn fmt_duration(seconds: f64) -> String {
-    let total = seconds.max(0.0) as i64;
-    let days = total / 86_400;
-    let hours = (total % 86_400) / 3_600;
-    let minutes = (total % 3_600) / 60;
-    if days > 0 {
-      format!("{days}d {hours}h")
-    } else if hours > 0 {
-      format!("{hours}h {minutes}m")
-    } else {
-      format!("{minutes}m")
-    }
-  }
-
-  fn fmt_volume(value: f64) -> String {
-    format!("{} m\u{00B3}", fmt_num(value.round() as i64))
   }
 
   #[cfg(test)]

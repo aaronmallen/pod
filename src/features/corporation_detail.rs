@@ -1103,22 +1103,6 @@ fn placeholder() -> String {
   PLACEHOLDER.to_owned()
 }
 
-pub(super) fn fmt_isk(balance: Option<f64>) -> String {
-  let Some(value) = balance else {
-    return "\u{2014}".to_owned();
-  };
-  let magnitude = value.abs();
-  if magnitude >= 1e9 {
-    format!("{:.2}B", value / 1e9)
-  } else if magnitude >= 1e6 {
-    format!("{:.1}M", value / 1e6)
-  } else if magnitude >= 1e3 {
-    format!("{:.1}K", value / 1e3)
-  } else {
-    format!("{value:.0}")
-  }
-}
-
 /// Derives the next keyset cursor from the last row of a page, matching the active sort column.
 fn contact_cursor(sort: ContactSortColumn, row: &ContactRow) -> ContactCursor {
   let id = row.contact.contact_id();

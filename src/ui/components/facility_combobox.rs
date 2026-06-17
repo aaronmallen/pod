@@ -12,7 +12,15 @@ use crate::ui::{
 };
 
 const LIST_HEIGHT: f32 = 230.0;
+const PILL_RADIUS: f32 = 3.0;
 const SEARCH_MIN_CHARS: usize = 3;
+/// Wormhole-band tint (design `#B98BD9`) for J-space security pills.
+const WORMHOLE: Color = Color {
+  r: 0.725,
+  g: 0.545,
+  b: 0.851,
+  a: 1.0,
+};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityRef {
@@ -222,58 +230,26 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     self
   }
 
-  /// The always-visible, compact field showing the current selection (or empty placeholder). Pressing it
-  /// toggles the [`FacilityCombobox::popover`] open; the popover (not this button) owns the search input.
+  /// The always-visible field showing the selected facility as a two-line card (or the empty placeholder).
+  /// Pressing it toggles the [`FacilityCombobox::popover`] open; the popover (not this button) owns the search input.
   pub fn trigger(self) -> Element<'a, M> {
-    let label = match &self.selection {
-      Some(facility) => {
-        let system = facility.solar_system.trim();
-        match (system.is_empty(), facility.name.is_empty()) {
-          (false, false) => format!("{} \u{00B7} {}", system, facility.name),
-          (true, false) => facility.name.clone(),
-          _ => system.to_owned(),
-        }
-      }
-      None => self.placeholder.to_owned(),
-    };
-    let label_color = if self.selection.is_some() {
-      color::text::PRIMARY
-    } else {
-      color::text::tertiary()
+    let card: Element<'a, M> = match &self.selection {
+      Some(facility) => selected_card(facility),
+      None => empty_card(self.placeholder),
     };
 
-    let mut row = Row::new()
-      .spacing(spacing::SPACE_2)
+    let row = Row::new()
+      .spacing(spacing::SPACE_3_5)
       .align_y(Vertical::Center)
       .width(Length::Fill)
-      .push(Icon::search().color(color::text::secondary()).size(14.0).render::<M>())
-      .push(
-        container(
-          text(label)
-            .font(typography::body::REGULAR)
-            .size(typography::size::MD)
-            .style(typography::colored(label_color)),
-        )
-        .width(Length::Fill)
-        .clip(true),
-      );
-
-    if let Some(index) = self.selection.as_ref().and_then(|facility| facility.cost_index) {
-      row = row.push(
-        text(format!("{:.2}%", index * 100.0))
-          .font(typography::mono::REGULAR)
-          .size(typography::size::XS_PLUS)
-          .style(typography::colored(color::text::secondary())),
-      );
-    }
-
-    row = row.push(Icon::chevron().color(color::text::secondary()).size(14.0).render::<M>());
+      .push(card)
+      .push(Icon::chevron().color(color::text::secondary()).size(14.0).render::<M>());
 
     let mut field = button(row).width(self.width).padding(Padding {
-      top: spacing::SPACE_2,
-      bottom: spacing::SPACE_2,
-      left: spacing::SPACE_2_5,
-      right: spacing::SPACE_2,
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+      right: spacing::SPACE_3_5,
     });
     if let Some(message) = self.on_toggle {
       field = field.on_press(message);
@@ -401,6 +377,37 @@ fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     .into()
 }
 
+fn cost_index_block<'a, M: 'a>(cost_index: Option<f64>) -> Element<'a, M> {
+  let pct = cost_index.unwrap_or(0.0) * 100.0;
+  Column::with_children(vec![
+    text("COST INDEX")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    text(format!("{pct:.2}%"))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::accent::PLASMA))
+      .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .align_x(Horizontal::Right)
+  .into()
+}
+
+fn empty_card<'a, M: 'a>(placeholder: &str) -> Element<'a, M> {
+  container(
+    text(placeholder.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .clip(true)
+  .into()
+}
+
 fn footer<'a, M: Clone + 'a>(on_clear: M) -> Element<'a, M> {
   button(
     text("Clear \u{2192} Ask each install")
@@ -448,7 +455,7 @@ fn result_row<'a, M: Clone + 'a>(
     }));
 
   let mut meta = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center);
-  meta = meta.push(sec_label(facility.security_status));
+  meta = meta.push(sec_pill(facility.security_status));
   if !facility.solar_system.trim().is_empty() {
     meta = meta.push(
       text(facility.solar_system.clone())
@@ -510,27 +517,80 @@ fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
-fn sec_label<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
+fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
   let Some(sec) = security_status else {
-    return text("\u{2014}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary()))
-      .into();
+    return Space::new().into();
   };
-  let sec_color = if sec >= 0.5 {
-    color::status::ONLINE
-  } else if sec > 0.0 {
-    color::status::WARNING
+  let (label, band) = if sec <= -0.9 {
+    ("J-space".to_owned(), WORMHOLE)
+  } else if sec <= 0.0 {
+    (format!("{sec:.1}"), color::status::DANGER)
+  } else if sec < 0.5 {
+    (format!("{sec:.1}"), color::status::WARNING)
   } else {
-    color::status::DANGER
+    (format!("{sec:.1}"), color::status::ONLINE)
   };
-  text(format!("{sec:.1}"))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS)
-    .style(move |_| text::Style {
-      color: Some(sec_color),
-    })
+
+  container(
+    text(label)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(band)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    bottom: 1.0,
+    left: spacing::UNIT + 2.0,
+    right: spacing::UNIT + 2.0,
+  })
+  .style(move |_| container::Style {
+    border: Border {
+      color: color::with_alpha(band, 0.5),
+      radius: PILL_RADIUS.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn selected_card<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
+  let mut heading = Row::new().spacing(spacing::SPACE_2).align_y(Vertical::Center).push(
+    text(facility.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY)),
+  );
+  heading = heading.push(sec_pill(facility.security_status));
+  let system = facility.solar_system.trim();
+  if !system.is_empty() {
+    heading = heading.push(
+      text(system.to_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::secondary())),
+    );
+  }
+
+  let mut details = Column::new().spacing(spacing::UNIT).width(Length::Fill).push(heading);
+  if let Some(region) = facility
+    .region
+    .as_deref()
+    .map(str::trim)
+    .filter(|region| !region.is_empty())
+  {
+    details = details.push(
+      text(region.to_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary())),
+    );
+  }
+
+  Row::with_children(vec![details.into(), cost_index_block(facility.cost_index)])
+    .spacing(spacing::SPACE_3_5)
+    .align_y(Vertical::Center)
+    .width(Length::Fill)
     .into()
 }
 
@@ -687,6 +747,17 @@ mod tests {
     }
 
     #[test]
+    fn it_renders_a_selected_trigger_without_a_region() {
+      let mut facility = sample(1, "Jita Keepstar");
+      facility.region = None;
+
+      let _el: Element<'_, Message> = FacilityCombobox::new()
+        .selection(Some(facility))
+        .on_toggle(Message::Cleared)
+        .trigger();
+    }
+
+    #[test]
     fn it_renders_a_popover_with_results_and_a_footer() {
       let results = vec![sample(1, "Jita Keepstar"), sample(2, "Perimeter Tranquility")];
 
@@ -708,6 +779,35 @@ mod tests {
         .on_pick(|f| Message::Picked(f.id))
         .searching(true)
         .popover();
+    }
+  }
+
+  mod sec_pill {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_high_security_pill() {
+      let _el: Element<'_, Message> = super::super::sec_pill(Some(0.9));
+    }
+
+    #[test]
+    fn it_renders_a_low_security_pill() {
+      let _el: Element<'_, Message> = super::super::sec_pill(Some(0.3));
+    }
+
+    #[test]
+    fn it_renders_a_null_security_pill() {
+      let _el: Element<'_, Message> = super::super::sec_pill(Some(-0.2));
+    }
+
+    #[test]
+    fn it_renders_a_wormhole_pill() {
+      let _el: Element<'_, Message> = super::super::sec_pill(Some(-1.0));
+    }
+
+    #[test]
+    fn it_renders_nothing_without_a_security_status() {
+      let _el: Element<'_, Message> = super::super::sec_pill(None);
     }
   }
 }

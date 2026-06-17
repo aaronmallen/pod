@@ -633,14 +633,16 @@ fn dot<'a>() -> Element<'a, Message> {
 }
 
 fn fmt_isk(value: f64) -> String {
-  if value >= 1_000_000_000_000.0 {
-    format!("{:.1}T", value / 1_000_000_000_000.0)
-  } else if value >= 1_000_000_000.0 {
-    format!("{:.1}B", value / 1_000_000_000.0)
-  } else if value >= 1_000_000.0 {
-    format!("{:.1}M", value / 1_000_000.0)
-  } else if value >= 1_000.0 {
-    format!("{:.1}K", value / 1_000.0)
+  let sign = if value < 0.0 { "-" } else { "" };
+  let magnitude = value.abs();
+  if magnitude >= 1_000_000_000_000.0 {
+    format!("{sign}{:.1}T", magnitude / 1_000_000_000_000.0)
+  } else if magnitude >= 1_000_000_000.0 {
+    format!("{sign}{:.1}B", magnitude / 1_000_000_000.0)
+  } else if magnitude >= 1_000_000.0 {
+    format!("{sign}{:.1}M", magnitude / 1_000_000.0)
+  } else if magnitude >= 1_000.0 {
+    format!("{sign}{:.1}K", magnitude / 1_000.0)
   } else {
     format!("{value:.0}")
   }
@@ -718,4 +720,33 @@ fn grouped<'a>(jobs: &[&'a IndustryJob], group_by: GroupBy, now: DateTime<Utc>) 
       label: Some(label),
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod fmt_isk {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_scales_positive_values_by_magnitude() {
+      assert_eq!(fmt_isk(2_500_000_000_000.0), "2.5T");
+      assert_eq!(fmt_isk(5_000_000_000.0), "5.0B");
+      assert_eq!(fmt_isk(7_500_000.0), "7.5M");
+      assert_eq!(fmt_isk(1_200.0), "1.2K");
+      assert_eq!(fmt_isk(500.0), "500");
+    }
+
+    #[test]
+    fn it_renders_negative_values_scaled_and_signed() {
+      assert_eq!(fmt_isk(-2_500_000_000_000.0), "-2.5T");
+      assert_eq!(fmt_isk(-5_000_000_000.0), "-5.0B");
+      assert_eq!(fmt_isk(-7_500_000.0), "-7.5M");
+      assert_eq!(fmt_isk(-1_200.0), "-1.2K");
+      assert_eq!(fmt_isk(-500.0), "-500");
+    }
+  }
 }

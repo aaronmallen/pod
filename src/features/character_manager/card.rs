@@ -80,11 +80,6 @@ pub(super) fn card<'a>(
     stats_row(model),
   ];
 
-  // A single red "Needs re-authorization" badge surfaces a revoked/expired/scope-short token; the
-  // actual re-auth action is offered through the right-click context menu (context_menu_view).
-  if model.needs_reauth {
-    sections.push(reauth_badge());
-  }
   if let Some(indicator) = sync_indicator(failure) {
     sections.push(indicator);
   }
@@ -223,36 +218,55 @@ fn portrait(model: &CardModel) -> Element<'_, Message> {
     model.portrait.path(),
   );
 
-  let Some(label) = status_label(model.docked) else {
-    return splash;
-  };
+  let mut layers: Vec<Element<'_, Message>> = vec![splash];
 
-  let pill = container(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(|_| text::Style {
-        color: Some(color::with_alpha(color::text::PRIMARY, STATUS_PILL_TEXT_ALPHA)),
-      }),
-  )
-  .padding([spacing::UNIT, spacing::SPACE_2])
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::state::OVERLAY_DARK)),
-    border: Border {
-      radius: STATUS_PILL_RADIUS.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  });
+  if let Some(label) = status_label(model.docked) {
+    let pill = container(
+      text(label)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(|_| text::Style {
+          color: Some(color::with_alpha(color::text::PRIMARY, STATUS_PILL_TEXT_ALPHA)),
+        }),
+    )
+    .padding([spacing::UNIT, spacing::SPACE_2])
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::state::OVERLAY_DARK)),
+      border: Border {
+        radius: STATUS_PILL_RADIUS.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
 
-  let overlay = container(pill)
-    .width(Length::Fill)
-    .height(Length::Fixed(PORTRAIT_HEIGHT))
-    .align_x(Horizontal::Right)
-    .align_y(Vertical::Top)
-    .padding(STATUS_PILL_INSET);
+    layers.push(
+      container(pill)
+        .width(Length::Fill)
+        .height(Length::Fixed(PORTRAIT_HEIGHT))
+        .align_x(Horizontal::Right)
+        .align_y(Vertical::Top)
+        .padding(STATUS_PILL_INSET)
+        .into(),
+    );
+  }
 
-  Stack::with_children(vec![splash, overlay.into()])
+  if model.needs_reauth {
+    layers.push(
+      container(reauth_badge(Message::ReauthCharacterRequested(model.character_id)))
+        .width(Length::Fill)
+        .height(Length::Fixed(PORTRAIT_HEIGHT))
+        .align_x(Horizontal::Left)
+        .align_y(Vertical::Top)
+        .padding(STATUS_PILL_INSET)
+        .into(),
+    );
+  }
+
+  if layers.len() == 1 {
+    return layers.pop().expect("splash layer is always present");
+  }
+
+  Stack::with_children(layers)
     .width(Length::Fill)
     .height(Length::Fixed(PORTRAIT_HEIGHT))
     .into()
@@ -458,14 +472,13 @@ fn stat<'a>(label: &'a str, value: String, value_font: iced::Font) -> Element<'a
     .into()
 }
 
-/// The single red "Needs re-authorization" badge — an uppercase mono pill on a danger-colored
-/// background, mirroring the collapsed one-state TokenAlertBadge in the design mock.
-fn reauth_badge<'a>() -> Element<'a, Message> {
+pub(super) fn reauth_badge<'a>(on_press: Message) -> Element<'a, Message> {
   let on_danger = color::on_fill(color::status::DANGER);
-  let pill = container(
+
+  button(
     Row::with_children(vec![
       status::dot(on_danger),
-      text("Needs re-authorization")
+      text("Fix Permissions")
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(move |_| text::Style {
@@ -477,23 +490,21 @@ fn reauth_badge<'a>() -> Element<'a, Message> {
     .align_y(Vertical::Center),
   )
   .padding([spacing::UNIT, spacing::SPACE_2])
-  .style(|_| container::Style {
+  .on_press(on_press)
+  .style(reauth_badge_style)
+  .into()
+}
+
+fn reauth_badge_style(_theme: &iced::Theme, _status: button::Status) -> button::Style {
+  button::Style {
     background: Some(Background::Color(color::status::DANGER)),
+    text_color: color::on_fill(color::status::DANGER),
     border: Border {
       radius: STATUS_PILL_RADIUS.into(),
       ..Border::default()
     },
-    ..container::Style::default()
-  });
-
-  container(pill)
-    .padding(Padding {
-      top: 0.0,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3_5,
-    })
-    .into()
+    ..button::Style::default()
+  }
 }
 
 fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {

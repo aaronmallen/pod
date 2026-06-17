@@ -1,23 +1,25 @@
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
 };
 
-use super::{Message, card::TagChip};
+use super::{
+  Message,
+  card::{TagChip, reauth_badge},
+};
 use crate::{
   store::{images, model::ENTITY_TYPE_CORPORATION},
   sync::Phase,
   ui::{
-    components::{avatar::Avatar, chip::Chip, eyebrow::eyebrow, rule, status},
+    components::{avatar::Avatar, chip::Chip, eyebrow::eyebrow, rule},
     style::{color, radius, spacing, typography},
   },
 };
 
-const REAUTH_BADGE_RADIUS: f32 = 4.0;
-
 const CHIP_GAP: f32 = 5.0;
 const CHIP_RADIUS: f32 = 999.0;
+const CORP_BADGE_INSET: f32 = 6.0;
 const HAIRLINE: f32 = 1.0;
 const LOGO_SIZE: f32 = 72.0;
 const MEMBERS_VALUE_SIZE: f32 = 22.0;
@@ -58,12 +60,6 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
   ];
 
-  // A single red "Needs re-authorization" badge surfaces a revoked/expired/scope-short token; the
-  // re-auth action lives in the right-click context menu (see corp_context_menu_view), matching the
-  // character cards.
-  if model.needs_reauth {
-    sections.push(reauth_badge());
-  }
   if let Some(indicator) = sync_failure_indicator(failure) {
     sections.push(indicator);
   }
@@ -79,7 +75,7 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
 }
 
 fn plate(model: &CorpCardModel) -> Element<'_, Message> {
-  let logo = Avatar::new(
+  let tile = Avatar::new(
     model.corporation_id,
     &model.ticker,
     Length::Fixed(LOGO_SIZE),
@@ -89,6 +85,22 @@ fn plate(model: &CorpCardModel) -> Element<'_, Message> {
   .border(color::with_alpha(color::text::PRIMARY, 0.1), HAIRLINE)
   .radius(radius::SUBTLE)
   .view::<Message>();
+
+  let logo: Element<'_, Message> = if model.needs_reauth {
+    let overlay = container(reauth_badge(Message::ReauthCorporationRequested(model.corporation_id)))
+      .width(Length::Fixed(LOGO_SIZE))
+      .height(Length::Fixed(LOGO_SIZE))
+      .align_x(Horizontal::Left)
+      .align_y(Vertical::Top)
+      .padding(CORP_BADGE_INSET);
+
+    Stack::with_children(vec![tile, overlay.into()])
+      .width(Length::Fixed(LOGO_SIZE))
+      .height(Length::Fixed(LOGO_SIZE))
+      .into()
+  } else {
+    tile
+  };
 
   let ticker = text(model.ticker.clone())
     .font(typography::mono::MEDIUM)
@@ -285,44 +297,6 @@ fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Me
   container(Column::with_children(vec![label.into(), value.into()]).spacing(spacing::UNIT))
     .width(Length::Fill)
     .padding(spacing::SPACE_3)
-    .into()
-}
-
-/// The single red "Needs re-authorization" badge — an uppercase mono pill on a danger-colored
-/// background, mirroring the collapsed one-state TokenAlertBadge in the design mock.
-fn reauth_badge<'a>() -> Element<'a, Message> {
-  let on_danger = color::on_fill(color::status::DANGER);
-  let pill = container(
-    Row::with_children(vec![
-      status::dot(on_danger),
-      text("Needs re-authorization")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(move |_| text::Style {
-          color: Some(on_danger),
-        })
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .padding([spacing::UNIT, spacing::SPACE_2])
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::status::DANGER)),
-    border: Border {
-      radius: REAUTH_BADGE_RADIUS.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  });
-
-  container(pill)
-    .padding(Padding {
-      top: 0.0,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3_5,
-    })
     .into()
 }
 

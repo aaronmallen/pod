@@ -401,29 +401,6 @@ pub(super) fn format_stat_value(value: f64, unit_suffix: &str) -> String {
   format!("{trimmed}{unit_suffix}")
 }
 
-pub(super) fn group_by_type<'a>(cards: &[&'a AbyssalCard]) -> Vec<(String, Vec<&'a AbyssalCard>)> {
-  let mut order: Vec<i64> = Vec::new();
-  let mut groups: HashMap<i64, Vec<&'a AbyssalCard>> = HashMap::new();
-  for card in cards {
-    groups.entry(card.group_type_id).or_insert_with(|| {
-      order.push(card.group_type_id);
-      Vec::new()
-    });
-    groups.get_mut(&card.group_type_id).expect("just inserted").push(card);
-  }
-  order
-    .into_iter()
-    .map(|type_id| {
-      let members = groups.remove(&type_id).unwrap_or_default();
-      let label = members
-        .first()
-        .map(|c| c.module_name.clone())
-        .unwrap_or_else(|| format!("Type {type_id}"));
-      (label, members)
-    })
-    .collect()
-}
-
 pub(super) fn filter_rail(state: &super::State) -> Element<'_, Message> {
   filter_sidebar::rail(state)
 }
@@ -630,32 +607,6 @@ mod tests {
 
       assert!(loaded.cards.is_empty());
       assert_eq!(loaded.total, 0);
-    }
-  }
-
-  mod group_by_type {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_groups_cards_by_type_with_a_break_between_groups() {
-      let cards = [
-        card(1, "Heavy Assault Missile Launcher II", 2410, "Unstable"),
-        card(2, "Adaptive Invulnerability Field II", 2281, "Gravid"),
-        card(3, "Heavy Assault Missile Launcher II", 2410, "Gravid"),
-      ];
-
-      let refs: Vec<&AbyssalCard> = cards.iter().collect();
-      let groups = group_by_type(&refs);
-
-      assert_eq!(groups.len(), 2);
-      assert_eq!(groups[0].0, "Heavy Assault Missile Launcher II");
-      assert_eq!(groups[0].1.len(), 2);
-      assert_eq!(groups[0].1[0].item_id, 1);
-      assert_eq!(groups[0].1[1].item_id, 3);
-      assert_eq!(groups[1].0, "Adaptive Invulnerability Field II");
-      assert_eq!(groups[1].1.len(), 1);
     }
   }
 

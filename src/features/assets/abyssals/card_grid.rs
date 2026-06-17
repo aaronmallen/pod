@@ -1,9 +1,14 @@
+use std::{
+  cell::RefCell,
+  hash::{Hash, Hasher},
+};
+
 use iced::{
   Element, Length,
   widget::{Column, responsive, scrollable},
 };
 
-use super::{AbyssalCard, card, group_by_type};
+use super::{AbyssalCard, card};
 use crate::{
   features::assets::Message,
   ui::{
@@ -27,6 +32,17 @@ const CARD_GAP: f32 = spacing::SPACE_3_5;
 /// for [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 300.0;
 
+thread_local! {
+  /// Last computed grouping plan, keyed by [`card_set_fingerprint`].
+  ///
+  /// `view()` re-runs every iced frame, so the plan is memoized here to avoid re-grouping
+  /// on every render. It stores owned *indices* (not card refs) precisely so it can outlive
+  /// any one frame's borrow and be rehydrated against the current card slice each render.
+  static GROUP_PLAN: RefCell<Option<(u64, GroupPlan)>> = const { RefCell::new(None) };
+}
+
+type GroupPlan = Vec<(String, Vec<usize>)>;
+
 /// A grid flattened into a single row-major index space, plus the metadata the row
 /// renderer needs to reattach section headers.
 struct GridLayout<'a> {
@@ -44,12 +60,12 @@ impl<'a> GridLayout<'a> {
     let mut slots: Vec<Slot<'a>> = Vec::with_capacity(cards.len());
     let mut group_headers: Vec<(usize, String)> = Vec::new();
 
-    for (label, members) in group_by_type(cards) {
+    for (label, members) in grouped_indices(cards) {
       // The group starts on a fresh row, so its first visual row is the current
       // slot count divided by the row width.
       group_headers.push((slots.len() / cards_per_row, label));
-      for member in &members {
-        slots.push(Slot::Card(member));
+      for index in &members {
+        slots.push(Slot::Card(cards[*index]));
       }
       // Pad the group's final row so the next group begins on its own row.
       let remainder = slots.len() % cards_per_row;
@@ -150,6 +166,20 @@ pub(super) fn windowed_grid<'a>(cards: Vec<&'a AbyssalCard>, scroll_offset: f32)
   .into()
 }
 
+/// Hashes only the grouping inputs (`group_type_id` + `module_name`, in order).
+///
+/// `item_id`, prices, and rolled stats are deliberately excluded: they change without
+/// affecting the grouping, so changing them must not invalidate the cached plan.
+fn card_set_fingerprint(cards: &[&AbyssalCard]) -> u64 {
+  let mut hasher = std::collections::hash_map::DefaultHasher::new();
+  cards.len().hash(&mut hasher);
+  for card in cards {
+    card.group_type_id.hash(&mut hasher);
+    card.module_name.hash(&mut hasher);
+  }
+  hasher.finish()
+}
+
 /// Number of cards that fit across the available width.
 fn cards_per_row(width: f32) -> usize {
   if width < CARD_WIDTH {
@@ -175,6 +205,45 @@ fn group_card_count(group_headers: &[(usize, String)], slots: &[Slot<'_>], row: 
     .filter(|slot| matches!(slot, Slot::Card(_)))
     .count();
   format!("{count} module{}", if count == 1 { "" } else { "s" })
+}
+
+fn group_indices_by_type(cards: &[&AbyssalCard]) -> GroupPlan {
+  let mut order: Vec<i64> = Vec::new();
+  let mut groups: std::collections::HashMap<i64, (String, Vec<usize>)> = std::collections::HashMap::new();
+  for (index, card) in cards.iter().enumerate() {
+    groups
+      .entry(card.group_type_id)
+      .or_insert_with(|| {
+        order.push(card.group_type_id);
+        (card.module_name.clone(), Vec::new())
+      })
+      .1
+      .push(index);
+  }
+  order
+    .into_iter()
+    .map(|type_id| {
+      groups
+        .remove(&type_id)
+        .unwrap_or_else(|| (format!("Type {type_id}"), Vec::new()))
+    })
+    .collect()
+}
+
+fn grouped_indices(cards: &[&AbyssalCard]) -> GroupPlan {
+  let fingerprint = card_set_fingerprint(cards);
+
+  GROUP_PLAN.with_borrow_mut(|cache| {
+    if let Some((cached_fingerprint, plan)) = cache
+      && *cached_fingerprint == fingerprint
+    {
+      return plan.clone();
+    }
+
+    let plan = group_indices_by_type(cards);
+    *cache = Some((fingerprint, plan.clone()));
+    plan
+  })
 }
 
 #[cfg(test)]
@@ -207,6 +276,33 @@ mod tests {
         unit_suffix: " tf".to_owned(),
       }],
       tier_label: "Gravid".to_owned(),
+    }
+  }
+
+  mod card_set_fingerprint {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_changes_when_the_grouping_inputs_change_and_holds_when_they_do_not() {
+      let base = [card(1, "Launcher", 2410), card(2, "Field", 2281)];
+      let base_refs: Vec<&AbyssalCard> = base.iter().collect();
+
+      let same = [card(9, "Launcher", 2410), card(8, "Field", 2281)];
+      let same_refs: Vec<&AbyssalCard> = same.iter().collect();
+      let reordered_refs: Vec<&AbyssalCard> = base.iter().rev().collect();
+      let added = [
+        card(1, "Launcher", 2410),
+        card(2, "Field", 2281),
+        card(3, "Field", 2281),
+      ];
+      let added_refs: Vec<&AbyssalCard> = added.iter().collect();
+
+      // item_id is not a grouping input, so changing only it leaves the fingerprint stable.
+      assert_eq!(card_set_fingerprint(&base_refs), card_set_fingerprint(&same_refs));
+      assert_ne!(card_set_fingerprint(&base_refs), card_set_fingerprint(&reordered_refs));
+      assert_ne!(card_set_fingerprint(&base_refs), card_set_fingerprint(&added_refs));
     }
   }
 
@@ -302,6 +398,64 @@ mod tests {
       let layout = GridLayout::build(&refs, 2);
 
       let _el: Element<'_, Message> = layout.render_row(0);
+    }
+  }
+
+  mod group_indices_by_type {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_groups_indices_in_first_seen_order_with_each_groups_label() {
+      let cards = [
+        card(1, "Launcher", 2410),
+        card(2, "Field", 2281),
+        card(3, "Launcher", 2410),
+      ];
+      let refs: Vec<&AbyssalCard> = cards.iter().collect();
+
+      let plan = group_indices_by_type(&refs);
+
+      assert_eq!(plan.len(), 2);
+      assert_eq!(plan[0], ("Launcher".to_owned(), vec![0, 2]));
+      assert_eq!(plan[1], ("Field".to_owned(), vec![1]));
+    }
+  }
+
+  mod grouped_indices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_same_grouping_whether_or_not_the_plan_is_cached() {
+      let cards = [
+        card(1, "Launcher", 2410),
+        card(2, "Field", 2281),
+        card(3, "Launcher", 2410),
+      ];
+      let refs: Vec<&AbyssalCard> = cards.iter().collect();
+
+      let first = grouped_indices(&refs);
+      let cached = grouped_indices(&refs);
+
+      assert_eq!(first, cached);
+      assert_eq!(first, group_indices_by_type(&refs));
+    }
+
+    #[test]
+    fn it_rebuilds_the_plan_when_the_card_set_changes() {
+      let before = [card(1, "Launcher", 2410)];
+      let before_refs: Vec<&AbyssalCard> = before.iter().collect();
+      let _ = grouped_indices(&before_refs);
+
+      let after = [card(1, "Launcher", 2410), card(2, "Field", 2281)];
+      let after_refs: Vec<&AbyssalCard> = after.iter().collect();
+      let plan = grouped_indices(&after_refs);
+
+      assert_eq!(plan, group_indices_by_type(&after_refs));
+      assert_eq!(plan.len(), 2);
     }
   }
 

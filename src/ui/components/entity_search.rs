@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 use iced::{
@@ -57,6 +55,7 @@ impl EntityKind {
     }
   }
 
+  #[allow(dead_code)] // glyph-shape helper exercised only by unit tests
   pub fn is_round(self) -> bool {
     matches!(self, Self::Character)
   }
@@ -178,11 +177,6 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
       results,
       searching: false,
     }
-  }
-
-  pub fn exclude(mut self, names: &'a [String]) -> Self {
-    self.exclude = names;
-    self
   }
 
   /// Renders the chips and input bare (no bordered field box), for hosts that already supply their own field
@@ -308,18 +302,15 @@ impl<'a, M: Clone + 'static> SingleSelect<'a, M> {
     }
   }
 
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn exclude(mut self, names: &'a [String]) -> Self {
     self.exclude = names;
     self
   }
 
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn open(mut self, open: bool) -> Self {
     self.open = open;
-    self
-  }
-
-  pub fn placeholder(mut self, placeholder: &'a str) -> Self {
-    self.placeholder = placeholder;
     self
   }
 

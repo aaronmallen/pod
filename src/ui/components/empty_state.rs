@@ -26,7 +26,7 @@ impl<'a, M: Clone + 'static> EmptyState<'a, M> {
     self
   }
 
-  #[allow(dead_code)]
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn icon(mut self, icon: Icon) -> Self {
     self.icon = Some(icon);
     self

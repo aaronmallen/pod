@@ -1,6 +1,5 @@
 use iced::{Element, Length, Padding, alignment::Horizontal, widget::container};
 
-#[allow(dead_code)]
 pub fn positioned_dropdown<'a, M>(content: Element<'a, M>, top: f32, left: f32) -> Element<'a, M>
 where
   M: 'a,
@@ -14,7 +13,6 @@ where
     .into()
 }
 
-#[allow(dead_code)]
 pub fn positioned_dropdown_right<'a, M>(content: Element<'a, M>, top: f32, right: f32) -> Element<'a, M>
 where
   M: 'a,

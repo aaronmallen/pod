@@ -6,7 +6,7 @@ use iced::{
 
 use crate::ui::style::{color, typography};
 
-#[allow(dead_code)]
+#[allow(dead_code)] // helper exercised only by unit tests
 pub fn column_headers<'a, M: 'a>(columns: &[(&str, bool)]) -> Element<'a, M> {
   let cells: Vec<Element<'a, M>> = columns
     .iter()

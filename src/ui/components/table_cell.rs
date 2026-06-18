@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use iced::{
   Color, Element, Font, Length,
   alignment::Horizontal,

@@ -63,7 +63,7 @@ impl<'a, Message> LineChart<'a, Message> {
   }
 
   // Consumed by the asset tracker (next consumer); kept on the shared API.
-  #[allow(dead_code)]
+  #[expect(dead_code)]
   /// Overrides the default x-axis tick formatter.
   ///
   /// The closure receives `(days_ago, span_days)` and returns a display string.

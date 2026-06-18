@@ -2,7 +2,6 @@ use iced::{Element, Length, widget::Stack};
 
 use crate::ui::components::backdrop;
 
-#[allow(dead_code)]
 pub fn modal_overlay<'a, M>(base: Element<'a, M>, backdrop_msg: Option<M>, content: Element<'a, M>) -> Element<'a, M>
 where
   M: Clone + 'a,

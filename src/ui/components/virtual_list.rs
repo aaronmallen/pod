@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 //! A shared windowing helper for long, scrollable lists.
 //!
 //! iced 0.14 ships no virtualized-list widget, so every infinite-scroll surface
@@ -145,6 +143,7 @@ impl VirtualListConfig {
     self
   }
 
+  #[allow(dead_code)] // overscan override drives windowing unit tests
   pub fn overscan(mut self, overscan: usize) -> Self {
     self.overscan = overscan;
     self
@@ -230,6 +229,7 @@ pub struct WindowRange {
 }
 
 impl WindowRange {
+  #[allow(dead_code)] // paired with len(); asserted by the empty-window unit test
   pub fn is_empty(&self) -> bool {
     self.first_row >= self.end_row
   }

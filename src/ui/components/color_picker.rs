@@ -27,7 +27,6 @@ const SWATCH_RADIUS: f32 = 7.0;
 const SWATCH_SIZE: f32 = 28.0;
 
 /// The exact color enum permitted by the ESI mail-label endpoints; ESI rejects any hex value outside this fixed set.
-#[allow(dead_code)]
 pub const LABEL_COLORS: [&str; 18] = [
   "#0000fe", "#006634", "#0099ff", "#00ff33", "#01ffff", "#349800", "#660066", "#666666", "#999999", "#99ffff",
   "#9a0000", "#ccff9a", "#e6e6e6", "#fe0000", "#ff6600", "#ffff01", "#ffffcd", "#ffffff",
@@ -35,7 +34,7 @@ pub const LABEL_COLORS: [&str; 18] = [
 
 pub struct Preset {
   pub hex: &'static str,
-  #[allow(dead_code)]
+  #[allow(dead_code)] // swatch metadata read only by unit tests
   pub name: &'static str,
 }
 
@@ -187,7 +186,6 @@ where
 }
 
 /// Renders the constrained ESI label color picker; selection is limited to `LABEL_COLORS` with no free-form hex entry.
-#[allow(dead_code)]
 pub fn label_color_grid<'a, M>(current: &str, on_select: impl Fn(String) -> M + 'a) -> Element<'a, M>
 where
   M: Clone + 'static,

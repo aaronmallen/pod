@@ -18,7 +18,7 @@ const UNDERLINE_HEIGHT: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TabLayout {
-  #[allow(dead_code)]
+  #[allow(dead_code)] // layout variant exercised only by unit tests
   Centered,
   Fill,
   #[default]

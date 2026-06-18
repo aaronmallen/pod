@@ -37,7 +37,7 @@ pub struct TriggerPortrait {
   pub path: Option<PathBuf>,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // cohesive row-builder params; a params struct would only relocate the same fields
 pub fn picker_character_row<'a, M: 'a + Clone>(
   id: i64,
   name: impl Into<String>,

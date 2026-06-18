@@ -37,7 +37,7 @@ where
     }
   }
 
-  #[allow(dead_code)]
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn on_press(mut self, message: M) -> Self {
     self.on_press = Some(message);
     self
@@ -48,7 +48,7 @@ where
     self
   }
 
-  #[allow(dead_code)]
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn selected(mut self, selected: bool) -> Self {
     self.selected = selected;
     self

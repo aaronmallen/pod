@@ -30,7 +30,7 @@ where
     }
   }
 
-  #[allow(dead_code)]
+  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn bordered(mut self, bordered: bool) -> Self {
     self.bordered = bordered;
     self

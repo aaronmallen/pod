@@ -23,7 +23,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/arrow-out.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn assets() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/assets.svg"))
   }
@@ -32,22 +31,14 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/bold.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn calendar() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/calendar.svg"))
   }
 
-  #[allow(dead_code)]
-  pub fn caret() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/caret.svg"))
-  }
-
-  #[allow(dead_code)]
   pub fn characters() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/characters.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn check() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/check.svg"))
   }
@@ -56,7 +47,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn chevron_left() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron-left.svg"))
   }
@@ -65,12 +55,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron-right.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn clock() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/clock.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn close() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/close.svg"))
   }
@@ -87,12 +75,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/copy.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn corp() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/corp.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn cross() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/cross.svg"))
   }
@@ -105,12 +91,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/draft.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn faction() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/faction.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn filter() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/filter.svg"))
   }
@@ -119,7 +103,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/flask.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn fleet() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/fleet.svg"))
   }
@@ -164,24 +147,12 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/link.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn live() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/live.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn lock() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/lock.svg"))
-  }
-
-  #[allow(dead_code)]
-  pub fn logo_mark() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/identity/pod-mark.svg"))
-  }
-
-  #[allow(dead_code)]
-  pub fn mail() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/mail.svg"))
   }
 
   pub fn market() -> Self {
@@ -192,14 +163,8 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/moon.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn mutamarket() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/mutamarket.svg"))
-  }
-
-  #[allow(dead_code)]
-  pub fn notif_alliance() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-alliance.svg"))
   }
 
   pub fn notif_clone() -> Self {
@@ -210,7 +175,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-combat.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn notif_contact() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-contact.svg"))
   }
@@ -223,12 +187,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-corp.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn notif_fw() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-fw.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn notif_incursion() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/notif-incursion.svg"))
   }
@@ -273,14 +235,8 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pencil.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn personal() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/personal.svg"))
-  }
-
-  #[allow(dead_code)]
-  pub fn planner() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/planner.svg"))
   }
 
   pub fn plus() -> Self {
@@ -303,12 +259,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/send.svg"))
   }
 
-  #[allow(dead_code)]
-  pub fn settings() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/settings.svg"))
-  }
-
-  #[allow(dead_code)]
   pub fn skills() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/skills.svg"))
   }
@@ -349,7 +299,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/tier-system.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn tilde() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/tilde.svg"))
   }
@@ -362,16 +311,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/trash.svg"))
   }
 
-  #[allow(dead_code)]
-  pub fn users() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/users.svg"))
-  }
-
   pub fn values() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/values.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn wallet() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/wallet.svg"))
   }

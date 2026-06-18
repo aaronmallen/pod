@@ -5,7 +5,6 @@ use iced::{
 
 use crate::ui::style::{color, typography};
 
-#[allow(dead_code)]
 pub fn segment_button<'a, M>(label: impl Into<String>, active: bool, padding: Padding, on_press: M) -> Element<'a, M>
 where
   M: Clone + 'a,

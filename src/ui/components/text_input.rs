@@ -66,13 +66,13 @@ impl<'a, M: Clone + 'static> TextInput<'a, M> {
     self
   }
 
-  #[allow(dead_code)]
+  #[expect(dead_code)]
   pub fn height(mut self, height: f32) -> Self {
     self.height = height;
     self
   }
 
-  #[allow(dead_code)]
+  #[expect(dead_code)]
   pub fn horizontal_padding(mut self, padding: f32) -> Self {
     self.horizontal_padding = padding;
     self
@@ -88,7 +88,7 @@ impl<'a, M: Clone + 'static> TextInput<'a, M> {
     self
   }
 
-  #[allow(dead_code)]
+  #[expect(dead_code)]
   pub fn input_id(mut self, id: Id) -> Self {
     self.input_id = Some(id);
     self

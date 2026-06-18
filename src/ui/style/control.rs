@@ -5,7 +5,6 @@ use iced::{
 
 use crate::ui::style::{color, radius, spacing};
 
-#[allow(dead_code)]
 pub fn bordered_pane(_theme: &iced::Theme) -> container::Style {
   container::Style {
     border: Border {
@@ -125,7 +124,6 @@ pub fn slider_track(_theme: &iced::Theme, _status: slider::Status) -> slider::St
   }
 }
 
-#[allow(dead_code)]
 pub fn sunken_pane(_theme: &iced::Theme) -> container::Style {
   container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),

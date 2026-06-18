@@ -229,6 +229,15 @@ mod tests {
     }
 
     #[test]
+    fn it_maps_each_category_to_its_label() {
+      assert_eq!(EntityCategory::Alliance.label(), "Alliance");
+      assert_eq!(EntityCategory::Character.label(), "Character");
+      assert_eq!(EntityCategory::Corporation.label(), "Corporation");
+      assert_eq!(EntityCategory::SolarSystem.label(), "Solar System");
+      assert_eq!(EntityCategory::Station.label(), "Station");
+    }
+
+    #[test]
     fn it_rejects_unsupported_esi_categories() {
       assert_eq!(EntityCategory::from_esi("structure"), None);
       assert_eq!(EntityCategory::from_esi(""), None);

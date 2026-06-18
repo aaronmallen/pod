@@ -1508,6 +1508,24 @@ mod tests {
     }
 
     #[test]
+    fn it_has_a_label_for_each_kind() {
+      assert_eq!(LinkKind::Character.label(), "Character");
+      assert_eq!(LinkKind::Corporation.label(), "Corporation");
+      assert_eq!(LinkKind::Http.label(), "http://");
+      assert_eq!(LinkKind::SolarSystem.label(), "Solar System");
+      assert_eq!(LinkKind::Station.label(), "Station");
+    }
+
+    #[test]
+    fn it_has_a_placeholder_for_each_kind() {
+      assert_eq!(LinkKind::Character.placeholder(), "Search characters\u{2026}");
+      assert_eq!(LinkKind::Corporation.placeholder(), "Search corporations\u{2026}");
+      assert_eq!(LinkKind::Http.placeholder(), "example.com/path");
+      assert_eq!(LinkKind::SolarSystem.placeholder(), "Search solar systems\u{2026}");
+      assert_eq!(LinkKind::Station.placeholder(), "Search stations\u{2026}");
+    }
+
+    #[test]
     fn it_maps_only_searchable_kinds_to_a_category() {
       assert!(LinkKind::Http.category().is_none());
       assert!(LinkKind::Character.category().is_some());
@@ -1558,6 +1576,41 @@ mod tests {
 
       assert!(!popover.can_insert());
       assert!(popover.http_link().is_none());
+    }
+
+    #[test]
+    fn it_renders_the_http_url_input_variant() {
+      let popover = LinkPopover {
+        kind: LinkKind::Http,
+        url: "example.com".to_owned(),
+        ..LinkPopover::default()
+      };
+
+      let _: Element<'_, Message> = link_popover(&popover);
+    }
+
+    #[test]
+    fn it_renders_the_entity_search_variant() {
+      let popover = LinkPopover {
+        kind: LinkKind::Character,
+        ..LinkPopover::default()
+      };
+
+      let _: Element<'_, Message> = link_popover(&popover);
+    }
+  }
+
+  mod link_radio {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_selected_radio() {
+      let _: Element<'_, Message> = link_radio(LinkKind::Character, true);
+    }
+
+    #[test]
+    fn it_renders_an_unselected_radio() {
+      let _: Element<'_, Message> = link_radio(LinkKind::Http, false);
     }
   }
 }

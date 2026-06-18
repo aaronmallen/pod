@@ -1333,58 +1333,31 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
   let Some(draft) = state.compose.as_mut() else {
     return Task::none();
   };
+  let message = match update_compose_recipients(draft, message) {
+    Ok(()) => return Task::none(),
+    Err(message) => message,
+  };
+  let message = match update_compose_link(draft, message) {
+    Ok(()) => return Task::none(),
+    Err(message) => message,
+  };
   match message {
-    Message::ComposeToInput(value) => {
-      draft.to_search.set_query(value);
-    }
-    Message::ComposeCcInput(value) => {
-      draft.cc_search.set_query(value);
-    }
-    Message::ComposeToSearched {
-      generation,
-      results,
-    } => {
-      draft.to_search.accept_results(generation, results);
-    }
-    Message::ComposeCcSearched {
-      generation,
-      results,
-    } => {
-      draft.cc_search.accept_results(generation, results);
-    }
-    Message::ComposeToCommitted => {
-      let name = draft.to_search.query().trim().to_owned();
-      if !name.is_empty() {
-        draft.push_to(compose::Recipient::typed(name));
-        draft.to_search.clear();
-      }
-    }
-    Message::ComposeCcCommitted => {
-      let name = draft.cc_search.query().trim().to_owned();
-      if !name.is_empty() {
-        draft.push_cc(compose::Recipient::typed(name));
-        draft.cc_search.clear();
-      }
-    }
-    Message::ComposeToPicked(entity) => {
-      draft.push_to(compose::Recipient::from_entity(entity));
-      draft.to_search.clear();
-    }
-    Message::ComposeCcPicked(entity) => {
-      draft.push_cc(compose::Recipient::from_entity(entity));
-      draft.cc_search.clear();
-    }
-    Message::ComposeToRemoved(index) => {
-      draft.remove_to(index);
-    }
-    Message::ComposeCcRemoved(index) => {
-      draft.remove_cc(index);
-    }
     Message::ComposeCcShown => draft.show_cc = true,
     Message::ComposeSubjectChanged(value) => draft.subject = value,
     Message::ComposeBodyChanged(action) => draft.body.perform(action),
     Message::ComposeBold => draft.wrap_emphasis(compose::EmphasisKind::Bold),
     Message::ComposeItalic => draft.wrap_emphasis(compose::EmphasisKind::Italic),
+    Message::ComposeFromChanged(character_id) => {
+      draft.from_character_id = character_id;
+      draft.from_picker_open = false;
+    }
+    _ => {}
+  }
+  Task::none()
+}
+
+fn update_compose_link(draft: &mut compose::Draft, message: Message) -> Result<(), Message> {
+  match message {
     Message::ComposeLinkToggled => {
       draft.link = match draft.link {
         Some(_) => None,
@@ -1437,13 +1410,62 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
         draft.link = None;
       }
     }
-    Message::ComposeFromChanged(character_id) => {
-      draft.from_character_id = character_id;
-      draft.from_picker_open = false;
-    }
-    _ => {}
+    other => return Err(other),
   }
-  Task::none()
+  Ok(())
+}
+
+fn update_compose_recipients(draft: &mut compose::Draft, message: Message) -> Result<(), Message> {
+  match message {
+    Message::ComposeToInput(value) => {
+      draft.to_search.set_query(value);
+    }
+    Message::ComposeCcInput(value) => {
+      draft.cc_search.set_query(value);
+    }
+    Message::ComposeToSearched {
+      generation,
+      results,
+    } => {
+      draft.to_search.accept_results(generation, results);
+    }
+    Message::ComposeCcSearched {
+      generation,
+      results,
+    } => {
+      draft.cc_search.accept_results(generation, results);
+    }
+    Message::ComposeToCommitted => {
+      let name = draft.to_search.query().trim().to_owned();
+      if !name.is_empty() {
+        draft.push_to(compose::Recipient::typed(name));
+        draft.to_search.clear();
+      }
+    }
+    Message::ComposeCcCommitted => {
+      let name = draft.cc_search.query().trim().to_owned();
+      if !name.is_empty() {
+        draft.push_cc(compose::Recipient::typed(name));
+        draft.cc_search.clear();
+      }
+    }
+    Message::ComposeToPicked(entity) => {
+      draft.push_to(compose::Recipient::from_entity(entity));
+      draft.to_search.clear();
+    }
+    Message::ComposeCcPicked(entity) => {
+      draft.push_cc(compose::Recipient::from_entity(entity));
+      draft.cc_search.clear();
+    }
+    Message::ComposeToRemoved(index) => {
+      draft.remove_to(index);
+    }
+    Message::ComposeCcRemoved(index) => {
+      draft.remove_cc(index);
+    }
+    other => return Err(other),
+  }
+  Ok(())
 }
 
 fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -1536,6 +1558,16 @@ fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.cursor = Some(point);
       Task::none()
     }
+    Message::DropTargetEntered(_) | Message::DropTargetLeft(_) | Message::LabelDropReleased => {
+      update_label_drag(state, message, db)
+    }
+    Message::LabelsWritten => reload_after_label_write(state, db),
+    _ => Task::none(),
+  }
+}
+
+fn update_label_drag(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
     Message::DropTargetEntered(target) => {
       if state.dragging_mail.is_some() {
         state.drop_target = Some(target);
@@ -1570,7 +1602,6 @@ fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Mes
         }
       }
     }
-    Message::LabelsWritten => reload_after_label_write(state, db),
     _ => Task::none(),
   }
 }
@@ -1925,6 +1956,269 @@ mod tests {
         subject: "S".to_owned(),
         time: "10:00".to_owned(),
         timestamp: "2026-06-01T10:00:00Z".to_owned(),
+      }
+    }
+
+    mod compose_fields {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      fn entity(id: i64, name: &str) -> EntityRef {
+        character_entity(id, name)
+      }
+
+      fn with_compose() -> State {
+        let mut state = State::new(42);
+        state.compose = Some(compose::Draft::blank(42));
+        state
+      }
+
+      #[test]
+      fn it_appends_a_committed_cc_recipient() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeCcInput("Other".to_owned()));
+
+        let _ = update_compose_fields(&mut state, Message::ComposeCcCommitted);
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.cc.len(), 1);
+        assert_eq!(draft.cc_search.query(), "");
+      }
+
+      #[test]
+      fn it_appends_a_committed_to_recipient() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeToInput("Pilot".to_owned()));
+
+        let _ = update_compose_fields(&mut state, Message::ComposeToCommitted);
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.to.len(), 1);
+        assert_eq!(draft.to_search.query(), "");
+      }
+
+      #[test]
+      fn it_appends_a_picked_to_recipient_and_clears_the_search() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeToPicked(entity(95_000_001, "Pilot")));
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.to.len(), 1);
+        assert_eq!(draft.to.first().unwrap().id, Some(95_000_001));
+      }
+
+      #[test]
+      fn it_appends_a_picked_cc_recipient() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeCcPicked(entity(95_000_002, "Pilot")));
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.cc.len(), 1);
+      }
+
+      #[test]
+      fn it_does_not_commit_an_empty_recipient() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeToCommitted);
+
+        assert!(state.compose.as_ref().unwrap().to.is_empty());
+      }
+
+      #[test]
+      fn it_removes_recipients_by_index() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeToPicked(entity(1, "A")));
+        let _ = update_compose_fields(&mut state, Message::ComposeCcPicked(entity(2, "B")));
+
+        let _ = update_compose_fields(&mut state, Message::ComposeToRemoved(0));
+        let _ = update_compose_fields(&mut state, Message::ComposeCcRemoved(0));
+
+        let draft = state.compose.as_ref().unwrap();
+        assert!(draft.to.is_empty());
+        assert!(draft.cc.is_empty());
+      }
+
+      #[test]
+      fn it_accepts_recipient_search_results() {
+        let mut state = with_compose();
+        let to_gen = state.compose.as_mut().unwrap().to_search.set_query("Pilot".to_owned());
+        let cc_gen = state.compose.as_mut().unwrap().cc_search.set_query("Other".to_owned());
+
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeToSearched {
+            generation: to_gen,
+            results: vec![entity(1, "Pilot")],
+          },
+        );
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeCcSearched {
+            generation: cc_gen,
+            results: vec![entity(2, "Other")],
+          },
+        );
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.to_search.results().len(), 1);
+        assert_eq!(draft.cc_search.results().len(), 1);
+      }
+
+      #[test]
+      fn it_shows_the_cc_field() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeCcShown);
+
+        assert!(state.compose.as_ref().unwrap().show_cc);
+      }
+
+      #[test]
+      fn it_sets_the_subject() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeSubjectChanged("Hi".to_owned()));
+
+        assert_eq!(state.compose.as_ref().unwrap().subject, "Hi");
+      }
+
+      #[test]
+      fn it_changes_the_from_character_and_closes_the_picker() {
+        let mut state = with_compose();
+        state.compose.as_mut().unwrap().from_picker_open = true;
+
+        let _ = update_compose_fields(&mut state, Message::ComposeFromChanged(99));
+
+        let draft = state.compose.as_ref().unwrap();
+        assert_eq!(draft.from_character_id, 99);
+        assert!(!draft.from_picker_open);
+      }
+
+      #[test]
+      fn it_wraps_a_bold_emphasis() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeBold);
+
+        assert_eq!(state.compose.as_ref().unwrap().body.text(), "<b></b>");
+      }
+
+      #[test]
+      fn it_wraps_an_italic_emphasis() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeItalic);
+
+        assert_eq!(state.compose.as_ref().unwrap().body.text(), "<i></i>");
+      }
+
+      #[test]
+      fn it_toggles_the_link_popover_open_and_closed() {
+        let mut state = with_compose();
+
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+        assert!(state.compose.as_ref().unwrap().link.is_some());
+
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+        assert!(state.compose.as_ref().unwrap().link.is_none());
+      }
+
+      #[test]
+      fn it_selects_a_link_kind() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
+        );
+
+        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
+        assert_eq!(link.kind, compose::LinkKind::Character);
+      }
+
+      #[test]
+      fn it_changes_the_link_url() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkUrlChanged("example.com".to_owned()));
+
+        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
+        assert_eq!(link.url, "example.com");
+      }
+
+      #[test]
+      fn it_accepts_link_search_input_and_results() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
+        );
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkSearchInput("Pilot".to_owned()));
+        let generation = state
+          .compose
+          .as_ref()
+          .unwrap()
+          .link
+          .as_ref()
+          .unwrap()
+          .search
+          .generation();
+
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeLinkSearched {
+            generation,
+            results: vec![entity(1, "Pilot")],
+          },
+        );
+
+        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
+        assert_eq!(link.results.len(), 1);
+      }
+
+      #[test]
+      fn it_inserts_a_picked_link_and_closes_the_popover() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+        let _ = update_compose_fields(
+          &mut state,
+          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
+        );
+
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkPicked(entity(95_000_001, "Pilot")));
+
+        let draft = state.compose.as_ref().unwrap();
+        assert!(draft.link.is_none());
+        assert!(draft.body.text().contains("95000001"));
+      }
+
+      #[test]
+      fn it_inserts_an_http_link_and_closes_the_popover() {
+        let mut state = with_compose();
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkUrlChanged("example.com".to_owned()));
+
+        let _ = update_compose_fields(&mut state, Message::ComposeLinkInsert);
+
+        let draft = state.compose.as_ref().unwrap();
+        assert!(draft.link.is_none());
+        assert!(draft.body.text().contains("http://example.com"));
+      }
+
+      #[test]
+      fn it_ignores_compose_messages_without_an_open_draft() {
+        let mut state = State::new(42);
+
+        let _ = update_compose_fields(&mut state, Message::ComposeSubjectChanged("Hi".to_owned()));
+
+        assert!(state.compose.is_none());
       }
     }
 

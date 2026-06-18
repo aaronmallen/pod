@@ -3183,6 +3183,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_accepts_location_results_for_the_current_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
+        &db,
+      );
+      let generation = state.stockpile_editor.as_ref().unwrap().location_generation();
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationResults(
+          generation,
+          vec![LocationRef {
+            context: None,
+            id: 60_003_760,
+            name: "Jita IV - Moon 4".to_owned(),
+            security_status: None,
+            tier: LocationTier::from_id(60_003_760),
+          }],
+        ),
+        &db,
+      );
+
+      let editor = state.stockpile_editor.as_ref().unwrap();
+      assert_eq!(editor.location_results().len(), 1);
+      assert_eq!(editor.location_results()[0].id, 60_003_760);
+    }
+
+    #[tokio::test]
     async fn it_confirms_an_import_by_prefilling_the_editor_and_closing_the_panel() {
       use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
 
@@ -3241,6 +3273,83 @@ mod tests {
 
       let _ = update(&mut state, Message::StockpileEditorItemRemoved(0), &db);
       assert!(state.stockpile_editor.as_ref().unwrap().items().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_clears_a_picked_location() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationPicked(LocationRef {
+          context: None,
+          id: 60_003_760,
+          name: "Jita IV - Moon 4".to_owned(),
+          security_status: None,
+          tier: LocationTier::from_id(60_003_760),
+        }),
+        &db,
+      );
+      assert!(state.stockpile_editor.as_ref().unwrap().location().is_some());
+
+      let _ = update(&mut state, Message::StockpileEditorLocationCleared, &db);
+
+      assert!(state.stockpile_editor.as_ref().unwrap().location().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_drops_location_results_from_a_superseded_generation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
+        &db,
+      );
+      let stale = state.stockpile_editor.as_ref().unwrap().location_generation();
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationSearchChanged("Jital".to_owned()),
+        &db,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationResults(
+          stale,
+          vec![LocationRef {
+            context: None,
+            id: 60_003_760,
+            name: "Jita IV - Moon 4".to_owned(),
+            security_status: None,
+            tier: LocationTier::from_id(60_003_760),
+          }],
+        ),
+        &db,
+      );
+
+      assert!(state.stockpile_editor.as_ref().unwrap().location_results().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_dismisses_open_popovers() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorItemSearchChanged("Tri".to_owned()),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::StockpileEditorPopoversClosed, &db);
+
+      let editor = state.stockpile_editor.as_ref().unwrap();
+      assert!(!editor.location_open());
+      assert!(!editor.item_search().open);
     }
 
     #[tokio::test]
@@ -3373,6 +3482,119 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_picks_a_location_and_closes_the_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorLocationPicked(LocationRef {
+          context: None,
+          id: 60_003_760,
+          name: "Jita IV - Moon 4".to_owned(),
+          security_status: None,
+          tier: LocationTier::from_id(60_003_760),
+        }),
+        &db,
+      );
+
+      let editor = state.stockpile_editor.as_ref().unwrap();
+      assert_eq!(editor.location().map(|location| location.id), Some(60_003_760));
+      assert!(!editor.location_open());
+    }
+
+    #[tokio::test]
+    async fn it_records_a_resolved_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorScopeResolved(vec![stockpiles::ScopePilot {
+          corp: "TST".to_owned(),
+          id: 1,
+          name: "Pilot".to_owned(),
+          portrait: images::ImageState::Fresh(std::path::PathBuf::from("/cache/1.jpg")),
+        }]),
+        &db,
+      );
+
+      assert_eq!(state.stockpile_editor.as_ref().unwrap().scope_pilots().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_item_search_query() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorItemSearchChanged("Tritanium".to_owned()),
+        &db,
+      );
+
+      let editor = state.stockpile_editor.as_ref().unwrap();
+      assert_eq!(editor.item_search().query, "Tritanium");
+      assert!(editor.item_search().open);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_scope_query() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorScopeChanged("tag:pvp".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.stockpile_editor.as_ref().unwrap().scope_query(), "tag:pvp");
+    }
+
+    #[tokio::test]
+    async fn it_replaces_an_open_editor_with_a_blank_draft() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorNameChanged("Cap boosters".to_owned()),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      assert_eq!(state.stockpile_editor.as_ref().map(|editor| editor.name()), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_sets_item_suggestions_excluding_added_types() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorItemPicked(34, "Tritanium".to_owned()),
+        &db,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::StockpileEditorItemResults(vec![(34, "Tritanium".to_owned()), (35, "Pyerite".to_owned())]),
+        &db,
+      );
+
+      let editor = state.stockpile_editor.as_ref().unwrap();
+      assert_eq!(editor.item_search().suggestions, vec![(35, "Pyerite".to_owned())]);
+    }
+
+    #[tokio::test]
     async fn it_toggles_a_card_expanded_then_collapsed() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
@@ -3382,6 +3604,19 @@ mod tests {
 
       let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
       assert!(!state.stockpile_expanded.contains(&7));
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_location_picker_open_and_closed() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let _ = update(&mut state, Message::StockpileNew, &db);
+
+      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
+      assert!(state.stockpile_editor.as_ref().unwrap().location_open());
+
+      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
+      assert!(!state.stockpile_editor.as_ref().unwrap().location_open());
     }
 
     #[tokio::test]

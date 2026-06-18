@@ -177,7 +177,7 @@ export function DocLayout({ current, pages }: DocLayoutProps) {
             borderRight: `1px solid ${T.rule}`,
           }}
         >
-          {sectionsOf(pages).map(({ pages: sectionPages, section }) => (
+          {sectionsOf(pages.filter((page) => page.slug !== '')).map(({ pages: sectionPages, section }) => (
             <div key={section} style={{ marginBottom: 28 }}>
               <div
                 style={{

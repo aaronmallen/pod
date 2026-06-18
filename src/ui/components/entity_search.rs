@@ -11,7 +11,6 @@ use iced::{
 use crate::ui::{
   components::{
     avatar::Avatar,
-    chip::Chip,
     icon::Icon,
     text_input::{self as text_input_component, TextInput},
   },
@@ -20,6 +19,9 @@ use crate::ui::{
 
 const DROPDOWN_MAX_HEIGHT: f32 = 264.0;
 const FIELD_HEIGHT: f32 = 42.0;
+const PILL_AVATAR: f32 = 16.0;
+const PILL_RADIUS: f32 = 999.0;
+const PILL_REMOVE_GLYPH: f32 = 9.0;
 const RESULT_AVATAR: f32 = 30.0;
 const ROUNDED_RADIUS: f32 = RESULT_AVATAR * 0.2;
 const ROUND_RADIUS: f32 = RESULT_AVATAR;
@@ -207,16 +209,30 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
 
   pub fn view(self) -> Element<'a, M> {
     let mut chips = Row::new().spacing(spacing::UNIT + 2.0).align_y(Vertical::Center);
-    for (index, chip) in self.chips.iter().enumerate() {
+
+    // The inline field carries its own leading search glyph so it reads like the Contacts search
+    // field; the bordered (non-inline) path gets the glyph from the shared `TextInput` instead.
+    if self.inline {
       chips = chips.push(
-        Chip::new(chip.name.clone(), None)
-          .on_remove((self.on_remove)(index))
-          .view(),
+        Icon::search()
+          .size(typography::size::SM)
+          .color(color::text::secondary())
+          .render(),
       );
     }
 
+    for (index, chip) in self.chips.iter().enumerate() {
+      chips = chips.push(recipient_pill(chip, (self.on_remove)(index)));
+    }
+
+    let placeholder = if self.inline && !self.chips.is_empty() {
+      "Add another\u{2026}"
+    } else {
+      self.placeholder
+    };
+
     let input: Element<'a, M> = if self.inline {
-      let mut input = text_input(self.placeholder, self.query)
+      let mut input = text_input(placeholder, self.query)
         .on_input(self.on_input)
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
@@ -461,6 +477,54 @@ fn entity_avatar<'a, M: 'static>(entity: &EntityRef, size: f32) -> Element<'a, M
   )
   .radius(entity.kind.avatar_radius())
   .view()
+}
+
+/// Renders a selected recipient as a rounded pill carrying the entity's portrait, name, and a
+/// remove affordance — mirroring the design's `RecipientPill`. The avatar shape follows the kind
+/// (round for characters, rounded-square for corporations, glyph tile for locations).
+fn recipient_pill<'a, M>(entity: &EntityRef, on_remove: M) -> Element<'a, M>
+where
+  M: Clone + 'a + 'static,
+{
+  let name = text(entity.name.clone())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+
+  let remove = button(
+    Icon::close()
+      .size(PILL_REMOVE_GLYPH)
+      .color(color::text::secondary())
+      .render(),
+  )
+  .padding(0)
+  .on_press(on_remove)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    ..button::Style::default()
+  });
+
+  container(
+    Row::new()
+      .spacing(spacing::UNIT + 2.0)
+      .align_y(Vertical::Center)
+      .push(entity_avatar(entity, PILL_AVATAR))
+      .push(name)
+      .push(remove),
+  )
+  .padding([spacing::UNIT - 1.0, spacing::UNIT + 1.0])
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: PILL_RADIUS.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 /// Renders a location glyph in an avatar-sized tile, standing in for the portrait that location
@@ -788,6 +852,33 @@ mod tests {
       )
       .searching(true)
       .view();
+    }
+
+    #[test]
+    fn it_renders_recipient_pills_with_portraits_across_avatar_shapes() {
+      // Exercises the portrait-pill path for each avatar shape: round (character),
+      // rounded-square (corporation), and the glyph-tile fallback (location).
+      let chips = vec![
+        sample(EntityKind::Character, 95, "Vex Voronova"),
+        sample(EntityKind::Corporation, 96, "Vex Holdings"),
+        sample(EntityKind::SolarSystem, 30000142, "Jita"),
+      ];
+      let results: Vec<EntityRef> = Vec::new();
+
+      let el: Element<'_, Message> =
+        MultiSelect::new("", &chips, &results, Message::Input, Message::Picked, Message::Removed)
+          .inline(true)
+          .view();
+
+      let mut tree = iced::advanced::widget::Tree::new(&el);
+      tree.diff(&el);
+      assert!(!tree.children.is_empty());
+    }
+
+    #[test]
+    fn it_renders_a_standalone_recipient_pill() {
+      let entity = sample(EntityKind::Character, 95, "Vex Voronova");
+      let _pill: Element<'_, Message> = recipient_pill(&entity, Message::Removed(0));
     }
   }
 

@@ -7,6 +7,40 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### Added
+
+- New **User Interface** settings tab - choose whether the navigation rail sits on the left or right edge of the
+  window, and drag or reorder the rail's items to your liking. Changes apply instantly to every open window.
+- Stockpiles can now be scoped to a set of characters with a simple query (for example `tag:pvp` or `corp:cobalt`)
+  instead of always covering everyone - the scope tracks roster changes automatically without re-saving.
+- Stockpile editor - search for an item and pick it to add a fully-filled row instantly; the old blank "+ Add item"
+  row is gone, and items you've already added are hidden from the results.
+- The stockpile location picker can now target any EVE tier - region, constellation, system, station, or structure -
+  with a colored tier tag, security status, and region/system context shown for each result.
+- A red **Fix Permissions** button now appears on the corner of a character portrait or corporation logo when
+  re-authentication is needed, launching the fix in one click instead of hunting through the right-click menu.
+
+### Changed
+
+- All **About** information now lives on a Settings → About tab, which links to the project website
+  (pod.aaronmallen.dev) and adds a "Support Pod" section.
+
+### Fixed
+
+- Calendar local-time labels now convert to your actual time zone - non-UTC users previously saw the local-time line
+  showing the exact same time as the EVE (UTC) line.
+- Skill plan editor - the search box now stays visible when a picker tab (Skills, Ships, Modules, Certs) has no
+  results, so you can always clear or change a search that matched nothing.
+- Long facility names in the Industry planner and Industry settings now wrap instead of being cut off, and NPC
+  stations no longer show their system name twice.
+
+### Performance
+
+- The Industry Planner now opens almost instantly after the first visit - it previously rebuilt its entire build
+  catalog (a 40-plus-second wait) every single time you opened it.
+
 ## [0.6.0]
 
 ### Added
@@ -569,7 +603,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.1...HEAD
+[0.6.1]: https://github.com/aaronmallen/pod/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/aaronmallen/pod/compare/0.5.6...0.6.0
 [0.5.6]: https://github.com/aaronmallen/pod/compare/0.5.5...0.5.6
 [0.5.5]: https://github.com/aaronmallen/pod/compare/0.5.4...0.5.5

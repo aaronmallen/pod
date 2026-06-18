@@ -1666,23 +1666,16 @@ mod view {
 
     let bar = Row::with_children(vec![container(search).width(Length::Fill).into(), toggle.into()])
       .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center)
-      .into();
+      .align_y(Vertical::Center);
 
-    // Keep the search input at a STABLE tree position (always child 0 of this Column): returning a bare
-    // `bar` when closed and a `Column[bar, results]` once the user types reparents the text input, which
-    // makes iced drop its focus after the first keystroke. Always render the Column; the results slot
-    // collapses to a zero-height Space (and the gap to 0) when the picker is closed.
+    // Float the results panel below the bar via AnchoredDropdown so opening the picker overlays the plan
+    // instead of pushing it down. The bar (child 0, holding the text input) stays the stable underlay, so
+    // iced keeps the input focused across keystrokes; only the popover slot toggles.
     let open = planner.picker_open() || !planner.search().is_empty();
-    let results: Element<'_, Message> = if open {
-      picker_results(planner)
-    } else {
-      Space::new().into()
-    };
+    let popover = open.then(|| picker_results(planner));
 
-    Column::with_children(vec![bar, results])
-      .spacing(if open { spacing::SPACE_2 } else { 0.0 })
-      .width(Length::Fill)
+    AnchoredDropdown::new(bar, popover)
+      .on_dismiss(Message::PickerToggled)
       .into()
   }
 

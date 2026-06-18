@@ -15,6 +15,8 @@ export interface DocPage {
 
 const DOCS_BASE = '/docs/';
 
+const SECTION_ORDER = ['Pod Docs', 'Guide', 'Features', 'Reference'];
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
@@ -26,6 +28,10 @@ export function loadDocPages(contentDir: string): DocPage[] {
 
   pages.sort((a, b) => {
     if (a.frontmatter.section !== b.frontmatter.section) {
+      const rankDelta = sectionRank(a.frontmatter.section) - sectionRank(b.frontmatter.section);
+      if (rankDelta !== 0) {
+        return rankDelta;
+      }
       return a.frontmatter.section.localeCompare(b.frontmatter.section);
     }
     if (a.frontmatter.order !== b.frontmatter.order) {
@@ -35,6 +41,11 @@ export function loadDocPages(contentDir: string): DocPage[] {
   });
 
   return pages;
+}
+
+function sectionRank(section: string): number {
+  const index = SECTION_ORDER.indexOf(section);
+  return index === -1 ? SECTION_ORDER.length : index;
 }
 
 export function urlForSlug(slug: string): string {

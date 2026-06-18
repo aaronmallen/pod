@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
+use chrono::Utc;
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
   model::{
     CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership, CharacterMailRecipient,
-    MailFolderAssignment, MailSnooze, MailTriage,
+    MailDraft, MailFolderAssignment, MailSnooze, MailTriage,
     character_mail_view::{MailRender, UnifiedMail},
     mail_overlay_state::MailOverlayState,
   },
@@ -645,6 +646,99 @@ pub async fn expired_trashed_mails(db: &Database, cutoff: &str) -> Result<Vec<Ma
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DraftInput {
+  pub body: String,
+  pub character_id: i64,
+  pub kind: String,
+  pub quote: Option<String>,
+  pub recipients_cc: String,
+  pub recipients_to: String,
+  pub subject: String,
+}
+
+/// Persists a draft and returns its row id. `None` inserts a fresh row (preserving `created_at`); `Some(id)` updates
+/// that row in place so re-saving an open draft never duplicates it.
+pub async fn upsert_draft(db: &Database, id: Option<i64>, input: &DraftInput) -> Result<i64, Error> {
+  let now = Utc::now().to_rfc3339();
+  let id = match id {
+    Some(id) => {
+      sqlx::query(
+        "UPDATE mail_drafts SET subject = ?, body = ?, recipients_to = ?, recipients_cc = ?, kind = ?, quote = ?, \
+        updated_at = ? WHERE id = ?",
+      )
+      .bind(&input.subject)
+      .bind(&input.body)
+      .bind(&input.recipients_to)
+      .bind(&input.recipients_cc)
+      .bind(&input.kind)
+      .bind(&input.quote)
+      .bind(&now)
+      .bind(id)
+      .execute(&db.0)
+      .await?;
+      id
+    }
+    None => {
+      sqlx::query_scalar::<_, i64>(
+        "INSERT INTO mail_drafts \
+          (character_id, subject, body, recipients_to, recipients_cc, kind, quote, created_at, updated_at) \
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+      )
+      .bind(input.character_id)
+      .bind(&input.subject)
+      .bind(&input.body)
+      .bind(&input.recipients_to)
+      .bind(&input.recipients_cc)
+      .bind(&input.kind)
+      .bind(&input.quote)
+      .bind(&now)
+      .bind(&now)
+      .fetch_one(&db.0)
+      .await?
+    }
+  };
+  Ok(id)
+}
+
+pub async fn draft(db: &Database, id: i64) -> Result<Option<MailDraft>, Error> {
+  let row = sqlx::query_as::<_, MailDraft>(
+    "SELECT body, character_id, created_at, id, kind, quote, recipients_cc, recipients_to, subject, updated_at \
+    FROM mail_drafts WHERE id = ?",
+  )
+  .bind(id)
+  .fetch_optional(&db.0)
+  .await?;
+  Ok(row)
+}
+
+pub async fn list_drafts_for_character(db: &Database, character_id: i64) -> Result<Vec<MailDraft>, Error> {
+  let rows = sqlx::query_as::<_, MailDraft>(
+    "SELECT body, character_id, created_at, id, kind, quote, recipients_cc, recipients_to, subject, updated_at \
+    FROM mail_drafts WHERE character_id = ? ORDER BY updated_at DESC, id DESC",
+  )
+  .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn count_drafts_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mail_drafts WHERE character_id = ?")
+    .bind(character_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
+pub async fn delete_draft(db: &Database, id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM mail_drafts WHERE id = ?")
+    .bind(id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
 }
 
 pub async fn overlay_state(db: &Database, character_id: i64, mail_id: i64) -> Result<MailOverlayState, Error> {
@@ -3188,6 +3282,136 @@ mod overlay_tests {
         super::visible_unread_counts_by_label(&db, 42, NOW).await.unwrap(),
         [(1, 1), (2, 0)]
       );
+    }
+  }
+
+  mod drafts {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn input(character_id: i64, subject: &str) -> super::super::DraftInput {
+      super::super::DraftInput {
+        body: "Body text".to_owned(),
+        character_id,
+        kind: "New".to_owned(),
+        quote: None,
+        recipients_cc: "[]".to_owned(),
+        recipients_to: "[]".to_owned(),
+        subject: subject.to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_inserts_a_new_row_when_id_is_none() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      let id = super::super::upsert_draft(&db, None, &input(42, "First"))
+        .await
+        .unwrap();
+
+      let stored = super::super::draft(&db, id).await.unwrap().unwrap();
+      assert_eq!(stored.character_id, 42);
+      assert_eq!(stored.subject, "First");
+      assert_eq!(super::super::count_drafts_for_character(&db, 42).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_updates_in_place_without_duplicating_when_id_is_supplied() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let id = super::super::upsert_draft(&db, None, &input(42, "First"))
+        .await
+        .unwrap();
+
+      let same = super::super::upsert_draft(&db, Some(id), &input(42, "Edited"))
+        .await
+        .unwrap();
+
+      assert_eq!(same, id);
+      assert_eq!(super::super::count_drafts_for_character(&db, 42).await.unwrap(), 1);
+      assert_eq!(super::super::draft(&db, id).await.unwrap().unwrap().subject, "Edited");
+    }
+
+    #[tokio::test]
+    async fn it_lists_only_the_requested_characters_drafts() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::super::upsert_draft(&db, None, &input(42, "Mine")).await.unwrap();
+      super::super::upsert_draft(&db, None, &input(43, "Theirs"))
+        .await
+        .unwrap();
+
+      let mine = super::super::list_drafts_for_character(&db, 42).await.unwrap();
+
+      assert_eq!(mine.len(), 1);
+      assert_eq!(mine[0].subject, "Mine");
+    }
+
+    #[tokio::test]
+    async fn it_gets_none_for_a_missing_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert!(super::super::draft(&db, 999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_deletes_the_row_by_id() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let id = super::super::upsert_draft(&db, None, &input(42, "Doomed"))
+        .await
+        .unwrap();
+
+      super::super::delete_draft(&db, id).await.unwrap();
+
+      assert!(super::super::draft(&db, id).await.unwrap().is_none());
+      assert_eq!(super::super::count_drafts_for_character(&db, 42).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_counts_drafts_scoped_to_the_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      super::super::upsert_draft(&db, None, &input(42, "One")).await.unwrap();
+      super::super::upsert_draft(&db, None, &input(42, "Two")).await.unwrap();
+      super::super::upsert_draft(&db, None, &input(43, "Other"))
+        .await
+        .unwrap();
+
+      assert_eq!(super::super::count_drafts_for_character(&db, 42).await.unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_kind_and_quote_context() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let mut payload = input(42, "Re: Hello");
+      payload.kind = "Reply".to_owned();
+      payload.quote = Some("> original".to_owned());
+
+      let id = super::super::upsert_draft(&db, None, &payload).await.unwrap();
+
+      let stored = super::super::draft(&db, id).await.unwrap().unwrap();
+      assert_eq!(stored.kind, "Reply");
+      assert_eq!(stored.quote.as_deref(), Some("> original"));
+    }
+
+    #[tokio::test]
+    async fn it_cascades_deletes_when_the_character_is_removed() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::super::upsert_draft(&db, None, &input(42, "Orphan"))
+        .await
+        .unwrap();
+
+      character::delete(&db, 42).await.unwrap();
+
+      assert_eq!(super::super::count_drafts_for_character(&db, 42).await.unwrap(), 0);
     }
   }
 }

@@ -2,6 +2,7 @@ mod compose;
 mod folder_pane;
 mod labels;
 mod loaders;
+mod markup;
 mod message_list;
 mod outbox_indicator;
 mod read_state;

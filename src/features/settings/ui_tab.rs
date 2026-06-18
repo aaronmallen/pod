@@ -415,7 +415,7 @@ fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
     .width(Length::Fixed(14.0))
     .height(Length::Fixed(14.0))
     .style(move |_| container::Style {
-      background: selected.then(|| Background::Color(color::accent::PLASMA)),
+      background: selected.then_some(Background::Color(color::accent::PLASMA)),
       border: Border {
         color: if selected {
           color::accent::PLASMA

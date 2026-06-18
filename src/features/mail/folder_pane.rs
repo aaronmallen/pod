@@ -5,7 +5,7 @@ use iced::{
 };
 
 use super::{
-  Folder, Message, StandardFolder, State,
+  DropTarget, Folder, Message, StandardFolder, State,
   loaders::{FolderLabel, StandardFolderCounts},
 };
 use crate::ui::{
@@ -32,14 +32,13 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
   let data = state.folder_data();
   let selected = state.folder();
 
+  let dragging = state.dragging_mail().is_some();
+  let drop_target = state.drop_target();
+
   let mut column = Column::new().width(Length::Fill);
   column = column.push(unified_section(state, selected));
-  column = column.push(folders_section(&data.standard_counts, selected));
-  column = column.push(labels_section(
-    data.labels.as_slice(),
-    state.dragging_mail().is_some(),
-    state.drop_target(),
-  ));
+  column = column.push(folders_section(&data.standard_counts, selected, dragging, drop_target));
+  column = column.push(labels_section(data.labels.as_slice(), dragging, drop_target));
 
   let scroll = scrollable(column)
     .style(crate::ui::style::control::scrollbar)
@@ -119,18 +118,34 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     .into()
 }
 
-fn folders_section<'a>(counts: &StandardFolderCounts, selected: Folder) -> Element<'a, Message> {
+/// The standard boxes that accept a dragged message row as a pure local move.
+fn is_drop_box(folder: StandardFolder) -> bool {
+  matches!(
+    folder,
+    StandardFolder::Archive | StandardFolder::Inbox | StandardFolder::Trash
+  )
+}
+
+fn folders_section<'a>(
+  counts: &StandardFolderCounts,
+  selected: Folder,
+  dragging: bool,
+  drop_target: Option<DropTarget>,
+) -> Element<'a, Message> {
   let mut column = Column::new().width(Length::Fill).spacing(1.0);
   column = column.push(inset_header("Folders"));
 
   for (standard_folder, name) in STANDARD_FOLDER_ROWS {
     let folder = Folder::Standard(standard_folder);
+    let over = drop_target == Some(DropTarget::StandardFolder(standard_folder));
     column = column.push(folder_row(
       folder,
       standard_folder_icon(standard_folder),
       name,
       counts.unread_for(standard_folder),
       selected == folder,
+      dragging && is_drop_box(standard_folder),
+      over,
     ));
   }
 
@@ -156,9 +171,17 @@ fn inset_header<'a>(label: &str) -> Element<'a, Message> {
     .into()
 }
 
-fn folder_row(folder: Folder, icon: Icon, name: &str, unread: i64, active: bool) -> Element<'_, Message> {
+fn folder_row<'a>(
+  folder: Folder,
+  icon: Icon,
+  name: &'a str,
+  unread: i64,
+  active: bool,
+  drop_box: bool,
+  over: bool,
+) -> Element<'a, Message> {
   let content = Row::with_children(vec![
-    folder_icon(icon, active),
+    folder_icon(icon, active || over),
     text(name.to_owned())
       .size(typography::size::MD)
       .font(if active {
@@ -168,7 +191,7 @@ fn folder_row(folder: Folder, icon: Icon, name: &str, unread: i64, active: bool)
       })
       .width(Length::Fill)
       .style(move |_| text::Style {
-        color: Some(if active {
+        color: Some(if active || over {
           color::text::PRIMARY
         } else {
           color::text::secondary()
@@ -180,7 +203,37 @@ fn folder_row(folder: Folder, icon: Icon, name: &str, unread: i64, active: bool)
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_2_5);
 
-  selectable_row(folder, active, content, false)
+  let row = selectable_row(folder, active, content, false);
+
+  let Folder::Standard(standard_folder) = folder else {
+    return row;
+  };
+  if !drop_box {
+    return row;
+  }
+
+  let target = DropTarget::StandardFolder(standard_folder);
+  let highlighted = container(row).style(move |_| drop_box_style(over));
+  mouse_area(highlighted)
+    .on_enter(Message::DropTargetEntered(target))
+    .on_exit(Message::DropTargetLeft(target))
+    .into()
+}
+
+fn drop_box_style(over: bool) -> container::Style {
+  container::Style {
+    background: over.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
+    border: Border {
+      color: if over {
+        color::accent::PLASMA
+      } else {
+        iced::Color::TRANSPARENT
+      },
+      radius: radius::SUBTLE.into(),
+      width: if over { 1.0 } else { 0.0 },
+    },
+    ..container::Style::default()
+  }
 }
 
 fn standard_folder_icon(standard_folder: StandardFolder) -> Icon {
@@ -204,7 +257,7 @@ fn folder_icon<'a>(icon: Icon, active: bool) -> Element<'a, Message> {
   icon.size(16.0).color(tone).render::<Message>()
 }
 
-fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<i64>) -> Element<'_, Message> {
+fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<DropTarget>) -> Element<'_, Message> {
   let mut column = Column::new().width(Length::Fill).spacing(1.0);
   column = column.push(labels_header());
 
@@ -226,7 +279,7 @@ fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<i6
     );
   } else {
     for label in labels {
-      column = column.push(label_row(label, drop_target == Some(label.label_id)));
+      column = column.push(label_row(label, drop_target == Some(DropTarget::Label(label.label_id))));
     }
     if dragging {
       column = column.push(drag_hint());
@@ -305,8 +358,8 @@ fn label_row(label: &FolderLabel, over: bool) -> Element<'_, Message> {
   mouse_area(chip)
     .on_press(Message::FolderSelected(Folder::Label(label_id)))
     .on_right_press(Message::LabelDeleteRequested(label_id))
-    .on_enter(Message::LabelDropTargetEntered(label_id))
-    .on_exit(Message::LabelDropTargetLeft(label_id))
+    .on_enter(Message::DropTargetEntered(DropTarget::Label(label_id)))
+    .on_exit(Message::DropTargetLeft(DropTarget::Label(label_id)))
     .into()
 }
 
@@ -507,6 +560,25 @@ mod tests {
         StandardFolder::Trash,
       ]
     );
+  }
+
+  #[test]
+  fn it_accepts_drops_only_on_inbox_archive_and_trash() {
+    assert!(is_drop_box(StandardFolder::Inbox));
+    assert!(is_drop_box(StandardFolder::Archive));
+    assert!(is_drop_box(StandardFolder::Trash));
+    assert!(!is_drop_box(StandardFolder::Starred));
+    assert!(!is_drop_box(StandardFolder::Snoozed));
+    assert!(!is_drop_box(StandardFolder::Sent));
+    assert!(!is_drop_box(StandardFolder::Drafts));
+  }
+
+  #[test]
+  fn it_highlights_a_drop_box_only_while_hovered() {
+    assert!(drop_box_style(true).background.is_some());
+    assert_eq!(drop_box_style(true).border.width, 1.0);
+    assert!(drop_box_style(false).background.is_none());
+    assert_eq!(drop_box_style(false).border.width, 0.0);
   }
 
   #[test]

@@ -1,3 +1,4 @@
+use super::StandardFolder;
 use crate::store::{Database, repo::mail};
 
 pub(super) async fn toggle_star(db: Database, character_id: i64, mail_id: i64) {
@@ -28,6 +29,25 @@ pub(super) async fn archive(db: Database, character_id: i64, mail_id: i64) {
 
 pub(super) async fn trash(db: Database, character_id: i64, mail_id: i64) {
   let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false).await;
+}
+
+/// Move a dragged message into one of the standard boxes as a pure local move (no ESI write).
+/// Any active snooze is cleared first so the mail surfaces in its new box immediately. Inbox is the
+/// "no overlay" state, so it clears any folder assignment; Archive/Trash file the mail into that box.
+pub(super) async fn move_to_box(db: Database, character_id: i64, mail_id: i64, folder: StandardFolder) {
+  let _ = mail::delete_snoozed_mail(&db, character_id, mail_id).await;
+  match folder {
+    StandardFolder::Inbox => {
+      let _ = mail::clear_folder(&db, character_id, mail_id).await;
+    }
+    StandardFolder::Archive => {
+      let _ = mail::assign_folder(&db, character_id, mail_id, "archive", None, false).await;
+    }
+    StandardFolder::Trash => {
+      let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false).await;
+    }
+    StandardFolder::Drafts | StandardFolder::Sent | StandardFolder::Snoozed | StandardFolder::Starred => {}
+  }
 }
 
 #[cfg(test)]
@@ -124,5 +144,45 @@ mod tests {
       .await
       .unwrap();
     assert_eq!(outbox, 0);
+  }
+
+  #[tokio::test]
+  async fn it_clears_the_snooze_when_a_snoozed_mail_is_dropped_into_a_box() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    mail::upsert_snoozed_mail(&db, 42, 7, "2099-01-01T00:00:00Z")
+      .await
+      .unwrap();
+
+    move_to_box(db.clone(), 42, 7, StandardFolder::Archive).await;
+
+    assert!(mail::all_snoozed_mails(&db, 42).await.unwrap().is_empty());
+    assert_eq!(mail::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "archive");
+  }
+
+  #[tokio::test]
+  async fn it_returns_a_trashed_mail_to_the_inbox_by_clearing_its_folder() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    mail::assign_folder(&db, 42, 7, "trash", None, false).await.unwrap();
+
+    move_to_box(db.clone(), 42, 7, StandardFolder::Inbox).await;
+
+    assert!(mail::folder(&db, 42, 7).await.unwrap().is_none());
+    let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+    assert_eq!(outbox, 0);
+  }
+
+  #[tokio::test]
+  async fn it_trashes_a_mail_dropped_onto_the_trash_box() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+
+    move_to_box(db.clone(), 42, 7, StandardFolder::Trash).await;
+
+    assert_eq!(mail::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "trash");
   }
 }

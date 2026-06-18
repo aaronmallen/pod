@@ -117,6 +117,8 @@ pub enum Message {
     generation: u64,
     results: Vec<EntityRef>,
   },
+  DropTargetEntered(DropTarget),
+  DropTargetLeft(DropTarget),
   FolderPaneDragEnd,
   FolderPaneDragStart,
   FolderPaneDragged(f32),
@@ -128,8 +130,6 @@ pub enum Message {
   LabelDeleteRequested(i64),
   LabelDragMoved(Point),
   LabelDropReleased,
-  LabelDropTargetEntered(i64),
-  LabelDropTargetLeft(i64),
   LabelModalClosed,
   LabelModalOpened,
   LabelModalSubmitted,
@@ -242,6 +242,14 @@ pub enum StandardFolder {
   Trash,
 }
 
+/// Where a dragged message row can be dropped: onto one of the standard boxes (a pure local move)
+/// or onto a custom label (the existing tag behaviour).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DropTarget {
+  Label(i64),
+  StandardFolder(StandardFolder),
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,
@@ -249,7 +257,7 @@ pub struct State {
   compose: Option<compose::Draft>,
   cursor: Option<Point>,
   dragging_mail: Option<i64>,
-  drop_target: Option<i64>,
+  drop_target: Option<DropTarget>,
   folder: Folder,
   folder_data: FolderPaneData,
   folder_pane: PaneDrag,
@@ -497,7 +505,7 @@ impl State {
     self.dragging_mail
   }
 
-  pub(super) fn drop_target(&self) -> Option<i64> {
+  pub(super) fn drop_target(&self) -> Option<DropTarget> {
     self.drop_target
   }
 
@@ -825,14 +833,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::ComposeClosed
     | Message::ComposeSend
     | Message::ComposeSent(_) => update_compose(state, message, db),
-    Message::LabelColorPicked(_)
+    Message::DropTargetEntered(_)
+    | Message::DropTargetLeft(_)
+    | Message::LabelColorPicked(_)
     | Message::LabelDeleteCancelled
     | Message::LabelDeleteConfirmed
     | Message::LabelDeleteRequested(_)
     | Message::LabelDragMoved(_)
     | Message::LabelDropReleased
-    | Message::LabelDropTargetEntered(_)
-    | Message::LabelDropTargetLeft(_)
     | Message::LabelModalClosed
     | Message::LabelModalOpened
     | Message::LabelModalSubmitted
@@ -1348,14 +1356,14 @@ fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.cursor = Some(point);
       Task::none()
     }
-    Message::LabelDropTargetEntered(label_id) => {
+    Message::DropTargetEntered(target) => {
       if state.dragging_mail.is_some() {
-        state.drop_target = Some(label_id);
+        state.drop_target = Some(target);
       }
       Task::none()
     }
-    Message::LabelDropTargetLeft(label_id) => {
-      if state.drop_target == Some(label_id) {
+    Message::DropTargetLeft(target) => {
+      if state.drop_target == Some(target) {
         state.drop_target = None;
       }
       Task::none()
@@ -1364,16 +1372,23 @@ fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Mes
       let drop = state.dragging_mail.zip(state.drop_target);
       state.dragging_mail = None;
       state.drop_target = None;
-      let Some((mail_id, label_id)) = drop else {
+      let Some((mail_id, target)) = drop else {
         return Task::none();
       };
       let Some(character_id) = state.character_for(mail_id) else {
         return Task::none();
       };
-      Task::perform(
-        labels::enqueue_assign(db.clone(), character_id, mail_id, label_id),
-        |()| Message::LabelsWritten,
-      )
+      match target {
+        DropTarget::Label(label_id) => Task::perform(
+          labels::enqueue_assign(db.clone(), character_id, mail_id, label_id),
+          |()| Message::LabelsWritten,
+        ),
+        DropTarget::StandardFolder(folder) => {
+          Task::perform(triage::move_to_box(db.clone(), character_id, mail_id, folder), |()| {
+            Message::LabelsWritten
+          })
+        }
+      }
     }
     Message::LabelsWritten => reload_after_label_write(state, db),
     _ => Task::none(),
@@ -2279,7 +2294,21 @@ mod tests {
         let db = crate::store::open_test().await.unwrap();
         state.messages = vec![list_row(7, 42, true)];
         state.dragging_mail = Some(7);
-        state.drop_target = Some(8);
+        state.drop_target = Some(DropTarget::Label(8));
+
+        let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
+
+        assert!(state.dragging_mail.is_none());
+        assert!(state.drop_target.is_none());
+      }
+
+      #[tokio::test]
+      async fn it_clears_drag_state_when_releasing_onto_a_standard_box() {
+        let mut state = State::new(42);
+        let db = crate::store::open_test().await.unwrap();
+        state.messages = vec![list_row(7, 42, true)];
+        state.dragging_mail = Some(7);
+        state.drop_target = Some(DropTarget::StandardFolder(StandardFolder::Archive));
 
         let _ = update_labels(&mut state, Message::LabelDropReleased, &db);
 
@@ -2315,12 +2344,12 @@ mod tests {
       async fn it_clears_only_the_matching_drop_target_on_leave() {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
-        state.drop_target = Some(8);
+        state.drop_target = Some(DropTarget::Label(8));
 
-        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(9), &db);
-        assert_eq!(state.drop_target, Some(8));
+        let _ = update_labels(&mut state, Message::DropTargetLeft(DropTarget::Label(9)), &db);
+        assert_eq!(state.drop_target, Some(DropTarget::Label(8)));
 
-        let _ = update_labels(&mut state, Message::LabelDropTargetLeft(8), &db);
+        let _ = update_labels(&mut state, Message::DropTargetLeft(DropTarget::Label(8)), &db);
         assert!(state.drop_target.is_none());
       }
 
@@ -2420,12 +2449,12 @@ mod tests {
         let mut state = State::new(42);
         let db = crate::store::open_test().await.unwrap();
 
-        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
+        let _ = update_labels(&mut state, Message::DropTargetEntered(DropTarget::Label(8)), &db);
         assert!(state.drop_target.is_none());
 
         state.dragging_mail = Some(7);
-        let _ = update_labels(&mut state, Message::LabelDropTargetEntered(8), &db);
-        assert_eq!(state.drop_target, Some(8));
+        let _ = update_labels(&mut state, Message::DropTargetEntered(DropTarget::Label(8)), &db);
+        assert_eq!(state.drop_target, Some(DropTarget::Label(8)));
       }
 
       #[tokio::test]

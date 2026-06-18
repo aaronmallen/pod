@@ -5,6 +5,8 @@ use sqlx::FromRow;
 
 #[derive(Clone, CopyGetters, Debug, Eq, FromRow, Getters, PartialEq)]
 pub struct Model {
+  #[getset(get = "pub")]
+  pub assigned_at: Option<String>,
   #[getset(get_copy = "pub")]
   pub character_id: i64,
   #[getset(get = "pub")]

@@ -1065,7 +1065,9 @@ mod tests {
       store_mail(db, 6, 95_000_001, false).await;
 
       mail::set_triage(db, CHAR, 3, true).await.unwrap();
-      mail::assign_folder(db, CHAR, 4, "archive", None, false).await.unwrap();
+      mail::assign_folder(db, CHAR, 4, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       mail::replace_labels_for_character(
         db,

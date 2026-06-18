@@ -77,6 +77,9 @@ pub struct MailSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SnapshotFolder {
+  /// `None` for rows written before this column existed; `restore_mail` re-inserts it so a
+  /// restored mail retains its original trash age and remains eligible for auto-purge.
+  pub assigned_at: Option<String>,
   pub folder: String,
   pub remap_label_id: Option<i64>,
   pub soft_delete_intent: bool,
@@ -579,19 +582,21 @@ pub async fn assign_folder(
   folder: &str,
   remap_label_id: Option<i64>,
   soft_delete_intent: bool,
+  assigned_at: &str,
 ) -> Result<(), Error> {
   sqlx::query(
-    "INSERT INTO mail_folder_assignment (character_id, mail_id, folder, remap_label_id, soft_delete_intent) \
-      VALUES (?, ?, ?, ?, ?) \
+    "INSERT INTO mail_folder_assignment (character_id, mail_id, folder, remap_label_id, soft_delete_intent, assigned_at) \
+      VALUES (?, ?, ?, ?, ?, ?) \
     ON CONFLICT(character_id, mail_id) DO UPDATE SET \
       folder = excluded.folder, remap_label_id = excluded.remap_label_id, \
-      soft_delete_intent = excluded.soft_delete_intent",
+      soft_delete_intent = excluded.soft_delete_intent, assigned_at = excluded.assigned_at",
   )
   .bind(character_id)
   .bind(mail_id)
   .bind(folder)
   .bind(remap_label_id)
   .bind(soft_delete_intent)
+  .bind(assigned_at)
   .execute(&db.0)
   .await?;
   Ok(())
@@ -608,7 +613,7 @@ pub async fn clear_folder(db: &Database, character_id: i64, mail_id: i64) -> Res
 
 pub async fn folder(db: &Database, character_id: i64, mail_id: i64) -> Result<Option<MailFolderAssignment>, Error> {
   let row = sqlx::query_as::<_, MailFolderAssignment>(
-    "SELECT character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \
+    "SELECT assigned_at, character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \
     WHERE character_id = ? AND mail_id = ?",
   )
   .bind(character_id)
@@ -620,11 +625,23 @@ pub async fn folder(db: &Database, character_id: i64, mail_id: i64) -> Result<Op
 
 pub async fn all_in_folder(db: &Database, character_id: i64, folder: &str) -> Result<Vec<MailFolderAssignment>, Error> {
   let rows = sqlx::query_as::<_, MailFolderAssignment>(
-    "SELECT character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \
+    "SELECT assigned_at, character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \
     WHERE character_id = ? AND folder = ? ORDER BY mail_id",
   )
   .bind(character_id)
   .bind(folder)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn expired_trashed_mails(db: &Database, cutoff: &str) -> Result<Vec<MailFolderAssignment>, Error> {
+  let rows = sqlx::query_as::<_, MailFolderAssignment>(
+    // NULL stamp (row pre-dates this column) is intentionally skipped — not treated as infinitely old.
+    "SELECT assigned_at, character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \
+    WHERE folder = 'trash' AND assigned_at IS NOT NULL AND assigned_at <= ? ORDER BY assigned_at",
+  )
+  .bind(cutoff)
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -682,6 +699,7 @@ pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Re
       .fetch_optional(&db.0)
       .await?;
   let folder = folder(db, character_id, mail_id).await?.map(|row| SnapshotFolder {
+    assigned_at: row.assigned_at().clone(),
     folder: row.folder().clone(),
     remap_label_id: row.remap_label_id(),
     soft_delete_intent: row.soft_delete_intent(),
@@ -823,14 +841,15 @@ pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), 
 
   if let Some(folder) = &snapshot.folder {
     sqlx::query(
-      "INSERT INTO mail_folder_assignment (character_id, mail_id, folder, remap_label_id, soft_delete_intent) \
-        VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO mail_folder_assignment (character_id, mail_id, folder, remap_label_id, soft_delete_intent, assigned_at) \
+        VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(snapshot.character_id)
     .bind(snapshot.mail_id)
     .bind(&folder.folder)
     .bind(folder.remap_label_id)
     .bind(folder.soft_delete_intent)
+    .bind(&folder.assigned_at)
     .execute(&mut *tx)
     .await?;
   }
@@ -2156,7 +2175,9 @@ mod overlay_tests {
       super::upsert_snoozed_mail(&db, 42, 2, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       let states = super::all_overlay_states(&db, 42).await.unwrap();
 
@@ -2189,9 +2210,15 @@ mod overlay_tests {
     async fn it_lists_by_folder_and_clears() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
-      super::assign_folder(&db, 42, 2, "trash", None, true).await.unwrap();
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 1, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::assign_folder(&db, 42, 2, "trash", None, true, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       assert_eq!(
         super::all_in_folder(&db, 42, "archive")
@@ -2220,7 +2247,7 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      let result = super::assign_folder(&db, 42, 1, "inbox", None, false).await;
+      let result = super::assign_folder(&db, 42, 1, "inbox", None, false, "2026-06-01T00:00:00Z").await;
 
       assert!(result.is_err());
     }
@@ -2230,7 +2257,7 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      super::assign_folder(&db, 42, 1, "archive", Some(7), false)
+      super::assign_folder(&db, 42, 1, "archive", Some(7), false, "2026-06-01T00:00:00Z")
         .await
         .unwrap();
       let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
@@ -2238,7 +2265,9 @@ mod overlay_tests {
       assert_eq!(row.remap_label_id(), Some(7));
       assert!(!row.soft_delete_intent());
 
-      super::assign_folder(&db, 42, 1, "trash", None, true).await.unwrap();
+      super::assign_folder(&db, 42, 1, "trash", None, true, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
       let row = super::folder(&db, 42, 1).await.unwrap().unwrap();
       assert_eq!(row.folder(), "trash");
       assert_eq!(row.remap_label_id(), None);
@@ -2255,9 +2284,15 @@ mod overlay_tests {
     async fn it_lists_mail_ids_in_a_folder() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
-      super::assign_folder(&db, 42, 2, "trash", None, true).await.unwrap();
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 1, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::assign_folder(&db, 42, 2, "trash", None, true, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       assert_eq!(super::folder_mail_ids(&db, 42, "archive").await.unwrap(), [1, 3]);
       assert_eq!(super::folder_mail_ids(&db, 42, "trash").await.unwrap(), [2]);
@@ -2288,7 +2323,9 @@ mod overlay_tests {
       super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
-      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 1, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       let state = super::overlay_state(&db, 42, 1).await.unwrap();
 
@@ -2342,7 +2379,9 @@ mod overlay_tests {
       for id in 1..=4 {
         store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
       }
-      super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 3, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
       super::upsert_snoozed_mail(&db, 42, 2, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
@@ -2452,7 +2491,7 @@ mod overlay_tests {
       super::upsert_snoozed_mail(db, character_id, mail_id, "2099-01-01T00:00:00Z")
         .await
         .unwrap();
-      super::assign_folder(db, character_id, mail_id, "trash", None, false)
+      super::assign_folder(db, character_id, mail_id, "trash", None, false, "2026-06-01T00:00:00Z")
         .await
         .unwrap();
     }
@@ -2622,7 +2661,9 @@ mod overlay_tests {
         )
         .await;
       }
-      super::assign_folder(&db, 42, 2, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 2, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       let first = super::search_visible_headers_page(&db, 42, NOW, "fleet", None, None, 1)
         .await
@@ -2817,7 +2858,9 @@ mod overlay_tests {
       store_mail(&db, &received(42, 2, "2026-06-02T10:00:00Z", false)).await;
       store_mail(&db, &received(42, 3, "2026-06-03T10:00:00Z", false)).await;
       store_mail(&db, &received(42, 4, "2026-06-04T10:00:00Z", false)).await;
-      super::assign_folder(&db, 42, 2, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 2, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
       super::upsert_snoozed_mail(&db, 42, 3, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
@@ -2884,7 +2927,9 @@ mod overlay_tests {
       )
       .await
       .unwrap();
-      super::assign_folder(&db, 42, 11, "trash", None, true).await.unwrap();
+      super::assign_folder(&db, 42, 11, "trash", None, true, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       let visible = super::visible_headers_for_label(&db, 42, 1, NOW).await.unwrap();
 
@@ -2905,7 +2950,9 @@ mod overlay_tests {
       store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
       store_mail(&db, &received(43, 2, "2026-06-02T10:00:00Z", false)).await;
       store_mail(&db, &received(43, 3, "2026-06-03T10:00:00Z", false)).await;
-      super::assign_folder(&db, 43, 2, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 43, 2, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
       super::upsert_snoozed_mail(&db, 43, 3, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
@@ -3048,7 +3095,9 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", true)).await;
-      super::assign_folder(&db, 42, 1, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 1, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       assert_eq!(super::visible_unread_count(&db, 42, NOW).await.unwrap(), 0);
     }
@@ -3062,7 +3111,9 @@ mod overlay_tests {
       store_mail(&db, &sent(42, 3, "2026-06-03T10:00:00Z")).await;
       store_mail(&db, &received(42, 4, "2026-06-04T10:00:00Z", false)).await;
       store_mail(&db, &received(42, 5, "2026-06-05T10:00:00Z", false)).await;
-      super::assign_folder(&db, 42, 4, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 4, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
       super::upsert_snoozed_mail(&db, 42, 5, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
@@ -3129,7 +3180,9 @@ mod overlay_tests {
       super::upsert_snoozed_mail(&db, 42, 11, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
-      super::assign_folder(&db, 42, 20, "archive", None, false).await.unwrap();
+      super::assign_folder(&db, 42, 20, "archive", None, false, "2026-06-01T00:00:00Z")
+        .await
+        .unwrap();
 
       assert_eq!(
         super::visible_unread_counts_by_label(&db, 42, NOW).await.unwrap(),

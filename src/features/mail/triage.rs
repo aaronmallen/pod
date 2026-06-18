@@ -1,9 +1,15 @@
+use chrono::Utc;
+
 use super::StandardFolder;
 use crate::store::{
   Database,
   model::OwnerType,
   repo::{infra, mail},
 };
+
+fn now_stamp() -> String {
+  Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
 
 pub(super) async fn toggle_star(db: Database, character_id: i64, mail_id: i64) {
   let overlay = mail::overlay_state(&db, character_id, mail_id)
@@ -21,11 +27,11 @@ async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bool) 
 }
 
 pub(super) async fn archive(db: Database, character_id: i64, mail_id: i64) {
-  let _ = mail::assign_folder(&db, character_id, mail_id, "archive", None, false).await;
+  let _ = mail::assign_folder(&db, character_id, mail_id, "archive", None, false, &now_stamp()).await;
 }
 
 pub(super) async fn trash(db: Database, character_id: i64, mail_id: i64) {
-  let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false).await;
+  let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false, &now_stamp()).await;
 }
 
 /// Permanently deletes a trashed mail from both Pod and the EVE mailbox. Snapshots every local row,
@@ -63,10 +69,10 @@ pub(super) async fn move_to_box(db: Database, character_id: i64, mail_id: i64, f
       let _ = mail::clear_folder(&db, character_id, mail_id).await;
     }
     StandardFolder::Archive => {
-      let _ = mail::assign_folder(&db, character_id, mail_id, "archive", None, false).await;
+      let _ = mail::assign_folder(&db, character_id, mail_id, "archive", None, false, &now_stamp()).await;
     }
     StandardFolder::Trash => {
-      let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false).await;
+      let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false, &now_stamp()).await;
     }
     StandardFolder::Drafts | StandardFolder::Sent | StandardFolder::Snoozed | StandardFolder::Starred => {}
   }
@@ -177,7 +183,9 @@ mod tests {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
     store_mail(&db, 42, 7).await;
-    mail::assign_folder(&db, 42, 7, "trash", None, false).await.unwrap();
+    mail::assign_folder(&db, 42, 7, "trash", None, false, "2026-06-01T00:00:00Z")
+      .await
+      .unwrap();
 
     delete(db.clone(), 42, 7).await;
 
@@ -221,7 +229,9 @@ mod tests {
   async fn it_returns_a_trashed_mail_to_the_inbox_by_clearing_its_folder() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
-    mail::assign_folder(&db, 42, 7, "trash", None, false).await.unwrap();
+    mail::assign_folder(&db, 42, 7, "trash", None, false, "2026-06-01T00:00:00Z")
+      .await
+      .unwrap();
 
     move_to_box(db.clone(), 42, 7, StandardFolder::Inbox).await;
 

@@ -417,7 +417,9 @@ mod tests {
     store_mail(&db, 5, 95_000_001, false).await;
 
     mail::set_triage(&db, CHAR, 2, true).await.unwrap();
-    mail::assign_folder(&db, CHAR, 3, "archive", None, false).await.unwrap();
+    mail::assign_folder(&db, CHAR, 3, "archive", None, false, "2026-06-01T00:00:00Z")
+      .await
+      .unwrap();
     let until = (Utc::now() + chrono::Duration::days(1)).to_rfc3339();
     mail::upsert_snoozed_mail(&db, CHAR, 4, &until).await.unwrap();
     mail::replace_labels_for_character(

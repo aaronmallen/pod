@@ -1,5 +1,6 @@
 mod graphics;
 mod snooze_scheduler;
+mod trash_purge_scheduler;
 mod windows;
 
 use std::{
@@ -89,6 +90,8 @@ const SCALE_MAX: u8 = 150;
 
 const SCALE_MIN: u8 = 85;
 
+const TRASH_PURGE_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
+
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   height: 0.0,
   width: 0.0,
@@ -127,6 +130,9 @@ struct App {
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
+  /// `None` arms the purge for the very next clock tick (fires once shortly after launch); `Some`
+  /// holds the earliest instant it may run again.
+  next_trash_purge: Option<Instant>,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
   pending_auth: Option<auth::Message>,
@@ -245,6 +251,7 @@ enum Message {
   TakeOver,
   TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
   ToggleSyncPopover,
+  TrashPurged(Vec<(i64, i64)>),
   UpdaterAction(updater_banner::Action),
   UpdaterDismissToast,
   UpdaterStateChanged(updater::State),
@@ -327,6 +334,7 @@ impl Message {
       Message::Splash(_) => "Splash",
       Message::StorageMigrated => "StorageMigrated",
       Message::StoreOpened(_) => "StoreOpened",
+      Message::TrashPurged(_) => "TrashPurged",
       Message::WindowOpened(_) => "WindowOpened",
       _ => return None,
     })
@@ -781,6 +789,7 @@ fn boot() -> (App, Task<Message>) {
     last_synced: None,
     mail: None,
     mail_unread: 0,
+    next_trash_purge: None,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
     pending_auth: None,
@@ -1437,6 +1446,22 @@ fn snooze_wake_tick(app: &App) -> Task<Message> {
     Some(runtime) => Task::perform(
       snooze_scheduler::wake_due_snoozes(runtime.db.clone(), app.now),
       Message::SnoozesWoken,
+    ),
+    None => Task::none(),
+  }
+}
+
+fn trash_purge_tick(app: &mut App) -> Task<Message> {
+  let now = Instant::now();
+  if app.next_trash_purge.is_some_and(|due| now < due) {
+    return Task::none();
+  }
+  app.next_trash_purge = Some(now + TRASH_PURGE_INTERVAL);
+
+  match app.runtime.as_ref() {
+    Some(runtime) => Task::perform(
+      trash_purge_scheduler::purge_expired_trash(runtime.db.clone(), app.now),
+      Message::TrashPurged,
     ),
     None => Task::none(),
   }
@@ -2560,6 +2585,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Splash(msg) => update_splash(app, msg),
     Message::StorageMigrated => Task::none(),
     Message::StoreOpened(ready) => handle_store_opened(app, *ready),
+    Message::TrashPurged(purged) => handle_trash_purged(app, purged),
     other => dispatch_sync_lifecycle(app, other),
   }
 }
@@ -3115,6 +3141,13 @@ fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
   })
   .discard();
   Task::batch([flip, reload])
+}
+
+fn handle_trash_purged(app: &App, purged: Vec<(i64, i64)>) -> Task<Message> {
+  if purged.is_empty() {
+    return Task::none();
+  }
+  mail_clock_reload(app)
 }
 
 /// App-side mirror of the mail feature's wake flip (the feature module is private). Drops the
@@ -3703,6 +3736,7 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
   drain_due_save(app, Instant::now());
   Task::batch([
     snooze_wake_tick(app),
+    trash_purge_tick(app),
     mail_unread_tick(app),
     mail_clock_reload(app),
     calendar_attention_tick(app),
@@ -4389,6 +4423,7 @@ mod tests {
       last_synced: None,
       mail: None,
       mail_unread: 0,
+      next_trash_purge: None,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
       pending_auth: None,
@@ -7982,6 +8017,7 @@ mod tests {
       assert_eq!(Message::ReauthCharacter(1).variant_name(), "ReauthCharacter");
       assert_eq!(Message::RestartSync.variant_name(), "RestartSync");
       assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
+      assert_eq!(Message::TrashPurged(Vec::new()).variant_name(), "TrashPurged");
       assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
       assert_eq!(Message::SyncPulse.variant_name(), "SyncPulse");
       assert_eq!(Message::TakeOver.variant_name(), "TakeOver");

@@ -498,6 +498,10 @@ fn time_label(timestamp: &str) -> String {
 }
 
 pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
+  if matches!(state.folder(), Folder::Standard(StandardFolder::Drafts)) {
+    return draft_pane(state, width);
+  }
+
   let flat = flatten(state);
 
   let body: Element<'_, Message> = if flat.is_empty() {
@@ -542,6 +546,102 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
   container(Row::with_children(vec![surface.into(), right_rule()]).width(Length::Fill))
     .width(Length::Fixed(width))
     .height(Length::Fill)
+    .into()
+}
+
+/// The Drafts read-path: a bounded list of locally persisted compose drafts. Drafts are not mail, so
+/// they bypass the mail listing entirely — a row opens its draft into the compose modal and carries
+/// its own delete action.
+fn draft_pane(state: &State, width: f32) -> Element<'_, Message> {
+  let drafts = state.drafts();
+
+  let body: Element<'_, Message> = if drafts.is_empty() {
+    shared_empty_state("No drafts.").render()
+  } else {
+    let rows = drafts.iter().map(draft_row).collect::<Vec<_>>();
+    scrollable(Column::with_children(rows).width(Length::Fill))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into()
+  };
+
+  let column = Column::with_children(vec![search_box(state.search()), body])
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+  let surface = container(column)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    });
+
+  container(Row::with_children(vec![surface.into(), right_rule()]).width(Length::Fill))
+    .width(Length::Fixed(width))
+    .height(Length::Fill)
+    .into()
+}
+
+fn draft_row(row: &super::draft::DraftRow) -> Element<'_, Message> {
+  let recipients = text(row.recipients.clone())
+    .size(typography::size::SM)
+    .style(|_| text::Style {
+      color: Some(color::text::secondary()),
+    });
+
+  let subject = text(row.subject.clone())
+    .size(typography::size::MD)
+    .font(typography::body::MEDIUM)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+
+  let snippet = text(row.snippet.clone())
+    .size(typography::size::SM)
+    .wrapping(text::Wrapping::Word)
+    .style(|_| text::Style {
+      color: Some(color::text::secondary()),
+    });
+
+  let content = Column::with_children(vec![recipients.into(), subject.into(), snippet.into()])
+    .spacing(spacing::SPACE_2 / 2.0 - 1.0)
+    .width(Length::Fill);
+
+  let openable = mouse_area(container(content).width(Length::Fill))
+    .on_press(Message::DraftOpened(row.id))
+    .into();
+
+  let delete = mouse_area(
+    container(
+      Icon::trash()
+        .size(14.0)
+        .color(color::text::secondary())
+        .render::<Message>(),
+    )
+    .width(Length::Fixed(28.0))
+    .height(Length::Fixed(28.0))
+    .align_x(iced::alignment::Horizontal::Center)
+    .align_y(Vertical::Center),
+  )
+  .on_press(Message::DraftDeleted(row.id))
+  .into();
+
+  let body = Row::with_children(vec![openable, delete])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+  let row_container = container(body).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_3,
+    bottom: spacing::SPACE_3,
+    left: spacing::SPACE_2 * 2.0,
+    right: spacing::SPACE_2 * 2.0,
+  });
+
+  Column::with_children(vec![row_container.into(), rule::horizontal()])
+    .width(Length::Fill)
     .into()
 }
 

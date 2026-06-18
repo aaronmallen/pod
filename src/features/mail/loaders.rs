@@ -246,7 +246,8 @@ async fn load_standard_folder_counts(db: &Database, character_id: i64, now: &str
         .await
         .unwrap_or_default(),
     ),
-    drafts: 0,
+    // Drafts has no unread concept; the badge shows the total stored drafts for the character.
+    drafts: mail::count_drafts_for_character(db, character_id).await.unwrap_or(0),
     inbox: mail::visible_unread_count(db, character_id, now).await.unwrap_or(0),
     sent: 0,
     snoozed: count_snoozed_unread(db, character_id, now, &unread).await,

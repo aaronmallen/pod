@@ -11,7 +11,9 @@ use super::{Message, loaders::RosterPilot, markup::Link};
 use crate::{
   store::{
     Database, images,
-    model::{CharacterMail, CharacterMailBody, CharacterMailRecipient, OwnerType, character_mail_view::MailRender},
+    model::{
+      CharacterMail, CharacterMailBody, CharacterMailRecipient, MailDraft, OwnerType, character_mail_view::MailRender,
+    },
     repo::{infra, mail},
   },
   ui::{
@@ -45,6 +47,9 @@ pub struct Draft {
   pub expanded: bool,
   pub from_character_id: i64,
   pub from_picker_open: bool,
+  /// The `mail_drafts` row id once this compose has been persisted; threaded back so every later
+  /// save updates the same row and a successful send deletes it by id.
+  pub id: Option<i64>,
   pub kind: Kind,
   pub link: Option<LinkPopover>,
   pub minimized: bool,
@@ -68,6 +73,7 @@ impl Draft {
       expanded: false,
       from_character_id,
       from_picker_open: false,
+      id: None,
       kind: Kind::New,
       link: None,
       minimized: false,
@@ -118,8 +124,44 @@ impl Draft {
     draft
   }
 
+  pub(super) fn from_persisted(row: &MailDraft) -> Self {
+    let mut draft = Draft::blank(row.character_id());
+    draft.id = Some(row.id());
+    draft.kind = Kind::from_storage(row.kind());
+    draft.subject = row.subject().clone();
+    draft.body = text_editor::Content::with_text(row.body());
+    draft.quote = row.quote().clone();
+
+    for recipient in deserialize_recipients(row.recipients_to()) {
+      draft.push_to(recipient);
+    }
+    for recipient in deserialize_recipients(row.recipients_cc()) {
+      draft.push_cc(recipient);
+    }
+    draft.show_cc = !draft.cc.is_empty();
+    draft
+  }
+
   pub(super) fn can_send(&self) -> bool {
     !self.to.is_empty() && !self.subject.trim().is_empty()
+  }
+
+  /// A draft worth persisting: anything typed into the subject, body, or recipients. A blank new
+  /// compose closed without input is discarded rather than saved.
+  pub(super) fn is_empty(&self) -> bool {
+    self.subject.trim().is_empty() && self.body.text().trim().is_empty() && self.to.is_empty() && self.cc.is_empty()
+  }
+
+  pub(super) fn persist_input(&self) -> mail::DraftInput {
+    mail::DraftInput {
+      body: self.body.text(),
+      character_id: self.from_character_id,
+      kind: self.kind.as_storage().to_owned(),
+      quote: self.quote.clone(),
+      recipients_cc: serialize_recipients(&self.cc),
+      recipients_to: serialize_recipients(&self.to),
+      subject: self.subject.clone(),
+    }
   }
 
   pub(super) fn push_cc(&mut self, recipient: Recipient) {
@@ -290,6 +332,24 @@ pub enum Kind {
 }
 
 impl Kind {
+  pub(super) fn as_storage(self) -> &'static str {
+    match self {
+      Kind::Forward => "Forward",
+      Kind::New => "New",
+      Kind::Reply => "Reply",
+      Kind::ReplyAll => "ReplyAll",
+    }
+  }
+
+  fn from_storage(raw: &str) -> Self {
+    match raw {
+      "Forward" => Kind::Forward,
+      "Reply" => Kind::Reply,
+      "ReplyAll" => Kind::ReplyAll,
+      _ => Kind::New,
+    }
+  }
+
   pub(super) fn header(self) -> &'static str {
     match self {
       Kind::New => "New message",
@@ -371,6 +431,14 @@ impl SendPayload {
 fn optimistic_mail_id() -> i64 {
   let millis = chrono::Utc::now().timestamp_millis();
   -millis.max(1)
+}
+
+fn deserialize_recipients(json: &str) -> Vec<Recipient> {
+  serde_json::from_str(json).unwrap_or_default()
+}
+
+fn serialize_recipients(recipients: &[Recipient]) -> String {
+  serde_json::to_string(recipients).unwrap_or_else(|_| "[]".to_owned())
 }
 
 fn prefixed(subject: &str, prefix: &str) -> String {
@@ -1283,6 +1351,63 @@ mod tests {
     assert_eq!(draft.cc.len(), 1);
     assert_eq!(draft.cc[0].id, Some(95_000_009));
     assert!(draft.show_cc);
+  }
+
+  #[test]
+  fn from_persisted_round_trips_recipients_subject_body_kind_and_quote() {
+    let row = MailDraft {
+      body: "<b>Form up</b>".to_owned(),
+      character_id: 42,
+      created_at: "2026-06-18T10:00:00Z".to_owned(),
+      id: 7,
+      kind: "ReplyAll".to_owned(),
+      quote: Some("From Vex:\nhi".to_owned()),
+      recipients_cc: r#"[{"id":95000009,"name":"Alt","recipient_type":"character"}]"#.to_owned(),
+      recipients_to: r#"[{"id":95000001,"name":"Vex","recipient_type":"character"}]"#.to_owned(),
+      subject: "Re: CTA".to_owned(),
+      updated_at: "2026-06-18T10:05:00Z".to_owned(),
+    };
+
+    let draft = Draft::from_persisted(&row);
+
+    assert_eq!(draft.id, Some(7));
+    assert_eq!(draft.kind, Kind::ReplyAll);
+    assert_eq!(draft.subject, "Re: CTA");
+    assert_eq!(draft.body.text(), "<b>Form up</b>");
+    assert_eq!(draft.quote.as_deref(), Some("From Vex:\nhi"));
+    assert_eq!(draft.to[0].id, Some(95_000_001));
+    assert_eq!(draft.cc[0].id, Some(95_000_009));
+    assert_eq!(draft.to_chips.len(), 1);
+    assert_eq!(draft.cc_chips.len(), 1);
+    assert!(draft.show_cc);
+  }
+
+  #[test]
+  fn is_empty_guards_a_blank_compose_but_not_a_typed_one() {
+    let mut draft = Draft::blank(42);
+    assert!(draft.is_empty());
+
+    draft.subject = "   ".to_owned();
+    assert!(draft.is_empty());
+
+    draft.subject = "CTA".to_owned();
+    assert!(!draft.is_empty());
+  }
+
+  #[test]
+  fn persist_input_serialises_recipients_and_kind() {
+    let mut draft = Draft::blank(42);
+    draft.kind = Kind::Forward;
+    draft.subject = "Fwd".to_owned();
+    draft.push_to(Recipient::character("Vex", 95_000_001));
+
+    let input = draft.persist_input();
+
+    assert_eq!(input.character_id, 42);
+    assert_eq!(input.kind, "Forward");
+    assert_eq!(input.subject, "Fwd");
+    assert!(input.recipients_to.contains("95000001"));
+    assert_eq!(input.recipients_cc, "[]");
   }
 
   #[test]

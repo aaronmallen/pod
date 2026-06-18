@@ -1154,9 +1154,26 @@ fn shutdown_if_last_window(app: &mut App) -> Task<Message> {
 
 fn shutdown(app: &mut App) -> Task<Message> {
   tracing::info!(target: "pod::lifecycle", "shutting down");
+  let save_draft = save_open_compose(app);
   let checkpoint = shutdown_storage(app);
   stop_engines(app);
-  checkpoint.chain(Task::batch([iced::exit(), exit_process()]))
+  save_draft
+    .chain(checkpoint)
+    .chain(Task::batch([iced::exit(), exit_process()]))
+}
+
+/// Flushes any open, non-empty mail compose to Drafts before the storage checkpoint, so a draft in
+/// flight at quit survives to the next launch. Runs before the checkpoint so the persisted row is
+/// included in the pushed working copy.
+fn save_open_compose(app: &App) -> Task<Message> {
+  let (Some(state), Some(runtime)) = (app.mail.as_ref(), app.runtime.as_ref()) else {
+    return Task::none();
+  };
+  let Some((id, input)) = state.pending_draft_save() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  Task::future(async move { mail::persist_pending_draft(db, id, input).await }).discard()
 }
 
 fn stop_engines(app: &App) {

@@ -1,4 +1,5 @@
 mod compose;
+mod draft;
 mod folder_pane;
 mod labels;
 mod loaders;
@@ -71,6 +72,7 @@ pub enum Folder {
 
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
+  drafts: Vec<draft::DraftRow>,
   folder: Folder,
   folder_data: FolderPaneData,
   folder_pane_width: f32,
@@ -129,6 +131,13 @@ pub enum Message {
     results: Vec<EntityRef>,
   },
   Delete(i64),
+  DraftDeleted(i64),
+  DraftLoaded(Box<Option<crate::store::model::MailDraft>>),
+  DraftOpened(i64),
+  DraftRowsLoaded(Vec<draft::DraftRow>),
+  /// An auto-save finished; the row id is threaded back onto the still-open compose so the next
+  /// save updates the same row and a send deletes it by id.
+  DraftSaved(Option<i64>),
   DropTargetEntered(DropTarget),
   DropTargetLeft(DropTarget),
   FolderPaneDragEnd,
@@ -267,6 +276,7 @@ pub struct State {
   all_messages: Vec<MessageRow>,
   compose: Option<compose::Draft>,
   cursor: Option<Point>,
+  drafts: Vec<draft::DraftRow>,
   dragging_mail: Option<i64>,
   drop_target: Option<DropTarget>,
   folder: Folder,
@@ -306,6 +316,7 @@ impl State {
       all_messages: Vec::new(),
       compose: None,
       cursor: None,
+      drafts: Vec::new(),
       dragging_mail: None,
       drop_target: None,
       folder: Folder::default(),
@@ -462,6 +473,20 @@ impl State {
     &self.messages
   }
 
+  pub(super) fn drafts(&self) -> &[draft::DraftRow] {
+    &self.drafts
+  }
+
+  /// The open compose's persist input, paired with its existing row id, when there is a non-empty
+  /// compose worth saving. Drives the auto-save triggers (close, scope/folder switch, quit).
+  pub fn pending_draft_save(&self) -> Option<(Option<i64>, mail::DraftInput)> {
+    let draft = self.compose.as_ref()?;
+    if draft.is_empty() {
+      return None;
+    }
+    Some((draft.id, draft.persist_input()))
+  }
+
   pub fn list_scroll_offset(&self) -> f32 {
     self.list_scroll_offset
   }
@@ -588,6 +613,14 @@ enum SnoozeMenu {
 
 fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32) -> PaneDrag {
   PaneDrag::from_store_with_min(ui, key, default, min, host_width)
+}
+
+/// Persists an open compose's pending save (built synchronously from state via
+/// [`State::pending_draft_save`]) before the app exits, so a draft in flight at quit is present in
+/// Drafts on next launch. Awaited by the app's shutdown sequence rather than dispatched as a message,
+/// since the UI is tearing down.
+pub async fn persist_pending_draft(db: Database, id: Option<i64>, input: mail::DraftInput) {
+  let _ = draft::persist(db, id, input).await;
 }
 
 pub fn load(db: &Database, character: i64) -> Task<Message> {
@@ -852,6 +885,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::ComposeClosed
     | Message::ComposeSend
     | Message::ComposeSent(_) => update_compose(state, message, db),
+    Message::DraftDeleted(_)
+    | Message::DraftLoaded(_)
+    | Message::DraftOpened(_)
+    | Message::DraftRowsLoaded(_)
+    | Message::DraftSaved(_) => update_drafts(state, message, db),
     Message::DropTargetEntered(_)
     | Message::DropTargetLeft(_)
     | Message::LabelColorPicked(_)
@@ -879,6 +917,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ScopeSelected(scope) => {
+      let save = save_open_draft(state, db);
       state.messages_page_epoch.next();
       state.active = scope;
       state.folder = Folder::Unified;
@@ -892,13 +931,14 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
       state.pending_label_delete = None;
       state.dragging_mail = None;
       state.drop_target = None;
-      Task::none()
+      save
     }
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
     }
     Message::FolderSelected(folder) => {
+      let save = save_open_draft(state, db);
       state.messages_page_epoch.next();
       state.folder = folder;
       state.selected = None;
@@ -906,7 +946,7 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
       state.label_picker = None;
-      reload_for(db, state.active, folder)
+      Task::batch([save, reload_for(db, state.active, folder)])
     }
     Message::SearchChanged(query) => {
       state.search = query;
@@ -954,6 +994,7 @@ fn update_outbox(state: &mut State, message: Message, db: &Database) -> Task<Mes
 
 fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Message> {
   let Loaded {
+    drafts,
     folder,
     folder_data,
     folder_pane_width,
@@ -981,6 +1022,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
   if scope == state.active && folder == state.folder {
     // A fresh folder load supersedes any in-flight scroll page captured against the prior list.
     state.messages_page_epoch.next();
+    state.drafts = drafts;
     state.folder_data = folder_data;
     state.headers = headers;
     state.overlays = overlays;
@@ -1159,6 +1201,68 @@ fn update_snooze_calendar(state: &mut State, message: Message) -> Task<Message> 
   Task::none()
 }
 
+/// Persists the open non-empty compose (if any), threading the row id back via `DraftSaved`. Used by
+/// the close/scope/folder auto-save triggers so a single persisted-id mechanism keeps every save on
+/// one row.
+fn save_open_draft(state: &State, db: &Database) -> Task<Message> {
+  let Some((id, input)) = state.pending_draft_save() else {
+    return Task::none();
+  };
+  Task::perform(draft::persist(db.clone(), id, input), Message::DraftSaved)
+}
+
+fn reload_drafts(state: &State, db: &Database) -> Task<Message> {
+  let Scope::Character(character_id) = state.active;
+  Task::perform(draft::load_rows(db.clone(), character_id), Message::DraftRowsLoaded)
+}
+
+/// Persists the closing compose (if non-empty), then reloads so the Drafts list and folder badge
+/// reflect the new row. The compose is being discarded, so the row id is not threaded back.
+fn save_on_close(state: &State, db: &Database) -> Task<Message> {
+  let Some((id, input)) = state.pending_draft_save() else {
+    return Task::none();
+  };
+  let reload = reload_for(db, state.active, state.folder);
+  Task::perform(draft::persist(db.clone(), id, input), |_| ())
+    .discard()
+    .chain(reload)
+}
+
+fn update_drafts(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::DraftDeleted(id) => {
+      state.drafts.retain(|row| row.id != id);
+      let reload = reload_for(db, state.active, state.folder);
+      Task::perform(draft::delete(db.clone(), id), |()| ())
+        .discard()
+        .chain(reload)
+    }
+    Message::DraftLoaded(row) => {
+      if let Some(row) = *row {
+        state.compose = Some(compose::Draft::from_persisted(&row));
+      }
+      Task::none()
+    }
+    Message::DraftOpened(id) => {
+      let db = db.clone();
+      Task::perform(async move { mail::draft(&db, id).await.ok().flatten() }, |row| {
+        Message::DraftLoaded(Box::new(row))
+      })
+    }
+    Message::DraftRowsLoaded(rows) => {
+      state.drafts = rows;
+      Task::none()
+    }
+    Message::DraftSaved(id) => {
+      if let Some(draft) = state.compose.as_mut() {
+        draft.id = id;
+      }
+      reload_drafts(state, db)
+    }
+    _ => Task::none(),
+  }
+}
+
 fn update_compose(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ComposeOpened => {
@@ -1187,8 +1291,9 @@ fn update_compose(state: &mut State, message: Message, db: &Database) -> Task<Me
       Task::none()
     }
     Message::ComposeClosed => {
+      let save = save_on_close(state, db);
       state.compose = None;
-      Task::none()
+      save
     }
     Message::ComposeSend => {
       let Some(draft) = state.compose.as_ref() else {
@@ -1202,8 +1307,15 @@ fn update_compose(state: &mut State, message: Message, db: &Database) -> Task<Me
     }
     Message::ComposeSent(result) => match result {
       Ok(()) => {
+        let sent_draft_id = state.compose.as_ref().and_then(|draft| draft.id);
         state.compose = None;
-        reload_for(db, state.active, state.folder)
+        let reload = reload_for(db, state.active, state.folder);
+        match sent_draft_id {
+          Some(id) => Task::perform(draft::delete(db.clone(), id), |()| ())
+            .discard()
+            .chain(reload),
+          None => reload,
+        }
       }
       Err(message) => {
         if let Some(draft) = state.compose.as_mut() {
@@ -1519,6 +1631,7 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
 
   let first_page = message_list::load_first_page(&db, scope, folder).await;
   let outbox_indicator = loaders::load_outbox_indicator(&db).await;
+  let drafts = draft::load_rows(db.clone(), scope_id).await;
 
   let (headers, overlays) = match folder {
     Folder::Unified => (Vec::new(), HashMap::new()),
@@ -1542,6 +1655,7 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
     .unwrap_or(MESSAGE_LIST_PANE_DEFAULT_WIDTH);
 
   Loaded {
+    drafts,
     folder,
     folder_data,
     folder_pane_width,
@@ -2638,6 +2752,156 @@ mod tests {
 
         let name = state.label_modal.as_ref().map(|d| d.name.clone()).unwrap();
         assert_eq!(name.chars().count(), labels::NAME_MAX_CHARS);
+      }
+    }
+
+    mod drafts {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+      use crate::store::{
+        self,
+        model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+        repo::{character, mail},
+      };
+
+      async fn seed_character(db: &Database, id: i64) {
+        let corp_id = 90_000_001;
+        let alliance_id = 99_000_001;
+        let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+        let race = Race::new(2, alliance_id, "A race.", "Caldari");
+        let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+        corp.set_ceo_id(id);
+        corp.set_creator_id(id);
+        corp.set_member_count(1);
+        corp.set_tax_rate(0.0);
+        let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+        let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+        character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+          .await
+          .unwrap();
+      }
+
+      fn typed_compose() -> compose::Draft {
+        let mut draft = compose::Draft::blank(42);
+        draft.subject = "CTA".to_owned();
+        draft.body = text_editor::Content::with_text("Form up.");
+        draft.to.push(compose::Recipient::typed("Vex"));
+        draft
+      }
+
+      #[tokio::test]
+      async fn it_offers_a_pending_save_for_a_non_empty_compose_and_persists_one_row() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let mut state = State::new(42);
+        state.compose = Some(typed_compose());
+
+        let (id, input) = state.pending_draft_save().expect("a non-empty compose is worth saving");
+        draft::persist(db.clone(), id, input).await;
+
+        // Closing clears the live compose; the persist itself is dispatched as an async task.
+        let _ = update(&mut state, Message::ComposeClosed, &db);
+        assert!(state.compose().is_none());
+        assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 1);
+      }
+
+      #[tokio::test]
+      async fn it_offers_no_pending_save_for_a_blank_compose() {
+        let mut state = State::new(42);
+        state.compose = Some(compose::Draft::blank(42));
+
+        assert!(state.pending_draft_save().is_none());
+      }
+
+      #[tokio::test]
+      async fn it_threads_the_saved_id_back_onto_the_open_compose() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let mut state = State::new(42);
+        state.compose = Some(typed_compose());
+        let id = mail::upsert_draft(&db, None, &state.compose().unwrap().persist_input())
+          .await
+          .unwrap();
+
+        let _ = update(&mut state, Message::DraftSaved(Some(id)), &db);
+
+        assert_eq!(state.compose().unwrap().id, Some(id));
+      }
+
+      #[tokio::test]
+      async fn it_updates_the_same_row_when_re_saving_an_opened_draft() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
+          .await
+          .unwrap();
+        let mut state = State::new(42);
+        let mut compose = typed_compose();
+        compose.id = Some(id);
+        compose.subject = "Edited".to_owned();
+        state.compose = Some(compose);
+
+        let (saved_id, input) = state.pending_draft_save().unwrap();
+        assert_eq!(saved_id, Some(id), "the persisted id is threaded back into the save");
+        draft::persist(db.clone(), saved_id, input).await;
+
+        assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 1);
+        assert_eq!(mail::draft(&db, id).await.unwrap().unwrap().subject, "Edited");
+      }
+
+      #[tokio::test]
+      async fn it_clears_the_compose_on_a_successful_send() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
+          .await
+          .unwrap();
+        let mut state = State::new(42);
+        let mut compose = typed_compose();
+        compose.id = Some(id);
+        state.compose = Some(compose);
+
+        let _ = update(&mut state, Message::ComposeSent(Ok(())), &db);
+
+        assert!(state.compose().is_none());
+
+        // The row deletion is dispatched as an async task; verify the by-id delete path directly.
+        draft::delete(db.clone(), id).await;
+        assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 0);
+      }
+
+      #[tokio::test]
+      async fn it_fills_the_compose_from_a_loaded_draft_row() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
+          .await
+          .unwrap();
+        let mut state = State::new(42);
+        let row = mail::draft(&db, id).await.unwrap();
+
+        let _ = update(&mut state, Message::DraftLoaded(Box::new(row)), &db);
+
+        let compose = state.compose().expect("the draft fills the compose");
+        assert_eq!(compose.id, Some(id));
+        assert_eq!(compose.subject, "CTA");
+        assert_eq!(compose.body.text(), "Form up.");
+      }
+
+      #[tokio::test]
+      async fn it_drops_a_deleted_draft_from_the_in_memory_list() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
+          .await
+          .unwrap();
+        let mut state = State::new(42);
+        state.drafts = draft::load_rows(db.clone(), 42).await;
+
+        let _ = update(&mut state, Message::DraftDeleted(id), &db);
+
+        assert!(state.drafts().is_empty());
       }
     }
 

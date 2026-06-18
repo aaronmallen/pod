@@ -41,6 +41,17 @@ const SWATCH_SIZE: f32 = 11.0;
 /// never be shown as user labels in the folder pane or as row/reading chips.
 pub(crate) const SYSTEM_LABEL_IDS: [i64; 4] = [1, 2, 4, 8];
 
+/// The well-known EVE Inbox system label id. Snoozing pulls a mail out of the Inbox box by
+/// removing this membership; waking restores it.
+pub(crate) const INBOX_LABEL_ID: i64 = 1;
+
+/// The name of the user label that mirrors Pod's snooze state into EVE. It is created on demand
+/// (no per-character persisted id) and resolved from the catalog by this name.
+pub(crate) const SNOOZED_LABEL_NAME: &str = "Snoozed";
+
+/// A muted blue swatch for the auto-created Snoozed label.
+const SNOOZED_LABEL_COLOR: &str = "#6688cc";
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct LabelDraft {
   pub color: String,
@@ -152,6 +163,93 @@ pub(super) async fn enqueue_assign(db: Database, character_id: i64, mail_id: i64
   }
   let mut labels = previous.clone();
   labels.push(label_id);
+
+  apply_membership(&db, character_id, mail_id, &previous, &labels).await;
+
+  let payload = SetPayload {
+    character_id,
+    labels,
+    mail_id,
+    previous,
+  };
+  let dedupe = format!("set_labels:{mail_id}");
+  enqueue(&db, character_id, "mail.set_labels", &payload, Some(&dedupe)).await;
+}
+
+/// Resolves the id of the character's "Snoozed" label, creating it (optimistic mirror + outbox
+/// create) when absent. Returns the resolved or freshly minted (negative-temp) id, which the
+/// `mail.set_labels` outbox row then references — the `mail.create_label` handler later remaps the
+/// temp id and rewrites any dependent membership rows on execute.
+async fn resolve_or_create_snoozed_label(db: &Database, character_id: i64) -> i64 {
+  let catalog = mail::labels(db, character_id).await.unwrap_or_default();
+  if let Some(existing) = catalog
+    .iter()
+    .find(|label| label.name().eq_ignore_ascii_case(SNOOZED_LABEL_NAME))
+  {
+    return existing.label_id();
+  }
+
+  let label_id = temp_label_id();
+  let draft = LabelDraft {
+    color: SNOOZED_LABEL_COLOR.to_owned(),
+    name: SNOOZED_LABEL_NAME.to_owned(),
+  };
+  enqueue_create(db.clone(), character_id, label_id, draft).await;
+  label_id
+}
+
+/// Computes a label set by removing `remove` (when present) and adding `add` (when absent),
+/// preserving the order of the surviving labels and appending the addition last.
+fn flip_set(current: &[i64], remove: i64, add: i64) -> Vec<i64> {
+  let mut next: Vec<i64> = current.iter().copied().filter(|id| *id != remove).collect();
+  if !next.contains(&add) {
+    next.push(add);
+  }
+  next
+}
+
+/// Snooze-side label flip: pull the mail out of the Inbox box (remove system label 1) and into the
+/// Snoozed box (add the Snoozed label, creating it if missing). Writes the optimistic local mirror
+/// and enqueues a `mail.set_labels` outbox row mirroring the move to EVE.
+pub(super) async fn enqueue_snooze_flip(db: Database, character_id: i64, mail_id: i64) {
+  let snoozed_id = resolve_or_create_snoozed_label(&db, character_id).await;
+  let previous = mail::membership(&db, character_id, mail_id).await.unwrap_or_default();
+  let labels = flip_set(&previous, INBOX_LABEL_ID, snoozed_id);
+  if labels == previous {
+    return;
+  }
+
+  apply_membership(&db, character_id, mail_id, &previous, &labels).await;
+
+  let payload = SetPayload {
+    character_id,
+    labels,
+    mail_id,
+    previous,
+  };
+  let dedupe = format!("set_labels:{mail_id}");
+  enqueue(&db, character_id, "mail.set_labels", &payload, Some(&dedupe)).await;
+}
+
+/// Wake-side label flip: the inverse of [`enqueue_snooze_flip`]. Drops the Snoozed label (when the
+/// catalog still carries one) and restores Inbox membership, returning the mail to the Inbox box.
+/// A no-op write is skipped so a mail that was never snooze-flipped (or already back in Inbox)
+/// leaves the outbox untouched.
+pub(super) async fn enqueue_wake_flip(db: Database, character_id: i64, mail_id: i64) {
+  let catalog = mail::labels(&db, character_id).await.unwrap_or_default();
+  let snoozed_id = catalog
+    .iter()
+    .find(|label| label.name().eq_ignore_ascii_case(SNOOZED_LABEL_NAME))
+    .map(CharacterMailLabel::label_id);
+
+  let previous = mail::membership(&db, character_id, mail_id).await.unwrap_or_default();
+  let mut labels: Vec<i64> = previous.iter().copied().filter(|id| Some(*id) != snoozed_id).collect();
+  if !labels.contains(&INBOX_LABEL_ID) {
+    labels.push(INBOX_LABEL_ID);
+  }
+  if labels == previous {
+    return;
+  }
 
   apply_membership(&db, character_id, mail_id, &previous, &labels).await;
 
@@ -724,6 +822,187 @@ mod tests {
     fn it_adds_an_absent_label_and_removes_a_present_one() {
       assert_eq!(toggled_set(&[1, 2], 3), vec![1, 2, 3]);
       assert_eq!(toggled_set(&[1, 2, 3], 2), vec![1, 3]);
+    }
+  }
+
+  mod flip_set {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_removes_the_target_and_appends_the_addition_last() {
+      assert_eq!(flip_set(&[1, 9], INBOX_LABEL_ID, 7), vec![9, 7]);
+    }
+
+    #[test]
+    fn it_keeps_the_addition_unduplicated() {
+      assert_eq!(flip_set(&[1, 7], INBOX_LABEL_ID, 7), vec![7]);
+    }
+
+    #[test]
+    fn it_is_a_no_op_set_when_nothing_changes() {
+      // Already out of Inbox and already labelled Snoozed: the surviving set equals the input.
+      assert_eq!(flip_set(&[7], INBOX_LABEL_ID, 7), vec![7]);
+    }
+  }
+
+  mod snooze_flip {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Alliance, Bloodline, Character, CharacterMail, CharacterMailBody, Corporation, Gender, Race},
+      repo::character,
+    };
+
+    async fn seed_character(db: &Database, id: i64) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    async fn store_unread(db: &Database, character_id: i64, mail_id: i64) {
+      let header = CharacterMail {
+        character_id,
+        from_id: 95_000_001,
+        from_name: "Sender".to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some("Subject".to_owned()),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+        ..Default::default()
+      };
+      let body = CharacterMailBody {
+        body: "<p>hi</p>".to_owned(),
+        character_id,
+        mail_id,
+      };
+      mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
+    }
+
+    async fn seed_inbox_label(db: &Database, character_id: i64) {
+      let label = CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id: INBOX_LABEL_ID,
+        name: "Inbox".to_owned(),
+      };
+      mail::insert_label(db, &label).await.unwrap();
+    }
+
+    async fn pending_set_labels(db: &Database) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'mail.set_labels'")
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_creates_the_snoozed_label_when_absent() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_inbox_label(&db, 42).await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      enqueue_snooze_flip(db.clone(), 42, 7).await;
+
+      let labels = mail::labels(&db, 42).await.unwrap();
+      let snoozed = labels
+        .iter()
+        .find(|l| l.name() == SNOOZED_LABEL_NAME)
+        .expect("snoozed label created");
+      assert!(snoozed.label_id() < 0, "created with a negative temp id");
+    }
+
+    #[tokio::test]
+    async fn it_does_not_duplicate_an_existing_snoozed_label() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_inbox_label(&db, 42).await;
+      mail::insert_label(
+        &db,
+        &CharacterMailLabel {
+          character_id: 42,
+          color: Some(SNOOZED_LABEL_COLOR.to_owned()),
+          label_id: 99,
+          name: SNOOZED_LABEL_NAME.to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      enqueue_snooze_flip(db.clone(), 42, 7).await;
+
+      let count = mail::labels(&db, 42)
+        .await
+        .unwrap()
+        .iter()
+        .filter(|l| l.name() == SNOOZED_LABEL_NAME)
+        .count();
+      assert_eq!(count, 1);
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [99]);
+    }
+
+    #[tokio::test]
+    async fn it_moves_the_mail_from_inbox_to_snoozed_and_enqueues_one_set_labels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_inbox_label(&db, 42).await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      enqueue_snooze_flip(db.clone(), 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert!(!membership.contains(&INBOX_LABEL_ID), "Inbox removed");
+      assert_eq!(membership.len(), 1, "exactly the Snoozed label remains");
+      assert!(membership[0] < 0, "membership references the temp Snoozed id");
+      assert_eq!(pending_set_labels(&db).await, 1);
+    }
+
+    #[tokio::test]
+    async fn it_restores_inbox_and_drops_snoozed_on_wake() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_inbox_label(&db, 42).await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+      enqueue_snooze_flip(db.clone(), 42, 7).await;
+
+      enqueue_wake_flip(db.clone(), 42, 7).await;
+
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [INBOX_LABEL_ID]);
+    }
+
+    #[tokio::test]
+    async fn it_skips_the_outbox_when_wake_is_a_no_op() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      seed_inbox_label(&db, 42).await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      // Never snoozed: already in Inbox, no Snoozed label — waking changes nothing.
+      enqueue_wake_flip(db.clone(), 42, 7).await;
+
+      assert_eq!(pending_set_labels(&db).await, 0);
+      assert_eq!(mail::membership(&db, 42, 7).await.unwrap(), [INBOX_LABEL_ID]);
     }
   }
 }

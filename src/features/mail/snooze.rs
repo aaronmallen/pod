@@ -5,7 +5,7 @@ use iced::{
   widget::{Column, Row, Space, container, mouse_area, text},
 };
 
-use super::Message;
+use super::{Message, labels};
 use crate::{
   store::{Database, repo::mail},
   ui::{
@@ -210,10 +210,12 @@ pub(super) fn canonical_until(until: &str) -> String {
 pub(super) async fn snooze_until(db: Database, character_id: i64, mail_id: i64, until: String) {
   let until = canonical_until(&until);
   let _ = mail::upsert_snoozed_mail(&db, character_id, mail_id, &until).await;
+  labels::enqueue_snooze_flip(db, character_id, mail_id).await;
 }
 
 pub(super) async fn unsnooze(db: Database, character_id: i64, mail_id: i64) {
   let _ = mail::delete_snoozed_mail(&db, character_id, mail_id).await;
+  labels::enqueue_wake_flip(db, character_id, mail_id).await;
 }
 
 pub(super) fn month_grid(year: i32, month0: u32) -> Vec<DayCell> {

@@ -3086,11 +3086,89 @@ fn refresh_storage_status(app: &mut App) {
   }
 }
 
+/// The well-known EVE Inbox system label id — kept in sync with `features::mail::labels` (which is a
+/// private module and so cannot be imported here). Waking a snooze restores this membership.
+const INBOX_LABEL_ID: i64 = 1;
+
+/// The name of the user label that mirrors Pod's snooze state into EVE. Resolved from the catalog
+/// by this name; created on demand at snooze time by the mail feature.
+const SNOOZED_LABEL_NAME: &str = "Snoozed";
+
+/// Reverses the snooze-time label flip for each mail the scheduler woke this tick: drop the Snoozed
+/// label and restore Inbox membership, mirroring the move back to EVE via a `mail.set_labels`
+/// outbox row. Because the scheduler wakes *every* expired snooze regardless of when it elapsed,
+/// this also covers backdated wakes — a mail whose wake time passed while Pod was closed gets its
+/// flip enqueued on the next launch tick.
 fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
   if woken.is_empty() {
     return Task::none();
   }
-  mail_clock_reload(app)
+  let reload = mail_clock_reload(app);
+  let Some(runtime) = app.runtime.as_ref() else {
+    return reload;
+  };
+  let db = runtime.db.clone();
+  let flip = Task::future(async move {
+    for (character_id, mail_id) in woken {
+      enqueue_wake_label_flip(&db, character_id, mail_id).await;
+    }
+  })
+  .discard();
+  Task::batch([flip, reload])
+}
+
+/// App-side mirror of the mail feature's wake flip (the feature module is private). Drops the
+/// Snoozed label when the catalog still carries one, restores Inbox membership, and enqueues a
+/// `mail.set_labels` outbox row. A no-op write (already in Inbox, never flipped) is skipped so the
+/// outbox stays clean.
+async fn enqueue_wake_label_flip(db: &store::Database, character_id: i64, mail_id: i64) {
+  use store::{model::OwnerType, repo::mail};
+
+  let catalog = mail::labels(db, character_id).await.unwrap_or_default();
+  let snoozed_id = catalog
+    .iter()
+    .find(|label| label.name().eq_ignore_ascii_case(SNOOZED_LABEL_NAME))
+    .map(|label| label.label_id());
+
+  let previous = mail::membership(db, character_id, mail_id).await.unwrap_or_default();
+  let mut labels: Vec<i64> = previous.iter().copied().filter(|id| Some(*id) != snoozed_id).collect();
+  if !labels.contains(&INBOX_LABEL_ID) {
+    labels.push(INBOX_LABEL_ID);
+  }
+  if labels == previous {
+    return;
+  }
+
+  for label_id in &previous {
+    if !labels.contains(label_id) {
+      let _ = mail::remove_membership(db, character_id, mail_id, *label_id).await;
+    }
+  }
+  for label_id in &labels {
+    if !previous.contains(label_id) {
+      let _ = mail::add_membership(db, character_id, mail_id, *label_id).await;
+    }
+  }
+
+  let payload = serde_json::json!({
+    "character_id": character_id,
+    "labels": labels,
+    "mail_id": mail_id,
+    "previous": previous,
+  });
+  let Ok(json) = serde_json::to_string(&payload) else {
+    return;
+  };
+  let dedupe = format!("set_labels:{mail_id}");
+  let _ = store::repo::infra::append(
+    db,
+    OwnerType::Character,
+    character_id,
+    "mail.set_labels",
+    &json,
+    Some(&dedupe),
+  )
+  .await;
 }
 
 fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {

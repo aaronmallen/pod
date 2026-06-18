@@ -10,6 +10,8 @@ pub type HandlerFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait KindHandler: Send + Sync {
   fn kind(&self) -> OutboxKind;
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>>;
 
   fn execute<'a>(
@@ -39,6 +41,8 @@ pub enum OutboxKind {
 }
 
 impl OutboxKind {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub const ALL: &'static [OutboxKind] = &[
     OutboxKind::MailSend,
     OutboxKind::MailSetRead,

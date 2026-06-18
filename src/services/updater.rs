@@ -55,6 +55,8 @@ impl Handle {
     let _ = self.commands.try_send(Command::Apply);
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn check(&self) {
     let _ = self.commands.try_send(Command::Check);
   }
@@ -67,6 +69,7 @@ impl Handle {
     let _ = self.commands.try_send(Command::Shutdown);
   }
 
+  #[expect(dead_code)]
   pub fn state(&self) -> State {
     self.state.borrow().clone()
   }
@@ -95,6 +98,8 @@ pub enum State {
 }
 
 impl State {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn version(&self) -> Option<&str> {
     match self {
       State::UpdateAvailable {

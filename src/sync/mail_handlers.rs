@@ -326,6 +326,8 @@ impl KindHandler for DeleteLabelHandler {
 
 #[derive(Debug, Deserialize)]
 struct DeleteLabelPayload {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   character_id: i64,
   label_id: i64,
 }

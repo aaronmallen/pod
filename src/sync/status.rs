@@ -67,6 +67,8 @@ impl OutboxStatus {
     self.count(OutboxPhase::Failed)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn last_error(&self, id: i64) -> Option<&str> {
     self
       .rows
@@ -112,6 +114,8 @@ impl SyncStatus {
     Self::default()
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn active(&self) -> usize {
     self.count(Phase::Syncing)
   }
@@ -162,18 +166,26 @@ impl SyncStatus {
     }
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn attention(&self) -> usize {
     self.count(Phase::Blocked) + self.count(Phase::NotReady)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn done(&self) -> usize {
     self.count(Phase::Done) + self.count(Phase::Empty)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn errors(&self) -> usize {
     self.count(Phase::BackingOff) + self.count(Phase::Failed)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn is_syncing(&self) -> bool {
     self.active() > 0
   }
@@ -182,6 +194,8 @@ impl SyncStatus {
     self.tasks.get(key).map(|task| task.phase)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn percent(&self) -> u8 {
     let total = self.total();
     if total == 0 {
@@ -208,10 +222,14 @@ impl SyncStatus {
     self.tasks.get(key).and_then(|task| task.retry_secs)
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn tasks(&self) -> impl Iterator<Item = &TaskStatus> {
     self.tasks.values()
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn total(&self) -> usize {
     self.tasks.len()
   }
@@ -257,6 +275,8 @@ enum OutboxPhase {
 
 #[derive(Clone, Debug)]
 struct OutboxRow {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   last_error: Option<String>,
   phase: OutboxPhase,
 }

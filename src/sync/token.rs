@@ -10,15 +10,21 @@ use crate::{
 const REFRESH_SKEW_SECS: i64 = 60;
 
 #[derive(Default)]
+// Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+#[allow(dead_code)]
 pub struct TokenCache {
   entries: HashMap<(i64, u8), Option<Grant>>,
 }
 
 impl TokenCache {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn new() -> Self {
     Self::default()
   }
 
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub async fn get(
     &mut self,
     db: &Database,
@@ -133,6 +139,8 @@ fn needs_refresh(expires_at: i64, now: i64, skew: i64) -> bool {
   expires_at - skew <= now
 }
 
+// Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+#[allow(dead_code)]
 fn owner_key(owner_type: OwnerType) -> u8 {
   match owner_type {
     OwnerType::Character => 0,

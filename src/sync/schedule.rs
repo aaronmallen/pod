@@ -22,6 +22,8 @@ pub struct Schedule {
 }
 
 impl Schedule {
+  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
+  #[allow(dead_code)]
   pub fn new() -> Self {
     Self::default()
   }

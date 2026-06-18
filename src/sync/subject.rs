@@ -5,6 +5,7 @@ pub enum Subject {
 }
 
 impl Subject {
+  #[expect(dead_code)]
   pub fn id(self) -> i64 {
     match self {
       Self::Character(id) | Self::Corporation(id) => id,

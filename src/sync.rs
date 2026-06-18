@@ -22,6 +22,8 @@ pub use engine::spawn;
 pub use event::Event;
 pub use handle::Handle;
 pub use job::{JobKey, JobKind};
+// Outcome is re-exported only for test fixtures (`outcome: sync::Outcome::synced()`); no production reader yet.
+#[allow(unused_imports)]
 pub use outcome::Outcome;
 pub use status::{OutboxStatus, Phase, SyncStatus};
 pub use structure_resolution::resolve_stockpile_location;

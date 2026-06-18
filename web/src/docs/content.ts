@@ -72,8 +72,8 @@ function loadDocPage(contentDir: string, sourcePath: string): DocPage {
   };
 }
 
-function slugForSource(contentDir: string, sourcePath: string): string {
+export function slugForSource(contentDir: string, sourcePath: string): string {
   const relative = path.relative(contentDir, sourcePath).replace(/\\/g, '/');
   const withoutExt = relative.replace(/\.md$/, '');
-  return withoutExt.replace(/\/index$/, '');
+  return withoutExt.replace(/(^|\/)index$/, '');
 }

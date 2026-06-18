@@ -8,7 +8,10 @@ use getset::{CopyGetters, Getters, MutGetters, Setters};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-use crate::store::fs_kind::{self, FsKind};
+use crate::{
+  store::fs_kind::{self, FsKind},
+  ui::components::rail::Destination,
+};
 
 const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
@@ -301,6 +304,9 @@ pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default)]
   storage: StorageConfig,
+  #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default, skip_serializing_if = "UiConfig::is_default")]
+  ui: UiConfig,
 }
 
 impl Default for Settings {
@@ -311,6 +317,7 @@ impl Default for Settings {
       features: FeatureFlags::default(),
       industry: IndustryConfig::default(),
       storage: StorageConfig::default(),
+      ui: UiConfig::default(),
     }
   }
 }
@@ -338,6 +345,14 @@ impl LogLevel {
   fn is_default(&self) -> bool {
     *self == LogLevel::default()
   }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NavLocation {
+  #[default]
+  Left,
+  Right,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
@@ -448,6 +463,50 @@ impl StorageMode {
   }
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Getters, MutGetters, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct UiConfig {
+  #[getset(get = "pub")]
+  #[serde(default)]
+  nav_location: NavLocation,
+  #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default = "default_rail_order", deserialize_with = "deserialize_rail_order")]
+  rail_order: Vec<Destination>,
+}
+
+impl UiConfig {
+  fn is_default(&self) -> bool {
+    *self == UiConfig::default()
+  }
+
+  pub fn sanitize(&mut self) {
+    let mut seen = Vec::with_capacity(Destination::REORDERABLE.len());
+
+    for &destination in &self.rail_order {
+      if Destination::REORDERABLE.contains(&destination) && !seen.contains(&destination) {
+        seen.push(destination);
+      }
+    }
+
+    for &destination in &Destination::REORDERABLE {
+      if !seen.contains(&destination) {
+        seen.push(destination);
+      }
+    }
+
+    self.rail_order = seen;
+  }
+}
+
+impl Default for UiConfig {
+  fn default() -> Self {
+    Self {
+      nav_location: NavLocation::default(),
+      rail_order: default_rail_order(),
+    }
+  }
+}
+
 pub fn cache_dir() -> PathBuf {
   dir_spec::cache_home()
     .unwrap_or_else(|| data_dir().join("cache"))
@@ -500,6 +559,27 @@ fn default_eve_client_id() -> String {
   EVE_CLIENT_ID.to_owned()
 }
 
+fn default_rail_order() -> Vec<Destination> {
+  Destination::REORDERABLE.to_vec()
+}
+
+/// Deserializes the rail order while silently dropping ids that are not a known [`Destination`], so a
+/// stale id from an older config (e.g. a removed `market`) can't fail the whole load.
+fn deserialize_rail_order<'de, D>(deserializer: D) -> Result<Vec<Destination>, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let ids = Vec::<String>::deserialize(deserializer)?;
+  Ok(
+    ids
+      .into_iter()
+      .filter_map(|id| {
+        Destination::deserialize(serde::de::value::StrDeserializer::<serde::de::value::Error>::new(&id)).ok()
+      })
+      .collect(),
+  )
+}
+
 fn default_scale_100() -> u8 {
   100
 }
@@ -537,10 +617,13 @@ pub fn load() -> Result<Settings, Error> {
 }
 
 fn load_from(path: &Path) -> Result<Settings, Error> {
-  Figment::from(Serialized::defaults(Settings::default()))
+  let mut settings: Settings = Figment::from(Serialized::defaults(Settings::default()))
     .merge(Toml::file(path))
     .extract()
-    .map_err(|error| Error::Load(Box::new(error)))
+    .map_err(|error| Error::Load(Box::new(error)))?;
+
+  settings.ui.sanitize();
+  Ok(settings)
 }
 
 pub fn log_dir() -> PathBuf {
@@ -1314,6 +1397,164 @@ mod tests {
 
       assert!(suggests, "the advisory fires for a network db_dir while in Direct mode");
       assert_eq!(seen.into_inner(), Some(PathBuf::from("/mnt/nas/pod")));
+    }
+  }
+
+  mod ui_config {
+    use super::*;
+
+    mod is_default {
+      use super::*;
+
+      #[test]
+      fn it_is_true_for_an_untouched_config() {
+        assert!(UiConfig::default().is_default());
+      }
+
+      #[test]
+      fn it_is_false_once_the_nav_location_moves() {
+        let mut ui = UiConfig::default();
+        ui.set_nav_location(NavLocation::Right);
+
+        assert!(!ui.is_default());
+      }
+    }
+
+    mod sanitize {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_appends_missing_known_destinations_in_default_order() {
+        let mut ui = UiConfig::default();
+        ui.set_rail_order(vec![Destination::Wallet, Destination::Mail]);
+
+        ui.sanitize();
+
+        assert_eq!(
+          *ui.rail_order(),
+          vec![
+            Destination::Wallet,
+            Destination::Mail,
+            Destination::Characters,
+            Destination::Skills,
+            Destination::Industry,
+            Destination::Calendar,
+            Destination::Assets,
+          ]
+        );
+      }
+
+      #[test]
+      fn it_drops_duplicates_keeping_the_first_occurrence() {
+        let mut ui = UiConfig::default();
+        ui.set_rail_order(vec![Destination::Assets, Destination::Assets]);
+
+        ui.sanitize();
+
+        assert_eq!(ui.rail_order().iter().filter(|&&d| d == Destination::Assets).count(), 1);
+        assert_eq!(ui.rail_order()[0], Destination::Assets);
+      }
+
+      #[test]
+      fn it_drops_the_pinned_settings_destination() {
+        let mut ui = UiConfig::default();
+        ui.set_rail_order(vec![Destination::Settings, Destination::Characters]);
+
+        ui.sanitize();
+
+        assert!(!ui.rail_order().contains(&Destination::Settings));
+      }
+
+      #[test]
+      fn it_heals_an_empty_order_to_the_full_default() {
+        let mut ui = UiConfig::default();
+        ui.set_rail_order(Vec::new());
+
+        ui.sanitize();
+
+        assert_eq!(*ui.rail_order(), Destination::REORDERABLE.to_vec());
+      }
+
+      #[test]
+      fn it_preserves_the_relative_order_of_known_items() {
+        let mut ui = UiConfig::default();
+        ui.set_rail_order(vec![
+          Destination::Calendar,
+          Destination::Characters,
+          Destination::Wallet,
+        ]);
+
+        ui.sanitize();
+
+        assert_eq!(ui.rail_order()[0], Destination::Calendar);
+        assert_eq!(ui.rail_order()[1], Destination::Characters);
+        assert_eq!(ui.rail_order()[2], Destination::Wallet);
+      }
+    }
+
+    mod serialization {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn a_customized_config_round_trips_through_toml() {
+        let mut ui = UiConfig::default();
+        ui.set_nav_location(NavLocation::Right);
+        ui.set_rail_order(vec![Destination::Assets, Destination::Mail]);
+
+        let toml = toml::to_string_pretty(&ui).unwrap();
+        let restored: UiConfig = toml::from_str(&toml).unwrap();
+
+        assert_eq!(restored, ui);
+        assert!(
+          toml.contains("nav_location = \"right\""),
+          "nav_location must persist in snake_case: {toml}"
+        );
+      }
+
+      #[test]
+      fn a_default_settings_serializes_without_a_ui_table() {
+        let toml = toml::to_string_pretty(&Settings::default()).unwrap();
+
+        assert!(
+          !toml.contains("[ui]"),
+          "a default ui table must not leak to disk: {toml}"
+        );
+      }
+
+      #[test]
+      fn it_drops_an_unknown_destination_on_load_via_serialized_order() {
+        let toml = "[ui]\nrail_order = [\"market\", \"characters\"]\n";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, toml).unwrap();
+
+        let ui = load_from(&path).unwrap().ui().to_owned();
+
+        assert!(!ui.rail_order().is_empty());
+        assert_eq!(*ui.rail_order(), Destination::REORDERABLE.to_vec());
+      }
+
+      #[test]
+      fn it_round_trips_through_the_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut settings = Settings::default();
+        settings.ui_mut().set_nav_location(NavLocation::Right);
+        settings
+          .ui_mut()
+          .set_rail_order(vec![Destination::Assets, Destination::Wallet]);
+
+        save_to(&path, &settings).unwrap();
+        let loaded = load_from(&path).unwrap();
+
+        assert_eq!(loaded.ui().nav_location(), &NavLocation::Right);
+        assert_eq!(loaded.ui().rail_order()[0], Destination::Assets);
+        assert_eq!(loaded.ui().rail_order()[1], Destination::Wallet);
+      }
     }
   }
 }

@@ -1108,6 +1108,7 @@ pub fn combined_liquid(state: &State) -> Option<f64> {
   sum_option([character_liquid, state.owned_corp_liquid()].into_iter())
 }
 
+// Kept: tested aggregation over loaded `state.periods`, awaiting the period-totals UI wiring; deletion would orphan the loaded `periods` data.
 #[allow(dead_code)]
 pub fn period_totals(state: &State) -> PeriodTotals {
   let ids: std::collections::HashSet<i64> = state.scope_ids().into_iter().collect();

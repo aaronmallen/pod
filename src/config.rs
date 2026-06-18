@@ -113,7 +113,6 @@ pub enum Error {
   Write(String),
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Feature {
   AssetTracking,
@@ -131,7 +130,6 @@ pub enum Feature {
 }
 
 impl Feature {
-  #[allow(dead_code)]
   pub const ALL: [Feature; 12] = [
     Feature::CloneMonitoring,
     Feature::Contacts,
@@ -147,7 +145,6 @@ impl Feature {
     Feature::AssetTracking,
   ];
 
-  #[allow(dead_code)]
   pub fn noun(self) -> &'static str {
     match self {
       Feature::AssetTracking => "Asset",
@@ -207,7 +204,6 @@ pub struct FeatureFlags {
   wallet: bool,
 }
 
-#[allow(dead_code)]
 impl FeatureFlags {
   pub fn enabled(&self) -> Vec<Feature> {
     Feature::ALL
@@ -391,7 +387,6 @@ impl StorageConfig {
     }
   }
 
-  #[allow(dead_code)]
   pub fn machine_id_or_generate(&mut self) -> String {
     if let Some(id) = &self.machine_id {
       return id.clone();
@@ -414,7 +409,6 @@ impl StorageConfig {
     self.db_dir.clone().unwrap_or_else(data_dir)
   }
 
-  #[allow(dead_code)]
   pub fn resolved_log_dir(&self) -> PathBuf {
     self.log_dir.clone().unwrap_or_else(log_dir)
   }
@@ -439,12 +433,10 @@ impl StorageConfig {
   }
 
   /// Advisory for a UI hint only: reports a network db_dir while sync is off. Never changes the mode.
-  #[allow(dead_code)]
   pub fn suggests_network_sync(&self) -> bool {
     self.suggests_network_sync_with(fs_kind::detect)
   }
 
-  #[allow(dead_code)]
   fn suggests_network_sync_with(&self, detect: impl Fn(&Path) -> FsKind) -> bool {
     !self.network && detect(&self.resolved_db_dir()).is_network()
   }
@@ -454,13 +446,6 @@ impl StorageConfig {
 pub enum StorageMode {
   Direct,
   Sync,
-}
-
-impl StorageMode {
-  #[allow(dead_code)]
-  pub fn is_sync(self) -> bool {
-    matches!(self, StorageMode::Sync)
-  }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Getters, MutGetters, PartialEq, Serialize, Setters)]
@@ -542,11 +527,6 @@ fn resolve_working_copy_dir(state_home: Option<PathBuf>, fallback_root: PathBuf)
     .join(WORKING_COPY_SUBDIR)
 }
 
-#[allow(dead_code)]
-pub fn database_path() -> PathBuf {
-  data_dir().join("pod.db")
-}
-
 fn default_calendar_density() -> CalendarDensity {
   CalendarDensity::default()
 }
@@ -588,7 +568,6 @@ fn default_true() -> bool {
   true
 }
 
-#[allow(dead_code)]
 fn generate_machine_id() -> String {
   let mut bytes = [0u8; 16];
   rand::rng().fill_bytes(&mut bytes);
@@ -692,20 +671,6 @@ fn save_to(path: &Path, settings: &Settings) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  mod database_path {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_is_pod_db_under_the_data_dir() {
-      let path = database_path();
-
-      assert_eq!(path.file_name().unwrap(), "pod.db");
-      assert!(path.starts_with(data_dir()));
-    }
-  }
 
   mod feature {
     use super::*;

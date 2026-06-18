@@ -457,7 +457,6 @@ impl Route {
   }
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 struct Runtime {
   db: store::Database,

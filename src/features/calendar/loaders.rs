@@ -60,6 +60,7 @@ impl CalendarEvent {
     OwnerType::from_esi(&self.owner_type)
   }
 
+  #[allow(dead_code)]
   pub fn is_synthetic(&self) -> bool {
     self.owner_type == OVERLAY_OWNER
   }

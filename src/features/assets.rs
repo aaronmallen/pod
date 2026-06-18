@@ -183,7 +183,6 @@ pub enum Message {
   AbyssalSourceTypeSelected(Option<i64>),
   AbyssalStatMaxChanged(i64, f64),
   AbyssalStatMinChanged(i64, f64),
-  #[allow(dead_code)]
   AbyssalStatRangeChanged(i64, SliderEndpoint, f64),
   AbyssalStatTemplatesLoaded(Vec<StatTemplate>),
   AbyssalTypeModalClosed,
@@ -210,7 +209,6 @@ pub enum Message {
   PaneDrag(f32),
   PaneDragEnd,
   PaneDragStart(Pane),
-  #[allow(dead_code)]
   PaneSettled(&'static str, f32),
   PickerToggled,
   ReauthRequested(i64),
@@ -461,7 +459,6 @@ impl State {
     }
   }
 
-  #[allow(dead_code)]
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
     let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
     self.sidebar = PaneDrag::from_store(ui, SIDEBAR_PANE_KEY, SIDEBAR_DEFAULT_WIDTH, host_width);

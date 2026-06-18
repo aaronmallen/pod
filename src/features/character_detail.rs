@@ -261,7 +261,6 @@ impl Message {
 #[derive(Clone, Debug)]
 pub struct PickerPilot {
   pub corp: String,
-  #[allow(dead_code)]
   pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,

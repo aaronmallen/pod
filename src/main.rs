@@ -4,13 +4,10 @@ mod app;
 mod clients;
 mod config;
 mod features;
-#[allow(dead_code)]
 mod services;
 mod store;
-#[allow(dead_code)]
 mod sync;
 mod ui;
-#[allow(dead_code)]
 mod window_state;
 
 fn main() -> iced::Result {

@@ -36,7 +36,6 @@ pub struct Loaded {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  #[allow(dead_code)]
   CloseRequested,
   DataLoaded(Box<Loaded>),
   GroupToggled(i64),
@@ -107,7 +106,6 @@ impl State {
     self.expanded.contains(&group_id)
   }
 
-  #[allow(dead_code)]
   pub(super) fn is_loading(&self) -> bool {
     self.loading
   }

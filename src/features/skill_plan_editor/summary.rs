@@ -41,7 +41,6 @@ pub(super) struct SummaryData {
   pub base_attrs: Attributes,
   pub character_total_sp: u64,
   pub current_base_sec: f64,
-  #[allow(dead_code)]
   pub current_sec: f64,
   pub group_sec: HashMap<String, f64>,
   pub implant_effect: ImplantEffect,

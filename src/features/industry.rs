@@ -3,9 +3,7 @@ mod extractions;
 mod jobs;
 mod loaders;
 mod planner;
-#[allow(dead_code)]
 mod planner_loaders;
-#[allow(dead_code)]
 mod planner_model;
 mod planner_search;
 mod shell;

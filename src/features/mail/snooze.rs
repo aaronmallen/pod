@@ -14,7 +14,6 @@ use crate::{
   },
 };
 
-#[allow(dead_code)]
 pub(super) const DOWNTIME_HOUR: u32 = 11;
 
 const MENU_WIDTH: f32 = 240.0;

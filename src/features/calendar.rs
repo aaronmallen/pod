@@ -1,7 +1,3 @@
-// The module and its public surface (Message/State/update/view/load) are mounted by the app
-// router in a follow-up change; until then the wiring is dead from the binary's perspective.
-#![allow(dead_code)]
-
 mod agenda;
 mod day;
 mod detail;

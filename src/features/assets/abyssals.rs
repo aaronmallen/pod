@@ -85,16 +85,6 @@ pub struct AbyssalStat {
   pub(super) unit_suffix: String,
 }
 
-impl AbyssalStat {
-  #[allow(dead_code)]
-  pub(super) fn delta_pct(&self) -> f64 {
-    if self.base_value.abs() < f64::EPSILON {
-      return 0.0;
-    }
-    (self.rolled - self.base_value) / self.base_value * 100.0
-  }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct AbyssalsData {
   pub(super) cards: Vec<AbyssalCard>,
@@ -480,22 +470,6 @@ mod tests {
       stats: vec![stat(50, 47.0, 41.0, (28.0, 56.0)), stat(51, 8.5, 7.1, (5.0, 12.0))],
       tier_label: tier.to_owned(),
       type_icon: IconResolution::Missing,
-    }
-  }
-
-  mod delta_pct {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_computes_the_signed_delta_from_base() {
-      assert_eq!(stat(1, 100.0, 80.0, (60.0, 140.0)).delta_pct(), -20.0);
-    }
-
-    #[test]
-    fn it_is_zero_when_base_is_zero() {
-      assert_eq!(stat(1, 0.0, 5.0, (0.0, 0.0)).delta_pct(), 0.0);
     }
   }
 

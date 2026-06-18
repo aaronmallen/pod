@@ -526,7 +526,6 @@ static MODAL_LAYOUT: &[&[ModalSection]] = &[
   ],
 ];
 
-#[allow(dead_code)]
 static MODAL_SOURCE_PATTERNS: &[(i64, &str)] = &[
   (47702, "Stasis Webifier"),
   (47732, "Warp Scrambler"),

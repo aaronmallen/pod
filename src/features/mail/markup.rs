@@ -14,7 +14,6 @@
 //!
 //! The compose panel (task `uwqlrkzr-C`) is the first consumer; until it lands
 //! the public surface is unused, so the module allows dead code.
-#![allow(dead_code)]
 
 /// `showinfo:` type-id for a character.
 pub const CHARACTER_TYPE_ID: i64 = 1377;
@@ -40,19 +39,6 @@ pub enum Link {
   Http { url: String, text: String },
   /// A solar-system entity link (`showinfo:5//<system-id>`).
   SolarSystem { id: i64, name: String },
-  /// A station entity link.
-  ///
-  /// When `type_id` is `Some`, this renders a per-station showinfo link
-  /// (`showinfo:<type-id>//<station-id>`). When it is `None` — i.e. the SDE
-  /// could not supply a reliable per-station type-id — the link degrades to a
-  /// solar-system-level link so the reader still gets a clickable target near
-  /// the station rather than a dead href. The display text is unchanged.
-  Station {
-    id: i64,
-    name: String,
-    system_id: i64,
-    type_id: Option<i64>,
-  },
 }
 
 impl Link {
@@ -88,20 +74,6 @@ impl Link {
     }
   }
 
-  /// Build a station link.
-  ///
-  /// `type_id` is the per-station showinfo type-id from the SDE
-  /// (`stations.type_id`). Pass `None` when no reliable type-id is available to
-  /// degrade to a solar-system-level link anchored at `system_id`.
-  pub fn station(id: i64, name: impl Into<String>, system_id: i64, type_id: Option<i64>) -> Self {
-    Self::Station {
-      id,
-      name: name.into(),
-      system_id,
-      type_id,
-    }
-  }
-
   /// Render this link as EVE wire markup (`<a href="...">text</a>`).
   pub fn to_markup(&self) -> String {
     match self {
@@ -121,15 +93,6 @@ impl Link {
         id,
         name,
       } => showinfo_link(SOLAR_SYSTEM_TYPE_ID, *id, name),
-      Self::Station {
-        id,
-        name,
-        system_id,
-        type_id,
-      } => match type_id {
-        Some(type_id) => showinfo_link(*type_id, *id, name),
-        None => showinfo_link(SOLAR_SYSTEM_TYPE_ID, *system_id, name),
-      },
     }
   }
 }
@@ -218,26 +181,6 @@ mod tests {
       let link = Link::http("https://example.com/op", "Op details");
 
       assert_eq!(link.to_markup(), "<a href=\"https://example.com/op\">Op details</a>");
-    }
-
-    #[test]
-    fn it_builds_a_station_link_with_the_per_station_type_id() {
-      let link = Link::station(60_003_760, "Jita IV - Moon 4", 30_000_142, Some(52678));
-
-      assert_eq!(
-        link.to_markup(),
-        "<a href=\"showinfo:52678//60003760\">Jita IV - Moon 4</a>"
-      );
-    }
-
-    #[test]
-    fn it_degrades_a_station_without_a_type_id_to_a_system_link() {
-      let link = Link::station(60_003_760, "Jita IV - Moon 4", 30_000_142, None);
-
-      assert_eq!(
-        link.to_markup(),
-        "<a href=\"showinfo:5//30000142\">Jita IV - Moon 4</a>"
-      );
     }
   }
 }

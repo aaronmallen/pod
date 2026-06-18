@@ -72,7 +72,6 @@ pub struct SkillCatalog {
 
 #[derive(Clone, Debug)]
 pub struct SkillCatalogEntry {
-  #[allow(dead_code)]
   pub group_id: i64,
   pub group_name: String,
   pub name: String,

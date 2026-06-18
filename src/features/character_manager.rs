@@ -370,12 +370,10 @@ impl State {
     self.filtered.is_some()
   }
 
-  #[allow(dead_code)]
   pub fn search_help_open(&self) -> bool {
     self.search_help_open
   }
 
-  #[allow(dead_code)]
   pub fn search_query(&self) -> &str {
     &self.search_query
   }

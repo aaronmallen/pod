@@ -199,7 +199,6 @@ pub enum Message {
   },
   Selected(i64),
   SnoozeCalendarBack,
-  #[allow(dead_code)]
   SnoozeCalendarChip(u32, u32),
   SnoozeCalendarConfirmed,
   SnoozeCalendarDaySelected(i32, u32, u32),

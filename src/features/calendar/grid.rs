@@ -11,6 +11,7 @@ const ACCENT_WIDTH: f32 = 3.0;
 
 pub(super) const MIN_BLOCK_MINUTES: i64 = 30;
 
+#[expect(dead_code)]
 pub(super) const MINUTES_PER_DAY: i64 = 1440;
 
 #[derive(Clone, Copy)]

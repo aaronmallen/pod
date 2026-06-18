@@ -562,6 +562,73 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn reset_on_industry_is_a_no_op_when_the_feature_is_disabled() {
+    let mut state = state().await;
+    state.settings.features_mut().set_industry(false);
+    state.settings.industry_mut().set_manufacturing(Some(60_003_760));
+    state.active = Category::Industry;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::Persist);
+    assert_eq!(
+      *state.settings.industry().manufacturing(),
+      Some(60_003_760),
+      "a disabled Industry category must leave the industry defaults untouched"
+    );
+  }
+
+  #[tokio::test]
+  async fn reset_on_industry_restores_defaults_when_the_feature_is_enabled() {
+    let mut state = state().await;
+    state.settings.features_mut().set_industry(true);
+    state.settings.industry_mut().set_manufacturing(Some(60_003_760));
+    state.active = Category::Industry;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::Persist);
+    assert_eq!(*state.settings.industry().manufacturing(), None);
+  }
+
+  #[tokio::test]
+  async fn reset_on_storage_restores_the_default_network_setting() {
+    let mut state = state().await;
+    state.settings.storage_mut().set_network(true);
+    state.active = Category::Storage;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::Persist);
+    assert!(!state.settings.storage().network());
+  }
+
+  #[tokio::test]
+  async fn reset_on_tags_is_a_no_op() {
+    let mut state = state().await;
+    state.active = Category::Tags;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::Persist);
+  }
+
+  #[tokio::test]
+  async fn reset_on_ui_restores_the_default_layout_and_signals_a_live_change() {
+    let mut state = state().await;
+    state
+      .settings
+      .ui_mut()
+      .set_nav_location(crate::config::NavLocation::Right);
+    state.active = Category::Ui;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::UiChanged);
+    assert_eq!(*state.settings.ui().nav_location(), crate::config::NavLocation::Left);
+  }
+
+  #[tokio::test]
   async fn reset_to_defaults_restores_the_active_category() {
     let mut state = state().await;
     state.settings.features_mut().set_wallet(false);

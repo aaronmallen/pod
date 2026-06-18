@@ -79,10 +79,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/copy.svg"))
   }
 
-  pub fn doc() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/doc.svg"))
-  }
-
   #[allow(dead_code)]
   pub fn corp() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/corp.svg"))
@@ -91,6 +87,10 @@ impl Icon {
   #[allow(dead_code)]
   pub fn cross() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/cross.svg"))
+  }
+
+  pub fn doc() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/doc.svg"))
   }
 
   pub fn draft() -> Self {

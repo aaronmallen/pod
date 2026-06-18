@@ -47,6 +47,21 @@ impl State {
   }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Direction {
+  Down,
+  Up,
+}
+
+impl Direction {
+  fn glyph(self) -> &'static str {
+    match self {
+      Direction::Down => "\u{2193}",
+      Direction::Up => "\u{2191}",
+    }
+  }
+}
+
 pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
     Message::Dropped => {
@@ -662,21 +677,6 @@ fn order_button<'a>(direction: Direction, index: usize, disabled: bool) -> Eleme
       }
     })
     .into()
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Direction {
-  Down,
-  Up,
-}
-
-impl Direction {
-  fn glyph(self) -> &'static str {
-    match self {
-      Direction::Down => "\u{2193}",
-      Direction::Up => "\u{2191}",
-    }
-  }
 }
 
 #[cfg(test)]

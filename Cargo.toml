@@ -39,7 +39,6 @@ libs = [
 schemes = ["eveauth-pod"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
-muda = "0.19"
 objc2 = "0.6"
 objc2-core-services = { features = ["AE"], version = "0.3" }
 objc2-foundation = { features = [

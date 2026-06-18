@@ -4,7 +4,6 @@ use iced::window;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
-  About,
   Compare,
   Main,
   SkillPlanEditor,
@@ -17,7 +16,7 @@ impl Window {
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
-      Self::About | Self::Splash => None,
+      Self::Splash => None,
     }
   }
 }
@@ -119,11 +118,6 @@ mod tests {
     #[test]
     fn it_maps_the_skill_plan_editor_to_a_stable_key() {
       assert_eq!(Window::SkillPlanEditor.state_key(), Some("skill_plan_editor"));
-    }
-
-    #[test]
-    fn it_never_persists_about() {
-      assert_eq!(Window::About.state_key(), None);
     }
 
     #[test]

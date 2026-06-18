@@ -120,6 +120,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/forward.svg"))
   }
 
+  pub fn heart() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/heart.svg"))
+  }
+
   pub fn help() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/help.svg"))
   }

@@ -19,14 +19,12 @@ use iced::{
 };
 use windows::{Window, Windows};
 
-#[cfg(target_os = "macos")]
-use crate::services::menu;
 use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    about, assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot,
-    corporation_detail, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
+    assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, corporation_detail,
+    industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::{images, updater},
   store,
@@ -45,10 +43,6 @@ use crate::{
   },
   window_state::{self, UiState, WindowGeometry, coalesce::WriteCoalescer, validity},
 };
-
-const ABOUT_WINDOW_HEIGHT: f32 = 240.0;
-
-const ABOUT_WINDOW_WIDTH: f32 = 360.0;
 
 const CHIP_OPEN_TINT_ALPHA: f32 = 0.06;
 
@@ -106,7 +100,6 @@ static UPDATER_RECEIVER: std::sync::Mutex<Option<tokio::sync::watch::Receiver<up
   std::sync::Mutex::new(None);
 
 struct App {
-  about: Option<window::Id>,
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
   auth: auth::State,
@@ -200,7 +193,6 @@ struct HolderInfo {
 
 #[derive(Clone, Debug)]
 enum Message {
-  About(about::Message),
   Assets(assets::Message),
   Auth(auth::Message),
   Calendar(calendar::Message),
@@ -228,16 +220,13 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
-  #[cfg(target_os = "macos")]
-  Menu(menu::MenuAction),
   Nav(rail::Destination),
-  // Only constructed by the macOS native menu; the About window has no other entry point yet.
-  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-  OpenAbout,
   PeriodicPull,
   PeriodicPush,
   Pulled(bool),
   Pushed(Option<SystemTime>),
+  #[cfg(target_os = "macos")]
+  Quit,
   ReacquireLease,
   Ready(Runtime),
   ReauthCharacter(i64),
@@ -293,7 +282,6 @@ impl Message {
 
   fn feature_variant_name(&self) -> Option<&'static str> {
     Some(match self {
-      Message::About(_) => "About",
       Message::Assets(_) => "Assets",
       Message::Auth(_) => "Auth",
       Message::Calendar(_) => "Calendar",
@@ -305,8 +293,6 @@ impl Message {
       Message::Industry(_) => "Industry",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
-      #[cfg(target_os = "macos")]
-      Message::Menu(_) => "Menu",
       Message::Nav(_) => "Nav",
       Message::Settings(_) => "Settings",
       Message::SkillPlanEditor(_) => "SkillPlanEditor",
@@ -332,7 +318,8 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
-      Message::OpenAbout => "OpenAbout",
+      #[cfg(target_os = "macos")]
+      Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
       Message::SeedProgress(_) => "SeedProgress",
@@ -751,8 +738,6 @@ fn boot() -> (App, Task<Message>) {
   store::images::init_root(image_root);
 
   auth::install();
-  #[cfg(target_os = "macos")]
-  menu::init();
   let settings = window::Settings {
     size: Size::new(spacing::layout::SPLASH_WIDTH, spacing::layout::SPLASH_HEIGHT),
     decorations: false,
@@ -775,7 +760,6 @@ fn boot() -> (App, Task<Message>) {
   }
 
   let app = App {
-    about: None,
     accessibility,
     assets: None,
     auth: auth::State::default(),
@@ -1131,7 +1115,6 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
     Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
-    Some(Window::About) => close_about_window(app, id),
     _ => {
       app.windows.remove(id);
       window::close(id)
@@ -1145,7 +1128,6 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
     return Task::none();
   };
   match kind {
-    Window::About if app.about == Some(id) => app.about = None,
     Window::Compare if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) => app.compare = None,
     Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
     _ => {}
@@ -2280,7 +2262,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
   #[cfg(target_os = "macos")]
-  subs.push(menu::subscription().map(Message::Menu));
+  subs.push(quit_shortcut_subscription());
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
@@ -2315,6 +2297,19 @@ fn subscription(app: &App) -> Subscription<Message> {
     subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
   }
   Subscription::batch(subs)
+}
+
+/// Restores the Cmd-Q quit accelerator that the now-removed native macOS menu used to provide.
+#[cfg(target_os = "macos")]
+fn quit_shortcut_subscription() -> Subscription<Message> {
+  iced::event::listen_with(|event, _status, _id| match event {
+    iced::Event::Keyboard(keyboard::Event::KeyPressed {
+      key: keyboard::Key::Character(c),
+      modifiers,
+      ..
+    }) if modifiers.command() && c.as_str().eq_ignore_ascii_case("q") => Some(Message::Quit),
+    _ => None,
+  })
 }
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
@@ -2506,54 +2501,6 @@ fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([window::close(id), reload])
 }
 
-#[cfg(target_os = "macos")]
-fn handle_menu(app: &mut App, action: menu::MenuAction) -> Task<Message> {
-  match action {
-    menu::MenuAction::About => Task::done(Message::OpenAbout),
-    menu::MenuAction::CheckUpdates => {
-      if let Some(handle) = &app.updater {
-        handle.check();
-      }
-      Task::none()
-    }
-    menu::MenuAction::Quit => shutdown(app),
-  }
-}
-
-fn open_about_window(app: &mut App) -> Task<Message> {
-  if app.about.is_some() {
-    return Task::none();
-  }
-
-  let settings = window::Settings {
-    size: Size::new(ABOUT_WINDOW_WIDTH, ABOUT_WINDOW_HEIGHT),
-    position: window::Position::Centered,
-    resizable: false,
-    icon: app_icon(),
-    ..window::Settings::default()
-  };
-  let (id, open_task) = window::open(settings);
-  app.windows.register(id, Window::About);
-  app.about = Some(id);
-  open_task.map(Message::WindowOpened)
-}
-
-fn close_about_window(app: &mut App, id: window::Id) -> Task<Message> {
-  if app.about == Some(id) {
-    app.about = None;
-  }
-  app.windows.remove(id);
-  window::close(id)
-}
-
-fn handle_about(app: &mut App, msg: about::Message) -> Task<Message> {
-  let dismiss = about::update(msg);
-  match (dismiss, app.about) {
-    (true, Some(id)) => close_about_window(app, id),
-    _ => Task::none(),
-  }
-}
-
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
@@ -2576,7 +2523,6 @@ fn update(app: &mut App, message: Message) -> Task<Message> {
 
 fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
   Ok(match message {
-    Message::About(msg) => handle_about(app, msg),
     Message::Assets(msg) => handle_assets(app, msg),
     Message::Auth(msg) => handle_auth(app, msg),
     Message::Calendar(msg) => handle_calendar(app, msg),
@@ -2588,8 +2534,6 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
-    #[cfg(target_os = "macos")]
-    Message::Menu(action) => handle_menu(app, action),
     Message::Nav(destination) => handle_nav(app, destination),
     Message::Settings(msg) => handle_settings(app, msg),
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
@@ -2647,7 +2591,8 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    Message::OpenAbout => open_about_window(app),
+    #[cfg(target_os = "macos")]
+    Message::Quit => shutdown(app),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
     Message::UpdaterDismissToast => handle_updater_dismiss_toast(app),
@@ -4264,7 +4209,6 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
       }
       _ => blank(),
     },
-    Some(Window::About) => about::view().map(Message::About),
     _ => blank(),
   }
 }
@@ -4285,7 +4229,6 @@ mod tests {
 
   fn test_app() -> App {
     App {
-      about: None,
       accessibility: config::AccessibilityConfig::default(),
       assets: None,
       auth: auth::State::default(),
@@ -4769,7 +4712,6 @@ mod tests {
         Message::InitFailed("boom".to_owned()),
         Message::LeaseHeartbeat,
         Message::LockReleased,
-        Message::OpenAbout,
         Message::PeriodicPush,
         Message::Pushed(None),
         Message::ReauthCharacter(1),
@@ -5914,15 +5856,6 @@ mod tests {
       let _ = update(&mut app, Message::UpdaterDismissToast);
 
       assert!(app.updater_toast_dismissed, "the toast hides after a dismiss");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[tokio::test]
-    async fn it_dispatches_each_native_menu_action() {
-      let mut app = test_app();
-
-      let _about = handle_menu(&mut app, menu::MenuAction::About);
-      let _check = handle_menu(&mut app, menu::MenuAction::CheckUpdates);
     }
 
     #[tokio::test]
@@ -7709,7 +7642,6 @@ mod tests {
       );
       assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
       assert_eq!(Message::LeaseHeartbeat.variant_name(), "LeaseHeartbeat");
-      assert_eq!(Message::OpenAbout.variant_name(), "OpenAbout");
       assert_eq!(Message::PeriodicPull.variant_name(), "PeriodicPull");
       assert_eq!(Message::PeriodicPush.variant_name(), "PeriodicPush");
       assert_eq!(Message::Pulled(false).variant_name(), "Pulled");

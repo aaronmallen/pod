@@ -1175,8 +1175,12 @@ mod tests {
       let unified = load_messages(&db, Scope::Character(CHAR), Folder::Unified).await;
       assert_eq!(
         ids(&unified),
-        vec![1, 2, 3, 5],
-        "the unified folder combines the roster's mail"
+        vec![1, 3, 5],
+        "the unified folder combines the roster's mail, excluding self-sent mail"
+      );
+      assert!(
+        !ids(&unified).contains(&2),
+        "self-sent mail (from_id == character_id) never appears in All Inboxes"
       );
 
       let labelled = load_messages(&db, Scope::Character(CHAR), Folder::Label(LABEL)).await;

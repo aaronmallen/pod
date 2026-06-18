@@ -394,6 +394,7 @@ pub async fn unified(db: &Database) -> Result<Vec<UnifiedMail>, Error> {
   let rows = sqlx::query_as::<_, UnifiedMail>(
     "SELECT character_id, mail_id, from_id, from_name, subject, timestamp, is_read, \
       has_attachment, important, from_corp, from_system, body FROM mail_unified \
+    WHERE from_id != character_id \
     ORDER BY timestamp DESC, mail_id DESC",
   )
   .fetch_all(&db.0)
@@ -829,7 +830,8 @@ pub async fn search_visible_unified_page(
   let pattern = format!("%{}%", escape_like(needle));
   let mut builder = QueryBuilder::<Sqlite>::new(
     "SELECT m.character_id, m.mail_id, m.from_id, m.from_name, m.subject, m.timestamp, m.is_read, \
-      m.has_attachment, m.important, m.from_corp, m.from_system, m.body FROM mail_unified m WHERE 1 = 1",
+      m.has_attachment, m.important, m.from_corp, m.from_system, m.body FROM mail_unified m \
+      WHERE m.from_id != m.character_id",
   );
   push_visible_tail_predicate(&mut builder, now, false);
   builder.push(" AND (m.subject LIKE ");
@@ -950,7 +952,8 @@ pub async fn visible_unified(db: &Database, now: &str) -> Result<Vec<UnifiedMail
     "SELECT m.character_id, m.mail_id, m.from_id, m.from_name, m.subject, m.timestamp, m.is_read, \
       m.has_attachment, m.important, m.from_corp, m.from_system, m.body \
     FROM mail_unified m \
-    WHERE NOT EXISTS ( \
+    WHERE m.from_id != m.character_id \
+    AND NOT EXISTS ( \
       SELECT 1 FROM mail_folder_assignment fa \
       WHERE fa.character_id = m.character_id AND fa.mail_id = m.mail_id \
     ) AND NOT EXISTS ( \
@@ -1868,6 +1871,56 @@ mod overlay_tests {
     }
   }
 
+  /// A corp broadcast: `from_corp = 1` and a sender id distinct from the owner.
+  fn corp_sender(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id: 98_000_001,
+      from_name: "Test Corp".to_owned(),
+      from_corp: true,
+      is_read: false,
+      mail_id,
+      subject: Some("Corp".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
+    }
+  }
+
+  /// System mail: `from_system = 1`.
+  fn system_sender(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id: 1,
+      from_name: "EVE System".to_owned(),
+      from_system: true,
+      is_read: false,
+      mail_id,
+      subject: Some("System".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
+    }
+  }
+
+  /// A mail received by `character_id` whose sender is another owned character.
+  fn cross_character(character_id: i64, mail_id: i64, from_id: i64, ts: &str) -> CharacterMail {
+    CharacterMail {
+      character_id,
+      from_id,
+      from_name: "Other Pilot".to_owned(),
+      is_read: false,
+      mail_id,
+      subject: Some("Cross".to_owned()),
+      timestamp: ts.to_owned(),
+      ..Default::default()
+    }
+  }
+
+  /// Override a header's subject so search tests can share one needle across senders.
+  fn with_subject(mut header: CharacterMail, subject: &str) -> CharacterMail {
+    header.subject = Some(subject.to_owned());
+    header
+  }
+
   async fn store_mail(db: &Database, header: &CharacterMail) {
     let body = CharacterMailBody {
       body: "<p>x</p>".to_owned(),
@@ -2502,6 +2555,91 @@ mod overlay_tests {
         unified.iter().map(|m| (m.character_id, m.mail_id)).collect::<Vec<_>>(),
         [(42, 1)]
       );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_self_sent_mail_but_keeps_corp_system_and_cross_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
+      store_mail(&db, &sent(42, 2, "2026-06-02T10:00:00Z")).await;
+      store_mail(&db, &corp_sender(43, 3, "2026-06-03T10:00:00Z")).await;
+      store_mail(&db, &system_sender(43, 4, "2026-06-04T10:00:00Z")).await;
+      store_mail(&db, &cross_character(43, 5, 42, "2026-06-05T10:00:00Z")).await;
+
+      let unified = super::visible_unified(&db, NOW).await.unwrap();
+
+      let ids = unified.iter().map(|m| m.mail_id).collect::<Vec<_>>();
+      assert_eq!(ids, [5, 4, 3, 1]);
+      assert!(!ids.contains(&2), "self-sent mail 2 must be absent from All Inboxes");
+    }
+  }
+
+  mod search_visible_unified_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_excludes_self_sent_mail_from_search_results() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      // All share the searchable subject "Pod" so only the self-sent predicate filters.
+      store_mail(
+        &db,
+        &with_subject(received(42, 1, "2026-06-01T10:00:00Z", false), "Pod from stranger"),
+      )
+      .await;
+      store_mail(&db, &with_subject(sent(42, 2, "2026-06-02T10:00:00Z"), "Pod self sent")).await;
+      store_mail(
+        &db,
+        &with_subject(corp_sender(43, 3, "2026-06-03T10:00:00Z"), "Pod corp"),
+      )
+      .await;
+      store_mail(
+        &db,
+        &with_subject(cross_character(43, 5, 42, "2026-06-05T10:00:00Z"), "Pod cross"),
+      )
+      .await;
+
+      let page = super::search_visible_unified_page(&db, NOW, "Pod", None, 50)
+        .await
+        .unwrap();
+
+      let ids = page.iter().map(|m| m.mail_id).collect::<Vec<_>>();
+      assert_eq!(ids, [5, 3, 1]);
+      assert!(!ids.contains(&2), "self-sent mail 2 must not appear in unified search");
+    }
+  }
+
+  mod unified_helper {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_excludes_self_sent_mail_but_keeps_corp_system_and_cross_character() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+      // Received from a stranger.
+      store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
+      // Self-sent by 42 (from_id == character_id): must be hidden from All Inboxes.
+      store_mail(&db, &sent(42, 2, "2026-06-02T10:00:00Z")).await;
+      // Corp broadcast (from_corp = 1) with a sender id distinct from the owner.
+      store_mail(&db, &corp_sender(43, 3, "2026-06-03T10:00:00Z")).await;
+      // System mail (from_system = 1).
+      store_mail(&db, &system_sender(43, 4, "2026-06-04T10:00:00Z")).await;
+      // 42 sent a mail 43 received: from_id (42) != 43's character_id, so 43's copy stays.
+      store_mail(&db, &cross_character(43, 5, 42, "2026-06-05T10:00:00Z")).await;
+
+      let unified = super::unified(&db).await.unwrap();
+
+      let ids = unified.iter().map(|m| m.mail_id).collect::<Vec<_>>();
+      assert_eq!(ids, [5, 4, 3, 1]);
+      assert!(!ids.contains(&2), "self-sent mail 2 must be absent from All Inboxes");
     }
   }
 

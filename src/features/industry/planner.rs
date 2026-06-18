@@ -58,7 +58,6 @@ impl Economics {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityPickerState {
-  pub anchor: Point,
   pub query: String,
   /// Live ESI search results (stations resolved from the SDE, structures via the authenticated
   /// endpoint), replacing the local list once a query reaches [`FACILITY_SEARCH_MIN_CHARS`].
@@ -913,7 +912,6 @@ impl Planner {
       // Typing into the always-visible field opens the picker for that type.
       None => {
         self.facility_picker = Some(FacilityPickerState {
-          anchor: self.cursor.unwrap_or_default(),
           query,
           results: Vec::new(),
           search_generation: 1,
@@ -1245,7 +1243,6 @@ impl Planner {
       self.facility_picker = None;
     } else {
       self.facility_picker = Some(FacilityPickerState {
-        anchor: self.cursor.unwrap_or_default(),
         query: String::new(),
         results: Vec::new(),
         search_generation: 0,
@@ -1446,7 +1443,9 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
   // The Material Plan scrollable lives inside `base`. The root element must keep a stable widget
   // identity whether or not an overlay is open, otherwise iced rebuilds the scrollable and resets
   // its offset to the top. Always return the same Stack shape — an empty overlay slot when nothing
-  // is open — so opening a menu/picker and breaking a node down move the scroll position not at all.
+  // is open — so opening the material context menu and breaking a node down move the scroll position
+  // not at all. The "Build at" facility picker no longer lives here: it floats via AnchoredDropdown
+  // anchored under its trigger inside `base`, so it adds no overlay layer and never reshapes this Stack.
   let overlay: iced::Element<'a, Message> = if let Some(menu) = planner.menu() {
     let mut items = Vec::new();
     if !menu.buildable {
@@ -1471,16 +1470,6 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     Stack::with_children(vec![
       backdrop::click_catcher(Message::MenuClosed),
       context_menu::context_menu(&title, items, menu.anchor),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-  } else if let Some(state) = planner.facility_picker() {
-    Stack::with_children(vec![
-      backdrop::click_catcher(Message::FacilityPickerToggled {
-        type_id: state.type_id,
-      }),
-      view::facility_picker_panel(planner),
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -1511,6 +1500,7 @@ mod view {
     store::images::IconResolution,
     ui::{
       components::{
+        anchored_dropdown::AnchoredDropdown,
         badge::badge,
         clip::clip_layer,
         facility_combobox::{FacilityCombobox, FacilityRef},
@@ -1528,7 +1518,6 @@ mod view {
   };
 
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
-  const FACILITY_PICKER_GAP: f32 = 6.0;
   const FACILITY_PICKER_WIDTH: f32 = 450.0;
   /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
   /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
@@ -2202,27 +2191,33 @@ mod view {
       })
       .trigger();
 
-    Column::with_children(vec![micro_label("Build at"), trigger])
+    // The "Build at" popover floats directly below the trigger (width-matched) via AnchoredDropdown so
+    // opening it never resizes the build card; an outside click toggles the picker shut. The widget is
+    // always present (only its `open` slot changes) so the planner's scrollable keeps a stable identity
+    // and never resets its offset when the picker opens or closes.
+    let open = planner
+      .facility_picker()
+      .filter(|state| state.type_id == type_id)
+      .map(|state| facility_picker_popover(planner, state, type_id, is_reaction));
+
+    let dropdown = AnchoredDropdown::new(trigger, open).on_dismiss(Message::FacilityPickerToggled {
+      type_id,
+    });
+
+    Column::with_children(vec![micro_label("Build at"), dropdown.into()])
       .spacing(spacing::SPACE_2)
       .width(Length::Fixed(FACILITY_PICKER_WIDTH))
       .into()
   }
 
-  /// Floating results for the open "Build at" picker. Rendered in the planner's overlay Stack and anchored
-  /// directly under the always-visible facility input (right-aligned and width-matched to it) so it reads as
-  /// the input's popover. Keeping it in the overlay rather than inline means the card never resizes when the
-  /// picker opens.
-  pub(super) fn facility_picker_panel(planner: &Planner) -> Element<'_, Message> {
-    let Some(state) = planner.facility_picker() else {
-      return Space::new().into();
-    };
-    let anchor_top = (state.anchor.y + FACILITY_PICKER_GAP).max(0.0);
-    let type_id = state.type_id;
-    let is_reaction = planner
-      .data()
-      .recipe(type_id)
-      .map(|recipe| recipe.is_reaction)
-      .unwrap_or(false);
+  /// The floating results popover for the open "Build at" picker, anchored under the facility trigger by
+  /// [`AnchoredDropdown`] and width-matched to it so it reads as the input's own dropdown.
+  fn facility_picker_popover<'a>(
+    planner: &'a Planner,
+    state: &'a super::FacilityPickerState,
+    type_id: i64,
+    is_reaction: bool,
+  ) -> Element<'a, Message> {
     let selected = planner
       .selected_facility(type_id, is_reaction)
       .map(|f| facility_ref(f, is_reaction));
@@ -2246,20 +2241,17 @@ mod view {
         solar_system_id: facility.solar_system_id,
         type_id,
       })
-      .width(Length::Fixed(FACILITY_PICKER_WIDTH))
+      .width(Length::Fill)
       .searching(state.searching)
       .selection(selected)
       .popover();
 
-    let panel = container(popover).style(|_| container::Style {
-      shadow: crate::ui::style::shadow::CARD,
-      ..container::Style::default()
-    });
-
-    // Right padding clears the detail pane and the card/pane gutters so the panel's right edge lines up with
-    // the right-floated facility input rather than the planner's right edge.
-    let right = planner.detail_pane_width() + PANE_PADDING + spacing::SPACE_3_5;
-    crate::ui::components::positioned_dropdown::positioned_dropdown_right(panel.into(), anchor_top, right)
+    container(popover)
+      .style(|_| container::Style {
+        shadow: crate::ui::style::shadow::CARD,
+        ..container::Style::default()
+      })
+      .into()
   }
 
   /// The pin descriptor for a selected facility: `Some` for a player structure that must be persisted,
@@ -4586,34 +4578,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_anchors_the_popover_at_the_cursor_when_the_picker_opens() {
+    fn it_opens_the_popover_for_the_toggled_type() {
       let mut planner = planner();
-      planner.update(Message::CursorMoved(Point::new(640.0, 215.0)));
 
       planner.update(Message::FacilityPickerToggled {
         type_id: HULK,
       });
 
-      assert_eq!(
-        planner.facility_picker().map(|state| state.anchor),
-        Some(Point::new(640.0, 215.0))
-      );
+      // The popover anchors under its trigger via AnchoredDropdown (no cursor capture); opening only
+      // needs to register the picker for the toggled type.
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
     }
 
     #[test]
-    fn it_anchors_the_popover_when_typing_opens_the_picker() {
+    fn it_opens_the_popover_when_typing_opens_the_picker() {
       let mut planner = planner();
-      planner.update(Message::CursorMoved(Point::new(120.0, 88.0)));
 
       planner.update(Message::FacilitySearchChanged {
         type_id: HULK,
         query: "cheap".to_owned(),
       });
 
-      assert_eq!(
-        planner.facility_picker().map(|state| state.anchor),
-        Some(Point::new(120.0, 88.0))
-      );
+      assert_eq!(planner.facility_picker().map(|state| state.type_id), Some(HULK));
     }
 
     #[test]

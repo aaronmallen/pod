@@ -297,8 +297,8 @@ fn activity_section(picker: &Picker, activity: Activity) -> Element<'_, Message>
 
   // The facility popover floats below the trigger (width-matched) via AnchoredDropdown so opening it
   // never pushes the sibling activity sections down — it overlays the content instead.
-  let dropdown = AnchoredDropdown::new(trigger, picker.open.then(|| popover(picker, activity)))
-    .on_dismiss(Message::PickerToggled {
+  let dropdown =
+    AnchoredDropdown::new(trigger, picker.open.then(|| popover(picker, activity))).on_dismiss(Message::PickerToggled {
       activity: id,
     });
 

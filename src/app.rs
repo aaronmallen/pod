@@ -3661,7 +3661,7 @@ fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) ->
 /// Captures the modal's current search generation and stamps it onto the async result so a stale response
 /// arriving after the user has typed again is discarded by the handler rather than clobbering newer results.
 fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, query: String) -> Task<Message> {
-  use crate::{features::entity_search, ui::components::entity_search as picker};
+  use crate::features::entity_search;
 
   let generation = state.contact_search_generation();
   let db = runtime.db.clone();
@@ -3676,24 +3676,7 @@ fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, que
   Task::perform(
     async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
     move |results| {
-      let results = results
-        .into_iter()
-        .map(|result| picker::EntityRef {
-          id: result.id,
-          kind: match result.category {
-            entity_search::EntityCategory::Alliance => picker::EntityKind::Alliance,
-            entity_search::EntityCategory::Character => picker::EntityKind::Character,
-            entity_search::EntityCategory::Corporation => picker::EntityKind::Corporation,
-            entity_search::EntityCategory::SolarSystem => picker::EntityKind::SolarSystem,
-            entity_search::EntityCategory::Station => picker::EntityKind::Station,
-          },
-          name: result.name,
-          portrait: result
-            .category
-            .image_kind()
-            .map(|kind| store::images::default_store().image_path(kind, result.id)),
-        })
-        .collect();
+      let results = results.into_iter().map(entity_ref_from_result).collect();
       Message::CharacterDetail(character_detail::Message::ContactEntityResults {
         generation,
         results,
@@ -8224,6 +8207,216 @@ mod tests {
         id: 1,
       });
       let _ = status_bar_view(&app);
+    }
+  }
+
+  mod entity_ref_from_result {
+    use crate::{
+      features::entity_search::{EntityCategory, EntityResult},
+      ui::components::entity_search::EntityKind,
+    };
+
+    fn result(category: EntityCategory, id: i64) -> EntityResult {
+      EntityResult {
+        category,
+        id,
+        name: format!("Entity {id}"),
+      }
+    }
+
+    #[test]
+    fn it_maps_an_alliance_to_a_logo_portrait() {
+      let mapped = super::super::entity_ref_from_result(result(EntityCategory::Alliance, 11));
+
+      assert_eq!(mapped.id, 11);
+      assert_eq!(mapped.kind, EntityKind::Alliance);
+      assert_eq!(mapped.name, "Entity 11");
+      assert!(mapped.portrait.is_some());
+    }
+
+    #[test]
+    fn it_maps_a_character_to_a_portrait() {
+      let mapped = super::super::entity_ref_from_result(result(EntityCategory::Character, 22));
+
+      assert_eq!(mapped.kind, EntityKind::Character);
+      assert!(mapped.portrait.is_some());
+    }
+
+    #[test]
+    fn it_maps_a_corporation_to_a_logo_portrait() {
+      let mapped = super::super::entity_ref_from_result(result(EntityCategory::Corporation, 33));
+
+      assert_eq!(mapped.kind, EntityKind::Corporation);
+      assert!(mapped.portrait.is_some());
+    }
+
+    #[test]
+    fn it_maps_a_solar_system_without_a_portrait() {
+      let mapped = super::super::entity_ref_from_result(result(EntityCategory::SolarSystem, 44));
+
+      assert_eq!(mapped.kind, EntityKind::SolarSystem);
+      assert!(mapped.portrait.is_none());
+    }
+
+    #[test]
+    fn it_maps_a_station_without_a_portrait() {
+      let mapped = super::super::entity_ref_from_result(result(EntityCategory::Station, 55));
+
+      assert_eq!(mapped.kind, EntityKind::Station);
+      assert!(mapped.portrait.is_none());
+    }
+  }
+
+  mod contact_entity_search {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_builds_a_search_task_without_panicking() {
+      let runtime = test_runtime().await;
+      let state = character_detail::State::new(42, &[]);
+
+      let _ = super::super::contact_entity_search(&state, &runtime, "qu".to_owned());
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_search_task_for_an_empty_query() {
+      let runtime = test_runtime().await;
+      let state = character_detail::State::new(42, &[]);
+
+      let _ = super::super::contact_entity_search(&state, &runtime, String::new());
+    }
+  }
+
+  mod enqueue_wake_label_flip {
+    use super::*;
+    use crate::store::{
+      Database,
+      model::{
+        Alliance, Bloodline, Character, CharacterMail, CharacterMailBody, CharacterMailLabel, Corporation, Gender,
+        OwnerType, Race,
+      },
+      repo::mail,
+    };
+
+    async fn seed_character(db: &Database, id: i64) {
+      use crate::store::repo::character;
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    async fn store_unread(db: &Database, character_id: i64, mail_id: i64) {
+      let header = CharacterMail {
+        character_id,
+        from_id: 95_000_001,
+        from_name: "Sender".to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some("Subject".to_owned()),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+        ..Default::default()
+      };
+      let body = CharacterMailBody {
+        body: "<p>hi</p>".to_owned(),
+        character_id,
+        mail_id,
+      };
+      mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
+    }
+
+    async fn insert_label(db: &Database, character_id: i64, label_id: i64, name: &str) {
+      let label = CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id,
+        name: name.to_owned(),
+      };
+      mail::insert_label(db, &label).await.unwrap();
+    }
+
+    async fn pending_set_labels(db: &Database) -> i64 {
+      sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'mail.set_labels'")
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_drops_snoozed_and_restores_inbox_then_enqueues_the_flip() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      insert_label(&db, 42, -9, SNOOZED_LABEL_NAME).await;
+      mail::add_membership(&db, 42, 7, -9).await.unwrap();
+
+      super::super::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert!(!membership.contains(&-9), "the snoozed label is dropped");
+      assert!(membership.contains(&INBOX_LABEL_ID), "inbox membership is restored");
+      assert_eq!(pending_set_labels(&db).await, 1, "a single set_labels row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_mail_is_already_only_in_inbox() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
+
+      super::super::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert_eq!(membership, vec![INBOX_LABEL_ID], "membership is unchanged");
+      assert_eq!(pending_set_labels(&db).await, 0, "no outbox row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_adds_inbox_when_a_mail_carries_no_labels() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+
+      super::super::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert_eq!(membership, vec![INBOX_LABEL_ID], "inbox membership is added");
+      assert_eq!(pending_set_labels(&db).await, 1, "a set_labels row is enqueued");
+    }
+
+    #[tokio::test]
+    async fn it_preserves_unrelated_labels_alongside_inbox() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      insert_label(&db, 42, INBOX_LABEL_ID, "Inbox").await;
+      insert_label(&db, 42, 5, "Keep").await;
+      insert_label(&db, 42, -9, SNOOZED_LABEL_NAME).await;
+      mail::add_membership(&db, 42, 7, 5).await.unwrap();
+      mail::add_membership(&db, 42, 7, -9).await.unwrap();
+
+      super::super::enqueue_wake_label_flip(&db, 42, 7).await;
+
+      let membership = mail::membership(&db, 42, 7).await.unwrap();
+      assert!(membership.contains(&5), "the unrelated label is preserved");
+      assert!(membership.contains(&INBOX_LABEL_ID), "inbox membership is restored");
+      assert!(!membership.contains(&-9), "the snoozed label is dropped");
+      let _ = OwnerType::Character;
     }
   }
 }

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -8,6 +8,7 @@ use iced::{
 use super::{
   CalendarEvent, Detail, Message, State,
   palette::{OwnerType, Response},
+  time::{fmt_eve, fmt_local},
 };
 use crate::{
   store::model::AttendeeTally,
@@ -222,10 +223,6 @@ fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> 
   .into()
 }
 
-fn hhmm(dt: DateTime<Utc>) -> String {
-  format!("{:02}:{:02}", dt.hour(), dt.minute())
-}
-
 fn long_month(day: DateTime<Utc>) -> &'static str {
   const MONTHS: [&str; 12] = [
     "January",
@@ -260,7 +257,7 @@ fn long_weekday(day: DateTime<Utc>) -> &'static str {
 fn meta_grid<'a>(state: &'a State, event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, Message> {
   let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
-  let when = when_value(event, state.tweaks().local_time());
+  let when = when_value(event, state.tweaks().local_time(), &chrono::Local);
   rows.push(meta_row(Icon::clock(), "When", when));
 
   if let Some(start) = event.start() {
@@ -469,7 +466,11 @@ fn tally_cell<'a>(icon: Icon, count: i64, tint: iced::Color) -> Element<'a, Mess
   .into()
 }
 
-fn when_value(event: &CalendarEvent, local_time: bool) -> String {
+fn when_value<Tz>(event: &CalendarEvent, local_time: bool, tz: &Tz) -> String
+where
+  Tz: TimeZone,
+  Tz::Offset: std::fmt::Display,
+{
   if event.is_all_day() {
     return "All day \u{00B7} EVE".to_owned();
   }
@@ -477,11 +478,11 @@ fn when_value(event: &CalendarEvent, local_time: bool) -> String {
     return "Unknown".to_owned();
   };
   let base = match event.end() {
-    Some(end) if end != start => format!("{} \u{2013} {} EVE", hhmm(start), hhmm(end)),
-    _ => format!("{} EVE", hhmm(start)),
+    Some(end) if end != start => format!("{} \u{2013} {} EVE", fmt_eve(start), fmt_eve(end)),
+    _ => format!("{} EVE", fmt_eve(start)),
   };
   if local_time {
-    format!("{base} \u{00B7} {} LT", hhmm(start))
+    format!("{base} \u{00B7} {}", fmt_local(start, tz))
   } else {
     base
   }
@@ -534,25 +535,55 @@ mod tests {
   }
 
   mod when_value {
-    use pretty_assertions::assert_eq;
+    use chrono::FixedOffset;
+    use pretty_assertions::{assert_eq, assert_ne};
 
     use super::*;
 
     #[test]
-    fn it_appends_local_time_when_enabled() {
-      let value = when_value(&event(0, "accepted"), true);
+    fn it_appends_the_converted_local_time_when_enabled() {
+      let west = FixedOffset::west_opt(5 * 3_600).unwrap();
 
-      assert!(value.contains("LT"));
+      assert_eq!(
+        when_value(&event(0, "accepted"), true, &west),
+        "19:00 EVE \u{00B7} 14:00 -05:00"
+      );
+    }
+
+    #[test]
+    fn it_keeps_the_eve_line_distinct_from_local() {
+      let east = FixedOffset::east_opt(3 * 3_600).unwrap();
+      let value = when_value(&event(0, "accepted"), true, &east);
+
+      assert_ne!(value, "19:00 EVE");
+      assert!(value.starts_with("19:00 EVE \u{00B7} 22:00"));
+    }
+
+    #[test]
+    fn it_falls_back_to_the_numeric_offset() {
+      let west = FixedOffset::west_opt(4 * 3_600).unwrap();
+
+      assert!(when_value(&event(0, "accepted"), true, &west).ends_with("-04:00"));
     }
 
     #[test]
     fn it_renders_a_timed_span_in_eve() {
-      assert_eq!(when_value(&event(90, "accepted"), false), "19:00 \u{2013} 20:30 EVE");
+      let utc = FixedOffset::east_opt(0).unwrap();
+
+      assert_eq!(
+        when_value(&event(90, "accepted"), false, &utc),
+        "19:00 \u{2013} 20:30 EVE"
+      );
     }
 
     #[test]
     fn it_renders_an_all_day_event() {
-      assert_eq!(when_value(&event(1440, "accepted"), false), "All day \u{00B7} EVE");
+      let utc = FixedOffset::east_opt(0).unwrap();
+
+      assert_eq!(
+        when_value(&event(1440, "accepted"), false, &utc),
+        "All day \u{00B7} EVE"
+      );
     }
   }
 }

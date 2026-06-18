@@ -12,6 +12,7 @@ mod palette;
 mod respond;
 mod shell;
 mod switcher;
+mod time;
 mod week;
 mod year;
 

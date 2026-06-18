@@ -8,6 +8,7 @@ use iced::{
 use super::{
   CalendarEvent, Message, State,
   palette::{self, OwnerType},
+  time::{fmt_eve, fmt_local},
 };
 use crate::{
   config::CalendarDensity,
@@ -255,10 +256,6 @@ fn empty_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn hhmm(dt: DateTime<Utc>) -> String {
-  format!("{:02}:{:02}", dt.hour(), dt.minute())
-}
-
 fn month(day: DateTime<Utc>) -> &'static str {
   const MONTHS: [&str; 12] = [
     "January",
@@ -402,7 +399,7 @@ fn time_column<'a>(event: &'a CalendarEvent, local_time: bool) -> Element<'a, Me
     );
   } else if let Some(start) = event.start() {
     lines.push(
-      text(hhmm(start))
+      text(fmt_eve(start))
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY))
@@ -412,7 +409,7 @@ fn time_column<'a>(event: &'a CalendarEvent, local_time: bool) -> Element<'a, Me
       && end != start
     {
       lines.push(
-        text(format!("\u{2013} {}", hhmm(end)))
+        text(format!("\u{2013} {}", fmt_eve(end)))
           .font(typography::mono::REGULAR)
           .size(typography::size::SM)
           .style(typography::colored(color::text::secondary()))
@@ -421,7 +418,7 @@ fn time_column<'a>(event: &'a CalendarEvent, local_time: bool) -> Element<'a, Me
     }
     if local_time {
       lines.push(
-        text(format!("{} LT", hhmm(start)))
+        text(fmt_local(start, &chrono::Local))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(typography::colored(color::text::tertiary()))
@@ -458,17 +455,6 @@ mod tests {
 
   fn at(timestamp: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(timestamp).unwrap().with_timezone(&Utc)
-  }
-
-  mod hhmm {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_pads_the_eve_clock() {
-      assert_eq!(hhmm(at("2026-06-12T09:05:00Z")), "09:05");
-    }
   }
 
   mod start_of_day {

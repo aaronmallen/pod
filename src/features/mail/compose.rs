@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -5,18 +7,19 @@ use iced::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{Message, loaders::RosterPilot};
+use super::{Message, loaders::RosterPilot, markup::Link};
 use crate::{
   store::{
     Database, images,
-    model::{OwnerType, character_mail_view::MailRender},
-    repo::infra,
+    model::{CharacterMail, CharacterMailBody, CharacterMailRecipient, OwnerType, character_mail_view::MailRender},
+    repo::{infra, mail},
   },
   ui::{
     components::{
       avatar::Avatar,
       entity_search::{EntityKind, EntityRef, EntitySearch, MultiSelect},
       eyebrow::eyebrow_text,
+      icon::Icon,
       picker::TriggerPortrait,
       rule,
     },
@@ -30,6 +33,8 @@ const EXPANDED_WIDTH: f32 = 760.0;
 
 const FROM_PORTRAIT_SIZE: f32 = 22.0;
 
+const LINK_POPOVER_WIDTH: f32 = 320.0;
+
 #[derive(Clone, Debug)]
 pub struct Draft {
   pub body: text_editor::Content,
@@ -41,6 +46,7 @@ pub struct Draft {
   pub from_character_id: i64,
   pub from_picker_open: bool,
   pub kind: Kind,
+  pub link: Option<LinkPopover>,
   pub minimized: bool,
   pub quote: Option<String>,
   pub show_cc: bool,
@@ -63,6 +69,7 @@ impl Draft {
       from_character_id,
       from_picker_open: false,
       kind: Kind::New,
+      link: None,
       minimized: false,
       quote: None,
       show_cc: false,
@@ -138,6 +145,139 @@ impl Draft {
       self.to_chips.remove(index);
     }
   }
+
+  /// Wraps the current body selection in `<b>`/`<i>` (per `kind`), or — when nothing is selected —
+  /// inserts an empty tag pair at the cursor. The editor content is the wire format, so the tags go
+  /// out verbatim.
+  pub(super) fn wrap_emphasis(&mut self, kind: EmphasisKind) {
+    let selection = self.body.selection().unwrap_or_default();
+    let wrapped = match kind {
+      EmphasisKind::Bold => super::markup::bold(&selection),
+      EmphasisKind::Italic => super::markup::italic(&selection),
+    };
+    self.insert_text(&wrapped);
+  }
+
+  /// Replaces the current body selection with `text` (or inserts at the cursor when nothing is
+  /// selected). A paste edit overwrites any active selection in iced's editor.
+  pub(super) fn insert_text(&mut self, text: &str) {
+    self
+      .body
+      .perform(text_editor::Action::Edit(text_editor::Edit::Paste(Arc::new(
+        text.to_owned(),
+      ))));
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmphasisKind {
+  Bold,
+  Italic,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LinkKind {
+  Character,
+  Corporation,
+  #[default]
+  Http,
+  SolarSystem,
+  Station,
+}
+
+impl LinkKind {
+  pub(super) const ALL: [LinkKind; 5] = [
+    LinkKind::Http,
+    LinkKind::Character,
+    LinkKind::Corporation,
+    LinkKind::SolarSystem,
+    LinkKind::Station,
+  ];
+
+  /// The entity-search category for searchable kinds; `None` for the plain `http` kind, which takes
+  /// a typed URL rather than an entity search.
+  pub(super) fn category(self) -> Option<crate::features::entity_search::EntityCategory> {
+    use crate::features::entity_search::EntityCategory;
+    match self {
+      LinkKind::Character => Some(EntityCategory::Character),
+      LinkKind::Corporation => Some(EntityCategory::Corporation),
+      LinkKind::Http => None,
+      LinkKind::SolarSystem => Some(EntityCategory::SolarSystem),
+      LinkKind::Station => Some(EntityCategory::Station),
+    }
+  }
+
+  pub(super) fn label(self) -> &'static str {
+    match self {
+      LinkKind::Character => "Character",
+      LinkKind::Corporation => "Corporation",
+      LinkKind::Http => "http://",
+      LinkKind::SolarSystem => "Solar System",
+      LinkKind::Station => "Station",
+    }
+  }
+
+  pub(super) fn placeholder(self) -> &'static str {
+    match self {
+      LinkKind::Character => "Search characters\u{2026}",
+      LinkKind::Corporation => "Search corporations\u{2026}",
+      LinkKind::Http => "example.com/path",
+      LinkKind::SolarSystem => "Search solar systems\u{2026}",
+      LinkKind::Station => "Search stations\u{2026}",
+    }
+  }
+
+  /// Builds the markup link for an entity result of this kind. Returns `None` for `http`, which is
+  /// built from the typed URL instead of a picked entity.
+  pub(super) fn link_for(self, id: i64, name: String) -> Option<Link> {
+    match self {
+      LinkKind::Character => Some(Link::character(id, name)),
+      LinkKind::Corporation => Some(Link::corporation(id, name)),
+      LinkKind::Http => None,
+      LinkKind::SolarSystem => Some(Link::solar_system(id, name)),
+      // The SDE per-station type-id is resolved by the search loader and folded into the picked
+      // entity; absent it, the station degrades to a system-level link.
+      LinkKind::Station => Some(Link::solar_system(id, name)),
+    }
+  }
+}
+
+/// The toolbar "Generate Link" popover state: the selected kind, the typed query, and the live
+/// entity-search results for searchable kinds.
+#[derive(Clone, Debug, Default)]
+pub struct LinkPopover {
+  pub kind: LinkKind,
+  pub results: Vec<EntityRef>,
+  pub search: EntitySearch,
+  pub url: String,
+}
+
+impl LinkPopover {
+  pub(super) fn can_insert(&self) -> bool {
+    matches!(self.kind, LinkKind::Http) && !self.url.trim().is_empty()
+  }
+
+  /// The markup for an http link from the typed URL, normalising a bare host to an `http://` URL so
+  /// the emitted href is always absolute.
+  pub(super) fn http_link(&self) -> Option<Link> {
+    let raw = self.url.trim();
+    if raw.is_empty() {
+      return None;
+    }
+    let url = if raw.contains("://") {
+      raw.to_owned()
+    } else {
+      format!("http://{raw}")
+    };
+    Some(Link::http(url.clone(), url))
+  }
+
+  pub(super) fn select(&mut self, kind: LinkKind) {
+    self.kind = kind;
+    self.url.clear();
+    self.search.clear();
+    self.results.clear();
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -179,7 +319,16 @@ impl Recipient {
   }
 
   pub(super) fn from_entity(entity: EntityRef) -> Self {
-    Recipient::character(entity.name, entity.id)
+    let recipient_type = match entity.kind {
+      EntityKind::Alliance => "alliance",
+      EntityKind::Corporation => "corporation",
+      EntityKind::Character | EntityKind::SolarSystem | EntityKind::Station => "character",
+    };
+    Recipient {
+      id: Some(entity.id),
+      name: entity.name,
+      recipient_type: Some(recipient_type.to_owned()),
+    }
   }
 
   pub(super) fn typed(name: impl Into<String>) -> Self {
@@ -195,21 +344,33 @@ impl Recipient {
 pub struct SendPayload {
   pub body: String,
   pub from_character_id: i64,
+  /// The synthetic, negative mail id of the optimistic Sent-folder row written at enqueue time. The
+  /// `mail.send` handler purges this row when the ESI send permanently fails (compensate).
+  pub optimistic_mail_id: i64,
   pub recipients: Vec<Recipient>,
   pub subject: String,
 }
 
 impl SendPayload {
-  fn from_draft(draft: &Draft) -> Self {
+  fn from_draft(draft: &Draft, optimistic_mail_id: i64) -> Self {
     let mut recipients = draft.to.clone();
     recipients.extend(draft.cc.iter().cloned());
     SendPayload {
       body: draft.body.text(),
       from_character_id: draft.from_character_id,
+      optimistic_mail_id,
       recipients,
       subject: draft.subject.clone(),
     }
   }
+}
+
+/// A negative, millisecond-epoch-derived mail id for the optimistic Sent-folder row. The negativity
+/// is load-bearing: mail sync upserts the real sent mail under ESI's own positive id and never
+/// deletes this placeholder, so the sync job sweeps negative self-sent rows on the next pass.
+fn optimistic_mail_id() -> i64 {
+  let millis = chrono::Utc::now().timestamp_millis();
+  -millis.max(1)
 }
 
 fn prefixed(subject: &str, prefix: &str) -> String {
@@ -224,9 +385,18 @@ fn strip_quote(html: &str) -> String {
   super::loaders::strip_html_snippet(html)
 }
 
+/// Writes the optimistic Sent-folder mail first, then appends the `mail.send` outbox row. Mirrors
+/// the label handlers: the outbox drainer never calls a handler `apply()`, so the feature layer
+/// owns the optimistic write. The synthetic row carries `from_id == character_id`, which is what
+/// puts it in the Sent folder; it is reconciled away by the next sync and compensated (purged) by
+/// the handler on permanent failure.
 pub(super) async fn enqueue_send(db: Database, draft: Draft) -> Result<(), String> {
-  let payload = SendPayload::from_draft(&draft);
+  let mail_id = optimistic_mail_id();
+  let payload = SendPayload::from_draft(&draft, mail_id);
   let json = serde_json::to_string(&payload).map_err(|e| format!("could not build the send: {e}"))?;
+
+  write_optimistic_sent(&db, &payload, mail_id).await;
+
   infra::append(
     &db,
     OwnerType::Character,
@@ -238,6 +408,53 @@ pub(super) async fn enqueue_send(db: Database, draft: Draft) -> Result<(), Strin
   .await
   .map(|_| ())
   .map_err(|e| format!("could not queue the send: {e}"))
+}
+
+async fn write_optimistic_sent(db: &Database, payload: &SendPayload, mail_id: i64) {
+  let character_id = payload.from_character_id;
+  let from_name = crate::store::repo::character::get(db, character_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|c| c.name().to_owned())
+    .unwrap_or_default();
+
+  let header = CharacterMail {
+    character_id,
+    from_corp: false,
+    from_id: character_id,
+    from_name,
+    from_system: false,
+    has_attachment: false,
+    important: false,
+    is_read: true,
+    mail_id,
+    subject: Some(payload.subject.clone()),
+    timestamp: chrono::Utc::now().to_rfc3339(),
+  };
+  let body = CharacterMailBody {
+    body: payload.body.clone(),
+    character_id,
+    mail_id,
+  };
+  let recipients: Vec<CharacterMailRecipient> = payload
+    .recipients
+    .iter()
+    .filter_map(|recipient| {
+      recipient.id.map(|recipient_id| CharacterMailRecipient {
+        character_id,
+        mail_id,
+        recipient_id,
+        recipient_name: recipient.name.clone(),
+        recipient_type: recipient
+          .recipient_type
+          .clone()
+          .unwrap_or_else(|| "character".to_owned()),
+      })
+    })
+    .collect();
+
+  let _ = mail::upsert_complete(db, &header, &body, &recipients).await;
 }
 
 pub(super) fn panel<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
@@ -350,7 +567,7 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeToRemoved,
   )
   .inline(true)
-  .placeholder("Add recipient\u{2026}")
+  .placeholder("Search characters or corporations\u{2026}")
   .searching(draft.to_search.searching())
   .on_submit(Message::ComposeToCommitted)
   .view();
@@ -387,7 +604,7 @@ fn cc_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeCcRemoved,
   )
   .inline(true)
-  .placeholder("Add Cc recipient\u{2026}")
+  .placeholder("Search characters or corporations\u{2026}")
   .searching(draft.cc_search.searching())
   .on_submit(Message::ComposeCcCommitted)
   .view();
@@ -527,9 +744,16 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
 
   let send = send_button(draft.can_send());
 
-  let row = Row::with_children(vec![from_trigger.into(), Space::new().width(Length::Fill).into(), send])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center);
+  let row = Row::with_children(vec![
+    toolbar_button(Icon::bold(), false, Message::ComposeBold),
+    toolbar_button(Icon::italic(), false, Message::ComposeItalic),
+    toolbar_button(Icon::link(), draft.link.is_some(), Message::ComposeLinkToggled),
+    Space::new().width(Length::Fill).into(),
+    from_trigger.into(),
+    send,
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
 
   let footer_bar = container(row)
     .width(Length::Fill)
@@ -539,15 +763,218 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
       ..container::Style::default()
     });
 
+  let mut children: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(popover) = &draft.link {
+    children.push(link_popover(popover));
+  }
   if draft.from_picker_open && roster.len() > 1 {
-    Column::with_children(vec![
-      from_dropdown(draft, roster),
-      rule::horizontal(),
-      footer_bar.into(),
-    ])
-    .into()
+    children.push(from_dropdown(draft, roster));
+  }
+  children.push(rule::horizontal());
+  children.push(footer_bar.into());
+
+  Column::with_children(children).into()
+}
+
+fn toolbar_button<'a>(icon: Icon, active: bool, message: Message) -> Element<'a, Message> {
+  let tint = if active {
+    color::accent::PLASMA
   } else {
-    Column::with_children(vec![rule::horizontal(), footer_bar.into()]).into()
+    color::text::secondary()
+  };
+  mouse_area(
+    container(icon.size(14.0).color(tint).render::<Message>())
+      .width(Length::Fixed(28.0))
+      .height(Length::Fixed(28.0))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+  )
+  .on_press(message)
+  .into()
+}
+
+fn link_popover(popover: &LinkPopover) -> Element<'_, Message> {
+  let header = container(eyebrow_text("GENERATE LINK", Some(color::text::tertiary())))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    });
+
+  let mut kinds = Column::new().spacing(spacing::UNIT).width(Length::Fill);
+  for kind in LinkKind::ALL {
+    kinds = kinds.push(link_radio(kind, kind == popover.kind));
+  }
+
+  let input: Element<'_, Message> = match popover.kind {
+    LinkKind::Http => {
+      let field = text_input(LinkKind::Http.placeholder(), &popover.url)
+        .on_input(Message::ComposeLinkUrlChanged)
+        .on_submit(Message::ComposeLinkInsert)
+        .padding(spacing::SPACE_2)
+        .size(typography::size::MD)
+        .width(Length::Fill)
+        .style(link_input_style);
+      Row::with_children(vec![
+        container(field).width(Length::Fill).into(),
+        link_insert_button(popover.can_insert()),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .into()
+    }
+    _ => MultiSelect::new(
+      popover.search.query(),
+      &[],
+      &popover.results,
+      Message::ComposeLinkSearchInput,
+      Message::ComposeLinkPicked,
+      |_| Message::ComposeLinkToggled,
+    )
+    .placeholder(popover.kind.placeholder())
+    .searching(popover.search.searching())
+    .view(),
+  };
+
+  let body = Column::with_children(vec![
+    header.into(),
+    rule::horizontal(),
+    container(kinds)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_2,
+        right: spacing::SPACE_2,
+      })
+      .into(),
+    container(input)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_3,
+        left: spacing::SPACE_3,
+        right: spacing::SPACE_3,
+      })
+      .into(),
+  ])
+  .width(Length::Fill);
+
+  container(body)
+    .width(Length::Fixed(LINK_POPOVER_WIDTH))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::PANEL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn link_radio<'a>(kind: LinkKind, selected: bool) -> Element<'a, Message> {
+  let dot_color = if selected {
+    color::accent::PLASMA
+  } else {
+    color::rule_strong()
+  };
+  let inner: Element<'a, Message> = if selected {
+    container(Space::new())
+      .width(Length::Fixed(7.0))
+      .height(Length::Fixed(7.0))
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::PLASMA)),
+        border: Border {
+          radius: 3.5.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into()
+  } else {
+    Space::new().into()
+  };
+  let dot = container(inner)
+    .width(Length::Fixed(15.0))
+    .height(Length::Fixed(15.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_| container::Style {
+      border: Border {
+        color: dot_color,
+        radius: 7.5.into(),
+        width: 1.5,
+      },
+      ..container::Style::default()
+    });
+
+  mouse_area(
+    container(
+      Row::with_children(vec![
+        dot.into(),
+        text(kind.label())
+          .size(typography::size::SM)
+          .style(move |_| text::Style {
+            color: Some(if selected {
+              color::text::PRIMARY
+            } else {
+              color::text::secondary()
+            }),
+          })
+          .into(),
+      ])
+      .spacing(spacing::SPACE_2_5)
+      .align_y(Vertical::Center),
+    )
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::UNIT + 1.0,
+      bottom: spacing::UNIT + 1.0,
+      left: spacing::UNIT + 2.0,
+      right: spacing::UNIT + 2.0,
+    }),
+  )
+  .on_press(Message::ComposeLinkKindSelected(kind))
+  .into()
+}
+
+fn link_insert_button<'a>(enabled: bool) -> Element<'a, Message> {
+  let (fg, bg) = if enabled {
+    (color::surface::BASE, color::accent::PLASMA)
+  } else {
+    (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.08))
+  };
+  let button = container(
+    text("Insert")
+      .size(typography::size::SM)
+      .font(typography::body::MEDIUM)
+      .style(move |_| text::Style {
+        color: Some(fg),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+    right: spacing::SPACE_2_5,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(bg)),
+    border: Border {
+      radius: radius::CONTROL.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  if enabled {
+    mouse_area(button).on_press(Message::ComposeLinkInsert).into()
+  } else {
+    button.into()
   }
 }
 
@@ -613,12 +1040,18 @@ fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
     (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.05))
   };
   let button = container(
-    text("Send")
-      .size(typography::size::MD)
-      .font(typography::body::MEDIUM)
-      .style(move |_| text::Style {
-        color: Some(fg),
-      }),
+    Row::with_children(vec![
+      text("Send")
+        .size(typography::size::MD)
+        .font(typography::body::MEDIUM)
+        .style(move |_| text::Style {
+          color: Some(fg),
+        })
+        .into(),
+      Icon::arrow_out().size(12.0).color(fg).render::<Message>(),
+    ])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Center),
   )
   .padding(Padding {
     top: spacing::SPACE_2,
@@ -670,6 +1103,21 @@ fn transparent_editor(_theme: &iced::Theme, _status: text_editor::Status) -> tex
       radius: 0.0.into(),
       width: 0.0,
     },
+    placeholder: color::text::tertiary(),
+    value: color::text::PRIMARY,
+    selection: color::accent::PLASMA_MUTED,
+  }
+}
+
+fn link_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+  text_input::Style {
+    background: Background::Color(color::surface::SUNKEN),
+    border: Border {
+      color: color::rule(),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    icon: color::text::secondary(),
     placeholder: color::text::tertiary(),
     value: color::text::PRIMARY,
     selection: color::accent::PLASMA_MUTED,
@@ -790,6 +1238,28 @@ mod tests {
     assert_eq!(count, 1);
   }
 
+  #[tokio::test]
+  async fn enqueue_send_writes_an_optimistic_self_sent_mail() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    let mut draft = Draft::blank(42);
+    draft.to.push(Recipient::character("Vex Voronova", 95_000_001));
+    draft.subject = "Hello".to_owned();
+    draft.body = text_editor::Content::with_text("Hi <b>there</b>");
+
+    enqueue_send(db.clone(), draft).await.unwrap();
+
+    let headers = mail::headers(&db, 42).await.unwrap();
+    let sent: Vec<_> = headers.iter().filter(|h| h.from_id() == 42).collect();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].mail_id() < 0, "the placeholder carries a negative temp id");
+    assert!(sent[0].is_read());
+    assert_eq!(sent[0].subject().as_deref(), Some("Hello"));
+
+    let body = mail::body(&db, 42, sent[0].mail_id()).await.unwrap().unwrap();
+    assert_eq!(body.body, "Hi <b>there</b>");
+  }
+
   #[test]
   fn forward_uses_fwd_subject_and_no_recipients() {
     let draft = Draft::from_mail(Kind::Forward, &render());
@@ -832,8 +1302,137 @@ mod tests {
     let mut draft = Draft::blank(42);
     draft.to.push(Recipient::typed("A"));
     draft.cc.push(Recipient::typed("B"));
-    let payload = SendPayload::from_draft(&draft);
+    let payload = SendPayload::from_draft(&draft, -1);
     assert_eq!(payload.recipients.len(), 2);
     assert_eq!(payload.from_character_id, 42);
+  }
+
+  mod from_entity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_the_entity_kind_to_the_recipient_type() {
+      let corp = EntityRef {
+        id: 98_000_001,
+        kind: EntityKind::Corporation,
+        name: "Test Corp".to_owned(),
+        portrait: None,
+      };
+
+      let recipient = Recipient::from_entity(corp);
+
+      assert_eq!(recipient.id, Some(98_000_001));
+      assert_eq!(recipient.recipient_type.as_deref(), Some("corporation"));
+    }
+  }
+
+  mod wrap_emphasis {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_inserts_an_empty_tag_pair_at_the_cursor_without_a_selection() {
+      let mut draft = Draft::blank(42);
+
+      draft.wrap_emphasis(EmphasisKind::Bold);
+
+      assert_eq!(draft.body.text(), "<b></b>");
+    }
+
+    #[test]
+    fn it_inserts_an_italic_pair() {
+      let mut draft = Draft::blank(42);
+
+      draft.wrap_emphasis(EmphasisKind::Italic);
+
+      assert_eq!(draft.body.text(), "<i></i>");
+    }
+
+    #[test]
+    fn it_wraps_the_current_selection() {
+      let mut draft = Draft::blank(42);
+      draft.body = text_editor::Content::with_text("Form up");
+      draft.body.perform(text_editor::Action::SelectAll);
+
+      draft.wrap_emphasis(EmphasisKind::Bold);
+
+      assert_eq!(draft.body.text(), "<b>Form up</b>");
+    }
+  }
+
+  mod link_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_builds_entity_markup_for_searchable_kinds() {
+      let link = LinkKind::Character
+        .link_for(95_000_001, "Pod Pilot".to_owned())
+        .unwrap();
+
+      assert_eq!(link.to_markup(), "<a href=\"showinfo:1377//95000001\">Pod Pilot</a>");
+    }
+
+    #[test]
+    fn it_has_no_entity_markup_for_http() {
+      assert!(LinkKind::Http.link_for(1, "x".to_owned()).is_none());
+    }
+
+    #[test]
+    fn it_maps_only_searchable_kinds_to_a_category() {
+      assert!(LinkKind::Http.category().is_none());
+      assert!(LinkKind::Character.category().is_some());
+      assert!(LinkKind::Station.category().is_some());
+    }
+  }
+
+  mod link_popover {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_normalises_a_bare_host_to_an_http_url() {
+      let popover = LinkPopover {
+        kind: LinkKind::Http,
+        url: "example.com/op".to_owned(),
+        ..LinkPopover::default()
+      };
+
+      let link = popover.http_link().unwrap();
+
+      assert_eq!(
+        link.to_markup(),
+        "<a href=\"http://example.com/op\">http://example.com/op</a>"
+      );
+    }
+
+    #[test]
+    fn it_keeps_an_explicit_scheme() {
+      let popover = LinkPopover {
+        kind: LinkKind::Http,
+        url: "https://example.com".to_owned(),
+        ..LinkPopover::default()
+      };
+
+      let link = popover.http_link().unwrap();
+
+      assert_eq!(
+        link.to_markup(),
+        "<a href=\"https://example.com\">https://example.com</a>"
+      );
+    }
+
+    #[test]
+    fn it_cannot_insert_an_empty_url() {
+      let popover = LinkPopover::default();
+
+      assert!(!popover.can_insert());
+      assert!(popover.http_link().is_none());
+    }
   }
 }

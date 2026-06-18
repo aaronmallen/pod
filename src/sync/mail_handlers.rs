@@ -138,8 +138,12 @@ impl KindHandler for SendHandler {
     })
   }
 
-  fn compensate<'a>(&'a self, _db: &'a Database, _payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
-    Box::pin(async move { Ok(()) })
+  fn compensate<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let p = SendPayload::parse(payload)?;
+      mail::purge_mail(db, p.from_character_id, p.optimistic_mail_id).await?;
+      Ok(())
+    })
   }
 }
 
@@ -147,6 +151,8 @@ impl KindHandler for SendHandler {
 struct SendPayload {
   body: String,
   from_character_id: i64,
+  #[serde(default)]
+  optimistic_mail_id: i64,
   recipients: Vec<SendRecipient>,
   subject: String,
 }
@@ -828,6 +834,33 @@ mod tests {
     let result = SendHandler.apply(&db, "not json").await;
 
     assert!(matches!(result, Err(clients::Error::Json(_))));
+  }
+
+  #[tokio::test]
+  async fn it_purges_the_optimistic_sent_mail_on_compensate() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    let header = CharacterMail {
+      character_id: 42,
+      from_id: 42,
+      from_name: "Pilot".to_owned(),
+      is_read: true,
+      mail_id: -99,
+      subject: Some("Hi".to_owned()),
+      timestamp: "2026-06-01T10:00:00Z".to_owned(),
+      ..Default::default()
+    };
+    let body = CharacterMailBody {
+      body: "There".to_owned(),
+      character_id: 42,
+      mail_id: -99,
+    };
+    mail::upsert_complete(&db, &header, &body, &[]).await.unwrap();
+    let payload = r#"{"from_character_id":42,"optimistic_mail_id":-99,"recipients":[],"subject":"Hi","body":"There"}"#;
+
+    SendHandler.compensate(&db, payload).await.unwrap();
+
+    assert!(mail::snapshot_mail(&db, 42, -99).await.unwrap().is_none());
   }
 
   #[tokio::test]

@@ -23,6 +23,8 @@ const RECIPIENT_TYPE_MAILING_LIST: &str = "mailing_list";
 const CATEGORY_CHARACTER: &str = "character";
 const CATEGORY_CORPORATION: &str = "corporation";
 
+const OUTBOX_KIND_SEND: &str = "mail.send";
+
 const OUTBOX_KIND_SET_READ: &str = "mail.set_read";
 
 const SYSTEM_ID_CEILING: i64 = 10_000_000;
@@ -100,6 +102,14 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
     synced += 1;
   }
 
+  // Reconcile away optimistic Sent placeholders once their sends have drained: the real sent mail
+  // has now been upserted under its ESI id, so the negative-id rows the composer wrote can be
+  // dropped. Guarded by a no-pending-send check so a sync that lands before the outbox flushes does
+  // not purge a placeholder whose real mail has not yet been delivered.
+  if !has_pending_send(ctx, character_id).await? {
+    mail::purge_synthetic_sent(ctx.db, character_id).await?;
+  }
+
   let labels = build_labels(character_id, &label_definitions, &headers, &persisted);
   mail::replace_labels_for_character(ctx.db, character_id, &labels).await?;
 
@@ -107,6 +117,14 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   mail::replace_membership_for_character(ctx.db, character_id, &memberships).await?;
 
   Ok(Outcome::from_rows(synced))
+}
+
+/// Whether the character has an unflushed `mail.send` outbox row. While one is pending, the
+/// optimistic Sent placeholder it backs must survive sync — the real mail has not been delivered
+/// yet, so purging would make the sent mail vanish until a later sync fetches it.
+async fn has_pending_send(ctx: &JobCtx<'_>, character_id: i64) -> Result<bool, Error> {
+  let payloads = infra::outbox_pending_payloads(ctx.db, OwnerType::Character, character_id, OUTBOX_KIND_SEND).await?;
+  Ok(!payloads.is_empty())
 }
 
 /// Mail ids with an unflushed mark-read outbox write, used to defend the optimistic read flag.
@@ -931,6 +949,67 @@ mod tests {
 
       assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
       assert!(!mail::has_body(&fx.db, 42, 7).await.unwrap());
+    }
+
+    async fn mount_empty_mailbox(server: &MockServer) {
+      mount_json(server, "/characters/42/mail/", serde_json::json!([])).await;
+      mount_labels(server, serde_json::json!({ "labels": [] })).await;
+    }
+
+    async fn seed_synthetic_sent(db: &store::Database) {
+      let header = CharacterMail {
+        character_id: 42,
+        from_id: 42,
+        from_name: "Pilot".to_owned(),
+        is_read: true,
+        mail_id: -99,
+        subject: Some("Sent".to_owned()),
+        timestamp: "2026-06-01T10:00:00Z".to_owned(),
+        ..Default::default()
+      };
+      let body = CharacterMailBody {
+        body: "draft".to_owned(),
+        character_id: 42,
+        mail_id: -99,
+      };
+      mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_reconciles_the_optimistic_sent_placeholder_once_the_send_has_drained() {
+      let server = MockServer::start().await;
+      mount_empty_mailbox(&server).await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      seed_synthetic_sent(&fx.db).await;
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      assert!(mail::headers(&fx.db, 42).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_optimistic_sent_placeholder_while_a_send_is_pending() {
+      let server = MockServer::start().await;
+      mount_empty_mailbox(&server).await;
+      let fx = fixture(server, 42).await;
+      seed_character(&fx.db, 42).await;
+      seed_synthetic_sent(&fx.db).await;
+      infra::append(&fx.db, OwnerType::Character, 42, OUTBOX_KIND_SEND, "{}", None)
+        .await
+        .unwrap();
+      let ctx = ctx_with_grant(&fx.db, &fx.esi, &fx.image, &fx.image_store, &fx.grant, 42);
+
+      run(&ctx).await.unwrap();
+
+      let ids: Vec<i64> = mail::headers(&fx.db, 42)
+        .await
+        .unwrap()
+        .iter()
+        .map(|h| h.mail_id())
+        .collect();
+      assert_eq!(ids, [-99], "the placeholder survives until the send drains");
     }
   }
 }

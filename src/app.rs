@@ -3922,6 +3922,7 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
       mail::reload(&runtime.db, scope).map(Message::Mail),
     ]),
     mail::Message::ComposeToInput(_) | mail::Message::ComposeCcInput(_) => handle_compose_input(state, runtime, msg),
+    mail::Message::ComposeLinkSearchInput(_) => handle_compose_link_input(state, runtime, msg),
     msg => mail::update(state, msg, &runtime.db).map(Message::Mail),
   }
 }
@@ -3936,10 +3937,20 @@ fn handle_compose_input(state: &mut mail::State, runtime: &Runtime, msg: mail::M
   Task::batch([update, mail_recipient_search(state, runtime, query, is_to)])
 }
 
+fn handle_compose_link_input(state: &mut mail::State, runtime: &Runtime, msg: mail::Message) -> Task<Message> {
+  let query = match &msg {
+    mail::Message::ComposeLinkSearchInput(value) => value.clone(),
+    _ => unreachable!("handle_compose_link_input only receives compose link search input"),
+  };
+  let update = mail::update(state, msg, &runtime.db).map(Message::Mail);
+  Task::batch([update, mail_link_search(state, runtime, query)])
+}
+
 /// Captures the draft's current search generation and stamps it onto the async result so a stale
 /// response arriving after the user has typed again is discarded by the handler.
 ///
-/// Mail recipients are characters only, so the shared entity loader is restricted to `[Character]`.
+/// Mail recipients are characters and corporations, mirroring the design's "Search characters or
+/// corporations…" placeholder.
 fn mail_recipient_search(state: &mail::State, runtime: &Runtime, query: String, is_to: bool) -> Task<Message> {
   use crate::features::entity_search;
 
@@ -3951,22 +3962,14 @@ fn mail_recipient_search(state: &mail::State, runtime: &Runtime, query: String, 
   let esi = Arc::clone(&runtime.esi);
   let eve_image = Arc::clone(&runtime.eve_image);
   let sso = Arc::clone(&runtime.sso);
-  let categories = vec![entity_search::EntityCategory::Character];
+  let categories = vec![
+    entity_search::EntityCategory::Character,
+    entity_search::EntityCategory::Corporation,
+  ];
   Task::perform(
     async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
     move |results| {
-      let results = results
-        .into_iter()
-        .map(|result| crate::ui::components::entity_search::EntityRef {
-          id: result.id,
-          kind: crate::ui::components::entity_search::EntityKind::Character,
-          name: result.name,
-          portrait: result
-            .category
-            .image_kind()
-            .map(|kind| store::images::default_store().image_path(kind, result.id)),
-        })
-        .collect();
+      let results = results.into_iter().map(entity_ref_from_result).collect();
       Message::Mail(if is_to {
         mail::Message::ComposeToSearched {
           generation,
@@ -3980,6 +3983,56 @@ fn mail_recipient_search(state: &mail::State, runtime: &Runtime, query: String, 
       })
     },
   )
+}
+
+/// Runs the live entity search behind the toolbar link popover, restricted to the category of the
+/// currently selected link kind. No-ops for the non-searchable `http` kind (which has no category)
+/// and below the minimum query length.
+fn mail_link_search(state: &mail::State, runtime: &Runtime, query: String) -> Task<Message> {
+  use crate::features::entity_search;
+
+  let Some((generation, category)) = state.compose_link_search() else {
+    return Task::none();
+  };
+  if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
+    return Task::none();
+  }
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let eve_image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  Task::perform(
+    async move { entity_search::search_entities(db, esi, eve_image, sso, vec![category], query).await },
+    move |results| {
+      let results = results.into_iter().map(entity_ref_from_result).collect();
+      Message::Mail(mail::Message::ComposeLinkSearched {
+        generation,
+        results,
+      })
+    },
+  )
+}
+
+fn entity_ref_from_result(
+  result: crate::features::entity_search::EntityResult,
+) -> crate::ui::components::entity_search::EntityRef {
+  use crate::{features::entity_search::EntityCategory, ui::components::entity_search::EntityKind};
+  let kind = match result.category {
+    EntityCategory::Alliance => EntityKind::Alliance,
+    EntityCategory::Character => EntityKind::Character,
+    EntityCategory::Corporation => EntityKind::Corporation,
+    EntityCategory::SolarSystem => EntityKind::SolarSystem,
+    EntityCategory::Station => EntityKind::Station,
+  };
+  crate::ui::components::entity_search::EntityRef {
+    id: result.id,
+    kind,
+    name: result.name,
+    portrait: result
+      .category
+      .image_kind()
+      .map(|image_kind| store::images::default_store().image_path(image_kind, result.id)),
+  }
 }
 
 fn handle_compare(app: &mut App, msg: skills_compare::Message) -> Task<Message> {

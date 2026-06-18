@@ -733,6 +733,25 @@ pub async fn purge_mail(db: &Database, character_id: i64, mail_id: i64) -> Resul
   Ok(())
 }
 
+/// Purges the optimistic Sent-folder placeholders a character holds — self-sent rows whose
+/// `mail_id` is negative. The composer writes these so a sent mail shows in Sent immediately; mail
+/// sync upserts the real sent mail under ESI's positive id and never deletes stale rows, so this
+/// sweep (run by the mail sync job) reconciles the placeholder away once the real mail has landed.
+pub async fn purge_synthetic_sent(db: &Database, character_id: i64) -> Result<(), Error> {
+  let ids = sqlx::query_scalar::<_, i64>(
+    "SELECT mail_id FROM character_mail WHERE character_id = ? AND from_id = ? AND mail_id < 0",
+  )
+  .bind(character_id)
+  .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+
+  for mail_id in ids {
+    purge_mail(db, character_id, mail_id).await?;
+  }
+  Ok(())
+}
+
 /// Re-inserts every row captured by [`snapshot_mail`], reversing a [`purge_mail`] in one
 /// transaction. Used to compensate a permanently failed ESI delete.
 pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), Error> {
@@ -2506,6 +2525,71 @@ mod overlay_tests {
       seed_character(&db, 42).await;
 
       assert_eq!(super::snapshot_mail(&db, 42, 7).await.unwrap(), None);
+    }
+  }
+
+  mod purge_synthetic_sent {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn self_sent(mail_id: i64, ts: &str) -> CharacterMail {
+      CharacterMail {
+        character_id: 42,
+        from_id: 42,
+        from_name: "Me".to_owned(),
+        is_read: true,
+        mail_id,
+        subject: Some("Sent".to_owned()),
+        timestamp: ts.to_owned(),
+        ..Default::default()
+      }
+    }
+
+    fn received_mail(mail_id: i64, ts: &str) -> CharacterMail {
+      CharacterMail {
+        character_id: 42,
+        from_id: 95_000_001,
+        from_name: "Sender".to_owned(),
+        is_read: false,
+        mail_id,
+        subject: Some("Received".to_owned()),
+        timestamp: ts.to_owned(),
+        ..Default::default()
+      }
+    }
+
+    fn body(mail_id: i64) -> CharacterMailBody {
+      CharacterMailBody {
+        body: "x".to_owned(),
+        character_id: 42,
+        mail_id,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_drops_negative_self_sent_rows_but_keeps_real_mail() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      super::upsert_complete(&db, &self_sent(-99, "2026-06-01T10:00:00Z"), &body(-99), &[])
+        .await
+        .unwrap();
+      super::upsert_complete(&db, &self_sent(7, "2026-06-02T10:00:00Z"), &body(7), &[])
+        .await
+        .unwrap();
+      super::upsert_complete(&db, &received_mail(-1, "2026-06-01T09:00:00Z"), &body(-1), &[])
+        .await
+        .unwrap();
+
+      super::purge_synthetic_sent(&db, 42).await.unwrap();
+
+      let mail_ids: Vec<i64> = super::headers(&db, 42)
+        .await
+        .unwrap()
+        .iter()
+        .map(|h| h.mail_id())
+        .collect();
+      assert_eq!(mail_ids, [7, -1], "only the negative self-sent placeholder is purged");
     }
   }
 

@@ -19,9 +19,17 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/archive.svg"))
   }
 
+  pub fn arrow_out() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/arrow-out.svg"))
+  }
+
   #[allow(dead_code)]
   pub fn assets() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/assets.svg"))
+  }
+
+  pub fn bold() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/bold.svg"))
   }
 
   #[allow(dead_code)]
@@ -144,8 +152,16 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/inventory.svg"))
   }
 
+  pub fn italic() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/italic.svg"))
+  }
+
   pub fn journal() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/journal.svg"))
+  }
+
+  pub fn link() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/link.svg"))
   }
 
   #[allow(dead_code)]

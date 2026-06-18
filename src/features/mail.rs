@@ -90,6 +90,7 @@ pub struct Loaded {
 pub enum Message {
   Archive(i64),
   ComposeBodyChanged(text_editor::Action),
+  ComposeBold,
   ComposeCcCommitted,
   ComposeCcInput(String),
   ComposeCcPicked(EntityRef),
@@ -103,6 +104,17 @@ pub enum Message {
   ComposeExpandToggled,
   ComposeFromChanged(i64),
   ComposeFromToggled,
+  ComposeItalic,
+  ComposeLinkInsert,
+  ComposeLinkKindSelected(compose::LinkKind),
+  ComposeLinkPicked(EntityRef),
+  ComposeLinkSearchInput(String),
+  ComposeLinkSearched {
+    generation: u64,
+    results: Vec<EntityRef>,
+  },
+  ComposeLinkToggled,
+  ComposeLinkUrlChanged(String),
   ComposeMinimizeToggled,
   ComposeOpened,
   ComposeSend,
@@ -405,6 +417,17 @@ impl State {
         }
       })
       .unwrap_or_default()
+  }
+
+  /// The current generation of the link popover's entity search, and the entity-search category for
+  /// the selected kind. `None` when there is no draft, no open popover, or the selected kind is the
+  /// non-searchable `http` kind.
+  pub fn compose_link_search(&self) -> Option<(u64, crate::features::entity_search::EntityCategory)> {
+    let popover = self.compose.as_ref()?.link.as_ref()?;
+    popover
+      .kind
+      .category()
+      .map(|category| (popover.search.generation(), category))
   }
 
   pub fn unified_unread(&self) -> i64 {
@@ -810,6 +833,17 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::ComposeCcShown
     | Message::ComposeSubjectChanged(_)
     | Message::ComposeBodyChanged(_)
+    | Message::ComposeBold
+    | Message::ComposeItalic
+    | Message::ComposeLinkToggled
+    | Message::ComposeLinkKindSelected(_)
+    | Message::ComposeLinkUrlChanged(_)
+    | Message::ComposeLinkSearchInput(_)
+    | Message::ComposeLinkSearched {
+      ..
+    }
+    | Message::ComposeLinkPicked(_)
+    | Message::ComposeLinkInsert
     | Message::ComposeFromChanged(_) => update_compose_fields(state, message),
     Message::ComposeOpened
     | Message::ComposeFromToggled
@@ -1236,6 +1270,60 @@ fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
     Message::ComposeCcShown => draft.show_cc = true,
     Message::ComposeSubjectChanged(value) => draft.subject = value,
     Message::ComposeBodyChanged(action) => draft.body.perform(action),
+    Message::ComposeBold => draft.wrap_emphasis(compose::EmphasisKind::Bold),
+    Message::ComposeItalic => draft.wrap_emphasis(compose::EmphasisKind::Italic),
+    Message::ComposeLinkToggled => {
+      draft.link = match draft.link {
+        Some(_) => None,
+        None => Some(compose::LinkPopover::default()),
+      };
+    }
+    Message::ComposeLinkKindSelected(kind) => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.select(kind);
+      }
+    }
+    Message::ComposeLinkUrlChanged(value) => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.url = value;
+      }
+    }
+    Message::ComposeLinkSearchInput(value) => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.search.set_query(value);
+      }
+    }
+    Message::ComposeLinkSearched {
+      generation,
+      results,
+    } => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.search.accept_results(generation, results.clone());
+        popover.results = results;
+      }
+    }
+    Message::ComposeLinkPicked(entity) => {
+      let markup = draft
+        .link
+        .as_ref()
+        .and_then(|popover| popover.kind.link_for(entity.id, entity.name))
+        .map(|link| link.to_markup());
+      if let Some(markup) = markup {
+        draft.insert_text(&markup);
+        draft.link = None;
+      }
+    }
+    Message::ComposeLinkInsert => {
+      let markup = draft
+        .link
+        .as_ref()
+        .and_then(compose::LinkPopover::http_link)
+        .map(|link| link.to_markup());
+      if let Some(markup) = markup {
+        draft.insert_text(&markup);
+        draft.link = None;
+      }
+    }
     Message::ComposeFromChanged(character_id) => {
       draft.from_character_id = character_id;
       draft.from_picker_open = false;

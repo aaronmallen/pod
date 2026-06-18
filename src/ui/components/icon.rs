@@ -262,10 +262,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/personal.svg"))
   }
 
-  pub fn pin() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/pin.svg"))
-  }
-
   #[allow(dead_code)]
   pub fn planner() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/planner.svg"))

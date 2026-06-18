@@ -9,19 +9,12 @@ pub(super) async fn toggle_star(db: Database, character_id: i64, mail_id: i64) {
   let overlay = mail::overlay_state(&db, character_id, mail_id)
     .await
     .unwrap_or_default();
-  set_triage(&db, character_id, mail_id, !overlay.is_starred, overlay.is_pinned).await;
+  set_triage(&db, character_id, mail_id, !overlay.is_starred).await;
 }
 
-pub(super) async fn toggle_pin(db: Database, character_id: i64, mail_id: i64) {
-  let overlay = mail::overlay_state(&db, character_id, mail_id)
-    .await
-    .unwrap_or_default();
-  set_triage(&db, character_id, mail_id, overlay.is_starred, !overlay.is_pinned).await;
-}
-
-async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bool, pin: bool) {
-  if star || pin {
-    let _ = mail::set_triage(db, character_id, mail_id, star, pin).await;
+async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bool) {
+  if star {
+    let _ = mail::set_triage(db, character_id, mail_id, star).await;
   } else {
     let _ = mail::clear_triage(db, character_id, mail_id).await;
   }
@@ -123,10 +116,10 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_clears_the_triage_row_when_both_flags_drop_to_false() {
+  async fn it_clears_the_triage_row_when_the_star_drops_to_false() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
-    mail::set_triage(&db, 42, 7, true, false).await.unwrap();
+    mail::set_triage(&db, 42, 7, true).await.unwrap();
 
     toggle_star(db.clone(), 42, 7).await;
 
@@ -135,29 +128,14 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn it_toggles_pin_without_clobbering_star() {
+  async fn it_stars_an_unstarred_mail() {
     let db = store::open_test().await.unwrap();
     seed_character(&db, 42).await;
-    mail::set_triage(&db, 42, 7, true, false).await.unwrap();
-
-    toggle_pin(db.clone(), 42, 7).await;
-
-    let row = mail::triage(&db, 42, 7).await.unwrap().unwrap();
-    assert!(row.star(), "star is preserved when toggling pin");
-    assert!(row.pin());
-  }
-
-  #[tokio::test]
-  async fn it_toggles_star_without_clobbering_pin() {
-    let db = store::open_test().await.unwrap();
-    seed_character(&db, 42).await;
-    mail::set_triage(&db, 42, 7, false, true).await.unwrap();
 
     toggle_star(db.clone(), 42, 7).await;
 
     let row = mail::triage(&db, 42, 7).await.unwrap().unwrap();
     assert!(row.star());
-    assert!(row.pin(), "pin is preserved when toggling star");
   }
 
   #[tokio::test]

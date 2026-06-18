@@ -91,7 +91,6 @@ pub struct SnapshotRecipient {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct SnapshotTriage {
-  pub pin: bool,
   pub star: bool,
 }
 
@@ -483,15 +482,14 @@ pub async fn mail(db: &Database, character_id: i64, mail_id: i64) -> Result<Opti
   }))
 }
 
-pub async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bool, pin: bool) -> Result<(), Error> {
+pub async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bool) -> Result<(), Error> {
   sqlx::query(
-    "INSERT INTO mail_triage (character_id, mail_id, star, pin) VALUES (?, ?, ?, ?) \
-    ON CONFLICT(character_id, mail_id) DO UPDATE SET star = excluded.star, pin = excluded.pin",
+    "INSERT INTO mail_triage (character_id, mail_id, star) VALUES (?, ?, ?) \
+    ON CONFLICT(character_id, mail_id) DO UPDATE SET star = excluded.star",
   )
   .bind(character_id)
   .bind(mail_id)
   .bind(star)
-  .bind(pin)
   .execute(&db.0)
   .await?;
   Ok(())
@@ -508,7 +506,7 @@ pub async fn clear_triage(db: &Database, character_id: i64, mail_id: i64) -> Res
 
 pub async fn triage(db: &Database, character_id: i64, mail_id: i64) -> Result<Option<MailTriage>, Error> {
   let row = sqlx::query_as::<_, MailTriage>(
-    "SELECT character_id, id, mail_id, pin, star FROM mail_triage WHERE character_id = ? AND mail_id = ?",
+    "SELECT character_id, id, mail_id, star FROM mail_triage WHERE character_id = ? AND mail_id = ?",
   )
   .bind(character_id)
   .bind(mail_id)
@@ -519,7 +517,7 @@ pub async fn triage(db: &Database, character_id: i64, mail_id: i64) -> Result<Op
 
 pub async fn all_triage(db: &Database, character_id: i64) -> Result<Vec<MailTriage>, Error> {
   let rows = sqlx::query_as::<_, MailTriage>(
-    "SELECT character_id, id, mail_id, pin, star FROM mail_triage WHERE character_id = ? ORDER BY mail_id",
+    "SELECT character_id, id, mail_id, star FROM mail_triage WHERE character_id = ? ORDER BY mail_id",
   )
   .bind(character_id)
   .fetch_all(&db.0)
@@ -634,7 +632,7 @@ pub async fn all_in_folder(db: &Database, character_id: i64, folder: &str) -> Re
 
 pub async fn overlay_state(db: &Database, character_id: i64, mail_id: i64) -> Result<MailOverlayState, Error> {
   let row = sqlx::query_as::<_, MailOverlayState>(
-    "SELECT k.mail_id AS mail_id, COALESCE(t.star, 0) AS is_starred, COALESCE(t.pin, 0) AS is_pinned, \
+    "SELECT k.mail_id AS mail_id, COALESCE(t.star, 0) AS is_starred, \
       s.snooze_until AS snooze_until, f.folder AS folder \
     FROM (SELECT ? AS character_id, ? AS mail_id) k \
     LEFT JOIN mail_triage t ON t.character_id = k.character_id AND t.mail_id = k.mail_id \
@@ -675,7 +673,6 @@ pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Re
     .collect();
   let label_ids = membership(db, character_id, mail_id).await?;
   let triage = triage(db, character_id, mail_id).await?.map(|row| SnapshotTriage {
-    pin: row.pin(),
     star: row.star(),
   });
   let snooze_until =
@@ -788,11 +785,10 @@ pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), 
   }
 
   if let Some(triage) = &snapshot.triage {
-    sqlx::query("INSERT INTO mail_triage (character_id, mail_id, star, pin) VALUES (?, ?, ?, ?)")
+    sqlx::query("INSERT INTO mail_triage (character_id, mail_id, star) VALUES (?, ?, ?)")
       .bind(snapshot.character_id)
       .bind(snapshot.mail_id)
       .bind(triage.star)
-      .bind(triage.pin)
       .execute(&mut *tx)
       .await?;
   }
@@ -837,7 +833,7 @@ pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), 
 
 pub async fn all_overlay_states(db: &Database, character_id: i64) -> Result<Vec<MailOverlayState>, Error> {
   let rows = sqlx::query_as::<_, MailOverlayState>(
-    "SELECT k.mail_id AS mail_id, COALESCE(t.star, 0) AS is_starred, COALESCE(t.pin, 0) AS is_pinned, \
+    "SELECT k.mail_id AS mail_id, COALESCE(t.star, 0) AS is_starred, \
       s.snooze_until AS snooze_until, f.folder AS folder \
     FROM ( \
       SELECT character_id, mail_id FROM mail_triage WHERE character_id = ? \
@@ -864,15 +860,6 @@ pub async fn starred_mail_ids(db: &Database, character_id: i64) -> Result<Vec<i6
   .bind(character_id)
   .fetch_all(&db.0)
   .await?;
-  Ok(rows)
-}
-
-pub async fn pinned_mail_ids(db: &Database, character_id: i64) -> Result<Vec<i64>, Error> {
-  let rows =
-    sqlx::query_scalar::<_, i64>("SELECT mail_id FROM mail_triage WHERE character_id = ? AND pin = 1 ORDER BY mail_id")
-      .bind(character_id)
-      .fetch_all(&db.0)
-      .await?;
   Ok(rows)
 }
 
@@ -938,11 +925,10 @@ pub async fn visible_headers_for_label(
   Ok(rows)
 }
 
-/// One bounded page of the inbox listing (visible, non-pinned), newest first.
+/// One bounded page of the inbox listing (visible), newest first.
 ///
 /// This is the keyset-paginated replacement for the unbounded [`visible_headers`]
-/// fetch: it excludes pinned mail (those form a small unbounded head loaded by
-/// [`pinned_visible_headers`]) and seeks past `cursor` when one is supplied.
+/// fetch: it seeks past `cursor` when one is supplied.
 pub async fn visible_headers_page(
   db: &Database,
   character_id: i64,
@@ -952,14 +938,14 @@ pub async fn visible_headers_page(
 ) -> Result<Vec<CharacterMail>, Error> {
   let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
   builder.push("WHERE m.character_id = ").push_bind(character_id);
-  push_visible_tail_predicate(&mut builder, now, true);
+  push_visible_tail_predicate(&mut builder, now);
   push_keyset_seek(&mut builder, cursor);
   push_order_and_limit(&mut builder, limit);
   let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
   Ok(rows)
 }
 
-/// One bounded page of a label folder's listing (visible, non-pinned), newest first.
+/// One bounded page of a label folder's listing (visible), newest first.
 pub async fn visible_headers_for_label_page(
   db: &Database,
   character_id: i64,
@@ -972,41 +958,9 @@ pub async fn visible_headers_for_label_page(
   push_label_join(&mut builder);
   builder.push("WHERE m.character_id = ").push_bind(character_id);
   builder.push(" AND mem.label_id = ").push_bind(label_id);
-  push_visible_tail_predicate(&mut builder, now, true);
+  push_visible_tail_predicate(&mut builder, now);
   push_keyset_seek(&mut builder, cursor);
   push_order_and_limit(&mut builder, limit);
-  let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
-  Ok(rows)
-}
-
-/// Every visible *pinned* header for a folder, newest first and unbounded.
-///
-/// Pins float to the top of the listing irrespective of timestamp, so they cannot
-/// participate in the keyset cursor; they are loaded once as a (necessarily small)
-/// head ahead of the paginated tail. `label_id` scopes to a label folder; `None`
-/// is the inbox path.
-pub async fn pinned_visible_headers(
-  db: &Database,
-  character_id: i64,
-  now: &str,
-  label_id: Option<i64>,
-) -> Result<Vec<CharacterMail>, Error> {
-  let mut builder = QueryBuilder::<Sqlite>::new(VISIBLE_HEADER_COLUMNS);
-  if label_id.is_some() {
-    push_label_join(&mut builder);
-  }
-  builder.push("WHERE m.character_id = ").push_bind(character_id);
-  if let Some(label_id) = label_id {
-    builder.push(" AND mem.label_id = ").push_bind(label_id);
-  }
-  builder.push(
-    " AND EXISTS ( \
-      SELECT 1 FROM mail_triage t \
-      WHERE t.character_id = m.character_id AND t.mail_id = m.mail_id AND t.pin = 1 \
-    )",
-  );
-  push_visible_tail_predicate(&mut builder, now, false);
-  builder.push(" ORDER BY m.timestamp DESC, m.mail_id DESC");
   let rows = builder.build_query_as::<CharacterMail>().fetch_all(&db.0).await?;
   Ok(rows)
 }
@@ -1015,8 +969,7 @@ pub async fn pinned_visible_headers(
 ///
 /// The bounded replacement for scanning the whole mailbox in memory on every
 /// keystroke. `needle` is matched case-insensitively as a substring of the subject
-/// or sender; `label_id` scopes the search to a label folder. Pins are not
-/// special-cased — search results are a flat recency-ranked list.
+/// or sender; `label_id` scopes the search to a label folder.
 pub async fn search_visible_headers_page(
   db: &Database,
   character_id: i64,
@@ -1035,9 +988,7 @@ pub async fn search_visible_headers_page(
   if let Some(label_id) = label_id {
     builder.push(" AND mem.label_id = ").push_bind(label_id);
   }
-  // Search keeps the filed/snoozed visibility predicate but omits the pin
-  // exclusion (results are a flat recency-ranked list, not a pinned-head listing).
-  push_visible_tail_predicate(&mut builder, now, false);
+  push_visible_tail_predicate(&mut builder, now);
   builder.push(" AND (m.subject LIKE ");
   builder.push_bind(pattern.clone());
   builder.push(" ESCAPE '\\' OR m.from_name LIKE ");
@@ -1067,7 +1018,7 @@ pub async fn search_visible_unified_page(
       m.has_attachment, m.important, m.from_corp, m.from_system, m.body FROM mail_unified m \
       WHERE m.from_id != m.character_id",
   );
-  push_visible_tail_predicate(&mut builder, now, false);
+  push_visible_tail_predicate(&mut builder, now);
   builder.push(" AND (m.subject LIKE ");
   builder.push_bind(pattern.clone());
   builder.push(" ESCAPE '\\' OR m.from_name LIKE ");
@@ -1085,8 +1036,8 @@ fn push_label_join(builder: &mut QueryBuilder<Sqlite>) {
     .push("JOIN character_mail_label_membership mem ON mem.character_id = m.character_id AND mem.mail_id = m.mail_id ");
 }
 
-/// Exclude mail that is filed or snoozed, and (when `exclude_pinned`) pinned.
-fn push_visible_tail_predicate(builder: &mut QueryBuilder<Sqlite>, now: &str, exclude_pinned: bool) {
+/// Exclude mail that is filed or snoozed.
+fn push_visible_tail_predicate(builder: &mut QueryBuilder<Sqlite>, now: &str) {
   builder.push(
     " AND NOT EXISTS ( \
       SELECT 1 FROM mail_folder_assignment fa \
@@ -1097,14 +1048,6 @@ fn push_visible_tail_predicate(builder: &mut QueryBuilder<Sqlite>, now: &str, ex
   );
   builder.push_bind(now.to_owned());
   builder.push(" )");
-  if exclude_pinned {
-    builder.push(
-      " AND NOT EXISTS ( \
-        SELECT 1 FROM mail_triage t \
-        WHERE t.character_id = m.character_id AND t.mail_id = m.mail_id AND t.pin = 1 \
-      )",
-    );
-  }
 }
 
 /// Seek strictly past `cursor` in `(timestamp DESC, mail_id DESC)` order.
@@ -2173,7 +2116,7 @@ mod overlay_tests {
     async fn it_merges_multiple_overlays_on_the_same_mail_into_one_row() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 5, true, true).await.unwrap();
+      super::set_triage(&db, 42, 5, true).await.unwrap();
       super::upsert_snoozed_mail(&db, 42, 5, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
@@ -2182,7 +2125,7 @@ mod overlay_tests {
 
       assert_eq!(states.len(), 1);
       assert_eq!(states[0].mail_id, 5);
-      assert!(states[0].is_pinned);
+      assert!(states[0].is_starred);
       assert!(states[0].is_snoozed());
     }
 
@@ -2190,7 +2133,7 @@ mod overlay_tests {
     async fn it_returns_one_row_per_overlaid_mail_across_tables() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
       super::upsert_snoozed_mail(&db, 42, 2, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
@@ -2209,8 +2152,8 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_character(&db, 43).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::set_triage(&db, 43, 2, true, false).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
+      super::set_triage(&db, 43, 2, true).await.unwrap();
 
       let states = super::all_overlay_states(&db, 42).await.unwrap();
 
@@ -2302,15 +2245,14 @@ mod overlay_tests {
     }
 
     #[tokio::test]
-    async fn it_lists_starred_and_pinned_mail_ids_independently() {
+    async fn it_lists_starred_mail_ids() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::set_triage(&db, 42, 2, false, true).await.unwrap();
-      super::set_triage(&db, 42, 3, true, true).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
+      super::set_triage(&db, 42, 2, false).await.unwrap();
+      super::set_triage(&db, 42, 3, true).await.unwrap();
 
       assert_eq!(super::starred_mail_ids(&db, 42).await.unwrap(), [1, 3]);
-      assert_eq!(super::pinned_mail_ids(&db, 42).await.unwrap(), [2, 3]);
     }
   }
 
@@ -2323,7 +2265,7 @@ mod overlay_tests {
     async fn it_joins_all_three_overlays_into_one_state() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, true).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
       super::upsert_snoozed_mail(&db, 42, 1, "2026-06-10T08:00:00Z")
         .await
         .unwrap();
@@ -2332,7 +2274,6 @@ mod overlay_tests {
       let state = super::overlay_state(&db, 42, 1).await.unwrap();
 
       assert!(state.is_starred);
-      assert!(state.is_pinned);
       assert!(state.is_snoozed());
       assert_eq!(state.snooze_until.as_deref(), Some("2026-06-10T08:00:00Z"));
       assert_eq!(state.folder.as_deref(), Some("archive"));
@@ -2342,12 +2283,11 @@ mod overlay_tests {
     async fn it_reflects_a_partial_overlay() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
 
       let state = super::overlay_state(&db, 42, 1).await.unwrap();
 
       assert!(state.is_starred);
-      assert!(!state.is_pinned);
       assert!(!state.is_snoozed());
       assert_eq!(state.folder, None);
     }
@@ -2361,7 +2301,6 @@ mod overlay_tests {
 
       assert_eq!(state.mail_id, 7);
       assert!(!state.is_starred);
-      assert!(!state.is_pinned);
       assert!(!state.is_snoozed());
       assert_eq!(state.snooze_until, None);
       assert_eq!(state.folder, None);
@@ -2378,27 +2317,23 @@ mod overlay_tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_pinned_snoozed_and_archived_mail_from_the_tail() {
+    async fn it_excludes_snoozed_and_archived_mail_from_the_listing() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       for id in 1..=4 {
         store_mail(&db, &received(42, id, &format!("2026-06-0{id}T10:00:00Z"), false)).await;
       }
-      super::set_triage(&db, 42, 4, false, true).await.unwrap(); // pinned -> head, not tail
       super::assign_folder(&db, 42, 3, "archive", None, false).await.unwrap();
       super::upsert_snoozed_mail(&db, 42, 2, "2026-06-20T00:00:00Z")
         .await
         .unwrap();
 
-      let tail = super::visible_headers_page(&db, 42, NOW, None, 50).await.unwrap();
-      assert_eq!(ids(&tail), [1]);
-
-      let pinned = super::pinned_visible_headers(&db, 42, NOW, None).await.unwrap();
-      assert_eq!(ids(&pinned), [4]);
+      let page = super::visible_headers_page(&db, 42, NOW, None, 50).await.unwrap();
+      assert_eq!(ids(&page), [4, 1]);
     }
 
     #[tokio::test]
-    async fn it_pages_a_label_folder_and_keeps_pins_in_the_head() {
+    async fn it_pages_a_label_folder() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       super::replace_labels_for_character(
@@ -2429,15 +2364,11 @@ mod overlay_tests {
       )
       .await
       .unwrap();
-      super::set_triage(&db, 42, 2, false, true).await.unwrap();
 
-      let tail = super::visible_headers_for_label_page(&db, 42, 7, NOW, None, 50)
+      let page = super::visible_headers_for_label_page(&db, 42, 7, NOW, None, 50)
         .await
         .unwrap();
-      assert_eq!(ids(&tail), [3, 1], "the pinned mail is excluded from the tail");
-
-      let pinned = super::pinned_visible_headers(&db, 42, NOW, Some(7)).await.unwrap();
-      assert_eq!(ids(&pinned), [2]);
+      assert_eq!(ids(&page), [3, 2, 1]);
     }
 
     #[tokio::test]
@@ -2498,7 +2429,7 @@ mod overlay_tests {
       .await
       .unwrap();
       super::add_membership(db, character_id, mail_id, 1).await.unwrap();
-      super::set_triage(db, character_id, mail_id, true, false).await.unwrap();
+      super::set_triage(db, character_id, mail_id, true).await.unwrap();
       super::upsert_snoozed_mail(db, character_id, mail_id, "2099-01-01T00:00:00Z")
         .await
         .unwrap();
@@ -2564,7 +2495,7 @@ mod overlay_tests {
       assert_eq!(super::recipients(&db, 42, 7).await.unwrap().len(), 1);
       assert_eq!(super::membership(&db, 42, 7).await.unwrap(), [1]);
       let triage = super::triage(&db, 42, 7).await.unwrap().unwrap();
-      assert!(triage.star() && !triage.pin());
+      assert!(triage.star());
       assert_eq!(super::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "trash");
       assert_eq!(super::snapshot_mail(&db, 42, 7).await.unwrap(), Some(snapshot));
     }
@@ -2754,7 +2685,7 @@ mod overlay_tests {
     async fn it_cascades_when_the_character_is_deleted() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, true).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
 
       sqlx::query("DELETE FROM characters WHERE id = 42")
         .execute(&db.0)
@@ -2768,7 +2699,7 @@ mod overlay_tests {
     async fn it_clears_a_triage_row() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      super::set_triage(&db, 42, 1, true, true).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
 
       super::clear_triage(&db, 42, 1).await.unwrap();
 
@@ -2776,16 +2707,15 @@ mod overlay_tests {
     }
 
     #[tokio::test]
-    async fn it_upserts_star_and_pin_in_place() {
+    async fn it_upserts_star_in_place() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
 
-      super::set_triage(&db, 42, 1, true, false).await.unwrap();
-      super::set_triage(&db, 42, 1, false, true).await.unwrap();
+      super::set_triage(&db, 42, 1, false).await.unwrap();
+      super::set_triage(&db, 42, 1, true).await.unwrap();
 
       let row = super::triage(&db, 42, 1).await.unwrap().unwrap();
-      assert!(!row.star());
-      assert!(row.pin());
+      assert!(row.star());
       assert_eq!(super::all_triage(&db, 42).await.unwrap().len(), 1);
     }
   }

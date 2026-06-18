@@ -80,7 +80,6 @@ pub struct Loaded {
   messages_has_more: bool,
   outbox_indicator: OutboxIndicator,
   overlays: HashMap<i64, MailOverlayState>,
-  pinned: Vec<MessageRow>,
   roster: Vec<RosterPilot>,
   scope: Scope,
   unified: Vec<UnifiedMail>,
@@ -151,7 +150,7 @@ pub enum Message {
   },
   Loaded(Box<Loaded>),
   MarkedRead,
-  /// One more keyset page of the non-pinned tail finished loading.
+  /// One more keyset page of the listing finished loading.
   MessagesPageLoaded {
     epoch: u64,
     rows: Vec<MessageRow>,
@@ -192,7 +191,6 @@ pub enum Message {
   SnoozeCalendarPrevMonth,
   SnoozeMenuToggled,
   SnoozePreset(snooze::Preset),
-  TogglePin(i64),
   ToggleStar(i64),
   Trash(i64),
   Unsnooze(i64),
@@ -276,7 +274,6 @@ pub struct State {
   overlays: HashMap<i64, MailOverlayState>,
   pending_label_delete: Option<i64>,
   picker_open: bool,
-  pinned: Vec<MessageRow>,
   render: Option<ReadingRender>,
   roster: Vec<RosterPilot>,
   search: String,
@@ -324,7 +321,6 @@ impl State {
       overlays: HashMap::new(),
       pending_label_delete: None,
       picker_open: false,
-      pinned: Vec::new(),
       render: None,
       roster: Vec::new(),
       search: String::new(),
@@ -370,13 +366,11 @@ impl State {
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
     let roster = self.roster.iter().map(|pilot| &pilot.portrait);
     let messages = self.messages.iter().map(|row| &row.sender_portrait);
-    let pinned = self.pinned.iter().map(|row| &row.sender_portrait);
     let all_messages = self.all_messages.iter().map(|row| &row.sender_portrait);
     let render = self.render.iter().map(|render| &render.sender_portrait);
 
     roster
       .chain(messages)
-      .chain(pinned)
       .chain(all_messages)
       .chain(render)
       .filter_map(images::ImageState::stale_key)
@@ -443,10 +437,6 @@ impl State {
 
   pub fn messages(&self) -> &[MessageRow] {
     &self.messages
-  }
-
-  pub fn pinned(&self) -> &[MessageRow] {
-    &self.pinned
   }
 
   pub fn list_scroll_offset(&self) -> f32 {
@@ -524,7 +514,6 @@ impl State {
     self
       .messages
       .iter()
-      .chain(self.pinned.iter())
       .chain(self.all_messages.iter())
       .find(|row| row.mail_id == mail_id)
       .map(|row| row.label_ids.clone())
@@ -537,12 +526,7 @@ impl State {
     {
       return Some(render.mail.header.character_id());
     }
-    if let Some(row) = self
-      .messages
-      .iter()
-      .chain(self.pinned.iter())
-      .find(|r| r.mail_id == mail_id)
-    {
+    if let Some(row) = self.messages.iter().find(|r| r.mail_id == mail_id) {
       return Some(row.character_id);
     }
     let Scope::Character(id) = self.active;
@@ -786,7 +770,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::Selected(mail_id) => handle_message_selected(state, mail_id, db),
     Message::MarkedRead => reload_for(db, state.active, state.folder),
     Message::ToggleStar(mail_id) => triage_write(state, db, mail_id, triage::toggle_star),
-    Message::TogglePin(mail_id) => triage_write(state, db, mail_id, triage::toggle_pin),
     Message::Archive(mail_id) => triage_write(state, db, mail_id, triage::archive),
     Message::Delete(mail_id) => triage_write(state, db, mail_id, triage::delete),
     Message::Trash(mail_id) => triage_write(state, db, mail_id, triage::trash),
@@ -946,7 +929,6 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     messages_has_more,
     outbox_indicator,
     overlays,
-    pinned,
     roster,
     scope,
     unified,
@@ -968,7 +950,6 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     state.folder_data = folder_data;
     state.headers = headers;
     state.overlays = overlays;
-    state.pinned = pinned;
     state.messages = messages;
     state.messages_cursor = state.messages.last().map(cursor_of);
     state.messages_has_more = messages_has_more;
@@ -977,11 +958,7 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     // Archiving or trashing the open mail drops it from the reloaded folder; clear the reading pane (mirroring
     // FolderSelected) so it stops rendering a mail no longer in the list.
     if let Some(selected) = state.selected
-      && !state
-        .messages
-        .iter()
-        .chain(&state.pinned)
-        .any(|row| row.mail_id == selected)
+      && !state.messages.iter().any(|row| row.mail_id == selected)
     {
       state.selected = None;
       state.render = None;
@@ -1486,7 +1463,6 @@ async fn load_mail(db: Database, scope: Scope, folder: Folder) -> Loaded {
     messages_has_more: first_page.has_more,
     outbox_indicator,
     overlays,
-    pinned: first_page.pinned,
     roster,
     scope,
     unified,
@@ -1586,7 +1562,6 @@ mod tests {
       MessageRow {
         bucket: DayBucket::Today,
         character_id: 42,
-        is_pinned: false,
         is_read: true,
         is_starred: false,
         has_attachment: false,
@@ -1729,7 +1704,6 @@ mod tests {
       message_list::MessageRow {
         bucket: message_list::DayBucket::Today,
         character_id,
-        is_pinned: false,
         is_read,
         is_starred: false,
         has_attachment: false,
@@ -1933,7 +1907,6 @@ mod tests {
         Message::MarkedRead,
         Message::OverlayWritten,
         Message::ToggleStar(7),
-        Message::TogglePin(7),
         Message::Archive(7),
         Message::Trash(7),
         Message::Reply(7),
@@ -2846,10 +2819,10 @@ mod tests {
         },
       };
       state.messages = vec![
-        row(1, DayBucket::Today, true, false, false, false, &[]),
-        row(2, DayBucket::Today, false, true, false, false, &["Fleet"]),
-        row(3, DayBucket::Yesterday, false, false, true, false, &[]),
-        row(4, DayBucket::Earlier, false, false, false, true, &["Ops", "Fleet"]),
+        row(1, DayBucket::Today, true, false, false, &[]),
+        row(2, DayBucket::Today, false, false, false, &["Fleet"]),
+        row(3, DayBucket::Yesterday, false, true, false, &[]),
+        row(4, DayBucket::Earlier, false, false, true, &["Ops", "Fleet"]),
       ];
       state.unified_unread = 3;
       state.outbox_indicator = OutboxIndicator {
@@ -2877,7 +2850,6 @@ mod tests {
       mail_id: i64,
       bucket: DayBucket,
       is_read: bool,
-      is_pinned: bool,
       is_starred: bool,
       _unused: bool,
       labels: &[&str],
@@ -2885,7 +2857,6 @@ mod tests {
       MessageRow {
         bucket,
         character_id: 42,
-        is_pinned,
         is_read,
         is_starred,
         has_attachment: false,

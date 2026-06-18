@@ -398,7 +398,7 @@ mod tests {
     let db = store::open_test().await.unwrap();
     seed_character(&db, CHAR).await;
     store_mail(&db, 1, 95_000_001, false).await;
-    mail::set_triage(&db, CHAR, 1, true, false).await.unwrap();
+    mail::set_triage(&db, CHAR, 1, true).await.unwrap();
 
     assert_eq!(load_headers(&db, CHAR).await.len(), 1);
     assert_eq!(load_overlays(&db, CHAR).await.len(), 1);
@@ -416,7 +416,7 @@ mod tests {
     store_mail(&db, 4, 95_000_001, false).await;
     store_mail(&db, 5, 95_000_001, false).await;
 
-    mail::set_triage(&db, CHAR, 2, true, false).await.unwrap();
+    mail::set_triage(&db, CHAR, 2, true).await.unwrap();
     mail::assign_folder(&db, CHAR, 3, "archive", None, false).await.unwrap();
     let until = (Utc::now() + chrono::Duration::days(1)).to_rfc3339();
     mail::upsert_snoozed_mail(&db, CHAR, 4, &until).await.unwrap();

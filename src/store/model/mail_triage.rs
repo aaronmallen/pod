@@ -12,7 +12,5 @@ pub struct Model {
   #[getset(get_copy = "pub")]
   pub mail_id: i64,
   #[getset(get_copy = "pub")]
-  pub pin: bool,
-  #[getset(get_copy = "pub")]
   pub star: bool,
 }

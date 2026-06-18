@@ -106,13 +106,6 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     false,
   ));
   row = row.push(toolbar_button(
-    Icon::pin(),
-    "Pin",
-    Message::TogglePin(mail_id),
-    false,
-    false,
-  ));
-  row = row.push(toolbar_button(
     Icon::archive(),
     "Archive",
     Message::Archive(mail_id),

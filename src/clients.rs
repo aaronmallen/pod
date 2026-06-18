@@ -21,6 +21,8 @@ static USER_AGENT: LazyLock<String> = LazyLock::new(|| {
   )
 });
 
+// `ErrorLimited` keeps EVE's own term for the HTTP 420 error-rate-limit response (distinct from the 429
+// `RateLimit`); renaming to drop the `Error` prefix would obscure that domain meaning.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

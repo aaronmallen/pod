@@ -17,9 +17,7 @@ use crate::clients::{
   eve_sso::Grant,
 };
 
-#[allow(dead_code)]
 const ASSET_NAMES_BATCH_SIZE: usize = 1000;
-#[allow(dead_code)]
 const CALENDAR_MAX_PAGES: usize = 10;
 
 pub struct AuthenticatedClient<'a> {
@@ -37,7 +35,6 @@ impl<'a> AuthenticatedClient<'a> {
 
   /// Per the ESI contract the contact ids are the JSON request body, while standing, label_ids,
   /// and watched ride the query string.
-  #[allow(dead_code)]
   pub async fn add_contacts(
     &self,
     contact_ids: &[i64],
@@ -62,7 +59,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn assets_names(&self, item_ids: &[i64]) -> Result<Vec<AssetName>, clients::Error> {
     let url = self
       .esi
@@ -82,7 +78,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn calendar_attendees(&self, event_id: i64) -> Result<Vec<CalendarAttendee>, clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/calendar/{event_id}/attendees/",
@@ -91,7 +86,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn calendar_event(&self, event_id: i64) -> Result<CalendarEventDetail, clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/calendar/{event_id}/",
@@ -103,7 +97,6 @@ impl<'a> AuthenticatedClient<'a> {
   /// Walks the calendar newest-first, using the lowest `event_id` of each page as the exclusive
   /// `from_event_id` cursor for the next, until a page is empty, the cursor stops advancing, or
   /// `CALENDAR_MAX_PAGES` is reached.
-  #[allow(dead_code)]
   pub async fn calendar_events(&self) -> Result<Vec<CalendarEvent>, clients::Error> {
     let mut events: Vec<CalendarEvent> = Vec::new();
     let mut from_event_id: Option<i64> = None;
@@ -150,7 +143,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn contract_bids(&self, contract_id: i64) -> Result<Vec<ContractBid>, clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/contracts/{contract_id}/bids/",
@@ -159,7 +151,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn contract_items(&self, contract_id: i64) -> Result<Vec<ContractItem>, clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/contracts/{contract_id}/items/",
@@ -175,7 +166,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn create_mail_label(&self, request: &CreateMailLabelRequest) -> Result<i64, clients::Error> {
     let url = self
       .esi
@@ -183,7 +173,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.post_json(&url, request, self.grant.access_token()).await
   }
 
-  #[allow(dead_code)]
   pub async fn delete_mail(&self, mail_id: i64) -> Result<(), clients::Error> {
     let url = self
       .esi
@@ -191,7 +180,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.delete_empty(&url, self.grant.access_token()).await
   }
 
-  #[allow(dead_code)]
   pub async fn delete_mail_label(&self, label_id: i64) -> Result<(), clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/mail/labels/{label_id}/",
@@ -200,7 +188,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.delete_empty(&url, self.grant.access_token()).await
   }
 
-  #[allow(dead_code)]
   pub async fn edit_contacts(
     &self,
     contact_ids: &[i64],
@@ -225,7 +212,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn blueprints(&self) -> Result<Vec<Blueprint>, clients::Error> {
     let url = self
       .esi
@@ -233,7 +219,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn industry_jobs(&self) -> Result<Vec<IndustryJob>, clients::Error> {
     let url = self
       .esi
@@ -260,7 +245,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn mail_labels(&self) -> Result<MailLabels, clients::Error> {
     let url = self
       .esi
@@ -296,7 +280,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn recent_killmails(&self) -> Result<Vec<RecentKillmail>, clients::Error> {
     let url = self
       .esi
@@ -304,7 +287,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn remove_contacts(&self, contact_ids: &[i64]) -> Result<(), clients::Error> {
     let base = self
       .esi
@@ -314,7 +296,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.delete_empty(url.as_str(), self.grant.access_token()).await
   }
 
-  #[allow(dead_code)]
   pub async fn respond_to_event(&self, event_id: i64, request: &RespondRequest) -> Result<(), clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/calendar/{event_id}/",

@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Constellation {
   pub constellation_id: i64,
   pub name: String,
   pub position: Position,
   pub region_id: i64,
+  #[expect(dead_code)]
   pub systems: Vec<i64>,
 }
 
@@ -16,26 +16,25 @@ pub struct DogmaAttribute {
   pub value: f64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ItemCategory {
   pub category_id: i32,
+  #[expect(dead_code)]
   pub groups: Vec<i32>,
   pub name: String,
   pub published: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ItemGroup {
   pub category_id: i32,
   pub group_id: i32,
   pub name: String,
   pub published: bool,
+  #[expect(dead_code)]
   pub types: Vec<i32>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ItemType {
   #[serde(default)]
@@ -44,6 +43,7 @@ pub struct ItemType {
   #[serde(default)]
   pub dogma_attributes: Vec<DogmaAttribute>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub graphic_id: Option<i32>,
   pub group_id: i32,
   #[serde(default)]
@@ -51,6 +51,7 @@ pub struct ItemType {
   #[serde(default)]
   pub market_group_id: Option<i32>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub mass: Option<f64>,
   pub name: String,
   #[serde(default)]
@@ -89,9 +90,10 @@ pub struct Position {
   pub z: f64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Region {
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub constellations: Vec<i64>,
   #[serde(default)]
   pub description: Option<String>,
@@ -139,7 +141,6 @@ pub struct SearchResult {
   pub structure: Vec<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SolarSystem {
   pub constellation_id: i64,
@@ -151,8 +152,10 @@ pub struct SolarSystem {
   #[serde(default)]
   pub star_id: Option<i64>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub stargates: Option<Vec<i64>>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub stations: Option<Vec<i64>>,
   pub system_id: i64,
 }

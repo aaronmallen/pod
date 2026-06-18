@@ -12,7 +12,6 @@ pub struct SystemCostIndices {
   pub solar_system_id: i64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct IndustryJob {
   pub activity_id: i32,

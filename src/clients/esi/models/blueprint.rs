@@ -6,7 +6,6 @@ use serde::Deserialize;
 /// `runs == -1` denotes an original blueprint (BPO); any other value is the
 /// remaining run count of a copy (BPC). The model carries the raw value
 /// unchanged — interpretation lives in the sync layer.
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Blueprint {
   pub item_id: i64,

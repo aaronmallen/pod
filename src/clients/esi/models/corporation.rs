@@ -20,10 +20,11 @@ pub struct CorporationDivisionName {
   pub name: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CorporationDivisions {
   #[serde(default)]
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub hangar: Vec<CorporationDivisionName>,
   #[serde(default)]
   pub wallet: Vec<CorporationDivisionName>,
@@ -55,27 +56,30 @@ pub struct CorporationInfo {
   pub war_eligible: Option<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CorporationStructure {
   pub corporation_id: i64,
   #[serde(default)]
+  #[expect(dead_code)]
   pub fuel_expires: Option<String>,
   #[serde(default)]
   pub name: Option<String>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub profile_id: Option<i64>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub services: Vec<CorporationStructureService>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub state: Option<String>,
   pub structure_id: i64,
   pub system_id: i64,
   pub type_id: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[expect(dead_code)]
 pub struct CorporationStructureService {
   pub name: String,
   pub state: String,
@@ -126,8 +130,8 @@ pub struct CorporationWalletTransaction {
   pub unit_price: f64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+#[expect(dead_code)]
 pub struct MemberRole {
   pub character_id: i64,
   #[serde(default)]

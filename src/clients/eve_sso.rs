@@ -44,12 +44,6 @@ impl Client {
     }
   }
 
-  #[allow(dead_code)]
-  pub fn parse_character_id(token: &str) -> Result<i64, clients::Error> {
-    let claims = Self::decode_jwt_claims(token)?;
-    parse_id_from_sub(&claims.sub)
-  }
-
   #[cfg(test)]
   pub fn with_token_url(mut self, url: impl Into<String>) -> Self {
     self.token_url = url.into();
@@ -209,11 +203,6 @@ impl Grant {
 
   pub fn has_scope(&self, scope: &str) -> bool {
     self.scopes.iter().any(|granted| granted == scope)
-  }
-
-  #[allow(dead_code)]
-  pub fn is_expired(&self) -> bool {
-    Utc::now() >= self.expires_at
   }
 }
 
@@ -415,31 +404,6 @@ mod tests {
       }
     }
 
-    mod parse_character_id {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[test]
-      fn it_parses_character_id_from_valid_jwt() {
-        let token = make_jwt("CHARACTER:EVE:12345678", "Test Character");
-
-        assert_eq!(Client::parse_character_id(&token).unwrap(), 12345678);
-      }
-
-      #[test]
-      fn it_returns_error_for_malformed_sub() {
-        let token = make_jwt("BADINPUT", "Test Character");
-
-        assert!(Client::parse_character_id(&token).is_err());
-      }
-
-      #[test]
-      fn it_returns_error_for_non_jwt() {
-        assert!(Client::parse_character_id("not-a-jwt").is_err());
-      }
-    }
-
     mod refresh_with_token {
       use pretty_assertions::assert_eq;
       use wiremock::{
@@ -569,40 +533,6 @@ mod tests {
 
         assert_eq!(grant.has_scope("esi-universe.read_structures.v1"), true);
         assert_eq!(grant.has_scope("esi-wallet.read_character_wallet.v1"), false);
-      }
-    }
-
-    mod is_expired {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[test]
-      fn it_returns_false_when_not_expired() {
-        let grant = Grant::new(
-          "token",
-          1,
-          "Name",
-          Utc::now() + chrono::Duration::hours(1),
-          "rt",
-          vec![],
-        );
-
-        assert_eq!(grant.is_expired(), false);
-      }
-
-      #[test]
-      fn it_returns_true_when_expired() {
-        let grant = Grant::new(
-          "token",
-          1,
-          "Name",
-          Utc::now() - chrono::Duration::hours(1),
-          "rt",
-          vec![],
-        );
-
-        assert_eq!(grant.is_expired(), true);
       }
     }
   }

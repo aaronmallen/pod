@@ -25,7 +25,6 @@ impl Client {
     }
   }
 
-  #[allow(dead_code)]
   pub fn alliance_logo_url(&self, alliance_id: i64, size: Size) -> String {
     self.url("alliances", alliance_id, "logo", size)
   }
@@ -46,20 +45,17 @@ impl Client {
     self.url("types", type_id, "icon", size)
   }
 
-  #[allow(dead_code)]
-  pub fn type_render_url(&self, type_id: i64, size: Size) -> String {
-    self.url("types", type_id, "render", size)
-  }
-
   fn url(&self, category: &str, id: i64, variant: &str, size: Size) -> String {
     let base = self.base_url.trim_end_matches('/');
     format!("{base}/{category}/{id}/{variant}?size={}", size as u16)
   }
 }
 
+// Complete catalog of the EVE image-server `size=` values; not every size is wired into production yet
+// (S32/S128/S1024 are currently exercised only by tests or reserved), so the catalog stays whole.
+#[allow(dead_code)]
 // Rule-4 exception: variants stay ordered by ascending pixel size rather than alphabetically because each
 // discriminant is the literal EVE image-server `size=` value (used via `size as u16`).
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Size {
   S32 = 32,
@@ -139,16 +135,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_builds_type_icon_and_render_urls() {
+    async fn it_builds_a_type_icon_url() {
       let client = make_client().await;
 
       assert_eq!(
         client.type_icon_url(587, Size::S64),
         "https://images.evetech.net/types/587/icon?size=64"
-      );
-      assert_eq!(
-        client.type_render_url(587, Size::S512),
-        "https://images.evetech.net/types/587/render?size=512"
       );
     }
   }

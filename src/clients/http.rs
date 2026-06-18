@@ -35,6 +35,8 @@ impl Cache {
     }
   }
 
+  // Reached only through Client::cache_db (a test-support seam), so dead in the lib build but live
+  // under tests; #[expect] would be unfulfilled there.
   #[allow(dead_code)]
   pub(crate) fn db(&self) -> &store::Database {
     &self.db
@@ -62,7 +64,6 @@ impl Client {
     }
   }
 
-  #[allow(dead_code)]
   pub async fn delete_empty(&self, url: &str, token: &str, compat_date: Option<&str>) -> Result<(), Error> {
     let mut req = self.inner.delete(url).bearer_auth(token);
     if let Some(date) = compat_date {
@@ -70,11 +71,6 @@ impl Client {
     }
     let resp = send_logged("DELETE", url, req, &self.budgets).await?;
     handle_status(resp).await
-  }
-
-  #[allow(dead_code)]
-  pub async fn get_bytes(&self, url: &str, token: Option<&str>) -> Result<Vec<u8>, Error> {
-    self.get_cached_bytes(url, token, true, None).await
   }
 
   pub async fn get_bytes_uncached(&self, url: &str) -> Result<Vec<u8>, Error> {
@@ -128,18 +124,6 @@ impl Client {
     Ok(items)
   }
 
-  #[allow(dead_code)]
-  pub async fn post_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), Error> {
-    let resp = send_logged(
-      "POST",
-      url,
-      self.inner.post(url).bearer_auth(token).json(body),
-      &self.budgets,
-    )
-    .await?;
-    handle_status(resp).await
-  }
-
   pub async fn post_form<B: Serialize, T: DeserializeOwned>(&self, url: &str, body: &B) -> Result<T, Error> {
     let resp = send_logged("POST", url, self.inner.post(url).form(body), &self.budgets).await?;
     deserialize_response(resp).await
@@ -189,6 +173,8 @@ impl Client {
     handle_status(resp).await
   }
 
+  // Test-support accessor: the app-level cache-population test reads the cache database through this
+  // seam. Dead in the lib build but used by tests, so #[expect] would be unfulfilled there.
   #[allow(dead_code)]
   pub(crate) fn cache_db(&self) -> &store::Database {
     self.cache.db()
@@ -677,54 +663,6 @@ mod tests {
       }
     }
 
-    mod get_bytes {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      #[tokio::test]
-      async fn it_returns_and_caches_the_body_on_200() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/portrait"))
-          .respond_with(
-            ResponseTemplate::new(200)
-              .insert_header("ETag", "\"v1\"")
-              .set_body_raw(vec![1u8, 2, 3], "image/png"),
-          )
-          .mount(&server)
-          .await;
-        let (client, db) = make_test_client().await;
-        let url = format!("{}/portrait", server.uri());
-
-        let bytes = client.get_bytes(&url, None).await.unwrap();
-
-        assert_eq!(bytes, vec![1u8, 2, 3]);
-        let cached = infra::http_cache_get(&db, &url).await.unwrap().unwrap();
-        assert_eq!(cached.body(), &[1u8, 2, 3]);
-      }
-
-      #[tokio::test]
-      async fn it_serves_a_fresh_cached_body_without_a_request() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-          .and(path("/portrait"))
-          .respond_with(ResponseTemplate::new(500))
-          .expect(0)
-          .mount(&server)
-          .await;
-        let (client, db) = make_test_client().await;
-        let url = format!("{}/portrait", server.uri());
-        let mut entry = HttpCacheEntry::new(vec![9u8, 9, 9], 0, &url);
-        entry.set_expires_at(Utc::now().timestamp() + 3600);
-        infra::http_cache_upsert(&db, &entry).await.unwrap();
-
-        let bytes = client.get_bytes(&url, None).await.unwrap();
-
-        assert_eq!(bytes, vec![9u8, 9, 9]);
-      }
-    }
-
     mod get_json {
       use pretty_assertions::assert_eq;
 
@@ -1032,49 +970,6 @@ mod tests {
           .unwrap();
 
         assert_eq!(result, vec![9]);
-      }
-    }
-
-    mod post_empty {
-      use super::*;
-
-      #[tokio::test]
-      async fn it_returns_ok_on_2xx() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/things"))
-          .respond_with(ResponseTemplate::new(204))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result = client
-          .post_empty(&format!("{}/things", server.uri()), &serde_json::Value::Null, "token")
-          .await;
-
-        assert!(result.is_ok());
-      }
-
-      #[tokio::test]
-      async fn it_returns_rate_limit_error_on_429() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-          .and(path("/things"))
-          .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "45"))
-          .mount(&server)
-          .await;
-        let (client, _db) = make_test_client().await;
-
-        let result = client
-          .post_empty(&format!("{}/things", server.uri()), &serde_json::Value::Null, "token")
-          .await;
-
-        assert!(matches!(
-          result,
-          Err(Error::RateLimit {
-            retry_after_secs: 45
-          })
-        ));
       }
     }
 

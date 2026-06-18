@@ -16,7 +16,6 @@ use crate::clients::{
   eve_sso::Grant,
 };
 
-#[allow(dead_code)]
 const ASSET_NAMES_BATCH_SIZE: usize = 1000;
 
 pub struct AuthenticatedClient<'a> {
@@ -37,7 +36,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn assets_names(&self, corporation_id: i64, item_ids: &[i64]) -> Result<Vec<AssetName>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/assets/names/"));
     let mut names = Vec::new();
@@ -48,7 +46,6 @@ impl<'a> AuthenticatedClient<'a> {
     Ok(names)
   }
 
-  #[allow(dead_code)]
   pub async fn blueprints(&self, corporation_id: i64) -> Result<Vec<Blueprint>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/blueprints/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
@@ -64,7 +61,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn contract_bids(&self, corporation_id: i64, contract_id: i64) -> Result<Vec<ContractBid>, clients::Error> {
     let url = self
       .esi
@@ -72,7 +68,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn contract_items(
     &self,
     corporation_id: i64,
@@ -84,7 +79,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn contracts(&self, corporation_id: i64) -> Result<Vec<Contract>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/contracts/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await
@@ -95,7 +89,6 @@ impl<'a> AuthenticatedClient<'a> {
     self.esi.get_json(&url, Some(self.grant.access_token())).await
   }
 
-  #[allow(dead_code)]
   pub async fn industry_jobs(&self, corporation_id: i64) -> Result<Vec<IndustryJob>, clients::Error> {
     let url = self.esi.url(&format!("corporations/{corporation_id}/industry/jobs/"));
     self.esi.get_json_paginated(&url, Some(self.grant.access_token())).await

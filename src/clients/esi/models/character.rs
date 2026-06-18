@@ -28,7 +28,6 @@ pub struct Attributes {
   pub willpower: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CalendarAttendee {
   #[serde(default)]
@@ -37,7 +36,6 @@ pub struct CalendarAttendee {
   pub event_response: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CalendarEvent {
   #[serde(default)]
@@ -51,13 +49,14 @@ pub struct CalendarEvent {
   pub title: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CalendarEventDetail {
   #[serde(default)]
   pub date: Option<String>,
   #[serde(default)]
   pub duration: Option<i32>,
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub event_id: i64,
   #[serde(default)]
   pub importance: Option<i32>,
@@ -95,10 +94,11 @@ pub struct CharacterInfo {
   pub title: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct CharacterSkills {
   pub skills: Vec<Skill>,
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub total_sp: i64,
   #[serde(default)]
   pub unallocated_sp: Option<i64>,
@@ -143,7 +143,6 @@ pub struct ContactLabel {
   pub label_name: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct Contract {
   #[serde(default)]
@@ -153,6 +152,7 @@ pub struct Contract {
   #[serde(default)]
   pub availability: Option<String>,
   #[serde(default)]
+  #[expect(dead_code)]
   pub buyout: Option<f64>,
   #[serde(default)]
   pub collateral: Option<f64>,
@@ -191,7 +191,6 @@ pub struct Contract {
   pub volume: Option<f64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ContractBid {
   pub amount: f64,
@@ -200,7 +199,6 @@ pub struct ContractBid {
   pub date_bid: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ContractItem {
   pub is_included: bool,
@@ -212,7 +210,6 @@ pub struct ContractItem {
   pub type_id: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Serialize)]
 pub struct CreateMailLabelRequest {
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,7 +242,6 @@ pub struct MailBody {
   pub body: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MailHeader {
   #[serde(default)]
@@ -263,7 +259,6 @@ pub struct MailHeader {
   pub timestamp: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MailLabel {
   #[serde(default)]
@@ -272,15 +267,18 @@ pub struct MailLabel {
   #[serde(default)]
   pub name: Option<String>,
   #[serde(default)]
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub unread_count: Option<i64>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MailLabels {
   #[serde(default)]
   pub labels: Vec<MailLabel>,
   #[serde(default)]
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub total_unread_count: Option<i64>,
 }
 
@@ -298,7 +296,6 @@ pub struct MarkReadRequest {
   pub read: Option<bool>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct MarketOrder {
   pub duration: i64,
@@ -309,6 +306,8 @@ pub struct MarketOrder {
   pub issued: String,
   pub location_id: i64,
   #[serde(default)]
+  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
+  #[allow(dead_code)]
   pub min_volume: Option<i64>,
   pub order_id: i64,
   pub price: f64,
@@ -340,7 +339,6 @@ pub struct Online {
   pub online: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct RecentKillmail {
   pub killmail_hash: String,

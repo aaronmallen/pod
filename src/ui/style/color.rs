@@ -262,6 +262,21 @@ pub fn from_hex(hex: &str) -> Option<iced::Color> {
   Some(iced::Color::from_rgb8(r, g, b))
 }
 
+/// Parses an EVE `#AARRGGBB` color (or the same eight hex digits without the leading `#`).
+///
+/// EVE stores mail font colors with a leading alpha byte. The alpha is dropped and the resulting
+/// color is fully opaque, so authored colors render verbatim regardless of the high-contrast flag.
+pub fn from_argb(hex: &str) -> Option<iced::Color> {
+  let trimmed = hex.trim().trim_start_matches('#');
+  if trimmed.len() != 8 {
+    return None;
+  }
+  let r = u8::from_str_radix(&trimmed[2..4], 16).ok()?;
+  let g = u8::from_str_radix(&trimmed[4..6], 16).ok()?;
+  let b = u8::from_str_radix(&trimmed[6..8], 16).ok()?;
+  Some(iced::Color::from_rgb8(r, g, b))
+}
+
 /// Returns a legible foreground (dark or light) for a given fill based on perceptual luminance.
 pub fn on_fill(fill: iced::Color) -> iced::Color {
   let luminance = 0.299 * fill.r + 0.587 * fill.g + 0.114 * fill.b;
@@ -327,6 +342,37 @@ mod tests {
       assert_eq!(from_hex(""), None);
       assert_eq!(from_hex("#12345"), None);
       assert_eq!(from_hex("zzzzzz"), None);
+    }
+  }
+
+  mod from_argb {
+    use pretty_assertions::assert_eq;
+
+    use super::super::from_argb;
+
+    #[test]
+    fn it_drops_the_alpha_byte_and_returns_an_opaque_color() {
+      // EVE encodes mail colors as #AARRGGBB; the leading alpha is discarded.
+      assert_eq!(from_argb("#ffff0000"), Some(iced::Color::from_rgb8(255, 0, 0)));
+      assert_eq!(from_argb("#bfffffff"), Some(iced::Color::from_rgb8(255, 255, 255)));
+    }
+
+    #[test]
+    fn it_parses_eight_digits_with_or_without_a_hash() {
+      assert_eq!(from_argb("ffffe400"), Some(iced::Color::from_rgb8(255, 228, 0)));
+      assert_eq!(from_argb("#ffd98d00"), Some(iced::Color::from_rgb8(217, 141, 0)));
+    }
+
+    #[test]
+    fn it_keeps_full_opacity_regardless_of_the_alpha_byte() {
+      assert_eq!(from_argb("#00112233").map(|c| c.a), Some(1.0));
+    }
+
+    #[test]
+    fn it_rejects_input_that_is_not_eight_hex_digits() {
+      assert_eq!(from_argb(""), None);
+      assert_eq!(from_argb("#ff0000"), None);
+      assert_eq!(from_argb("#zzzzzzzz"), None);
     }
   }
 

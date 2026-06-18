@@ -7,6 +7,37 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.2]
+
+### Added
+
+- Received mail now displays with full formatting — bold, italic, underline, line breaks, and per-word font colors
+  and sizes — so messages look the way they do in-game instead of as flattened plain text.
+- Compose now has a formatting toolbar to make selected text bold or italic, plus a "Generate Link" button that
+  inserts links to a web address, character, corporation, solar system, or station.
+- Sent mail appears in your Sent folder the moment you hit send, instead of only showing up after the next sync.
+- The Drafts folder works — closing the compose box, switching folders or characters, or quitting the app now saves
+  your unfinished message, and reopening it picks up right where you left off.
+- You can drag a message between the Inbox, Archive, and Trash boxes in the folder pane, not just onto a custom label.
+- Trash now has a Delete action that permanently removes a mail from both Pod and your in-game mailbox.
+- Mail left in Trash is now automatically deleted after 30 days, so it no longer piles up forever.
+- Snoozing a mail now also updates its labels in EVE — it leaves your Inbox and gets a "Snoozed" label while asleep,
+  then returns to the Inbox when it wakes.
+
+### Changed
+
+- Recipients in the compose To/Cc and link pickers now show as pills with a portrait and a remove button, and the
+  field carries a search glyph and an "Add another…" prompt to match the rest of the app.
+
+### Removed
+
+- The Pin feature has been removed in favor of Star — mail no longer has a separate pinned section at the top of each
+  folder; your existing stars are kept.
+
+### Fixed
+
+- The All Inboxes view no longer lists your own sent mail, so the message list now agrees with its unread count.
+
 ## [0.6.1]
 
 ### Added
@@ -603,7 +634,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.1...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.2...HEAD
+[0.6.2]: https://github.com/aaronmallen/pod/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/aaronmallen/pod/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/aaronmallen/pod/compare/0.5.6...0.6.0
 [0.5.6]: https://github.com/aaronmallen/pod/compare/0.5.5...0.5.6

@@ -3,9 +3,10 @@ use iced::{
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, button, container, stack, svg},
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
-  config::Feature,
+  config::{Feature, NavLocation},
   features::registry,
   ui::style::{color, radius, spacing},
 };
@@ -30,7 +31,8 @@ static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/setti
 static SKILLS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
 static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.svg");
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Destination {
   Assets,
   Calendar,
@@ -42,11 +44,42 @@ pub enum Destination {
   Wallet,
 }
 
+impl Destination {
+  pub const REORDERABLE: [Destination; 7] = [
+    Destination::Characters,
+    Destination::Skills,
+    Destination::Industry,
+    Destination::Mail,
+    Destination::Calendar,
+    Destination::Wallet,
+    Destination::Assets,
+  ];
+
+  pub fn icon(self) -> &'static [u8] {
+    icon_for(self)
+  }
+
+  pub fn label(self) -> &'static str {
+    match self {
+      Destination::Assets => "Assets",
+      Destination::Calendar => "Calendar",
+      Destination::Characters => "Characters",
+      Destination::Industry => "Industry",
+      Destination::Mail => "Mail",
+      Destination::Settings => "Settings",
+      Destination::Skills => "Skills",
+      Destination::Wallet => "Wallet",
+    }
+  }
+}
+
 pub fn rail<'a, M>(
   active: Destination,
   mail_unread: i64,
   calendar_attention: i64,
   enabled_features: &[Feature],
+  rail_order: &[Destination],
+  nav_location: NavLocation,
   on_nav: impl Fn(Destination) -> M + 'a,
 ) -> Element<'a, M>
 where
@@ -73,85 +106,39 @@ where
   let logo = container(Column::with_children(vec![logo_cell.into(), header_rule.into()]).width(Length::Fill))
     .width(Length::Fixed(RAIL_WIDTH));
 
-  let items = container(nav_item(
-    CHARACTERS_ICON,
-    active == Destination::Characters,
-    on_nav(Destination::Characters),
-  ))
-  .padding(Padding {
-    top: spacing::SPACE_3_5,
-    right: 0.0,
-    bottom: 0.0,
-    left: 0.0,
-  });
+  let mut column_children: Vec<Element<'a, M>> = vec![logo.into()];
+  let mut is_first_item = true;
 
-  let is_skills_enabled =
-    registry::feature_for_destination(Destination::Skills).is_none_or(|feature| enabled_features.contains(&feature));
+  for &destination in rail_order {
+    let is_enabled =
+      registry::feature_for_destination(destination).is_none_or(|feature| enabled_features.contains(&feature));
 
-  let is_industry_enabled =
-    registry::feature_for_destination(Destination::Industry).is_none_or(|feature| enabled_features.contains(&feature));
+    if !is_enabled {
+      continue;
+    }
 
-  let is_mail_enabled =
-    registry::feature_for_destination(Destination::Mail).is_none_or(|feature| enabled_features.contains(&feature));
+    let badge = match destination {
+      Destination::Calendar => calendar_attention > 0,
+      Destination::Mail => mail_unread > 0,
+      _ => false,
+    };
 
-  let is_calendar_enabled =
-    registry::feature_for_destination(Destination::Calendar).is_none_or(|feature| enabled_features.contains(&feature));
+    let item = nav_item_badged(icon_for(destination), active == destination, badge, on_nav(destination));
 
-  let is_wallet_enabled =
-    registry::feature_for_destination(Destination::Wallet).is_none_or(|feature| enabled_features.contains(&feature));
+    let cell = if is_first_item {
+      container(item).padding(Padding {
+        top: spacing::SPACE_3_5,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+      })
+    } else {
+      container(item)
+    };
 
-  let is_assets_enabled =
-    registry::feature_for_destination(Destination::Assets).is_none_or(|feature| enabled_features.contains(&feature));
-
-  let skills = if is_skills_enabled {
-    nav_item(SKILLS_ICON, active == Destination::Skills, on_nav(Destination::Skills))
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
-
-  let industry = if is_industry_enabled {
-    nav_item(
-      INDUSTRY_ICON,
-      active == Destination::Industry,
-      on_nav(Destination::Industry),
-    )
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
-
-  let mail = if is_mail_enabled {
-    nav_item_badged(
-      MAIL_ICON,
-      active == Destination::Mail,
-      mail_unread > 0,
-      on_nav(Destination::Mail),
-    )
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
-
-  let calendar = if is_calendar_enabled {
-    nav_item_badged(
-      CALENDAR_ICON,
-      active == Destination::Calendar,
-      calendar_attention > 0,
-      on_nav(Destination::Calendar),
-    )
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
-
-  let wallet = if is_wallet_enabled {
-    nav_item(WALLET_ICON, active == Destination::Wallet, on_nav(Destination::Wallet))
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
-
-  let assets = if is_assets_enabled {
-    nav_item(ASSETS_ICON, active == Destination::Assets, on_nav(Destination::Assets))
-  } else {
-    Space::new().width(Length::Fill).height(Length::Fixed(0.0)).into()
-  };
+    is_first_item = false;
+    column_children.push(cell.into());
+  }
 
   let settings = container(nav_item(
     SETTINGS_ICON,
@@ -165,21 +152,13 @@ where
     left: 0.0,
   });
 
+  column_children.push(Space::new().width(Length::Fill).height(Length::Fill).into());
+  column_children.push(settings.into());
+
   let body = container(
-    Column::with_children(vec![
-      logo.into(),
-      items.into(),
-      skills,
-      industry,
-      mail,
-      calendar,
-      wallet,
-      assets,
-      Space::new().width(Length::Fill).height(Length::Fill).into(),
-      settings.into(),
-    ])
-    .width(Length::Fill)
-    .align_x(Horizontal::Center),
+    Column::with_children(column_children)
+      .width(Length::Fill)
+      .align_x(Horizontal::Center),
   )
   .width(Length::Fixed(RAIL_WIDTH))
   .height(Length::Fill)
@@ -196,9 +175,25 @@ where
       ..container::Style::default()
     });
 
-  Row::with_children(vec![body.into(), edge.into()])
-    .height(Length::Fill)
-    .into()
+  let children: Vec<Element<'a, M>> = match nav_location {
+    NavLocation::Left => vec![body.into(), edge.into()],
+    NavLocation::Right => vec![edge.into(), body.into()],
+  };
+
+  Row::with_children(children).height(Length::Fill).into()
+}
+
+fn icon_for(destination: Destination) -> &'static [u8] {
+  match destination {
+    Destination::Assets => ASSETS_ICON,
+    Destination::Calendar => CALENDAR_ICON,
+    Destination::Characters => CHARACTERS_ICON,
+    Destination::Industry => INDUSTRY_ICON,
+    Destination::Mail => MAIL_ICON,
+    Destination::Settings => SETTINGS_ICON,
+    Destination::Skills => SKILLS_ICON,
+    Destination::Wallet => WALLET_ICON,
+  }
 }
 
 fn nav_item<'a, M>(icon: &'static [u8], active: bool, message: M) -> Element<'a, M>
@@ -326,59 +321,206 @@ mod tests {
   }
 
   #[test]
+  fn rail_docks_to_either_side() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let _left: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
+    let _right: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Right,
+      |d| d,
+    );
+  }
+
+  #[test]
   fn rail_hides_disabled_feature_icons_but_always_shows_characters_and_settings() {
+    let order = Destination::REORDERABLE;
+
     let no_features: Vec<Feature> = vec![];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &no_features, |destination| destination);
+    let _el: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &no_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
 
     let mail_only = vec![Feature::Mail];
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &mail_only, |destination| destination);
+    let _el: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &mail_only,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
+  }
+
+  #[test]
+  fn rail_renders_a_reordered_rail() {
+    let all_features = Feature::ALL;
+    let order = [
+      Destination::Wallet,
+      Destination::Assets,
+      Destination::Characters,
+      Destination::Skills,
+      Destination::Industry,
+      Destination::Mail,
+      Destination::Calendar,
+    ];
+    let _el: Element<'_, Destination> = rail(
+      Destination::Wallet,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
+  }
+
+  #[test]
+  fn rail_renders_with_a_disabled_item_in_the_middle_of_the_order() {
+    let features: Vec<Feature> = Feature::ALL
+      .into_iter()
+      .filter(|&feature| feature != Feature::Industry)
+      .collect();
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_assets_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Assets, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Assets,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_calendar_active_and_attention_badge() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Calendar, 0, 2, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Calendar,
+      0,
+      2,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_characters_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Characters, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Characters,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_industry_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Industry, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Industry,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_mail_active_and_unread_badge() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, 0, &all_features, &order, NavLocation::Left, |d| d);
   }
 
   #[test]
   fn rail_renders_with_settings_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Settings, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Settings,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_skills_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Skills, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Skills,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 
   #[test]
   fn rail_renders_with_wallet_active() {
     let all_features = Feature::ALL;
-    let _el: Element<'_, Destination> = rail(Destination::Wallet, 0, 0, &all_features, |destination| destination);
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = rail(
+      Destination::Wallet,
+      0,
+      0,
+      &all_features,
+      &order,
+      NavLocation::Left,
+      |d| d,
+    );
   }
 }

@@ -1117,6 +1117,16 @@ fn enabled_features(app: &App) -> Vec<config::Feature> {
   config::Feature::ALL.to_vec()
 }
 
+fn ui_config(app: &App) -> config::UiConfig {
+  if let Some(state) = app.settings.as_ref() {
+    return state.settings().ui().clone();
+  }
+  if let Some(runtime) = app.runtime.as_ref() {
+    return runtime.settings.ui().clone();
+  }
+  config::UiConfig::default()
+}
+
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
     Some(Window::Compare) => close_compare_window(app, id),
@@ -1683,18 +1693,24 @@ fn main_view(app: &App) -> Element<'_, Message> {
 
   let mail_unread = rail_mail_unread(app.mail_unread, app.mail.as_ref().map(mail::State::unified_unread));
   let enabled_features = enabled_features(app);
-  let body = Row::with_children(vec![
-    rail(
-      app.route.destination(),
-      mail_unread,
-      app.calendar_attention,
-      &enabled_features,
-      Message::Nav,
-    ),
-    content.into(),
-  ])
-  .width(Length::Fill)
-  .height(Length::Fill);
+  let ui = ui_config(app);
+  let nav_location = *ui.nav_location();
+  let rail_element = rail(
+    app.route.destination(),
+    mail_unread,
+    app.calendar_attention,
+    &enabled_features,
+    ui.rail_order(),
+    nav_location,
+    Message::Nav,
+  );
+  let body_children: Vec<Element<'_, Message>> = match nav_location {
+    config::NavLocation::Left => vec![rail_element, content.into()],
+    config::NavLocation::Right => vec![content.into(), rail_element],
+  };
+  let body = Row::with_children(body_children)
+    .width(Length::Fill)
+    .height(Length::Fill);
 
   let mut column_children: Vec<Element<'_, Message>> = Vec::with_capacity(4);
   if let Some(banner) = updater_banner::banner(&app.updater_state, Message::UpdaterAction) {
@@ -2814,6 +2830,16 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
         *runtime.settings.accessibility_mut() = accessibility;
       }
       color::set_high_contrast(*accessibility.high_contrast());
+      return Task::batch(vec![task, refresh_all_windows(app)]);
+    }
+    settings::Outcome::UiChanged => {
+      // The rail reads its side and order from `ui_config`, which prefers the live settings screen
+      // and falls back to the runtime; keep the runtime copy in lock-step so windows that read it
+      // stay honest, then redraw every window to re-dock and reorder the rail live.
+      let ui = state.settings().ui().clone();
+      if let Some(runtime) = app.runtime.as_mut() {
+        *runtime.settings.ui_mut() = ui;
+      }
       return Task::batch(vec![task, refresh_all_windows(app)]);
     }
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),

@@ -5,6 +5,7 @@ pub mod industry_tab;
 pub mod log_export;
 pub mod storage_tab;
 pub mod tags_tab;
+pub mod ui_tab;
 
 use chrono::{DateTime, Utc};
 use iced::{
@@ -35,6 +36,7 @@ pub enum Category {
   Industry,
   Storage,
   Tags,
+  Ui,
 }
 
 impl Category {
@@ -48,6 +50,7 @@ impl Category {
     }
     categories.push(Category::Storage);
     categories.push(Category::Tags);
+    categories.push(Category::Ui);
     categories
   }
 
@@ -59,6 +62,7 @@ impl Category {
       Category::Industry => "Industry",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
+      Category::Ui => "User Interface",
     }
   }
 }
@@ -73,6 +77,7 @@ pub enum Message {
   ResetToDefaults,
   Storage(storage_tab::Message),
   Tags(tags_tab::Message),
+  Ui(ui_tab::Message),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +98,7 @@ pub enum Outcome {
   ReleaseLock,
   SetLogLevel(config::LogLevel),
   SyncNow,
+  UiChanged,
 }
 
 #[derive(Debug)]
@@ -105,6 +111,7 @@ pub struct State {
   settings: Settings,
   storage: storage_tab::State,
   tags: tags_tab::State,
+  ui: ui_tab::State,
 }
 
 impl State {
@@ -114,6 +121,7 @@ impl State {
     let industry = industry_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
+    let ui = ui_tab::State::from_settings(&settings);
     State {
       accessibility,
       active: Category::default(),
@@ -123,6 +131,7 @@ impl State {
       settings,
       storage,
       tags,
+      ui,
     }
   }
 
@@ -157,7 +166,10 @@ pub fn load(state: &State) -> Task<Message> {
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  tags_tab::subscription(&state.tags).map(Message::Tags)
+  iced::Subscription::batch([
+    tags_tab::subscription(&state.tags).map(Message::Tags),
+    ui_tab::subscription(&state.ui).map(Message::Ui),
+  ])
 }
 
 pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
@@ -187,22 +199,28 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       let (outcome, task) = tags_tab::update(&mut state.tags, msg);
       (outcome, task.map(Message::Tags))
     }
+    Message::Ui(msg) => (ui_tab::update(&mut state.ui, msg, &mut state.settings), Task::none()),
     Message::ResetToDefaults => {
       let active = state.active;
       reset_active(state);
       // Resetting the scale must re-scale every open window, not just persist; only the
-      // AccessibilityChanged outcome makes the app hoist the new scale factor live.
-      let outcome = if active == Category::Accessibility {
-        Outcome::AccessibilityChanged
-      } else {
-        Outcome::Persist
+      // AccessibilityChanged outcome makes the app hoist the new scale factor live. The UI category
+      // re-docks and reorders the rail live the same way via UiChanged.
+      let outcome = match active {
+        Category::Accessibility => Outcome::AccessibilityChanged,
+        Category::Ui => Outcome::UiChanged,
+        _ => Outcome::Persist,
       };
       (outcome, Task::none())
     }
   };
   if matches!(
     outcome,
-    Outcome::AccessibilityChanged | Outcome::IndustryPin(_) | Outcome::Persist | Outcome::SetLogLevel(_)
+    Outcome::AccessibilityChanged
+      | Outcome::IndustryPin(_)
+      | Outcome::Persist
+      | Outcome::SetLogLevel(_)
+      | Outcome::UiChanged
   ) {
     config::save(&state.settings);
   }
@@ -220,6 +238,7 @@ fn reset_active(state: &mut State) {
     }
     Category::Industry => {}
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
+    Category::Ui => *state.settings.ui_mut() = defaults.ui().clone(),
     Category::Tags | Category::About => {}
   }
 }
@@ -444,6 +463,7 @@ fn badge_for(state: &State, category: Category) -> String {
     Category::Industry => industry_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
+    Category::Ui => ui_tab::badge(&state.settings),
   }
 }
 
@@ -465,6 +485,7 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     Category::Industry => industry_tab::view(&state.industry, &state.settings).map(Message::Industry),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
+    Category::Ui => ui_tab::view(&state.ui, &state.settings).map(Message::Ui),
   }
 }
 

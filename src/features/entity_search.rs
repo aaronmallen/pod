@@ -21,6 +21,8 @@ pub enum EntityCategory {
   Alliance,
   Character,
   Corporation,
+  SolarSystem,
+  Station,
 }
 
 impl EntityCategory {
@@ -29,6 +31,8 @@ impl EntityCategory {
       "alliance" => Some(Self::Alliance),
       "character" => Some(Self::Character),
       "corporation" => Some(Self::Corporation),
+      "solar_system" => Some(Self::SolarSystem),
+      "station" => Some(Self::Station),
       _ => None,
     }
   }
@@ -38,14 +42,19 @@ impl EntityCategory {
       Self::Alliance => "alliance",
       Self::Character => "character",
       Self::Corporation => "corporation",
+      Self::SolarSystem => "solar_system",
+      Self::Station => "station",
     }
   }
 
-  pub fn image_kind(self) -> images::ImageKind {
+  /// The portrait/logo image kind for entities that have one. Location entities (solar systems,
+  /// stations) have no portrait — they render with a glyph fallback — so this returns `None`.
+  pub fn image_kind(self) -> Option<images::ImageKind> {
     match self {
-      Self::Alliance => images::ImageKind::AllianceLogo,
-      Self::Character => images::ImageKind::CharacterPortrait,
-      Self::Corporation => images::ImageKind::CorporationLogo,
+      Self::Alliance => Some(images::ImageKind::AllianceLogo),
+      Self::Character => Some(images::ImageKind::CharacterPortrait),
+      Self::Corporation => Some(images::ImageKind::CorporationLogo),
+      Self::SolarSystem | Self::Station => None,
     }
   }
 
@@ -54,6 +63,8 @@ impl EntityCategory {
       Self::Alliance => "Alliance",
       Self::Character => "Character",
       Self::Corporation => "Corporation",
+      Self::SolarSystem => "Solar System",
+      Self::Station => "Station",
     }
   }
 }
@@ -97,7 +108,12 @@ pub async fn search_entities(
 async fn cache_result_portraits(eve_image: &eve_image::Client, results: &[EntityResult]) {
   let store = images::default_store();
   for result in results {
-    let path = store.image_path(result.category.image_kind(), result.id);
+    // Location entities (solar systems, stations) have no portrait — they render with a glyph
+    // fallback — so skip the image fetch entirely.
+    let Some(image_kind) = result.category.image_kind() else {
+      continue;
+    };
+    let path = store.image_path(image_kind, result.id);
     if images::is_fresh(&path, images::STALE_AFTER) {
       continue;
     }
@@ -105,6 +121,7 @@ async fn cache_result_portraits(eve_image: &eve_image::Client, results: &[Entity
       EntityCategory::Alliance => eve_image.alliance_logo_url(result.id, images::LOGO_SIZE),
       EntityCategory::Character => eve_image.character_portrait_url(result.id, Size::S64),
       EntityCategory::Corporation => eve_image.corporation_logo_url(result.id, images::LOGO_SIZE),
+      EntityCategory::SolarSystem | EntityCategory::Station => continue,
     };
     if let Ok(bytes) = eve_image.fetch(&url).await {
       let _ = store.write(&path, &bytes);
@@ -152,6 +169,8 @@ async fn resolve_entities(
       EntityCategory::Alliance => &result.alliance,
       EntityCategory::Character => &result.character,
       EntityCategory::Corporation => &result.corporation,
+      EntityCategory::SolarSystem => &result.solar_system,
+      EntityCategory::Station => &result.station,
     };
     ids.extend(bucket.iter().copied());
   }
@@ -191,20 +210,29 @@ mod tests {
 
     #[test]
     fn it_maps_each_category_to_its_image_kind() {
-      assert_eq!(EntityCategory::Alliance.image_kind(), images::ImageKind::AllianceLogo);
+      assert_eq!(
+        EntityCategory::Alliance.image_kind(),
+        Some(images::ImageKind::AllianceLogo)
+      );
       assert_eq!(
         EntityCategory::Character.image_kind(),
-        images::ImageKind::CharacterPortrait
+        Some(images::ImageKind::CharacterPortrait)
       );
       assert_eq!(
         EntityCategory::Corporation.image_kind(),
-        images::ImageKind::CorporationLogo
+        Some(images::ImageKind::CorporationLogo)
       );
     }
 
     #[test]
+    fn it_has_no_image_kind_for_location_categories() {
+      assert_eq!(EntityCategory::SolarSystem.image_kind(), None);
+      assert_eq!(EntityCategory::Station.image_kind(), None);
+    }
+
+    #[test]
     fn it_rejects_unsupported_esi_categories() {
-      assert_eq!(EntityCategory::from_esi("solar_system"), None);
+      assert_eq!(EntityCategory::from_esi("structure"), None);
       assert_eq!(EntityCategory::from_esi(""), None);
     }
 
@@ -214,6 +242,8 @@ mod tests {
         EntityCategory::Alliance,
         EntityCategory::Character,
         EntityCategory::Corporation,
+        EntityCategory::SolarSystem,
+        EntityCategory::Station,
       ] {
         assert_eq!(EntityCategory::from_esi(category.esi_category()), Some(category));
       }
@@ -350,6 +380,57 @@ mod tests {
             category: EntityCategory::Corporation,
             id: 96,
             name: "Vex Holdings".to_owned(),
+          },
+        ]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_location_categories_without_fetching_portraits() {
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/search/"))
+        .and(query_param("categories", "solar_system,station"))
+        .and(query_param("search", "Jita"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"{"solar_system":[30000142],"station":[60003760]}"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      Mock::given(method("POST"))
+        .and(path("/universe/names/"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+          r#"[{"id":30000142,"name":"Jita","category":"solar_system"},{"id":60003760,"name":"Jita IV - Moon 4 - Caldari Navy Assembly Plant","category":"station"}]"#,
+          "application/json",
+        ))
+        .mount(&server)
+        .await;
+      let (db, esi, eve_image, sso) = make_clients(&server.uri()).await;
+      seed_owned_character(&db).await;
+
+      let results = search_entities(
+        db,
+        esi,
+        eve_image,
+        sso,
+        vec![EntityCategory::SolarSystem, EntityCategory::Station],
+        "Jita".to_owned(),
+      )
+      .await;
+
+      assert_eq!(
+        results,
+        vec![
+          EntityResult {
+            category: EntityCategory::SolarSystem,
+            id: 30_000_142,
+            name: "Jita".to_owned(),
+          },
+          EntityResult {
+            category: EntityCategory::Station,
+            id: 60_003_760,
+            name: "Jita IV - Moon 4 - Caldari Navy Assembly Plant".to_owned(),
           },
         ]
       );

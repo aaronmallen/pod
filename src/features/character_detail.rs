@@ -1084,6 +1084,8 @@ fn entity_kind_str(kind: crate::ui::components::entity_search::EntityKind) -> &'
     EntityKind::Alliance => "alliance",
     EntityKind::Character => "character",
     EntityKind::Corporation => "corporation",
+    EntityKind::SolarSystem => "solar_system",
+    EntityKind::Station => "station",
   }
 }
 

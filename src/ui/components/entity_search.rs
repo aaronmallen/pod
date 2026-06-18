@@ -32,6 +32,8 @@ pub enum EntityKind {
   Alliance,
   Character,
   Corporation,
+  SolarSystem,
+  Station,
 }
 
 impl EntityKind {
@@ -39,6 +41,17 @@ impl EntityKind {
     match self {
       Self::Character => ROUND_RADIUS,
       _ => ROUNDED_RADIUS,
+    }
+  }
+
+  /// The glyph shown in place of a portrait for location kinds, which have no fetched image.
+  /// Portrait-backed kinds (characters, corporations, alliances) return `None` and fall back to
+  /// their cached avatar.
+  pub fn glyph(self) -> Option<Icon> {
+    match self {
+      Self::SolarSystem => Some(Icon::tier_system()),
+      Self::Station => Some(Icon::tier_station()),
+      Self::Alliance | Self::Character | Self::Corporation => None,
     }
   }
 
@@ -51,6 +64,8 @@ impl EntityKind {
       Self::Alliance => "Alliance",
       Self::Character => "Character",
       Self::Corporation => "Corporation",
+      Self::SolarSystem => "Solar System",
+      Self::Station => "Station",
     }
   }
 }
@@ -326,7 +341,7 @@ impl<'a, M: Clone + 'static> SingleSelect<'a, M> {
   }
 }
 
-fn chosen_card<'a, M: Clone + 'a>(value: &'a EntityRef, on_clear: M) -> Element<'a, M> {
+fn chosen_card<'a, M: Clone + 'static>(value: &'a EntityRef, on_clear: M) -> Element<'a, M> {
   let identity = Column::with_children(vec![
     text(value.name.clone())
       .font(typography::body::MEDIUM)
@@ -392,7 +407,7 @@ fn chosen_card<'a, M: Clone + 'a>(value: &'a EntityRef, on_clear: M) -> Element<
   .into()
 }
 
-fn dropdown<'a, M: Clone + 'a>(
+fn dropdown<'a, M: Clone + 'static>(
   results: &'a [EntityRef],
   chosen: &[&str],
   exclude: &[String],
@@ -432,7 +447,11 @@ fn dropdown<'a, M: Clone + 'a>(
   )
 }
 
-fn entity_avatar<'a, M: 'a>(entity: &EntityRef, size: f32) -> Element<'a, M> {
+fn entity_avatar<'a, M: 'static>(entity: &EntityRef, size: f32) -> Element<'a, M> {
+  if let Some(glyph) = entity.kind.glyph() {
+    return glyph_tile(glyph, size, entity.kind.avatar_radius());
+  }
+
   Avatar::new(
     entity.id,
     entity.name.clone(),
@@ -442,6 +461,26 @@ fn entity_avatar<'a, M: 'a>(entity: &EntityRef, size: f32) -> Element<'a, M> {
   )
   .radius(entity.kind.avatar_radius())
   .view()
+}
+
+/// Renders a location glyph in an avatar-sized tile, standing in for the portrait that location
+/// entities (solar systems, stations) do not have.
+fn glyph_tile<'a, M: 'static>(glyph: Icon, size: f32, radius: f32) -> Element<'a, M> {
+  container(glyph.size(size * 0.55).color(color::text::secondary()).render())
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        radius: radius.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn field<'a, M: 'a>(content: Element<'a, M>, focused: bool) -> Element<'a, M> {
@@ -489,7 +528,7 @@ fn no_matches<'a, M: 'a>() -> Element<'a, M> {
   .into()
 }
 
-fn result_row<'a, M: Clone + 'a>(entity: &'a EntityRef, on_pick: &impl Fn(EntityRef) -> M) -> Element<'a, M> {
+fn result_row<'a, M: Clone + 'static>(entity: &'a EntityRef, on_pick: &impl Fn(EntityRef) -> M) -> Element<'a, M> {
   let identity = Column::with_children(vec![
     text(entity.name.clone())
       .font(typography::body::REGULAR)
@@ -610,9 +649,22 @@ mod tests {
       assert!(EntityKind::Character.is_round());
       assert!(!EntityKind::Corporation.is_round());
       assert!(!EntityKind::Alliance.is_round());
+      assert!(!EntityKind::SolarSystem.is_round());
+      assert!(!EntityKind::Station.is_round());
 
       assert_eq!(EntityKind::Character.avatar_radius(), ROUND_RADIUS);
       assert_eq!(EntityKind::Corporation.avatar_radius(), ROUNDED_RADIUS);
+      assert_eq!(EntityKind::Station.avatar_radius(), ROUNDED_RADIUS);
+    }
+
+    #[test]
+    fn it_uses_a_glyph_only_for_location_kinds() {
+      assert!(EntityKind::SolarSystem.glyph().is_some());
+      assert!(EntityKind::Station.glyph().is_some());
+
+      assert!(EntityKind::Character.glyph().is_none());
+      assert!(EntityKind::Corporation.glyph().is_none());
+      assert!(EntityKind::Alliance.glyph().is_none());
     }
   }
 
@@ -783,6 +835,26 @@ mod tests {
       ];
 
       let _el: Element<'_, Message> = SingleSelect::new("Vex", None, &results, Message::Input, Message::Changed).view();
+    }
+
+    #[test]
+    fn it_renders_location_results_with_a_glyph_fallback() {
+      let results = vec![
+        sample(EntityKind::SolarSystem, 30_000_142, "Jita"),
+        sample(EntityKind::Station, 60_003_760, "Jita IV - Moon 4"),
+      ];
+
+      let _el: Element<'_, Message> =
+        SingleSelect::new("Jita", None, &results, Message::Input, Message::Changed).view();
+    }
+
+    #[test]
+    fn it_renders_a_chosen_location_card_with_a_glyph_fallback() {
+      let value = sample(EntityKind::Station, 60_003_760, "Jita IV - Moon 4");
+      let results: Vec<EntityRef> = Vec::new();
+
+      let _el: Element<'_, Message> =
+        SingleSelect::new("", Some(&value), &results, Message::Input, Message::Changed).view();
     }
 
     #[test]

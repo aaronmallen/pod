@@ -3557,9 +3557,14 @@ fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, que
             entity_search::EntityCategory::Alliance => picker::EntityKind::Alliance,
             entity_search::EntityCategory::Character => picker::EntityKind::Character,
             entity_search::EntityCategory::Corporation => picker::EntityKind::Corporation,
+            entity_search::EntityCategory::SolarSystem => picker::EntityKind::SolarSystem,
+            entity_search::EntityCategory::Station => picker::EntityKind::Station,
           },
           name: result.name,
-          portrait: Some(store::images::default_store().image_path(result.category.image_kind(), result.id)),
+          portrait: result
+            .category
+            .image_kind()
+            .map(|kind| store::images::default_store().image_path(kind, result.id)),
         })
         .collect();
       Message::CharacterDetail(character_detail::Message::ContactEntityResults {
@@ -3878,7 +3883,10 @@ fn mail_recipient_search(state: &mail::State, runtime: &Runtime, query: String, 
           id: result.id,
           kind: crate::ui::components::entity_search::EntityKind::Character,
           name: result.name,
-          portrait: Some(store::images::default_store().image_path(result.category.image_kind(), result.id)),
+          portrait: result
+            .category
+            .image_kind()
+            .map(|kind| store::images::default_store().image_path(kind, result.id)),
         })
         .collect();
       Message::Mail(if is_to {

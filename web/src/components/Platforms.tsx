@@ -19,7 +19,7 @@ export function Platforms({ platforms, accent, release }: Props) {
         <SectionHead
           eyebrow="Downloads"
           title="Available everywhere you fly."
-          line={`Signed and notarized. Release ${release.version} · ${release.date}.`}
+          line={`Release ${release.version} · ${release.date}.`}
         />
 
         <div style={{

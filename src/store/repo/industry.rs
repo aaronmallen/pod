@@ -43,7 +43,6 @@ pub struct PlanType {
 /// Director or Station_Manager (the same roles that gate structure discovery), plus player-pinned structures (public or
 /// allied citadels the planner chose, surfaced regardless of corp ownership and de-duped against the corp arm); ordered
 /// by manufacturing cost index ascending, facilities with no index last.
-#[allow(dead_code)]
 pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error> {
   let rows = sqlx::query_as::<_, Facility>(
     "WITH accessible_structures AS ( \
@@ -81,7 +80,6 @@ pub async fn accessible_facilities(db: &Database) -> Result<Vec<Facility>, Error
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn cost_index_for(db: &Database, solar_system_id: i64, activity_id: i64) -> Result<Option<f64>, Error> {
   Ok(
     cost_indices_for_system(db, solar_system_id)
@@ -90,7 +88,6 @@ pub async fn cost_index_for(db: &Database, solar_system_id: i64, activity_id: i6
   )
 }
 
-#[allow(dead_code)]
 pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Result<Option<IndustryCostIndex>, Error> {
   let row = sqlx::query_as::<_, IndustryCostIndex>(
     "SELECT copying, invention, manufacturing, reaction, researching_material_efficiency, \
@@ -106,7 +103,6 @@ pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Res
 /// Resolves a system's security status, region name, and system name via the SDE geography joins
 /// (solar_systems → constellations → regions), for facilities resolved outside [`accessible_facilities`]
 /// such as live ESI search hits. Returns `(security_status, region, system_name)`.
-#[allow(dead_code)]
 pub async fn system_geo(
   db: &Database,
   solar_system_id: i64,

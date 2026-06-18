@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::Path;
 
 const NETWORK_FSTYPE_NAMES: [&str; 5] = ["afpfs", "nfs", "smbfs", "webdav", "cifs"];

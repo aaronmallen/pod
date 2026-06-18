@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
@@ -371,6 +369,8 @@ async fn commit_with_org_context(
   }
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn insert_with_org(
   db: &Database,
   char: &Character,
@@ -504,6 +504,8 @@ pub async fn insert_with_org(
   commit_with_org_context(tx, char, corporation).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn upsert(db: &Database, char: &Character) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO characters \
@@ -906,6 +908,8 @@ pub async fn all_states(db: &Database) -> Result<Vec<CharacterState>, Error> {
   Ok(states)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn telemetry(db: &Database, character_id: i64) -> Result<Option<CharacterTelemetry>, Error> {
   let row = sqlx::query_as::<_, CharacterTelemetry>(
     "SELECT character_id, online, ship_item_id, ship_name, ship_type_id, solar_system_id, \
@@ -1216,6 +1220,8 @@ pub async fn replace_labels_for_character(
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterContacts, Error> {
   let contacts = sqlx::query_as::<_, CharacterContact>(
     "SELECT character_id, contact_id, contact_name, contact_type, is_blocked, is_watched, label_ids, standing \
@@ -1251,6 +1257,7 @@ pub async fn contact_labels(db: &Database, character_id: i64) -> Result<Vec<Char
 /// Fetches one keyset page of contacts ordered by `sort`/`dir`, optionally filtered to a single `contact_type`
 /// (the address-book facet), starting after `cursor`. The keyset compares `(sort column, contact_id)` so the page
 /// is stable across loads; the caller derives the next cursor from the last returned row.
+// Filter, cursor, and limit parameters of a keyset-paginated query; bundling them would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn contacts_page(
   db: &Database,
@@ -1629,6 +1636,8 @@ pub async fn notifications(db: &Database, character_id: i64) -> Result<Vec<Chara
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn all_squads(db: &Database) -> Result<Vec<Squad>, Error> {
   let rows = sqlx::query_as::<_, Squad>(
     "SELECT color, created_at, description, id, name, position, updated_at FROM squads ORDER BY position",
@@ -1781,6 +1790,8 @@ pub async fn unassign(db: &Database, character_id: i64) -> Result<(), Error> {
   assign(db, character_id, unassigned.id(), position).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn unassigned_id(db: &Database) -> Result<Option<i64>, Error> {
   Ok(by_name(db, RESERVED_UNASSIGNED_NAME).await?.map(|squad| squad.id()))
 }
@@ -1878,6 +1889,8 @@ pub async fn replace_standings_for_character(
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn standings(db: &Database, character_id: i64) -> Result<Vec<CharacterStanding>, Error> {
   let rows = sqlx::query_as::<_, CharacterStanding>(
     "SELECT character_id, from_id, from_name, from_type, standing FROM character_standings \
@@ -3775,6 +3788,7 @@ mod contact_tests {
       .unwrap();
   }
 
+  // Test seeder whose arguments mirror the contact columns.
   #[allow(clippy::too_many_arguments)]
   async fn seed_contact(
     db: &Database,

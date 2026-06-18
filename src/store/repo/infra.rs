@@ -37,6 +37,7 @@ pub async fn get(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<
   Ok(row)
 }
 
+// Arguments map directly to the persisted credential columns; bundling them into a struct would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
   db: &Database,
@@ -76,7 +77,6 @@ pub async fn upsert(
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn mark_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<(), Error> {
   let now = Utc::now().timestamp();
   sqlx::query("UPDATE credentials SET needs_reauth = 1, last_checked_at = ? WHERE owner_id = ? AND owner_type = ?")
@@ -88,7 +88,6 @@ pub async fn mark_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerTy
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> Result<(), Error> {
   let now = Utc::now().timestamp();
   sqlx::query("UPDATE credentials SET needs_reauth = 0, last_checked_at = ? WHERE owner_id = ? AND owner_type = ?")
@@ -100,6 +99,7 @@ pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerT
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn http_cache_delete(db: &Database, url: &str) -> Result<(), Error> {
   sqlx::query("DELETE FROM http_cache WHERE url = ?")
@@ -118,6 +118,7 @@ pub async fn http_cache_get(db: &Database, url: &str) -> Result<Option<HttpCache
   Ok(row)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn purge_expired(db: &Database) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM http_cache WHERE expires_at IS NOT NULL AND expires_at < ?")
@@ -215,6 +216,7 @@ pub async fn mark_done(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn mark_failed(db: &Database, id: i64, error: &str) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
@@ -347,6 +349,7 @@ pub async fn tag_delete(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn tag_get(db: &Database, id: i64) -> Result<Option<Tag>, Error> {
   let row = sqlx::query_as::<_, Tag>(
@@ -358,6 +361,7 @@ pub async fn tag_get(db: &Database, id: i64) -> Result<Option<Tag>, Error> {
   Ok(row)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn members(db: &Database, tag_id: i64, entity_type: &str) -> Result<Vec<i64>, Error> {
   let ids = sqlx::query_scalar::<_, i64>(

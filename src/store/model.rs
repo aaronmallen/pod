@@ -77,8 +77,6 @@ mod faction;
 mod http_cache_entry;
 mod inaccessible_structure;
 mod industry_cost_index;
-// Consumed by the saved-build-plans UI in a follow-up; the storage layer lands first.
-#[allow(dead_code)]
 mod industry_plan;
 mod item_category;
 mod item_group;
@@ -121,70 +119,44 @@ mod sync_ledger;
 mod tag;
 mod type_price_history;
 
-#[allow(unused_imports)]
 pub use abyssal_item::Model as AbyssalItem;
-#[allow(unused_imports)]
 pub use abyssal_module_stat::Model as AbyssalModuleStat;
-#[allow(unused_imports)]
 pub use abyssal_stat_template::{StatRange, StatTemplate};
-#[allow(unused_imports)]
 pub use agent_type::Model as AgentType;
 pub use alliance::Model as Alliance;
 pub use bloodline::Model as Bloodline;
 pub use certificate::Model as Certificate;
 pub use certificate_skill::Model as CertificateSkill;
+// Gender is re-exported only for test fixtures (`Character::new(.., Gender::Male, ..)`); no production reader yet.
 #[allow(unused_imports)]
 pub use character::{Gender, Model as Character};
-#[allow(unused_imports)]
 pub use character_asset::Model as CharacterAsset;
 pub use character_attributes::Model as CharacterAttributes;
-#[allow(unused_imports)]
 pub use character_blueprint::Model as CharacterBlueprint;
-#[allow(unused_imports)]
 pub use character_calendar::Model as CharacterCalendarEvent;
-#[allow(unused_imports)]
 pub use character_calendar_attendee::Model as CharacterCalendarAttendee;
-#[allow(unused_imports)]
 pub use character_calendar_view::AttendeeTally;
-#[allow(unused_imports)]
 pub use character_clone::Model as CharacterClone;
-#[allow(unused_imports)]
 pub use character_clone_implant::Model as CharacterCloneImplant;
-#[allow(unused_imports)]
 pub use character_contact::Model as CharacterContact;
-#[allow(unused_imports)]
 pub use character_contact_label::Model as CharacterContactLabel;
-#[allow(unused_imports)]
 pub use character_contract::{ContractEscrow, Model as CharacterContract};
-#[allow(unused_imports)]
 pub use character_contract_bid::Model as CharacterContractBid;
-#[allow(unused_imports)]
 pub use character_contract_item::Model as CharacterContractItem;
 pub use character_implant::Model as CharacterImplant;
-#[allow(unused_imports)]
 pub use character_industry_job::Model as CharacterIndustryJob;
-#[allow(unused_imports)]
 pub use character_jump_clone::Model as CharacterJumpClone;
-#[allow(unused_imports)]
 pub use character_killmail::Model as CharacterKillEntry;
-#[allow(unused_imports)]
 pub use character_mail::Model as CharacterMail;
-#[allow(unused_imports)]
 pub use character_mail_body::Model as CharacterMailBody;
-#[allow(unused_imports)]
 pub use character_mail_label::Model as CharacterMailLabel;
-#[allow(unused_imports)]
 pub use character_mail_label_membership::Model as CharacterMailLabelMembership;
-#[allow(unused_imports)]
 pub use character_mail_recipient::Model as CharacterMailRecipient;
-#[allow(unused_imports)]
 pub use character_net_worth_snapshot::{CombinedNetWorthPoint, Model as CharacterNetWorthSnapshot};
-#[allow(unused_imports)]
 pub use character_notification::Model as CharacterNotification;
 pub use character_skill::Model as CharacterSkill;
 pub use character_skillqueue::Model as CharacterSkillqueue;
 pub use character_squad::Model as CharacterSquad;
-#[allow(unused_imports)]
 pub use character_standing::Model as CharacterStanding;
 pub use character_state::CharacterState;
 pub use character_telemetry::Model as CharacterTelemetry;
@@ -192,77 +164,48 @@ pub use character_wallet_journal::Model as CharacterWalletJournal;
 pub use character_wallet_transaction::Model as CharacterWalletTransaction;
 pub use constellation::Model as Constellation;
 pub use corporation::Model as Corporation;
-#[allow(unused_imports)]
 pub use corporation_asset::Model as CorporationAsset;
-#[allow(unused_imports)]
 pub use corporation_blueprint::Model as CorporationBlueprint;
-#[allow(unused_imports)]
 pub use corporation_contact::Model as CorporationContact;
-#[allow(unused_imports)]
 pub use corporation_contact_label::Model as CorporationContactLabel;
-#[allow(unused_imports)]
 pub use corporation_contract::Model as CorporationContract;
-#[allow(unused_imports)]
 pub use corporation_contract_bid::Model as CorporationContractBid;
-#[allow(unused_imports)]
 pub use corporation_contract_item::Model as CorporationContractItem;
-#[allow(unused_imports)]
 pub use corporation_industry_job::Model as CorporationIndustryJob;
-#[allow(unused_imports)]
 pub use corporation_killmail::Model as CorporationKillEntry;
-#[allow(unused_imports)]
 pub use corporation_killmail_attacker::Model as CorporationKillmailAttacker;
-#[allow(unused_imports)]
 pub use corporation_killmail_item::Model as CorporationKillmailItem;
-#[allow(unused_imports)]
 pub use corporation_member_role::Model as CorporationMemberRole;
-#[allow(unused_imports)]
 pub use corporation_mining_extraction::Model as CorporationMiningExtraction;
-#[allow(unused_imports)]
 pub use corporation_net_worth_snapshot::Model as CorporationNetWorthSnapshot;
-#[allow(unused_imports)]
 pub use corporation_standing::Model as CorporationStanding;
-#[allow(unused_imports)]
 pub use corporation_wallet_division::Model as CorporationWalletDivision;
-#[allow(unused_imports)]
 pub use corporation_wallet_journal::Model as CorporationWalletJournal;
-#[allow(unused_imports)]
 pub use corporation_wallet_transaction::Model as CorporationWalletTransaction;
 pub use credential::{Model as Credential, OwnerType};
-#[allow(unused_imports)]
 pub use dogma_attribute::Model as DogmaAttribute;
 pub use entity_tag::{ENTITY_TYPE_CHARACTER, ENTITY_TYPE_CORPORATION, Model as EntityTag};
 pub use facility::Model as Facility;
 pub use faction::Model as Faction;
 pub use http_cache_entry::Model as HttpCacheEntry;
-#[allow(unused_imports)]
 pub use inaccessible_structure::Model as InaccessibleStructure;
 pub use industry_cost_index::Model as IndustryCostIndex;
 pub use industry_plan::Model as IndustryPlan;
 pub use item_category::Model as ItemCategory;
 pub use item_group::Model as ItemGroup;
 pub use item_type::Model as ItemType;
-#[allow(unused_imports)]
 pub use killmail_attacker::Model as KillmailAttacker;
-#[allow(unused_imports)]
 pub use killmail_item::Model as KillmailItem;
-#[allow(unused_imports)]
 pub use mail_draft::Model as MailDraft;
 pub use mail_folder_assignment::Model as MailFolderAssignment;
-#[allow(unused_imports)]
 pub use mail_snooze::Model as MailSnooze;
-#[allow(unused_imports)]
 pub use mail_triage::Model as MailTriage;
 pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;
-#[allow(unused_imports)]
 pub use moon::Model as Moon;
-#[allow(unused_imports)]
 pub use npc_agent::Model as NpcAgent;
-#[allow(unused_imports)]
 pub use npc_agent_skill::Model as NpcAgentSkill;
-#[allow(unused_imports)]
 pub use npc_corporation_division::Model as NpcCorporationDivision;
 pub use outbox::Model as Outbox;
 pub use owned_corporation::Model as OwnedCorporation;
@@ -271,25 +214,17 @@ pub use region::Model as Region;
 pub use saved_asset_filter::Model as SavedAssetFilter;
 pub use ship_mastery::Model as ShipMastery;
 pub use skill_metadata::Model as SkillMetadata;
-#[allow(unused_imports)]
 pub use skill_plan::Model as SkillPlan;
-#[allow(unused_imports)]
 pub use skill_plan_cert_proficiency::Model as SkillPlanCertProficiency;
-#[allow(unused_imports)]
 pub use skill_plan_entry::Model as SkillPlanEntry;
-#[allow(unused_imports)]
 pub use skill_plan_remap_point::Model as SkillPlanRemapPoint;
-#[allow(unused_imports)]
 pub use skill_plan_ship_mastery::Model as SkillPlanShipMastery;
 pub use solar_system::Model as SolarSystem;
 pub use squad::Model as Squad;
 pub use station::Model as Station;
-#[allow(unused_imports)]
 pub use stockpile::Model as Stockpile;
-#[allow(unused_imports)]
 pub use stockpile_item::Model as StockpileItem;
 pub use structure::Model as Structure;
-#[allow(unused_imports)]
 pub use sync_ledger::Model as SyncLedger;
 pub use tag::Model as Tag;
 pub use type_price_history::Model as TypePriceHistory;

@@ -23,8 +23,8 @@ pub struct Model {
   pub type_id: i64,
 }
 
-#[allow(dead_code)]
 impl Model {
+  // Arguments mirror the abyssal_item table columns one-to-one; bundling them into a struct would only move the fields.
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     item_id: i64,
@@ -48,6 +48,8 @@ impl Model {
     }
   }
 
+  // Public store API exercised by unit tests; not yet wired into a production call site.
+  #[allow(dead_code)]
   pub fn set_muta_price(&mut self, price_isk: Option<f64>, synced_at: i64) -> &mut Self {
     self.muta_price_isk = price_isk;
     self.muta_price_synced = Some(synced_at);

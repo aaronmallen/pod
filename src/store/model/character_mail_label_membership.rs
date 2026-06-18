@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 

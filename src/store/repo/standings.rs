@@ -1,8 +1,6 @@
 //! Standings catalog query layer: loads raw standings for a character, computes effective standings
 //! with social-skill modifiers, and filters the combined faction/corporation/agent catalog.
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use sqlx::{QueryBuilder, Sqlite};
@@ -1207,16 +1205,21 @@ mod tests {
     use super::*;
     use crate::store;
 
+    #[expect(dead_code)]
     const ANGEL_CARTEL_FACTION: i64 = 500_011;
 
+    #[expect(dead_code)]
     const ANGEL_CORP: i64 = 1_000_002;
 
+    #[expect(dead_code)]
     const CALDARI_FACTION: i64 = 500_001;
 
     const CHARACTER: i64 = 90_000_001;
 
+    #[expect(dead_code)]
     const NAVY_CORP: i64 = 1_000_001;
 
+    #[expect(dead_code)]
     const SOE_CORP: i64 = 1_000_003;
 
     async fn exec(db: &store::Database, sql: &'static str) {

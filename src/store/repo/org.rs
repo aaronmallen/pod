@@ -127,6 +127,7 @@ pub async fn get_corporation(db: &Database, id: i64) -> Result<Option<Corporatio
 // that persists a CEO/creator belonging to a different corp must first ensure that corp's row
 // exists, exactly as sync::structure_resolution::resolve_owner_corporation does for the reference
 // CEO. See the deferred FK on migrations/0003_create_orgs.sql.
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn insert_corporation_with_org(
   db: &Database,
@@ -453,6 +454,7 @@ pub async fn upsert_many_seed_corporations(db: &Database, corporations: &[SeedCo
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn all_alliances(db: &Database) -> Result<Vec<Alliance>, Error> {
   let rows = sqlx::query_as::<_, Alliance>(
@@ -475,6 +477,7 @@ pub async fn get_alliance(db: &Database, id: i64) -> Result<Option<Alliance>, Er
   Ok(row)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn insert_alliance_with_org(
   db: &Database,
@@ -738,6 +741,7 @@ pub async fn corporation_contact_labels(
   Ok(labels)
 }
 
+// Filter, cursor, and limit parameters of a keyset-paginated query; bundling them would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn corporation_contacts_page(
   db: &Database,
@@ -841,7 +845,6 @@ pub async fn replace_standings_for_corporation(
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn corporation_mining_extractions(
   db: &Database,
   corporation_id: i64,
@@ -1012,7 +1015,6 @@ pub async fn upsert_corporation_killmail_detail(
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn corporation_killmail_attackers(
   db: &Database,
   corporation_id: i64,
@@ -1030,7 +1032,6 @@ pub async fn corporation_killmail_attackers(
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn corporation_killmail_items(
   db: &Database,
   corporation_id: i64,
@@ -1047,7 +1048,6 @@ pub async fn corporation_killmail_items(
   Ok(rows)
 }
 
-#[allow(dead_code)]
 pub async fn corporation_killmails(db: &Database, corporation_id: i64) -> Result<Vec<CorporationKillEntry>, Error> {
   let rows = sqlx::query_as::<_, CorporationKillEntry>(
     "SELECT corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id, victim_corp_id, \
@@ -1094,6 +1094,7 @@ pub async fn corporation_killmails_page(
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMemberRole>, Error> {
   let rows = sqlx::query_as::<_, CorporationMemberRole>(
@@ -1646,6 +1647,7 @@ mod corporation_tests {
       .unwrap();
     }
 
+    // Test seeder whose arguments mirror the owned-corporation columns.
     #[allow(clippy::too_many_arguments)]
     async fn seed_owned_corp(
       db: &Database,

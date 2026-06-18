@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::{HashMap, HashSet};
 
 use sqlx::{QueryBuilder, Sqlite};
@@ -103,6 +101,8 @@ pub async fn for_character_abyssal(db: &Database, character_id: i64) -> Result<V
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn filtered_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -202,6 +202,8 @@ pub async fn module_stats_for_type(db: &Database, abyssal_type_id: i64) -> Resul
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn stat_templates_for_type(db: &Database, type_id: i64) -> Result<Vec<StatTemplate>, Error> {
   build_stat_templates(db, type_id, type_id).await
 }
@@ -548,6 +550,8 @@ async fn delete_corporation_assets(db: &Database, corporation_id: i64, item_ids:
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn upsert_character_asset(db: &Database, asset: &CharacterAsset) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
   sqlx::query("DELETE FROM character_assets WHERE item_id = ?")
@@ -559,6 +563,8 @@ pub async fn upsert_character_asset(db: &Database, asset: &CharacterAsset) -> Re
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn upsert_corporation_asset(db: &Database, asset: &CorporationAsset) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
   sqlx::query("DELETE FROM corporation_assets WHERE item_id = ?")
@@ -582,6 +588,8 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Chara
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationAsset>, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(Vec::new());
@@ -597,6 +605,8 @@ pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<C
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn children_for_character(
   db: &Database,
   character_id: i64,
@@ -614,6 +624,8 @@ pub async fn children_for_character(
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn children_for_corporation(
   db: &Database,
   corporation_id: i64,
@@ -634,6 +646,8 @@ pub async fn children_for_corporation(
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn roots_for_character(db: &Database, character_id: i64) -> Result<Vec<CharacterAsset>, Error> {
   let rows = sqlx::query_as::<_, CharacterAsset>(
     "SELECT character_id, container_id, depth, is_active_ship, is_blueprint_copy, is_container, is_singleton, \
@@ -646,6 +660,8 @@ pub async fn roots_for_character(db: &Database, character_id: i64) -> Result<Vec
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn roots_for_characters(db: &Database, character_ids: &[i64]) -> Result<Vec<CharacterAsset>, Error> {
   if character_ids.is_empty() {
     return Ok(Vec::new());
@@ -661,6 +677,8 @@ pub async fn roots_for_characters(db: &Database, character_ids: &[i64]) -> Resul
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn roots_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationAsset>, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(Vec::new());
@@ -676,6 +694,8 @@ pub async fn roots_for_corporation(db: &Database, corporation_id: i64) -> Result
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn count_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
   let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_assets WHERE character_id = ?")
     .bind(character_id)
@@ -684,6 +704,8 @@ pub async fn count_for_character(db: &Database, character_id: i64) -> Result<i64
   Ok(count)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn count_for_corporation(db: &Database, corporation_id: i64) -> Result<i64, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(0);
@@ -695,6 +717,8 @@ pub async fn count_for_corporation(db: &Database, corporation_id: i64) -> Result
   Ok(count)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn referenced_locations(db: &Database) -> Result<Vec<ReferencedLocation>, Error> {
   let rows = sqlx::query_as::<_, ReferencedLocation>(
     "SELECT location_id, location_type FROM character_assets WHERE location_type <> 'item' \
@@ -711,6 +735,8 @@ pub async fn geo_locations_for_character(db: &Database, character_id: i64) -> Re
   geo_locations(db, "character_assets", "character_id", &[character_id]).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn geo_locations_for_characters(db: &Database, character_ids: &[i64]) -> Result<Vec<GeoLocation>, Error> {
   if character_ids.is_empty() {
     return Ok(Vec::new());
@@ -789,6 +815,8 @@ macro_rules! geo_extra_join_sql {
   };
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const RENDER_CHARACTER_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
     a.name AS name, it.name AS type_name, ig.name AS group_name, ",
@@ -804,6 +832,8 @@ const RENDER_CHARACTER_SQL: &str = concat!(
   "WHERE a.character_id = ? ORDER BY a.item_id"
 );
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const RENDER_CORPORATION_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
     a.name AS name, it.name AS type_name, ig.name AS group_name, ",
@@ -819,6 +849,8 @@ const RENDER_CORPORATION_SQL: &str = concat!(
   "WHERE a.corporation_id = ? ORDER BY a.item_id"
 );
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn render_for_character(db: &Database, character_id: i64) -> Result<Vec<AssetRenderRow>, Error> {
   let rows = sqlx::query_as::<_, RenderRowSql>(RENDER_CHARACTER_SQL)
     .bind(character_id)
@@ -827,6 +859,8 @@ pub async fn render_for_character(db: &Database, character_id: i64) -> Result<Ve
   Ok(rows.into_iter().map(RenderRowSql::into_row).collect())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn render_for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<AssetRenderRow>, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(Vec::new());
@@ -948,6 +982,8 @@ pub async fn inventory_page_for_character(
   inventory_page(db, "character_assets", "character_id", &[character_id], query).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn inventory_page_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -1002,6 +1038,8 @@ pub async fn inventory_totals_for_character(
   .await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn inventory_totals_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -1115,13 +1153,21 @@ macro_rules! asset_value_as_of_sql {
   };
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ASSET_VALUE_AS_OF_CHARACTER: &str = asset_value_as_of_sql!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ASSET_VALUE_AS_OF_CORPORATION: &str = asset_value_as_of_sql!("corporation_assets", "corporation_id");
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn asset_value_as_of_for_character(db: &Database, character_id: i64, date: &str) -> Result<f64, Error> {
   asset_value_as_of(db, ASSET_VALUE_AS_OF_CHARACTER, character_id, date).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn asset_value_as_of_for_corporation(db: &Database, corporation_id: i64, date: &str) -> Result<f64, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(0.0);
@@ -1129,6 +1175,8 @@ pub async fn asset_value_as_of_for_corporation(db: &Database, corporation_id: i6
   asset_value_as_of(db, ASSET_VALUE_AS_OF_CORPORATION, corporation_id, date).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 async fn asset_value_as_of(db: &Database, sql: &'static str, owner_id: i64, date: &str) -> Result<f64, Error> {
   let value = sqlx::query_scalar::<_, f64>(sql)
     .bind(date)
@@ -1175,10 +1223,14 @@ pub async fn children_render_for_corporation(
   .await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn child_count_for_character(db: &Database, character_id: i64, container_id: i64) -> Result<i64, Error> {
   child_count(db, "character_assets", "character_id", &[character_id], container_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn child_count_for_characters(db: &Database, character_ids: &[i64], container_id: i64) -> Result<i64, Error> {
   if character_ids.is_empty() {
     return Ok(0);
@@ -1186,6 +1238,8 @@ pub async fn child_count_for_characters(db: &Database, character_ids: &[i64], co
   child_count(db, "character_assets", "character_id", character_ids, container_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn child_count_for_corporation(db: &Database, corporation_id: i64, container_id: i64) -> Result<i64, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(0);
@@ -1200,6 +1254,8 @@ pub async fn child_count_for_corporation(db: &Database, corporation_id: i64, con
   .await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn node_rollup_for_character(
   db: &Database,
   character_id: i64,
@@ -1208,6 +1264,8 @@ pub async fn node_rollup_for_character(
   node_rollup(db, "character_assets", "character_id", &[character_id], container_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn node_rollup_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -1219,6 +1277,8 @@ pub async fn node_rollup_for_characters(
   node_rollup(db, "character_assets", "character_id", character_ids, container_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn node_rollup_for_corporation(
   db: &Database,
   corporation_id: i64,
@@ -1237,6 +1297,8 @@ pub async fn node_rollup_for_corporation(
   .await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn ancestors_of_match_for_character(
   db: &Database,
   character_id: i64,
@@ -1246,6 +1308,8 @@ pub async fn ancestors_of_match_for_character(
   ancestors_of_match(db, "character_assets", "character_id", &[character_id], filter, me_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn ancestors_of_match_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -1258,6 +1322,8 @@ pub async fn ancestors_of_match_for_characters(
   ancestors_of_match(db, "character_assets", "character_id", character_ids, filter, me_id).await
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn ancestors_of_match_for_corporation(
   db: &Database,
   corporation_id: i64,
@@ -1297,6 +1363,8 @@ async fn children_render(
   Ok(rows.into_iter().map(InventoryRowSql::into_row).collect())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 async fn child_count(
   db: &Database,
   table: &'static str,
@@ -1315,6 +1383,8 @@ async fn child_count(
   Ok(count)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 async fn node_rollup(
   db: &Database,
   table: &'static str,
@@ -1340,6 +1410,8 @@ async fn node_rollup(
   })
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 async fn ancestors_of_match(
   db: &Database,
   table: &'static str,
@@ -1813,6 +1885,8 @@ fn inventory_totals_head(table: &str, owner_column: &str) -> &'static str {
   }
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 fn child_count_head(table: &str, owner_column: &str) -> &'static str {
   match (table, owner_column) {
     ("character_assets", "character_id") => "SELECT COUNT(*) FROM character_assets WHERE character_id ",
@@ -1821,6 +1895,8 @@ fn child_count_head(table: &str, owner_column: &str) -> &'static str {
   }
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 fn node_rollup_sql(table: &str, owner_column: &str) -> (&'static str, &'static str, &'static str) {
   match (table, owner_column) {
     ("character_assets", "character_id") => (
@@ -1837,6 +1913,8 @@ fn node_rollup_sql(table: &str, owner_column: &str) -> (&'static str, &'static s
   }
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 fn ancestors_of_match_sql(table: &str, owner_column: &str) -> (&'static str, &'static str) {
   match (table, owner_column) {
     ("character_assets", "character_id") => (ANCESTORS_ANCHOR_CHARACTER, ANCESTORS_RECURSE_CHARACTER),
@@ -2041,17 +2119,39 @@ macro_rules! ancestors_recurse_sql_lit {
   };
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_ANCHOR_CHARACTER: &str = node_rollup_anchor_sql_lit!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_ANCHOR_CORPORATION: &str = node_rollup_anchor_sql_lit!("corporation_assets", "corporation_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_RECURSE_CHARACTER: &str = node_rollup_recurse_sql_lit!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_RECURSE_CORPORATION: &str = node_rollup_recurse_sql_lit!("corporation_assets", "corporation_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_AGGREGATE_CHARACTER: &str = node_rollup_aggregate_sql_lit!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const NODE_ROLLUP_AGGREGATE_CORPORATION: &str = node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ANCESTORS_ANCHOR_CORPORATION: &str = ancestors_anchor_sql_lit!("corporation_assets", "corporation_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ANCESTORS_RECURSE_CHARACTER: &str = ancestors_recurse_sql_lit!("character_assets", "character_id");
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const ANCESTORS_RECURSE_CORPORATION: &str = ancestors_recurse_sql_lit!("corporation_assets", "corporation_id");
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn completeness_for_character(db: &Database, character_id: i64) -> Result<AssetCompleteness, Error> {
   let distinct_type_ids =
     sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT type_id) FROM character_assets WHERE character_id = ?")
@@ -2071,6 +2171,8 @@ pub async fn completeness_for_character(db: &Database, character_id: i64) -> Res
   Ok(report)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn completeness_for_corporation(db: &Database, corporation_id: i64) -> Result<AssetCompleteness, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(AssetCompleteness::default());
@@ -2093,6 +2195,8 @@ pub async fn completeness_for_corporation(db: &Database, corporation_id: i64) ->
   Ok(report)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 fn into_completeness(distinct_type_ids: i64, unresolved: Vec<i64>) -> AssetCompleteness {
   AssetCompleteness {
     distinct_type_ids,
@@ -2101,6 +2205,8 @@ fn into_completeness(distinct_type_ids: i64, unresolved: Vec<i64>) -> AssetCompl
   }
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 fn log_completeness(owner_kind: &str, owner_id: i64, report: &AssetCompleteness) {
   if !report.is_complete() {
     tracing::warn!(
@@ -2247,6 +2353,8 @@ pub async fn get(db: &Database, id: i64) -> Result<Option<Stockpile>, Error> {
   Ok(row)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn with_items(db: &Database, id: i64) -> Result<Option<StockpileWithItems>, Error> {
   let Some(stockpile) = get(db, id).await? else {
     return Ok(None);

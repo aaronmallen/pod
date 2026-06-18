@@ -1,10 +1,10 @@
-#![allow(dead_code)]
-
 use chrono::{Duration, NaiveDate};
 
 use crate::store::model::{CharacterNetWorthSnapshot, CombinedNetWorthPoint};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct PeriodDelta {
   pub absolute: f64,
   pub end: f64,
@@ -12,14 +12,17 @@ pub struct PeriodDelta {
   pub start: f64,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub enum Scope {
   Character(i64),
   Combined,
 }
 
 #[derive(Clone, Debug, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct SeriesPoint {
   pub asset_value: Option<f64>,
   pub date: String,
@@ -52,8 +55,9 @@ impl From<CombinedNetWorthPoint> for SeriesPoint {
   }
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub enum Timeframe {
   HalfYear,
   Month,
@@ -63,6 +67,8 @@ pub enum Timeframe {
 }
 
 impl Timeframe {
+  // Public store API exercised by unit tests; not yet wired into a production call site.
+  #[allow(dead_code)]
   pub fn days(self) -> i64 {
     match self {
       Timeframe::Week => 7,
@@ -73,6 +79,8 @@ impl Timeframe {
     }
   }
 
+  // Public store API exercised by unit tests; not yet wired into a production call site.
+  #[allow(dead_code)]
   pub fn since(self, today: NaiveDate) -> String {
     let start = today - Duration::days(self.days() - 1);
     start.format("%Y-%m-%d").to_string()

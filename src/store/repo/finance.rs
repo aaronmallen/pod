@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use chrono::NaiveDate;
 use sqlx::{QueryBuilder, Sqlite};
 
@@ -18,6 +16,8 @@ use crate::store::{
 
 pub const RETENTION_DAYS: i64 = 365;
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 const STATE_OPEN: &str = "open";
 
 pub async fn replace_for_character(
@@ -484,6 +484,8 @@ pub async fn count_transactions_for_corporation(
   Ok(count)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn escrow(db: &Database, character_id: i64) -> Result<Option<ContractEscrow>, Error> {
   let row = sqlx::query_as::<_, ContractEscrow>(
     "SELECT character_id, escrow, escrow_collateral, escrow_price FROM character_contract_escrow \
@@ -589,6 +591,8 @@ pub async fn divisions(db: &Database, corporation_id: i64) -> Result<Vec<Corpora
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn division(
   db: &Database,
   corporation_id: i64,
@@ -744,6 +748,8 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Marke
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn open_escrow(db: &Database, character_id: i64) -> Result<f64, Error> {
   let total: f64 =
     sqlx::query_scalar("SELECT COALESCE(SUM(escrow), 0.0) FROM market_orders WHERE character_id = ? AND state = ?")
@@ -876,6 +882,8 @@ pub async fn for_character_since(
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn latest(db: &Database, scope: Scope) -> Result<Option<SeriesPoint>, Error> {
   let point = match scope {
     Scope::Character(id) => sqlx::query_as::<_, CharacterNetWorthSnapshot>(
@@ -899,6 +907,8 @@ pub async fn latest(db: &Database, scope: Scope) -> Result<Option<SeriesPoint>, 
   Ok(point)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub fn period_delta(series: &[SeriesPoint]) -> Option<PeriodDelta> {
   let mut figures = series.iter().filter_map(|point| point.net_worth);
   let start = figures.next()?;
@@ -913,6 +923,8 @@ pub fn period_delta(series: &[SeriesPoint]) -> Option<PeriodDelta> {
   })
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn series_since(
   db: &Database,
   scope: Scope,
@@ -935,6 +947,7 @@ pub async fn series_since(
   Ok(points)
 }
 
+// Arguments map directly to the persisted row columns; bundling them into a struct would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
   db: &Database,
@@ -965,6 +978,8 @@ pub async fn upsert(
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn series(db: &Database, type_id: i64) -> Result<Vec<TypePriceHistory>, Error> {
   let rows = sqlx::query_as::<_, TypePriceHistory>(
     "SELECT close, date, high, low, open, type_id FROM type_price_histories \
@@ -976,6 +991,8 @@ pub async fn series(db: &Database, type_id: i64) -> Result<Vec<TypePriceHistory>
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn close_as_of(db: &Database, type_id: i64, date: &str) -> Result<Option<f64>, Error> {
   let close = sqlx::query_scalar::<_, f64>(
     "SELECT close FROM type_price_histories WHERE type_id = ? AND date <= ? ORDER BY date DESC LIMIT 1",
@@ -1057,6 +1074,8 @@ pub async fn append_wallet_journal(db: &Database, entries: &[CharacterWalletJour
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn wallet_journal(db: &Database, character_id: i64) -> Result<Vec<CharacterWalletJournal>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletJournal>(
     "SELECT amount, balance, character_id, context_id, context_id_type, date, description, \
@@ -1125,6 +1144,8 @@ pub async fn append_wallet_transaction(
   Ok(())
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn wallet_transactions(db: &Database, character_id: i64) -> Result<Vec<CharacterWalletTransaction>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletTransaction>(
     "SELECT character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
@@ -1168,6 +1189,8 @@ pub async fn wallet_period_summaries_all(db: &Database) -> Result<Vec<CharacterW
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn wallet_period_summaries_get(
   db: &Database,
   character_id: i64,

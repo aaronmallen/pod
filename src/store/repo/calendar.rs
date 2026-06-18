@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::store::{
   Database, Error,
   model::{AttendeeTally, CharacterCalendarAttendee, CharacterCalendarEvent},

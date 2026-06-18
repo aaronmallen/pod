@@ -5,6 +5,8 @@ use crate::store::{
   model::{OwnerType, SyncLedger},
 };
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn all(db: &Database) -> Result<Vec<SyncLedger>, Error> {
   let rows = sqlx::query_as::<_, SyncLedger>(
     "SELECT kind, last_attempt_at, last_reason, last_success_at, next_eligible_at, outcome, rows_touched, \
@@ -27,6 +29,8 @@ pub async fn for_subject(db: &Database, subject_type: OwnerType, subject_id: i64
   Ok(rows)
 }
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub async fn get(
   db: &Database,
   subject_type: OwnerType,
@@ -45,6 +49,7 @@ pub async fn get(
   Ok(row)
 }
 
+// Arguments map directly to the sync_ledger row columns; bundling them into a struct would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn upsert(
   db: &Database,

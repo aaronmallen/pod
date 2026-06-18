@@ -23,7 +23,6 @@ impl Model {
   /// Returns the cost index for an ESI activity_id integer (1=manufacturing, 3=research time,
   /// 4=research material, 5=copying, 8=invention, 9 and 11=reaction — both map to the same
   /// column because 9 is the legacy pre-Lifeblood reaction id and 11 is the current one).
-  #[allow(dead_code)]
   pub fn for_activity(&self, activity_id: i64) -> Option<f64> {
     match activity_id {
       1 => self.manufacturing,

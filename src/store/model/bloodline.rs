@@ -30,6 +30,7 @@ pub struct Model {
 }
 
 impl Model {
+  // Arguments mirror the bloodline table columns one-to-one; bundling them into a struct would only move the fields.
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     id: i64,

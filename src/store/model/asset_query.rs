@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use sqlx::FromRow;
 
 use crate::{
@@ -10,6 +8,8 @@ use crate::{
 const INVENTORY_ICON_SIZE: Size = Size::S64;
 
 #[derive(Clone, Debug, Default, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct AssetCompleteness {
   pub distinct_type_ids: i64,
   pub resolved: i64,
@@ -17,12 +17,16 @@ pub struct AssetCompleteness {
 }
 
 impl AssetCompleteness {
+  // Public store API exercised by unit tests; not yet wired into a production call site.
+  #[allow(dead_code)]
   pub fn is_complete(&self) -> bool {
     self.unresolved.is_empty()
   }
 }
 
 #[derive(Clone, Debug, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct AssetRenderRow {
   pub category: String,
   pub container_id: Option<i64>,
@@ -379,24 +383,32 @@ pub struct InventoryTotals {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct NodeRollup {
   pub items: i64,
   pub value: f64,
 }
 
 #[derive(FromRow)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct NodeRollupSql {
   pub items: Option<i64>,
   pub value: Option<f64>,
 }
 
 #[derive(Clone, Debug, Eq, FromRow, Hash, PartialEq)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct ReferencedLocation {
   pub location_id: i64,
   pub location_type: String,
 }
 
 #[derive(FromRow)]
+// Public store API exercised by unit tests; not yet wired into a production call site.
+#[allow(dead_code)]
 pub struct RenderRowSql {
   pub category: String,
   pub container_id: Option<i64>,
@@ -416,6 +428,8 @@ pub struct RenderRowSql {
 }
 
 impl RenderRowSql {
+  // Public store API exercised by unit tests; not yet wired into a production call site.
+  #[allow(dead_code)]
   pub fn into_row(self) -> AssetRenderRow {
     AssetRenderRow {
       category: self.category,

@@ -11,7 +11,6 @@ const RECOGNIZED_KEYS: &[&str] = &[
   "training",
 ];
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChipKind {
   FreeText,
@@ -38,7 +37,6 @@ pub struct ParsedQuery {
 }
 
 impl ParsedQuery {
-  #[allow(dead_code)]
   pub fn display_chips(&self) -> Vec<(String, ChipKind)> {
     self
       .tokens

@@ -1,6 +1,6 @@
 use sqlx::FromRow;
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 #[derive(Clone, Debug, FromRow)]
 pub struct CharacterState {
   pub character_id: i64,

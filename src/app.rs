@@ -5655,6 +5655,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_settings_exports_logs_through_the_storage_diagnostics() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Storage(settings::storage_tab::Message::ExportLogs(
+          settings::log_export::RangePreset::LastHour,
+        )),
+      );
+
+      assert!(
+        app.settings.is_some(),
+        "exporting logs leaves the settings screen open and runs the diagnostics task"
+      );
+    }
+
+    #[tokio::test]
     async fn handle_settings_hoists_an_interface_scale_change_onto_the_app_and_runtime() {
       let runtime = test_runtime().await;
       let mut app = test_app();
@@ -5675,6 +5695,70 @@ mod tests {
         *app.runtime.as_ref().unwrap().settings.accessibility().scale(),
         125,
         "the runtime settings mirror the new scale so a later save persists it",
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_migrates_storage_when_sync_is_toggled() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      let mut state = settings::State::new(runtime.settings.clone(), runtime.db.clone());
+      let networked = *state.settings().storage().network();
+      app.runtime = Some(runtime);
+
+      // Flipping the sync toggle stages a storage migration request the handler must drain.
+      let _ = settings::update(
+        &mut state,
+        settings::Message::Storage(settings::storage_tab::Message::SyncToggled(!networked)),
+      );
+      app.settings = Some(state);
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::CategorySelected(settings::Category::Storage),
+      );
+
+      assert!(
+        app
+          .settings
+          .as_mut()
+          .expect("the settings screen stays open")
+          .take_storage_migration()
+          .is_none(),
+        "the handler drains the staged storage migration request"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_pins_a_picked_structure_facility() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      // A player-owned structure (id past the NPC-station range) is pinned, not just persisted.
+      let facility = crate::ui::components::facility_combobox::FacilityRef {
+        cost_index: Some(0.05),
+        id: 1_030_000_000_001,
+        name: "Player Keepstar".to_owned(),
+        region: Some("The Forge".to_owned()),
+        security_status: Some(0.9),
+        solar_system: "Jita".to_owned(),
+        solar_system_id: 30_000_142,
+        type_id: None,
+      };
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Industry(settings::industry_tab::Message::FacilityPicked {
+          activity: 1,
+          facility,
+        }),
+      );
+
+      assert_eq!(
+        *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
+        Some(1_030_000_000_001),
+        "picking a structure mirrors it onto the runtime and routes through the pin path"
       );
     }
 
@@ -5707,6 +5791,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_settings_redocks_the_rail_when_the_nav_side_changes() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Ui(settings::ui_tab::Message::SideSelected(config::NavLocation::Right)),
+      );
+
+      assert_eq!(
+        app.runtime.as_ref().unwrap().settings.ui().nav_location(),
+        &config::NavLocation::Right,
+        "the runtime UI config mirrors the new rail side so open windows re-dock live"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_releases_the_storage_lock() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Storage(settings::storage_tab::Message::ReleaseLock),
+      );
+
+      assert!(
+        app.settings.is_some(),
+        "requesting a lock release leaves the settings screen open and routes the release task"
+      );
+    }
+
+    #[tokio::test]
     async fn handle_settings_routes_a_tab_switch_through_the_settings_state() {
       let runtime = test_runtime().await;
       let mut app = test_app();
@@ -5719,6 +5840,27 @@ mod tests {
       );
 
       assert!(app.settings.is_some(), "switching tabs leaves the settings screen open");
+    }
+
+    #[tokio::test]
+    async fn handle_settings_runs_an_industry_facility_search() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Industry(settings::industry_tab::Message::QueryChanged {
+          activity: 1,
+          query: "jita".to_owned(),
+        }),
+      );
+
+      assert!(
+        app.settings.is_some(),
+        "typing into the facility field seams a live search and keeps the screen open"
+      );
     }
 
     #[tokio::test]
@@ -5760,6 +5902,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_settings_sets_the_log_level() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      let level = *runtime.settings.storage().log_level();
+      let next = if level == config::LogLevel::Verbose {
+        config::LogLevel::default()
+      } else {
+        config::LogLevel::Verbose
+      };
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Storage(settings::storage_tab::Message::LogLevelChanged(next)),
+      );
+
+      assert_eq!(
+        app.settings.as_ref().unwrap().settings().storage().log_level(),
+        &next,
+        "the new log level is recorded on the settings screen and applied live"
+      );
+    }
+
+    #[tokio::test]
     async fn handle_settings_syncs_industry_defaults_onto_the_runtime() {
       let runtime = test_runtime().await;
       let mut app = test_app();
@@ -5791,6 +5958,24 @@ mod tests {
         *app.runtime.as_ref().unwrap().settings.industry().manufacturing(),
         Some(60_003_760),
         "the runtime industry config mirrors the settings screen so the planner honors the new default"
+      );
+    }
+
+    #[tokio::test]
+    async fn handle_settings_triggers_a_manual_sync() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Storage(settings::storage_tab::Message::SyncNow),
+      );
+
+      assert!(
+        app.settings.is_some(),
+        "requesting a manual sync leaves the settings screen open and routes the sync task"
       );
     }
 

@@ -16,6 +16,7 @@ const NAV_COLS: NavCol[] = [
   ['Pod', [
     ['Download', '#download'],
     ["What's new", '#notes'],
+    ['Docs', '/docs/'],
     ['FAQ', '#faq'],
     ['Support', '#support'],
   ]],
@@ -30,10 +31,15 @@ const NAV_COLS: NavCol[] = [
 ];
 
 interface Props {
+  basePath?: string;
   release: Release;
 }
 
-export function Footer({ release }: Props) {
+function resolveHref(href: string, basePath: string): string {
+  return href.startsWith('#') ? `${basePath}${href}` : href;
+}
+
+export function Footer({ basePath = '', release }: Props) {
   return (
     <footer>
       <div style={{
@@ -66,7 +72,7 @@ export function Footer({ release }: Props) {
               {links.map(([label, href]) => (
                 <a
                   key={label}
-                  href={href}
+                  href={resolveHref(href, basePath)}
                   style={{ color: T.ink, textDecoration: 'none', fontSize: 13 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = T.plasma; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = T.ink; }}

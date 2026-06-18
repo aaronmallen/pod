@@ -4,19 +4,25 @@ import { PodMark } from './PodMark';
 
 interface TopNavProps {
   accent: string;
+  basePath?: string;
   release: Release;
 }
 
 const NAV_LINKS: [string, string][] = [
   ['Download', '#download'],
   ["What's new", '#notes'],
+  ['Docs', '/docs/'],
   ['FAQ', '#faq'],
   ['Support', '#support'],
   ['Discord', 'https://discord.gg/VZpQ56pcHw'],
   ['Source', 'https://github.com/aaronmallen/pod'],
 ];
 
-export function TopNav({ accent, release }: TopNavProps) {
+function resolveHref(href: string, basePath: string): string {
+  return href.startsWith('#') ? `${basePath}${href}` : href;
+}
+
+export function TopNav({ accent, basePath = '', release }: TopNavProps) {
   return (
     <nav style={{
       position: 'sticky', top: 0, zIndex: 10,
@@ -27,7 +33,7 @@ export function TopNav({ accent, release }: TopNavProps) {
       WebkitBackdropFilter: 'blur(14px) saturate(140%)',
       borderBottom: `1px solid ${T.rule}`,
     }}>
-      <a href="#" style={{
+      <a href={basePath || '#'} style={{
         display: 'flex', alignItems: 'center', gap: 10,
         textDecoration: 'none', color: T.ink,
       }}>
@@ -40,7 +46,7 @@ export function TopNav({ accent, release }: TopNavProps) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
         {NAV_LINKS.map(([label, href]) => (
-          <a key={label} href={href} style={{
+          <a key={label} href={resolveHref(href, basePath)} style={{
             color: T.muted,
             textDecoration: 'none',
             fontSize: 13,

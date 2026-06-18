@@ -199,6 +199,8 @@ pub enum Message {
   },
   Selected(i64),
   SnoozeCalendarBack,
+  // Constructed only by handler-routing tests; the set-time arm is wired but not yet triggered from the UI.
+  #[allow(dead_code)]
   SnoozeCalendarChip(u32, u32),
   SnoozeCalendarConfirmed,
   SnoozeCalendarDaySelected(i32, u32, u32),

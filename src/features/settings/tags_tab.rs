@@ -37,6 +37,8 @@ pub enum Message {
   ColorHexSubmitted,
   CursorMoved(Point),
   DropDragged,
+  // Constructed only by handler-routing tests; the cancel-edit arm is wired but not yet triggered from the UI.
+  #[allow(dead_code)]
   EditCancelled,
   EditCommitted,
   EditDraftChanged(String),
@@ -46,7 +48,10 @@ pub enum Message {
   Loaded(Result<Vec<Tag>, String>),
   NewTagChanged(String),
   PickUpTag(i64),
-  Recolor { hex: String, tag_id: i64 },
+  Recolor {
+    hex: String,
+    tag_id: i64,
+  },
   RemoveTag(i64),
   Saved(Result<(), String>),
   SortSelected(SortMode),

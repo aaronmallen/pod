@@ -41,6 +41,8 @@ pub(super) struct SummaryData {
   pub base_attrs: Attributes,
   pub character_total_sp: u64,
   pub current_base_sec: f64,
+  // Read only by tests asserting installed implants shorten the plan training time; not yet surfaced in the UI.
+  #[allow(dead_code)]
   pub current_sec: f64,
   pub group_sec: HashMap<String, f64>,
   pub implant_effect: ImplantEffect,

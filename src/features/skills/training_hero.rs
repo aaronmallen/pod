@@ -40,6 +40,8 @@ pub fn training_hero<'a>(
   }
 }
 
+// Built-but-not-yet-wired queue hero card (sibling of active/idle); keeps the queue_item module reachable until wired.
+#[allow(dead_code)]
 pub fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: DateTime<Utc>) -> Element<'a, Message> {
   queue_item::queue_item(item, sp_rate, now)
 }

@@ -14,8 +14,6 @@ use crate::{
   },
 };
 
-pub(super) const DOWNTIME_HOUR: u32 = 11;
-
 const MENU_WIDTH: f32 = 240.0;
 
 const CALENDAR_WIDTH: f32 = 304.0;
@@ -763,13 +761,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[test]
-    fn downtime_chip_is_11_00_utc() {
-      let mut cal = Calendar::open(now());
-      cal.set_time(DOWNTIME_HOUR, 0);
-      assert_eq!((cal.hour, cal.minute), (11, 0));
-    }
 
     #[test]
     fn it_opens_defaulted_to_tomorrow_09_00() {

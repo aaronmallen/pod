@@ -143,6 +143,8 @@ pub enum Message {
   EntryNoteToggled(i64),
   EntryPriorityCycled(i64),
   EntryRemoved(i64),
+  // Payload unread: the variant is the fn-pointer constructor for the save-file dialog future, whose path result is intentionally ignored.
+  #[allow(dead_code)]
   ExportFilePicked(Option<PathBuf>),
   ExportRequested,
   ExportToClipboard,
@@ -179,6 +181,8 @@ pub enum Message {
   RemapAttrBumped(i64, AttrKey, i32),
   RemapInserted(Option<i64>),
   RemapRemoved(i64),
+  // Payload unread: the variant is the fn-pointer constructor for the reorder-persist future, whose result is intentionally ignored.
+  #[allow(dead_code)]
   Reordered(Result<(), String>),
   SaveRequested,
   Saved(Result<i64, String>),

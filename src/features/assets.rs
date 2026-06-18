@@ -183,6 +183,8 @@ pub enum Message {
   AbyssalSourceTypeSelected(Option<i64>),
   AbyssalStatMaxChanged(i64, f64),
   AbyssalStatMinChanged(i64, f64),
+  // Constructed only by handler-routing tests; the real range-update arm is wired but not yet triggered from the UI.
+  #[allow(dead_code)]
   AbyssalStatRangeChanged(i64, SliderEndpoint, f64),
   AbyssalStatTemplatesLoaded(Vec<StatTemplate>),
   AbyssalTypeModalClosed,

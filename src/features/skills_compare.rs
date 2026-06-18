@@ -36,6 +36,8 @@ pub struct Loaded {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  // Constructed only by handler-routing tests; the close arm is wired but not yet triggered from the UI.
+  #[allow(dead_code)]
   CloseRequested,
   DataLoaded(Box<Loaded>),
   GroupToggled(i64),
@@ -104,10 +106,6 @@ impl State {
 
   pub(super) fn is_expanded(&self, group_id: i64) -> bool {
     self.expanded.contains(&group_id)
-  }
-
-  pub(super) fn is_loading(&self) -> bool {
-    self.loading
   }
 
   pub(super) fn model(&self, pilot_id: i64) -> Option<&CompareModel> {

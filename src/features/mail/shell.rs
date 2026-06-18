@@ -277,5 +277,6 @@ fn message_list_pane(state: &State) -> Element<'_, Message> {
 }
 
 fn reading_pane(state: &State) -> Element<'_, Message> {
-  reading_pane::pane(state.render(), state.open_mail_snoozed())
+  let in_trash = matches!(state.folder(), Folder::Standard(StandardFolder::Trash));
+  reading_pane::pane(state.render(), state.open_mail_snoozed(), in_trash)
 }

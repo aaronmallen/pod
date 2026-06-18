@@ -7,8 +7,49 @@ use crate::{
     esi::models::character::{CreateMailLabelRequest, MarkReadRequest, SendMailRecipient, SendMailRequest},
     eve_sso::Grant,
   },
-  store::{Database, model::CharacterMailLabel, repo::mail},
+  store::{
+    Database,
+    model::CharacterMailLabel,
+    repo::mail::{self, MailSnapshot},
+  },
 };
+
+struct DeleteHandler;
+
+impl KindHandler for DeleteHandler {
+  fn kind(&self) -> OutboxKind {
+    OutboxKind::MailDelete
+  }
+
+  fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let snapshot = parse_snapshot(payload)?;
+      mail::purge_mail(db, snapshot.character_id, snapshot.mail_id).await?;
+      Ok(())
+    })
+  }
+
+  fn execute<'a>(
+    &'a self,
+    _db: &'a Database,
+    esi: &'a esi::Client,
+    grant: &'a Grant,
+    payload: &'a str,
+  ) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let snapshot = parse_snapshot(payload)?;
+      esi.character_authenticated(grant).delete_mail(snapshot.mail_id).await
+    })
+  }
+
+  fn compensate<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
+    Box::pin(async move {
+      let snapshot = parse_snapshot(payload)?;
+      mail::restore_mail(db, &snapshot).await?;
+      Ok(())
+    })
+  }
+}
 
 struct SendHandler;
 
@@ -363,9 +404,14 @@ impl SetLabelsPayload {
   }
 }
 
+fn parse_snapshot(payload: &str) -> Result<MailSnapshot, clients::Error> {
+  Ok(serde_json::from_str(payload)?)
+}
+
 pub(super) fn registry() -> Registry {
   Registry::new()
     .with(Box::new(CreateLabelHandler))
+    .with(Box::new(DeleteHandler))
     .with(Box::new(DeleteLabelHandler))
     .with(Box::new(SetLabelsHandler))
     .with(Box::new(SetReadHandler))
@@ -646,6 +692,113 @@ mod tests {
       let grant = Grant::new_test("tok", 42);
 
       let result = DeleteLabelHandler.execute(&db, &esi, &grant, &payload(42, 17)).await;
+
+      assert!(matches!(result, Err(clients::Error::Http(_))));
+    }
+  }
+
+  mod delete_mail {
+    use pretty_assertions::assert_eq;
+    use wiremock::{
+      Mock, MockServer, ResponseTemplate,
+      matchers::{method, path},
+    };
+
+    use super::*;
+    use crate::clients::{esi, http};
+
+    async fn esi_client(server: &MockServer) -> esi::Client {
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db)).build();
+      esi::Client::with_base_url(http, server.uri())
+    }
+
+    async fn snapshot_payload(db: &Database, character_id: i64, mail_id: i64) -> String {
+      let snapshot = mail::snapshot_mail(db, character_id, mail_id)
+        .await
+        .unwrap()
+        .expect("snapshot");
+      serde_json::to_string(&snapshot).unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_deletes_at_esi_on_execute() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      let payload = snapshot_payload(&db, 42, 7).await;
+      let server = MockServer::start().await;
+      Mock::given(method("DELETE"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      DeleteHandler.execute(&db, &esi, &grant, &payload).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_fails_a_malformed_payload() {
+      let db = store::open_test().await.unwrap();
+
+      let result = DeleteHandler.apply(&db, "not json").await;
+
+      assert!(matches!(result, Err(clients::Error::Json(_))));
+    }
+
+    #[test]
+    fn it_is_registered() {
+      let registry = registry();
+
+      let handler = registry.handler(OutboxKind::MailDelete).expect("registered");
+
+      assert_eq!(handler.kind(), OutboxKind::MailDelete);
+    }
+
+    #[tokio::test]
+    async fn it_purges_the_local_mail_on_apply() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      let payload = snapshot_payload(&db, 42, 7).await;
+
+      DeleteHandler.apply(&db, &payload).await.unwrap();
+
+      assert!(mail::snapshot_mail(&db, 42, 7).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_restores_the_local_mail_on_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      let payload = snapshot_payload(&db, 42, 7).await;
+      DeleteHandler.apply(&db, &payload).await.unwrap();
+
+      DeleteHandler.compensate(&db, &payload).await.unwrap();
+
+      assert!(mail::snapshot_mail(&db, 42, 7).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_surfaces_an_esi_rejection_for_the_drainer_to_compensate() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_unread(&db, 42, 7).await;
+      let payload = snapshot_payload(&db, 42, 7).await;
+      let server = MockServer::start().await;
+      Mock::given(method("DELETE"))
+        .and(path("/characters/42/mail/7/"))
+        .respond_with(ResponseTemplate::new(403))
+        .mount(&server)
+        .await;
+      let esi = esi_client(&server).await;
+      let grant = Grant::new_test("tok", 42);
+
+      let result = DeleteHandler.execute(&db, &esi, &grant, &payload).await;
 
       assert!(matches!(result, Err(clients::Error::Http(_))));
     }

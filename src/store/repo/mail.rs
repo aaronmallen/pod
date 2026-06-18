@@ -48,6 +48,53 @@ impl MailCursor {
   }
 }
 
+/// A complete capture of every local row a single mail owns, taken before a permanent delete so the
+/// outbox SAGA can restore it byte-for-byte if the ESI delete permanently fails.
+///
+/// It rides inside the `mail.delete` outbox payload, so the fields are plain serializable values
+/// rather than the `FromRow` model structs. `(character_id, mail_id)` identifies the mail; the
+/// dependent rows reference it implicitly.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct MailSnapshot {
+  pub body: Option<String>,
+  pub character_id: i64,
+  pub folder: Option<SnapshotFolder>,
+  pub from_corp: bool,
+  pub from_id: i64,
+  pub from_name: String,
+  pub from_system: bool,
+  pub has_attachment: bool,
+  pub important: bool,
+  pub is_read: bool,
+  pub label_ids: Vec<i64>,
+  pub mail_id: i64,
+  pub recipients: Vec<SnapshotRecipient>,
+  pub snooze_until: Option<String>,
+  pub subject: Option<String>,
+  pub timestamp: String,
+  pub triage: Option<SnapshotTriage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SnapshotFolder {
+  pub folder: String,
+  pub remap_label_id: Option<i64>,
+  pub soft_delete_intent: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SnapshotRecipient {
+  pub recipient_id: i64,
+  pub recipient_name: String,
+  pub recipient_type: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct SnapshotTriage {
+  pub pin: bool,
+  pub star: bool,
+}
+
 pub async fn upsert_complete(
   db: &Database,
   header: &CharacterMail,
@@ -599,6 +646,193 @@ pub async fn overlay_state(db: &Database, character_id: i64, mail_id: i64) -> Re
   .fetch_one(&db.0)
   .await?;
   Ok(row)
+}
+
+/// Captures every local row a mail owns so a permanent delete can be undone. Returns `None` when
+/// the mail header is gone (nothing to delete).
+pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Result<Option<MailSnapshot>, Error> {
+  let Some(header) = sqlx::query_as::<_, CharacterMail>(
+    "SELECT character_id, from_corp, from_id, from_name, from_system, has_attachment, important, is_read, mail_id, \
+      subject, timestamp FROM character_mail WHERE character_id = ? AND mail_id = ?",
+  )
+  .bind(character_id)
+  .bind(mail_id)
+  .fetch_optional(&db.0)
+  .await?
+  else {
+    return Ok(None);
+  };
+
+  let body = body(db, character_id, mail_id).await?.map(|row| row.body().clone());
+  let recipients = recipients(db, character_id, mail_id)
+    .await?
+    .into_iter()
+    .map(|row| SnapshotRecipient {
+      recipient_id: row.recipient_id(),
+      recipient_name: row.recipient_name().clone(),
+      recipient_type: row.recipient_type().clone(),
+    })
+    .collect();
+  let label_ids = membership(db, character_id, mail_id).await?;
+  let triage = triage(db, character_id, mail_id).await?.map(|row| SnapshotTriage {
+    pin: row.pin(),
+    star: row.star(),
+  });
+  let snooze_until =
+    sqlx::query_scalar::<_, String>("SELECT snooze_until FROM mail_snooze WHERE character_id = ? AND mail_id = ?")
+      .bind(character_id)
+      .bind(mail_id)
+      .fetch_optional(&db.0)
+      .await?;
+  let folder = folder(db, character_id, mail_id).await?.map(|row| SnapshotFolder {
+    folder: row.folder().clone(),
+    remap_label_id: row.remap_label_id(),
+    soft_delete_intent: row.soft_delete_intent(),
+  });
+
+  Ok(Some(MailSnapshot {
+    body,
+    character_id: header.character_id(),
+    folder,
+    from_corp: header.from_corp(),
+    from_id: header.from_id(),
+    from_name: header.from_name().clone(),
+    from_system: header.from_system(),
+    has_attachment: header.has_attachment(),
+    important: header.important(),
+    is_read: header.is_read(),
+    label_ids,
+    mail_id: header.mail_id(),
+    recipients,
+    snooze_until,
+    subject: header.subject().clone(),
+    timestamp: header.timestamp().clone(),
+    triage,
+  }))
+}
+
+/// Permanently removes every local row a mail owns across all dependent tables in one transaction,
+/// leaving no orphans.
+pub async fn purge_mail(db: &Database, character_id: i64, mail_id: i64) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  for statement in [
+    "DELETE FROM character_mail_label_membership WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM mail_folder_assignment WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM mail_snooze WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM mail_triage WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM character_mail_recipients WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM character_mail_body WHERE character_id = ? AND mail_id = ?",
+    "DELETE FROM character_mail WHERE character_id = ? AND mail_id = ?",
+  ] {
+    sqlx::query(statement)
+      .bind(character_id)
+      .bind(mail_id)
+      .execute(&mut *tx)
+      .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
+}
+
+/// Re-inserts every row captured by [`snapshot_mail`], reversing a [`purge_mail`] in one
+/// transaction. Used to compensate a permanently failed ESI delete.
+pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+
+  sqlx::query(
+    "INSERT INTO character_mail \
+      (character_id, mail_id, from_id, from_name, subject, timestamp, is_read, \
+      has_attachment, important, from_corp, from_system) \
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT (character_id, mail_id) DO NOTHING",
+  )
+  .bind(snapshot.character_id)
+  .bind(snapshot.mail_id)
+  .bind(snapshot.from_id)
+  .bind(&snapshot.from_name)
+  .bind(&snapshot.subject)
+  .bind(&snapshot.timestamp)
+  .bind(snapshot.is_read)
+  .bind(snapshot.has_attachment)
+  .bind(snapshot.important)
+  .bind(snapshot.from_corp)
+  .bind(snapshot.from_system)
+  .execute(&mut *tx)
+  .await?;
+
+  if let Some(body) = &snapshot.body {
+    sqlx::query(
+      "INSERT INTO character_mail_body (character_id, mail_id, body) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    )
+    .bind(snapshot.character_id)
+    .bind(snapshot.mail_id)
+    .bind(body)
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  for recipient in &snapshot.recipients {
+    sqlx::query(
+      "INSERT INTO character_mail_recipients \
+        (character_id, mail_id, recipient_id, recipient_type, recipient_name) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(snapshot.character_id)
+    .bind(snapshot.mail_id)
+    .bind(recipient.recipient_id)
+    .bind(&recipient.recipient_type)
+    .bind(&recipient.recipient_name)
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  if let Some(triage) = &snapshot.triage {
+    sqlx::query("INSERT INTO mail_triage (character_id, mail_id, star, pin) VALUES (?, ?, ?, ?)")
+      .bind(snapshot.character_id)
+      .bind(snapshot.mail_id)
+      .bind(triage.star)
+      .bind(triage.pin)
+      .execute(&mut *tx)
+      .await?;
+  }
+
+  if let Some(snooze_until) = &snapshot.snooze_until {
+    sqlx::query("INSERT INTO mail_snooze (character_id, mail_id, snooze_until) VALUES (?, ?, ?)")
+      .bind(snapshot.character_id)
+      .bind(snapshot.mail_id)
+      .bind(snooze_until)
+      .execute(&mut *tx)
+      .await?;
+  }
+
+  if let Some(folder) = &snapshot.folder {
+    sqlx::query(
+      "INSERT INTO mail_folder_assignment (character_id, mail_id, folder, remap_label_id, soft_delete_intent) \
+        VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(snapshot.character_id)
+    .bind(snapshot.mail_id)
+    .bind(&folder.folder)
+    .bind(folder.remap_label_id)
+    .bind(folder.soft_delete_intent)
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  for label_id in &snapshot.label_ids {
+    sqlx::query(
+      "INSERT OR IGNORE INTO character_mail_label_membership (character_id, mail_id, label_id) VALUES (?, ?, ?)",
+    )
+    .bind(snapshot.character_id)
+    .bind(snapshot.mail_id)
+    .bind(label_id)
+    .execute(&mut *tx)
+    .await?;
+  }
+
+  tx.commit().await?;
+  Ok(())
 }
 
 pub async fn all_overlay_states(db: &Database, character_id: i64) -> Result<Vec<MailOverlayState>, Error> {
@@ -1820,8 +2054,8 @@ mod overlay_tests {
   use crate::store::{
     self, Database,
     model::{
-      Alliance, Bloodline, Character, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership, Corporation,
-      Gender, Race,
+      Alliance, Bloodline, Character, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership,
+      CharacterMailRecipient, Corporation, Gender, Race,
     },
     repo::character,
   };
@@ -2228,6 +2462,119 @@ mod overlay_tests {
         .await
         .unwrap();
       assert_eq!(ids(&third), [1], "the final short page signals exhaustion");
+    }
+  }
+
+  mod purge_mail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn store_full_mail(db: &Database, character_id: i64, mail_id: i64) {
+      let header = received(character_id, mail_id, "2026-06-01T10:00:00Z", false);
+      let body = CharacterMailBody {
+        body: "<p>secret</p>".to_owned(),
+        character_id,
+        mail_id,
+      };
+      let recipient = CharacterMailRecipient {
+        character_id,
+        mail_id,
+        recipient_id: character_id,
+        recipient_name: "Me".to_owned(),
+        recipient_type: "character".to_owned(),
+      };
+      super::upsert_complete(db, &header, &body, &[recipient]).await.unwrap();
+      super::replace_labels_for_character(
+        db,
+        character_id,
+        &[CharacterMailLabel {
+          character_id,
+          color: None,
+          label_id: 1,
+          name: "Inbox".to_owned(),
+        }],
+      )
+      .await
+      .unwrap();
+      super::add_membership(db, character_id, mail_id, 1).await.unwrap();
+      super::set_triage(db, character_id, mail_id, true, false).await.unwrap();
+      super::upsert_snoozed_mail(db, character_id, mail_id, "2099-01-01T00:00:00Z")
+        .await
+        .unwrap();
+      super::assign_folder(db, character_id, mail_id, "trash", None, false)
+        .await
+        .unwrap();
+    }
+
+    async fn row_count(db: &Database, table: &str, character_id: i64, mail_id: i64) -> i64 {
+      let sql = match table {
+        "character_mail" => "SELECT COUNT(*) FROM character_mail WHERE character_id = ? AND mail_id = ?",
+        "character_mail_body" => "SELECT COUNT(*) FROM character_mail_body WHERE character_id = ? AND mail_id = ?",
+        "character_mail_recipients" => {
+          "SELECT COUNT(*) FROM character_mail_recipients WHERE character_id = ? AND mail_id = ?"
+        }
+        "mail_triage" => "SELECT COUNT(*) FROM mail_triage WHERE character_id = ? AND mail_id = ?",
+        "mail_snooze" => "SELECT COUNT(*) FROM mail_snooze WHERE character_id = ? AND mail_id = ?",
+        "mail_folder_assignment" => {
+          "SELECT COUNT(*) FROM mail_folder_assignment WHERE character_id = ? AND mail_id = ?"
+        }
+        _ => "SELECT COUNT(*) FROM character_mail_label_membership WHERE character_id = ? AND mail_id = ?",
+      };
+      sqlx::query_scalar::<_, i64>(sql)
+        .bind(character_id)
+        .bind(mail_id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_leaves_no_orphan_rows_across_every_dependent_table() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_full_mail(&db, 42, 7).await;
+
+      super::purge_mail(&db, 42, 7).await.unwrap();
+
+      for table in [
+        "character_mail",
+        "character_mail_body",
+        "character_mail_recipients",
+        "mail_triage",
+        "mail_snooze",
+        "mail_folder_assignment",
+        "character_mail_label_membership",
+      ] {
+        assert_eq!(row_count(&db, table, 42, 7).await, 0, "{table} retained an orphan");
+      }
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_every_row_through_snapshot_purge_and_restore() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      store_full_mail(&db, 42, 7).await;
+      let snapshot = super::snapshot_mail(&db, 42, 7).await.unwrap().expect("snapshot");
+
+      super::purge_mail(&db, 42, 7).await.unwrap();
+      super::restore_mail(&db, &snapshot).await.unwrap();
+
+      assert_eq!(super::body(&db, 42, 7).await.unwrap().unwrap().body(), "<p>secret</p>");
+      assert_eq!(super::recipients(&db, 42, 7).await.unwrap().len(), 1);
+      assert_eq!(super::membership(&db, 42, 7).await.unwrap(), [1]);
+      let triage = super::triage(&db, 42, 7).await.unwrap().unwrap();
+      assert!(triage.star() && !triage.pin());
+      assert_eq!(super::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "trash");
+      assert_eq!(super::snapshot_mail(&db, 42, 7).await.unwrap(), Some(snapshot));
+    }
+
+    #[tokio::test]
+    async fn it_snapshots_none_for_a_mail_with_no_header() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+
+      assert_eq!(super::snapshot_mail(&db, 42, 7).await.unwrap(), None);
     }
   }
 

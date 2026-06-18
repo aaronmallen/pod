@@ -184,6 +184,14 @@ impl<'a> AuthenticatedClient<'a> {
   }
 
   #[allow(dead_code)]
+  pub async fn delete_mail(&self, mail_id: i64) -> Result<(), clients::Error> {
+    let url = self
+      .esi
+      .url(&format!("characters/{}/mail/{mail_id}/", self.grant.character_id()));
+    self.esi.delete_empty(&url, self.grant.access_token()).await
+  }
+
+  #[allow(dead_code)]
   pub async fn delete_mail_label(&self, label_id: i64) -> Result<(), clients::Error> {
     let url = self.esi.url(&format!(
       "characters/{}/mail/labels/{label_id}/",
@@ -1117,6 +1125,28 @@ mod tests {
           .unwrap();
 
         assert_eq!(label_id, 128);
+      }
+    }
+
+    mod delete_mail {
+      use super::*;
+
+      #[tokio::test]
+      async fn it_deletes_the_mail_at_its_path_with_the_bearer_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("DELETE"))
+          .and(path("/characters/42/mail/7/"))
+          .and(header("Authorization", "Bearer secret-token"))
+          .respond_with(ResponseTemplate::new(204))
+          .expect(1)
+          .mount(&server)
+          .await;
+        let esi = make_esi(&server.uri()).await;
+        let grant = Grant::new_test("secret-token", 42);
+
+        let result = esi.character_authenticated(&grant).delete_mail(7).await;
+
+        assert!(result.is_ok());
       }
     }
 

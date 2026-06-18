@@ -20,9 +20,9 @@ const BODY_MAX_WIDTH: f32 = 720.0;
 
 const SENDER_AVATAR_SIZE: f32 = 44.0;
 
-pub(super) fn pane(render: Option<&ReadingRender>, is_snoozed: bool) -> Element<'_, Message> {
+pub(super) fn pane(render: Option<&ReadingRender>, is_snoozed: bool, in_trash: bool) -> Element<'_, Message> {
   let body: Element<'_, Message> = match render {
-    Some(render) => opened(render, is_snoozed),
+    Some(render) => opened(render, is_snoozed, in_trash),
     None => empty_state(),
   };
 
@@ -40,14 +40,14 @@ fn empty_state<'a>() -> Element<'a, Message> {
   shared_empty_state("Select a message").render()
 }
 
-fn opened(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
-  Column::with_children(vec![toolbar(render, is_snoozed), scroll_body(render)])
+fn opened(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<'_, Message> {
+  Column::with_children(vec![toolbar(render, is_snoozed, in_trash), scroll_body(render)])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
 }
 
-fn toolbar(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
+fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<'_, Message> {
   let mail_id = render.mail.header.mail_id();
 
   let star_tone = if render.is_starred {
@@ -119,13 +119,12 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool) -> Element<'_, Message> {
     false,
     false,
   ));
-  row = row.push(toolbar_button(
-    Icon::trash(),
-    "Delete",
-    Message::Trash(mail_id),
-    false,
-    true,
-  ));
+  let (trash_label, trash_message) = if in_trash {
+    ("Delete", Message::Delete(mail_id))
+  } else {
+    ("Move to Trash", Message::Trash(mail_id))
+  };
+  row = row.push(toolbar_button(Icon::trash(), trash_label, trash_message, false, true));
   row = row.push(Space::new().width(Length::Fill));
   row = row.push(timestamp_stamp(render.mail.header.timestamp().clone()));
 
@@ -843,18 +842,18 @@ mod tests {
     fn it_renders_a_snoozed_system_message_addressed_to_me() {
       // A zero sender id flags a system message, and a blank recipient display resolves to "me".
       let render = render(0, "mailing_list", "  ", false);
-      let _el: Element<'_, Message> = super::super::pane(Some(&render), true);
+      let _el: Element<'_, Message> = super::super::pane(Some(&render), true, false);
     }
 
     #[test]
     fn it_renders_an_opened_starred_mail() {
       let render = render(95_000_001, "character", "Vex Voronova", true);
-      let _el: Element<'_, Message> = super::super::pane(Some(&render), false);
+      let _el: Element<'_, Message> = super::super::pane(Some(&render), false, true);
     }
 
     #[test]
     fn it_renders_the_empty_reading_pane() {
-      let _el: Element<'_, Message> = super::super::pane(None, false);
+      let _el: Element<'_, Message> = super::super::pane(None, false, false);
     }
   }
 }

@@ -1,5 +1,9 @@
 use super::StandardFolder;
-use crate::store::{Database, repo::mail};
+use crate::store::{
+  Database,
+  model::OwnerType,
+  repo::{infra, mail},
+};
 
 pub(super) async fn toggle_star(db: Database, character_id: i64, mail_id: i64) {
   let overlay = mail::overlay_state(&db, character_id, mail_id)
@@ -29,6 +33,31 @@ pub(super) async fn archive(db: Database, character_id: i64, mail_id: i64) {
 
 pub(super) async fn trash(db: Database, character_id: i64, mail_id: i64) {
   let _ = mail::assign_folder(&db, character_id, mail_id, "trash", None, false).await;
+}
+
+/// Permanently deletes a trashed mail from both Pod and the EVE mailbox. Snapshots every local row,
+/// purges them optimistically (the row vanishes immediately), then appends a `mail.delete` outbox
+/// row carrying the snapshot. The SAGA executes the ESI delete and, only on permanent failure,
+/// restores the mail from the snapshot. A no-op when the mail has already been purged.
+pub(super) async fn delete(db: Database, character_id: i64, mail_id: i64) {
+  let Ok(Some(snapshot)) = mail::snapshot_mail(&db, character_id, mail_id).await else {
+    return;
+  };
+  let _ = mail::purge_mail(&db, character_id, mail_id).await;
+
+  let Ok(payload) = serde_json::to_string(&snapshot) else {
+    return;
+  };
+  let dedupe = format!("delete_mail:{mail_id}");
+  let _ = infra::append(
+    &db,
+    OwnerType::Character,
+    character_id,
+    "mail.delete",
+    &payload,
+    Some(&dedupe),
+  )
+  .await;
 }
 
 /// Move a dragged message into one of the standard boxes as a pure local move (no ESI write).
@@ -139,6 +168,56 @@ mod tests {
     trash(db.clone(), 42, 7).await;
 
     assert_eq!(mail::folder(&db, 42, 7).await.unwrap().unwrap().folder(), "trash");
+    let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+    assert_eq!(outbox, 0);
+  }
+
+  async fn store_mail(db: &Database, character_id: i64, mail_id: i64) {
+    use crate::store::model::{CharacterMail, CharacterMailBody};
+    let header = CharacterMail {
+      character_id,
+      from_id: 95_000_001,
+      from_name: "Sender".to_owned(),
+      mail_id,
+      subject: Some("Subject".to_owned()),
+      timestamp: "2026-06-01T10:00:00Z".to_owned(),
+      ..Default::default()
+    };
+    let body = CharacterMailBody {
+      body: "<p>hi</p>".to_owned(),
+      character_id,
+      mail_id,
+    };
+    mail::upsert_complete(db, &header, &body, &[]).await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn it_optimistically_purges_the_mail_and_enqueues_a_delete_on_delete() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+    store_mail(&db, 42, 7).await;
+    mail::assign_folder(&db, 42, 7, "trash", None, false).await.unwrap();
+
+    delete(db.clone(), 42, 7).await;
+
+    assert!(mail::snapshot_mail(&db, 42, 7).await.unwrap().is_none());
+    let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = 'mail.delete'")
+      .fetch_one(&db.0)
+      .await
+      .unwrap();
+    assert_eq!(outbox, 1);
+  }
+
+  #[tokio::test]
+  async fn it_is_a_no_op_when_the_mail_is_already_gone_on_delete() {
+    let db = store::open_test().await.unwrap();
+    seed_character(&db, 42).await;
+
+    delete(db.clone(), 42, 7).await;
+
     let outbox = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox")
       .fetch_one(&db.0)
       .await

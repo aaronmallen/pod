@@ -117,6 +117,7 @@ pub enum Message {
     generation: u64,
     results: Vec<EntityRef>,
   },
+  Delete(i64),
   DropTargetEntered(DropTarget),
   DropTargetLeft(DropTarget),
   FolderPaneDragEnd,
@@ -787,6 +788,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::ToggleStar(mail_id) => triage_write(state, db, mail_id, triage::toggle_star),
     Message::TogglePin(mail_id) => triage_write(state, db, mail_id, triage::toggle_pin),
     Message::Archive(mail_id) => triage_write(state, db, mail_id, triage::archive),
+    Message::Delete(mail_id) => triage_write(state, db, mail_id, triage::delete),
     Message::Trash(mail_id) => triage_write(state, db, mail_id, triage::trash),
     Message::OverlayWritten => reload_for(db, state.active, state.folder),
 

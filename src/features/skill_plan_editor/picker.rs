@@ -122,20 +122,18 @@ fn skills_tab<'a>(
   state: &'a PickerState,
   planned: &HashMap<i64, u8>,
 ) -> Element<'a, Message> {
+  scrollable_list(skills_tab_items(catalog, state, planned))
+}
+
+fn skills_tab_items<'a>(
+  catalog: &'a SkillCatalog,
+  state: &'a PickerState,
+  planned: &HashMap<i64, u8>,
+) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
 
-  let mut items: Vec<Element<'a, Message>> = vec![
-    container(search_bar::search_bar(&state.query, "Search skills\u{2026}"))
-      .padding(Padding {
-        top: spacing::SPACE_3,
-        bottom: spacing::SPACE_3,
-        left: spacing::SPACE_3,
-        right: spacing::SPACE_3,
-      })
-      .width(Length::Fill)
-      .into(),
-  ];
+  let mut items = vec![search_bar_item(&state.query, "Search skills\u{2026}")];
 
   let mut any_visible = false;
   for group in &catalog.groups {
@@ -184,15 +182,10 @@ fn skills_tab<'a>(
   }
 
   if !any_visible {
-    return empty_state::empty_state("No skills match your search");
+    items.push(empty_state::empty_state("No skills match your search"));
   }
 
-  items.push(Space::new().height(12.0).into());
-  scrollable(column(items).width(Length::Fill))
-    .style(crate::ui::style::control::scrollbar)
-    .height(Length::Fill)
-    .width(Length::Fill)
-    .into()
+  items
 }
 
 fn ships_tab(state: &PickerState) -> Element<'_, Message> {
@@ -200,6 +193,10 @@ fn ships_tab(state: &PickerState) -> Element<'_, Message> {
     return empty_state::empty_state("Loading ships\u{2026}");
   };
 
+  scrollable_list(ships_tab_items(ships, state))
+}
+
+fn ships_tab_items<'a>(ships: &'a [PickerShip], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
   let mut items = vec![search_bar_item(&state.query, "Search ships\u{2026}")];
@@ -211,7 +208,8 @@ fn ships_tab(state: &PickerState) -> Element<'_, Message> {
     searching,
   );
   if groups.is_empty() {
-    return empty_state::empty_state("No ships match your search");
+    items.push(empty_state::empty_state("No ships match your search"));
+    return items;
   }
 
   for (group_id, group_name, members) in groups {
@@ -225,7 +223,7 @@ fn ships_tab(state: &PickerState) -> Element<'_, Message> {
     }
   }
 
-  scrollable_list(items)
+  items
 }
 
 fn modules_tab(state: &PickerState) -> Element<'_, Message> {
@@ -233,6 +231,10 @@ fn modules_tab(state: &PickerState) -> Element<'_, Message> {
     return empty_state::empty_state("Loading modules\u{2026}");
   };
 
+  scrollable_list(modules_tab_items(modules, state))
+}
+
+fn modules_tab_items<'a>(modules: &'a [PickerModule], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
   let mut items = vec![search_bar_item(&state.query, "Search modules\u{2026}")];
@@ -244,7 +246,8 @@ fn modules_tab(state: &PickerState) -> Element<'_, Message> {
     searching,
   );
   if groups.is_empty() {
-    return empty_state::empty_state("No modules match your search");
+    items.push(empty_state::empty_state("No modules match your search"));
+    return items;
   }
 
   for (group_id, group_name, members) in groups {
@@ -257,7 +260,7 @@ fn modules_tab(state: &PickerState) -> Element<'_, Message> {
     }
   }
 
-  scrollable_list(items)
+  items
 }
 
 fn certs_tab(state: &PickerState) -> Element<'_, Message> {
@@ -265,6 +268,10 @@ fn certs_tab(state: &PickerState) -> Element<'_, Message> {
     return empty_state::empty_state("Loading certificates\u{2026}");
   };
 
+  scrollable_list(certs_tab_items(certs, state))
+}
+
+fn certs_tab_items<'a>(certs: &'a [PickerCert], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
   let mut items = vec![search_bar_item(&state.query, "Search certificates\u{2026}")];
@@ -280,10 +287,10 @@ fn certs_tab(state: &PickerState) -> Element<'_, Message> {
   }
 
   if !any_visible {
-    return empty_state::empty_state("No certificates match your search");
+    items.push(empty_state::empty_state("No certificates match your search"));
   }
 
-  scrollable_list(items)
+  items
 }
 
 fn search_bar_item<'a>(query: &'a str, placeholder: &'a str) -> Element<'a, Message> {
@@ -325,4 +332,178 @@ fn group_by_item_group<'a, T>(
     }
   }
   groups
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::features::skills::browse::{AttrKey, SkillCatalogEntry, SkillCatalogGroup};
+
+  fn catalog() -> SkillCatalog {
+    SkillCatalog {
+      groups: vec![SkillCatalogGroup {
+        id: 255,
+        name: "Gunnery".to_owned(),
+        skills: vec![SkillCatalogEntry {
+          group_id: 255,
+          group_name: "Gunnery".to_owned(),
+          name: "Gunnery".to_owned(),
+          prereqs: vec![],
+          primary_attr: AttrKey::Perception,
+          rank: 1,
+          secondary_attr: AttrKey::Willpower,
+          type_id: 3300,
+        }],
+      }],
+    }
+  }
+
+  fn cert() -> PickerCert {
+    PickerCert {
+      grade: 1,
+      id: 1,
+      name: "Gunnery Basics".to_owned(),
+      skills: vec![],
+    }
+  }
+
+  fn module() -> PickerModule {
+    PickerModule {
+      group_id: 55,
+      group_name: "Projectile Weapon".to_owned(),
+      id: 12_058,
+      name: "125mm Gatling AutoCannon".to_owned(),
+      requirements: vec![],
+    }
+  }
+
+  fn ship() -> PickerShip {
+    PickerShip {
+      group_id: 25,
+      group_name: "Frigate".to_owned(),
+      id: 587,
+      name: "Rifter".to_owned(),
+      own_requirements: vec![],
+      tier_cert_skills: vec![],
+    }
+  }
+
+  fn state_with_query(query: &str) -> PickerState {
+    PickerState {
+      query: query.to_owned(),
+      ..PickerState::default()
+    }
+  }
+
+  mod certs_tab_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_search_bar_and_appends_the_empty_message_on_zero_results() {
+      let certs = vec![cert()];
+      let state = state_with_query("nonsense");
+
+      let items = certs_tab_items(&certs, &state);
+
+      assert_eq!(items.len(), 2, "search bar plus the empty message remain");
+    }
+
+    #[test]
+    fn it_renders_results_without_the_empty_message_when_the_query_matches() {
+      let certs = vec![
+        cert(),
+        PickerCert {
+          grade: 1,
+          id: 2,
+          name: "Gunnery Specialist".to_owned(),
+          skills: vec![],
+        },
+      ];
+      let state = state_with_query("gunnery");
+
+      let items = certs_tab_items(&certs, &state);
+
+      assert!(items.len() > 2, "search bar plus matching rows, no empty message");
+    }
+  }
+
+  mod modules_tab_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_search_bar_and_appends_the_empty_message_on_zero_results() {
+      let modules = vec![module()];
+      let state = state_with_query("nonsense");
+
+      let items = modules_tab_items(&modules, &state);
+
+      assert_eq!(items.len(), 2, "search bar plus the empty message remain");
+    }
+
+    #[test]
+    fn it_renders_results_without_the_empty_message_when_the_query_matches() {
+      let modules = vec![module()];
+      let state = state_with_query("autocannon");
+
+      let items = modules_tab_items(&modules, &state);
+
+      assert!(items.len() > 2, "search bar plus matching rows, no empty message");
+    }
+  }
+
+  mod ships_tab_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_search_bar_and_appends_the_empty_message_on_zero_results() {
+      let ships = vec![ship()];
+      let state = state_with_query("nonsense");
+
+      let items = ships_tab_items(&ships, &state);
+
+      assert_eq!(items.len(), 2, "search bar plus the empty message remain");
+    }
+
+    #[test]
+    fn it_renders_results_without_the_empty_message_when_the_query_matches() {
+      let ships = vec![ship()];
+      let state = state_with_query("rifter");
+
+      let items = ships_tab_items(&ships, &state);
+
+      assert!(items.len() > 2, "search bar plus matching rows, no empty message");
+    }
+  }
+
+  mod skills_tab_items {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_search_bar_and_appends_the_empty_message_on_zero_results() {
+      let catalog = catalog();
+      let state = state_with_query("nonsense");
+
+      let items = skills_tab_items(&catalog, &state, &HashMap::new());
+
+      assert_eq!(items.len(), 2, "search bar plus the empty message remain");
+    }
+
+    #[test]
+    fn it_renders_results_without_the_empty_message_when_the_query_matches() {
+      let catalog = catalog();
+      let state = state_with_query("gunnery");
+
+      let items = skills_tab_items(&catalog, &state, &HashMap::new());
+
+      assert!(items.len() > 2, "search bar plus matching rows, no empty message");
+    }
+  }
 }

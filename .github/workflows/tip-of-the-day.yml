@@ -12,7 +12,7 @@ jobs:
   post-tip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Post tip to Discord
         if: env.DISCORD_TIP_WEBHOOK_URL != ''

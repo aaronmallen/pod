@@ -2,6 +2,7 @@
 title: Wallet
 section: Features
 order: 4
+description: Track ISK across every character and corporation in Pod's Wallet feature — market transactions, contracts, the journal, a zero-based Budget, and a net-worth history built from daily snapshots.
 ---
 
 # Wallet

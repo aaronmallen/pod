@@ -2,6 +2,7 @@
 title: The Interface
 section: Guide
 order: 2
+description: Learn your way around Pod's main window — the navigation rail, the working area, the status bar, the sync popover, and the update banner — so you can read it at a glance.
 ---
 
 # The Interface

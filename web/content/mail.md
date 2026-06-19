@@ -2,6 +2,7 @@
 title: Mail
 section: Features
 order: 3
+description: Read, organize, and compose EVE Online mail across every character on your roster from Pod's three-pane Mail feature, with folders, labels, and a combined All Inboxes view.
 ---
 
 # Mail

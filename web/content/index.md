@@ -2,6 +2,7 @@
 title: Pod Docs
 section: Pod Docs
 order: 0
+description: Documentation for Pod, the free native EVE Online companion app for Windows, macOS, and Linux. Learn what Pod does and how each feature — characters, skills, mail, wallet, assets, and more — works.
 ---
 
 # Pod Docs

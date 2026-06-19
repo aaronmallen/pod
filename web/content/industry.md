@@ -2,6 +2,7 @@
 title: Industry
 section: Features
 order: 7
+description: Track running and finished industry jobs, browse your blueprint library, plan build costs and material needs, and watch corporation moon-extraction timers — all from Pod's Industry feature.
 ---
 
 # Industry

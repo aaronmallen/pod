@@ -2,6 +2,7 @@
 title: Calendar
 section: Features
 order: 6
+description: See EVE Online calendar events for every pilot alongside Pod's own deadlines — skill completions, market order expiries, contract lapses, industry jobs, and moon extractions — across five views with RSVP controls.
 ---
 
 # Calendar

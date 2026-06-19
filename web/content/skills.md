@@ -2,6 +2,7 @@
 title: Skills
 section: Features
 order: 2
+description: See what each EVE Online character is training and how long it will take in Pod's Skills view, then plan training ahead with reusable skill plans you build and apply.
 ---
 
 # Skills

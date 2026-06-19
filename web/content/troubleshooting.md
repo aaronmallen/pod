@@ -2,6 +2,7 @@
 title: Troubleshooting
 section: Reference
 order: 2
+description: Fixes for the snags you are most likely to hit running Pod, including the macOS "damaged" Gatekeeper warning, sync and authorization issues, and where to find logs.
 ---
 
 # Troubleshooting

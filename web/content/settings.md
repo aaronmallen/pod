@@ -2,6 +2,7 @@
 title: Settings
 section: Reference
 order: 1
+description: Configure Pod from the Settings window — Accessibility, Features, Storage, Tags, User Interface, and Industry — with per-category resets and an About tab covering version and license.
 ---
 
 # Settings

@@ -1,4 +1,5 @@
 export interface DocFrontmatter {
+  description?: string;
   order: number;
   section: string;
   title: string;
@@ -13,7 +14,7 @@ export function parseFrontmatter(data: Record<string, unknown>, sourcePath: stri
     }
   }
 
-  const { order, section, title } = data;
+  const { description, order, section, title } = data;
 
   if (typeof title !== 'string' || title.trim() === '') {
     throw new Error(`${sourcePath}: frontmatter "title" must be a non-empty string`);
@@ -27,5 +28,13 @@ export function parseFrontmatter(data: Record<string, unknown>, sourcePath: stri
     throw new Error(`${sourcePath}: frontmatter "order" must be a finite number`);
   }
 
-  return { order, section, title };
+  if (description !== undefined && (typeof description !== 'string' || description.trim() === '')) {
+    throw new Error(`${sourcePath}: frontmatter "description" must be a non-empty string when present`);
+  }
+
+  const frontmatter: DocFrontmatter = { order, section, title };
+  if (typeof description === 'string') {
+    frontmatter.description = description.trim();
+  }
+  return frontmatter;
 }

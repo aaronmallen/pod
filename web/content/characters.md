@@ -2,6 +2,7 @@
 title: Characters
 section: Features
 order: 1
+description: Manage your roster of EVE Online pilots in Pod — add characters through single sign-on, group them into named squads, and read per-character and per-corporation stats at a glance.
 ---
 
 # Characters

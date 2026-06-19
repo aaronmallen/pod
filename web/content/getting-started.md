@@ -2,6 +2,7 @@
 title: Getting Started
 section: Guide
 order: 1
+description: Install Pod on Windows, macOS, or Linux and add your first EVE Online character through single sign-on. By the end you will have one pilot on the roster and Pod syncing data from ESI.
 ---
 
 # Getting Started

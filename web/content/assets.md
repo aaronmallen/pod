@@ -2,6 +2,7 @@
 title: Assets
 section: Features
 order: 5
+description: Browse everything you own across characters and corporations in Pod, with Inventory, Abyssals, Stockpiles, Values, and Tracker tabs for filtering, valuing, and locating your items.
 ---
 
 # Assets

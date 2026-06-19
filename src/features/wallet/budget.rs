@@ -641,9 +641,9 @@ fn progress(numerator: f64, denominator: f64) -> f64 {
 /// seeding the scope's starter envelopes on first use. Carry, activity and the
 /// budgetable pool come from the B2 math; assignments and targets from B1.
 pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView {
-  if budget::list_groups(db, scope).await.unwrap_or_default().is_empty() {
-    let _ = math::seed_scope(db, scope).await;
-  }
+  // seed_scope is once-only (persisted marker), so deleting every group never
+  // re-seeds the defaults on the next load.
+  let _ = math::seed_scope(db, scope).await;
 
   let activity = math::monthly_activity(db, scope, month).await;
   let pool = math::budgetable_pool(db, scope).await;

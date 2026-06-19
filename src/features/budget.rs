@@ -567,10 +567,19 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
 #[allow(dead_code)]
 pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> {
   use crate::store::repo::budget::{
-    NewCategory, NewGroup, create_category, create_group, list_groups, upsert_ref_type_map,
+    NewCategory, NewGroup, create_category, create_group, is_scope_seeded, list_groups, mark_scope_seeded,
+    upsert_ref_type_map,
   };
 
+  // Seed a scope's starter budget exactly once. The persisted marker means
+  // deleting every group never resurrects the defaults — the empty budget sticks.
+  if is_scope_seeded(db, scope).await? {
+    return Ok(());
+  }
+  // A scope seeded before this marker existed already has groups; adopt it
+  // without re-seeding.
   if !list_groups(db, scope).await?.is_empty() {
+    mark_scope_seeded(db, scope).await?;
     return Ok(());
   }
 
@@ -607,6 +616,7 @@ pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> 
     }
   }
 
+  mark_scope_seeded(db, scope).await?;
   Ok(())
 }
 
@@ -1229,6 +1239,41 @@ mod tests {
 
       let after = budget::list_groups(&db, BudgetScope::All).await.unwrap();
       assert_eq!(after.len(), SEED_GROUPS.len() - 1);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_reseed_after_every_group_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      for group in budget::list_groups(&db, BudgetScope::All).await.unwrap() {
+        budget::delete_group(&db, group.id()).await.unwrap();
+      }
+
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+
+      assert!(budget::list_groups(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_adopts_a_legacy_seeded_scope_without_re_seeding() {
+      let db = store::open_test().await.unwrap();
+      // Simulate a scope seeded before the marker existed: groups present, no marker.
+      budget::create_group(
+        &db,
+        &budget::NewGroup {
+          name: "Pre-existing".to_owned(),
+          position: 0,
+          scope: BudgetScope::All,
+        },
+      )
+      .await
+      .unwrap();
+
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+
+      let groups = budget::list_groups(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(groups.len(), 1);
+      assert!(budget::is_scope_seeded(&db, BudgetScope::All).await.unwrap());
     }
 
     #[tokio::test]

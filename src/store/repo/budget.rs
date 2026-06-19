@@ -163,6 +163,33 @@ pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetC
   Ok(rows)
 }
 
+// Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
+#[allow(dead_code)]
+pub async fn is_scope_seeded(db: &Database, scope: BudgetScope) -> Result<bool, Error> {
+  let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM budget_scope_seeded WHERE scope_kind = ? AND scope_id IS ?")
+    .bind(scope.scope_kind())
+    .bind(scope.scope_id())
+    .fetch_optional(&db.0)
+    .await?;
+  Ok(row.is_some())
+}
+
+// Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
+#[allow(dead_code)]
+pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  sqlx::query(
+    "INSERT INTO budget_scope_seeded (scope_kind, scope_id, seeded_at) VALUES (?, ?, ?) \
+    ON CONFLICT(scope_kind, COALESCE(scope_id, -1)) DO NOTHING",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .bind(&now)
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
 #[allow(dead_code)]

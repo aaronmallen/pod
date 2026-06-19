@@ -1,11 +1,11 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text, text_input},
+  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text, text_input},
 };
 
 use super::{
-  Message, State,
+  BudgetDropTarget, Message, State,
   budget::{self, Category, CategoryDraft, Group, Mode, TargetKind, TargetState},
 };
 use crate::ui::{
@@ -442,18 +442,102 @@ fn envelope_table(state: &State) -> Element<'_, Message> {
     return empty_table("No budget categories yet.");
   }
 
+  let edit_mode = state.budget_edit_mode();
+  let drop_target = state.budget_drop_target();
   let mut children: Vec<Element<'_, Message>> = vec![column_heads()];
   for group in &view.groups {
-    children.push(group_header(group, state.budget_collapsed(group.id)));
+    children.push(group_header(
+      group,
+      state.budget_collapsed(group.id),
+      state,
+      drop_target,
+    ));
     if !state.budget_collapsed(group.id) {
       for category in &group.categories {
-        children.push(category_row(state, category));
+        children.push(category_row(state, category, drop_target));
+      }
+      if edit_mode {
+        children.push(add_category_row(group.id));
       }
     }
+  }
+  if edit_mode {
+    children.push(add_group_button());
   }
   children.push(Space::new().height(Length::Fixed(40.0)).into());
 
   Column::with_children(children).width(Length::Fill).into()
+}
+
+fn add_category_row<'a>(group_id: i64) -> Element<'a, Message> {
+  let label = Row::with_children(vec![
+    text("\u{ff0b}")
+      .font(typography::body::REGULAR)
+      .size(15.0)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    text("Add category")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(9.0)
+  .align_y(Vertical::Center);
+
+  button(label)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 9.0,
+      right: 16.0,
+      bottom: 9.0,
+      left: 38.0,
+    })
+    .on_press(Message::BudgetCategoryAdded(group_id))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn add_group_button<'a>() -> Element<'a, Message> {
+  let label = Row::with_children(vec![
+    text("\u{ff0b}")
+      .font(typography::body::REGULAR)
+      .size(16.0)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    text("New category group")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(9.0)
+  .align_y(Vertical::Center);
+
+  button(label)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 16.0,
+      bottom: 14.0,
+      left: 16.0,
+    })
+    .on_press(Message::BudgetGroupAdded)
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn empty_table(message: &str) -> Element<'_, Message> {
@@ -534,19 +618,40 @@ fn mono_caption<'a>(value: impl Into<String>, value_color: Color, size: f32) -> 
 }
 
 // ── Group header ───────────────────────────────────────────────
-fn group_header(group: &Group, collapsed: bool) -> Element<'_, Message> {
+fn group_header<'a>(
+  group: &'a Group,
+  collapsed: bool,
+  state: &'a State,
+  drop_target: Option<BudgetDropTarget>,
+) -> Element<'a, Message> {
   let totals = group.totals();
+  let edit_mode = state.budget_edit_mode();
   let caret = if collapsed {
     Icon::chevron_right()
   } else {
     Icon::chevron()
   };
 
-  let row = Row::with_children(vec![
+  let caret_cell: Element<'a, Message> = if edit_mode {
+    button(caret.size(14.0).color(color::text::secondary()).render())
+      .padding(Padding::ZERO)
+      .width(Length::Fixed(DOT_COL))
+      .on_press(Message::BudgetGroupToggled(group.id))
+      .style(|_, _| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        ..button::Style::default()
+      })
+      .into()
+  } else {
     container(caret.size(14.0).color(color::text::secondary()).render())
       .width(Length::Fixed(DOT_COL))
       .align_x(Horizontal::Center)
-      .into(),
+      .into()
+  };
+
+  let name_cell: Element<'a, Message> = if edit_mode {
+    group_name_editor(group, state)
+  } else {
     container(
       text(group.name.to_uppercase())
         .font(typography::mono::MEDIUM)
@@ -560,7 +665,12 @@ fn group_header(group: &Group, collapsed: bool) -> Element<'_, Message> {
       bottom: spacing::SPACE_2,
       left: 10.0,
     })
-    .into(),
+    .into()
+  };
+
+  let row = Row::with_children(vec![
+    caret_cell,
+    name_cell,
     money_cell(totals.assigned, color::text::secondary(), ASSIGNED_COL, true),
     money_cell(totals.activity, color::text::secondary(), ACTIVITY_COL, true),
     money_cell(
@@ -576,23 +686,101 @@ fn group_header(group: &Group, collapsed: bool) -> Element<'_, Message> {
   ])
   .align_y(Vertical::Center);
 
-  button(container(row).width(Length::Fill).style(|_| container::Style {
+  let over = drop_target == Some(BudgetDropTarget::Group(group.id));
+  let header = container(row).width(Length::Fill).style(move |_| container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
-      color: color::rule(),
+      color: if over { color::accent::PLASMA } else { color::rule() },
       width: 1.0,
       radius: 0.0.into(),
     },
     ..container::Style::default()
-  }))
+  });
+
+  if edit_mode {
+    let target = BudgetDropTarget::Group(group.id);
+    return mouse_area(header)
+      .on_enter(Message::BudgetDropTargetEntered(target))
+      .on_exit(Message::BudgetDropTargetLeft(target))
+      .into();
+  }
+
+  button(header)
+    .padding(Padding::ZERO)
+    .width(Length::Fill)
+    .on_press(Message::BudgetGroupToggled(group.id))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn group_name_editor<'a>(group: &'a Group, state: &'a State) -> Element<'a, Message> {
+  let group_id = group.id;
+  let pending = state.budget_pending_group_delete() == Some(group_id);
+  let input = text_input("", &group.name)
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS_PLUS)
+    .padding(Padding {
+      top: spacing::UNIT,
+      right: spacing::SPACE_2,
+      bottom: spacing::UNIT,
+      left: spacing::SPACE_2,
+    })
+    .width(Length::Fixed(240.0))
+    .on_input(move |name| Message::BudgetGroupRenamed(group_id, name))
+    .on_submit(Message::BudgetGroupRenameWritten)
+    .style(group_name_input_style);
+
+  let delete_label = if pending { "confirm?" } else { "delete" };
+  let delete_color = if pending {
+    color::status::DANGER
+  } else {
+    color::text::tertiary()
+  };
+  let delete = button(
+    text(delete_label.to_uppercase())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(delete_color)),
+  )
   .padding(Padding::ZERO)
-  .width(Length::Fill)
-  .on_press(Message::BudgetGroupToggled(group.id))
+  .on_press(Message::BudgetGroupDeleteRequested(group_id))
   .style(|_, _| button::Style {
     background: Some(Background::Color(Color::TRANSPARENT)),
+    text_color: color::text::tertiary(),
     ..button::Style::default()
+  });
+
+  container(
+    Row::with_children(vec![input.into(), delete.into()])
+      .spacing(10.0)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: 0.0,
+    bottom: spacing::SPACE_2,
+    left: 10.0,
   })
   .into()
+}
+
+fn group_name_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+  text_input::Style {
+    background: Background::Color(color::surface::BASE),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 5.0.into(),
+    },
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
+    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    value: color::text::PRIMARY,
+  }
 }
 
 fn money_cell<'a>(value: f64, value_color: Color, width: f32, dim: bool) -> Element<'a, Message> {
@@ -620,26 +808,55 @@ fn money_cell<'a>(value: f64, value_color: Color, width: f32, dim: bool) -> Elem
 }
 
 // ── Category row ───────────────────────────────────────────────
-fn category_row<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+fn category_row<'a>(
+  state: &'a State,
+  category: &'a Category,
+  drop_target: Option<BudgetDropTarget>,
+) -> Element<'a, Message> {
   let selected = state.budget_selected() == Some(category.id);
+  let edit_mode = state.budget_edit_mode();
   let status = category.status();
 
+  let lead: Element<'a, Message> = if edit_mode {
+    drag_handle_cell(category.id)
+  } else {
+    dot_cell(category.tone.as_deref())
+  };
+  let tail: Element<'a, Message> = if edit_mode {
+    delete_category_cell(category.id)
+  } else {
+    available_cell(category, &status, selected)
+  };
+
   let row = Row::with_children(vec![
-    dot_cell(category.tone.as_deref()),
+    lead,
     name_cell(category, &status),
     assigned_cell(state, category),
     activity_cell(category.activity),
-    available_cell(category, &status, selected),
+    tail,
   ])
   .align_y(Vertical::Center)
   .height(Length::Fixed(58.0));
 
+  let over = drop_target == Some(BudgetDropTarget::Category(category.id));
   let background = if selected {
     Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))
   } else {
     Background::Color(Color::TRANSPARENT)
   };
   let border_color = if selected { color::accent::PLASMA } else { color::rule() };
+
+  if edit_mode {
+    let body = container(row)
+      .width(Length::Fill)
+      .style(move |_| category_drop_style(over, selected));
+    let target = BudgetDropTarget::Category(category.id);
+    return mouse_area(body)
+      .on_press(Message::BudgetCategorySelected(category.id))
+      .on_enter(Message::BudgetDropTargetEntered(target))
+      .on_exit(Message::BudgetDropTargetLeft(target))
+      .into();
+  }
 
   button(container(row).width(Length::Fill))
     .padding(Padding::ZERO)
@@ -654,6 +871,75 @@ fn category_row<'a>(state: &'a State, category: &'a Category) -> Element<'a, Mes
       },
       text_color: color::text::PRIMARY,
       ..button::Style::default()
+    })
+    .into()
+}
+
+/// The edit-mode row container style: a transparent top border that turns plasma
+/// when a dragged category hovers over this row, matching the design's
+/// top-border drop indicator.
+fn category_drop_style(over: bool, selected: bool) -> container::Style {
+  let background = if selected {
+    Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.07)))
+  } else {
+    None
+  };
+  container::Style {
+    background,
+    border: Border {
+      color: if over { color::accent::PLASMA } else { color::rule() },
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  }
+}
+
+fn drag_handle_cell<'a>(category_id: i64) -> Element<'a, Message> {
+  let handle = text("\u{283f}")
+    .font(typography::mono::REGULAR)
+    .size(14.0)
+    .style(typography::colored(color::text::tertiary()));
+
+  let armed =
+    mouse_area(container(handle).align_x(Horizontal::Center)).on_press(Message::BudgetDragStarted(category_id));
+
+  container(armed)
+    .width(Length::Fixed(DOT_COL))
+    .align_x(Horizontal::Center)
+    .into()
+}
+
+fn delete_category_cell<'a>(category_id: i64) -> Element<'a, Message> {
+  let glyph = button(
+    text("\u{00d7}")
+      .font(typography::body::REGULAR)
+      .size(14.0)
+      .align_x(Horizontal::Center)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fixed(28.0))
+  .height(Length::Fixed(28.0))
+  .on_press(Message::BudgetCategoryDeleted(category_id))
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 6.0.into(),
+    },
+    text_color: color::text::secondary(),
+    ..button::Style::default()
+  });
+
+  container(glyph)
+    .width(Length::Fixed(AVAILABLE_COL))
+    .align_x(Horizontal::Right)
+    .padding(Padding {
+      top: 0.0,
+      right: 16.0,
+      bottom: 0.0,
+      left: 16.0,
     })
     .into()
 }
@@ -1698,6 +1984,24 @@ mod tests {
     fn it_renders_a_collapsed_group() {
       let mut state = state_with_budget();
       state.budget_collapsed.insert(10);
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_renders_the_edit_mode_table() {
+      let mut state = state_with_budget();
+      state.budget_edit_mode = true;
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_highlights_a_drop_target_while_dragging() {
+      let mut state = state_with_budget();
+      state.budget_edit_mode = true;
+      state.budget_dragging = Some(2);
+      state.budget_drop_target = Some(BudgetDropTarget::Category(1));
 
       let _el: Element<'_, Message> = surface(&state);
     }

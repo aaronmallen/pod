@@ -203,6 +203,20 @@ pub async fn set_target(db: &Database, category_id: i64, target: &TargetInput) -
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
+pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  sqlx::query("UPDATE budget_category_groups SET name = ?, updated_at = ? WHERE id = ?")
+    .bind(name)
+    .bind(&now)
+    .bind(id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
+// unit tests until then.
+#[allow(dead_code)]
 pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -419,6 +433,33 @@ mod tests {
         groups.iter().map(BudgetCategoryGroup::name).collect::<Vec<_>>(),
         ["First", "Second"]
       );
+    }
+  }
+
+  mod rename_group {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_changes_the_name_without_touching_position() {
+      let db = store::open_test().await.unwrap();
+      let grp = create_group(
+        &db,
+        &NewGroup {
+          name: "Old".to_owned(),
+          position: 4,
+          scope: BudgetScope::All,
+        },
+      )
+      .await
+      .unwrap();
+
+      rename_group(&db, grp.id(), "New").await.unwrap();
+
+      let groups = list_groups(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(groups[0].name(), "New");
+      assert_eq!(groups[0].position(), 4);
     }
   }
 

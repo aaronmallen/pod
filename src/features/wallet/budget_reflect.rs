@@ -552,7 +552,7 @@ fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
     spark,
     text(
       "How long ISK sits in your wallet before it\u{2019}s spent. Higher means you\u{2019}re spending money you earned a \
-       while ago \u{2014} a buffer, not paycheck-to-paycheck.",
+      while ago \u{2014} a buffer, not paycheck-to-paycheck.",
     )
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
@@ -566,6 +566,41 @@ fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
 
 struct Sparkline {
   values: Vec<f64>,
+}
+
+/// Map age values onto evenly-spaced, padded, y-inverted sparkline points.
+///
+/// The value range is padded by [`AGE_PAD`] on each end so the line never clips
+/// against the top or bottom edge. X is monotonic across `[0, width]`; Y is
+/// inverted (larger values sit higher) across `[0, height]`.
+fn sparkline_points(values: &[f64], width: f32, height: f32) -> Vec<Point> {
+  let min = values.iter().copied().fold(f64::INFINITY, f64::min) - f64::from(AGE_PAD);
+  let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max) + f64::from(AGE_PAD);
+  let span = (max - min).max(1.0);
+  let last_index = (values.len() as f32 - 1.0).max(1.0);
+
+  values
+    .iter()
+    .enumerate()
+    .map(|(index, &value)| {
+      let x = (index as f32 / last_index) * width;
+      let y = height - (((value - min) / span) as f32) * height;
+      Point::new(x, y)
+    })
+    .collect()
+}
+
+/// Build an open polyline path that visits every point in order.
+fn polyline_path(points: &[Point]) -> canvas::Path {
+  canvas::Path::new(|builder| {
+    let mut points = points.iter();
+    if let Some(&first) = points.next() {
+      builder.move_to(first);
+      for &point in points {
+        builder.line_to(point);
+      }
+    }
+  })
 }
 
 impl canvas::Program<Message> for Sparkline {
@@ -585,22 +620,12 @@ impl canvas::Program<Message> for Sparkline {
     }
 
     let (width, height) = (bounds.width, bounds.height);
-    // Pad the value range so the line never clips against the top or bottom edge.
-    let min = self.values.iter().copied().fold(f64::INFINITY, f64::min) - f64::from(AGE_PAD);
-    let max = self.values.iter().copied().fold(f64::NEG_INFINITY, f64::max) + f64::from(AGE_PAD);
-    let span = (max - min).max(1.0);
-    let count = self.values.len() as f32;
-
-    let point = |index: usize| {
-      let x = (index as f32 / (count - 1.0)) * width;
-      let y = height - (((self.values[index] - min) / span) as f32) * height;
-      Point::new(x, y)
-    };
+    let points = sparkline_points(&self.values, width, height);
 
     let area = canvas::Path::new(|builder| {
-      builder.move_to(point(0));
-      for index in 1..self.values.len() {
-        builder.line_to(point(index));
+      builder.move_to(points[0]);
+      for &point in &points[1..] {
+        builder.line_to(point);
       }
       builder.line_to(Point::new(width, height));
       builder.line_to(Point::new(0.0, height));
@@ -608,20 +633,14 @@ impl canvas::Program<Message> for Sparkline {
     });
     frame.fill(&area, color::with_alpha(color::accent::PLASMA, 0.18));
 
-    let line = canvas::Path::new(|builder| {
-      builder.move_to(point(0));
-      for index in 1..self.values.len() {
-        builder.line_to(point(index));
-      }
-    });
     frame.stroke(
-      &line,
+      &polyline_path(&points),
       canvas::Stroke::default()
         .with_width(2.0)
         .with_color(color::accent::PLASMA),
     );
 
-    let last = point(self.values.len() - 1);
+    let last = points[points.len() - 1];
     frame.fill(&canvas::Path::circle(last, 3.5), color::accent::PLASMA);
 
     vec![frame.into_geometry()]
@@ -951,6 +970,59 @@ mod tests {
       state.budget_mode = budget::Mode::Reflect;
 
       let _el: Element<'_, Message> = reflect_surface(&state);
+    }
+  }
+
+  mod sparkline_geometry {
+    use super::*;
+
+    #[test]
+    fn it_spaces_x_monotonically_from_zero_to_width() {
+      let points = sparkline_points(&[10.0, 20.0, 30.0], 100.0, 50.0);
+
+      assert_eq!(points.len(), 3);
+      assert!((points[0].x - 0.0).abs() < 1e-4);
+      assert!((points[1].x - 50.0).abs() < 1e-4);
+      assert!((points[2].x - 100.0).abs() < 1e-4);
+      assert!(points[0].x < points[1].x && points[1].x < points[2].x);
+    }
+
+    #[test]
+    fn it_inverts_y_so_larger_values_sit_higher() {
+      let points = sparkline_points(&[10.0, 30.0], 100.0, 50.0);
+
+      // Larger age -> smaller y (closer to the top of the canvas).
+      assert!(points[1].y < points[0].y);
+    }
+
+    #[test]
+    fn it_pads_the_range_so_extremes_never_touch_the_edges() {
+      // span = (max + AGE_PAD) - (min - AGE_PAD) = 20 + 2*3 = 26.
+      // min value y = height - ((10 - (10 - 3)) / 26) * height = 50 - (3/26)*50.
+      let height = 50.0;
+      let points = sparkline_points(&[10.0, 30.0], 100.0, height);
+      let expected_low = height - (AGE_PAD / 26.0) * height;
+      let expected_high = height - ((20.0 + AGE_PAD) / 26.0) * height;
+
+      assert!((points[0].y - expected_low).abs() < 1e-3);
+      assert!((points[1].y - expected_high).abs() < 1e-3);
+      // Neither extreme reaches the very top (0.0) or bottom (height).
+      assert!(points[0].y < height && points[1].y > 0.0);
+    }
+
+    #[test]
+    fn it_avoids_division_by_zero_for_a_single_value() {
+      let points = sparkline_points(&[42.0], 100.0, 50.0);
+
+      assert_eq!(points.len(), 1);
+      assert!(points[0].x.is_finite() && points[0].y.is_finite());
+    }
+
+    #[test]
+    fn polyline_path_handles_empty_and_populated_inputs() {
+      // Building a path over points should not panic for either case.
+      let _empty = polyline_path(&[]);
+      let _line = polyline_path(&[Point::new(0.0, 0.0), Point::new(1.0, 1.0)]);
     }
   }
 }

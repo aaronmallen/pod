@@ -124,7 +124,20 @@ pub struct Loaded {
 pub struct BudgetLoad {
   history: Vec<crate::features::budget::MonthFlow>,
   scope: Scope,
+  /// A category id to select once the reloaded view lands, used after adding a
+  /// category so the new envelope opens in the inspector. `None` keeps the
+  /// current selection.
+  select: Option<i64>,
   view: budget::BudgetView,
+}
+
+/// A live drop slot while a category is being dragged in Budget edit mode.
+/// `Category` drops the dragged envelope immediately before that row in its
+/// group; `Group` appends it to the end of that group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BudgetDropTarget {
+  Category(i64),
+  Group(i64),
 }
 
 #[derive(Clone, Debug)]
@@ -134,8 +147,14 @@ pub enum Message {
   BudgetAssignDraftChanged(String),
   BudgetAssignEditBegan(i64),
   BudgetAutoAssign,
+  BudgetCategoryAdded(i64),
+  BudgetCategoryDeleted(i64),
   BudgetCategorySelected(i64),
   BudgetCoverOverspending,
+  BudgetDragStarted(i64),
+  BudgetDropReleased,
+  BudgetDropTargetEntered(BudgetDropTarget),
+  BudgetDropTargetLeft(BudgetDropTarget),
   BudgetEditToggled,
   BudgetEditorAmountChanged(String),
   BudgetEditorByDateChanged(String),
@@ -145,6 +164,10 @@ pub enum Message {
   BudgetEditorNoteChanged(String),
   BudgetEditorToggled,
   BudgetEditorToneSelected(String),
+  BudgetGroupAdded,
+  BudgetGroupDeleteRequested(i64),
+  BudgetGroupRenameWritten,
+  BudgetGroupRenamed(i64, String),
   BudgetGroupToggled(i64),
   BudgetLoaded(Box<BudgetLoad>),
   BudgetModeSelected(budget::Mode),
@@ -199,8 +222,14 @@ impl Message {
         | Message::BudgetAssignDraftChanged(_)
         | Message::BudgetAssignEditBegan(_)
         | Message::BudgetAutoAssign
+        | Message::BudgetCategoryAdded(_)
+        | Message::BudgetCategoryDeleted(_)
         | Message::BudgetCategorySelected(_)
         | Message::BudgetCoverOverspending
+        | Message::BudgetDragStarted(_)
+        | Message::BudgetDropReleased
+        | Message::BudgetDropTargetEntered(_)
+        | Message::BudgetDropTargetLeft(_)
         | Message::BudgetEditToggled
         | Message::BudgetEditorAmountChanged(_)
         | Message::BudgetEditorByDateChanged(_)
@@ -210,6 +239,10 @@ impl Message {
         | Message::BudgetEditorNoteChanged(_)
         | Message::BudgetEditorToggled
         | Message::BudgetEditorToneSelected(_)
+        | Message::BudgetGroupAdded
+        | Message::BudgetGroupDeleteRequested(_)
+        | Message::BudgetGroupRenameWritten
+        | Message::BudgetGroupRenamed(_, _)
         | Message::BudgetGroupToggled(_)
         | Message::BudgetLoaded(_)
         | Message::BudgetModeSelected(_)
@@ -307,12 +340,15 @@ pub struct State {
   active_division: i64,
   budget: Option<budget::BudgetView>,
   budget_collapsed: std::collections::HashSet<i64>,
+  budget_dragging: Option<i64>,
+  budget_drop_target: Option<BudgetDropTarget>,
   budget_edit_mode: bool,
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
   budget_history: Vec<crate::features::budget::MonthFlow>,
   budget_mode: budget::Mode,
   budget_month: String,
+  budget_pending_group_delete: Option<i64>,
   budget_range: budget::BudgetRange,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
@@ -350,12 +386,15 @@ impl State {
       active_division: DEFAULT_DIVISION,
       budget: None,
       budget_collapsed: std::collections::HashSet::new(),
+      budget_dragging: None,
+      budget_drop_target: None,
       budget_edit_mode: false,
       budget_editing: None,
       budget_editor: None,
       budget_history: Vec::new(),
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
+      budget_pending_group_delete: None,
       budget_range: budget::BudgetRange::default(),
       budget_selected: None,
       chart_hover: None,
@@ -450,6 +489,10 @@ impl State {
     self.budget_collapsed.contains(&group_id)
   }
 
+  pub(super) fn budget_drop_target(&self) -> Option<BudgetDropTarget> {
+    self.budget_drop_target
+  }
+
   pub(super) fn budget_edit_mode(&self) -> bool {
     self.budget_edit_mode
   }
@@ -476,6 +519,10 @@ impl State {
 
   pub(super) fn budget_month(&self) -> &str {
     &self.budget_month
+  }
+
+  pub(super) fn budget_pending_group_delete(&self) -> Option<i64> {
+    self.budget_pending_group_delete
   }
 
   pub(super) fn budget_range(&self) -> budget::BudgetRange {
@@ -722,6 +769,7 @@ fn load_budget(
       Message::BudgetLoaded(Box::new(BudgetLoad {
         history,
         scope,
+        select: None,
         view,
       }))
     },
@@ -876,24 +924,26 @@ fn budget_toggle_editor(state: &mut State) -> Task<Message> {
   let Some(selected) = state.budget_selected else {
     return Task::none();
   };
-  if let Some(view) = state.budget.as_ref() {
-    for group in &view.groups {
-      if let Some((position, category)) = group
+  budget_seed_editor(state, selected);
+  Task::none()
+}
+
+/// Loads `category_id`'s editor draft from the current view so the inspector can
+/// edit its metadata and target. A no-op when the category is not in the view.
+fn budget_seed_editor(state: &mut State, category_id: i64) {
+  let draft = state.budget.as_ref().and_then(|view| {
+    view.groups.iter().find_map(|group| {
+      group
         .categories
         .iter()
         .enumerate()
-        .find(|(_, category)| category.id == selected)
-      {
-        state.budget_editor = Some(budget::CategoryDraft::from_category(
-          group.id,
-          position as i64,
-          category,
-        ));
-        break;
-      }
-    }
+        .find(|(_, category)| category.id == category_id)
+        .map(|(position, category)| budget::CategoryDraft::from_category(group.id, position as i64, category))
+    })
+  });
+  if draft.is_some() {
+    state.budget_editor = draft;
   }
-  Task::none()
 }
 
 fn budget_commit_editor(state: &mut State, db: &Database) -> Task<Message> {
@@ -908,6 +958,147 @@ fn budget_commit_editor(state: &mut State, db: &Database) -> Task<Message> {
       budget::persist_category_edit(&db, &row, &draft.to_target()).await;
     })
   })
+}
+
+/// The end position (count of existing categories) of `group_id` in the current
+/// view, so a freshly-added category appends after the rest. Zero when the group
+/// or view is absent.
+fn budget_group_end_position(state: &State, group_id: i64) -> i64 {
+  let Some(view) = state.budget.as_ref() else {
+    return 0;
+  };
+  match view.groups.iter().find(|group| group.id == group_id) {
+    Some(group) => group.categories.len() as i64,
+    None => 0,
+  }
+}
+
+fn budget_add_category(state: &State, db: &Database, group_id: i64) -> Task<Message> {
+  let position = budget_group_end_position(state, group_id);
+  let scope = state.active;
+  let budget_scope = state.budget_scope();
+  let month = state.budget_month.clone();
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let new_id = budget::add_category(&db, group_id, position).await;
+      let view = budget::load(&db, budget_scope, &month).await;
+      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      (new_id, view, history)
+    },
+    move |(new_id, view, history)| {
+      Message::BudgetLoaded(Box::new(BudgetLoad {
+        history,
+        scope,
+        select: new_id,
+        view,
+      }))
+    },
+  )
+}
+
+fn budget_delete_category(state: &mut State, db: &Database, category_id: i64) -> Task<Message> {
+  if state.budget_selected == Some(category_id) {
+    state.budget_selected = None;
+    state.budget_editor = None;
+  }
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    Box::pin(async move { budget::delete_category(&db, category_id).await })
+  })
+}
+
+fn budget_add_group(state: &State, db: &Database) -> Task<Message> {
+  let position = state.budget.as_ref().map_or(0, |view| view.groups.len() as i64);
+  budget_persist_then_reload(state, db, move |db, scope, _month| {
+    Box::pin(async move {
+      budget::add_group(&db, scope, position).await;
+    })
+  })
+}
+
+fn budget_request_group_delete(state: &mut State, db: &Database, group_id: i64) -> Task<Message> {
+  let empty = state
+    .budget
+    .as_ref()
+    .and_then(|view| view.groups.iter().find(|group| group.id == group_id))
+    .is_some_and(|group| group.categories.is_empty());
+  // Empty groups delete immediately; a populated group cascades its categories,
+  // so the first click arms a confirmation and the second click commits it.
+  if !empty && state.budget_pending_group_delete != Some(group_id) {
+    state.budget_pending_group_delete = Some(group_id);
+    return Task::none();
+  }
+  budget_commit_group_delete(state, db, group_id)
+}
+
+fn budget_commit_group_delete(state: &mut State, db: &Database, group_id: i64) -> Task<Message> {
+  state.budget_pending_group_delete = None;
+  let clear_selection = state
+    .budget
+    .as_ref()
+    .and_then(|view| view.groups.iter().find(|group| group.id == group_id))
+    .zip(state.budget_selected)
+    .is_some_and(|(group, selected)| group.categories.iter().any(|category| category.id == selected));
+  if clear_selection {
+    state.budget_selected = None;
+    state.budget_editor = None;
+  }
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    Box::pin(async move { budget::delete_group(&db, group_id).await })
+  })
+}
+
+fn budget_rename_group(state: &mut State, db: &Database, group_id: i64, name: String) -> Task<Message> {
+  if let Some(group) = state
+    .budget
+    .as_mut()
+    .and_then(|view| view.groups.iter_mut().find(|group| group.id == group_id))
+  {
+    group.name = name.clone();
+  }
+  let db = db.clone();
+  Task::perform(async move { budget::rename_group(&db, group_id, &name).await }, |()| {
+    Message::BudgetGroupRenameWritten
+  })
+}
+
+fn budget_drop_released(state: &mut State, db: &Database) -> Task<Message> {
+  let drop = state.budget_dragging.take().zip(state.budget_drop_target.take());
+  let Some((dragged, target)) = drop else {
+    return Task::none();
+  };
+  let (target_group, before) = match target {
+    BudgetDropTarget::Category(category_id) => {
+      let group_id = state
+        .budget
+        .as_ref()
+        .and_then(|view| group_id_of_category(view, category_id));
+      let Some(group_id) = group_id else {
+        return Task::none();
+      };
+      (group_id, Some(category_id))
+    }
+    BudgetDropTarget::Group(group_id) => (group_id, None),
+  };
+  let Some(view) = state.budget.as_mut() else {
+    return Task::none();
+  };
+  if !view.move_category(dragged, target_group, before) {
+    return Task::none();
+  }
+  let reordered = view.clone();
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let reordered = reordered.clone();
+    Box::pin(async move { budget::persist_order(&db, &reordered).await })
+  })
+}
+
+fn group_id_of_category(view: &budget::BudgetView, category_id: i64) -> Option<i64> {
+  view
+    .groups
+    .iter()
+    .find(|group| group.categories.iter().any(|category| category.id == category_id))
+    .map(|group| group.id)
 }
 
 /// Runs a budget mutation, then reloads the derived view for the active scope and
@@ -938,6 +1129,7 @@ where
       Message::BudgetLoaded(Box::new(BudgetLoad {
         history,
         scope,
+        select: None,
         view,
       }))
     },
@@ -1025,13 +1217,14 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetCategorySelected(id) => {
       state.budget_selected = Some(id);
       state.budget_editor = None;
+      // In edit mode the inspector shows the category editor, so seed its draft
+      // from the freshly-selected category.
+      if state.budget_edit_mode {
+        budget_seed_editor(state, id);
+      }
       Task::none()
     }
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
-    Message::BudgetEditToggled => {
-      state.budget_edit_mode = !state.budget_edit_mode;
-      Task::none()
-    }
     Message::BudgetGroupToggled(group_id) => {
       if !state.budget_collapsed.remove(&group_id) {
         state.budget_collapsed.insert(group_id);
@@ -1042,16 +1235,26 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       let BudgetLoad {
         history,
         scope,
+        select,
         view,
       } = *load;
       if scope != state.active {
         return Task::none();
       }
-      if state.budget_selected.is_none() {
+      if let Some(id) = select {
+        state.budget_selected = Some(id);
+      } else if state.budget_selected.is_none() {
         state.budget_selected = view.first_category_id();
       }
       state.budget = Some(view);
       state.budget_history = history;
+      // Re-seed an open editor against the reloaded positions so a later
+      // metadata commit cannot revert an order change made while it was open.
+      if state.budget_editor.is_some()
+        && let Some(selected) = state.budget_selected
+      {
+        budget_seed_editor(state, selected);
+      }
       Task::none()
     }
     Message::BudgetModeSelected(mode) => {
@@ -1068,6 +1271,46 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.budget_range = range;
       Task::none()
     }
+    other => handle_budget_edit(state, other, db),
+  }
+}
+
+/// The edit-mode messages (drag-drop reorder + group/category CRUD), split off
+/// [`handle_budget`] so the dispatcher's complexity stays bounded. Unmatched
+/// messages fall through to [`handle_budget_editor`].
+fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetCategoryAdded(group_id) => budget_add_category(state, db, group_id),
+    Message::BudgetCategoryDeleted(category_id) => budget_delete_category(state, db, category_id),
+    Message::BudgetDragStarted(category_id) => {
+      state.budget_dragging = Some(category_id);
+      state.budget_drop_target = None;
+      Task::none()
+    }
+    Message::BudgetDropReleased => budget_drop_released(state, db),
+    Message::BudgetDropTargetEntered(target) => {
+      if state.budget_dragging.is_some() {
+        state.budget_drop_target = Some(target);
+      }
+      Task::none()
+    }
+    Message::BudgetDropTargetLeft(target) => {
+      if state.budget_drop_target == Some(target) {
+        state.budget_drop_target = None;
+      }
+      Task::none()
+    }
+    Message::BudgetEditToggled => {
+      state.budget_edit_mode = !state.budget_edit_mode;
+      state.budget_dragging = None;
+      state.budget_drop_target = None;
+      state.budget_pending_group_delete = None;
+      Task::none()
+    }
+    Message::BudgetGroupAdded => budget_add_group(state, db),
+    Message::BudgetGroupDeleteRequested(group_id) => budget_request_group_delete(state, db, group_id),
+    Message::BudgetGroupRenameWritten => Task::none(),
+    Message::BudgetGroupRenamed(group_id, name) => budget_rename_group(state, db, group_id, name),
     other => handle_budget_editor(state, other, db),
   }
 }
@@ -1271,6 +1514,15 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
         })
       )
       .then_some(Message::BudgetAssignCancelled)
+    }));
+  }
+  if state.budget_dragging.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+      )
+      .then_some(Message::BudgetDropReleased)
     }));
   }
   iced::Subscription::batch(subs)
@@ -3769,6 +4021,7 @@ mod tests {
       let load = BudgetLoad {
         history: Vec::new(),
         scope: state.active,
+        select: None,
         view: state_with_view().budget.unwrap(),
       };
 
@@ -3785,6 +4038,7 @@ mod tests {
       let load = BudgetLoad {
         history: Vec::new(),
         scope: Scope::Character(999),
+        select: None,
         view: state_with_view().budget.unwrap(),
       };
 
@@ -3808,6 +4062,190 @@ mod tests {
       let _ = update(&mut state, Message::BudgetAutoAssign, &db);
       let _ = update(&mut state, Message::BudgetCoverOverspending, &db);
       let _ = update(&mut state, Message::BudgetEditorCommitted, &db);
+    }
+
+    fn state_with_two_categories() -> State {
+      let mut state = state_with_view();
+      state.budget = Some(budget::BudgetView {
+        groups: vec![
+          budget::Group {
+            categories: vec![category(1), category(2)],
+            id: 10,
+            name: "Bills".to_owned(),
+          },
+          budget::Group {
+            categories: vec![category(3)],
+            id: 20,
+            name: "Wants".to_owned(),
+          },
+        ],
+        month: budget::current_month(),
+        overspent: 0.0,
+        pool: 5_000.0,
+        ready_to_assign: 1_500.0,
+      });
+      state.budget_edit_mode = true;
+      state
+    }
+
+    #[tokio::test]
+    async fn it_arms_and_clears_a_drag() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+
+      let _ = update(&mut state, Message::BudgetDragStarted(2), &db);
+      assert_eq!(state.budget_dragging, Some(2));
+
+      let _ = update(
+        &mut state,
+        Message::BudgetDropTargetEntered(BudgetDropTarget::Category(1)),
+        &db,
+      );
+      assert_eq!(state.budget_drop_target, Some(BudgetDropTarget::Category(1)));
+    }
+
+    #[tokio::test]
+    async fn it_reorders_the_in_memory_view_on_drop() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      let _ = update(&mut state, Message::BudgetDragStarted(2), &db);
+      let _ = update(
+        &mut state,
+        Message::BudgetDropTargetEntered(BudgetDropTarget::Group(20)),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::BudgetDropReleased, &db);
+
+      let view = state.budget().unwrap();
+      assert_eq!(view.groups[0].categories.iter().map(|c| c.id).collect::<Vec<_>>(), [1]);
+      assert_eq!(
+        view.groups[1].categories.iter().map(|c| c.id).collect::<Vec<_>>(),
+        [3, 2]
+      );
+      assert!(state.budget_dragging.is_none());
+      assert!(state.budget_drop_target.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_drops_without_a_target_as_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      let _ = update(&mut state, Message::BudgetDragStarted(2), &db);
+
+      let _ = update(&mut state, Message::BudgetDropReleased, &db);
+
+      let view = state.budget().unwrap();
+      assert_eq!(
+        view.groups[0].categories.iter().map(|c| c.id).collect::<Vec<_>>(),
+        [1, 2]
+      );
+    }
+
+    #[tokio::test]
+    async fn it_arms_then_confirms_a_populated_group_delete() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+
+      let _ = update(&mut state, Message::BudgetGroupDeleteRequested(10), &db);
+      assert_eq!(state.budget_pending_group_delete(), Some(10));
+      assert!(state.budget().unwrap().groups.iter().any(|g| g.id == 10));
+
+      let _ = update(&mut state, Message::BudgetGroupDeleteRequested(10), &db);
+      assert!(state.budget_pending_group_delete().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_selection_when_its_group_is_deleted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      state.budget_selected = Some(2);
+
+      let _ = update(&mut state, Message::BudgetGroupDeleteRequested(10), &db);
+      let _ = update(&mut state, Message::BudgetGroupDeleteRequested(10), &db);
+
+      assert!(state.budget_selected().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_renames_a_group_in_memory_immediately() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+
+      let _ = update(&mut state, Message::BudgetGroupRenamed(10, "Fixed".to_owned()), &db);
+
+      assert_eq!(state.budget().unwrap().groups[0].name, "Fixed");
+    }
+
+    #[tokio::test]
+    async fn it_clears_drag_state_when_leaving_edit_mode() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      let _ = update(&mut state, Message::BudgetDragStarted(2), &db);
+      state.budget_pending_group_delete = Some(10);
+
+      let _ = update(&mut state, Message::BudgetEditToggled, &db);
+
+      assert!(state.budget_dragging.is_none());
+      assert!(state.budget_pending_group_delete().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_seeds_the_editor_when_selecting_in_edit_mode() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+
+      let _ = update(&mut state, Message::BudgetCategorySelected(2), &db);
+
+      let editor = state.budget_editor().expect("editor seeded");
+      assert_eq!(editor.category_id, 2);
+    }
+
+    #[test]
+    fn it_finds_the_end_position_of_a_group() {
+      let state = state_with_two_categories();
+
+      assert_eq!(budget_group_end_position(&state, 10), 2);
+      assert_eq!(budget_group_end_position(&state, 20), 1);
+      assert_eq!(budget_group_end_position(&state, 999), 0);
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_the_edit_mode_crud_messages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+
+      // Each builds a persist+reload task; dispatching exercises the synchronous
+      // handler path (state mutation, position lookup) without executing the task.
+      let _ = update(&mut state, Message::BudgetCategoryAdded(10), &db);
+      let _ = update(&mut state, Message::BudgetGroupAdded, &db);
+
+      let _ = update(&mut state, Message::BudgetCategoryDeleted(2), &db);
+      assert!(state.budget_selected() != Some(2));
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_selection_when_its_category_is_deleted() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      state.budget_selected = Some(2);
+
+      let _ = update(&mut state, Message::BudgetCategoryDeleted(2), &db);
+
+      assert!(state.budget_selected().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_deletes_an_empty_group_without_a_confirmation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      if let Some(view) = state.budget.as_mut() {
+        view.groups[1].categories.clear();
+      }
+
+      let _ = update(&mut state, Message::BudgetGroupDeleteRequested(20), &db);
+
+      assert!(state.budget_pending_group_delete().is_none());
     }
   }
 

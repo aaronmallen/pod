@@ -5,11 +5,14 @@ use crate::{
   store::{
     Database,
     model::BudgetScope,
-    repo::budget::{self, TargetInput},
+    repo::budget::{self, NewCategory, NewGroup, TargetInput},
   },
 };
 
 const AVERAGE_WINDOW: usize = 3;
+const DEFAULT_CATEGORY_NAME: &str = "New Category";
+const DEFAULT_GROUP_NAME: &str = "New Group";
+const DEFAULT_TONE: &str = "plasma";
 
 const TONE_INFO: iced::Color = crate::ui::style::color::chart::VIOLET;
 
@@ -299,6 +302,37 @@ impl BudgetView {
       .flat_map(|group| &group.categories)
       .map(|c| c.id)
       .next()
+  }
+
+  /// Reorders the in-memory groups so `dragged` lands in `target_group`,
+  /// inserted before `before` (or appended when `before` is `None`), mirroring
+  /// the design's `moveCat`. A no-op when the drag would not change the order
+  /// (dropping a category onto itself). Returns `true` when the order changed.
+  pub fn move_category(&mut self, dragged: i64, target_group: i64, before: Option<i64>) -> bool {
+    if before == Some(dragged) {
+      return false;
+    }
+    let mut moving = None;
+    for group in &mut self.groups {
+      if let Some(index) = group.categories.iter().position(|c| c.id == dragged) {
+        moving = Some(group.categories.remove(index));
+        break;
+      }
+    }
+    let Some(moving) = moving else {
+      return false;
+    };
+    for group in &mut self.groups {
+      if group.id != target_group {
+        continue;
+      }
+      let index = before
+        .and_then(|id| group.categories.iter().position(|c| c.id == id))
+        .unwrap_or(group.categories.len());
+      group.categories.insert(index, moving);
+      return true;
+    }
+    false
   }
 }
 
@@ -755,6 +789,89 @@ pub async fn cover_overspending(db: &Database, view: &BudgetView) {
   }
 }
 
+/// Creates an empty category at the end of `group_id`, seeded with a default
+/// name, tone and a zero monthly target, and returns its new id for selection.
+pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option<i64> {
+  let category = budget::create_category(
+    db,
+    &NewCategory {
+      group_id,
+      name: DEFAULT_CATEGORY_NAME.to_owned(),
+      note: None,
+      position,
+      tone: Some(DEFAULT_TONE.to_owned()),
+    },
+  )
+  .await
+  .ok()?;
+  let _ = budget::set_target(
+    db,
+    category.id(),
+    &TargetInput {
+      amount: 0.0,
+      by_date: None,
+      kind: TargetKind::Monthly.to_storage().to_owned(),
+    },
+  )
+  .await;
+  Some(category.id())
+}
+
+/// Creates an empty category group at the end of `scope`, seeded with a default
+/// name, and returns its new id.
+pub async fn add_group(db: &Database, scope: BudgetScope, position: i64) -> Option<i64> {
+  budget::create_group(
+    db,
+    &NewGroup {
+      name: DEFAULT_GROUP_NAME.to_owned(),
+      position,
+      scope,
+    },
+  )
+  .await
+  .ok()
+  .map(|group| group.id())
+}
+
+/// Deletes a category. The B1 schema cascades its target, assignments and
+/// ref-type maps.
+pub async fn delete_category(db: &Database, category_id: i64) {
+  let _ = budget::delete_category(db, category_id).await;
+}
+
+/// Deletes a category group. The B1 schema cascades every category it holds.
+pub async fn delete_group(db: &Database, group_id: i64) {
+  let _ = budget::delete_group(db, group_id).await;
+}
+
+/// Persists the current group/category ordering: each category's `position`
+/// within its group and its owning `group_id`, so a drag-reorder survives a
+/// reload. Only the position and group change; other fields are read back from
+/// the row so concurrent target edits are preserved.
+pub async fn persist_order(db: &Database, view: &BudgetView) {
+  let now = chrono::Utc::now().to_rfc3339();
+  for group in &view.groups {
+    for (position, category) in group.categories.iter().enumerate() {
+      let row = crate::store::model::BudgetCategory {
+        created_at: now.clone(),
+        group_id: group.id,
+        id: category.id,
+        name: category.name.clone(),
+        note: category.note.clone(),
+        position: position as i64,
+        tone: category.tone.clone(),
+        updated_at: now.clone(),
+      };
+      let _ = budget::update_category(db, &row).await;
+    }
+  }
+}
+
+/// Renames a category group, preserving its position.
+pub async fn rename_group(db: &Database, group_id: i64, name: &str) {
+  let _ = budget::rename_group(db, group_id, name).await;
+}
+
 /// Persists the category metadata edits and target from the inspector editor.
 pub async fn persist_category_edit(db: &Database, category: &crate::store::model::BudgetCategory, target: &Target) {
   let _ = budget::update_category(db, category).await;
@@ -773,6 +890,194 @@ pub async fn persist_category_edit(db: &Database, category: &crate::store::model
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod move_category {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn category(id: i64) -> Category {
+      Category {
+        activity: 0.0,
+        assigned: 0.0,
+        avg_assigned: 0.0,
+        carry: 0.0,
+        id,
+        last_assigned: 0.0,
+        name: format!("Cat {id}"),
+        note: None,
+        spent_last: 0.0,
+        target: Target::default(),
+        tone: None,
+      }
+    }
+
+    fn view() -> BudgetView {
+      BudgetView {
+        groups: vec![
+          Group {
+            categories: vec![category(1), category(2), category(3)],
+            id: 10,
+            name: "Bills".to_owned(),
+          },
+          Group {
+            categories: vec![category(4)],
+            id: 20,
+            name: "Wants".to_owned(),
+          },
+        ],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      }
+    }
+
+    fn ids(group: &Group) -> Vec<i64> {
+      group.categories.iter().map(|c| c.id).collect()
+    }
+
+    #[test]
+    fn it_reorders_within_a_group_before_the_target() {
+      let mut view = view();
+
+      let moved = view.move_category(3, 10, Some(1));
+
+      assert!(moved);
+      assert_eq!(ids(&view.groups[0]), [3, 1, 2]);
+    }
+
+    #[test]
+    fn it_moves_a_category_across_groups() {
+      let mut view = view();
+
+      let moved = view.move_category(2, 20, Some(4));
+
+      assert!(moved);
+      assert_eq!(ids(&view.groups[0]), [1, 3]);
+      assert_eq!(ids(&view.groups[1]), [2, 4]);
+    }
+
+    #[test]
+    fn it_appends_to_a_group_when_dropped_on_its_header() {
+      let mut view = view();
+
+      let moved = view.move_category(1, 20, None);
+
+      assert!(moved);
+      assert_eq!(ids(&view.groups[0]), [2, 3]);
+      assert_eq!(ids(&view.groups[1]), [4, 1]);
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_dropped_on_itself() {
+      let mut view = view();
+
+      let moved = view.move_category(2, 10, Some(2));
+
+      assert!(!moved);
+      assert_eq!(ids(&view.groups[0]), [1, 2, 3]);
+    }
+  }
+
+  mod crud {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      repo::budget::{NewGroup, create_group, list_categories, list_groups},
+    };
+
+    async fn seed_group(db: &Database, name: &str) -> i64 {
+      create_group(
+        db,
+        &NewGroup {
+          name: name.to_owned(),
+          position: 0,
+          scope: BudgetScope::All,
+        },
+      )
+      .await
+      .unwrap()
+      .id()
+    }
+
+    #[tokio::test]
+    async fn it_adds_a_category_with_a_default_target() {
+      let db = store::open_test().await.unwrap();
+      let group_id = seed_group(&db, "Bills").await;
+
+      let id = add_category(&db, group_id, 0).await.unwrap();
+
+      let categories = list_categories(&db, group_id).await.unwrap();
+      assert_eq!(categories.len(), 1);
+      assert_eq!(categories[0].id(), id);
+      assert_eq!(budget::load_target(&db, id).await.unwrap().unwrap().kind(), "monthly");
+    }
+
+    #[tokio::test]
+    async fn it_adds_and_deletes_a_group() {
+      let db = store::open_test().await.unwrap();
+
+      let id = add_group(&db, BudgetScope::All, 0).await.unwrap();
+      assert_eq!(list_groups(&db, BudgetScope::All).await.unwrap().len(), 1);
+
+      delete_group(&db, id).await;
+      assert!(list_groups(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_renames_a_group_in_place() {
+      let db = store::open_test().await.unwrap();
+      let id = seed_group(&db, "Old").await;
+
+      rename_group(&db, id, "New").await;
+
+      let groups = list_groups(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(groups[0].name(), "New");
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_reordered_view() {
+      let db = store::open_test().await.unwrap();
+      let group_id = seed_group(&db, "Bills").await;
+      let first = add_category(&db, group_id, 0).await.unwrap();
+      let second = add_category(&db, group_id, 1).await.unwrap();
+
+      let view = BudgetView {
+        groups: vec![Group {
+          categories: vec![category_row(second), category_row(first)],
+          id: group_id,
+          name: "Bills".to_owned(),
+        }],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      };
+      persist_order(&db, &view).await;
+
+      let reloaded = list_categories(&db, group_id).await.unwrap();
+      assert_eq!(reloaded.iter().map(|c| c.id()).collect::<Vec<_>>(), [second, first]);
+    }
+
+    fn category_row(id: i64) -> Category {
+      Category {
+        activity: 0.0,
+        assigned: 0.0,
+        avg_assigned: 0.0,
+        carry: 0.0,
+        id,
+        last_assigned: 0.0,
+        name: format!("Cat {id}"),
+        note: None,
+        spent_last: 0.0,
+        target: Target::default(),
+        tone: None,
+      }
+    }
+  }
 
   mod target_kind {
     use pretty_assertions::assert_eq;

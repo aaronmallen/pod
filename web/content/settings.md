@@ -76,6 +76,8 @@ effect immediately across every open window.
 The Accessibility tab controls interface scale, high contrast, and how ISK
 figures are drawn.
 
+![The Accessibility tab with interface scale presets, the high-contrast toggle, and the contrast preview table](/docs/img/settings/accessibility.png)
+
 Interface scale runs from 85% to 150%, with a default of 100%. Five preset
 buttons set common values: XS is 85%, S is 92%, M is 100% (marked "Default"),
 L is 125%, and XL is 150%. A "Fine scale" slider lands you between presets in
@@ -105,6 +107,8 @@ custom · HC" are all valid readings.
 The Industry tab appears only when the Industry feature is enabled. It sets the
 default build facilities the planner pre-selects when you install a job.
 
+![The Industry tab with default Manufacturing and Reactions facility pickers](/docs/img/settings/industry.png)
+
 There are two separate defaults: one for Manufacturing and one for Reactions.
 When a default is set, the planner pre-selects that facility for jobs of that
 activity. When no default is set, the picker reads "Ask each install", and the
@@ -126,6 +130,8 @@ The Storage tab controls where Pod keeps its files, how it syncs across
 machines, and how you export logs for diagnostics. The category badge shows a
 green "All defaults" reading when no paths are customized, or a count of custom
 directories when you have overridden one or more of the three.
+
+![The Storage tab with the three file locations, networked sync, and log export controls](/docs/img/settings/storage.png)
 
 The tab lists three locations. "Shared data location" is the SQLite database
 that holds the character cache, mail bodies, market snapshots, and skill plans;
@@ -178,6 +184,8 @@ The Tags tab manages the custom labels you attach to characters, including each
 tag's color and order. The category badge counts how many tags have a color
 assigned.
 
+![The Tags tab with the tag list, color swatches, and sort controls](/docs/img/settings/tags.png)
+
 Create a tag by typing its name into the "Create a tag…" field and clicking
 "Add"; the Add button is active only when the field has text, and the field
 clears after you add the tag. Rename a tag by clicking its name in the list,
@@ -202,6 +210,8 @@ filtering".
 
 The User Interface tab controls where the navigation rail sits and the order of
 its icons. Both settings apply live across every Pod view.
+
+![The User Interface tab with the rail-side control and the icon-order list](/docs/img/settings/ui.png)
 
 The "Rail side" control docks the rail to the "Left" or the "Right" edge of the
 workspace. The default is Left. The current side is marked on the chosen card,

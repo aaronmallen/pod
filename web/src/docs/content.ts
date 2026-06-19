@@ -23,6 +23,84 @@ const md = new MarkdownIt({
   typographer: false,
 });
 
+const PUBLIC_DIR = path.resolve(process.cwd(), 'public');
+
+interface ImageDimensions {
+  width: number;
+  height: number;
+}
+
+const dimensionCache = new Map<string, ImageDimensions | null>();
+
+// Read intrinsic dimensions from a PNG's IHDR chunk (a dev-only, build-time read
+// over web/public). Avoids an extra dependency: the PNG header layout is fixed —
+// the 8-byte signature is followed by the IHDR chunk whose data begins at byte 16
+// with big-endian uint32 width and height. Returns null for non-PNG or unreadable
+// sources so the image still renders, just without width/height.
+function readPngDimensions(absPath: string): ImageDimensions | null {
+  if (dimensionCache.has(absPath)) {
+    return dimensionCache.get(absPath) ?? null;
+  }
+
+  let dimensions: ImageDimensions | null = null;
+  try {
+    const fd = fs.openSync(absPath, 'r');
+    try {
+      const header = Buffer.alloc(24);
+      const read = fs.readSync(fd, header, 0, 24, 0);
+      const isPng =
+        read >= 24 &&
+        header.readUInt32BE(0) === 0x89504e47 &&
+        header.readUInt32BE(4) === 0x0d0a1a0a;
+      if (isPng) {
+        const width = header.readUInt32BE(16);
+        const height = header.readUInt32BE(20);
+        if (width > 0 && height > 0) {
+          dimensions = { width, height };
+        }
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    dimensions = null;
+  }
+
+  dimensionCache.set(absPath, dimensions);
+  return dimensions;
+}
+
+// Resolve a doc image src (e.g. "/docs/img/foo/bar.png") to a path under web/public.
+function resolvePublicAsset(src: string): string | null {
+  if (!src.startsWith('/')) {
+    return null;
+  }
+  return path.join(PUBLIC_DIR, src);
+}
+
+const defaultImageRenderer =
+  md.renderer.rules.image ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options));
+
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+
+  token.attrSet('loading', 'lazy');
+  token.attrSet('decoding', 'async');
+
+  const src = token.attrGet('src');
+  if (src && token.attrIndex('width') < 0 && token.attrIndex('height') < 0) {
+    const assetPath = resolvePublicAsset(src);
+    const dimensions = assetPath ? readPngDimensions(assetPath) : null;
+    if (dimensions) {
+      token.attrSet('width', String(dimensions.width));
+      token.attrSet('height', String(dimensions.height));
+    }
+  }
+
+  return defaultImageRenderer(tokens, idx, options, env, self);
+};
+
 export function loadDocPages(contentDir: string): DocPage[] {
   const pages = collectMarkdownFiles(contentDir).map((sourcePath) => loadDocPage(contentDir, sourcePath));
 

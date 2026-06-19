@@ -213,7 +213,7 @@ fn month_nav(state: &State) -> Element<'_, Message> {
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("This month")
+    text(budget::month_relative_label(state.budget_month()))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::secondary()))

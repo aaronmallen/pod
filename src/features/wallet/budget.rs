@@ -533,6 +533,24 @@ pub fn month_label(month: &str) -> String {
   }
 }
 
+/// A relative descriptor for a `YYYY-MM` key against the current UTC month:
+/// "This month" only when it *is* the current month, otherwise "Last month" /
+/// "Next month" or "N months ago" / "In N months". Empty when unparseable.
+pub fn month_relative_label(month: &str) -> String {
+  let (Some((year, mon)), Some((current_year, current_mon))) = (parse_month(month), parse_month(&current_month()))
+  else {
+    return String::new();
+  };
+  let delta = (year * 12 + (mon - 1)) - (current_year * 12 + (current_mon - 1));
+  match delta {
+    0 => "This month".to_owned(),
+    -1 => "Last month".to_owned(),
+    1 => "Next month".to_owned(),
+    months if months < 0 => format!("{} months ago", -months),
+    months => format!("In {months} months"),
+  }
+}
+
 fn parse_month(month: &str) -> Option<(i32, i32)> {
   let (year, mon) = month.split_once('-')?;
   let year = year.parse::<i32>().ok()?;
@@ -1138,6 +1156,31 @@ mod tests {
     #[test]
     fn it_returns_an_unparseable_key_verbatim() {
       assert_eq!(month_label("nope"), "nope");
+    }
+  }
+
+  mod month_relative_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_says_this_month_only_for_the_current_month() {
+      let current = current_month();
+
+      assert_eq!(month_relative_label(&current), "This month");
+      assert_ne!(month_relative_label(&shift_month(&current, -1)), "This month");
+      assert_ne!(month_relative_label(&shift_month(&current, 1)), "This month");
+    }
+
+    #[test]
+    fn it_describes_adjacent_and_distant_months_relatively() {
+      let current = current_month();
+
+      assert_eq!(month_relative_label(&shift_month(&current, -1)), "Last month");
+      assert_eq!(month_relative_label(&shift_month(&current, 1)), "Next month");
+      assert_eq!(month_relative_label(&shift_month(&current, -3)), "3 months ago");
+      assert_eq!(month_relative_label(&shift_month(&current, 4)), "In 4 months");
     }
   }
 

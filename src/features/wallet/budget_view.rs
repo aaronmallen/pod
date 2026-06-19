@@ -17,7 +17,6 @@ const ASSIGNED_COL: f32 = 152.0;
 const ACTIVITY_COL: f32 = 146.0;
 const AVAILABLE_COL: f32 = 172.0;
 const DOT_COL: f32 = 28.0;
-const INSPECTOR_WIDTH: f32 = 300.0;
 const SIDE_PADDING: f32 = 28.0;
 
 pub(super) fn surface(state: &State) -> Element<'_, Message> {
@@ -428,10 +427,14 @@ fn plan_body(state: &State) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  Row::with_children(vec![table.into(), inspector(state)])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+  Row::with_children(vec![
+    table.into(),
+    crate::ui::components::resizable_pane::pane_handle(Message::BudgetInspectorDragStart),
+    inspector(state),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
 }
 
 fn envelope_table(state: &State) -> Element<'_, Message> {
@@ -1267,7 +1270,7 @@ fn inspector(state: &State) -> Element<'_, Message> {
       .width(Length::Fill)
       .height(Length::Fill),
   )
-  .width(Length::Fixed(INSPECTOR_WIDTH))
+  .width(Length::Fixed(state.budget_inspector_width()))
   .height(Length::Fill)
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),

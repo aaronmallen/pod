@@ -30,6 +30,10 @@ use crate::{
   window_state,
 };
 
+const BUDGET_INSPECTOR_DEFAULT_WIDTH: f32 = 300.0;
+
+const BUDGET_INSPECTOR_PANE_KEY: &str = "wallet.budget_inspector";
+
 const DEFAULT_DIVISION: i64 = 1;
 
 const HEADER_SIDE_PADDING: f32 = 28.0;
@@ -174,6 +178,9 @@ pub enum Message {
   BudgetGroupRenameWritten,
   BudgetGroupRenamed(i64, String),
   BudgetGroupToggled(i64),
+  BudgetInspectorDragEnd,
+  BudgetInspectorDragged(f32),
+  BudgetInspectorDragStart,
   BudgetLoaded(Box<BudgetLoad>),
   BudgetModeSelected(budget::Mode),
   BudgetMonthStepped(i32),
@@ -356,6 +363,7 @@ pub struct State {
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
   budget_history: Vec<crate::features::budget::MonthFlow>,
+  budget_inspector: PaneDrag,
   budget_mode: budget::Mode,
   budget_month: String,
   budget_pending_group_delete: Option<i64>,
@@ -404,6 +412,11 @@ impl State {
       budget_editing: None,
       budget_editor: None,
       budget_history: Vec::new(),
+      budget_inspector: PaneDrag::new(
+        BUDGET_INSPECTOR_DEFAULT_WIDTH,
+        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
+      )
+      .right_anchored(true),
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
       budget_pending_group_delete: None,
@@ -447,11 +460,19 @@ impl State {
     let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
     self.right_rail =
       PaneDrag::from_store(ui, RIGHT_RAIL_PANE_KEY, RIGHT_RAIL_DEFAULT_WIDTH, host_width).right_anchored(true);
+    self.budget_inspector = PaneDrag::from_store(
+      ui,
+      BUDGET_INSPECTOR_PANE_KEY,
+      BUDGET_INSPECTOR_DEFAULT_WIDTH,
+      host_width,
+    )
+    .right_anchored(true);
     self
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.right_rail.set_host_width(host_width);
+    self.budget_inspector.set_host_width(host_width);
   }
 
   pub fn active(&self) -> Scope {
@@ -524,6 +545,10 @@ impl State {
 
   pub(super) fn budget_history(&self) -> &[crate::features::budget::MonthFlow] {
     &self.budget_history
+  }
+
+  pub(super) fn budget_inspector_width(&self) -> f32 {
+    self.budget_inspector.width()
   }
 
   pub(super) fn budget_is_past(&self) -> bool {
@@ -1179,6 +1204,21 @@ fn handle_filter(state: &mut State, message: Message) -> Task<Message> {
 
 fn handle_rail(state: &mut State, message: Message) -> Task<Message> {
   match message {
+    Message::BudgetInspectorDragEnd => {
+      state.budget_inspector.end();
+      Task::done(Message::PaneSettled(
+        BUDGET_INSPECTOR_PANE_KEY,
+        state.budget_inspector.ratio(),
+      ))
+    }
+    Message::BudgetInspectorDragged(x) => {
+      state.budget_inspector.drag_to(x);
+      Task::none()
+    }
+    Message::BudgetInspectorDragStart => {
+      state.budget_inspector.start();
+      Task::none()
+    }
     Message::RailDragEnd => {
       state.right_rail.end();
       Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.ratio()))
@@ -1491,7 +1531,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    msg @ (Message::RailDragEnd | Message::RailDragged(_) | Message::RailDragStart) => handle_rail(state, msg),
+    msg @ (Message::BudgetInspectorDragEnd
+    | Message::BudgetInspectorDragged(_)
+    | Message::BudgetInspectorDragStart
+    | Message::RailDragEnd
+    | Message::RailDragged(_)
+    | Message::RailDragStart) => handle_rail(state, msg),
     Message::ReauthRequested(_) => Task::none(),
     Message::ScopeSelected(scope) => {
       state.picker_open = false;
@@ -1560,6 +1605,15 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.right_rail.is_active() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       crate::ui::components::resizable_pane::drag_event(event, Message::RailDragged, Message::RailDragEnd)
+    }));
+  }
+  if state.budget_inspector.is_active() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      crate::ui::components::resizable_pane::drag_event(
+        event,
+        Message::BudgetInspectorDragged,
+        Message::BudgetInspectorDragEnd,
+      )
     }));
   }
   if state.selected_contract.is_some() {
@@ -3810,6 +3864,20 @@ mod tests {
       let _ = update(&mut state, Message::RailDragEnd, &db);
 
       assert_eq!(state.right_rail.width(), start - 40.0);
+    }
+
+    #[tokio::test]
+    async fn it_resizes_the_budget_inspector_through_a_drag() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let start = state.budget_inspector_width();
+
+      let _ = update(&mut state, Message::BudgetInspectorDragStart, &db);
+      let _ = update(&mut state, Message::BudgetInspectorDragged(500.0), &db);
+      let _ = update(&mut state, Message::BudgetInspectorDragged(540.0), &db);
+      let _ = update(&mut state, Message::BudgetInspectorDragEnd, &db);
+
+      assert_eq!(state.budget_inspector_width(), start - 40.0);
     }
 
     #[tokio::test]

@@ -637,7 +637,6 @@ struct JournalActivity {
 struct TransactionActivity {
   amount: f64,
   date: String,
-  is_buy: bool,
   transaction_id: i64,
 }
 
@@ -684,7 +683,6 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
       transactions.push(TransactionActivity {
         amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
         date: tx.date().clone(),
-        is_buy: tx.is_buy(),
         transaction_id: tx.transaction_id(),
       });
     }
@@ -711,7 +709,6 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
         transactions.push(TransactionActivity {
           amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
           date: tx.date().clone(),
-          is_buy: tx.is_buy(),
           transaction_id: tx.transaction_id(),
         });
       }

@@ -2171,4 +2171,47 @@ mod tests {
       let _el: Element<'_, Message> = surface(&state);
     }
   }
+
+  mod review_banner {
+    use super::*;
+    use crate::features::wallet::loaders::JournalEntry;
+
+    fn uncategorized_entry(id: i64, month: &str) -> JournalEntry {
+      JournalEntry {
+        amount: Some(-400.0),
+        balance: Some(5_000.0),
+        character_id: 1,
+        context_id: None,
+        date: format!("{month}-15T12:00:00Z"),
+        description: "Brokers fee".to_owned(),
+        id,
+        ref_type: "brokers_fee".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_renders_nothing_when_everything_is_categorized() {
+      let state = state_with_budget();
+
+      assert!(super::super::review_banner(&state).is_none());
+    }
+
+    #[test]
+    fn it_renders_the_singular_banner_for_one_uncategorized_entry() {
+      let mut state = state_with_budget();
+      state.budget_month = "2026-06".to_owned();
+      state.journal = vec![uncategorized_entry(1, "2026-06")];
+
+      assert!(super::super::review_banner(&state).is_some());
+    }
+
+    #[test]
+    fn it_renders_the_plural_banner_for_several_uncategorized_entries() {
+      let mut state = state_with_budget();
+      state.budget_month = "2026-06".to_owned();
+      state.journal = vec![uncategorized_entry(1, "2026-06"), uncategorized_entry(2, "2026-06")];
+
+      assert!(super::super::review_banner(&state).is_some());
+    }
+  }
 }

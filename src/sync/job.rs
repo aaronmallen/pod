@@ -251,7 +251,6 @@ impl JobKind {
   pub fn required_scope(self) -> &'static [&'static str] {
     match self {
       Self::AssetSync => &[scopes::CHARACTER_ASSETS, scopes::CORPORATION_ASSETS],
-      Self::CharacterAbyssals => &[],
       Self::CharacterBlueprints => &[scopes::CHARACTER_BLUEPRINTS],
       Self::CharacterCalendar => &[scopes::CHARACTER_CALENDAR_READ],
       Self::CharacterClones => &[scopes::CHARACTER_CLONES, scopes::CHARACTER_IMPLANTS],
@@ -262,7 +261,6 @@ impl JobKind {
       Self::CharacterMail => &[scopes::CHARACTER_MAIL],
       Self::CharacterMarketOrders => &[scopes::CHARACTER_ORDERS],
       Self::CharacterNotifications => &[scopes::CHARACTER_NOTIFICATIONS],
-      Self::CharacterProfile => &[],
       Self::CharacterSkills => &[
         scopes::CHARACTER_SKILLS,
         scopes::CHARACTER_SKILLQUEUE,
@@ -275,7 +273,6 @@ impl JobKind {
       ],
       Self::CharacterStandings => &[scopes::CHARACTER_STANDINGS],
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
-      Self::CorporationAbyssals => &[],
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationContacts => &[scopes::CORPORATION_CONTACTS],
       Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
@@ -290,8 +287,17 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      Self::IndustryCostIndices | Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => &[],
-      Self::NetWorthSnapshot | Self::TokenAudit => &[],
+      // Public kinds run without any granted scope: char/corp abyssals (derived offline from the
+      // asset table), the character profile, and the global maintenance jobs.
+      Self::CharacterAbyssals
+      | Self::CharacterProfile
+      | Self::CorporationAbyssals
+      | Self::IndustryCostIndices
+      | Self::KillmailDetailBackfill
+      | Self::KillmailReconcile
+      | Self::MarketPrices
+      | Self::NetWorthSnapshot
+      | Self::TokenAudit => &[],
     }
   }
 }

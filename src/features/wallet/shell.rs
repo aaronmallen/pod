@@ -1801,4 +1801,103 @@ mod tests {
       let _el: Element<'_, Message> = shell(&state, now());
     }
   }
+
+  fn envelope(id: i64, name: &str) -> crate::features::wallet::loaders::Envelope {
+    crate::features::wallet::loaders::Envelope {
+      id,
+      name: name.to_owned(),
+      tone: Some("plasma".to_owned()),
+    }
+  }
+
+  mod budget_filter_badge {
+    use super::*;
+    use crate::features::wallet::{BudgetFilter, BudgetFilterKind};
+
+    #[test]
+    fn it_renders_nothing_without_an_active_filter() {
+      let state = State::new();
+
+      assert!(super::super::budget_filter_badge(&state).is_none());
+    }
+
+    #[test]
+    fn it_renders_a_named_envelope_for_a_category_filter() {
+      let mut state = State::new();
+      state.budget_chips.meta.insert(7, envelope(7, "Bills"));
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Category(7),
+        month: "2026-06".to_owned(),
+      });
+
+      assert!(super::super::budget_filter_badge(&state).is_some());
+    }
+
+    #[test]
+    fn it_renders_nothing_when_a_category_filter_has_no_envelope_meta() {
+      let mut state = State::new();
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Category(7),
+        month: "2026-06".to_owned(),
+      });
+
+      assert!(super::super::budget_filter_badge(&state).is_none());
+    }
+
+    #[test]
+    fn it_renders_the_uncategorized_pill() {
+      let mut state = State::new();
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Uncategorized,
+        month: "2026-06".to_owned(),
+      });
+
+      assert!(super::super::budget_filter_badge(&state).is_some());
+    }
+  }
+
+  mod budget_picker_row {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_selected_and_an_unselected_row() {
+      let _selected: Element<'_, Message> =
+        super::super::budget_picker_row("Bills", Some(7), true, color::status::WARNING);
+      let _unselected: Element<'_, Message> =
+        super::super::budget_picker_row("Uncategorized", None, false, color::status::WARNING);
+    }
+  }
+
+  mod budget_chip {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_assign_affordance_when_unassigned() {
+      let state = State::new();
+
+      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+    }
+
+    #[test]
+    fn it_renders_a_settled_chip_when_assigned() {
+      let mut state = State::new();
+      state.budget_chips.meta.insert(7, envelope(7, "Bills"));
+      state.budget_chips.resolution.journal_overrides.insert(1, 7);
+
+      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+    }
+
+    #[test]
+    fn it_renders_the_open_popover() {
+      let mut state = State::new();
+      state.budget_chips.meta.insert(7, envelope(7, "Bills"));
+      state.budget_chips.envelopes = vec![crate::features::wallet::loaders::EnvelopeGroup {
+        categories: vec![envelope(7, "Bills")],
+        name: "Group".to_owned(),
+      }];
+      state.budget_picker = Some((BudgetEntryKind::Journal, 1));
+
+      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+    }
+  }
 }

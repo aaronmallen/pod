@@ -1352,49 +1352,10 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     }
     Message::BudgetAssignEditBegan(category_id) => budget_begin_assign(state, category_id),
     Message::BudgetAutoAssign => budget_auto_assign(state, db),
-    Message::BudgetCategorySelected(id) => {
-      state.budget_selected = Some(id);
-      state.budget_editor = None;
-      // In edit mode the inspector shows the category editor, so seed its draft
-      // from the freshly-selected category.
-      if state.budget_edit_mode {
-        budget_seed_editor(state, id);
-      }
-      Task::none()
-    }
+    Message::BudgetCategorySelected(id) => budget_select_category(state, id),
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
-    Message::BudgetGroupToggled(group_id) => {
-      if !state.budget_collapsed.remove(&group_id) {
-        state.budget_collapsed.insert(group_id);
-      }
-      Task::none()
-    }
-    Message::BudgetLoaded(load) => {
-      let BudgetLoad {
-        history,
-        scope,
-        select,
-        view,
-      } = *load;
-      if scope != state.active {
-        return Task::none();
-      }
-      if let Some(id) = select {
-        state.budget_selected = Some(id);
-      } else if state.budget_selected.is_none() {
-        state.budget_selected = view.first_category_id();
-      }
-      state.budget = Some(view);
-      state.budget_history = history;
-      // Re-seed an open editor against the reloaded positions so a later
-      // metadata commit cannot revert an order change made while it was open.
-      if state.budget_editor.is_some()
-        && let Some(selected) = state.budget_selected
-      {
-        budget_seed_editor(state, selected);
-      }
-      Task::none()
-    }
+    Message::BudgetGroupToggled(group_id) => budget_toggle_group(state, group_id),
+    Message::BudgetLoaded(load) => budget_apply_loaded(state, *load),
     Message::BudgetModeSelected(mode) => {
       state.budget_mode = mode;
       Task::none()
@@ -1404,33 +1365,21 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.budget_editing = None;
       reload_budget(state, db)
     }
-    Message::BudgetChipAssigned(choice) => {
-      let Some((kind, entry_id)) = state.budget_picker.take() else {
-        return Task::none();
-      };
-      let scope = state.budget_scope();
-      // A market trade and its journal twin are one event: assigning either one
-      // cascades to the other so both rows stay in sync and the trade is counted
-      // against the chosen envelope exactly once.
-      let counterpart = budget_cascade_target(state, kind, entry_id);
-      let db = db.clone();
-      Task::perform(
-        async move {
-          for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterpart) {
-            match choice {
-              Some(category_id) => {
-                let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
-              }
-              None => {
-                let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
-              }
-            }
-          }
-          loaders::load_budget_chips(&db, scope).await
-        },
-        |c| Message::BudgetChipsReloaded(Box::new(c)),
-      )
+    Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
+    Message::BudgetRangeSelected(range) => {
+      state.budget_range = range;
+      Task::none()
     }
+    other => handle_budget_chip(state, other, db),
+  }
+}
+
+/// The per-entry chip messages (open/dismiss/assign the envelope picker and
+/// apply a reloaded chip set), split off [`handle_budget`] to keep its
+/// complexity bounded. Unmatched messages fall through to [`handle_budget_edit`].
+fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetChipAssigned(choice) => budget_chip_assigned(state, db, choice),
     Message::BudgetChipDismissed => {
       state.budget_picker = None;
       Task::none()
@@ -1451,13 +1400,90 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       }
       Task::none()
     }
-    Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
-    Message::BudgetRangeSelected(range) => {
-      state.budget_range = range;
-      Task::none()
-    }
     other => handle_budget_edit(state, other, db),
   }
+}
+
+/// Selects a category, clearing any open editor and — in edit mode — re-seeding
+/// the inspector editor from the selection. Split off [`handle_budget`].
+fn budget_select_category(state: &mut State, id: i64) -> Task<Message> {
+  state.budget_selected = Some(id);
+  state.budget_editor = None;
+  // In edit mode the inspector shows the category editor, so seed its draft
+  // from the freshly-selected category.
+  if state.budget_edit_mode {
+    budget_seed_editor(state, id);
+  }
+  Task::none()
+}
+
+/// Toggles a group's collapsed state. Split off [`handle_budget`].
+fn budget_toggle_group(state: &mut State, group_id: i64) -> Task<Message> {
+  if !state.budget_collapsed.remove(&group_id) {
+    state.budget_collapsed.insert(group_id);
+  }
+  Task::none()
+}
+
+/// Applies a freshly-loaded budget view, ignoring loads whose scope no longer
+/// matches the active one and re-seeding an open editor against the new
+/// positions. Split off [`handle_budget`] to keep its complexity bounded.
+fn budget_apply_loaded(state: &mut State, load: BudgetLoad) -> Task<Message> {
+  let BudgetLoad {
+    history,
+    scope,
+    select,
+    view,
+  } = load;
+  if scope != state.active {
+    return Task::none();
+  }
+  if let Some(id) = select {
+    state.budget_selected = Some(id);
+  } else if state.budget_selected.is_none() {
+    state.budget_selected = view.first_category_id();
+  }
+  state.budget = Some(view);
+  state.budget_history = history;
+  // Re-seed an open editor against the reloaded positions so a later
+  // metadata commit cannot revert an order change made while it was open.
+  if state.budget_editor.is_some()
+    && let Some(selected) = state.budget_selected
+  {
+    budget_seed_editor(state, selected);
+  }
+  Task::none()
+}
+
+/// Persists (or clears) the picked envelope for the open chip's entry, cascading
+/// the assignment to a market trade's journal twin so both rows stay in sync.
+/// Split off [`handle_budget`] to keep its complexity bounded.
+fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -> Task<Message> {
+  let Some((kind, entry_id)) = state.budget_picker.take() else {
+    return Task::none();
+  };
+  let scope = state.budget_scope();
+  // A market trade and its journal twin are one event: assigning either one
+  // cascades to the other so both rows stay in sync and the trade is counted
+  // against the chosen envelope exactly once.
+  let counterpart = budget_cascade_target(state, kind, entry_id);
+  let db = db.clone();
+  Task::perform(
+    async move {
+      for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterpart) {
+        match choice {
+          Some(category_id) => {
+            let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
+          }
+          None => {
+            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
+          }
+        }
+      }
+      loaders::load_budget_chips(&db, scope).await
+    },
+    |c| Message::BudgetChipsReloaded(Box::new(c)),
+  )
 }
 
 /// The edit-mode messages (drag-drop reorder + group/category CRUD), split off
@@ -1524,6 +1550,32 @@ fn mutate_editor(state: &mut State, edit: impl FnOnce(&mut budget::CategoryDraft
     edit(editor);
   }
   Task::none()
+}
+
+/// Switches the active scope, resetting per-scope view and budget state and
+/// firing a fresh wallet (and, on the Budget tab, budget) reload. A no-op when
+/// the scope is unchanged. Split off [`update`] to keep its complexity bounded.
+fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task<Message> {
+  state.picker_open = false;
+  if scope == state.active {
+    return Task::none();
+  }
+  state.active = scope;
+  state.active_division = DEFAULT_DIVISION;
+  state.corp_divisions = Vec::new();
+  state.tab_scroll_offset = 0.0;
+  state.budget = None;
+  state.budget_filter = None;
+  state.budget_picker = None;
+  state.budget_selected = None;
+  state.budget_editing = None;
+  state.budget_editor = None;
+  let budget_task = if state.tab == Tab::Budget {
+    reload_budget(state, db)
+  } else {
+    Task::none()
+  };
+  reload(db, scope, state.active_division).chain(budget_task)
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -1616,28 +1668,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::RailDragged(_)
     | Message::RailDragStart) => handle_rail(state, msg),
     Message::ReauthRequested(_) => Task::none(),
-    Message::ScopeSelected(scope) => {
-      state.picker_open = false;
-      if scope == state.active {
-        return Task::none();
-      }
-      state.active = scope;
-      state.active_division = DEFAULT_DIVISION;
-      state.corp_divisions = Vec::new();
-      state.tab_scroll_offset = 0.0;
-      state.budget = None;
-      state.budget_filter = None;
-      state.budget_picker = None;
-      state.budget_selected = None;
-      state.budget_editing = None;
-      state.budget_editor = None;
-      let budget_task = if state.tab == Tab::Budget {
-        reload_budget(state, db)
-      } else {
-        Task::none()
-      };
-      reload(db, scope, state.active_division).chain(budget_task)
-    }
+    Message::ScopeSelected(scope) => handle_scope_selected(state, db, scope),
     msg @ (Message::BudgetFilterCleared
     | Message::FiltersCleared
     | Message::SearchChanged(_)
@@ -1695,6 +1726,18 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   }
 }
 
+/// True when `event` is an Escape key press, used by the modal-dismiss
+/// subscriptions to map the key to their cancel message.
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+      ..
+    })
+  )
+}
+
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
   if state.right_rail.is_active() {
@@ -1713,26 +1756,12 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   }
   if state.selected_contract.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-          ..
-        })
-      )
-      .then_some(Message::CloseContractDetail)
+      is_escape_pressed(&event).then_some(Message::CloseContractDetail)
     }));
   }
   if state.budget_editing.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
-      matches!(
-        event,
-        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-          ..
-        })
-      )
-      .then_some(Message::BudgetAssignCancelled)
+      is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
     }));
   }
   if state.budget_dragging.is_some() {
@@ -2522,6 +2551,177 @@ mod tests {
       date: date.to_owned(),
       liquid: 0.0,
       net_worth,
+    }
+  }
+
+  mod handle_budget {
+    use super::*;
+
+    fn budget_view() -> budget::BudgetView {
+      budget::BudgetView {
+        groups: Vec::new(),
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_category_and_clears_the_editor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::BudgetCategorySelected(7), &db);
+
+      assert_eq!(state.budget_selected, Some(7));
+      assert!(state.budget_editor.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_toggles_a_group_collapsed_then_expanded() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::BudgetGroupToggled(3), &db);
+      assert!(state.budget_collapsed.contains(&3));
+
+      let _ = update(&mut state, Message::BudgetGroupToggled(3), &db);
+      assert!(!state.budget_collapsed.contains(&3));
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_dismisses_the_chip_picker() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.budget_chips.envelopes = vec![loaders::EnvelopeGroup {
+        categories: Vec::new(),
+        name: "Group".to_owned(),
+      }];
+
+      let _ = update(&mut state, Message::BudgetChipOpened(BudgetEntryKind::Journal, 9), &db);
+      assert_eq!(state.budget_picker, Some((BudgetEntryKind::Journal, 9)));
+
+      let _ = update(&mut state, Message::BudgetChipDismissed, &db);
+      assert!(state.budget_picker.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_reloaded_chip_set() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Uncategorized,
+        month: "2026-06".to_owned(),
+      });
+
+      let mut chips = loaders::BudgetChips::default();
+      chips.meta.insert(1, loaders::Envelope {
+        id: 1,
+        name: "Bills".to_owned(),
+        tone: None,
+      });
+
+      let _ = update(&mut state, Message::BudgetChipsReloaded(Box::new(chips)), &db);
+
+      assert!(state.budget_chips.meta.contains_key(&1));
+    }
+
+    #[tokio::test]
+    async fn it_assigns_the_open_chip_to_a_category() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.budget_picker = Some((BudgetEntryKind::Journal, 9));
+
+      let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
+
+      assert!(state.budget_picker.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_open_chip_when_assigned_to_nothing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.budget_picker = Some((BudgetEntryKind::Market, 9));
+
+      let _ = update(&mut state, Message::BudgetChipAssigned(None), &db);
+
+      assert!(state.budget_picker.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_no_ops_assigning_when_no_chip_is_open() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
+
+      assert!(state.budget_picker.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_applies_a_loaded_view_for_the_active_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(
+        &mut state,
+        Message::BudgetLoaded(Box::new(BudgetLoad {
+          history: Vec::new(),
+          scope: Scope::All,
+          select: Some(5),
+          view: budget_view(),
+        })),
+        &db,
+      );
+
+      assert_eq!(state.budget_selected, Some(5));
+      assert!(state.budget.is_some());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_loaded_view_for_a_stale_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.active = Scope::All;
+
+      let _ = update(
+        &mut state,
+        Message::BudgetLoaded(Box::new(BudgetLoad {
+          history: Vec::new(),
+          scope: Scope::Character(1),
+          select: Some(5),
+          view: budget_view(),
+        })),
+        &db,
+      );
+
+      assert!(state.budget.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_sets_the_mode_and_range() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::BudgetModeSelected(budget::Mode::Reflect), &db);
+      assert_eq!(state.budget_mode, budget::Mode::Reflect);
+
+      let _ = update(&mut state, Message::BudgetRangeSelected(budget::BudgetRange::default()), &db);
+    }
+
+    #[tokio::test]
+    async fn it_cancels_an_assign_edit() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.budget_editing = Some(budget::EditingCell {
+        category_id: 1,
+        draft: "100".to_owned(),
+      });
+
+      let _ = update(&mut state, Message::BudgetAssignCancelled, &db);
+
+      assert!(state.budget_editing.is_none());
     }
   }
 
@@ -4708,6 +4908,71 @@ mod tests {
       state.timeframe = Timeframe::Month;
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+  }
+
+  mod load_wallet {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_an_empty_all_scope_off_a_fresh_db() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let loaded = super::super::load_wallet(db, Scope::All, DEFAULT_DIVISION).await;
+
+      assert!(loaded.journal.is_empty());
+      assert_eq!(loaded.journal_total, 0);
+    }
+
+    #[tokio::test]
+    async fn it_loads_a_corporation_scope_off_a_fresh_db() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let loaded = super::super::load_wallet(db, Scope::Corporation(98_000_001), DEFAULT_DIVISION).await;
+
+      assert!(loaded.contracts.is_empty());
+      assert_eq!(loaded.contract_total, 0);
+    }
+
+    #[tokio::test]
+    async fn it_loads_a_character_scope_off_a_fresh_db() {
+      let db = crate::store::open_test().await.unwrap();
+
+      let loaded = super::super::load_wallet(db, Scope::Character(1), DEFAULT_DIVISION).await;
+
+      assert!(loaded.market.is_empty());
+    }
+  }
+
+  mod is_escape_pressed {
+    #[test]
+    fn it_ignores_a_non_escape_event() {
+      let event = iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left));
+
+      assert!(!super::super::is_escape_pressed(&event));
+    }
+  }
+
+  mod subscription {
+    use super::*;
+
+    #[test]
+    fn it_batches_no_listeners_for_an_idle_state() {
+      let state = State::new();
+
+      let _sub: iced::Subscription<Message> = super::super::subscription(&state);
+    }
+
+    #[test]
+    fn it_registers_the_modal_dismiss_listeners() {
+      let mut state = State::new();
+      state.budget_editing = Some(budget::EditingCell {
+        category_id: 1,
+        draft: String::new(),
+      });
+      state.budget_dragging = Some(1);
+
+      let _sub: iced::Subscription<Message> = super::super::subscription(&state);
     }
   }
 }

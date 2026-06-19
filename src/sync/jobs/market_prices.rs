@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use crate::clients::zkillboard;
 
-    fn find<'a>(rows: &'a [MarketPrice], type_id: i64) -> &'a MarketPrice {
+    fn find(rows: &[MarketPrice], type_id: i64) -> &MarketPrice {
       rows.iter().find(|row| row.type_id() == type_id).expect("row present")
     }
 

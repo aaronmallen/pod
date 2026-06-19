@@ -1929,7 +1929,7 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
     None => (InventoryTotals::default(), Vec::new()),
   };
   let geo_tree = tree::load_geo_tree(&db, scope, &roster, &corporations).await;
-  let values = values::summarize(&inventory, &roster, &corporations);
+  let values = values::summarize(&inventory, totals.value, &roster, &corporations);
   let nav = tracker::load_series(&db, scope).await;
   let stockpiles = stockpiles::load_cards(&db).await;
   let abyssals = abyssals::load_cards(&db, scope, &roster).await;

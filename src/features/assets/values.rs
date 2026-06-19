@@ -66,9 +66,12 @@ pub(super) struct TopItem {
   pub value: f64,
 }
 
-pub(super) fn summarize(rows: &[InventoryRow], roster: &[RosterPilot], corporations: &[RosterCorp]) -> ValueSummary {
-  let total_value: f64 = rows.iter().map(|r| r.value).sum();
-
+pub(super) fn summarize(
+  rows: &[InventoryRow],
+  total_value: f64,
+  roster: &[RosterPilot],
+  corporations: &[RosterCorp],
+) -> ValueSummary {
   ValueSummary {
     by_category: by_category(rows),
     by_location: by_location(rows),
@@ -649,6 +652,7 @@ mod tests {
           row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0),
           row("Rupture", "ship", 8, 60_008_494, 1, 2_000.0),
         ],
+        3_000.0,
         &[pilot(7, "Vex"), pilot(8, "Korren")],
         &[],
       );
@@ -670,7 +674,7 @@ mod tests {
       ];
       let roster = vec![pilot(7, "Vex"), pilot(8, "Korren")];
 
-      let summary = summarize(&rows, &roster, &[]);
+      let summary = summarize(&rows, 3_500.0, &roster, &[]);
 
       assert_eq!(summary.total_value, 3_500.0);
       assert_eq!(summary.by_category[0].label, "Ship");
@@ -689,14 +693,26 @@ mod tests {
       let rows = vec![row("Rupture", "ship", 98_832_116, 60_003_760, 1, 2_000.0)];
       let corporations = vec![corp(98_832_116, "Hyoryu")];
 
-      let summary = summarize(&rows, &[], &corporations);
+      let summary = summarize(&rows, 2_000.0, &[], &corporations);
 
       assert_eq!(summary.matrix_rows[0].owner_label, "Hyoryu");
     }
 
     #[test]
+    fn it_uses_the_full_set_total_over_the_page_row_sum() {
+      let page = vec![row("Rifter", "ship", 7, 60_003_760, 1, 1_000.0)];
+
+      let summary = summarize(&page, 9_999.0, &[pilot(7, "Vex")], &[]);
+
+      assert_eq!(
+        summary.total_value, 9_999.0,
+        "the headline total reflects the full asset scope, not the loaded page"
+      );
+    }
+
+    #[test]
     fn it_yields_an_empty_summary_for_no_rows() {
-      let summary = summarize(&[], &[], &[]);
+      let summary = summarize(&[], 0.0, &[], &[]);
       assert_eq!(summary, ValueSummary::default());
     }
   }

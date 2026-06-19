@@ -4296,6 +4296,74 @@ mod asset_tests {
         "the character_financials view and the page valuation produce the same total"
       );
     }
+
+    #[tokio::test]
+    async fn the_full_set_total_sums_every_asset_regardless_of_the_loaded_page() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let assets: Vec<CharacterAsset> = (100..103).map(|item_id| char_asset(item_id, 42, None)).collect();
+      replace_for_character(&db, 42, &assets).await.unwrap();
+      abyssal(&db, 100, 42, Some(750_000.0)).await;
+
+      let page = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          cursor: None,
+          direction: SortDirection::Ascending,
+          filter: "",
+          limit: 1,
+          location_ids: &[],
+          me_id: None,
+          sort: SortColumn::Value,
+        },
+      )
+      .await
+      .unwrap();
+      let page_sum: f64 = page.iter().map(|row| row.value).sum();
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let view_value = financials_asset_value(&db, 42).await;
+
+      assert_eq!(page.len(), 1, "the page is limited to a single row");
+      assert_eq!(
+        totals.value, 750_200.0,
+        "muta abyssal (750_000) + 2 base-priced modules @100 (200)"
+      );
+      assert!(
+        page_sum < totals.value,
+        "the page sum under-reports the full asset scope"
+      );
+      assert_eq!(
+        view_value, totals.value,
+        "the full-set total equals the net-worth asset value"
+      );
+    }
+
+    #[tokio::test]
+    async fn the_full_set_total_honors_the_active_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let module = char_asset(100, 42, None);
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      mineral.quantity = 3;
+      replace_for_character(&db, 42, &[module, mineral]).await.unwrap();
+
+      let filtered = inventory_totals_for_character(&db, 42, "Tritanium", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        filtered.value, 15.0,
+        "the full-set total is scoped to the filtered rows (3 tritanium @5)"
+      );
+    }
   }
 
   mod corp_muta_valuation {

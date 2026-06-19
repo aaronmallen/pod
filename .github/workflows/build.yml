@@ -16,7 +16,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           cache-save: "true"
@@ -32,7 +32,7 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - if: runner.os == 'Linux'
         uses: ./.github/actions/setup
         with:
@@ -57,7 +57,7 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       # The Linux job builds a separately-instrumented coverage target via cargo-llvm-cov, which overflows the
       # ~14 GB free on ubuntu-latest. Reclaim the preinstalled toolchains/images we never use before building.
       - if: runner.os == 'Linux'
@@ -89,7 +89,7 @@ jobs:
           - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - if: runner.os == 'Linux'
         uses: ./.github/actions/setup
         with:

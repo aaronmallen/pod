@@ -6,12 +6,17 @@ import type { Plugin } from 'vite';
 import { App } from '../App';
 import { FAQ_ITEMS } from '../components/Faq';
 import { loadDocPages } from './content';
+import type { DocPage } from './content';
 import { renderDocPage } from './render';
 
 export interface DocsPluginOptions {
   contentDir: string;
   root: string;
 }
+
+// Canonical production origin. Kept in sync with render.tsx's ORIGIN so the
+// sitemap, robots.txt, and per-page canonical links all agree.
+const ORIGIN = 'https://pod.aaronmallen.dev';
 
 // Builds the FAQPage JSON-LD from the plain-text Q&A projection so crawlers see
 // rich results for the landing page. Kept next to the prerender path because it
@@ -49,6 +54,22 @@ function prerenderLanding(outDir: string, info: (msg: string) => void): void {
   info('prerendered landing page into dist/index.html');
 }
 
+// Emits dist/sitemap.xml covering the landing page plus every doc page. Each
+// page.url is already the site-absolute path (e.g. "/docs/" or "/docs/guide/"),
+// so we just prefix the canonical origin. The landing page ("/") is included
+// explicitly since it is not part of the doc page set.
+function emitSitemap(outDir: string, pages: DocPage[], info: (msg: string) => void): void {
+  const paths = ['/', ...pages.map((page) => page.url)];
+  const urls = paths
+    .map((p) => `  <url>\n    <loc>${ORIGIN}${p}</loc>\n  </url>`)
+    .join('\n');
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
+
+  fs.writeFileSync(path.join(outDir, 'sitemap.xml'), xml, 'utf8');
+  info(`emitted sitemap.xml with ${paths.length} url(s)`);
+}
+
 export function docsPlugin(options: DocsPluginOptions): Plugin {
   let outDir = path.resolve(options.root, 'dist');
 
@@ -76,6 +97,9 @@ export function docsPlugin(options: DocsPluginOptions): Plugin {
       }
 
       this.info(`emitted ${pages.length} doc page(s)`);
+
+      // Sitemap: landing page + every doc URL, from the same page set above.
+      emitSitemap(outDir, pages, (msg) => this.info(msg));
     },
   };
 }

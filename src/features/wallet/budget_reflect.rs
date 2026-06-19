@@ -58,7 +58,6 @@ fn loading<'a>() -> Element<'a, Message> {
   .into()
 }
 
-// ── Stat band ──────────────────────────────────────────────────
 fn stat_band<'a>(reflect: &ReflectView) -> Element<'a, Message> {
   let net = reflect.net();
   let net_color = if net >= 0.0 {
@@ -196,7 +195,6 @@ fn stat_cell<'a>(
     .into()
 }
 
-// ── Report grid ────────────────────────────────────────────────
 fn report_grid<'a>(state: &State, reflect: &ReflectView) -> Element<'a, Message> {
   let range = state.budget_range();
   let flow_months = trailing(&reflect.history, range.months());
@@ -365,7 +363,6 @@ fn range_button<'a>(label: &'a str, range: BudgetRange, active: BudgetRange) -> 
   .into()
 }
 
-// ── Income vs spending — grouped monthly bars ──────────────────
 fn flow_chart<'a>(months: &[MonthFlow]) -> Element<'a, Message> {
   let max = months
     .iter()
@@ -508,7 +505,6 @@ fn legend<'a>(dot: Color, label: &'a str) -> Element<'a, Message> {
   .into()
 }
 
-// ── Age of ISK sparkline ───────────────────────────────────────
 fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
   let cur = reflect.age.round() as i64;
 
@@ -647,7 +643,6 @@ impl canvas::Program<Message> for Sparkline {
   }
 }
 
-// ── Spending by category — horizontal bars ─────────────────────
 fn spend_total<'a>(spend: f64) -> Element<'a, Message> {
   text(format!("{} ISK total", crate::ui::format::fmt_isk(spend)))
     .font(typography::mono::REGULAR)
@@ -767,7 +762,6 @@ fn bar_segment<'a>(portion: u16, fill: Color) -> Element<'a, Message> {
     .into()
 }
 
-// ── Target health ──────────────────────────────────────────────
 fn target_health<'a>(tally: &TargetTally) -> Element<'a, Message> {
   let segments = container(
     Row::with_children(vec![

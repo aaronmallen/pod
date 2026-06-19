@@ -121,7 +121,6 @@ fn review_banner(state: &State) -> Option<Element<'_, Message>> {
   )
 }
 
-// ── Sub-nav: Plan / Reflect + Edit toggle ──────────────────────
 fn sub_nav(state: &State) -> Element<'_, Message> {
   let mode = state.budget_mode();
   let toggle = Row::with_children(vec![
@@ -261,7 +260,6 @@ fn bordered<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     .into()
 }
 
-// ── Toolbar: month nav + Ready to Assign + overspending ─────────
 fn toolbar(state: &State) -> Element<'_, Message> {
   let view = state.budget();
   let ready = view.map_or(0.0, |v| v.ready_to_assign);
@@ -502,7 +500,6 @@ fn overspent_button<'a>(overspent: f64) -> Element<'a, Message> {
     .into()
 }
 
-// ── Plan body: envelope table + inspector ───────────────────────
 fn plan_body(state: &State) -> Element<'_, Message> {
   let table = container(
     scrollable(envelope_table(state))
@@ -706,7 +703,6 @@ fn mono_caption<'a>(value: impl Into<String>, value_color: Color, size: f32) -> 
     .into()
 }
 
-// ── Group header ───────────────────────────────────────────────
 fn group_header<'a>(
   group: &'a Group,
   collapsed: bool,
@@ -896,7 +892,6 @@ fn money_cell<'a>(value: f64, value_color: Color, width: f32, dim: bool) -> Elem
   .into()
 }
 
-// ── Category row ───────────────────────────────────────────────
 fn category_row<'a>(
   state: &'a State,
   category: &'a Category,
@@ -1368,7 +1363,6 @@ fn status_color(state: TargetState, _bar: bool) -> Color {
   }
 }
 
-// ── Inspector (right rail) ──────────────────────────────────────
 fn inspector(state: &State) -> Element<'_, Message> {
   let selected = state
     .budget_selected()
@@ -1829,7 +1823,6 @@ fn quick_assign_row<'a>(category_id: i64, label: &'a str, hint: Option<String>, 
     .into()
 }
 
-// ── Category / target editor (shared with B5) ───────────────────
 fn category_editor(draft: &CategoryDraft) -> Element<'_, Message> {
   let mut children: Vec<Element<'_, Message>> = vec![
     editor_field("Name", text_field(&draft.name, "", Message::BudgetEditorNameChanged)),

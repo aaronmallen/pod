@@ -102,15 +102,6 @@ impl ContactModal {
     self.entity.as_ref()
   }
 
-  /// Re-resolves the selected entity's portrait against the image cache, picking up a file that a fetch has since
-  /// written so a completed self-heal updates the displayed avatar without reopening the modal.
-  pub fn refresh_image(&mut self) {
-    self.image = self
-      .entity
-      .as_ref()
-      .and_then(|entity| resolve_image(entity.id, entity.kind));
-  }
-
   pub fn is_character(&self) -> bool {
     self
       .entity
@@ -124,6 +115,15 @@ impl ContactModal {
 
   pub fn labels(&self) -> &[i64] {
     &self.labels
+  }
+
+  /// Re-resolves the selected entity's portrait against the image cache, picking up a file that a fetch has since
+  /// written so a completed self-heal updates the displayed avatar without reopening the modal.
+  pub fn refresh_image(&mut self) {
+    self.image = self
+      .entity
+      .as_ref()
+      .and_then(|entity| resolve_image(entity.id, entity.kind));
   }
 
   pub fn set_entity(&mut self, entity: Option<EntityRef>) {

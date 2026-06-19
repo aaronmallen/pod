@@ -26,6 +26,7 @@ pub enum JobKind {
   CharacterStandings,
   CharacterTelemetry,
   CharacterWallet,
+  CorporationAbyssals,
   CorporationBlueprints,
   CorporationContacts,
   CorporationContracts,
@@ -63,6 +64,7 @@ impl JobKind {
     JobKind::CharacterStandings,
     JobKind::CharacterTelemetry,
     JobKind::CharacterWallet,
+    JobKind::CorporationAbyssals,
     JobKind::CorporationBlueprints,
     JobKind::CorporationContacts,
     JobKind::CorporationContracts,
@@ -103,7 +105,11 @@ impl JobKind {
 
   pub fn on_success_triggers(self) -> &'static [JobKind] {
     match self {
-      Self::AssetSync => &[JobKind::MarketPrices, JobKind::CharacterAbyssals],
+      Self::AssetSync => &[
+        JobKind::MarketPrices,
+        JobKind::CharacterAbyssals,
+        JobKind::CorporationAbyssals,
+      ],
       Self::CharacterWallet | Self::CorporationWallet => &[JobKind::MarketPrices],
       Self::CharacterProfile => &[JobKind::AssetSync, JobKind::CharacterWallet],
       Self::CorporationProfile => &[JobKind::AssetSync, JobKind::CorporationWallet],
@@ -186,6 +192,7 @@ impl JobKind {
         Subject::Character(_)
       ) | (
         Self::AssetSync
+          | Self::CorporationAbyssals
           | Self::CorporationBlueprints
           | Self::CorporationContacts
           | Self::CorporationContracts
@@ -214,6 +221,7 @@ impl JobKind {
       | Self::CharacterProfile
       | Self::CharacterStandings
       | Self::CharacterWallet
+      | Self::CorporationAbyssals
       | Self::CorporationBlueprints
       | Self::CorporationContacts
       | Self::CorporationContracts
@@ -267,6 +275,7 @@ impl JobKind {
       ],
       Self::CharacterStandings => &[scopes::CHARACTER_STANDINGS],
       Self::CharacterWallet => &[scopes::CHARACTER_WALLET],
+      Self::CorporationAbyssals => &[],
       Self::CorporationBlueprints => &[scopes::CORPORATION_ROLES, scopes::CORPORATION_BLUEPRINTS],
       Self::CorporationContacts => &[scopes::CORPORATION_CONTACTS],
       Self::CorporationContracts => &[scopes::CORPORATION_CONTRACTS],
@@ -382,6 +391,7 @@ async fn run_character_job_b(ctx: &JobCtx<'_>) -> Option<Result<Outcome, clients
 async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
   match ctx.key.kind {
     JobKind::AssetSync => super::jobs::asset_sync::run(ctx).await,
+    JobKind::CorporationAbyssals => super::jobs::abyssals::run(ctx).await,
     JobKind::CorporationBlueprints => super::jobs::blueprints::run(ctx).await,
     JobKind::CorporationIndustryJobs => super::jobs::industry::run(ctx).await,
     JobKind::KillmailDetailBackfill => super::jobs::killmail_detail_backfill::run(ctx).await,
@@ -458,16 +468,28 @@ mod tests {
       fn it_chains_asset_sync_to_prices_and_its_derived_abyssals() {
         assert_eq!(
           JobKind::AssetSync.on_success_triggers(),
-          [JobKind::MarketPrices, JobKind::CharacterAbyssals],
-          "a fresh asset sync must re-fire CharacterAbyssals, which is derived from the asset table",
+          [
+            JobKind::MarketPrices,
+            JobKind::CharacterAbyssals,
+            JobKind::CorporationAbyssals
+          ],
+          "a fresh asset sync must re-fire the per-subject abyssal jobs, which are derived from the asset table",
         );
         assert!(
           JobKind::CharacterAbyssals.applies_to(Subject::Character(1)),
-          "abyssals is per-subject, so the engine routes it to the same character that synced assets"
+          "char abyssals is per-subject, so the engine routes it to the same character that synced assets"
         );
         assert!(
           !JobKind::CharacterAbyssals.applies_to(Subject::Corporation(1)),
-          "abyssals is character-only, so a corporation asset sync does not route it"
+          "char abyssals never routes to a corporation asset sync"
+        );
+        assert!(
+          JobKind::CorporationAbyssals.applies_to(Subject::Corporation(1)),
+          "corp abyssals is per-subject, so the engine routes it to the same corporation that synced assets"
+        );
+        assert!(
+          !JobKind::CorporationAbyssals.applies_to(Subject::Character(1)),
+          "corp abyssals never routes to a character asset sync"
         );
       }
 
@@ -558,6 +580,7 @@ mod tests {
           let is_public = matches!(
             kind,
             JobKind::CharacterAbyssals
+              | JobKind::CorporationAbyssals
               | JobKind::CharacterProfile
               | JobKind::IndustryCostIndices
               | JobKind::KillmailDetailBackfill

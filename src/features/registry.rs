@@ -16,7 +16,11 @@ pub struct Descriptor {
 pub fn descriptor(feature: Feature) -> Descriptor {
   match feature {
     Feature::AssetTracking => Descriptor {
-      jobs: &[JobKind::AssetSync, JobKind::CharacterAbyssals],
+      jobs: &[
+        JobKind::AssetSync,
+        JobKind::CharacterAbyssals,
+        JobKind::CorporationAbyssals,
+      ],
       rail: Some(Destination::Assets),
       scopes: &[scopes::CHARACTER_ASSETS],
       tab: None,

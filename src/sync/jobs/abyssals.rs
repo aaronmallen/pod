@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::{
   clients::{Error, eve_image::Size, muta_market},
   store::{
-    model::AbyssalItem,
-    repo::{assets, character},
+    model::{AbyssalItem, CorporationAbyssalItem},
+    repo::{assets, character, org},
   },
   sync::{job::JobCtx, outcome::Outcome, subject::Subject},
 };
@@ -20,9 +20,13 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
 }
 
 async fn run_with_muta(ctx: &JobCtx<'_>, muta: &muta_market::Client) -> Result<Outcome, Error> {
-  let Subject::Character(character_id) = ctx.key.subject else {
-    return Ok(Outcome::synced());
-  };
+  match ctx.key.subject {
+    Subject::Character(character_id) => run_character(ctx, muta, character_id).await,
+    Subject::Corporation(corporation_id) => run_corporation(ctx, muta, corporation_id).await,
+  }
+}
+
+async fn run_character(ctx: &JobCtx<'_>, muta: &muta_market::Client, character_id: i64) -> Result<Outcome, Error> {
   if character::get(ctx.db, character_id).await?.is_none() {
     return Err(Error::NotReady);
   }
@@ -38,12 +42,9 @@ async fn run_with_muta(ctx: &JobCtx<'_>, muta: &muta_market::Client) -> Result<O
     return Ok(Outcome::Empty);
   }
 
-  let catalog: HashSet<i64> = assets::abyssal_type_ids(ctx.db).await?.into_iter().collect();
-  if catalog.is_empty() {
-    return Ok(Outcome::Blocked {
-      reason: "abyssal type catalog is not seeded".to_string(),
-    });
-  }
+  let Some(catalog) = catalog(ctx).await? else {
+    return Ok(blocked());
+  };
 
   let pairs: Vec<(i64, i64)> = singletons
     .into_iter()
@@ -57,6 +58,51 @@ async fn run_with_muta(ctx: &JobCtx<'_>, muta: &muta_market::Client) -> Result<O
   refresh_prices(ctx, character_id, muta, now).await?;
 
   Ok(Outcome::from_rows(pairs.len()))
+}
+
+async fn run_corporation(ctx: &JobCtx<'_>, muta: &muta_market::Client, corporation_id: i64) -> Result<Outcome, Error> {
+  if org::get_corporation(ctx.db, corporation_id).await?.is_none() {
+    return Err(Error::NotReady);
+  }
+
+  let assets = assets::for_corporation(ctx.db, corporation_id).await?;
+  let singletons: Vec<(i64, i64)> = assets
+    .iter()
+    .filter(|asset| asset.is_singleton())
+    .map(|asset| (asset.type_id(), asset.item_id()))
+    .collect();
+  if singletons.is_empty() {
+    assets::delete_stale_corporation(ctx.db, corporation_id, &[]).await?;
+    return Ok(Outcome::Empty);
+  }
+
+  let Some(catalog) = catalog(ctx).await? else {
+    return Ok(blocked());
+  };
+
+  let pairs: Vec<(i64, i64)> = singletons
+    .into_iter()
+    .filter(|(type_id, _)| catalog.contains(type_id))
+    .collect();
+  let keep_ids: Vec<i64> = pairs.iter().map(|(_, item_id)| *item_id).collect();
+
+  let now = now_unix();
+  sync_dogma_corporation(ctx, corporation_id, &pairs, now).await?;
+  assets::delete_stale_corporation(ctx.db, corporation_id, &keep_ids).await?;
+  refresh_prices_corporation(ctx, corporation_id, muta, now).await?;
+
+  Ok(Outcome::from_rows(pairs.len()))
+}
+
+async fn catalog(ctx: &JobCtx<'_>) -> Result<Option<HashSet<i64>>, Error> {
+  let catalog: HashSet<i64> = assets::abyssal_type_ids(ctx.db).await?.into_iter().collect();
+  Ok((!catalog.is_empty()).then_some(catalog))
+}
+
+fn blocked() -> Outcome {
+  Outcome::Blocked {
+    reason: "abyssal type catalog is not seeded".to_string(),
+  }
 }
 
 async fn cache_icon(ctx: &JobCtx<'_>, type_id: i64) {
@@ -148,6 +194,82 @@ async fn sync_one(ctx: &JobCtx<'_>, character_id: i64, type_id: i64, item_id: i6
   Ok(())
 }
 
+async fn refresh_prices_corporation(
+  ctx: &JobCtx<'_>,
+  corporation_id: i64,
+  muta: &muta_market::Client,
+  now: i64,
+) -> Result<(), Error> {
+  let items = assets::for_corporation_abyssal(ctx.db, corporation_id).await?;
+  let stale_before = now - PRICE_TTL;
+
+  for item in items {
+    if item.muta_price_synced().unwrap_or(0) >= stale_before {
+      continue;
+    }
+    match muta.item_price(item.item_id()).await {
+      Ok(price) => assets::update_price_corporation(ctx.db, item.item_id(), price, now).await?,
+      Err(error) => tracing::warn!(
+        corporation_id,
+        item_id = item.item_id(),
+        "abyssals: MutaMarket price fetch failed: {error}"
+      ),
+    }
+  }
+  Ok(())
+}
+
+async fn sync_dogma_corporation(
+  ctx: &JobCtx<'_>,
+  corporation_id: i64,
+  pairs: &[(i64, i64)],
+  now: i64,
+) -> Result<(), Error> {
+  let existing: HashMap<i64, i64> = assets::for_corporation_abyssal(ctx.db, corporation_id)
+    .await?
+    .into_iter()
+    .map(|row| (row.item_id(), row.synced_at()))
+    .collect();
+  let stale_before = now - SYNC_TTL;
+
+  for &(type_id, item_id) in pairs {
+    let last_synced = existing.get(&item_id).copied().unwrap_or(0);
+    if last_synced >= stale_before {
+      continue;
+    }
+    if let Err(error) = sync_one_corporation(ctx, corporation_id, type_id, item_id, now).await {
+      tracing::warn!(corporation_id, type_id, item_id, "abyssals: dogma sync failed: {error}");
+    }
+  }
+  Ok(())
+}
+
+async fn sync_one_corporation(
+  ctx: &JobCtx<'_>,
+  corporation_id: i64,
+  type_id: i64,
+  item_id: i64,
+  now: i64,
+) -> Result<(), Error> {
+  let dynamic = ctx.esi.dogma().dynamic_item(type_id, item_id).await?;
+
+  cache_icon(ctx, type_id).await;
+  cache_icon(ctx, dynamic.source_type_id).await;
+
+  let dogma_attributes = serde_json::to_string(&dynamic.dogma_attributes)?;
+  let item = CorporationAbyssalItem::new(
+    item_id,
+    corporation_id,
+    type_id,
+    dynamic.source_type_id,
+    dynamic.mutator_type_id,
+    dogma_attributes,
+    now,
+  );
+  assets::upsert_corporation(ctx.db, &item).await?;
+  Ok(())
+}
+
 #[cfg(test)]
 #[allow(clippy::needless_raw_string_hashes)]
 mod tests {
@@ -161,8 +283,11 @@ mod tests {
     clients::{esi, eve_image, eve_sso::Grant, http},
     store::{
       self, images,
-      model::{AbyssalModuleStat, Alliance, Bloodline, CharacterAsset, Corporation, Gender, Race},
-      repo::character::insert_with_org,
+      model::{
+        AbyssalModuleStat, Alliance, Bloodline, CharacterAsset, Corporation, CorporationAsset, CorporationMemberRole,
+        Gender, OwnerType, Race,
+      },
+      repo::{character::insert_with_org, infra},
     },
     sync::job::{JobKey, JobKind},
   };
@@ -515,6 +640,172 @@ mod tests {
       assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
       assert!(harness.image_store.type_icon_path(ABYSSAL_TYPE_ID, ICON_SIZE).exists());
       assert!(harness.image_store.type_icon_path(SOURCE_TYPE_ID, ICON_SIZE).exists());
+    }
+  }
+
+  mod corporation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CORP_ID: i64 = 90_000_001;
+
+    const DIRECTOR_ID: i64 = 42;
+
+    async fn authorize_corp(db: &store::Database) {
+      infra::upsert(
+        db,
+        CORP_ID,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        4_102_444_800,
+        Some(DIRECTOR_ID),
+        None,
+      )
+      .await
+      .unwrap();
+      crate::store::repo::org::replace_for_corporation(
+        db,
+        CORP_ID,
+        &[CorporationMemberRole::from((
+          CORP_ID,
+          DIRECTOR_ID,
+          "Director".to_string(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
+    fn corp_asset(item_id: i64, type_id: i64, is_singleton: bool) -> CorporationAsset {
+      CorporationAsset {
+        container_id: None,
+        corporation_id: CORP_ID,
+        depth: 0,
+        is_blueprint_copy: None,
+        is_container: false,
+        is_singleton,
+        item_id,
+        location_flag: "CorpDeliveries".to_owned(),
+        location_id: 60_003_760,
+        location_type: "station".to_owned(),
+        name: None,
+        quantity: 1,
+        type_id,
+      }
+    }
+
+    fn corp_ctx(harness: &Harness) -> JobCtx<'_> {
+      JobCtx {
+        db: &harness.db,
+        esi: &harness.esi,
+        image: &harness.image,
+        image_store: &harness.image_store,
+        key: JobKey::new(JobKind::CorporationAbyssals, Subject::Corporation(CORP_ID)),
+        grant: Some(&harness.grant),
+        sso: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_is_not_ready_when_the_corporation_is_not_synced() {
+      let server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      seed_abyssal_type(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", DIRECTOR_ID);
+      let harness = Harness {
+        _images_dir: images_dir,
+        db,
+        esi,
+        image,
+        image_store,
+        grant,
+      };
+
+      let result = run_with_muta(&corp_ctx(&harness), &muta(&server)).await;
+
+      assert!(
+        matches!(result, Err(Error::NotReady)),
+        "a missing corporation parent row must surface NotReady, got {result:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_upserts_corp_rolled_dogma_and_prices_the_item() {
+      let server = MockServer::start().await;
+      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
+      mount_icon(&server, ABYSSAL_TYPE_ID).await;
+      mount_icon(&server, SOURCE_TYPE_ID).await;
+      mount_muta_price(&server, 100, Some(5_000_000.0)).await;
+      let harness = Harness::new(&server, DIRECTOR_ID).await;
+      authorize_corp(&harness.db).await;
+      assets::replace_for_corporation(&harness.db, CORP_ID, &[corp_asset(100, ABYSSAL_TYPE_ID, true)])
+        .await
+        .unwrap();
+
+      let outcome = run_with_muta(&corp_ctx(&harness), &muta(&server)).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Synced {
+          rows_touched: 1
+        }
+      );
+      let rows = assets::for_corporation_abyssal(&harness.db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].item_id(), 100);
+      assert_eq!(rows[0].source_type_id(), SOURCE_TYPE_ID);
+      assert_eq!(rows[0].mutator_type_id(), MUTATOR_TYPE_ID);
+      assert_eq!(rows[0].muta_price_isk(), Some(5_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_prunes_corp_records_no_longer_owned() {
+      let server = MockServer::start().await;
+      let harness = Harness::new(&server, DIRECTOR_ID).await;
+      authorize_corp(&harness.db).await;
+      let stored = CorporationAbyssalItem::new(
+        999,
+        CORP_ID,
+        ABYSSAL_TYPE_ID,
+        SOURCE_TYPE_ID,
+        MUTATOR_TYPE_ID,
+        r#"[{"attribute_id":6,"value":1.0}]"#.to_owned(),
+        now_unix(),
+      );
+      assets::upsert_corporation(&harness.db, &stored).await.unwrap();
+
+      run_with_muta(&corp_ctx(&harness), &muta(&server)).await.unwrap();
+
+      let rows = assets::for_corporation_abyssal(&harness.db, CORP_ID).await.unwrap();
+      assert!(rows.is_empty(), "the unowned corp record is pruned");
+    }
+
+    #[tokio::test]
+    async fn it_stamps_a_none_price_for_an_unlisted_corp_item() {
+      let server = MockServer::start().await;
+      mount_dynamic_item(&server, ABYSSAL_TYPE_ID, 100).await;
+      mount_icon(&server, ABYSSAL_TYPE_ID).await;
+      mount_icon(&server, SOURCE_TYPE_ID).await;
+      mount_muta_unlisted(&server, 100).await;
+      let harness = Harness::new(&server, DIRECTOR_ID).await;
+      authorize_corp(&harness.db).await;
+      assets::replace_for_corporation(&harness.db, CORP_ID, &[corp_asset(100, ABYSSAL_TYPE_ID, true)])
+        .await
+        .unwrap();
+
+      run_with_muta(&corp_ctx(&harness), &muta(&server)).await.unwrap();
+
+      let rows = assets::for_corporation_abyssal(&harness.db, CORP_ID).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].muta_price_isk(), None);
+      assert!(rows[0].muta_price_synced().is_some(), "the None price is stamped");
     }
   }
 }

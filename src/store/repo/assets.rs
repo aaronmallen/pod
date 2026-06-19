@@ -6,8 +6,8 @@ use crate::store::{
   Database, Error,
   asset_filter::{ColumnSchema, FilterContext, WhereClause, compile_query},
   model::{
-    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAsset, SavedAssetFilter, StatRange, StatTemplate,
-    Stockpile, StockpileItem,
+    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset, SavedAssetFilter,
+    StatRange, StatTemplate, Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
       AssetCompleteness, AssetRenderRow, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery, InventoryRow,
@@ -391,6 +391,83 @@ pub async fn upsert(db: &Database, item: &AbyssalItem) -> Result<(), Error> {
   )
   .bind(item.item_id())
   .bind(item.character_id())
+  .bind(item.type_id())
+  .bind(item.source_type_id())
+  .bind(item.mutator_type_id())
+  .bind(item.dogma_attributes())
+  .bind(item.synced_at())
+  .bind(item.muta_price_isk())
+  .bind(item.muta_price_synced())
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
+pub async fn delete_stale_corporation(db: &Database, corporation_id: i64, keep_ids: &[i64]) -> Result<(), Error> {
+  if keep_ids.is_empty() {
+    sqlx::query("DELETE FROM corporation_abyssal_items WHERE corporation_id = ?")
+      .bind(corporation_id)
+      .execute(&db.0)
+      .await?;
+    return Ok(());
+  }
+
+  let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM corporation_abyssal_items WHERE corporation_id = ");
+  builder.push_bind(corporation_id);
+  builder.push(" AND item_id NOT IN (");
+  let mut separated = builder.separated(", ");
+  for id in keep_ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+  builder.build().execute(&db.0).await?;
+  Ok(())
+}
+
+pub async fn for_corporation_abyssal(db: &Database, corporation_id: i64) -> Result<Vec<CorporationAbyssalItem>, Error> {
+  let rows = sqlx::query_as::<_, CorporationAbyssalItem>(
+    "SELECT corporation_id, dogma_attributes, item_id, muta_price_isk, muta_price_synced, mutator_type_id, \
+    source_type_id, synced_at, type_id FROM corporation_abyssal_items WHERE corporation_id = ? ORDER BY item_id",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+pub async fn update_price_corporation(
+  db: &Database,
+  item_id: i64,
+  price_isk: Option<f64>,
+  synced_at: i64,
+) -> Result<(), Error> {
+  sqlx::query("UPDATE corporation_abyssal_items SET muta_price_isk = ?, muta_price_synced = ? WHERE item_id = ?")
+    .bind(price_isk)
+    .bind(synced_at)
+    .bind(item_id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+pub async fn upsert_corporation(db: &Database, item: &CorporationAbyssalItem) -> Result<(), Error> {
+  sqlx::query(
+    "INSERT INTO corporation_abyssal_items \
+      (item_id, corporation_id, type_id, source_type_id, mutator_type_id, dogma_attributes, synced_at, \
+      muta_price_isk, muta_price_synced) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT(item_id) DO UPDATE SET \
+      corporation_id    = excluded.corporation_id, \
+      type_id           = excluded.type_id, \
+      source_type_id    = excluded.source_type_id, \
+      mutator_type_id   = excluded.mutator_type_id, \
+      dogma_attributes  = excluded.dogma_attributes, \
+      synced_at         = excluded.synced_at, \
+      muta_price_isk    = excluded.muta_price_isk, \
+      muta_price_synced = excluded.muta_price_synced",
+  )
+  .bind(item.item_id())
+  .bind(item.corporation_id())
   .bind(item.type_id())
   .bind(item.source_type_id())
   .bind(item.mutator_type_id())
@@ -1169,7 +1246,7 @@ const ASSET_VALUE_AS_OF_CHARACTER: &str = asset_value_as_of_sql!("character_asse
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 const ASSET_VALUE_AS_OF_CORPORATION: &str =
-  asset_value_as_of_sql!("corporation_assets", "corporation_id", "abyssal_items");
+  asset_value_as_of_sql!("corporation_assets", "corporation_id", "corporation_abyssal_items");
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
@@ -2041,8 +2118,12 @@ macro_rules! geo_select_sql {
 }
 
 const GEO_SELECT_CHARACTER: &str = geo_select_sql!("character_assets", "character_id", "character", "abyssal_items");
-const GEO_SELECT_CORPORATION: &str =
-  geo_select_sql!("corporation_assets", "corporation_id", "corporation", "abyssal_items");
+const GEO_SELECT_CORPORATION: &str = geo_select_sql!(
+  "corporation_assets",
+  "corporation_id",
+  "corporation",
+  "corporation_abyssal_items"
+);
 const INVENTORY_SELECT_CHARACTER: &str = inventory_select_sql!(
   "character_assets",
   "character_id",
@@ -2055,12 +2136,16 @@ const INVENTORY_SELECT_CORPORATION: &str = inventory_select_sql!(
   "corporation_id",
   "corporation",
   "0",
-  "abyssal_items"
+  "corporation_abyssal_items"
 );
 const TOTALS_SELECT_CHARACTER: &str =
   totals_select_sql!("character_assets", "character_id", "character", "abyssal_items");
-const TOTALS_SELECT_CORPORATION: &str =
-  totals_select_sql!("corporation_assets", "corporation_id", "corporation", "abyssal_items");
+const TOTALS_SELECT_CORPORATION: &str = totals_select_sql!(
+  "corporation_assets",
+  "corporation_id",
+  "corporation",
+  "corporation_abyssal_items"
+);
 const COMBINED_ARM_CHARACTER: &str = combined_arm_sql!(
   "character_assets",
   "character_id",
@@ -2073,7 +2158,7 @@ const COMBINED_ARM_CORPORATION: &str = combined_arm_sql!(
   "corporation_id",
   "corporation",
   "0",
-  "abyssal_items"
+  "corporation_abyssal_items"
 );
 
 macro_rules! node_rollup_anchor_sql_lit {
@@ -2175,7 +2260,7 @@ const NODE_ROLLUP_AGGREGATE_CHARACTER: &str =
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 const NODE_ROLLUP_AGGREGATE_CORPORATION: &str =
-  node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id", "abyssal_items");
+  node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id", "corporation_abyssal_items");
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id");
@@ -4209,6 +4294,139 @@ mod asset_tests {
       assert_eq!(
         view_value, totals.value,
         "the character_financials view and the page valuation produce the same total"
+      );
+    }
+  }
+
+  mod corp_muta_valuation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn financials_asset_value(db: &Database, corporation_id: i64) -> f64 {
+      asset_value_as_of_for_corporation(db, corporation_id, "2999-01-01")
+        .await
+        .unwrap()
+    }
+
+    async fn corp_abyssal(db: &Database, item_id: i64, corporation_id: i64, muta: Option<f64>) {
+      let mut item = CorporationAbyssalItem::new(
+        item_id,
+        corporation_id,
+        587,
+        5975,
+        47_297,
+        r#"[{"attribute_id":6,"value":450.0}]"#.to_owned(),
+        1_700_000_000,
+      );
+      item.set_muta_price(muta, 1_700_000_000);
+      upsert_corporation(db, &item).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_corp_abyssal_values_at_its_muta_price_over_the_base_type_price() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+        .await
+        .unwrap();
+      corp_abyssal(&db, 100, CORP_ID, Some(750_000.0)).await;
+
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        totals.value, 750_000.0,
+        "the per-item corp muta price wins over the base-type market price"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_corp_abyssal_falls_back_to_the_base_type_price() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+        .await
+        .unwrap();
+      corp_abyssal(&db, 100, CORP_ID, None).await;
+
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        totals.value, 100.0,
+        "a null corp muta price falls back through the canonical chain"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_char_abyssal_table_never_values_a_corp_asset() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(100, CORP_ID, None)])
+        .await
+        .unwrap();
+      let mut wrong = AbyssalItem::new(
+        100,
+        DIRECTOR_ID,
+        587,
+        5975,
+        47_297,
+        r#"[{"attribute_id":6,"value":450.0}]"#.to_owned(),
+        1_700_000_000,
+      );
+      wrong.set_muta_price(Some(750_000.0), 1_700_000_000);
+      upsert(&db, &wrong).await.unwrap();
+
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        totals.value, 100.0,
+        "corp valuation joins corporation_abyssal_items, so a char abyssal row never leaks in"
+      );
+    }
+
+    #[tokio::test]
+    async fn the_corp_page_query_and_the_as_of_aggregate_agree() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, DIRECTOR_ID).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let rolled = corp_asset(100, CORP_ID, None);
+      let mut mineral = corp_asset(101, CORP_ID, None);
+      mineral.type_id = 24;
+      mineral.quantity = 3;
+      replace_for_corporation(&db, CORP_ID, &[rolled, mineral]).await.unwrap();
+      corp_abyssal(&db, 100, CORP_ID, Some(750_000.0)).await;
+
+      let totals = inventory_totals_for_corporation(&db, CORP_ID, "", &[], None)
+        .await
+        .unwrap();
+      let as_of_value = financials_asset_value(&db, CORP_ID).await;
+
+      assert_eq!(
+        totals.value, 750_015.0,
+        "corp muta abyssal (750_000) + 3 tritanium @5 (15)"
+      );
+      assert_eq!(
+        as_of_value, totals.value,
+        "the corp as-of aggregate and the page valuation produce the same total"
       );
     }
   }

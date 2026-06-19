@@ -135,6 +135,7 @@ impl DetailDataType {
       | JobKind::CharacterSkills
       | JobKind::CharacterTelemetry
       | JobKind::CharacterWallet
+      | JobKind::CorporationAbyssals
       | JobKind::CorporationBlueprints
       | JobKind::CorporationContacts
       | JobKind::CorporationContracts

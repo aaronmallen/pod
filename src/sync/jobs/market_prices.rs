@@ -76,7 +76,7 @@ mod tests {
     sqlx::query(
       "INSERT INTO character_assets \
         (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(item_id)
     .bind(42_i64)

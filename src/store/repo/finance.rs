@@ -848,16 +848,16 @@ pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) ->
 pub async fn market_prices_zkill_gap_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   let rows = sqlx::query_scalar::<_, i64>(
     "WITH held AS ( \
-       SELECT DISTINCT type_id FROM character_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
-       UNION \
-       SELECT DISTINCT type_id FROM corporation_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
-     ) \
-     SELECT held.type_id FROM held \
-     LEFT JOIN market_prices mp ON mp.type_id = held.type_id \
-     WHERE mp.type_id IS NULL \
+        SELECT DISTINCT type_id FROM character_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
+        UNION \
+        SELECT DISTINCT type_id FROM corporation_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
+      ) \
+      SELECT held.type_id FROM held \
+      LEFT JOIN market_prices mp ON mp.type_id = held.type_id \
+      WHERE mp.type_id IS NULL \
         OR mp.source = 'zkill' \
         OR (mp.source = 'esi' AND COALESCE(mp.adjusted_price, mp.average_price, 0) = 0) \
-     ORDER BY held.type_id",
+      ORDER BY held.type_id",
   )
   .fetch_all(&db.0)
   .await?;
@@ -2678,7 +2678,7 @@ mod market_tests {
       sqlx::query(
         "INSERT INTO character_assets \
           (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(item_id)
       .bind(42_i64)
@@ -2697,7 +2697,7 @@ mod market_tests {
       sqlx::query(
         "INSERT INTO corporation_assets \
           (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .bind(item_id)
       .bind(90_000_001_i64)

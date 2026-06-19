@@ -77,7 +77,7 @@ effect immediately across every open window.
 The Accessibility tab controls interface scale, high contrast, and how ISK
 figures are drawn.
 
-![The Accessibility tab with interface scale presets, the high-contrast toggle, and the contrast preview table](/docs/img/settings/accessibility.png)
+![Accessibility tab: scale presets, high-contrast toggle, and contrast preview](/docs/img/settings/accessibility.png)
 
 Interface scale runs from 85% to 150%, with a default of 100%. Five preset
 buttons set common values: XS is 85%, S is 92%, M is 100% (marked "Default"),
@@ -132,7 +132,7 @@ machines, and how you export logs for diagnostics. The category badge shows a
 green "All defaults" reading when no paths are customized, or a count of custom
 directories when you have overridden one or more of the three.
 
-![The Storage tab with the three file locations, networked sync, and log export controls](/docs/img/settings/storage.png)
+![Storage tab: three file locations, networked sync, and log export controls](/docs/img/settings/storage.png)
 
 The tab lists three locations. "Shared data location" is the SQLite database
 that holds the character cache, mail bodies, market snapshots, and skill plans;

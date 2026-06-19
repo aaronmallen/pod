@@ -18,7 +18,7 @@ Every site that values held assets — the Assets ▸ Values tab, the net-worth 
 asset-value sort/aggregates — resolves a per-asset unit price through one canonical COALESCE chain, identical for
 characters and corporations:
 
-```
+```text
 unit_price = CASE WHEN is_blueprint_copy THEN 0
              ELSE COALESCE(
                 ab.muta_price_isk,   -- MutaMarket per-item (abyssals), canonical
@@ -60,8 +60,8 @@ everywhere.
   non-null `muta_price_isk` wins over all ESI prices. Unlisted abyssals (null muta price) fall back through the normal
   chain.
 - zKillboard fills ESI type-price gaps only. When the resolved ESI price for a held type is null/0, the MarketPrices job
-  fetches zKill's per-type price and upserts it into `market_prices.average_price` tagged `source = 'zkill'`. zKill never
-  overrides a non-zero ESI price.
+  fetches zKill's per-type price and upserts it into `market_prices.average_price` tagged `source = 'zkill'`. zKill
+  never overrides a non-zero ESI price.
 - Price provenance is a column, not value-inferred. `market_prices` gains `source TEXT NOT NULL DEFAULT 'esi'` and
   `fetched_at`. The zKill refresh set is keyed off `source` (absent, OR `source='zkill'`, OR `source='esi'` with
   resolved price 0) so a zKill-filled `average_price` does not stop matching the gap check and go permanently stale; an

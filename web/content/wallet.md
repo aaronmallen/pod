@@ -7,11 +7,11 @@ order: 4
 # Wallet
 
 The Wallet feature tracks ISK across every character and corporation you have
-added. It collects wallet journal entries, market transactions, and contracts,
-and it builds a net-worth history from daily snapshots. The window has three
-tabs: Journal, Market, and Contracts. A header at the top summarizes the active
-scope, and a hero panel below it shows the net-worth graph and the breakdown of
-what makes up your balance.
+added. It collects market transactions, contracts, and wallet journal entries,
+and it builds a net-worth history from daily snapshots. The window has four
+tabs: Transactions, Contracts, Journal, and Budget. A header at the top
+summarizes the active scope, and a hero panel below it shows the net-worth graph
+and the breakdown of what makes up your balance.
 
 ## Header and scope
 
@@ -83,18 +83,18 @@ positive amount. Out narrows it to spend, the entries with a negative amount.
 The timeframe selector reuses the same 1W through 1Y choices as the hero, so you
 can scope the journal to a recent window or the full year.
 
-## Market tab
+## Transactions tab
 
-The Market tab lists your market transactions as buy and sell orders. Each row
-shows the side, the item, the quantity, the unit price, the order total, the
+The Transactions tab lists your market transactions as buy and sell orders. Each
+row shows the side, the item, the quantity, the unit price, the order total, the
 location, the character who placed it, and when it happened. Buy rows are marked
 with a down arrow and "BUY" in red. Sell rows are marked with an up arrow and
 "SELL" in green.
 
-Like the Journal tab, the Market tab pages in fifty rows at a time by cursor and
-fetches more as you scroll. A side filter across the top switches between All,
-Buy, and Sell so you can isolate one direction of trade. The sign filter applies
-here too: In shows sells, Out shows buys.
+Like the Journal tab, the Transactions tab pages in fifty rows at a time by
+cursor and fetches more as you scroll. A side filter across the top switches
+between All, Buy, and Sell so you can isolate one direction of trade. The sign
+filter applies here too: In shows sells, Out shows buys.
 
 ## Contracts tab
 
@@ -146,6 +146,139 @@ For auctions, a Bids section lists each bid with the bidder, when it was placed,
 and the amount. The leading bid is highlighted and tagged as the high bid.
 
 ![Contract detail modal](/docs/img/wallet/contract-detail.png)
+
+## Budget tab
+
+The Budget tab is a zero-based budget in the spirit of YNAB: you give every ISK
+a job by handing it to an envelope, and you watch what you actually spent flow
+back against those envelopes. It runs per scope, so each character and each
+corporation keeps its own budget.
+
+A sub-nav pill at the top switches between two modes. Plan, the planning mode,
+carries the blurb "Give every ISK a job". Reflect, the review mode, carries the
+blurb "Look back at where it went". In Plan mode an Edit budget toggle sits on
+the right; press it to enter editing, where the label changes to "Done editing"
+until you leave.
+
+![Budget Plan view](/docs/img/wallet/budget.png)
+
+### Plan mode
+
+Plan mode opens on a month. A month navigator with left and right chevrons steps
+you through your history, and a relative sub-label reads "This month" when you
+are on the current month, "Last month" on the previous one, and the month's name
+otherwise. Editing is only allowed on the current month; past months are
+read-only.
+
+Below the navigator sits the Ready to Assign hero: the pool of ISK you have not
+yet handed to an envelope, shown as a large ISK figure. It carries one of three
+state messages. When the pool is zero it reads "Every ISK has a job. Nothing
+left idle." in green. When it is positive it reads "Idle ISK earns nothing. Give
+it a job." in plasma, and an Auto-Assign button appears beside it to spread the
+pool across underfunded categories for you. When it is negative — you have
+assigned more than you hold — it reads "You've assigned more than you hold. Pull
+some back." in red, and the Auto-Assign button is hidden.
+
+When a category is overspent, its Available pill shows an Overspent state with a
+"Click to cover" affordance, so you can move ISK in to bring it back to zero.
+
+If any of the month's spending still lacks an envelope, an amber banner appears
+above the table. It reads "{n} transaction needs a category" (or "{n}
+transactions need a category" when there is more than one), with the sub-line
+"Until assigned, this spending won't show against any envelope." A Review &
+assign button on the right jumps to the ledger filtered to the uncategorized
+entries so you can clear them out.
+
+#### The envelope table
+
+The body is a table of envelopes grouped into collapsible category groups. A
+fresh scope is seeded with starter groups — Income, Trading, and Obligations,
+rendered in uppercase — holding starter envelopes: Bounties & rewards and
+Transfers in/out under Income; Market trading and Sales tax & broker fees under
+Trading; and Corp tithe & tax, Contracts, and Industry under Obligations. These
+are only seeds. You can rename, add, and delete groups and envelopes freely.
+
+Each row carries four columns:
+
+- Category — the envelope name, with a small tone dot for its colour. Rows with
+  a by-date target also show a "DUE {label}" pill, and a "View transactions"
+  link reveals on hover that filters the ledger to that category.
+- Assigned — what you have handed this envelope this month. Click the figure to
+  edit it inline; on past months it is read-only.
+- Activity — the signed total of what actually moved through the envelope this
+  month.
+- Available — a pill showing what is left. It turns red with a "!" when the
+  envelope is overspent, green with a "✓" when it is funded, and stays neutral
+  when it is underfunded but not overspent.
+
+#### The inspector
+
+A resizable inspector pane sits to the right; drag its edge to size it. With
+nothing selected it reads "Select a category to inspect its target, set funding,
+and review activity."
+
+Select an envelope and the inspector fills in. The header shows the name, any
+note, and the available balance, with a pencil to jump into editing. A View
+transactions button filters the ledger to that envelope. A Target block shows a
+state tag — Overspent, Funded, or Underfunded — with a progress bar toward the
+target. A This month block breaks the envelope down into Rolled over, Assigned,
+Activity, and Available.
+
+Below that, the inspector offers Auto-assign suggestions as one-click rows:
+Underfunded (top it up to its target), Assigned last month, Spent last month,
+Average assigned, and Set to zero. These per-category suggestions are distinct
+from the toolbar's Auto-Assign button, which spreads the whole Ready-to-Assign
+pool at once.
+
+### Edit mode
+
+Toggle Edit budget and the table becomes editable. You can rename and delete
+groups, add envelopes with + Add category, add a group with + New category
+group, and drag rows to reorder them or move them between groups.
+
+In edit mode the inspector becomes a category editor with fields for Name, an
+optional Note, a Colour swatch picker, and a target. The target type chooses how
+the envelope is funded:
+
+- Monthly — assign a set amount every month, then spend it down.
+- Refill — top the Available balance back up to a number each month.
+- Balance — build a standing reserve and hold it there, open-ended.
+- Goal — save toward a number, no deadline.
+- By date — save a number by a deadline, with a "By date" field for the
+  deadline.
+
+### Reflect mode
+
+Reflect mode looks back at the month. A stat band runs across the top with five
+figures: Net this month, Assigned, Income, Spent, and Age of ISK (in days).
+
+Below the band sit four report cards:
+
+- Income vs spending — grouped monthly bars over a trailing window, with a 3M /
+  6M toggle that defaults to 6M.
+- Age of ISK — a sparkline with an explainer of how long ISK sits in your wallet
+  before it is spent.
+- Spending by category — horizontal bars ranking where the ISK went.
+- Target health — a segmented bar with Funded, Underfunded, and Overspent
+  tallies, followed by a Needs attention list of the envelopes that fell short.
+
+### Assigning spending to an envelope
+
+The Transactions and Journal tabs each carry a Budget column. When an entry is
+already assigned, the column shows a tone dot, the category name, and a caret.
+When it is not, the column shows an amber "+ Assign category" pill. Click either
+one to open an anchored, grouped picker of your envelopes, with a "✓" beside the
+one the entry is currently assigned to.
+
+In this first version, assignment is fully manual: spending only counts against
+an envelope after you assign the entry to it. Until then it stays uncategorized —
+exactly what the amber banner in Plan mode warns about.
+
+After you follow a View transactions link or the Review & assign banner, a
+dismissible filter badge appears in the filter bar. It reads "Uncategorized
+only" in amber when filtered to unassigned spending, or shows the category name
+with its tone dot when filtered to one envelope. Press its "×" to clear the
+filter.
 
 ## Corporation wallets
 

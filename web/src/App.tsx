@@ -2,7 +2,13 @@ import { useEffect, useState } from 'react';
 import { T } from './tokens';
 import { PLATFORMS } from './data';
 import { RELEASE, PLATFORM_BUILDS } from './generated/release';
-import { detectOS } from './utils/detectOs';
+import { detectOS, type OsInfo } from './utils/detectOs';
+
+// Deterministic OS used during the build-time prerender AND the first client
+// render, so the server-rendered markup matches what React produces on initial
+// hydration (no mismatch). Windows is the most common visitor platform; the
+// real OS is resolved from `navigator` after mount via `useEffect` below.
+const DEFAULT_OS: OsInfo = { id: 'windows', label: 'Windows', buildId: 'win-x64-exe' };
 import { TopNav } from './components/TopNav';
 import { Hero } from './components/Hero';
 import { Platforms } from './components/Platforms';
@@ -17,7 +23,14 @@ const ACCENT = T.plasma;
 
 export function App() {
   const [archChoice, setArchChoice] = useState('mac-arm');
-  const os = detectOS();
+  const [os, setOs] = useState<OsInfo>(DEFAULT_OS);
+
+  // Resolve the real OS only after mount. The first client render uses
+  // DEFAULT_OS to match the prerendered HTML; this effect then swaps in the
+  // detected platform once the DOM has hydrated.
+  useEffect(() => {
+    setOs(detectOS());
+  }, []);
 
   useEffect(() => {
     const id = window.location.hash.slice(1);

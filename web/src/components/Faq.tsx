@@ -2,6 +2,77 @@ import { useState } from 'react';
 import { T } from '../tokens';
 import { SectionHead } from './SectionHead';
 
+// Plain-text projection of the Q&A used for the FAQPage JSON-LD emitted into
+// the prerendered landing page. Kept alongside the rich JSX `ENTRIES` so the
+// two stay in lockstep; the JSX renders for humans, this feeds search crawlers.
+export interface FaqItem {
+  question: string;
+  answer: string;
+}
+
+export const FAQ_ITEMS: FaqItem[] = [
+  {
+    question: "The app says it's damaged on macOS",
+    answer:
+      'macOS Gatekeeper quarantines apps downloaded outside the Mac App Store. ' +
+      'The simplest fix is through System Settings: 1. Try to open Pod once (it ' +
+      'will be blocked). 2. Open System Settings → Privacy & Security. 3. Scroll ' +
+      'to the Security section near the bottom and click Open Anyway next to Pod. ' +
+      '4. Confirm by clicking Open. On macOS Sequoia (15) and later the older ' +
+      'right-click → Open trick no longer works, so use the steps above. ' +
+      'Alternatively, you can clear the quarantine attribute from Terminal: ' +
+      'xattr -dr com.apple.quarantine /Applications/Pod.app. Either way, you only ' +
+      'need to do this once.',
+  },
+  {
+    question: 'Windows blocked the app / SmartScreen warning',
+    answer:
+      'Windows SmartScreen blocks apps from unrecognised publishers. Click More ' +
+      'info then Run anyway to proceed. The prompt appears once per install.',
+  },
+  {
+    question: 'Smart App Control blocked the app (no “Run anyway”)',
+    answer:
+      'Some Windows 11 PCs run Smart App Control, a stricter layer than ' +
+      'SmartScreen that hard-blocks apps from unverified publishers with no ' +
+      'per-app override. If you only see Okay and Get apps from the Store, ' +
+      "you'll need to turn Smart App Control off: 1. Open Windows Security. " +
+      '2. Go to App & browser control → Smart App Control settings. 3. Set it to ' +
+      'Off. 4. Re-run the installer (you may then see the normal SmartScreen ' +
+      'prompt — click More info → Run anyway). On current Windows 11 builds you ' +
+      'can switch Smart App Control back on later from the same screen; older ' +
+      'builds required reinstalling Windows to re-enable it. Note that there is ' +
+      'no per-app exception — the file Properties “Unblock” checkbox only affects ' +
+      'SmartScreen, not Smart App Control. Only turn it off if you are ' +
+      'comfortable running unsigned software you trust.',
+  },
+  {
+    question: 'Why does Pod request so many EVE Online permissions?',
+    answer:
+      'Every permission Pod requests is tied directly to a feature you can see ' +
+      "and control. We never ask for access we don't use. If you'd like to limit " +
+      'what Pod can access, open Settings before signing in and disable any ' +
+      'features you don’t need. Pod will only request permissions for the ' +
+      'features that are turned on — so you stay in control of what you share.',
+  },
+  {
+    question: 'Does Pod store my data anywhere?',
+    answer:
+      'Pod stores all character data in a local SQLite database on your machine. ' +
+      'Nothing is sent to Pod servers — there are no Pod servers. The only ' +
+      'outbound connection is to esi.evetech.net (CCP’s official API) to sync ' +
+      'your character data, with your explicit consent.',
+  },
+  {
+    question: 'Is this built by AI?',
+    answer:
+      'Pod is built by a software engineer by trade. AI tools are used to augment ' +
+      'the development workflow — things like code completion, review, and ' +
+      'research — but every decision, every line of code, and every release is ' +
+      'subject to human oversight.',
+  },
+];
+
 const ENTRIES: { question: string; answer: React.ReactNode }[] = [
   {
     question: "The app says it's damaged on macOS",

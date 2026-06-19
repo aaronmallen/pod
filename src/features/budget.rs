@@ -157,6 +157,19 @@ impl CategoryMonth {
   }
 }
 
+/// A single month's reporting figures for the Reflect view.
+///
+/// `age` is the ISK-quantity-weighted mean age in days of ISK spent that month,
+/// computed by the FIFO lot model in [`fifo_ages_by_month`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MonthFlow {
+  pub age: f64,
+  pub assigned: f64,
+  pub income: f64,
+  pub month: String,
+  pub spend: f64,
+}
+
 /// The budgetable pool for a scope and the derived YNAB top-line figures.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
@@ -489,6 +502,160 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
   aggregate_activity(in_month, |ref_type| {
     category_for_ref_type(ref_type, &overrides, &slug_to_id)
   })
+}
+
+fn epoch_day(date: &str) -> Option<i64> {
+  use chrono::Datelike;
+  let head = date.get(..10)?;
+  let parsed = chrono::NaiveDate::parse_from_str(head, "%Y-%m-%d").ok()?;
+  Some(i64::from(parsed.num_days_from_ce()))
+}
+
+/// Self-contained mirror of the wallet view-model's `shift_month` so the B2 math stays independent of the UI layer.
+fn shift_month_key(month: &str, delta: i32) -> String {
+  let Some((year, mon)) = month.split_once('-') else {
+    return month.to_owned();
+  };
+  let (Ok(year), Ok(mon)) = (year.parse::<i32>(), mon.parse::<i32>()) else {
+    return month.to_owned();
+  };
+  if !(1..=12).contains(&mon) {
+    return month.to_owned();
+  }
+  let zero_based = (year * 12 + (mon - 1)) + delta;
+  format!("{:04}-{:02}", zero_based.div_euclid(12), zero_based.rem_euclid(12) + 1)
+}
+
+/// The FIFO age-of-ISK, by month, for a scope's signed journal flows.
+///
+/// Models the wallet as a FIFO queue of timestamped ISK lots: every positive
+/// flow enqueues a lot dated on its journal day; every negative flow (a spend)
+/// consumes ISK from the oldest lot first. The age of each spent unit of ISK is
+/// the number of days between the lot it came from and the spend. A month's
+/// age-of-ISK is the ISK-quantity-weighted mean age (in days) of all ISK spent
+/// in that month — directly "how long ISK sat before being spent".
+///
+/// `flows` are `(date, signed amount)` in any order; they are sorted by day
+/// here. Spends with no ISK left to draw on (the queue is empty) contribute no
+/// age. Returns a map of month key (`YYYY-MM`) to weighted-mean spend age.
+fn fifo_ages_by_month<'a>(flows: impl IntoIterator<Item = (&'a str, f64)>) -> HashMap<String, f64> {
+  let mut dated: Vec<(i64, String, f64)> = flows
+    .into_iter()
+    .filter_map(|(date, amount)| {
+      let day = epoch_day(date)?;
+      let month = month_key(date)?;
+      (amount != 0.0).then_some((day, month, amount))
+    })
+    .collect();
+  dated.sort_by_key(|&(day, _, _)| day);
+
+  let mut lots: std::collections::VecDeque<(i64, f64)> = std::collections::VecDeque::new();
+  let mut weighted_age: HashMap<String, f64> = HashMap::new();
+  let mut spent_isk: HashMap<String, f64> = HashMap::new();
+
+  for (day, month, amount) in dated {
+    if amount > 0.0 {
+      lots.push_back((day, amount));
+      continue;
+    }
+    let mut remaining = -amount;
+    while remaining > 0.0 {
+      let Some(&(lot_day, lot_amount)) = lots.front() else {
+        break;
+      };
+      let drawn = remaining.min(lot_amount);
+      let age = (day - lot_day).max(0) as f64;
+      *weighted_age.entry(month.clone()).or_insert(0.0) += age * drawn;
+      *spent_isk.entry(month.clone()).or_insert(0.0) += drawn;
+      remaining -= drawn;
+      if drawn >= lot_amount {
+        lots.pop_front();
+      } else {
+        lots.front_mut().expect("front exists").1 -= drawn;
+      }
+    }
+  }
+
+  weighted_age
+    .into_iter()
+    .filter_map(|(month, total_age)| {
+      let isk = spent_isk.get(&month).copied().unwrap_or(0.0);
+      (isk > 0.0).then(|| (month, total_age / isk))
+    })
+    .collect()
+}
+
+/// The scope's signed journal flows as `(date, amount)`, unioning every in-scope
+/// character journal and covered corp-division journal. Drives the trailing
+/// history and FIFO age-of-ISK without re-querying per month.
+async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, f64)> {
+  let mut flows: Vec<(String, f64)> = Vec::new();
+  for character_id in scope_character_ids(db, scope).await {
+    for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
+      if let Some(amount) = row.amount() {
+        flows.push((row.date().clone(), amount));
+      }
+    }
+  }
+  for corp in scope_corporation_ids(db, scope).await {
+    for division in finance::divisions(db, corp).await.unwrap_or_default() {
+      for row in finance::corporation_wallet_journal(db, corp, division.division())
+        .await
+        .unwrap_or_default()
+      {
+        if let Some(amount) = row.amount() {
+          flows.push((row.date().clone(), amount));
+        }
+      }
+    }
+  }
+  flows
+}
+
+/// Months with no data are still emitted as zeros so the Reflect charts always have a full series.
+// Budget reporting history (B4); consumed by the Budget Reflect UI. Exercised by unit tests.
+#[allow(dead_code)]
+pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, months: usize) -> Vec<MonthFlow> {
+  let ages = fifo_ages_by_month(
+    scope_journal_flows(db, scope)
+      .await
+      .iter()
+      .map(|(d, a)| (d.as_str(), *a)),
+  );
+
+  let mut out: Vec<MonthFlow> = Vec::with_capacity(months);
+  for step in (0..months as i32).rev() {
+    let key = shift_month_key(month, -step);
+    let activity = monthly_activity(db, scope, &key).await;
+    let income = activity.values().filter(|&&v| v > 0.0).sum::<f64>();
+    let spend = activity.values().filter(|&&v| v < 0.0).map(|v| -v).sum::<f64>();
+    let assigned = month_assigned(db, scope, &key).await;
+    out.push(MonthFlow {
+      age: ages.get(&key).copied().unwrap_or(0.0),
+      assigned,
+      income,
+      month: key.clone(),
+      spend,
+    });
+  }
+  out
+}
+
+async fn month_assigned(db: &Database, scope: BudgetScope, month: &str) -> f64 {
+  use crate::store::repo::budget;
+  let mut total = 0.0;
+  for group in budget::list_groups(db, scope).await.unwrap_or_default() {
+    for category in budget::list_categories(db, group.id()).await.unwrap_or_default() {
+      let assignment = budget::list_assignments(db, category.id())
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|a| a.month() == month)
+        .map_or(0.0, |a| a.assigned());
+      total += assignment;
+    }
+  }
+  total
 }
 
 #[cfg(test)]
@@ -1102,6 +1269,179 @@ mod tests {
 
       // 5_000 character liquid + 1_000 owned-corp division balance.
       assert_eq!(pool, 6_000.0);
+    }
+  }
+
+  mod shift_month_key {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_steps_across_year_boundaries() {
+      assert_eq!(shift_month_key("2026-01", -1), "2025-12");
+      assert_eq!(shift_month_key("2026-12", 1), "2027-01");
+    }
+
+    #[test]
+    fn it_returns_an_unparseable_key_unchanged() {
+      assert_eq!(shift_month_key("nope", -1), "nope");
+    }
+  }
+
+  mod epoch_day {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_counts_whole_days_between_two_dates() {
+      let a = epoch_day("2026-06-01T08:00:00Z").unwrap();
+      let b = epoch_day("2026-06-08T23:59:59Z").unwrap();
+
+      assert_eq!(b - a, 7);
+    }
+
+    #[test]
+    fn it_rejects_a_malformed_date() {
+      assert_eq!(epoch_day("not-a-date"), None);
+    }
+  }
+
+  mod fifo_ages_by_month {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_ages_spent_isk_against_the_oldest_lot_first() {
+      // Deposit 100 on Jan 1, then spend 100 on Jan 11 → every ISK is 10 days old.
+      let ages = fifo_ages_by_month([("2026-01-01T00:00:00Z", 100.0), ("2026-01-11T00:00:00Z", -100.0)]);
+
+      assert_eq!(ages.get("2026-01"), Some(&10.0));
+    }
+
+    #[test]
+    fn it_weights_age_by_isk_drawn_from_each_lot() {
+      // Two lots: 100 on day 0, 100 on day 10. Spend 150 on day 20:
+      //   100 from the day-0 lot (age 20) + 50 from the day-10 lot (age 10).
+      //   weighted mean = (100*20 + 50*10) / 150 = 2500/150 ≈ 16.67 days.
+      let ages = fifo_ages_by_month([
+        ("2026-03-01T00:00:00Z", 100.0),
+        ("2026-03-11T00:00:00Z", 100.0),
+        ("2026-03-21T00:00:00Z", -150.0),
+      ]);
+
+      let age = ages.get("2026-03").copied().unwrap();
+      assert!((age - 2_500.0 / 150.0).abs() < 1e-9, "age was {age}");
+    }
+
+    #[test]
+    fn it_records_no_age_for_a_month_with_no_spend() {
+      let ages = fifo_ages_by_month([("2026-04-01T00:00:00Z", 100.0)]);
+
+      assert_eq!(ages.get("2026-04"), None);
+    }
+
+    #[test]
+    fn it_only_ages_isk_it_can_draw_from_the_queue() {
+      // Spend with an empty queue contributes nothing (no negative ages).
+      let ages = fifo_ages_by_month([("2026-05-05T00:00:00Z", -100.0)]);
+
+      assert_eq!(ages.get("2026-05"), None);
+    }
+
+    #[test]
+    fn it_sorts_flows_chronologically_before_aging() {
+      // Feed the spend before the deposit: the function must sort by day first,
+      // so the deposit on day 0 still ages by 10 days at the day-10 spend.
+      let ages = fifo_ages_by_month([("2026-06-11T00:00:00Z", -100.0), ("2026-06-01T00:00:00Z", 100.0)]);
+
+      assert_eq!(ages.get("2026-06"), Some(&10.0));
+    }
+  }
+
+  mod monthly_history {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Alliance, Bloodline, Character, Gender, Race},
+      repo::{character::insert_with_org, finance},
+    };
+
+    async fn seed_character(db: &Database, id: i64) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = store::model::Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    fn journal(id: i64, ref_type: &str, amount: f64, date: &str) -> store::model::CharacterWalletJournal {
+      store::model::CharacterWalletJournal {
+        amount: Some(amount),
+        balance: Some(amount),
+        character_id: 1,
+        context_id: None,
+        context_id_type: None,
+        date: date.to_owned(),
+        description: "Entry".to_owned(),
+        first_party_id: None,
+        id,
+        reason: None,
+        ref_type: ref_type.to_owned(),
+        second_party_id: None,
+        tax: None,
+        tax_receiver_id: None,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_emits_one_entry_per_trailing_month_oldest_first() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+
+      let history = monthly_history(&db, BudgetScope::Character(1), "2026-06", 3).await;
+
+      assert_eq!(history.len(), 3);
+      assert_eq!(history[0].month, "2026-04");
+      assert_eq!(history[2].month, "2026-06");
+    }
+
+    #[tokio::test]
+    async fn it_splits_income_and_spend_and_ages_the_spend() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, "bounty_prizes", 1_000.0, "2026-06-01T00:00:00Z"),
+          journal(2, "brokers_fee", -400.0, "2026-06-11T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+
+      let history = monthly_history(&db, BudgetScope::Character(1), "2026-06", 1).await;
+
+      assert_eq!(history.len(), 1);
+      assert_eq!(history[0].income, 1_000.0);
+      assert_eq!(history[0].spend, 400.0);
+      // 400 ISK drawn from the Jun-1 lot, spent Jun-11 → 10 days old.
+      assert_eq!(history[0].age, 10.0);
     }
   }
 }

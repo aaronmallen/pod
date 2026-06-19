@@ -20,6 +20,24 @@ pub enum Mode {
   Reflect,
 }
 
+/// The Reflect flow chart's trailing window, mirroring the design's 3M/6M
+/// toggle. `SixMonths` is the default (the wireframe opens on 6).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BudgetRange {
+  #[default]
+  SixMonths,
+  ThreeMonths,
+}
+
+impl BudgetRange {
+  pub fn months(self) -> usize {
+    match self {
+      BudgetRange::SixMonths => 6,
+      BudgetRange::ThreeMonths => 3,
+    }
+  }
+}
+
 /// The single active inline editor: which category's Assigned cell is open and
 /// the in-progress draft text. Only one cell edits at a time.
 #[derive(Clone, Debug, PartialEq)]
@@ -281,6 +299,142 @@ impl BudgetView {
       .flat_map(|group| &group.categories)
       .map(|c| c.id)
       .next()
+  }
+}
+
+/// The fully-derived Reflect (reporting) view-model for one scope and month: the
+/// stat-band totals, the trailing monthly history (for the flow chart and
+/// age-of-ISK sparkline), the spend-by-category rows, and the target-health
+/// tally. All figures come from the live [`BudgetView`] and B2's history so the
+/// reports reflect Plan edits.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ReflectView {
+  pub age: f64,
+  pub age_delta: f64,
+  pub assigned: f64,
+  pub history: Vec<crate::features::budget::MonthFlow>,
+  pub income: f64,
+  pub prev_label: String,
+  pub spend: f64,
+  pub spend_rows: Vec<SpendRow>,
+  pub tally: TargetTally,
+}
+
+/// One spend-by-category row for the Reflect view: the category's display name,
+/// tone, and the ISK spent this month (the absolute negative activity), already
+/// sorted descending by `spend`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpendRow {
+  pub name: String,
+  pub spend: f64,
+  pub tone: Option<String>,
+}
+
+/// A single "Needs attention" entry: a category that is underfunded or
+/// overspent, with the figure the design surfaces (shortfall for under, the
+/// negative available for over).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TargetAlert {
+  pub amount: f64,
+  pub name: String,
+  pub over: bool,
+}
+
+/// The target-health tally for the Reflect view: how many categories are met
+/// (funded), underfunded, or overspent, plus the worst few that "need
+/// attention" with their shortfall (under) or overspend available (over).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TargetTally {
+  pub attention: Vec<TargetAlert>,
+  pub met: usize,
+  pub over: usize,
+  pub under: usize,
+}
+
+impl ReflectView {
+  pub fn net(&self) -> f64 {
+    self.income - self.spend
+  }
+}
+
+/// Derives the Reflect view-model from a live [`BudgetView`] and a trailing
+/// `history` (oldest first, current month last). The stat band, spend rows, and
+/// target tally come from the current month's categories so they track Plan
+/// edits; the age-of-ISK figure and its delta come from the FIFO history.
+pub fn reflect(view: &BudgetView, history: Vec<crate::features::budget::MonthFlow>) -> ReflectView {
+  let mut assigned = 0.0;
+  let mut income = 0.0;
+  let mut spend = 0.0;
+  let mut spend_rows: Vec<SpendRow> = Vec::new();
+  let mut tally = TargetTally::default();
+
+  for category in view.groups.iter().flat_map(|group| &group.categories) {
+    assigned += category.assigned;
+    if category.activity > 0.0 {
+      income += category.activity;
+    } else if category.activity < 0.0 {
+      spend += -category.activity;
+      spend_rows.push(SpendRow {
+        name: category.name.clone(),
+        spend: -category.activity,
+        tone: category.tone.clone(),
+      });
+    }
+    let status = category.status();
+    match status.state {
+      TargetState::Met => tally.met += 1,
+      TargetState::Over => {
+        tally.over += 1;
+        tally.attention.push(TargetAlert {
+          amount: category.available(),
+          name: category.name.clone(),
+          over: true,
+        });
+      }
+      TargetState::Under => {
+        tally.under += 1;
+        tally.attention.push(TargetAlert {
+          amount: status.needed,
+          name: category.name.clone(),
+          over: false,
+        });
+      }
+    }
+  }
+  spend_rows.sort_by(|a, b| b.spend.total_cmp(&a.spend));
+
+  let age = history.last().map_or(0.0, |m| m.age);
+  let age_delta = match history.len() {
+    0 | 1 => 0.0,
+    n => age - history[n - 2].age,
+  };
+  let prev_label = match history.len() {
+    0 | 1 => String::new(),
+    n => month_short_label(&history[n - 2].month),
+  };
+
+  ReflectView {
+    age,
+    age_delta,
+    assigned,
+    history,
+    income,
+    prev_label,
+    spend,
+    spend_rows,
+    tally,
+  }
+}
+
+/// A short month label (e.g. `Jun`) for a `YYYY-MM` key, used by the flow chart
+/// axis and the age delta caption. Falls back to the key verbatim.
+pub fn month_short_label(month: &str) -> String {
+  const NAMES: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  match parse_month(month) {
+    Some((_, mon)) => NAMES[(mon - 1) as usize].to_owned(),
+    None => month.to_owned(),
   }
 }
 
@@ -942,6 +1096,158 @@ mod tests {
         },
         tone: None,
       }
+    }
+  }
+
+  mod month_short_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_the_short_month_name() {
+      assert_eq!(month_short_label("2026-06"), "Jun");
+      assert_eq!(month_short_label("2026-01"), "Jan");
+    }
+
+    #[test]
+    fn it_returns_an_unparseable_key_verbatim() {
+      assert_eq!(month_short_label("nope"), "nope");
+    }
+  }
+
+  mod budget_range {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_each_range_to_its_month_span() {
+      assert_eq!(BudgetRange::SixMonths.months(), 6);
+      assert_eq!(BudgetRange::ThreeMonths.months(), 3);
+      assert_eq!(BudgetRange::default(), BudgetRange::SixMonths);
+    }
+  }
+
+  mod reflect {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::budget::MonthFlow;
+
+    fn cat(id: i64, name: &str, assigned: f64, activity: f64, kind: TargetKind, amount: f64) -> Category {
+      Category {
+        activity,
+        assigned,
+        avg_assigned: 0.0,
+        carry: 0.0,
+        id,
+        last_assigned: 0.0,
+        name: name.to_owned(),
+        note: None,
+        spent_last: 0.0,
+        target: Target {
+          amount,
+          by_date: None,
+          kind,
+        },
+        tone: Some("plasma".to_owned()),
+      }
+    }
+
+    fn view_with(categories: Vec<Category>) -> BudgetView {
+      BudgetView {
+        groups: vec![Group {
+          categories,
+          id: 1,
+          name: "Group".to_owned(),
+        }],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      }
+    }
+
+    fn month(key: &str, age: f64) -> MonthFlow {
+      MonthFlow {
+        age,
+        assigned: 0.0,
+        income: 0.0,
+        month: key.to_owned(),
+        spend: 0.0,
+      }
+    }
+
+    #[test]
+    fn it_splits_income_spend_and_net_from_activity() {
+      let view = view_with(vec![
+        cat(1, "Bounties", 0.0, 1_000.0, TargetKind::Monthly, 0.0),
+        cat(2, "Fees", 100.0, -400.0, TargetKind::Monthly, 100.0),
+      ]);
+
+      let reflect = reflect(&view, Vec::new());
+
+      assert_eq!(reflect.income, 1_000.0);
+      assert_eq!(reflect.spend, 400.0);
+      assert_eq!(reflect.net(), 600.0);
+      assert_eq!(reflect.assigned, 100.0);
+    }
+
+    #[test]
+    fn it_sorts_spend_rows_descending_and_skips_income() {
+      let view = view_with(vec![
+        cat(1, "Small", 0.0, -50.0, TargetKind::Monthly, 0.0),
+        cat(2, "Big", 0.0, -900.0, TargetKind::Monthly, 0.0),
+        cat(3, "Income", 0.0, 200.0, TargetKind::Monthly, 0.0),
+      ]);
+
+      let reflect = reflect(&view, Vec::new());
+
+      assert_eq!(reflect.spend_rows.len(), 2);
+      assert_eq!(reflect.spend_rows[0].name, "Big");
+      assert_eq!(reflect.spend_rows[1].name, "Small");
+    }
+
+    #[test]
+    fn it_tallies_target_health_and_flags_attention() {
+      let view = view_with(vec![
+        // Met: monthly target fully assigned.
+        cat(1, "Met", 100.0, 0.0, TargetKind::Monthly, 100.0),
+        // Under: monthly target underfunded.
+        cat(2, "Under", 40.0, 0.0, TargetKind::Monthly, 100.0),
+        // Over: negative available.
+        cat(3, "Over", 0.0, -50.0, TargetKind::Monthly, 100.0),
+      ]);
+
+      let reflect = reflect(&view, Vec::new());
+
+      assert_eq!(reflect.tally.met, 1);
+      assert_eq!(reflect.tally.under, 1);
+      assert_eq!(reflect.tally.over, 1);
+      assert_eq!(reflect.tally.attention.len(), 2);
+    }
+
+    #[test]
+    fn it_takes_age_and_delta_from_the_history_tail() {
+      let view = view_with(Vec::new());
+
+      let reflect = reflect(&view, vec![month("2026-05", 45.0), month("2026-06", 47.0)]);
+
+      assert_eq!(reflect.age, 47.0);
+      assert_eq!(reflect.age_delta, 2.0);
+      assert_eq!(reflect.prev_label, "May");
+    }
+
+    #[test]
+    fn it_handles_an_empty_history() {
+      let view = view_with(Vec::new());
+
+      let reflect = reflect(&view, Vec::new());
+
+      assert_eq!(reflect.age, 0.0);
+      assert_eq!(reflect.age_delta, 0.0);
+      assert_eq!(reflect.prev_label, "");
     }
   }
 }

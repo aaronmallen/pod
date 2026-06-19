@@ -1,4 +1,5 @@
 mod budget;
+mod budget_reflect;
 mod budget_view;
 mod header;
 mod hero;
@@ -32,6 +33,8 @@ use crate::{
 const DEFAULT_DIVISION: i64 = 1;
 
 const HEADER_SIDE_PADDING: f32 = 28.0;
+
+const HISTORY_MONTHS: usize = 6;
 
 pub const PAGE_SIZE: usize = 50;
 
@@ -119,6 +122,7 @@ pub struct Loaded {
 
 #[derive(Clone, Debug)]
 pub struct BudgetLoad {
+  history: Vec<crate::features::budget::MonthFlow>,
   scope: Scope,
   view: budget::BudgetView,
 }
@@ -146,6 +150,7 @@ pub enum Message {
   BudgetModeSelected(budget::Mode),
   BudgetMonthStepped(i32),
   BudgetQuickAssign(i64, f64),
+  BudgetRangeSelected(budget::BudgetRange),
   ChartHovered(Option<f32>),
   CloseContractDetail,
   ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
@@ -210,6 +215,7 @@ impl Message {
         | Message::BudgetModeSelected(_)
         | Message::BudgetMonthStepped(_)
         | Message::BudgetQuickAssign(_, _)
+        | Message::BudgetRangeSelected(_)
     )
   }
 }
@@ -304,8 +310,10 @@ pub struct State {
   budget_edit_mode: bool,
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
+  budget_history: Vec<crate::features::budget::MonthFlow>,
   budget_mode: budget::Mode,
   budget_month: String,
+  budget_range: budget::BudgetRange,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
   contract_total: i64,
@@ -345,8 +353,10 @@ impl State {
       budget_edit_mode: false,
       budget_editing: None,
       budget_editor: None,
+      budget_history: Vec::new(),
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
+      budget_range: budget::BudgetRange::default(),
       budget_selected: None,
       chart_hover: None,
       contract_total: 0,
@@ -452,6 +462,10 @@ impl State {
     self.budget_editor.as_ref()
   }
 
+  pub(super) fn budget_history(&self) -> &[crate::features::budget::MonthFlow] {
+    &self.budget_history
+  }
+
   pub(super) fn budget_is_past(&self) -> bool {
     self.budget_month.as_str() < budget::current_month().as_str()
   }
@@ -462,6 +476,10 @@ impl State {
 
   pub(super) fn budget_month(&self) -> &str {
     &self.budget_month
+  }
+
+  pub(super) fn budget_range(&self) -> budget::BudgetRange {
+    self.budget_range
   }
 
   pub(super) fn budget_scope(&self) -> crate::store::model::BudgetScope {
@@ -695,9 +713,14 @@ fn load_budget(
 ) -> Task<Message> {
   let db = db.clone();
   Task::perform(
-    async move { budget::load(&db, budget_scope, &month).await },
-    move |view| {
+    async move {
+      let view = budget::load(&db, budget_scope, &month).await;
+      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      (view, history)
+    },
+    move |(view, history)| {
       Message::BudgetLoaded(Box::new(BudgetLoad {
+        history,
         scope,
         view,
       }))
@@ -907,10 +930,13 @@ where
   Task::perform(
     async move {
       mutate(db.clone(), budget_scope, month.clone()).await;
-      budget::load(&db, budget_scope, &month).await
+      let view = budget::load(&db, budget_scope, &month).await;
+      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      (view, history)
     },
-    move |view| {
+    move |(view, history)| {
       Message::BudgetLoaded(Box::new(BudgetLoad {
+        history,
         scope,
         view,
       }))
@@ -1014,6 +1040,7 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     }
     Message::BudgetLoaded(load) => {
       let BudgetLoad {
+        history,
         scope,
         view,
       } = *load;
@@ -1024,6 +1051,7 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
         state.budget_selected = view.first_category_id();
       }
       state.budget = Some(view);
+      state.budget_history = history;
       Task::none()
     }
     Message::BudgetModeSelected(mode) => {
@@ -1036,6 +1064,10 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       reload_budget(state, db)
     }
     Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
+    Message::BudgetRangeSelected(range) => {
+      state.budget_range = range;
+      Task::none()
+    }
     other => handle_budget_editor(state, other, db),
   }
 }
@@ -3595,6 +3627,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_selects_the_reflect_flow_range() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(
+        &mut state,
+        Message::BudgetRangeSelected(budget::BudgetRange::ThreeMonths),
+        &db,
+      );
+
+      assert_eq!(state.budget_range(), budget::BudgetRange::ThreeMonths);
+    }
+
+    #[tokio::test]
     async fn it_collapses_and_expands_a_group() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = state_with_view();
@@ -3721,6 +3767,7 @@ mod tests {
       let mut state = State::new();
       state.tab = Tab::Budget;
       let load = BudgetLoad {
+        history: Vec::new(),
         scope: state.active,
         view: state_with_view().budget.unwrap(),
       };
@@ -3736,6 +3783,7 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
       let load = BudgetLoad {
+        history: Vec::new(),
         scope: Scope::Character(999),
         view: state_with_view().budget.unwrap(),
       };

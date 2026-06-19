@@ -24,7 +24,7 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
   let mut children: Vec<Element<'_, Message>> = vec![sub_nav(state)];
 
   if state.budget_mode() == Mode::Reflect {
-    children.push(reflect_placeholder());
+    children.push(super::budget_reflect::reflect_surface(state));
   } else {
     children.push(toolbar(state));
     children.push(plan_body(state));
@@ -174,21 +174,6 @@ fn bordered<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     })
     .clip(true)
     .into()
-}
-
-fn reflect_placeholder<'a>() -> Element<'a, Message> {
-  container(
-    text("Reflect reporting arrives in a later build.")
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .padding(spacing::SPACE_6)
-  .into()
 }
 
 // ── Toolbar: month nav + Ready to Assign + overspending ─────────

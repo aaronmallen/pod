@@ -7,6 +7,36 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.3]
+
+### Added
+
+- New **Budget** tab in Wallet — a zero-based (envelope) budget you can plan and review. Assign each month's ISK to
+  categories, watch your Ready-to-Assign balance, cover overspending in a click, and see unspent balances carry forward
+  month to month. The Plan view's detail inspector is drag-resizable and remembers its width.
+- The Budget tab's **Reflect** view reports your net change, income vs. spending by month (3- or 6-month range), the
+  average age of the ISK you spend, spending by category, and which targets need attention.
+- Every Wallet Journal and Transactions row shows a budget category chip you can click to assign or reassign which
+  envelope it counts against — and a market trade and its matching journal entry stay in sync so it's only counted once.
+- A "Review & assign" banner shows how many of the month's entries still need a category and jumps you straight to them,
+  with per-category "View transactions" links to filter the ledger to one envelope.
+- The Assets **Values** tab total is now computed over your entire asset set instead of only the items currently
+  loaded on screen, so it no longer under-reports until you scroll.
+
+### Changed
+
+- Wallet tabs now sit at the top of the page (matching Industry and Assets), the **Market** tab is renamed
+  **Transactions**, and each row's Buy/Sell now shows as a colored chip.
+- Abyssal modules and other hard-to-price items now value more accurately — character and corporation abyssals are
+  priced from MutaMarket, and items EVE doesn't price fall back to zKillboard market data instead of showing 0 ISK.
+
+### Fixed
+
+- Portraits in the contact add/edit window now self-heal — broken or missing character and corporation images reload
+  instead of staying blank.
+- Window backgrounds — notably the Skill Plan editor and the Skills Compare header — now use Pod's dark surface color
+  instead of a lighter built-in shade that washed out the depth of cards.
+
 ## [0.6.2]
 
 ### Added
@@ -634,7 +664,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.2...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.3...HEAD
+[0.6.3]: https://github.com/aaronmallen/pod/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/aaronmallen/pod/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/aaronmallen/pod/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/aaronmallen/pod/compare/0.5.6...0.6.0

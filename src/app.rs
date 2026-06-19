@@ -2230,6 +2230,20 @@ fn separator<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn pod_theme() -> iced::Theme {
+  iced::Theme::custom(
+    "pod".to_string(),
+    iced::theme::Palette {
+      background: color::surface::BASE,
+      danger: color::status::DANGER,
+      primary: color::accent::PLASMA,
+      success: color::status::ONLINE,
+      text: color::text::PRIMARY,
+      ..iced::theme::Palette::DARK
+    },
+  )
+}
+
 fn splash_theme() -> iced::Theme {
   iced::Theme::custom(
     "splash".to_string(),
@@ -2356,7 +2370,7 @@ fn quit_shortcut_subscription() -> Subscription<Message> {
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
     Some(Window::Splash) => splash_theme(),
-    _ => iced::Theme::Dark,
+    _ => pod_theme(),
   }
 }
 

@@ -205,7 +205,7 @@ fn heads_row(state: &State) -> Element<'_, Message> {
     .width(Length::Fill);
 
   let head = container(row).width(Length::Fill).style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
+    background: Some(Background::Color(color::surface::BASE)),
     border: Border {
       radius: border::Radius {
         top_left: radius::PANEL,

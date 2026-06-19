@@ -2616,11 +2616,14 @@ mod tests {
       });
 
       let mut chips = loaders::BudgetChips::default();
-      chips.meta.insert(1, loaders::Envelope {
-        id: 1,
-        name: "Bills".to_owned(),
-        tone: None,
-      });
+      chips.meta.insert(
+        1,
+        loaders::Envelope {
+          id: 1,
+          name: "Bills".to_owned(),
+          tone: None,
+        },
+      );
 
       let _ = update(&mut state, Message::BudgetChipsReloaded(Box::new(chips)), &db);
 
@@ -2707,7 +2710,11 @@ mod tests {
       let _ = update(&mut state, Message::BudgetModeSelected(budget::Mode::Reflect), &db);
       assert_eq!(state.budget_mode, budget::Mode::Reflect);
 
-      let _ = update(&mut state, Message::BudgetRangeSelected(budget::BudgetRange::default()), &db);
+      let _ = update(
+        &mut state,
+        Message::BudgetRangeSelected(budget::BudgetRange::default()),
+        &db,
+      );
     }
 
     #[tokio::test]

@@ -84,6 +84,9 @@ pub struct JournalEntry {
   pub amount: Option<f64>,
   pub balance: Option<f64>,
   pub character_id: i64,
+  /// For a `market_transaction` twin, the linked `transaction_id` — used to
+  /// cascade a per-entry budget assignment to the matching market transaction.
+  pub context_id: Option<i64>,
   pub date: String,
   pub description: String,
   pub id: i64,
@@ -102,6 +105,9 @@ pub struct MarketEntry {
   pub date: String,
   pub is_buy: bool,
   pub item: String,
+  /// The linked journal entry id — used to cascade a per-entry budget assignment
+  /// to this trade's `market_transaction` journal twin.
+  pub journal_ref_id: i64,
   pub location: String,
   pub quantity: i64,
   pub total: f64,
@@ -339,6 +345,7 @@ fn map_corp_journal_row(row: &crate::store::model::CorporationWalletJournal) -> 
     amount: row.amount(),
     balance: row.balance(),
     character_id: row.corporation_id(),
+    context_id: row.context_id(),
     date: row.date().clone(),
     description: row.description().clone(),
     id: row.id(),
@@ -359,6 +366,7 @@ fn map_corp_txn_row(
     date: row.date().clone(),
     is_buy: row.is_buy(),
     item,
+    journal_ref_id: row.journal_ref_id(),
     location,
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
@@ -374,6 +382,7 @@ fn map_journal_row(row: &crate::store::model::CharacterWalletJournal) -> Journal
     amount: row.amount(),
     balance: row.balance(),
     character_id: row.character_id(),
+    context_id: row.context_id(),
     date: row.date().clone(),
     description: row.description().clone(),
     id: row.id(),
@@ -394,6 +403,7 @@ fn map_txn_row(
     date: row.date().clone(),
     is_buy: row.is_buy(),
     item,
+    journal_ref_id: row.journal_ref_id(),
     location,
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,

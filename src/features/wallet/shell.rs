@@ -275,6 +275,14 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
   if state.tab != Tab::Contracts {
     controls.push(sign_control(state));
   }
+  if matches!(state.tab, Tab::Journal | Tab::Market)
+    && let Some(badge) = budget_filter_badge(state)
+  {
+    controls.push(badge);
+  }
+  if state.has_active_filters() {
+    controls.push(clear_filters_button());
+  }
 
   container(
     Row::with_children(controls)
@@ -289,6 +297,112 @@ fn filter_bar(state: &State) -> Element<'_, Message> {
     left: HEADER_SIDE_PADDING,
   })
   .style(bordered_pane)
+  .into()
+}
+
+fn budget_filter_badge(state: &State) -> Option<Element<'_, Message>> {
+  let filter = state.budget_filter()?;
+  let (label, accent) = match filter.kind {
+    super::BudgetFilterKind::Category(id) => {
+      let envelope = state.budget_chips().meta.get(&id)?;
+      (
+        envelope.name.clone(),
+        super::budget::tone_color(envelope.tone.as_deref()),
+      )
+    }
+    super::BudgetFilterKind::Uncategorized => ("Uncategorized only".to_owned(), color::status::WARNING),
+  };
+
+  let dot = container(Space::new())
+    .width(Length::Fixed(7.0))
+    .height(Length::Fixed(7.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(accent)),
+      border: Border {
+        radius: 3.5.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+
+  let clear = button(
+    text("\u{00D7}")
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(0)
+  .on_press(Message::BudgetFilterCleared)
+  .style(|_, _| iced::widget::button::Style {
+    background: Some(Background::Color(iced::Color::TRANSPARENT)),
+    ..iced::widget::button::Style::default()
+  });
+
+  let pill = container(
+    Row::with_children(vec![
+      dot.into(),
+      text(label)
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      clear.into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_2,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(accent, 0.1))),
+    border: Border {
+      color: color::with_alpha(accent, 0.35),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  });
+
+  Some(pill.into())
+}
+
+fn clear_filters_button<'a>() -> Element<'a, Message> {
+  button(
+    text("Clear Filters")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  })
+  .on_press(Message::FiltersCleared)
+  .style(|_, status| {
+    let hovered = matches!(
+      status,
+      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      border: Border {
+        color: if hovered { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      text_color: if hovered {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..iced::widget::button::Style::default()
+    }
+  })
   .into()
 }
 
@@ -515,35 +629,60 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   ])
 }
 
-/// Renders the per-entry envelope chip — a tone dot, the assigned category name
-/// (or "Ready to Assign" when unassigned), and a caret — opening the reassign
-/// picker on press. Only an explicit per-entry override shows a category;
-/// nothing is auto-assigned.
+/// Renders the per-entry budget chip in one of two states: the assigned envelope
+/// (tone dot + name + caret), or an amber "+ Assign category" affordance when the
+/// entry is still uncategorized. Both open the picker on press; every entry —
+/// inflow or outflow — can be assigned to any category.
 fn budget_chip<'a>(state: &'a State, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let assigned = chips.resolution.override_for(kind, entry_id);
-  let envelope = assigned.and_then(|id| chips.meta.get(&id));
-  let label = envelope.map_or("Ready to Assign", |e| e.name.as_str());
-  let dot_color = envelope.map_or(color::accent::PLASMA, |e| super::budget::tone_color(e.tone.as_deref()));
-
   let open = state.budget_picker() == Some((kind, entry_id));
+  let on_press = if open {
+    Message::BudgetChipDismissed
+  } else {
+    Message::BudgetChipOpened(kind, entry_id)
+  };
 
-  let dot = container(Space::new())
+  let trigger = match assigned.and_then(|id| chips.meta.get(&id)) {
+    Some(envelope) => assigned_chip(
+      &envelope.name,
+      super::budget::tone_color(envelope.tone.as_deref()),
+      on_press,
+    ),
+    None => assign_affordance(on_press),
+  };
+
+  let popover = open.then(|| budget_picker_popover(state, assigned));
+
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::BudgetChipDismissed)
+    .popover_width(budget_picker_width(chips))
+    .into()
+}
+
+/// A small round tone dot used by the budget chips and pills.
+fn budget_dot<'a>(tone: iced::Color) -> Element<'a, Message> {
+  container(Space::new())
     .width(Length::Fixed(BUDGET_DOT_SIZE))
     .height(Length::Fixed(BUDGET_DOT_SIZE))
     .style(move |_| container::Style {
-      background: Some(Background::Color(dot_color)),
+      background: Some(Background::Color(tone)),
       border: Border {
         radius: (BUDGET_DOT_SIZE / 2.0).into(),
         ..Border::default()
       },
       ..container::Style::default()
-    });
+    })
+    .into()
+}
 
-  let trigger = button(
+/// The settled-envelope chip: tone dot + category name + caret, on a transparent
+/// pill that brightens on hover.
+fn assigned_chip<'a>(name: &str, tone: iced::Color, on_press: Message) -> Element<'a, Message> {
+  button(
     Row::with_children(vec![
-      dot.into(),
-      text(label.to_owned())
+      budget_dot(tone),
+      text(name.to_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -583,18 +722,57 @@ fn budget_chip<'a>(state: &'a State, kind: BudgetEntryKind, entry_id: i64) -> El
       ..iced::widget::button::Style::default()
     }
   })
-  .on_press(if open {
-    Message::BudgetChipDismissed
-  } else {
-    Message::BudgetChipOpened(kind, entry_id)
-  });
+  .on_press(on_press)
+  .into()
+}
 
-  let popover = open.then(|| budget_picker_popover(state, assigned));
-
-  AnchoredDropdown::new(trigger, popover)
-    .on_dismiss(Message::BudgetChipDismissed)
-    .popover_width(budget_picker_width(chips))
-    .into()
+/// The needs-attention affordance for an uncategorized outflow: an amber pill
+/// reading "+ Assign category" (iced has no dashed border, so a solid amber
+/// hairline carries the same intent).
+fn assign_affordance<'a>(on_press: Message) -> Element<'a, Message> {
+  button(
+    Row::with_children(vec![
+      text("+")
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+      text("Assign category")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+    ])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: 3.0,
+    right: spacing::SPACE_2,
+    bottom: 3.0,
+    left: spacing::SPACE_2,
+  })
+  .style(|_, status| {
+    let active = matches!(
+      status,
+      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::status::WARNING,
+        if active { 0.18 } else { 0.1 },
+      ))),
+      border: Border {
+        color: color::with_alpha(color::status::WARNING, if active { 0.8 } else { 0.55 }),
+        width: 1.0,
+        radius: BUDGET_CHIP_RADIUS.into(),
+      },
+      text_color: color::status::WARNING,
+      ..iced::widget::button::Style::default()
+    }
+  })
+  .on_press(on_press)
+  .into()
 }
 
 /// Approximates the widest picker row so the popover fits its envelope names
@@ -610,7 +788,6 @@ fn budget_picker_width(chips: &super::loaders::BudgetChips) -> f32 {
     .flat_map(|group| {
       std::iter::once(group.name.chars().count()).chain(group.categories.iter().map(|cat| cat.name.chars().count()))
     })
-    .chain(std::iter::once("Ready to Assign".chars().count()))
     .max()
     .unwrap_or(0);
 
@@ -620,13 +797,6 @@ fn budget_picker_width(chips: &super::loaders::BudgetChips) -> f32 {
 fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let mut rows: Vec<Element<'a, Message>> = Vec::new();
-
-  rows.push(budget_picker_row(
-    "Ready to Assign",
-    None,
-    current.is_none(),
-    color::accent::PLASMA,
-  ));
 
   for group in &chips.envelopes {
     rows.push(
@@ -1478,6 +1648,7 @@ mod tests {
         amount,
         balance: Some(5_000.0),
         character_id: 1,
+        context_id: None,
         date: "2026-05-30T12:00:00Z".to_owned(),
         description: "Bounty payout".to_owned(),
         id: 1,
@@ -1549,6 +1720,7 @@ mod tests {
         date: "2026-05-30T12:00:00Z".to_owned(),
         is_buy,
         item: "Tritanium".to_owned(),
+        journal_ref_id: 0,
         location: "Jita IV - Moon 4".to_owned(),
         quantity: 1_000,
         total: 5_000.0,

@@ -154,6 +154,7 @@ pub enum Message {
   BudgetAutoAssign,
   BudgetCategoryAdded(i64),
   BudgetCategoryDeleted(i64),
+  BudgetCategoryHovered(Option<i64>),
   BudgetCategorySelected(i64),
   BudgetChipAssigned(Option<i64>),
   BudgetChipDismissed,
@@ -173,6 +174,8 @@ pub enum Message {
   BudgetEditorNoteChanged(String),
   BudgetEditorToggled,
   BudgetEditorToneSelected(String),
+  BudgetFilterApplied(BudgetFilterKind),
+  BudgetFilterCleared,
   BudgetGroupAdded,
   BudgetGroupDeleteRequested(i64),
   BudgetGroupRenameWritten,
@@ -191,6 +194,7 @@ pub enum Message {
   ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
   ContractSelected(i64),
   DivisionSelected(i64),
+  FiltersCleared,
   Loaded(Box<Loaded>),
   MoreLoaded(Box<MorePage>),
   PaneSettled(&'static str, f32),
@@ -334,6 +338,21 @@ pub struct RosterPilot {
   pub portrait: images::ImageState,
 }
 
+/// A ledger filter driven from the Budget tab: show only the entries of a given
+/// scope-keyed envelope (or the uncategorized ones) for a single month. Applies
+/// to both the Journal and Transactions tables.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BudgetFilter {
+  pub kind: BudgetFilterKind,
+  pub month: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BudgetFilterKind {
+  Category(i64),
+  Uncategorized,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Scope {
   #[default]
@@ -362,7 +381,9 @@ pub struct State {
   budget_edit_mode: bool,
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
+  budget_filter: Option<BudgetFilter>,
   budget_history: Vec<crate::features::budget::MonthFlow>,
+  budget_hovered_category: Option<i64>,
   budget_inspector: PaneDrag,
   budget_mode: budget::Mode,
   budget_month: String,
@@ -411,7 +432,9 @@ impl State {
       budget_edit_mode: false,
       budget_editing: None,
       budget_editor: None,
+      budget_filter: None,
       budget_history: Vec::new(),
+      budget_hovered_category: None,
       budget_inspector: PaneDrag::new(
         BUDGET_INSPECTOR_DEFAULT_WIDTH,
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
@@ -521,6 +544,41 @@ impl State {
 
   pub(super) fn budget_chips(&self) -> &loaders::BudgetChips {
     &self.budget_chips
+  }
+
+  pub(super) fn budget_filter(&self) -> Option<&BudgetFilter> {
+    self.budget_filter.as_ref()
+  }
+
+  pub(super) fn budget_hovered_category(&self) -> Option<i64> {
+    self.budget_hovered_category
+  }
+
+  /// How many loaded ledger entries in the selected budget month still need a
+  /// category — the Review &amp; assign banner's count.
+  pub(super) fn budget_uncategorized_count(&self) -> usize {
+    let filter = BudgetFilter {
+      kind: BudgetFilterKind::Uncategorized,
+      month: self.budget_month.clone(),
+    };
+    let journal = self
+      .journal
+      .iter()
+      .filter(|entry| journal_budget_match(entry, &filter, &self.budget_chips))
+      .count();
+    let market = self
+      .market
+      .iter()
+      .filter(|entry| market_budget_match(entry, &filter, &self.budget_chips))
+      .count();
+    journal + market
+  }
+
+  pub(super) fn has_active_filters(&self) -> bool {
+    self.budget_filter.is_some()
+      || !self.search.is_empty()
+      || self.sign_filter != SignFilter::All
+      || self.side_filter != Side::All
   }
 
   pub(super) fn budget_collapsed(&self, group_id: i64) -> bool {
@@ -666,11 +724,14 @@ impl State {
   fn recompute_derived(&mut self) {
     let query = self.search.to_lowercase();
 
+    let budget_filter = self.budget_filter.as_ref();
+
     let journal_indices: Vec<usize> = self
       .journal
       .iter()
       .enumerate()
       .filter(|(_, entry)| journal_matches(entry, self.sign_filter, &query))
+      .filter(|(_, entry)| budget_filter.is_none_or(|filter| journal_budget_match(entry, filter, &self.budget_chips)))
       .map(|(index, _)| index)
       .collect();
 
@@ -679,6 +740,7 @@ impl State {
       .iter()
       .enumerate()
       .filter(|(_, entry)| market_matches(entry, self.sign_filter, self.side_filter, &query))
+      .filter(|(_, entry)| budget_filter.is_none_or(|filter| market_budget_match(entry, filter, &self.budget_chips)))
       .map(|(index, _)| index)
       .collect();
 
@@ -1192,6 +1254,13 @@ where
 
 fn handle_filter(state: &mut State, message: Message) -> Task<Message> {
   match message {
+    Message::BudgetFilterCleared => state.budget_filter = None,
+    Message::FiltersCleared => {
+      state.budget_filter = None;
+      state.search.clear();
+      state.sign_filter = SignFilter::All;
+      state.side_filter = Side::All;
+    }
     Message::SearchChanged(query) => state.search = query,
     Message::SideFilterChanged(side) => state.side_filter = side,
     Message::SignFilterChanged(filter) => state.sign_filter = filter,
@@ -1340,23 +1409,27 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
         return Task::none();
       };
       let scope = state.budget_scope();
+      // A market trade and its journal twin are one event: assigning either one
+      // cascades to the other so both rows stay in sync and the trade is counted
+      // against the chosen envelope exactly once.
+      let counterpart = budget_cascade_target(state, kind, entry_id);
       let db = db.clone();
-      match choice {
-        Some(category_id) => Task::perform(
-          async move {
-            let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
-            loaders::load_budget_chips(&db, scope).await
-          },
-          |c| Message::BudgetChipsReloaded(Box::new(c)),
-        ),
-        None => Task::perform(
-          async move {
-            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
-            loaders::load_budget_chips(&db, scope).await
-          },
-          |c| Message::BudgetChipsReloaded(Box::new(c)),
-        ),
-      }
+      Task::perform(
+        async move {
+          for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterpart) {
+            match choice {
+              Some(category_id) => {
+                let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
+              }
+              None => {
+                let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
+              }
+            }
+          }
+          loaders::load_budget_chips(&db, scope).await
+        },
+        |c| Message::BudgetChipsReloaded(Box::new(c)),
+      )
     }
     Message::BudgetChipDismissed => {
       state.budget_picker = None;
@@ -1371,6 +1444,11 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     }
     Message::BudgetChipsReloaded(chips) => {
       state.budget_chips = *chips;
+      // An assignment can change which rows match an active category/uncategorized
+      // filter, so refresh the derived indices.
+      if state.budget_filter.is_some() {
+        state.recompute_derived();
+      }
       Task::none()
     }
     Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
@@ -1548,6 +1626,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.corp_divisions = Vec::new();
       state.tab_scroll_offset = 0.0;
       state.budget = None;
+      state.budget_filter = None;
       state.budget_picker = None;
       state.budget_selected = None;
       state.budget_editing = None;
@@ -1559,8 +1638,24 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       };
       reload(db, scope, state.active_division).chain(budget_task)
     }
-    msg @ (Message::SearchChanged(_) | Message::SideFilterChanged(_) | Message::SignFilterChanged(_)) => {
-      handle_filter(state, msg)
+    msg @ (Message::BudgetFilterCleared
+    | Message::FiltersCleared
+    | Message::SearchChanged(_)
+    | Message::SideFilterChanged(_)
+    | Message::SignFilterChanged(_)) => handle_filter(state, msg),
+    Message::BudgetCategoryHovered(category_id) => {
+      state.budget_hovered_category = category_id;
+      Task::none()
+    }
+    Message::BudgetFilterApplied(kind) => {
+      state.budget_filter = Some(BudgetFilter {
+        kind,
+        month: state.budget_month.clone(),
+      });
+      state.tab = Tab::Journal;
+      state.tab_scroll_offset = 0.0;
+      state.recompute_derived();
+      Task::none()
     }
     Message::TabScrolled {
       absolute,
@@ -2089,6 +2184,63 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
   true
 }
 
+/// The matched counterpart of a budget assignment, so an assignment cascades
+/// across a market trade's two records. A transaction links to its journal twin
+/// via `journal_ref_id`; a `market_transaction` journal entry links to its
+/// transaction via `context_id`. Returns `None` when the entry has no 100% match.
+fn budget_cascade_target(state: &State, kind: BudgetEntryKind, entry_id: i64) -> Option<(BudgetEntryKind, i64)> {
+  match kind {
+    BudgetEntryKind::Market => {
+      let transaction = state.market.iter().find(|entry| entry.transaction_id == entry_id)?;
+      (transaction.journal_ref_id != 0).then_some((BudgetEntryKind::Journal, transaction.journal_ref_id))
+    }
+    BudgetEntryKind::Journal => {
+      let entry = state.journal.iter().find(|entry| entry.id == entry_id)?;
+      if entry.ref_type != "market_transaction" {
+        return None;
+      }
+      entry
+        .context_id
+        .map(|transaction_id| (BudgetEntryKind::Market, transaction_id))
+    }
+  }
+}
+
+/// Whether a journal entry satisfies an active Budget filter: in the filter's
+/// month, and either assigned to the filtered category or — for the
+/// uncategorized filter — an unassigned entry (inflow or outflow) that still
+/// needs a category. Market-transaction journal twins are excluded; their trade
+/// is reviewed and assigned from the Transactions table instead.
+fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
+  if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
+    return false;
+  }
+  let assigned = chips.resolution.override_for(BudgetEntryKind::Journal, entry.id);
+  match filter.kind {
+    BudgetFilterKind::Category(id) => assigned == Some(id),
+    BudgetFilterKind::Uncategorized => {
+      assigned.is_none() && entry.ref_type != "market_transaction" && entry.amount.is_some()
+    }
+  }
+}
+
+/// Whether a transaction satisfies an active Budget filter: in the filter's
+/// month, and either assigned to the filtered category or — for the
+/// uncategorized filter — an unassigned trade. Both buys and sells can be
+/// assigned to any category.
+fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
+  if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
+    return false;
+  }
+  let assigned = chips
+    .resolution
+    .override_for(BudgetEntryKind::Market, entry.transaction_id);
+  match filter.kind {
+    BudgetFilterKind::Category(id) => assigned == Some(id),
+    BudgetFilterKind::Uncategorized => assigned.is_none(),
+  }
+}
+
 fn humanize_ref_type(ref_type: &str) -> String {
   if ref_type.is_empty() {
     return "\u{2014}".to_owned();
@@ -2273,6 +2425,7 @@ mod tests {
       amount,
       balance: None,
       character_id,
+      context_id: None,
       date: "2026-05-30T12:00:00Z".to_owned(),
       description: description.to_owned(),
       id: 1,
@@ -2286,6 +2439,7 @@ mod tests {
       date: "2026-05-30T12:00:00Z".to_owned(),
       is_buy,
       item: item.to_owned(),
+      journal_ref_id: 0,
       location: location.to_owned(),
       quantity: 1,
       total: 1.0,
@@ -2368,6 +2522,111 @@ mod tests {
       date: date.to_owned(),
       liquid: 0.0,
       net_worth,
+    }
+  }
+
+  mod budget_review {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn chips(journal: &[(i64, i64)], market: &[(i64, i64)]) -> loaders::BudgetChips {
+      loaders::BudgetChips {
+        envelopes: Vec::new(),
+        meta: std::collections::HashMap::new(),
+        resolution: crate::features::budget::ResolutionContext {
+          journal_overrides: journal.iter().copied().collect(),
+          market_overrides: market.iter().copied().collect(),
+          ref_overrides: std::collections::HashMap::new(),
+          slug_to_id: std::collections::HashMap::new(),
+        },
+      }
+    }
+
+    #[test]
+    fn it_cascades_a_transaction_assignment_to_its_journal_twin() {
+      let mut state = State::new();
+      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
+      transaction.transaction_id = 500;
+      transaction.journal_ref_id = 10;
+      state.market = vec![transaction];
+
+      assert_eq!(
+        budget_cascade_target(&state, BudgetEntryKind::Market, 500),
+        Some((BudgetEntryKind::Journal, 10))
+      );
+    }
+
+    #[test]
+    fn it_cascades_a_journal_twin_assignment_to_its_transaction() {
+      let mut state = State::new();
+      let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
+      twin.id = 10;
+      twin.context_id = Some(500);
+      state.journal = vec![twin];
+
+      assert_eq!(
+        budget_cascade_target(&state, BudgetEntryKind::Journal, 10),
+        Some((BudgetEntryKind::Market, 500))
+      );
+    }
+
+    #[test]
+    fn it_does_not_cascade_a_plain_journal_entry() {
+      let mut state = State::new();
+      let mut fee = journal_entry(1, Some(-50.0), "brokers_fee", "Fee");
+      fee.id = 11;
+      fee.context_id = Some(500);
+      state.journal = vec![fee];
+
+      assert_eq!(budget_cascade_target(&state, BudgetEntryKind::Journal, 11), None);
+    }
+
+    #[test]
+    fn it_filters_the_journal_to_an_assigned_category_for_the_month() {
+      let mut state = State::new();
+      let mut assigned = journal_entry(1, Some(-100.0), "manufacturing", "In");
+      assigned.id = 1;
+      assigned.date = "2026-06-05T00:00:00Z".to_owned();
+      let mut other = journal_entry(1, Some(-200.0), "manufacturing", "Out");
+      other.id = 2;
+      other.date = "2026-06-06T00:00:00Z".to_owned();
+      state.journal = vec![assigned, other];
+      state.budget_chips = chips(&[(1, 42)], &[]);
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Category(42),
+        month: "2026-06".to_owned(),
+      });
+      state.recompute_derived();
+
+      let filtered = filtered_journal(&state);
+
+      assert_eq!(filtered.len(), 1);
+      assert_eq!(filtered[0].id, 1);
+    }
+
+    #[test]
+    fn it_counts_uncategorized_entries_for_the_selected_month() {
+      let mut state = State::new();
+      let mut buy = journal_entry(1, Some(-100.0), "manufacturing", "Buy");
+      buy.id = 1;
+      buy.date = "2026-06-05T00:00:00Z".to_owned();
+      // Inflows are assignable now, so an unassigned one also needs a category.
+      let mut inflow = journal_entry(1, Some(900.0), "bounty_prizes", "Bounty");
+      inflow.id = 2;
+      inflow.date = "2026-06-05T00:00:00Z".to_owned();
+      // A market_transaction twin is excluded (assigned from the Transactions tab).
+      let mut twin = journal_entry(1, Some(-300.0), "market_transaction", "Twin");
+      twin.id = 3;
+      twin.date = "2026-06-05T00:00:00Z".to_owned();
+      // Out-of-month entries never count.
+      let mut last_month = journal_entry(1, Some(-100.0), "manufacturing", "Old");
+      last_month.id = 4;
+      last_month.date = "2026-05-30T00:00:00Z".to_owned();
+      state.journal = vec![buy, inflow, twin, last_month];
+      state.budget_month = "2026-06".to_owned();
+
+      assert_eq!(state.budget_uncategorized_count(), 2);
     }
   }
 

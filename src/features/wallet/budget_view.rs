@@ -5,7 +5,7 @@ use iced::{
 };
 
 use super::{
-  BudgetDropTarget, Message, State,
+  BudgetDropTarget, BudgetFilterKind, Message, State,
   budget::{self, Category, CategoryDraft, Group, Mode, TargetKind, TargetState},
 };
 use crate::ui::{
@@ -26,6 +26,9 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
     children.push(super::budget_reflect::reflect_surface(state));
   } else {
     children.push(toolbar(state));
+    if let Some(banner) = review_banner(state) {
+      children.push(banner);
+    }
     children.push(plan_body(state));
   }
 
@@ -33,6 +36,89 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+/// The amber "Review & assign" banner: surfaces how many of the selected month's
+/// entries still need a category and jumps to the ledger filtered to them.
+fn review_banner(state: &State) -> Option<Element<'_, Message>> {
+  let count = state.budget_uncategorized_count();
+  if count == 0 {
+    return None;
+  }
+  let noun = if count == 1 {
+    "transaction needs"
+  } else {
+    "transactions need"
+  };
+
+  let review = button(
+    text("Review & assign")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(color::status::WARNING)),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  })
+  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::status::WARNING,
+        if active { 0.16 } else { 0.0 },
+      ))),
+      border: Border {
+        color: color::status::WARNING,
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: color::status::WARNING,
+      ..button::Style::default()
+    }
+  });
+
+  let message = Row::with_children(vec![
+    color_dot(Some("warning"), 8.0),
+    text(format!("{count} {noun} a category"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text("Until assigned, this spending won\u{2019}t show against any envelope.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    Space::new().width(Length::Fill).into(),
+    review.into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_y(Vertical::Center);
+
+  Some(
+    container(message)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_3,
+        right: SIDE_PADDING,
+        bottom: spacing::SPACE_3,
+        left: SIDE_PADDING,
+      })
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.09))),
+        border: Border {
+          color: color::with_alpha(color::status::WARNING, 0.28),
+          width: 1.0,
+          radius: 0.0.into(),
+        },
+        ..container::Style::default()
+      })
+      .into(),
+  )
 }
 
 // ── Sub-nav: Plan / Reflect + Edit toggle ──────────────────────
@@ -831,9 +917,10 @@ fn category_row<'a>(
     available_cell(category, &status, selected)
   };
 
+  let hovered = state.budget_hovered_category() == Some(category.id);
   let row = Row::with_children(vec![
     lead,
-    name_cell(category, &status),
+    name_cell(category, &status, hovered),
     assigned_cell(state, category),
     activity_cell(category.activity),
     tail,
@@ -861,7 +948,7 @@ fn category_row<'a>(
       .into();
   }
 
-  button(container(row).width(Length::Fill))
+  let row_button = button(container(row).width(Length::Fill))
     .padding(Padding::ZERO)
     .width(Length::Fill)
     .on_press(Message::BudgetCategorySelected(category.id))
@@ -874,7 +961,12 @@ fn category_row<'a>(
       },
       text_color: color::text::PRIMARY,
       ..button::Style::default()
-    })
+    });
+
+  // Track hover so the row's "View transactions →" link reveals only on hover.
+  mouse_area(row_button)
+    .on_enter(Message::BudgetCategoryHovered(Some(category.id)))
+    .on_exit(Message::BudgetCategoryHovered(None))
     .into()
 }
 
@@ -970,7 +1062,7 @@ fn color_dot<'a>(tone: Option<&str>, size: f32) -> Element<'a, Message> {
     .into()
 }
 
-fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus) -> Element<'a, Message> {
+fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus, hovered: bool) -> Element<'a, Message> {
   let mut head: Vec<Element<'a, Message>> = vec![
     text(category.name.clone())
       .font(typography::body::MEDIUM)
@@ -982,6 +1074,11 @@ fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus) -> Eleme
     && category.target.kind == TargetKind::GoalBy
   {
     head.push(due_pill(by));
+  }
+  // The "View transactions →" link only reveals on row hover, mirroring the design.
+  if hovered {
+    head.push(Space::new().width(Length::Fill).into());
+    head.push(view_transactions_link(category.id, "View transactions \u{2192}"));
   }
 
   let underline = target_bar(status);
@@ -1000,6 +1097,24 @@ fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus) -> Eleme
     right: 16.0,
     bottom: 10.0,
     left: 10.0,
+  })
+  .into()
+}
+
+/// A plasma "View transactions →" affordance that filters the ledger to a
+/// category for the selected month and jumps to it.
+fn view_transactions_link<'a>(category_id: i64, label: &'a str) -> Element<'a, Message> {
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::accent::PLASMA)),
+  )
+  .padding(0)
+  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    ..button::Style::default()
   })
   .into()
 }
@@ -1314,12 +1429,59 @@ fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Me
       children.push(category_editor(draft));
     }
   } else {
+    children.push(view_transactions_button(category.id));
     children.push(target_block(&status));
     children.push(this_month_block(category, &status));
     children.push(quick_assign_block(category, state.budget_month()));
   }
 
   Column::with_children(children).width(Length::Fill).into()
+}
+
+/// The inspector's full-width "View transactions →" button: filters the ledger
+/// to this category for the selected month and jumps to it.
+fn view_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
+  let label = button(
+    text("View transactions \u{2192}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3,
+  })
+  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::accent::PLASMA } else { color::rule() },
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: if active {
+        color::accent::PLASMA
+      } else {
+        color::text::PRIMARY
+      },
+      ..button::Style::default()
+    }
+  });
+
+  container(label)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 20.0,
+      bottom: spacing::SPACE_3,
+      left: 20.0,
+    })
+    .into()
 }
 
 fn inspector_header<'a>(

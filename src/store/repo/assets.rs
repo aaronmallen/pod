@@ -872,8 +872,14 @@ pub async fn render_for_corporation(db: &Database, corporation_id: i64) -> Resul
   Ok(rows.into_iter().map(RenderRowSql::into_row).collect())
 }
 
+macro_rules! abyssal_join_sql {
+  ($abyssal:literal) => {
+    concat!(" LEFT JOIN ", $abyssal, " ab ON ab.item_id = a.item_id ")
+  };
+}
+
 macro_rules! query_join_sql {
-  ($table:literal, $owner:literal, $owner_type:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal, $abyssal:literal) => {
     concat!(
       "FROM ",
       $table,
@@ -882,6 +888,7 @@ macro_rules! query_join_sql {
       JOIN item_groups ig ON ig.id = it.group_id \
       JOIN item_categories ic ON ic.id = ig.category_id \
       LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
       location_join_sql!($owner, $owner_type),
       geo_extra_join_sql!(),
       "WHERE a.",
@@ -914,7 +921,7 @@ macro_rules! row_volume_expr {
 }
 macro_rules! unit_price_expr {
   () => {
-    "CAST(CASE WHEN a.is_blueprint_copy = 1 THEN 0 ELSE COALESCE(mp.adjusted_price, mp.average_price, 0) END AS REAL)"
+    "CAST(CASE WHEN a.is_blueprint_copy = 1 THEN 0 ELSE COALESCE(ab.muta_price_isk, mp.adjusted_price, mp.average_price, 0) END AS REAL)"
   };
 }
 macro_rules! value_expr {
@@ -1132,6 +1139,7 @@ macro_rules! historical_unit_price_expr {
     "CASE \
       WHEN a.is_blueprint_copy = 1 THEN 0 \
       ELSE COALESCE( \
+        ab.muta_price_isk, \
         (SELECT h.close FROM type_price_histories h \
             WHERE h.type_id = a.type_id AND h.date <= ? ORDER BY h.date DESC LIMIT 1), \
         mp.adjusted_price, mp.average_price, 0) \
@@ -1140,13 +1148,15 @@ macro_rules! historical_unit_price_expr {
 }
 
 macro_rules! asset_value_as_of_sql {
-  ($table:literal, $owner:literal) => {
+  ($table:literal, $owner:literal, $abyssal:literal) => {
     concat!(
       "SELECT CAST(COALESCE(SUM(a.quantity * ",
       historical_unit_price_expr!(),
       "), 0) AS REAL) FROM ",
       $table,
-      " a LEFT JOIN market_prices mp ON mp.type_id = a.type_id WHERE a.",
+      " a LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
+      "WHERE a.",
       $owner,
       " = ?"
     )
@@ -1155,10 +1165,11 @@ macro_rules! asset_value_as_of_sql {
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
-const ASSET_VALUE_AS_OF_CHARACTER: &str = asset_value_as_of_sql!("character_assets", "character_id");
+const ASSET_VALUE_AS_OF_CHARACTER: &str = asset_value_as_of_sql!("character_assets", "character_id", "abyssal_items");
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
-const ASSET_VALUE_AS_OF_CORPORATION: &str = asset_value_as_of_sql!("corporation_assets", "corporation_id");
+const ASSET_VALUE_AS_OF_CORPORATION: &str =
+  asset_value_as_of_sql!("corporation_assets", "corporation_id", "abyssal_items");
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
@@ -1924,7 +1935,7 @@ fn ancestors_of_match_sql(table: &str, owner_column: &str) -> (&'static str, &'s
 }
 
 macro_rules! inventory_select_sql {
-  ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal, $abyssal:literal) => {
     concat!(
       "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.container_id, a.depth, a.is_container, ",
       $active_ship,
@@ -1945,13 +1956,13 @@ macro_rules! inventory_select_sql {
       " AS value, ",
       location_label_expr!(),
       " AS location_label ",
-      query_join_sql!($table, $owner, $owner_type)
+      query_join_sql!($table, $owner, $owner_type, $abyssal)
     )
   };
 }
 
 macro_rules! combined_arm_sql {
-  ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal, $active_ship:literal, $abyssal:literal) => {
     concat!(
       "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.container_id, a.depth, a.is_container, ",
       $active_ship,
@@ -1972,20 +1983,20 @@ macro_rules! combined_arm_sql {
       " AS value, ",
       location_label_expr!(),
       " AS location_label, sys.name AS system_name, con.name AS constellation_name, reg.name AS region_name ",
-      query_join_sql!($table, $owner, $owner_type)
+      query_join_sql!($table, $owner, $owner_type, $abyssal)
     )
   };
 }
 
 macro_rules! totals_select_sql {
-  ($table:literal, $owner:literal, $owner_type:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal, $abyssal:literal) => {
     concat!(
       "SELECT SUM(a.quantity) AS items, COUNT(DISTINCT a.location_id) AS locations, SUM(",
       value_expr!(),
       ") AS value, SUM(",
       row_volume_expr!(),
       ") AS volume ",
-      query_join_sql!($table, $owner, $owner_type)
+      query_join_sql!($table, $owner, $owner_type, $abyssal)
     )
   };
 }
@@ -2003,7 +2014,7 @@ macro_rules! geo_join_sql {
 }
 
 macro_rules! geo_select_sql {
-  ($table:literal, $owner:literal, $owner_type:literal) => {
+  ($table:literal, $owner:literal, $owner_type:literal, $abyssal:literal) => {
     concat!(
       "SELECT a.location_id, a.location_type, ",
       geo_label_expr!(),
@@ -2020,6 +2031,7 @@ macro_rules! geo_select_sql {
       JOIN item_groups ig ON ig.id = it.group_id \
       JOIN item_categories ic ON ic.id = ig.category_id \
       LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
       geo_join_sql!($owner, $owner_type),
       "WHERE a.",
       $owner,
@@ -2028,17 +2040,41 @@ macro_rules! geo_select_sql {
   };
 }
 
-const GEO_SELECT_CHARACTER: &str = geo_select_sql!("character_assets", "character_id", "character");
-const GEO_SELECT_CORPORATION: &str = geo_select_sql!("corporation_assets", "corporation_id", "corporation");
-const INVENTORY_SELECT_CHARACTER: &str =
-  inventory_select_sql!("character_assets", "character_id", "character", "a.is_active_ship");
-const INVENTORY_SELECT_CORPORATION: &str =
-  inventory_select_sql!("corporation_assets", "corporation_id", "corporation", "0");
-const TOTALS_SELECT_CHARACTER: &str = totals_select_sql!("character_assets", "character_id", "character");
-const TOTALS_SELECT_CORPORATION: &str = totals_select_sql!("corporation_assets", "corporation_id", "corporation");
-const COMBINED_ARM_CHARACTER: &str =
-  combined_arm_sql!("character_assets", "character_id", "character", "a.is_active_ship");
-const COMBINED_ARM_CORPORATION: &str = combined_arm_sql!("corporation_assets", "corporation_id", "corporation", "0");
+const GEO_SELECT_CHARACTER: &str = geo_select_sql!("character_assets", "character_id", "character", "abyssal_items");
+const GEO_SELECT_CORPORATION: &str =
+  geo_select_sql!("corporation_assets", "corporation_id", "corporation", "abyssal_items");
+const INVENTORY_SELECT_CHARACTER: &str = inventory_select_sql!(
+  "character_assets",
+  "character_id",
+  "character",
+  "a.is_active_ship",
+  "abyssal_items"
+);
+const INVENTORY_SELECT_CORPORATION: &str = inventory_select_sql!(
+  "corporation_assets",
+  "corporation_id",
+  "corporation",
+  "0",
+  "abyssal_items"
+);
+const TOTALS_SELECT_CHARACTER: &str =
+  totals_select_sql!("character_assets", "character_id", "character", "abyssal_items");
+const TOTALS_SELECT_CORPORATION: &str =
+  totals_select_sql!("corporation_assets", "corporation_id", "corporation", "abyssal_items");
+const COMBINED_ARM_CHARACTER: &str = combined_arm_sql!(
+  "character_assets",
+  "character_id",
+  "character",
+  "a.is_active_ship",
+  "abyssal_items"
+);
+const COMBINED_ARM_CORPORATION: &str = combined_arm_sql!(
+  "corporation_assets",
+  "corporation_id",
+  "corporation",
+  "0",
+  "abyssal_items"
+);
 
 macro_rules! node_rollup_anchor_sql_lit {
   ($table:literal, $owner:literal) => {
@@ -2067,7 +2103,7 @@ macro_rules! node_rollup_recurse_sql_lit {
 }
 
 macro_rules! node_rollup_aggregate_sql_lit {
-  ($table:literal, $owner:literal) => {
+  ($table:literal, $owner:literal, $abyssal:literal) => {
     concat!(
       " ) \
       SELECT SUM(",
@@ -2076,8 +2112,9 @@ macro_rules! node_rollup_aggregate_sql_lit {
       FROM ",
       $table,
       " a \
-      LEFT JOIN market_prices mp ON mp.type_id = a.type_id \
-      JOIN subtree s ON s.item_id = a.item_id \
+      LEFT JOIN market_prices mp ON mp.type_id = a.type_id",
+      abyssal_join_sql!($abyssal),
+      "JOIN subtree s ON s.item_id = a.item_id \
       WHERE a.",
       $owner,
       " "
@@ -2133,10 +2170,12 @@ const NODE_ROLLUP_RECURSE_CHARACTER: &str = node_rollup_recurse_sql_lit!("charac
 const NODE_ROLLUP_RECURSE_CORPORATION: &str = node_rollup_recurse_sql_lit!("corporation_assets", "corporation_id");
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
-const NODE_ROLLUP_AGGREGATE_CHARACTER: &str = node_rollup_aggregate_sql_lit!("character_assets", "character_id");
+const NODE_ROLLUP_AGGREGATE_CHARACTER: &str =
+  node_rollup_aggregate_sql_lit!("character_assets", "character_id", "abyssal_items");
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
-const NODE_ROLLUP_AGGREGATE_CORPORATION: &str = node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id");
+const NODE_ROLLUP_AGGREGATE_CORPORATION: &str =
+  node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id", "abyssal_items");
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id");
@@ -4065,6 +4104,112 @@ mod asset_tests {
       let value = asset_value_as_of_for_character(&db, 42, "2026-06-03").await.unwrap();
 
       assert_eq!(value, 0.0);
+    }
+  }
+
+  mod muta_valuation {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn financials_asset_value(db: &Database, character_id: i64) -> f64 {
+      sqlx::query_scalar::<_, Option<f64>>("SELECT asset_value FROM character_financials WHERE character_id = ?")
+        .bind(character_id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+        .unwrap_or(0.0)
+    }
+
+    async fn abyssal(db: &Database, item_id: i64, character_id: i64, muta: Option<f64>) {
+      let mut item = AbyssalItem::new(
+        item_id,
+        character_id,
+        587,
+        5975,
+        47_297,
+        r#"[{"attribute_id":6,"value":450.0}]"#.to_owned(),
+        1_700_000_000,
+      );
+      item.set_muta_price(muta, 1_700_000_000);
+      upsert(db, &item).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_abyssal_values_at_its_muta_price_over_the_base_type_price() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let asset = char_asset(100, 42, None);
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+      abyssal(&db, 100, 42, Some(750_000.0)).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+
+      assert_eq!(
+        totals.value, 750_000.0,
+        "the per-item muta price wins over the base-type market price"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_unlisted_abyssal_falls_back_to_the_base_type_price() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let asset = char_asset(100, 42, None);
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+      abyssal(&db, 100, 42, None).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+
+      assert_eq!(
+        totals.value, 100.0,
+        "a null muta price falls back through the canonical chain"
+      );
+    }
+
+    #[tokio::test]
+    async fn a_blueprint_copy_abyssal_values_at_zero() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.is_blueprint_copy = Some(true);
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+      abyssal(&db, 100, 42, Some(750_000.0)).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+
+      assert_eq!(totals.value, 0.0, "a blueprint copy is always valued at zero");
+    }
+
+    #[tokio::test]
+    async fn the_page_query_and_the_financials_view_agree_per_asset() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rolled Module", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_price(&db, 587, 100.0).await;
+      seed_price(&db, 24, 5.0).await;
+      let rolled = char_asset(100, 42, None);
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      mineral.quantity = 3;
+      replace_for_character(&db, 42, &[rolled, mineral]).await.unwrap();
+      abyssal(&db, 100, 42, Some(750_000.0)).await;
+
+      let totals = inventory_totals_for_character(&db, 42, "", &[], None).await.unwrap();
+      let view_value = financials_asset_value(&db, 42).await;
+
+      assert_eq!(totals.value, 750_015.0, "muta abyssal (750_000) + 3 tritanium @5 (15)");
+      assert_eq!(
+        view_value, totals.value,
+        "the character_financials view and the page valuation produce the same total"
+      );
     }
   }
 

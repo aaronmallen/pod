@@ -97,14 +97,18 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  Column::with_children(vec![super::hero::hero(state, now), panes.into()])
+  // The tab strip is hoisted directly under the header (mirroring Industry and
+  // Assets) so the bar never shifts position; the net-worth hero now lives below
+  // the strip inside the ledger column. This is also the surface the future
+  // Budget tab mounts onto.
+  Column::with_children(vec![tabs(state), panes.into()])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
 }
 
 fn center(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let mut head_children: Vec<Element<'_, Message>> = vec![tabs(state)];
+  let mut head_children: Vec<Element<'_, Message>> = vec![super::hero::hero(state, now)];
   if matches!(state.active(), Scope::Corporation(_)) {
     head_children.push(division_strip(state));
   }
@@ -202,7 +206,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
   let market_count = state.market_total;
   let contract_count = state.contract_total;
   let items = [
-    (Tab::Market, "Market", market_count),
+    (Tab::Market, "Transactions", market_count),
     (Tab::Contracts, "Contracts", contract_count),
     (Tab::Journal, "Journal", journal_count),
   ];
@@ -440,7 +444,7 @@ fn market_header<'a>() -> Element<'a, Message> {
 fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let entries = super::filtered_market(state);
   if entries.is_empty() {
-    return empty_ledger("No market transactions match.");
+    return empty_ledger("No transactions match.");
   }
 
   windowed_ledger(state, entries, move |entry| market_row(state, entry, now))
@@ -454,7 +458,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   };
 
   row_shell(vec![
-    mono_cell(side_label, Length::FillPortion(1), Horizontal::Left, side_color),
+    side_badge(side_label, side_color, Length::FillPortion(1)),
     item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
     mono_cell(
       &entry.quantity.to_string(),
@@ -487,6 +491,37 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       color::text::secondary(),
     ),
   ])
+}
+
+/// A translucent Buy/Sell chip: a side-tinted pill with a faint fill, a 1px
+/// tinted border, and mono uppercase glyph text. Mirrors the tinted-pill pattern
+/// used in killmail/contract detail views (bg ~0.12 alpha, border ~0.30 alpha).
+fn side_badge<'a>(label: &'a str, tint: iced::Color, width: Length) -> Element<'a, Message> {
+  let chip = container(
+    text(label)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    right: spacing::SPACE_2,
+    bottom: 3.0,
+    left: spacing::SPACE_2,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.12))),
+    border: Border {
+      color: color::with_alpha(tint, 0.3),
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    ..container::Style::default()
+  });
+
+  container(chip).width(width).align_x(Horizontal::Left).into()
 }
 
 fn item_cell<'a>(item: &str, type_icon_resolution: &IconResolution, width: Length) -> Element<'a, Message> {
@@ -1259,6 +1294,60 @@ mod tests {
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
+    }
+  }
+
+  mod market_tab {
+    use super::*;
+    use crate::store::images::IconResolution;
+
+    fn market_entry(is_buy: bool) -> MarketEntry {
+      MarketEntry {
+        character_id: 1,
+        date: "2026-05-30T12:00:00Z".to_owned(),
+        is_buy,
+        item: "Tritanium".to_owned(),
+        location: "Jita IV - Moon 4".to_owned(),
+        quantity: 1_000,
+        total: 5_000.0,
+        transaction_id: 1,
+        type_icon: IconResolution::Missing,
+        type_id: 34,
+        unit_price: 5.0,
+      }
+    }
+
+    fn state_on_market() -> State {
+      let mut state = State::new();
+      state.tab = Tab::Market;
+      state
+    }
+
+    #[test]
+    fn it_renders_buy_and_sell_side_badges() {
+      let mut state = state_on_market();
+      state.market = vec![
+        MarketEntry {
+          transaction_id: 1,
+          ..market_entry(true)
+        },
+        MarketEntry {
+          transaction_id: 2,
+          ..market_entry(false)
+        },
+      ];
+      state.recompute_derived();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert_eq!(crate::features::wallet::filtered_market(&state).len(), 2);
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_when_no_transactions_match() {
+      let state = state_on_market();
+
+      let _el: Element<'_, Message> = shell(&state, now());
+      assert!(crate::features::wallet::filtered_market(&state).is_empty());
     }
   }
 

@@ -3,7 +3,7 @@ use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   mouse,
-  widget::{Column, Row, Space, Stack, container, image, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, Stack, button, container, image, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -13,9 +13,10 @@ use super::{
 use crate::{
   config::Feature,
   features::contract_detail,
-  store::images::IconResolution,
+  store::{images::IconResolution, model::BudgetEntryKind},
   ui::{
     components::{
+      anchored_dropdown::AnchoredDropdown,
       avatar::Avatar,
       backdrop,
       eyebrow::eyebrow_text,
@@ -391,6 +392,15 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
     GlyphBadge::new(glyph, is_in).render(),
     journal_left_col(entry),
     journal_character_col(state, entry.character_id),
+    container(budget_chip(
+      state,
+      BudgetEntryKind::Journal,
+      entry.id,
+      Some(&entry.ref_type),
+      None,
+    ))
+    .width(Length::Fixed(170.0))
+    .into(),
     journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
   ])
 }
@@ -444,6 +454,7 @@ fn market_header<'a>() -> Element<'a, Message> {
   table_header(&[
     ("Side", Length::FillPortion(1), Horizontal::Left),
     ("Item", Length::FillPortion(3), Horizontal::Left),
+    ("Budget", Length::FillPortion(2), Horizontal::Left),
     ("Qty", Length::FillPortion(1), Horizontal::Right),
     ("Unit", Length::FillPortion(2), Horizontal::Right),
     ("Total", Length::FillPortion(2), Horizontal::Right),
@@ -472,6 +483,15 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   row_shell(vec![
     side_badge(side_label, side_color, Length::FillPortion(1)),
     item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
+    container(budget_chip(
+      state,
+      BudgetEntryKind::Market,
+      entry.transaction_id,
+      None,
+      Some(entry.is_buy),
+    ))
+    .width(Length::FillPortion(2))
+    .into(),
     mono_cell(
       &entry.quantity.to_string(),
       Length::FillPortion(1),
@@ -503,6 +523,184 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       color::text::secondary(),
     ),
   ])
+}
+
+/// Renders the per-entry envelope chip and opens an [`AnchoredDropdown`] picker on press.
+///
+/// Envelope resolution checks a scope-keyed override table first, then falls back to the
+/// entry's default assignment; when nothing resolves the label shows "Ready to Assign".
+fn budget_chip<'a>(
+  state: &'a State,
+  kind: BudgetEntryKind,
+  entry_id: i64,
+  ref_type: Option<&'a str>,
+  is_buy: Option<bool>,
+) -> Element<'a, Message> {
+  let chips = state.budget_chips();
+  let resolved_id = chips.resolution.resolve(kind, entry_id, ref_type, is_buy);
+  let envelope = resolved_id.and_then(|id| chips.meta.get(&id));
+  let label = envelope.map_or("Ready to Assign", |e| e.name.as_str());
+  let tint = envelope.map_or(color::accent::PLASMA, |e| super::budget::tone_color(e.tone.as_deref()));
+
+  let open = state.budget_picker() == Some((kind, entry_id));
+
+  let trigger = button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      }),
+  )
+  .padding(Padding {
+    top: 3.0,
+    right: spacing::SPACE_2,
+    bottom: 3.0,
+    left: spacing::SPACE_2,
+  })
+  .style(move |_, _status| iced::widget::button::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.12))),
+    border: Border {
+      color: color::with_alpha(tint, 0.3),
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    text_color: tint,
+    ..iced::widget::button::Style::default()
+  })
+  .on_press(if open {
+    Message::BudgetChipDismissed
+  } else {
+    Message::BudgetChipOpened(kind, entry_id)
+  });
+
+  let popover = if open {
+    Some(budget_picker_popover(state, resolved_id))
+  } else {
+    None
+  };
+
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::BudgetChipDismissed)
+    .into()
+}
+
+fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<'a, Message> {
+  let chips = state.budget_chips();
+  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+
+  rows.push(budget_picker_row(
+    "Ready to Assign",
+    None,
+    current.is_none(),
+    color::accent::PLASMA,
+  ));
+
+  for group in &chips.envelopes {
+    rows.push(
+      text(group.name.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+    for cat in &group.categories {
+      let tint = super::budget::tone_color(cat.tone.as_deref());
+      rows.push(budget_picker_row(
+        &cat.name,
+        Some(cat.id),
+        current == Some(cat.id),
+        tint,
+      ));
+    }
+  }
+
+  container(
+    scrollable(Column::with_children(rows).spacing(spacing::SPACE_2))
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fixed(240.0)),
+  )
+  .padding(spacing::SPACE_3)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn budget_picker_row<'a>(label: &str, id: Option<i64>, selected: bool, tint: iced::Color) -> Element<'a, Message> {
+  let dot = container(Space::new())
+    .width(Length::Fixed(6.0))
+    .height(Length::Fixed(6.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(tint)),
+      border: Border {
+        radius: 3.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+
+  let label_text = text(label.to_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(if selected {
+      color::text::PRIMARY
+    } else {
+      color::text::secondary()
+    }));
+
+  let check: Element<'a, Message> = if selected {
+    text("\u{2713}")
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::SM)
+      .style(typography::colored(tint))
+      .into()
+  } else {
+    Space::new().into()
+  };
+
+  let row = Row::with_children(vec![
+    dot.into(),
+    label_text.into(),
+    Space::new().width(Length::Fill).into(),
+    check,
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  button(row)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+    })
+    .width(Length::Fill)
+    .style(move |_, _status| iced::widget::button::Style {
+      background: if selected {
+        Some(Background::Color(color::with_alpha(tint, 0.08)))
+      } else {
+        None
+      },
+      border: Border {
+        radius: radius::SUBTLE.into(),
+        ..Border::default()
+      },
+      text_color: if selected {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..iced::widget::button::Style::default()
+    })
+    .on_press(Message::BudgetChipAssigned(id))
+    .into()
 }
 
 /// A translucent Buy/Sell chip: a side-tinted pill with a faint fill, a 1px

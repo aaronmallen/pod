@@ -20,7 +20,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      OwnerType, character_financials::CharacterFinancials,
+      BudgetEntryKind, OwnerType, character_financials::CharacterFinancials,
       character_wallet_period_summary::CharacterWalletPeriodSummary,
     },
     repo::{character, finance, infra, org},
@@ -105,6 +105,7 @@ pub struct JournalFlow {
 
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
+  chips: loaders::BudgetChips,
   contract_total: i64,
   contracts: Vec<ContractEntry>,
   corp_divisions: Vec<CorpDivision>,
@@ -150,6 +151,10 @@ pub enum Message {
   BudgetCategoryAdded(i64),
   BudgetCategoryDeleted(i64),
   BudgetCategorySelected(i64),
+  BudgetChipAssigned(Option<i64>),
+  BudgetChipDismissed,
+  BudgetChipOpened(BudgetEntryKind, i64),
+  BudgetChipsReloaded(Box<loaders::BudgetChips>),
   BudgetCoverOverspending,
   BudgetDragStarted(i64),
   BudgetDropReleased,
@@ -225,6 +230,10 @@ impl Message {
         | Message::BudgetCategoryAdded(_)
         | Message::BudgetCategoryDeleted(_)
         | Message::BudgetCategorySelected(_)
+        | Message::BudgetChipAssigned(_)
+        | Message::BudgetChipDismissed
+        | Message::BudgetChipOpened(_, _)
+        | Message::BudgetChipsReloaded(_)
         | Message::BudgetCoverOverspending
         | Message::BudgetDragStarted(_)
         | Message::BudgetDropReleased
@@ -339,6 +348,7 @@ pub struct State {
   active: Scope,
   active_division: i64,
   budget: Option<budget::BudgetView>,
+  budget_chips: loaders::BudgetChips,
   budget_collapsed: std::collections::HashSet<i64>,
   budget_dragging: Option<i64>,
   budget_drop_target: Option<BudgetDropTarget>,
@@ -349,6 +359,7 @@ pub struct State {
   budget_mode: budget::Mode,
   budget_month: String,
   budget_pending_group_delete: Option<i64>,
+  budget_picker: Option<(BudgetEntryKind, i64)>,
   budget_range: budget::BudgetRange,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
@@ -385,6 +396,7 @@ impl State {
       active: Scope::default(),
       active_division: DEFAULT_DIVISION,
       budget: None,
+      budget_chips: loaders::BudgetChips::default(),
       budget_collapsed: std::collections::HashSet::new(),
       budget_dragging: None,
       budget_drop_target: None,
@@ -395,6 +407,7 @@ impl State {
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
       budget_pending_group_delete: None,
+      budget_picker: None,
       budget_range: budget::BudgetRange::default(),
       budget_selected: None,
       chart_hover: None,
@@ -485,6 +498,10 @@ impl State {
     self.budget.as_ref()
   }
 
+  pub(super) fn budget_chips(&self) -> &loaders::BudgetChips {
+    &self.budget_chips
+  }
+
   pub(super) fn budget_collapsed(&self, group_id: i64) -> bool {
     self.budget_collapsed.contains(&group_id)
   }
@@ -523,6 +540,10 @@ impl State {
 
   pub(super) fn budget_pending_group_delete(&self) -> Option<i64> {
     self.budget_pending_group_delete
+  }
+
+  pub(super) fn budget_picker(&self) -> Option<(BudgetEntryKind, i64)> {
+    self.budget_picker
   }
 
   pub(super) fn budget_range(&self) -> budget::BudgetRange {
@@ -778,6 +799,14 @@ fn load_budget(
 
 fn reload_budget(state: &State, db: &Database) -> Task<Message> {
   load_budget(db, state.active, state.budget_scope(), state.budget_month.clone())
+}
+
+fn reload_budget_chips(state: &State, db: &Database) -> Task<Message> {
+  let scope = state.budget_scope();
+  let db = db.clone();
+  Task::perform(async move { loaders::load_budget_chips(&db, scope).await }, |c| {
+    Message::BudgetChipsReloaded(Box::new(c))
+  })
 }
 
 fn reload_kind(kind: JobKind) -> bool {
@@ -1266,6 +1295,44 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.budget_editing = None;
       reload_budget(state, db)
     }
+    Message::BudgetChipAssigned(choice) => {
+      let Some((kind, entry_id)) = state.budget_picker.take() else {
+        return Task::none();
+      };
+      let scope = state.budget_scope();
+      let db = db.clone();
+      match choice {
+        Some(category_id) => Task::perform(
+          async move {
+            let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
+            loaders::load_budget_chips(&db, scope).await
+          },
+          |c| Message::BudgetChipsReloaded(Box::new(c)),
+        ),
+        None => Task::perform(
+          async move {
+            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
+            loaders::load_budget_chips(&db, scope).await
+          },
+          |c| Message::BudgetChipsReloaded(Box::new(c)),
+        ),
+      }
+    }
+    Message::BudgetChipDismissed => {
+      state.budget_picker = None;
+      Task::none()
+    }
+    Message::BudgetChipOpened(kind, id) => {
+      state.budget_picker = Some((kind, id));
+      if state.budget_chips.envelopes.is_empty() {
+        return reload_budget_chips(state, db);
+      }
+      Task::none()
+    }
+    Message::BudgetChipsReloaded(chips) => {
+      state.budget_chips = *chips;
+      Task::none()
+    }
     Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
     Message::BudgetRangeSelected(range) => {
       state.budget_range = range;
@@ -1363,6 +1430,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     Message::Loaded(loaded) => {
       let Loaded {
+        chips,
         contract_total,
         contracts,
         corp_divisions,
@@ -1377,6 +1445,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         right_rail_width,
         roster,
       } = *loaded;
+      state.budget_chips = chips;
       state.contract_total = contract_total;
       state.contracts = contracts;
       state.corp_divisions = corp_divisions;
@@ -1434,6 +1503,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.corp_divisions = Vec::new();
       state.tab_scroll_offset = 0.0;
       state.budget = None;
+      state.budget_picker = None;
       state.budget_selected = None;
       state.budget_editing = None;
       state.budget_editor = None;
@@ -1588,7 +1658,15 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     .copied()
     .unwrap_or(RIGHT_RAIL_DEFAULT_WIDTH);
 
+  let budget_scope = match scope {
+    Scope::All => crate::store::model::BudgetScope::All,
+    Scope::Character(id) => crate::store::model::BudgetScope::Character(id),
+    Scope::Corporation(id) => crate::store::model::BudgetScope::Corporation(id),
+  };
+  let chips = loaders::load_budget_chips(&db, budget_scope).await;
+
   Loaded {
+    chips,
     contract_total,
     contracts,
     corp_divisions,
@@ -2119,6 +2197,7 @@ mod tests {
 
   fn load_wallet_for_test() -> Loaded {
     Loaded {
+      chips: loaders::BudgetChips::default(),
       contract_total: 0,
       contracts: Vec::new(),
       corp_divisions: Vec::new(),
@@ -2524,6 +2603,7 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(Loaded {
+          chips: loaders::BudgetChips::default(),
           contract_total: 0,
           contracts: vec![],
           corp_divisions: vec![],
@@ -3640,6 +3720,7 @@ mod tests {
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(Loaded {
+          chips: loaders::BudgetChips::default(),
           contract_total: 0,
           contracts: vec![],
           corp_divisions: vec![],

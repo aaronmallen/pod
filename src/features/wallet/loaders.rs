@@ -10,11 +10,19 @@ use crate::{
   store::{
     Database,
     images::{self, IconResolution},
+    model::BudgetScope,
     repo::finance,
   },
 };
 
 const MARKET_ICON_SIZE: Size = Size::S64;
+
+#[derive(Clone, Debug, Default)]
+pub struct BudgetChips {
+  pub envelopes: Vec<EnvelopeGroup>,
+  pub meta: std::collections::HashMap<i64, Envelope>,
+  pub resolution: crate::features::budget::ResolutionContext,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContractEntry {
@@ -56,6 +64,19 @@ impl ContractEntry {
     }
     self.status.clone()
   }
+}
+
+#[derive(Clone, Debug)]
+pub struct Envelope {
+  pub id: i64,
+  pub name: String,
+  pub tone: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct EnvelopeGroup {
+  pub categories: Vec<Envelope>,
+  pub name: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -401,6 +422,46 @@ async fn load_location_names(db: &Database) -> HashMap<i64, String> {
     names.insert(structure.id(), structure.name().clone());
   }
   names
+}
+
+pub(super) async fn load_budget_chips(db: &Database, scope: BudgetScope) -> BudgetChips {
+  let resolution = crate::features::budget::ResolutionContext::load(db, scope).await;
+  let groups = crate::store::repo::budget::list_groups(db, scope)
+    .await
+    .unwrap_or_default();
+  let mut envelopes = Vec::new();
+  let mut meta = std::collections::HashMap::new();
+  for group in &groups {
+    let categories = crate::store::repo::budget::list_categories(db, group.id())
+      .await
+      .unwrap_or_default();
+    let mut envelope_cats: Vec<Envelope> = Vec::new();
+    for cat in &categories {
+      let envelope = Envelope {
+        id: cat.id(),
+        name: cat.name().clone(),
+        tone: cat.tone().clone(),
+      };
+      meta.insert(
+        cat.id(),
+        Envelope {
+          id: cat.id(),
+          name: cat.name().clone(),
+          tone: cat.tone().clone(),
+        },
+      );
+      envelope_cats.push(envelope);
+    }
+    envelopes.push(EnvelopeGroup {
+      categories: envelope_cats,
+      name: group.name().clone(),
+    });
+  }
+  BudgetChips {
+    envelopes,
+    meta,
+    resolution,
+  }
 }
 
 #[cfg(test)]
@@ -1108,6 +1169,33 @@ mod tests {
       let store = images::Store::new(dir.path().to_path_buf());
 
       assert_eq!(super::pending_party_ids(&store, vec![11, 22]), vec![11, 22]);
+    }
+  }
+
+  mod load_budget_chips {
+    use crate::store::{self, model::BudgetScope};
+
+    #[tokio::test]
+    async fn it_returns_empty_chips_on_an_unseeded_scope() {
+      let db = store::open_test().await.unwrap();
+
+      let chips = super::super::load_budget_chips(&db, BudgetScope::All).await;
+
+      assert!(chips.envelopes.is_empty());
+      assert!(chips.meta.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_non_empty_chips_and_meta_after_seeding() {
+      let db = store::open_test().await.unwrap();
+      crate::features::budget::seed_scope(&db, BudgetScope::All)
+        .await
+        .unwrap();
+
+      let chips = super::super::load_budget_chips(&db, BudgetScope::All).await;
+
+      assert!(!chips.envelopes.is_empty());
+      assert!(!chips.meta.is_empty());
     }
   }
 }

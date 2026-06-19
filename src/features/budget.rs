@@ -314,15 +314,16 @@ fn market_default_slug(is_buy: bool) -> &'static str {
 // Budget activity derivation (child B); consumed by the Budget Plan/Reflect UI and the per-entry
 // chip in child C. Exercised by unit tests until then.
 #[allow(dead_code)]
-struct ResolutionContext {
-  journal_overrides: HashMap<i64, i64>,
-  market_overrides: HashMap<i64, i64>,
-  ref_overrides: HashMap<String, i64>,
-  slug_to_id: HashMap<&'static str, i64>,
+#[derive(Clone, Debug, Default)]
+pub struct ResolutionContext {
+  pub journal_overrides: HashMap<i64, i64>,
+  pub market_overrides: HashMap<i64, i64>,
+  pub ref_overrides: HashMap<String, i64>,
+  pub slug_to_id: HashMap<&'static str, i64>,
 }
 
 impl ResolutionContext {
-  async fn load(db: &Database, scope: BudgetScope) -> Self {
+  pub async fn load(db: &Database, scope: BudgetScope) -> Self {
     let mut journal_overrides = HashMap::new();
     let mut market_overrides = HashMap::new();
     for assignment in crate::store::repo::budget::list_entry_assignments(db, scope)
@@ -348,7 +349,7 @@ impl ResolutionContext {
     }
   }
 
-  fn resolve(
+  pub fn resolve(
     &self,
     entry_kind: BudgetEntryKind,
     entry_id: i64,

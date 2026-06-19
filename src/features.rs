@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod auth;
+pub mod budget;
 pub mod calendar;
 pub mod character_detail;
 pub mod character_manager;

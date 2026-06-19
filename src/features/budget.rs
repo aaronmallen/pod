@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use crate::store::{
   Database, Error,
-  model::BudgetScope,
+  model::{BudgetEntryAssignment, BudgetEntryKind, BudgetScope},
   repo::{character, finance, org},
 };
 
@@ -132,6 +132,15 @@ const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
   ("jump_clone_installation_fee", "industry"),
   ("office_rental_fee", "industry"),
 ];
+
+/// Default category slug for a market transaction by side — the canonical
+/// translation of the design's `defaultBudgetCatForMarket` (a buy is working
+/// capital flowing out, a sell is income flowing in) onto the seeded slug
+/// vocabulary. A user override on the `market_transaction` ref_type or a
+/// per-entry assignment takes precedence over this default.
+const MARKET_BUY_SLUG: &str = "trading";
+
+const MARKET_SELL_SLUG: &str = "income";
 
 /// A single category's month figures, derived live.
 ///
@@ -265,6 +274,68 @@ pub fn category_for_ref_type(
   }
   let slug = default_ref_type_slugs().get(ref_type).copied()?;
   slug_to_id.get(slug).copied()
+}
+
+/// Persists a per-entry budget envelope override for a single ledger entry,
+/// lazy-seeding the scope's default budget first so an unseeded scope gains real
+/// categories before the assignment lands. Idempotent on `(scope, entry_kind,
+/// entry_id)`: reassigning the same entry replaces its category.
+// Per-entry budget assignment (child A); consumed by the Budget UI in child C. Exercised by unit
+// tests until then.
+#[allow(dead_code)]
+pub async fn assign_entry(
+  db: &Database,
+  scope: BudgetScope,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+  category_id: i64,
+) -> Result<BudgetEntryAssignment, Error> {
+  seed_scope(db, scope).await?;
+  crate::store::repo::budget::upsert_entry_assignment(db, scope, entry_kind, entry_id, category_id).await
+}
+
+fn market_default_slug(is_buy: bool) -> &'static str {
+  if is_buy { MARKET_BUY_SLUG } else { MARKET_SELL_SLUG }
+}
+
+/// Resolves a single ledger entry to its effective budget category for a scope,
+/// honoring the precedence: per-entry override → per-`ref_type` map → seed
+/// default. Journal entries resolve through their `ref_type`; market entries
+/// resolve through their side (`is_buy`), with a user override on the
+/// `market_transaction` ref_type winning over the side default. Returns `None`
+/// when nothing maps (e.g. an unseeded scope, or an unmapped `ref_type`).
+// Per-entry budget assignment (child A); consumed by the Budget derivation/UI in children B/C.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
+pub async fn resolve_entry_category(
+  db: &Database,
+  scope: BudgetScope,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+  ref_type: Option<&str>,
+  is_buy: Option<bool>,
+) -> Option<i64> {
+  let kind = entry_kind.as_str();
+  let assignments = crate::store::repo::budget::list_entry_assignments(db, scope)
+    .await
+    .unwrap_or_default();
+  if let Some(found) = assignments
+    .iter()
+    .find(|assignment| assignment.entry_kind() == kind && assignment.entry_id() == entry_id)
+  {
+    return Some(found.category_id());
+  }
+
+  let slug_to_id = slug_to_category_id(db, scope).await;
+  match entry_kind {
+    BudgetEntryKind::Journal => {
+      let overrides = ref_type_overrides(db, scope).await;
+      category_for_ref_type(ref_type?, &overrides, &slug_to_id)
+    }
+    // Market entries carry a side, not a `ref_type`, so the per-`ref_type` map
+    // tier does not apply — they resolve by side once no per-entry override exists.
+    BudgetEntryKind::Market => slug_to_id.get(market_default_slug(is_buy?)).copied(),
+  }
 }
 
 /// Aggregates signed journal `amount` by mapped category id for a set of
@@ -987,6 +1058,146 @@ mod tests {
       assert_eq!(
         budget::list_groups(&db, BudgetScope::Character(1)).await.unwrap().len(),
         SEED_GROUPS.len()
+      );
+    }
+  }
+
+  mod assign_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::budget};
+
+    #[tokio::test]
+    async fn it_lazy_seeds_an_unseeded_scope_on_first_assignment() {
+      // A fresh DB seeds a scope's categories in a deterministic order, so the
+      // income category id discovered on a probe DB is valid on a second fresh DB
+      // where `assign_entry` performs the lazy seed itself.
+      let probe = store::open_test().await.unwrap();
+      seed_scope(&probe, BudgetScope::Character(1)).await.unwrap();
+      let income_id = slug_to_category_id(&probe, BudgetScope::Character(1)).await["income"];
+
+      let db = store::open_test().await.unwrap();
+      assert!(
+        budget::list_groups(&db, BudgetScope::Character(1))
+          .await
+          .unwrap()
+          .is_empty()
+      );
+
+      let saved = assign_entry(&db, BudgetScope::Character(1), BudgetEntryKind::Journal, 5, income_id)
+        .await
+        .unwrap();
+
+      assert!(
+        !budget::list_groups(&db, BudgetScope::Character(1))
+          .await
+          .unwrap()
+          .is_empty()
+      );
+      assert_eq!(saved.category_id(), income_id);
+      assert_eq!(
+        resolve_entry_category(
+          &db,
+          BudgetScope::Character(1),
+          BudgetEntryKind::Journal,
+          5,
+          Some("manufacturing"),
+          None
+        )
+        .await,
+        Some(income_id)
+      );
+    }
+  }
+
+  mod resolve_entry_category {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::budget};
+
+    #[tokio::test]
+    async fn it_prefers_a_per_entry_override_over_the_ref_type_default() {
+      let db = store::open_test().await.unwrap();
+      let scope = BudgetScope::All;
+      seed_scope(&db, scope).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, scope).await;
+
+      // `manufacturing` defaults to the industry envelope; override entry 5 to income.
+      assign_entry(&db, scope, BudgetEntryKind::Journal, 5, slug_to_id["income"])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 5, Some("manufacturing"), None).await,
+        Some(slug_to_id["income"])
+      );
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_ref_type_map_when_there_is_no_override() {
+      let db = store::open_test().await.unwrap();
+      let scope = BudgetScope::All;
+      seed_scope(&db, scope).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, scope).await;
+
+      // `bounty_prizes` seeds to income; remap the ref_type to fees with no per-entry override.
+      budget::upsert_ref_type_map(&db, scope, "bounty_prizes", slug_to_id["fees"])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 9, Some("bounty_prizes"), None).await,
+        Some(slug_to_id["fees"])
+      );
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_seed_default() {
+      let db = store::open_test().await.unwrap();
+      let scope = BudgetScope::All;
+      seed_scope(&db, scope).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, scope).await;
+
+      assert_eq!(
+        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 1, Some("bounty_prizes"), None).await,
+        Some(slug_to_id["income"])
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resolves_a_market_entry_by_side() {
+      let db = store::open_test().await.unwrap();
+      let scope = BudgetScope::All;
+      seed_scope(&db, scope).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, scope).await;
+
+      assert_eq!(
+        resolve_entry_category(&db, scope, BudgetEntryKind::Market, 10, None, Some(true)).await,
+        Some(slug_to_id["trading"])
+      );
+      assert_eq!(
+        resolve_entry_category(&db, scope, BudgetEntryKind::Market, 11, None, Some(false)).await,
+        Some(slug_to_id["income"])
+      );
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_on_an_unseeded_scope() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(
+        resolve_entry_category(
+          &db,
+          BudgetScope::All,
+          BudgetEntryKind::Journal,
+          1,
+          Some("bounty_prizes"),
+          None
+        )
+        .await,
+        None
       );
     }
   }

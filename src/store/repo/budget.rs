@@ -1,6 +1,9 @@
 use crate::store::{
   Database, Error,
-  model::{BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetRefTypeMap, BudgetScope, BudgetTarget},
+  model::{
+    BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetEntryKind, BudgetRefTypeMap,
+    BudgetScope, BudgetTarget,
+  },
 };
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
@@ -89,6 +92,28 @@ pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
+// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
+pub async fn delete_entry_assignment(
+  db: &Database,
+  scope: BudgetScope,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+) -> Result<(), Error> {
+  sqlx::query(
+    "DELETE FROM budget_entry_assignments \
+    WHERE scope_kind = ? AND scope_id IS ? AND entry_kind = ? AND entry_id = ?",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .bind(entry_kind.as_str())
+  .bind(entry_id)
+  .execute(&db.0)
+  .await?;
+  Ok(())
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -133,6 +158,22 @@ pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetC
     FROM budget_categories WHERE group_id = ? ORDER BY position, id",
   )
   .bind(group_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
+pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetEntryAssignment>, Error> {
+  let rows = sqlx::query_as::<_, BudgetEntryAssignment>(
+    "SELECT id, scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at \
+    FROM budget_entry_assignments \
+    WHERE scope_kind = ? AND scope_id IS ? ORDER BY entry_kind, entry_id",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -267,6 +308,37 @@ pub async fn upsert_assignment(
   .bind(category_id)
   .bind(month)
   .bind(assigned)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(row)
+}
+
+// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
+pub async fn upsert_entry_assignment(
+  db: &Database,
+  scope: BudgetScope,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+  category_id: i64,
+) -> Result<BudgetEntryAssignment, Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  let row = sqlx::query_as::<_, BudgetEntryAssignment>(
+    "INSERT INTO budget_entry_assignments \
+    (scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at) \
+    VALUES (?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT(scope_kind, COALESCE(scope_id, -1), entry_kind, entry_id) \
+    DO UPDATE SET category_id = excluded.category_id, updated_at = excluded.updated_at \
+    RETURNING id, scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .bind(entry_kind.as_str())
+  .bind(entry_id)
+  .bind(category_id)
+  .bind(&now)
+  .bind(&now)
   .fetch_one(&db.0)
   .await?;
   Ok(row)
@@ -590,6 +662,101 @@ mod tests {
       assert_eq!(all[0].category_id(), all_cat.id());
       assert_eq!(pilot.len(), 1);
       assert_eq!(pilot[0].category_id(), char_cat.id());
+    }
+  }
+
+  mod upsert_entry_assignment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_and_is_idempotent_on_the_unique_key() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let first = category(&db, grp.id(), "Rent").await;
+      let second = category(&db, grp.id(), "Power").await;
+
+      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 42, first.id())
+        .await
+        .unwrap();
+      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 42, second.id())
+        .await
+        .unwrap();
+
+      let assignments = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(assignments.len(), 1);
+      assert_eq!(assignments[0].entry_kind(), "journal");
+      assert_eq!(assignments[0].entry_id(), 42);
+      assert_eq!(assignments[0].category_id(), second.id());
+    }
+
+    #[tokio::test]
+    async fn it_separates_entry_kinds_and_scopes_with_the_same_entry_id() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::Character(1), "Pilot").await;
+      let cat = category(&db, grp.id(), "Fuel").await;
+
+      upsert_entry_assignment(&db, BudgetScope::Character(1), BudgetEntryKind::Journal, 7, cat.id())
+        .await
+        .unwrap();
+      upsert_entry_assignment(&db, BudgetScope::Character(1), BudgetEntryKind::Market, 7, cat.id())
+        .await
+        .unwrap();
+
+      let assignments = list_entry_assignments(&db, BudgetScope::Character(1)).await.unwrap();
+
+      assert_eq!(
+        assignments
+          .iter()
+          .map(BudgetEntryAssignment::entry_kind)
+          .collect::<Vec<_>>(),
+        ["journal", "market"]
+      );
+      assert!(list_entry_assignments(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_cascades_when_the_category_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Market, 99, cat.id())
+        .await
+        .unwrap();
+
+      delete_category(&db, cat.id()).await.unwrap();
+
+      assert!(list_entry_assignments(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+  }
+
+  mod delete_entry_assignment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_removes_only_the_matching_assignment() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 1, cat.id())
+        .await
+        .unwrap();
+      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 2, cat.id())
+        .await
+        .unwrap();
+
+      delete_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 1)
+        .await
+        .unwrap();
+
+      let remaining = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].entry_id(), 2);
     }
   }
 }

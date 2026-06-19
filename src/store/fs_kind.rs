@@ -1,5 +1,8 @@
 use std::path::Path;
 
+// Only the macOS detect path (and the unit tests) classify by fstype name; gate to those configs so the Linux
+// non-test build, which classifies by magic number instead, does not see this as dead code.
+#[cfg(any(target_os = "macos", test))]
 const NETWORK_FSTYPE_NAMES: [&str; 5] = ["afpfs", "nfs", "smbfs", "webdav", "cifs"];
 
 #[cfg(target_os = "linux")]
@@ -23,6 +26,7 @@ impl FsKind {
   }
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn classify_fstype_name(name: &str) -> FsKind {
   let name = name.trim().to_ascii_lowercase();
   if NETWORK_FSTYPE_NAMES

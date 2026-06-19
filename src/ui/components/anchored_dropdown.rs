@@ -30,6 +30,7 @@ pub struct AnchoredDropdown<'a, Message, Theme, Renderer> {
   underlay: Element<'a, Message, Theme, Renderer>,
   popover: Option<Element<'a, Message, Theme, Renderer>>,
   on_dismiss: Option<Message>,
+  popover_width: Option<f32>,
 }
 
 impl<'a, Message, Theme, Renderer> AnchoredDropdown<'a, Message, Theme, Renderer>
@@ -45,12 +46,21 @@ where
       underlay: underlay.into(),
       popover,
       on_dismiss: None,
+      popover_width: None,
     }
   }
 
   /// Sets the message emitted when the user clicks outside the open popover.
   pub fn on_dismiss(mut self, message: Message) -> Self {
     self.on_dismiss = Some(message);
+    self
+  }
+
+  /// Overrides the popover's width. By default the popover is width-matched to
+  /// the trigger (the combobox/menu convention); set this when the popover's
+  /// content needs more room than a narrow trigger affords.
+  pub fn popover_width(mut self, width: f32) -> Self {
+    self.popover_width = Some(width);
     self
   }
 }
@@ -177,6 +187,7 @@ where
       bounds: layout.bounds() + translation,
       viewport: *viewport,
       on_dismiss: self.on_dismiss.clone(),
+      width: self.popover_width,
     })))
   }
 }
@@ -188,6 +199,8 @@ struct DropdownOverlay<'a, 'b, Message, Theme, Renderer> {
   bounds: Rectangle,
   viewport: Rectangle,
   on_dismiss: Option<Message>,
+  /// Explicit popover width; falls back to the trigger width when `None`.
+  width: Option<f32>,
 }
 
 impl<Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
@@ -203,8 +216,8 @@ where
     let flip_up = space_below < space_above && space_below < self.bounds.height;
 
     let max_height = if flip_up { space_above } else { space_below }.max(0.0);
-    let limits = Limits::new(Size::ZERO, Size::new(self.bounds.width, max_height.max(1.0)))
-      .width(Length::Fixed(self.bounds.width));
+    let width = self.width.unwrap_or(self.bounds.width).min(bounds.width).max(1.0);
+    let limits = Limits::new(Size::ZERO, Size::new(width, max_height.max(1.0))).width(Length::Fixed(width));
 
     let node = self.popover.as_widget_mut().layout(self.tree, renderer, &limits);
     let size = node.size();

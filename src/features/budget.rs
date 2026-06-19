@@ -303,6 +303,9 @@ pub async fn assign_entry(
   crate::store::repo::budget::upsert_entry_assignment(db, scope, entry_kind, entry_id, category_id).await
 }
 
+// Dormant auto-categorization helper: the v1 derivation is manual-only, so this
+// feeds only the (test-exercised) `ResolutionContext::resolve` fallback path.
+#[allow(dead_code)]
 fn market_default_slug(is_buy: bool) -> &'static str {
   if is_buy { MARKET_BUY_SLUG } else { MARKET_SELL_SLUG }
 }
@@ -349,6 +352,17 @@ impl ResolutionContext {
     }
   }
 
+  pub fn override_for(&self, entry_kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
+    match entry_kind {
+      BudgetEntryKind::Journal => self.journal_overrides.get(&entry_id).copied(),
+      BudgetEntryKind::Market => self.market_overrides.get(&entry_id).copied(),
+    }
+  }
+
+  // Dormant auto-categorization path. The v1 derivation and chip are manual-only
+  // (they use `override_for`); this full-precedence resolver is retained, and
+  // exercised by unit tests, for a future opt-in auto-assign mode.
+  #[allow(dead_code)]
   pub fn resolve(
     &self,
     entry_kind: BudgetEntryKind,
@@ -632,11 +646,11 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
 
 /// Aggregates a scope's signed activity by category for a single UTC calendar
 /// `month` (`YYYY-MM`), unioning every in-scope character and covered
-/// corp-division journal with the matching wallet transactions. Each entry
-/// resolves through the precedence per-entry override → `ref_type` map → seed
-/// default; market trades are counted from the transaction source (by side),
-/// and their journal twins are de-duplicated away so a trade is counted once.
-/// Unmapped flows are dropped.
+/// corp-division journal with the matching wallet transactions. v1 is fully
+/// manual: only entries carrying an explicit per-entry override contribute to a
+/// category; everything else stays in Ready-to-Assign. Market trades are counted
+/// from the transaction source, and their journal twins are de-duplicated away
+/// so an assigned trade is counted once.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
 #[allow(dead_code)]
@@ -709,15 +723,17 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
     .filter(|row| !is_market_twin(row, &ingested))
     .map(|row| (row.id, row.ref_type.as_str(), row.amount));
 
-  let mut by_category = aggregate_activity(journal_in_month, |id, ref_type| {
-    context.resolve(BudgetEntryKind::Journal, id, Some(ref_type), None)
+  // v1 is fully manual: only entries the user has explicitly assigned (a per-entry
+  // override) contribute to a category. Everything else stays in Ready-to-Assign.
+  let mut by_category = aggregate_activity(journal_in_month, |id, _ref_type| {
+    context.override_for(BudgetEntryKind::Journal, id)
   });
 
   for tx in &transactions {
     if month_key(&tx.date).as_deref() != Some(month) {
       continue;
     }
-    if let Some(category_id) = context.resolve(BudgetEntryKind::Market, tx.transaction_id, None, Some(tx.is_buy)) {
+    if let Some(category_id) = context.override_for(BudgetEntryKind::Market, tx.transaction_id) {
       *by_category.entry(category_id).or_insert(0.0) += tx.amount;
     }
   }
@@ -837,19 +853,24 @@ async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, 
 // Budget reporting history (B4); consumed by the Budget Reflect UI. Exercised by unit tests.
 #[allow(dead_code)]
 pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, months: usize) -> Vec<MonthFlow> {
-  let ages = fifo_ages_by_month(
-    scope_journal_flows(db, scope)
-      .await
-      .iter()
-      .map(|(d, a)| (d.as_str(), *a)),
-  );
+  // income/spend are raw monthly cashflow (every journal movement), independent
+  // of envelope assignment — the Reflect trend tracks money in/out, not budgeting.
+  let flows = scope_journal_flows(db, scope).await;
+  let ages = fifo_ages_by_month(flows.iter().map(|(d, a)| (d.as_str(), *a)));
 
   let mut out: Vec<MonthFlow> = Vec::with_capacity(months);
   for step in (0..months as i32).rev() {
     let key = shift_month_key(month, -step);
-    let activity = monthly_activity(db, scope, &key).await;
-    let income = activity.values().filter(|&&v| v > 0.0).sum::<f64>();
-    let spend = activity.values().filter(|&&v| v < 0.0).map(|v| -v).sum::<f64>();
+    let income = flows
+      .iter()
+      .filter(|(date, a)| *a > 0.0 && month_key(date.as_str()).as_deref() == Some(&key))
+      .map(|(_, a)| *a)
+      .sum::<f64>();
+    let spend = flows
+      .iter()
+      .filter(|(date, a)| *a < 0.0 && month_key(date.as_str()).as_deref() == Some(&key))
+      .map(|(_, a)| -*a)
+      .sum::<f64>();
     let assigned = month_assigned(db, scope, &key).await;
     out.push(MonthFlow {
       age: ages.get(&key).copied().unwrap_or(0.0),
@@ -1374,7 +1395,7 @@ mod tests {
         Alliance, Bloodline, Character, CharacterWalletTransaction, Corporation, CorporationWalletJournal,
         CorporationWalletTransaction, Gender, Race,
       },
-      repo::{budget, character::insert_with_org, finance},
+      repo::{character::insert_with_org, finance},
     };
 
     async fn seed_character(db: &Database, id: i64) {
@@ -1457,43 +1478,104 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_sums_journal_amounts_by_mapped_category_for_the_month() {
+    async fn it_counts_only_assigned_journal_entries() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
       finance::append_wallet_journal(
         &db,
         &[
           journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
-          journal(2, 1, "bounty_prizes", 500.0, "2026-06-20T00:00:00Z"),
-          journal(3, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-          // Out of the month — must be excluded.
-          journal(4, 1, "bounty_prizes", 9_999.0, "2026-05-31T23:59:59Z"),
+          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
+          // Unassigned — stays in Ready-to-Assign, never counted.
+          journal(3, 1, "bounty_prizes", 500.0, "2026-06-20T00:00:00Z"),
         ],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetEntryKind::Journal,
+        2,
+        slug_to_id["fees"],
       )
       .await
       .unwrap();
 
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
 
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_500.0));
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
       assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-120.0));
+      assert_eq!(activity.len(), 2);
     }
 
     #[tokio::test]
-    async fn it_lets_a_user_override_reroute_a_ref_type() {
+    async fn it_does_not_count_unassigned_entries() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+
+      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert!(activity.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_excludes_an_assigned_entry_outside_the_month() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      // Re-route bounties from income to the trading category.
-      budget::upsert_ref_type_map(&db, BudgetScope::Character(1), "bounty_prizes", slug_to_id["trading"])
+      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 9_999.0, "2026-05-31T23:59:59Z")])
         .await
         .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+
+      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert!(activity.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_assigns_a_journal_entry_to_a_category() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
       finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
         .await
         .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["trading"],
+      )
+      .await
+      .unwrap();
 
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
@@ -1502,7 +1584,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_includes_corp_division_journals_for_a_corp_scope() {
+    async fn it_counts_assigned_corp_division_journals_for_a_corp_scope() {
       let db = store::open_test().await.unwrap();
       let corp_id = 98_000_001;
       let mut corp = Corporation::new(corp_id, "Test Corp", "TSTC");
@@ -1545,55 +1627,52 @@ mod tests {
       )
       .await
       .unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
+      assign_entry(
+        &db,
+        BudgetScope::Corporation(corp_id),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["tithe"],
+      )
+      .await
+      .unwrap();
 
       let activity = monthly_activity(&db, BudgetScope::Corporation(corp_id), "2026-06").await;
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
 
       assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
     }
 
     #[tokio::test]
-    async fn it_lets_a_per_entry_override_win_over_the_ref_type_default() {
+    async fn it_counts_an_assigned_market_trade_once() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
-        .await
-        .unwrap();
-      // Bounties default to income; pin this one entry to trading.
-      assign_entry(
-        &db,
-        BudgetScope::Character(1),
-        BudgetEntryKind::Journal,
-        1,
-        slug_to_id["trading"],
-      )
-      .await
-      .unwrap();
-
-      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
-
-      assert_eq!(activity.get(&slug_to_id["income"]), None);
-      assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
-    }
-
-    #[tokio::test]
-    async fn it_counts_a_market_trade_once_and_keeps_its_fees() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 1).await;
-      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      // A sale: a transaction row, its journal twin, and a separate broker fee.
+      // A sale: a transaction row plus its journal twin. Assigning the transaction
+      // counts the trade once; the twin is suppressed so it cannot double-count.
       finance::append_wallet_transaction(&db, &[transaction(500, 1, false, 100.0, 10, "2026-06-05T00:00:00Z")])
         .await
         .unwrap();
       finance::append_wallet_journal(
         &db,
-        &[
-          linked_journal(10, 1, "market_transaction", 1_000.0, 500, "2026-06-05T00:00:00Z"),
-          linked_journal(11, 1, "brokers_fee", -50.0, 500, "2026-06-05T00:00:00Z"),
-        ],
+        &[linked_journal(
+          10,
+          1,
+          "market_transaction",
+          1_000.0,
+          500,
+          "2026-06-05T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetEntryKind::Market,
+        500,
+        slug_to_id["income"],
       )
       .await
       .unwrap();
@@ -1601,17 +1680,16 @@ mod tests {
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
       assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-50.0));
-      assert_eq!(activity.get(&slug_to_id["trading"]), None);
+      assert_eq!(activity.len(), 1);
     }
 
     #[tokio::test]
-    async fn it_lets_a_per_entry_override_win_for_a_market_trade() {
+    async fn it_assigns_a_market_trade_to_a_category() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      // A buy defaults to trading; pin this trade to fees.
+      // A buy spends, so its signed amount is negative.
       finance::append_wallet_transaction(&db, &[transaction(600, 1, true, 100.0, 5, "2026-06-07T00:00:00Z")])
         .await
         .unwrap();
@@ -1628,11 +1706,10 @@ mod tests {
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
       assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-500.0));
-      assert_eq!(activity.get(&slug_to_id["trading"]), None);
     }
 
     #[tokio::test]
-    async fn it_ingests_corp_transactions_and_dedups_the_journal_twin() {
+    async fn it_counts_an_assigned_corp_transaction_once() {
       let db = store::open_test().await.unwrap();
       let corp_id = 98_000_002;
       let mut corp = Corporation::new(corp_id, "Trade Corp", "TRDC");
@@ -1693,12 +1770,21 @@ mod tests {
       )
       .await
       .unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
+      assign_entry(
+        &db,
+        BudgetScope::Corporation(corp_id),
+        BudgetEntryKind::Market,
+        700,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
 
       let activity = monthly_activity(&db, BudgetScope::Corporation(corp_id), "2026-06").await;
-      let slug_to_id = slug_to_category_id(&db, BudgetScope::Corporation(corp_id)).await;
 
       assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
-      assert_eq!(activity.get(&slug_to_id["trading"]), None);
+      assert_eq!(activity.len(), 1);
     }
   }
 

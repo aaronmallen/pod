@@ -40,6 +40,8 @@ use crate::{
   },
 };
 
+const BUDGET_CHIP_RADIUS: f32 = 11.0;
+const BUDGET_DOT_SIZE: f32 = 7.0;
 const MARKET_ICON_BOX: f32 = 28.0;
 const ROW_AVATAR: f32 = 22.0;
 
@@ -391,16 +393,10 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   row_shell(vec![
     GlyphBadge::new(glyph, is_in).render(),
     journal_left_col(entry),
+    container(budget_chip(state, BudgetEntryKind::Journal, entry.id))
+      .width(Length::Fixed(170.0))
+      .into(),
     journal_character_col(state, entry.character_id),
-    container(budget_chip(
-      state,
-      BudgetEntryKind::Journal,
-      entry.id,
-      Some(&entry.ref_type),
-      None,
-    ))
-    .width(Length::Fixed(170.0))
-    .into(),
     journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
   ])
 }
@@ -483,15 +479,9 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   row_shell(vec![
     side_badge(side_label, side_color, Length::FillPortion(1)),
     item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
-    container(budget_chip(
-      state,
-      BudgetEntryKind::Market,
-      entry.transaction_id,
-      None,
-      Some(entry.is_buy),
-    ))
-    .width(Length::FillPortion(2))
-    .into(),
+    container(budget_chip(state, BudgetEntryKind::Market, entry.transaction_id))
+      .width(Length::FillPortion(2))
+      .into(),
     mono_cell(
       &entry.quantity.to_string(),
       Length::FillPortion(1),
@@ -525,32 +515,47 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   ])
 }
 
-/// Renders the per-entry envelope chip and opens an [`AnchoredDropdown`] picker on press.
-///
-/// Envelope resolution checks a scope-keyed override table first, then falls back to the
-/// entry's default assignment; when nothing resolves the label shows "Ready to Assign".
-fn budget_chip<'a>(
-  state: &'a State,
-  kind: BudgetEntryKind,
-  entry_id: i64,
-  ref_type: Option<&'a str>,
-  is_buy: Option<bool>,
-) -> Element<'a, Message> {
+/// Renders the per-entry envelope chip — a tone dot, the assigned category name
+/// (or "Ready to Assign" when unassigned), and a caret — opening the reassign
+/// picker on press. Only an explicit per-entry override shows a category;
+/// nothing is auto-assigned.
+fn budget_chip<'a>(state: &'a State, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
-  let resolved_id = chips.resolution.resolve(kind, entry_id, ref_type, is_buy);
-  let envelope = resolved_id.and_then(|id| chips.meta.get(&id));
+  let assigned = chips.resolution.override_for(kind, entry_id);
+  let envelope = assigned.and_then(|id| chips.meta.get(&id));
   let label = envelope.map_or("Ready to Assign", |e| e.name.as_str());
-  let tint = envelope.map_or(color::accent::PLASMA, |e| super::budget::tone_color(e.tone.as_deref()));
+  let dot_color = envelope.map_or(color::accent::PLASMA, |e| super::budget::tone_color(e.tone.as_deref()));
 
   let open = state.budget_picker() == Some((kind, entry_id));
 
+  let dot = container(Space::new())
+    .width(Length::Fixed(BUDGET_DOT_SIZE))
+    .height(Length::Fixed(BUDGET_DOT_SIZE))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(dot_color)),
+      border: Border {
+        radius: (BUDGET_DOT_SIZE / 2.0).into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+
   let trigger = button(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(move |_| text::Style {
-        color: Some(tint),
-      }),
+    Row::with_children(vec![
+      dot.into(),
+      text(label.to_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      text("\u{25BE}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    ])
+    .spacing(spacing::UNIT + 2.0)
+    .align_y(Vertical::Center),
   )
   .padding(Padding {
     top: 3.0,
@@ -558,15 +563,25 @@ fn budget_chip<'a>(
     bottom: 3.0,
     left: spacing::SPACE_2,
   })
-  .style(move |_, _status| iced::widget::button::Style {
-    background: Some(Background::Color(color::with_alpha(tint, 0.12))),
-    border: Border {
-      color: color::with_alpha(tint, 0.3),
-      width: 1.0,
-      radius: radius::SUBTLE.into(),
-    },
-    text_color: tint,
-    ..iced::widget::button::Style::default()
+  .style(|_, status| {
+    let active = matches!(
+      status,
+      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    );
+    iced::widget::button::Style {
+      background: Some(Background::Color(if active {
+        color::with_alpha(color::text::PRIMARY, 0.05)
+      } else {
+        iced::Color::TRANSPARENT
+      })),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: BUDGET_CHIP_RADIUS.into(),
+      },
+      text_color: color::text::secondary(),
+      ..iced::widget::button::Style::default()
+    }
   })
   .on_press(if open {
     Message::BudgetChipDismissed
@@ -574,15 +589,32 @@ fn budget_chip<'a>(
     Message::BudgetChipOpened(kind, entry_id)
   });
 
-  let popover = if open {
-    Some(budget_picker_popover(state, resolved_id))
-  } else {
-    None
-  };
+  let popover = open.then(|| budget_picker_popover(state, assigned));
 
   AnchoredDropdown::new(trigger, popover)
     .on_dismiss(Message::BudgetChipDismissed)
+    .popover_width(budget_picker_width(chips))
     .into()
+}
+
+/// Approximates the widest picker row so the popover fits its envelope names
+/// rather than the narrow chip trigger: a glyph dot, the longest label, a
+/// checkmark, and the row/container padding, capped to a sane band.
+fn budget_picker_width(chips: &super::loaders::BudgetChips) -> f32 {
+  const CHAR_WIDTH: f32 = 7.5;
+  const CHROME: f32 = 72.0;
+
+  let longest = chips
+    .envelopes
+    .iter()
+    .flat_map(|group| {
+      std::iter::once(group.name.chars().count()).chain(group.categories.iter().map(|cat| cat.name.chars().count()))
+    })
+    .chain(std::iter::once("Ready to Assign".chars().count()))
+    .max()
+    .unwrap_or(0);
+
+  (CHROME + longest as f32 * CHAR_WIDTH).clamp(220.0, 360.0)
 }
 
 fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<'a, Message> {

@@ -89,6 +89,13 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     return forbidden::forbidden(Feature::Wallet.noun(), name, &missing, Message::ReauthRequested(id));
   }
 
+  if state.tab == Tab::Budget {
+    return Column::with_children(vec![tabs(state), super::budget_view::surface(state)])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into();
+  }
+
   let panes = Row::with_children(vec![
     center(state, now),
     pane_handle(Message::RailDragStart),
@@ -131,7 +138,7 @@ fn pinned_header<'a>(state: &State) -> Option<Element<'a, Message>> {
   match state.tab {
     Tab::Market => Some(market_header()),
     Tab::Contracts => Some(contract_header()),
-    Tab::Journal => None,
+    Tab::Budget | Tab::Journal => None,
   }
 }
 
@@ -206,9 +213,10 @@ fn tabs(state: &State) -> Element<'_, Message> {
   let market_count = state.market_total;
   let contract_count = state.contract_total;
   let items = [
-    (Tab::Market, "Transactions", market_count),
-    (Tab::Contracts, "Contracts", contract_count),
-    (Tab::Journal, "Journal", journal_count),
+    (Tab::Market, "Transactions", Some(market_count)),
+    (Tab::Contracts, "Contracts", Some(contract_count)),
+    (Tab::Journal, "Journal", Some(journal_count)),
+    (Tab::Budget, "Budget", None),
   ];
 
   let tabs = items
@@ -216,7 +224,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
     .map(|(tab, label, count)| {
       let selected = state.tab == tab;
       tab_select::Tab {
-        count: count.to_string(),
+        count: count.map(|count| count.to_string()).unwrap_or_default(),
         icon: Some(tab_icon(tab)),
         label,
         on_press: (!selected).then_some(Message::TabSelected(tab)),
@@ -240,6 +248,7 @@ fn tabs(state: &State) -> Element<'_, Message> {
 
 fn tab_icon(tab: Tab) -> Icon {
   match tab {
+    Tab::Budget => Icon::budget(),
     Tab::Contracts => Icon::contracts(),
     Tab::Journal => Icon::journal(),
     Tab::Market => Icon::market(),
@@ -324,6 +333,9 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     Tab::Journal => journal_table(state, now),
     Tab::Market => market_table(state, now),
     Tab::Contracts => contracts_table(state, now),
+    // The Budget tab takes the dedicated surface path in `body`; this arm is
+    // unreachable from `center` but keeps the match exhaustive.
+    Tab::Budget => empty_ledger("Budget"),
   }
 }
 

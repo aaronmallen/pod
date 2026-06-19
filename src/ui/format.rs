@@ -165,6 +165,36 @@ pub fn fmt_volume(volume: f64) -> String {
   }
 }
 
+/// Parses a friendly ISK string into a rounded ISK amount.
+///
+/// Accepts a trailing magnitude suffix (`k`/`m`/`b`/`t`, case-insensitive),
+/// strips grouping separators (commas, spaces, underscores, and the narrow
+/// no-break space EVE uses), and rounds to a whole number. Empty, blank, or
+/// otherwise non-numeric input yields `0.0`. Mirrors the design's `parseIsk`.
+pub fn parse_isk(input: &str) -> f64 {
+  let lowered = input.trim().to_lowercase();
+  let stripped: String = lowered
+    .chars()
+    .filter(|ch| !matches!(ch, ',' | ' ' | '_' | '\u{202f}'))
+    .collect();
+  if stripped.is_empty() || stripped == "-" {
+    return 0.0;
+  }
+
+  let (number, multiplier) = match stripped.chars().last() {
+    Some('t') => (&stripped[..stripped.len() - 1], 1e12),
+    Some('b') => (&stripped[..stripped.len() - 1], 1e9),
+    Some('m') => (&stripped[..stripped.len() - 1], 1e6),
+    Some('k') => (&stripped[..stripped.len() - 1], 1e3),
+    _ => (stripped.as_str(), 1.0),
+  };
+
+  match number.parse::<f64>() {
+    Ok(value) if value.is_finite() => (value * multiplier).round(),
+    _ => 0.0,
+  }
+}
+
 pub fn skill_label(name: Option<&str>, skill_id: i64) -> String {
   match name {
     Some(name) => name.to_owned(),
@@ -445,6 +475,65 @@ mod tests {
     #[test]
     fn it_scales_to_mega_cubic_metres() {
       assert_eq!(fmt_volume(2_500_000.0), "2.5Mm\u{b3}");
+    }
+  }
+
+  mod parse_isk {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_a_thousands_suffix() {
+      assert_eq!(parse_isk("250k"), 250_000.0);
+      assert_eq!(parse_isk("1.5K"), 1_500.0);
+    }
+
+    #[test]
+    fn it_parses_a_millions_suffix() {
+      assert_eq!(parse_isk("250m"), 250_000_000.0);
+      assert_eq!(parse_isk("42M"), 42_000_000.0);
+    }
+
+    #[test]
+    fn it_parses_a_billions_suffix() {
+      assert_eq!(parse_isk("3.46B"), 3_460_000_000.0);
+      assert_eq!(parse_isk("2.1b"), 2_100_000_000.0);
+    }
+
+    #[test]
+    fn it_parses_a_trillions_suffix() {
+      assert_eq!(parse_isk("1.2t"), 1_200_000_000_000.0);
+      assert_eq!(parse_isk("3T"), 3_000_000_000_000.0);
+    }
+
+    #[test]
+    fn it_strips_grouping_separators() {
+      assert_eq!(parse_isk("1,200,000"), 1_200_000.0);
+      assert_eq!(parse_isk("1 200 000"), 1_200_000.0);
+      assert_eq!(parse_isk("1_200_000"), 1_200_000.0);
+      assert_eq!(parse_isk("12\u{202f}500"), 12_500.0);
+    }
+
+    #[test]
+    fn it_parses_a_bare_number() {
+      assert_eq!(parse_isk("250"), 250.0);
+      assert_eq!(parse_isk("  4200  "), 4_200.0);
+    }
+
+    #[test]
+    fn it_rounds_to_a_whole_number() {
+      assert_eq!(parse_isk("3.466b"), 3_466_000_000.0);
+      assert_eq!(parse_isk("1.4"), 1.0);
+    }
+
+    #[test]
+    fn it_returns_zero_for_empty_or_invalid_input() {
+      assert_eq!(parse_isk(""), 0.0);
+      assert_eq!(parse_isk("   "), 0.0);
+      assert_eq!(parse_isk("-"), 0.0);
+      assert_eq!(parse_isk("abc"), 0.0);
+      assert_eq!(parse_isk("12.3.4"), 0.0);
     }
   }
 

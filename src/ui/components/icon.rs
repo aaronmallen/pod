@@ -31,6 +31,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/bold.svg"))
   }
 
+  pub fn budget() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/budget.svg"))
+  }
+
   pub fn calendar() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/calendar.svg"))
   }

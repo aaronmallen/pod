@@ -1,0 +1,1720 @@
+use iced::{
+  Background, Border, Color, Element, Length, Padding,
+  alignment::{Horizontal, Vertical},
+  widget::{Column, Row, Space, button, container, scrollable, text, text_input},
+};
+
+use super::{
+  Message, State,
+  budget::{self, Category, CategoryDraft, Group, Mode, TargetKind, TargetState},
+};
+use crate::ui::{
+  components::icon::Icon,
+  style::{color, spacing, typography},
+};
+
+const ASSIGNED_COL: f32 = 152.0;
+const ACTIVITY_COL: f32 = 146.0;
+const AVAILABLE_COL: f32 = 172.0;
+const DOT_COL: f32 = 28.0;
+const INSPECTOR_WIDTH: f32 = 300.0;
+const SIDE_PADDING: f32 = 28.0;
+
+pub(super) fn surface(state: &State) -> Element<'_, Message> {
+  let mut children: Vec<Element<'_, Message>> = vec![sub_nav(state)];
+
+  if state.budget_mode() == Mode::Reflect {
+    children.push(reflect_placeholder());
+  } else {
+    children.push(toolbar(state));
+    children.push(plan_body(state));
+  }
+
+  Column::with_children(children)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+// ── Sub-nav: Plan / Reflect + Edit toggle ──────────────────────
+fn sub_nav(state: &State) -> Element<'_, Message> {
+  let mode = state.budget_mode();
+  let toggle = Row::with_children(vec![
+    mode_button("Plan", mode == Mode::Plan, Mode::Plan, true),
+    mode_button("Reflect", mode == Mode::Reflect, Mode::Reflect, false),
+  ])
+  .into();
+
+  let blurb = match mode {
+    Mode::Plan => "Give every ISK a job",
+    Mode::Reflect => "Look back at where it went",
+  };
+
+  let mut row: Vec<Element<'_, Message>> = vec![
+    bordered(toggle),
+    mono_caption(blurb, color::text::tertiary(), typography::size::XS_PLUS),
+    Space::new().width(Length::Fill).into(),
+  ];
+  if mode == Mode::Plan {
+    row.push(edit_toggle(state.budget_edit_mode()));
+  }
+
+  container(
+    Row::with_children(row)
+      .spacing(spacing::SPACE_3_5)
+      .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3,
+    right: SIDE_PADDING,
+    bottom: spacing::SPACE_3,
+    left: SIDE_PADDING,
+  })
+  .style(crate::ui::style::control::bordered_pane)
+  .into()
+}
+
+fn mode_button<'a>(label: &'a str, active: bool, mode: Mode, leading: bool) -> Element<'a, Message> {
+  let text_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let background = if active {
+    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+  } else {
+    Background::Color(Color::TRANSPARENT)
+  };
+  let border = Border {
+    color: color::rule(),
+    width: if leading { 1.0 } else { 0.0 },
+    radius: 0.0.into(),
+  };
+
+  button(
+    text(label.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(text_color)),
+  )
+  .padding(Padding {
+    top: 7.0,
+    right: 18.0,
+    bottom: 7.0,
+    left: 18.0,
+  })
+  .on_press_maybe((!active).then_some(Message::BudgetModeSelected(mode)))
+  .style(move |_, _| button::Style {
+    background: Some(background),
+    border: Border {
+      color: color::rule(),
+      width: 0.0,
+      ..border
+    },
+    text_color,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn edit_toggle<'a>(edit_mode: bool) -> Element<'a, Message> {
+  let label = if edit_mode { "Done editing" } else { "Edit budget" };
+  let text_color = if edit_mode {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let background = if edit_mode {
+    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+  } else {
+    Background::Color(Color::TRANSPARENT)
+  };
+  let border_color = if edit_mode {
+    color::accent::PLASMA
+  } else {
+    color::rule()
+  };
+
+  button(
+    text(label.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(text_color)),
+  )
+  .padding(Padding {
+    top: 7.0,
+    right: spacing::SPACE_3_5,
+    bottom: 7.0,
+    left: spacing::SPACE_3_5,
+  })
+  .on_press(Message::BudgetEditToggled)
+  .style(move |_, _| button::Style {
+    background: Some(background),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: spacing::SPACE_2.into(),
+    },
+    text_color,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn bordered<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+  container(content)
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: spacing::SPACE_2.into(),
+      },
+      ..container::Style::default()
+    })
+    .clip(true)
+    .into()
+}
+
+fn reflect_placeholder<'a>() -> Element<'a, Message> {
+  container(
+    text("Reflect reporting arrives in a later build.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .padding(spacing::SPACE_6)
+  .into()
+}
+
+// ── Toolbar: month nav + Ready to Assign + overspending ─────────
+fn toolbar(state: &State) -> Element<'_, Message> {
+  let view = state.budget();
+  let ready = view.map_or(0.0, |v| v.ready_to_assign);
+  let overspent = view.map_or(0.0, |v| v.overspent);
+
+  let mut row: Vec<Element<'_, Message>> = vec![month_nav(state), ready_hero(ready)];
+  if overspent < 0.0 {
+    row.push(overspent_button(overspent));
+  }
+
+  container(
+    Row::with_children(row)
+      .spacing(16.0)
+      .align_y(Vertical::Center)
+      .height(Length::Shrink),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 16.0,
+    right: SIDE_PADDING,
+    bottom: 16.0,
+    left: SIDE_PADDING,
+  })
+  .style(crate::ui::style::control::bordered_pane)
+  .into()
+}
+
+fn month_nav(state: &State) -> Element<'_, Message> {
+  let label = budget::month_label(state.budget_month());
+
+  let center = Column::with_children(vec![
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text("This month")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .align_x(Horizontal::Center)
+  .spacing(spacing::UNIT / 2.0);
+
+  let row = Row::with_children(vec![
+    nav_arrow(Icon::chevron_left(), -1),
+    container(center)
+      .padding(Padding {
+        top: spacing::UNIT,
+        right: spacing::SPACE_3_5,
+        bottom: spacing::UNIT,
+        left: spacing::SPACE_3_5,
+      })
+      .into(),
+    nav_arrow(Icon::chevron_right(), 1),
+  ])
+  .align_y(Vertical::Center);
+
+  container(row)
+    .padding(spacing::UNIT)
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: spacing::SPACE_2.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn nav_arrow<'a>(icon: Icon, delta: i32) -> Element<'a, Message> {
+  button(icon.size(16.0).color(color::text::secondary()).render())
+    .padding(Padding {
+      top: 6.0,
+      right: 7.0,
+      bottom: 6.0,
+      left: 7.0,
+    })
+    .on_press(Message::BudgetMonthStepped(delta))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn ready_hero<'a>(ready: f64) -> Element<'a, Message> {
+  let zero = ready.abs() < 1.0;
+  let positive = ready > 0.0;
+  let (value_color, fill_alpha, border_color, message) = if zero {
+    (
+      color::status::ONLINE,
+      color::with_alpha(color::status::ONLINE, 0.10),
+      color::with_alpha(color::status::ONLINE, 0.3),
+      "Every ISK has a job. Nothing left idle.",
+    )
+  } else if positive {
+    (
+      color::accent::PLASMA,
+      color::with_alpha(color::accent::PLASMA, 0.10),
+      color::with_alpha(color::accent::PLASMA, 0.3),
+      "Idle ISK earns nothing. Give it a job.",
+    )
+  } else {
+    (
+      color::status::DANGER,
+      color::with_alpha(color::status::DANGER, 0.12),
+      color::with_alpha(color::status::DANGER, 0.35),
+      "You\u{2019}ve assigned more than you hold. Pull some back.",
+    )
+  };
+
+  let amount = Row::with_children(vec![
+    text(crate::ui::format::fmt_isk_full(ready))
+      .font(typography::body::MEDIUM)
+      .size(30.0)
+      .style(typography::colored(value_color))
+      .into(),
+    text(" ISK")
+      .font(typography::body::MEDIUM)
+      .size(16.0)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .align_y(Vertical::Bottom);
+
+  let left = Column::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text("Ready to Assign", None).into(),
+    amount.into(),
+  ])
+  .spacing(spacing::UNIT);
+
+  let mut row: Vec<Element<'a, Message>> = vec![
+    left.into(),
+    Space::new().width(Length::Fill).into(),
+    hero_message(message),
+  ];
+  if positive && !zero {
+    row.push(auto_assign_button());
+  }
+
+  container(Row::with_children(row).spacing(18.0).align_y(Vertical::Center))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: 20.0,
+      bottom: spacing::SPACE_3,
+      left: 20.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(fill_alpha)),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: 10.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn hero_message<'a>(message: &'a str) -> Element<'a, Message> {
+  container(
+    text(message.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .max_width(240.0)
+  .into()
+}
+
+fn auto_assign_button<'a>() -> Element<'a, Message> {
+  button(
+    text("Auto-Assign")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::on_fill(color::accent::PLASMA))),
+  )
+  .padding(Padding {
+    top: 9.0,
+    right: 16.0,
+    bottom: 9.0,
+    left: 16.0,
+  })
+  .on_press(Message::BudgetAutoAssign)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(color::accent::PLASMA)),
+    border: Border {
+      radius: spacing::SPACE_2.into(),
+      ..Border::default()
+    },
+    text_color: color::on_fill(color::accent::PLASMA),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn overspent_button<'a>(overspent: f64) -> Element<'a, Message> {
+  let body = Column::with_children(vec![
+    text("Overspent")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::status::DANGER))
+      .into(),
+    text(crate::ui::format::fmt_isk(overspent))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::status::DANGER))
+      .into(),
+    text("Click to cover")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::UNIT - 1.0);
+
+  button(body)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: 18.0,
+      bottom: spacing::SPACE_2,
+      left: 18.0,
+    })
+    .on_press(Message::BudgetCoverOverspending)
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::DANGER, 0.10))),
+      border: Border {
+        color: color::with_alpha(color::status::DANGER, 0.35),
+        width: 1.0,
+        radius: 10.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+// ── Plan body: envelope table + inspector ───────────────────────
+fn plan_body(state: &State) -> Element<'_, Message> {
+  let table = container(
+    scrollable(envelope_table(state))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  Row::with_children(vec![table.into(), inspector(state)])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn envelope_table(state: &State) -> Element<'_, Message> {
+  let Some(view) = state.budget() else {
+    return empty_table("Loading budget\u{2026}");
+  };
+  if view.groups.is_empty() {
+    return empty_table("No budget categories yet.");
+  }
+
+  let mut children: Vec<Element<'_, Message>> = vec![column_heads()];
+  for group in &view.groups {
+    children.push(group_header(group, state.budget_collapsed(group.id)));
+    if !state.budget_collapsed(group.id) {
+      for category in &group.categories {
+        children.push(category_row(state, category));
+      }
+    }
+  }
+  children.push(Space::new().height(Length::Fixed(40.0)).into());
+
+  Column::with_children(children).width(Length::Fill).into()
+}
+
+fn empty_table(message: &str) -> Element<'_, Message> {
+  container(
+    text(message.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .padding(spacing::SPACE_6)
+  .into()
+}
+
+fn column_heads<'a>() -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    Space::new().width(Length::Fixed(DOT_COL)).into(),
+    container(crate::ui::components::eyebrow::eyebrow_text("Category", None))
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 10.0,
+      })
+      .width(Length::Fill)
+      .into(),
+    head_cell("Assigned", ASSIGNED_COL),
+    head_cell("Activity", ACTIVITY_COL),
+    head_cell("Available", AVAILABLE_COL),
+  ])
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: 0.0,
+      bottom: spacing::SPACE_3,
+      left: 0.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn head_cell<'a>(label: &'a str, width: f32) -> Element<'a, Message> {
+  container(
+    crate::ui::components::eyebrow::eyebrow_text(label, None)
+      .width(Length::Fill)
+      .align_x(Horizontal::Right),
+  )
+  .padding(Padding {
+    top: 0.0,
+    right: 16.0,
+    bottom: 0.0,
+    left: 16.0,
+  })
+  .width(Length::Fixed(width))
+  .into()
+}
+
+fn mono_caption<'a>(value: impl Into<String>, value_color: Color, size: f32) -> Element<'a, Message> {
+  text(value.into())
+    .font(typography::mono::REGULAR)
+    .size(size)
+    .style(typography::colored(value_color))
+    .into()
+}
+
+// ── Group header ───────────────────────────────────────────────
+fn group_header(group: &Group, collapsed: bool) -> Element<'_, Message> {
+  let totals = group.totals();
+  let caret = if collapsed {
+    Icon::chevron_right()
+  } else {
+    Icon::chevron()
+  };
+
+  let row = Row::with_children(vec![
+    container(caret.size(14.0).color(color::text::secondary()).render())
+      .width(Length::Fixed(DOT_COL))
+      .align_x(Horizontal::Center)
+      .into(),
+    container(
+      text(group.name.to_uppercase())
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::PRIMARY)),
+    )
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: 0.0,
+      bottom: spacing::SPACE_2,
+      left: 10.0,
+    })
+    .into(),
+    money_cell(totals.assigned, color::text::secondary(), ASSIGNED_COL, true),
+    money_cell(totals.activity, color::text::secondary(), ACTIVITY_COL, true),
+    money_cell(
+      totals.available,
+      if totals.available < 0.0 {
+        color::status::DANGER
+      } else {
+        color::text::secondary()
+      },
+      AVAILABLE_COL,
+      true,
+    ),
+  ])
+  .align_y(Vertical::Center);
+
+  button(container(row).width(Length::Fill).style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  }))
+  .padding(Padding::ZERO)
+  .width(Length::Fill)
+  .on_press(Message::BudgetGroupToggled(group.id))
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn money_cell<'a>(value: f64, value_color: Color, width: f32, dim: bool) -> Element<'a, Message> {
+  let resolved = if dim && value == 0.0 {
+    color::text::tertiary()
+  } else {
+    value_color
+  };
+  container(
+    text(crate::ui::format::fmt_isk_full(value))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .width(Length::Fill)
+      .align_x(Horizontal::Right)
+      .style(typography::colored(resolved)),
+  )
+  .padding(Padding {
+    top: 0.0,
+    right: 16.0,
+    bottom: 0.0,
+    left: 16.0,
+  })
+  .width(Length::Fixed(width))
+  .into()
+}
+
+// ── Category row ───────────────────────────────────────────────
+fn category_row<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let selected = state.budget_selected() == Some(category.id);
+  let status = category.status();
+
+  let row = Row::with_children(vec![
+    dot_cell(category.tone.as_deref()),
+    name_cell(category, &status),
+    assigned_cell(state, category),
+    activity_cell(category.activity),
+    available_cell(category, &status, selected),
+  ])
+  .align_y(Vertical::Center)
+  .height(Length::Fixed(58.0));
+
+  let background = if selected {
+    Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))
+  } else {
+    Background::Color(Color::TRANSPARENT)
+  };
+  let border_color = if selected { color::accent::PLASMA } else { color::rule() };
+
+  button(container(row).width(Length::Fill))
+    .padding(Padding::ZERO)
+    .width(Length::Fill)
+    .on_press(Message::BudgetCategorySelected(category.id))
+    .style(move |_, _| button::Style {
+      background: Some(background),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn dot_cell<'a>(tone: Option<&str>) -> Element<'a, Message> {
+  container(color_dot(tone, 11.0))
+    .width(Length::Fixed(DOT_COL))
+    .align_x(Horizontal::Center)
+    .into()
+}
+
+fn color_dot<'a>(tone: Option<&str>, size: f32) -> Element<'a, Message> {
+  let fill = budget::tone_color(tone);
+  container(Space::new())
+    .width(Length::Fixed(size))
+    .height(Length::Fixed(size))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(fill)),
+      border: Border {
+        radius: (size / 2.0).into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus) -> Element<'a, Message> {
+  let mut head: Vec<Element<'a, Message>> = vec![
+    text(category.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ];
+  if let Some(by) = category.target.by_date.as_deref()
+    && category.target.kind == TargetKind::GoalBy
+  {
+    head.push(due_pill(by));
+  }
+
+  let underline = target_bar(status);
+
+  Column::with_children(vec![
+    Row::with_children(head)
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .into(),
+    underline,
+  ])
+  .spacing(spacing::UNIT + 1.0)
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 10.0,
+    right: 16.0,
+    bottom: 10.0,
+    left: 10.0,
+  })
+  .into()
+}
+
+fn due_pill<'a>(label: &'a str) -> Element<'a, Message> {
+  container(
+    text(format!("DUE {label}"))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::status::WARNING)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: 5.0,
+    bottom: 1.0,
+    left: 5.0,
+  })
+  .style(|_| container::Style {
+    border: Border {
+      color: color::with_alpha(color::status::WARNING, 0.3),
+      width: 1.0,
+      radius: 3.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn target_bar<'a>(status: &budget::TargetStatus) -> Element<'a, Message> {
+  let fill = status_color(status.state, true);
+  let filled = (status.pct.max(0.02) * 1000.0) as u16;
+  let empty = 1000_u16.saturating_sub(filled);
+
+  let bar = container(
+    Row::with_children(vec![
+      progress_segment(filled, fill),
+      progress_segment(empty, Color::TRANSPARENT),
+    ])
+    .width(Length::Fixed(120.0)),
+  )
+  .width(Length::Fixed(120.0))
+  .height(Length::Fixed(3.0))
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.10))),
+    border: Border {
+      radius: 2.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  Row::with_children(vec![
+    bar.into(),
+    mono_caption(status.month_label.clone(), color::text::secondary(), 9.5),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn progress_segment<'a>(portion: u16, fill: Color) -> Element<'a, Message> {
+  if portion == 0 {
+    return Space::new().width(Length::FillPortion(0)).into();
+  }
+  container(Space::new().width(Length::Fill).height(Length::Fill))
+    .width(Length::FillPortion(portion))
+    .height(Length::Fill)
+    .style(move |_| container::Style {
+      background: Some(Background::Color(fill)),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn activity_cell<'a>(activity: f64) -> Element<'a, Message> {
+  let value_color = if activity > 0.0 {
+    color::status::ONLINE
+  } else if activity < 0.0 {
+    color::text::secondary()
+  } else {
+    color::text::tertiary()
+  };
+  money_cell(activity, value_color, ACTIVITY_COL, true)
+}
+
+fn assigned_cell<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let editing = state.budget_editing().filter(|cell| cell.category_id == category.id);
+
+  let inner: Element<'a, Message> = if let Some(cell) = editing {
+    text_input("", &cell.draft)
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD)
+      .padding(Padding {
+        top: 5.0,
+        right: 8.0,
+        bottom: 5.0,
+        left: 8.0,
+      })
+      .width(Length::Fixed(120.0))
+      .align_x(Horizontal::Right)
+      .on_input(Message::BudgetAssignDraftChanged)
+      .on_submit(Message::BudgetAssignCommitted)
+      .style(assigned_input_style)
+      .into()
+  } else {
+    assigned_display(state, category)
+  };
+
+  container(inner)
+    .width(Length::Fixed(ASSIGNED_COL))
+    .align_x(Horizontal::Right)
+    .padding(Padding {
+      top: 0.0,
+      right: 16.0,
+      bottom: 0.0,
+      left: 16.0,
+    })
+    .into()
+}
+
+fn assigned_display<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let value_color = if category.assigned == 0.0 {
+    color::text::tertiary()
+  } else {
+    color::text::PRIMARY
+  };
+  let label = text(crate::ui::format::fmt_isk_full(category.assigned))
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(value_color));
+
+  if state.budget_is_past() {
+    return container(label).into();
+  }
+
+  button(label)
+    .padding(Padding {
+      top: 5.0,
+      right: 8.0,
+      bottom: 5.0,
+      left: 8.0,
+    })
+    .on_press(Message::BudgetAssignEditBegan(category.id))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      text_color: color::text::PRIMARY,
+      border: Border {
+        radius: 5.0.into(),
+        ..Border::default()
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn assigned_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+  text_input::Style {
+    background: Background::Color(color::surface::SUNKEN),
+    border: Border {
+      color: color::accent::PLASMA,
+      width: 1.0,
+      radius: 5.0.into(),
+    },
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
+    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    value: color::text::PRIMARY,
+  }
+}
+
+fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, selected: bool) -> Element<'a, Message> {
+  let available = category.available();
+  let (background, fg, border_color) = match status.state {
+    TargetState::Over => (
+      color::with_alpha(color::status::DANGER, 0.14),
+      color::status::DANGER,
+      color::with_alpha(color::status::DANGER, 0.4),
+    ),
+    TargetState::Met => (
+      color::with_alpha(color::status::ONLINE, 0.14),
+      color::status::ONLINE,
+      color::with_alpha(color::status::ONLINE, 0.4),
+    ),
+    TargetState::Under if available > 0.0 => (
+      color::with_alpha(color::text::PRIMARY, 0.06),
+      color::text::PRIMARY,
+      color::rule_strong(),
+    ),
+    TargetState::Under => (Color::TRANSPARENT, color::text::tertiary(), color::rule()),
+  };
+
+  let mut pill_children: Vec<Element<'a, Message>> = Vec::new();
+  if status.state == TargetState::Over {
+    pill_children.push(pill_glyph("!", fg));
+  } else if status.state == TargetState::Met {
+    pill_children.push(pill_glyph("\u{2713}", fg));
+  }
+  pill_children.push(
+    text(crate::ui::format::fmt_isk_full(available))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::SM + 1.5)
+      .style(typography::colored(fg))
+      .into(),
+  );
+
+  let border_final = if selected { color::accent::PLASMA } else { border_color };
+
+  let pill = button(Row::with_children(pill_children).spacing(7.0).align_y(Vertical::Center))
+    .padding(Padding {
+      top: 5.0,
+      right: 11.0,
+      bottom: 5.0,
+      left: 11.0,
+    })
+    .on_press(Message::BudgetCategorySelected(category.id))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(background)),
+      border: Border {
+        color: border_final,
+        width: 1.0,
+        radius: 13.0.into(),
+      },
+      ..button::Style::default()
+    });
+
+  container(pill)
+    .width(Length::Fixed(AVAILABLE_COL))
+    .align_x(Horizontal::Right)
+    .padding(Padding {
+      top: 0.0,
+      right: 16.0,
+      bottom: 0.0,
+      left: 16.0,
+    })
+    .into()
+}
+
+fn pill_glyph<'a>(glyph: &'a str, fg: Color) -> Element<'a, Message> {
+  text(glyph.to_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(fg))
+    .into()
+}
+
+fn status_color(state: TargetState, _bar: bool) -> Color {
+  match state {
+    TargetState::Over => color::status::DANGER,
+    TargetState::Met => color::status::ONLINE,
+    TargetState::Under => color::status::WARNING,
+  }
+}
+
+// ── Inspector (right rail) ──────────────────────────────────────
+fn inspector(state: &State) -> Element<'_, Message> {
+  let selected = state
+    .budget_selected()
+    .and_then(|id| state.budget().and_then(|view| view.category(id)));
+
+  let content: Element<'_, Message> = match selected {
+    None => inspector_empty(),
+    Some(category) => inspector_for(state, category),
+  };
+
+  container(
+    scrollable(content)
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fixed(INSPECTOR_WIDTH))
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn inspector_empty<'a>() -> Element<'a, Message> {
+  Column::with_children(vec![
+    Icon::budget().size(34.0).color(color::text::tertiary()).render(),
+    container(
+      text("Select a category to inspect its target, set funding, and review activity.")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .align_x(Horizontal::Center)
+        .style(typography::colored(color::text::secondary())),
+    )
+    .max_width(220.0)
+    .into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_x(Horizontal::Center)
+  .width(Length::Fill)
+  .padding(32.0)
+  .into()
+}
+
+fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let status = category.status();
+  let editing = state.budget_editor().is_some() || state.budget_edit_mode();
+
+  let mut children: Vec<Element<'a, Message>> = vec![inspector_header(state, category, &status)];
+  if editing {
+    if let Some(draft) = state.budget_editor() {
+      children.push(category_editor(draft));
+    }
+  } else {
+    children.push(target_block(&status));
+    children.push(this_month_block(category, &status));
+    children.push(quick_assign_block(category, state.budget_month()));
+  }
+
+  Column::with_children(children).width(Length::Fill).into()
+}
+
+fn inspector_header<'a>(
+  state: &'a State,
+  category: &'a Category,
+  status: &budget::TargetStatus,
+) -> Element<'a, Message> {
+  let note = category.note.clone().unwrap_or_else(|| "No note".to_owned());
+
+  let mut head: Vec<Element<'a, Message>> = vec![
+    color_dot(category.tone.as_deref(), 14.0),
+    Column::with_children(vec![
+      text(category.name.clone())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::LG)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      text(note)
+        .font(typography::mono::REGULAR)
+        .size(9.5)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    ])
+    .spacing(spacing::UNIT / 2.0)
+    .width(Length::Fill)
+    .into(),
+  ];
+  if !state.budget_edit_mode() {
+    head.push(editor_toggle_button(state.budget_editor().is_some()));
+  }
+
+  let available_color = match status.state {
+    TargetState::Over => color::status::DANGER,
+    TargetState::Met => color::status::ONLINE,
+    TargetState::Under => color::text::PRIMARY,
+  };
+  let available_row = Row::with_children(vec![
+    text(crate::ui::format::fmt_isk(category.available()))
+      .font(typography::body::MEDIUM)
+      .size(28.0)
+      .style(typography::colored(available_color))
+      .into(),
+    crate::ui::components::eyebrow::eyebrow_text("available", None).into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Bottom);
+
+  Column::with_children(vec![
+    Row::with_children(head).spacing(11.0).align_y(Vertical::Center).into(),
+    available_row.into(),
+  ])
+  .spacing(spacing::SPACE_3_5)
+  .width(Length::Fill)
+  .padding(section_padding())
+  .into()
+}
+
+fn editor_toggle_button<'a>(active: bool) -> Element<'a, Message> {
+  let tint = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let border_color = if active { color::accent::PLASMA } else { color::rule() };
+  let background = if active {
+    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
+  } else {
+    Background::Color(Color::TRANSPARENT)
+  };
+
+  button(Icon::pencil().size(14.0).color(tint).render())
+    .padding(8.0)
+    .on_press(Message::BudgetEditorToggled)
+    .style(move |_, _| button::Style {
+      background: Some(background),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn section_padding() -> Padding {
+  Padding {
+    top: 18.0,
+    right: 20.0,
+    bottom: 18.0,
+    left: 20.0,
+  }
+}
+
+fn bordered_section<'a>(content: Column<'a, Message>) -> Element<'a, Message> {
+  container(content)
+    .width(Length::Fill)
+    .padding(section_padding())
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn target_block<'a>(status: &budget::TargetStatus) -> Element<'a, Message> {
+  let (state_label, state_color) = match status.state {
+    TargetState::Over => ("Overspent", color::status::DANGER),
+    TargetState::Met => ("Funded", color::status::ONLINE),
+    TargetState::Under => ("Underfunded", color::status::WARNING),
+  };
+
+  let header = Row::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text("Target", None)
+      .width(Length::Fill)
+      .into(),
+    text(state_label.to_uppercase())
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(state_color))
+      .into(),
+  ])
+  .align_y(Vertical::Center);
+
+  let bar_fill = status_color(status.state, true);
+  let filled = (status.pct.max(0.02) * 1000.0) as u16;
+  let empty = 1000_u16.saturating_sub(filled);
+  let bar = container(
+    Row::with_children(vec![
+      progress_segment(filled, bar_fill),
+      progress_segment(empty, Color::TRANSPARENT),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(6.0))
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.10))),
+    border: Border {
+      radius: 3.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  let mut footer: Vec<Element<'a, Message>> = vec![
+    mono_caption(
+      status.month_label.clone(),
+      color::text::secondary(),
+      typography::size::XS_PLUS,
+    ),
+    Space::new().width(Length::Fill).into(),
+  ];
+  if status.needed > 0.0 {
+    footer.push(mono_caption(
+      format!("{} to go", crate::ui::format::fmt_isk(status.needed)),
+      color::status::WARNING,
+      typography::size::XS_PLUS,
+    ));
+  }
+
+  bordered_section(
+    Column::with_children(vec![
+      header.into(),
+      text(status.label.clone())
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      bar.into(),
+      Row::with_children(footer).align_y(Vertical::Center).into(),
+    ])
+    .spacing(spacing::SPACE_3),
+  )
+}
+
+fn this_month_block<'a>(category: &'a Category, status: &budget::TargetStatus) -> Element<'a, Message> {
+  let activity_color = if category.activity > 0.0 {
+    color::status::ONLINE
+  } else if category.activity < 0.0 {
+    color::status::DANGER
+  } else {
+    color::text::tertiary()
+  };
+
+  let rows = Column::with_children(vec![
+    breakdown_row(
+      "Rolled over",
+      crate::ui::format::fmt_isk_full(category.carry),
+      color::text::secondary(),
+    ),
+    breakdown_row(
+      "Assigned",
+      crate::ui::format::fmt_isk_full(category.assigned),
+      color::text::PRIMARY,
+    ),
+    breakdown_row("Activity", fmt_signed(category.activity), activity_color),
+  ])
+  .spacing(spacing::SPACE_2);
+
+  let available_color = if status.state == TargetState::Over {
+    color::status::DANGER
+  } else {
+    color::text::PRIMARY
+  };
+  let total = Row::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text("Available", None)
+      .width(Length::Fill)
+      .into(),
+    text(crate::ui::format::fmt_isk_full(category.available()))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD + 1.0)
+      .style(typography::colored(available_color))
+      .into(),
+  ])
+  .align_y(Vertical::Center);
+
+  bordered_section(
+    Column::with_children(vec![
+      crate::ui::components::eyebrow::eyebrow_text("This month", None).into(),
+      rows.into(),
+      crate::ui::components::rule::horizontal(),
+      total.into(),
+    ])
+    .spacing(spacing::SPACE_3),
+  )
+}
+
+fn breakdown_row<'a>(label: &'a str, value: String, value_color: Color) -> Element<'a, Message> {
+  Row::with_children(vec![
+    text(label.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .width(Length::Fill)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    text(value)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(value_color))
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn fmt_signed(value: f64) -> String {
+  if value == 0.0 {
+    return "0".to_owned();
+  }
+  let sign = if value > 0.0 { "+" } else { "-" };
+  format!("{sign}{}", crate::ui::format::fmt_isk(value.abs()))
+}
+
+fn quick_assign_block<'a>(category: &'a Category, month: &str) -> Element<'a, Message> {
+  let prev = budget::month_label(&budget::shift_month(month, -1));
+  let mut suggestions: Vec<Element<'a, Message>> = Vec::new();
+  if category.status().needed > 0.0 {
+    suggestions.push(quick_assign_row(
+      category.id,
+      "Underfunded",
+      Some("Meet this month\u{2019}s target".to_owned()),
+      category.underfunded_assign(),
+    ));
+  }
+  suggestions.push(quick_assign_row(
+    category.id,
+    "Assigned last month",
+    Some(prev),
+    category.last_assigned,
+  ));
+  suggestions.push(quick_assign_row(
+    category.id,
+    "Spent last month",
+    None,
+    category.spent_last,
+  ));
+  suggestions.push(quick_assign_row(
+    category.id,
+    "Average assigned",
+    Some("Trailing 3 months".to_owned()),
+    category.avg_assigned,
+  ));
+  suggestions.push(quick_assign_row(category.id, "Set to zero", None, 0.0));
+
+  Column::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text("Auto-assign", None).into(),
+    Column::with_children(suggestions).spacing(7.0).into(),
+  ])
+  .spacing(spacing::SPACE_3)
+  .width(Length::Fill)
+  .padding(section_padding())
+  .into()
+}
+
+fn quick_assign_row<'a>(category_id: i64, label: &'a str, hint: Option<String>, value: f64) -> Element<'a, Message> {
+  let mut left: Vec<Element<'a, Message>> = vec![
+    text(label.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ];
+  if let Some(hint) = hint {
+    left.push(mono_caption(hint, color::text::tertiary(), typography::size::XS));
+  }
+
+  let row = Row::with_children(vec![
+    Column::with_children(left)
+      .spacing(spacing::UNIT / 2.0)
+      .width(Length::Fill)
+      .into(),
+    text(crate::ui::format::fmt_isk(value))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::MD - 1.0)
+      .style(typography::colored(color::accent::PLASMA))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  button(row)
+    .padding(Padding {
+      top: 9.0,
+      right: spacing::SPACE_3,
+      bottom: 9.0,
+      left: spacing::SPACE_3,
+    })
+    .width(Length::Fill)
+    .on_press(Message::BudgetQuickAssign(category_id, value))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
+}
+
+// ── Category / target editor (shared with B5) ───────────────────
+fn category_editor(draft: &CategoryDraft) -> Element<'_, Message> {
+  let mut children: Vec<Element<'_, Message>> = vec![
+    editor_field("Name", text_field(&draft.name, "", Message::BudgetEditorNameChanged)),
+    editor_field(
+      "Note",
+      text_field(&draft.note, "Optional", Message::BudgetEditorNoteChanged),
+    ),
+    editor_field("Colour", tone_picker(draft.tone.as_deref())),
+    crate::ui::components::rule::horizontal(),
+    editor_field("Target type", target_type_picker(draft.target_kind)),
+    editor_field(draft.target_kind.amount_label(), money_field(&draft.target_amount_text)),
+  ];
+  if draft.target_kind == TargetKind::GoalBy {
+    children.push(editor_field(
+      "By date",
+      text_field(&draft.by_date, "e.g. Jan 2028", Message::BudgetEditorByDateChanged),
+    ));
+  }
+  children.push(editor_commit_button());
+
+  Column::with_children(children)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 18.0,
+      right: 20.0,
+      bottom: 18.0,
+      left: 20.0,
+    })
+    .into()
+}
+
+fn editor_field<'a>(label: &'a str, control: Element<'a, Message>) -> Element<'a, Message> {
+  Column::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text(label, None).into(),
+    control,
+  ])
+  .spacing(7.0)
+  .width(Length::Fill)
+  .into()
+}
+
+fn text_field<'a>(value: &'a str, placeholder: &'a str, on_input: fn(String) -> Message) -> Element<'a, Message> {
+  text_input(placeholder, value)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+    })
+    .width(Length::Fill)
+    .on_input(on_input)
+    .on_submit(Message::BudgetEditorCommitted)
+    .style(editor_input_style)
+    .into()
+}
+
+fn money_field<'a>(value: &'a str) -> Element<'a, Message> {
+  text_input("", value)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+    })
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .on_input(Message::BudgetEditorAmountChanged)
+    .on_submit(Message::BudgetEditorCommitted)
+    .style(editor_input_style)
+    .into()
+}
+
+fn editor_input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input::Style {
+  text_input::Style {
+    background: Background::Color(color::surface::BASE),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 7.0.into(),
+    },
+    icon: color::text::secondary(),
+    placeholder: color::text::tertiary(),
+    selection: color::with_alpha(color::accent::PLASMA, 0.3),
+    value: color::text::PRIMARY,
+  }
+}
+
+fn tone_picker<'a>(active: Option<&str>) -> Element<'a, Message> {
+  let swatches = budget::tone_options()
+    .into_iter()
+    .map(|tone| tone_swatch(tone, active == Some(tone)))
+    .collect::<Vec<Element<'a, Message>>>();
+
+  Row::with_children(swatches).spacing(spacing::SPACE_2).into()
+}
+
+fn tone_swatch<'a>(tone: &'static str, active: bool) -> Element<'a, Message> {
+  let fill = budget::tone_color(Some(tone));
+  let border_color = if active {
+    color::text::PRIMARY
+  } else {
+    Color::TRANSPARENT
+  };
+
+  button(Space::new().width(Length::Fixed(22.0)).height(Length::Fixed(22.0)))
+    .padding(Padding::ZERO)
+    .on_press(Message::BudgetEditorToneSelected(tone.to_owned()))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(fill)),
+      border: Border {
+        color: border_color,
+        width: 2.0,
+        radius: 13.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn target_type_picker<'a>(active: TargetKind) -> Element<'a, Message> {
+  let buttons = TargetKind::all()
+    .into_iter()
+    .map(|kind| target_type_button(kind, kind == active))
+    .collect::<Vec<Element<'a, Message>>>();
+
+  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+  let mut iter = buttons.into_iter();
+  while let Some(first) = iter.next() {
+    let mut pair = vec![first];
+    if let Some(second) = iter.next() {
+      pair.push(second);
+    } else {
+      pair.push(Space::new().width(Length::Fill).into());
+    }
+    rows.push(Row::with_children(pair).spacing(6.0).into());
+  }
+
+  let hint = mono_caption_sans(active.hint());
+
+  let mut children: Vec<Element<'a, Message>> = rows;
+  children.push(hint);
+  Column::with_children(children).spacing(6.0).width(Length::Fill).into()
+}
+
+fn target_type_button<'a>(kind: TargetKind, active: bool) -> Element<'a, Message> {
+  let text_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+  let border_color = if active { color::accent::PLASMA } else { color::rule() };
+  let background = if active {
+    Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))
+  } else {
+    Background::Color(Color::TRANSPARENT)
+  };
+
+  button(
+    text(kind.label().to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(text_color)),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+  })
+  .on_press(Message::BudgetEditorKindSelected(kind))
+  .style(move |_, _| button::Style {
+    background: Some(background),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: 7.0.into(),
+    },
+    text_color,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn mono_caption_sans<'a>(value: &'a str) -> Element<'a, Message> {
+  text(value.to_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()))
+    .into()
+}
+
+fn editor_commit_button<'a>() -> Element<'a, Message> {
+  button(
+    text("Save category")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::on_fill(color::accent::PLASMA))),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 9.0,
+    right: spacing::SPACE_3,
+    bottom: 9.0,
+    left: spacing::SPACE_3,
+  })
+  .on_press(Message::BudgetEditorCommitted)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(color::accent::PLASMA)),
+    border: Border {
+      radius: 7.0.into(),
+      ..Border::default()
+    },
+    text_color: color::on_fill(color::accent::PLASMA),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn category(id: i64, kind: TargetKind, amount: f64, assigned: f64) -> Category {
+    Category {
+      activity: -50.0,
+      assigned,
+      avg_assigned: 100.0,
+      carry: 200.0,
+      id,
+      last_assigned: 120.0,
+      name: format!("Category {id}"),
+      note: Some("A note".to_owned()),
+      spent_last: 80.0,
+      target: budget::Target {
+        amount,
+        by_date: (kind == TargetKind::GoalBy).then(|| "Jan 2028".to_owned()),
+        kind,
+      },
+      tone: Some("plasma".to_owned()),
+    }
+  }
+
+  fn view() -> budget::BudgetView {
+    budget::BudgetView {
+      groups: vec![Group {
+        categories: vec![
+          category(1, TargetKind::Monthly, 1_000.0, 400.0),
+          category(2, TargetKind::GoalBy, 50_000.0, 100.0),
+        ],
+        id: 10,
+        name: "Bills".to_owned(),
+      }],
+      month: budget::current_month(),
+      overspent: -50.0,
+      pool: 5_000.0,
+      ready_to_assign: 1_500.0,
+    }
+  }
+
+  fn state_with_budget() -> State {
+    let mut state = State::new();
+    state.tab = super::super::Tab::Budget;
+    state.budget = Some(view());
+    state.budget_selected = Some(1);
+    state
+  }
+
+  mod surface {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_plan_surface_with_a_selection() {
+      let state = state_with_budget();
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_renders_the_inspector_editor_when_open() {
+      let mut state = state_with_budget();
+      let selected = state.budget().unwrap().category(1).unwrap();
+      state.budget_editor = Some(CategoryDraft::from_category(10, 0, selected));
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_renders_an_overspent_cover_affordance() {
+      let state = state_with_budget();
+
+      let _el: Element<'_, Message> = toolbar(&state);
+    }
+
+    #[test]
+    fn it_renders_the_empty_inspector_without_a_selection() {
+      let mut state = state_with_budget();
+      state.budget_selected = None;
+
+      let _el: Element<'_, Message> = inspector(&state);
+    }
+
+    #[test]
+    fn it_renders_the_reflect_placeholder() {
+      let mut state = state_with_budget();
+      state.budget_mode = Mode::Reflect;
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_renders_a_collapsed_group() {
+      let mut state = state_with_budget();
+      state.budget_collapsed.insert(10);
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+  }
+}

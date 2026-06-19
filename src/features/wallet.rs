@@ -1,3 +1,5 @@
+mod budget;
+mod budget_view;
 mod header;
 mod hero;
 mod loaders;
@@ -116,7 +118,34 @@ pub struct Loaded {
 }
 
 #[derive(Clone, Debug)]
+pub struct BudgetLoad {
+  scope: Scope,
+  view: budget::BudgetView,
+}
+
+#[derive(Clone, Debug)]
 pub enum Message {
+  BudgetAssignCancelled,
+  BudgetAssignCommitted,
+  BudgetAssignDraftChanged(String),
+  BudgetAssignEditBegan(i64),
+  BudgetAutoAssign,
+  BudgetCategorySelected(i64),
+  BudgetCoverOverspending,
+  BudgetEditToggled,
+  BudgetEditorAmountChanged(String),
+  BudgetEditorByDateChanged(String),
+  BudgetEditorCommitted,
+  BudgetEditorKindSelected(budget::TargetKind),
+  BudgetEditorNameChanged(String),
+  BudgetEditorNoteChanged(String),
+  BudgetEditorToggled,
+  BudgetEditorToneSelected(String),
+  BudgetGroupToggled(i64),
+  BudgetLoaded(Box<BudgetLoad>),
+  BudgetModeSelected(budget::Mode),
+  BudgetMonthStepped(i32),
+  BudgetQuickAssign(i64, f64),
   ChartHovered(Option<f32>),
   CloseContractDetail,
   ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
@@ -152,6 +181,35 @@ impl Message {
     matches!(
       self,
       Message::ContractDetailLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
+    )
+  }
+
+  /// Whether this message belongs to the Budget surface, routed to
+  /// [`handle_budget`] so the wallet dispatcher stays free of budget branching.
+  fn is_budget(&self) -> bool {
+    matches!(
+      self,
+      Message::BudgetAssignCancelled
+        | Message::BudgetAssignCommitted
+        | Message::BudgetAssignDraftChanged(_)
+        | Message::BudgetAssignEditBegan(_)
+        | Message::BudgetAutoAssign
+        | Message::BudgetCategorySelected(_)
+        | Message::BudgetCoverOverspending
+        | Message::BudgetEditToggled
+        | Message::BudgetEditorAmountChanged(_)
+        | Message::BudgetEditorByDateChanged(_)
+        | Message::BudgetEditorCommitted
+        | Message::BudgetEditorKindSelected(_)
+        | Message::BudgetEditorNameChanged(_)
+        | Message::BudgetEditorNoteChanged(_)
+        | Message::BudgetEditorToggled
+        | Message::BudgetEditorToneSelected(_)
+        | Message::BudgetGroupToggled(_)
+        | Message::BudgetLoaded(_)
+        | Message::BudgetModeSelected(_)
+        | Message::BudgetMonthStepped(_)
+        | Message::BudgetQuickAssign(_, _)
     )
   }
 }
@@ -241,6 +299,14 @@ pub enum SignFilter {
 pub struct State {
   active: Scope,
   active_division: i64,
+  budget: Option<budget::BudgetView>,
+  budget_collapsed: std::collections::HashSet<i64>,
+  budget_edit_mode: bool,
+  budget_editing: Option<budget::EditingCell>,
+  budget_editor: Option<budget::CategoryDraft>,
+  budget_mode: budget::Mode,
+  budget_month: String,
+  budget_selected: Option<i64>,
   chart_hover: Option<f32>,
   contract_total: i64,
   contracts: Vec<ContractEntry>,
@@ -274,6 +340,14 @@ impl State {
     State {
       active: Scope::default(),
       active_division: DEFAULT_DIVISION,
+      budget: None,
+      budget_collapsed: std::collections::HashSet::new(),
+      budget_edit_mode: false,
+      budget_editing: None,
+      budget_editor: None,
+      budget_mode: budget::Mode::default(),
+      budget_month: budget::current_month(),
+      budget_selected: None,
       chart_hover: None,
       contract_total: 0,
       contracts: Vec::new(),
@@ -356,6 +430,51 @@ impl State {
 
   pub fn active_division(&self) -> i64 {
     self.active_division
+  }
+
+  pub(super) fn budget(&self) -> Option<&budget::BudgetView> {
+    self.budget.as_ref()
+  }
+
+  pub(super) fn budget_collapsed(&self, group_id: i64) -> bool {
+    self.budget_collapsed.contains(&group_id)
+  }
+
+  pub(super) fn budget_edit_mode(&self) -> bool {
+    self.budget_edit_mode
+  }
+
+  pub(super) fn budget_editing(&self) -> Option<&budget::EditingCell> {
+    self.budget_editing.as_ref()
+  }
+
+  pub(super) fn budget_editor(&self) -> Option<&budget::CategoryDraft> {
+    self.budget_editor.as_ref()
+  }
+
+  pub(super) fn budget_is_past(&self) -> bool {
+    self.budget_month.as_str() < budget::current_month().as_str()
+  }
+
+  pub(super) fn budget_mode(&self) -> budget::Mode {
+    self.budget_mode
+  }
+
+  pub(super) fn budget_month(&self) -> &str {
+    &self.budget_month
+  }
+
+  pub(super) fn budget_scope(&self) -> crate::store::model::BudgetScope {
+    use crate::store::model::BudgetScope;
+    match self.active {
+      Scope::All => BudgetScope::All,
+      Scope::Character(id) => BudgetScope::Character(id),
+      Scope::Corporation(id) => BudgetScope::Corporation(id),
+    }
+  }
+
+  pub(super) fn budget_selected(&self) -> Option<i64> {
+    self.budget_selected
   }
 
   pub(super) fn category_flows(&self) -> &[CategoryFlow] {
@@ -489,6 +608,7 @@ impl State {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
+  Budget,
   Contracts,
   Journal,
   #[default]
@@ -567,6 +687,28 @@ fn reload(db: &Database, scope: Scope, division: i64) -> Task<Message> {
   })
 }
 
+fn load_budget(
+  db: &Database,
+  scope: Scope,
+  budget_scope: crate::store::model::BudgetScope,
+  month: String,
+) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move { budget::load(&db, budget_scope, &month).await },
+    move |view| {
+      Message::BudgetLoaded(Box::new(BudgetLoad {
+        scope,
+        view,
+      }))
+    },
+  )
+}
+
+fn reload_budget(state: &State, db: &Database) -> Task<Message> {
+  load_budget(db, state.active, state.budget_scope(), state.budget_month.clone())
+}
+
 fn reload_kind(kind: JobKind) -> bool {
   matches!(
     kind,
@@ -581,6 +723,10 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
 
   let scope = state.active;
   let tab = state.tab;
+
+  if tab == Tab::Budget {
+    return Task::none();
+  }
 
   if let Scope::Corporation(corp_id) = scope {
     if tab != Tab::Contracts {
@@ -632,6 +778,8 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
         move |contracts| more_page(scope, tab, MorePage::contracts(contracts)),
       )
     }
+    // The Budget tab paginates nothing; the early return above already covered it.
+    Tab::Budget => Task::none(),
   }
 }
 
@@ -639,6 +787,165 @@ fn more_page(scope: Scope, tab: Tab, mut page: MorePage) -> Message {
   page.scope = scope;
   page.tab = tab;
   Message::MoreLoaded(Box::new(page))
+}
+
+fn budget_begin_assign(state: &mut State, category_id: i64) -> Task<Message> {
+  if state.budget_is_past() {
+    return Task::none();
+  }
+  let draft = state
+    .budget
+    .as_ref()
+    .and_then(|view| view.category(category_id))
+    .filter(|category| category.assigned != 0.0)
+    .map(|category| crate::ui::format::fmt_isk(category.assigned))
+    .unwrap_or_default();
+  state.budget_editing = Some(budget::EditingCell {
+    category_id,
+    draft,
+  });
+  Task::none()
+}
+
+fn budget_commit_assign(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(editing) = state.budget_editing.take() else {
+    return Task::none();
+  };
+  let value = crate::ui::format::parse_isk(&editing.draft);
+  let category_id = editing.category_id;
+  budget_persist_then_reload(state, db, move |db, _scope, month| {
+    Box::pin(async move { budget::persist_assignment(&db, category_id, &month, value).await })
+  })
+}
+
+fn budget_quick_assign(state: &mut State, db: &Database, category_id: i64, value: f64) -> Task<Message> {
+  state.budget_editing = None;
+  budget_persist_then_reload(state, db, move |db, _scope, month| {
+    Box::pin(async move { budget::persist_assignment(&db, category_id, &month, value).await })
+  })
+}
+
+fn budget_auto_assign(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(view) = state.budget.clone() else {
+    return Task::none();
+  };
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let view = view.clone();
+    Box::pin(async move { budget::auto_assign(&db, &view).await })
+  })
+}
+
+fn budget_cover_overspending(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(view) = state.budget.clone() else {
+    return Task::none();
+  };
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let view = view.clone();
+    Box::pin(async move { budget::cover_overspending(&db, &view).await })
+  })
+}
+
+fn budget_toggle_editor(state: &mut State) -> Task<Message> {
+  if state.budget_editor.is_some() {
+    state.budget_editor = None;
+    return Task::none();
+  }
+  let Some(selected) = state.budget_selected else {
+    return Task::none();
+  };
+  if let Some(view) = state.budget.as_ref() {
+    for group in &view.groups {
+      if let Some((position, category)) = group
+        .categories
+        .iter()
+        .enumerate()
+        .find(|(_, category)| category.id == selected)
+      {
+        state.budget_editor = Some(budget::CategoryDraft::from_category(
+          group.id,
+          position as i64,
+          category,
+        ));
+        break;
+      }
+    }
+  }
+  Task::none()
+}
+
+fn budget_commit_editor(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(draft) = state.budget_editor.take() else {
+    return Task::none();
+  };
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let draft = draft.clone();
+    Box::pin(async move {
+      let now = chrono::Utc::now().to_rfc3339();
+      let row = draft.to_category_row(now.clone(), now);
+      budget::persist_category_edit(&db, &row, &draft.to_target()).await;
+    })
+  })
+}
+
+/// Runs a budget mutation, then reloads the derived view for the active scope and
+/// month. The mutation closure receives an owned DB handle, the budget scope, and
+/// the month key so it can persist whatever the message requires.
+fn budget_persist_then_reload<F>(state: &State, db: &Database, mutate: F) -> Task<Message>
+where
+  F: FnOnce(
+      Database,
+      crate::store::model::BudgetScope,
+      String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+    + Send
+    + 'static,
+{
+  let scope = state.active;
+  let budget_scope = state.budget_scope();
+  let month = state.budget_month.clone();
+  let db = db.clone();
+  Task::perform(
+    async move {
+      mutate(db.clone(), budget_scope, month.clone()).await;
+      budget::load(&db, budget_scope, &month).await
+    },
+    move |view| {
+      Message::BudgetLoaded(Box::new(BudgetLoad {
+        scope,
+        view,
+      }))
+    },
+  )
+}
+
+fn handle_filter(state: &mut State, message: Message) -> Task<Message> {
+  match message {
+    Message::SearchChanged(query) => state.search = query,
+    Message::SideFilterChanged(side) => state.side_filter = side,
+    Message::SignFilterChanged(filter) => state.sign_filter = filter,
+    _ => return Task::none(),
+  }
+  state.tab_scroll_offset = 0.0;
+  state.recompute_derived();
+  Task::none()
+}
+
+fn handle_rail(state: &mut State, message: Message) -> Task<Message> {
+  match message {
+    Message::RailDragEnd => {
+      state.right_rail.end();
+      Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.ratio()))
+    }
+    Message::RailDragged(x) => {
+      state.right_rail.drag_to(x);
+      Task::none()
+    }
+    Message::RailDragStart => {
+      state.right_rail.start();
+      Task::none()
+    }
+    _ => Task::none(),
+  }
 }
 
 fn handle_close_contract_detail(state: &mut State) -> Task<Message> {
@@ -671,7 +978,98 @@ fn handle_contract_selected(state: &State, db: &Database, contract_id: i64) -> T
   }
 }
 
+/// Handles the `Message::Budget*` family. Split out of [`update`] so the wallet
+/// dispatcher does not absorb the budget surface's branching. Editor-field
+/// setters route through [`mutate_editor`] to keep this a flat dispatch.
+fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetAssignCancelled => {
+      state.budget_editing = None;
+      Task::none()
+    }
+    Message::BudgetAssignCommitted => budget_commit_assign(state, db),
+    Message::BudgetAssignDraftChanged(draft) => {
+      if let Some(editing) = state.budget_editing.as_mut() {
+        editing.draft = draft;
+      }
+      Task::none()
+    }
+    Message::BudgetAssignEditBegan(category_id) => budget_begin_assign(state, category_id),
+    Message::BudgetAutoAssign => budget_auto_assign(state, db),
+    Message::BudgetCategorySelected(id) => {
+      state.budget_selected = Some(id);
+      state.budget_editor = None;
+      Task::none()
+    }
+    Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
+    Message::BudgetEditToggled => {
+      state.budget_edit_mode = !state.budget_edit_mode;
+      Task::none()
+    }
+    Message::BudgetGroupToggled(group_id) => {
+      if !state.budget_collapsed.remove(&group_id) {
+        state.budget_collapsed.insert(group_id);
+      }
+      Task::none()
+    }
+    Message::BudgetLoaded(load) => {
+      let BudgetLoad {
+        scope,
+        view,
+      } = *load;
+      if scope != state.active {
+        return Task::none();
+      }
+      if state.budget_selected.is_none() {
+        state.budget_selected = view.first_category_id();
+      }
+      state.budget = Some(view);
+      Task::none()
+    }
+    Message::BudgetModeSelected(mode) => {
+      state.budget_mode = mode;
+      Task::none()
+    }
+    Message::BudgetMonthStepped(delta) => {
+      state.budget_month = budget::shift_month(&state.budget_month, delta);
+      state.budget_editing = None;
+      reload_budget(state, db)
+    }
+    Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
+    other => handle_budget_editor(state, other, db),
+  }
+}
+
+/// The inspector category/target editor messages, split off [`handle_budget`] so
+/// neither dispatcher carries the whole budget message family.
+fn handle_budget_editor(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetEditorAmountChanged(text) => mutate_editor(state, |editor| {
+      editor.target_amount = crate::ui::format::parse_isk(&text);
+      editor.target_amount_text = text;
+    }),
+    Message::BudgetEditorByDateChanged(text) => mutate_editor(state, |editor| editor.by_date = text),
+    Message::BudgetEditorCommitted => budget_commit_editor(state, db),
+    Message::BudgetEditorKindSelected(kind) => mutate_editor(state, |editor| editor.target_kind = kind),
+    Message::BudgetEditorNameChanged(text) => mutate_editor(state, |editor| editor.name = text),
+    Message::BudgetEditorNoteChanged(text) => mutate_editor(state, |editor| editor.note = text),
+    Message::BudgetEditorToggled => budget_toggle_editor(state),
+    Message::BudgetEditorToneSelected(tone) => mutate_editor(state, |editor| editor.tone = Some(tone)),
+    _ => Task::none(),
+  }
+}
+
+fn mutate_editor(state: &mut State, edit: impl FnOnce(&mut budget::CategoryDraft)) -> Task<Message> {
+  if let Some(editor) = state.budget_editor.as_mut() {
+    edit(editor);
+  }
+  Task::none()
+}
+
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  if message.is_budget() {
+    return handle_budget(state, message, db);
+  }
   match message {
     Message::ChartHovered(fraction) => {
       state.chart_hover = fraction;
@@ -749,18 +1147,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    Message::RailDragEnd => {
-      state.right_rail.end();
-      Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.ratio()))
-    }
-    Message::RailDragged(x) => {
-      state.right_rail.drag_to(x);
-      Task::none()
-    }
-    Message::RailDragStart => {
-      state.right_rail.start();
-      Task::none()
-    }
+    msg @ (Message::RailDragEnd | Message::RailDragged(_) | Message::RailDragStart) => handle_rail(state, msg),
     Message::ReauthRequested(_) => Task::none(),
     Message::ScopeSelected(scope) => {
       state.picker_open = false;
@@ -771,25 +1158,19 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.active_division = DEFAULT_DIVISION;
       state.corp_divisions = Vec::new();
       state.tab_scroll_offset = 0.0;
-      reload(db, scope, state.active_division)
+      state.budget = None;
+      state.budget_selected = None;
+      state.budget_editing = None;
+      state.budget_editor = None;
+      let budget_task = if state.tab == Tab::Budget {
+        reload_budget(state, db)
+      } else {
+        Task::none()
+      };
+      reload(db, scope, state.active_division).chain(budget_task)
     }
-    Message::SearchChanged(query) => {
-      state.search = query;
-      state.tab_scroll_offset = 0.0;
-      state.recompute_derived();
-      Task::none()
-    }
-    Message::SideFilterChanged(side) => {
-      state.side_filter = side;
-      state.tab_scroll_offset = 0.0;
-      state.recompute_derived();
-      Task::none()
-    }
-    Message::SignFilterChanged(filter) => {
-      state.sign_filter = filter;
-      state.tab_scroll_offset = 0.0;
-      state.recompute_derived();
-      Task::none()
+    msg @ (Message::SearchChanged(_) | Message::SideFilterChanged(_) | Message::SignFilterChanged(_)) => {
+      handle_filter(state, msg)
     }
     Message::TabScrolled {
       absolute,
@@ -805,6 +1186,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.tab = tab;
       state.tab_scroll_offset = 0.0;
       state.tab_exhausted = false;
+      if tab == Tab::Budget {
+        return reload_budget(state, db);
+      }
       Task::none()
     }
     Message::TimeframeSelected(timeframe) => {
@@ -812,6 +1196,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.chart_hover = None;
       Task::none()
     }
+    // The Budget surface is dispatched by `handle_budget` via the `is_budget`
+    // guard above; this arm only keeps the match exhaustive.
+    _ => Task::none(),
   }
 }
 
@@ -840,6 +1227,18 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
         })
       )
       .then_some(Message::CloseContractDetail)
+    }));
+  }
+  if state.budget_editing.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+          key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+          ..
+        })
+      )
+      .then_some(Message::BudgetAssignCancelled)
     }));
   }
   iced::Subscription::batch(subs)
@@ -3136,6 +3535,231 @@ mod tests {
       let _ = update(&mut state, Message::ContractSelected(999), &db);
 
       assert!(state.selected_contract.is_none());
+    }
+  }
+
+  mod budget_handlers {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::wallet::budget;
+
+    fn category(id: i64) -> budget::Category {
+      budget::Category {
+        activity: -50.0,
+        assigned: 400.0,
+        avg_assigned: 100.0,
+        carry: 200.0,
+        id,
+        last_assigned: 120.0,
+        name: format!("Category {id}"),
+        note: Some("note".to_owned()),
+        spent_last: 80.0,
+        target: budget::Target {
+          amount: 1_000.0,
+          by_date: None,
+          kind: budget::TargetKind::Monthly,
+        },
+        tone: Some("plasma".to_owned()),
+      }
+    }
+
+    fn state_with_view() -> State {
+      let mut state = State::new();
+      state.tab = Tab::Budget;
+      state.budget = Some(budget::BudgetView {
+        groups: vec![budget::Group {
+          categories: vec![category(1)],
+          id: 10,
+          name: "Bills".to_owned(),
+        }],
+        month: budget::current_month(),
+        overspent: 0.0,
+        pool: 5_000.0,
+        ready_to_assign: 1_500.0,
+      });
+      state.budget_selected = Some(1);
+      state
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_plan_reflect_mode_and_edit_mode() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetModeSelected(budget::Mode::Reflect), &db);
+      assert_eq!(state.budget_mode(), budget::Mode::Reflect);
+
+      let _ = update(&mut state, Message::BudgetEditToggled, &db);
+      assert!(state.budget_edit_mode());
+    }
+
+    #[tokio::test]
+    async fn it_collapses_and_expands_a_group() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetGroupToggled(10), &db);
+      assert!(state.budget_collapsed(10));
+
+      let _ = update(&mut state, Message::BudgetGroupToggled(10), &db);
+      assert!(!state.budget_collapsed(10));
+    }
+
+    #[tokio::test]
+    async fn it_opens_an_assigned_editor_seeded_with_the_current_value() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+
+      let editing = state.budget_editing().expect("editor open");
+      assert_eq!(editing.category_id, 1);
+      assert_eq!(editing.draft, crate::ui::format::fmt_isk(400.0));
+    }
+
+    #[tokio::test]
+    async fn it_does_not_open_an_assigned_editor_for_a_past_month() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      state.budget_month = budget::shift_month(&budget::current_month(), -2);
+
+      let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+
+      assert!(state.budget_editing().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_edits_and_cancels_the_assigned_draft() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+
+      let _ = update(&mut state, Message::BudgetAssignDraftChanged("2.5m".to_owned()), &db);
+      assert_eq!(state.budget_editing().unwrap().draft, "2.5m");
+
+      let _ = update(&mut state, Message::BudgetAssignCancelled, &db);
+      assert!(state.budget_editing().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_inspector_editor_for_the_selection() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetEditorToggled, &db);
+      let editor = state.budget_editor().expect("editor open");
+      assert_eq!(editor.category_id, 1);
+      assert_eq!(editor.name, "Category 1");
+
+      let _ = update(&mut state, Message::BudgetEditorNameChanged("Renamed".to_owned()), &db);
+      assert_eq!(state.budget_editor().unwrap().name, "Renamed");
+
+      let _ = update(&mut state, Message::BudgetEditorToggled, &db);
+      assert!(state.budget_editor().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_updates_the_editor_target_fields() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetEditorToggled, &db);
+
+      let _ = update(
+        &mut state,
+        Message::BudgetEditorKindSelected(budget::TargetKind::GoalBy),
+        &db,
+      );
+      let _ = update(&mut state, Message::BudgetEditorAmountChanged("220b".to_owned()), &db);
+      let _ = update(
+        &mut state,
+        Message::BudgetEditorByDateChanged("Jan 2028".to_owned()),
+        &db,
+      );
+      let _ = update(
+        &mut state,
+        Message::BudgetEditorNoteChanged("hull fund".to_owned()),
+        &db,
+      );
+      let _ = update(&mut state, Message::BudgetEditorToneSelected("warning".to_owned()), &db);
+
+      let editor = state.budget_editor().unwrap();
+      assert_eq!(editor.target_kind, budget::TargetKind::GoalBy);
+      assert_eq!(editor.target_amount, 220_000_000_000.0);
+      assert_eq!(editor.by_date, "Jan 2028");
+      assert_eq!(editor.note, "hull fund");
+      assert_eq!(editor.tone.as_deref(), Some("warning"));
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_category_and_clears_the_editor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetEditorToggled, &db);
+
+      let _ = update(&mut state, Message::BudgetCategorySelected(1), &db);
+
+      assert_eq!(state.budget_selected(), Some(1));
+      assert!(state.budget_editor().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_steps_the_month_and_drops_any_open_editor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+
+      let _ = update(&mut state, Message::BudgetMonthStepped(-1), &db);
+
+      assert_eq!(state.budget_month(), budget::shift_month(&budget::current_month(), -1));
+      assert!(state.budget_editing().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_records_a_loaded_view_for_the_active_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.tab = Tab::Budget;
+      let load = BudgetLoad {
+        scope: state.active,
+        view: state_with_view().budget.unwrap(),
+      };
+
+      let _ = update(&mut state, Message::BudgetLoaded(Box::new(load)), &db);
+
+      assert!(state.budget().is_some());
+      assert_eq!(state.budget_selected(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_loaded_view_for_a_stale_scope() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      let load = BudgetLoad {
+        scope: Scope::Character(999),
+        view: state_with_view().budget.unwrap(),
+      };
+
+      let _ = update(&mut state, Message::BudgetLoaded(Box::new(load)), &db);
+
+      assert!(state.budget().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_dispatches_the_persist_and_mutation_messages() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      // Each of these returns a persist+reload task; dispatching exercises the
+      // synchronous handler path. The editor edits drop the inline assign editor.
+      let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+      let _ = update(&mut state, Message::BudgetAssignCommitted, &db);
+      assert!(state.budget_editing().is_none());
+
+      let _ = update(&mut state, Message::BudgetQuickAssign(1, 250.0), &db);
+      let _ = update(&mut state, Message::BudgetAutoAssign, &db);
+      let _ = update(&mut state, Message::BudgetCoverOverspending, &db);
+      let _ = update(&mut state, Message::BudgetEditorCommitted, &db);
     }
   }
 

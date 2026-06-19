@@ -487,16 +487,8 @@ mod tests {
       finance::market_prices_upsert_many(
         &db,
         &[
-          store::model::MarketPrice {
-            adjusted_price: Some(1_000.0),
-            average_price: None,
-            type_id: 587,
-          },
-          store::model::MarketPrice {
-            adjusted_price: Some(50.0),
-            average_price: None,
-            type_id: 34,
-          },
+          store::model::MarketPrice::esi(587, Some(1_000.0), None),
+          store::model::MarketPrice::esi(34, Some(50.0), None),
         ],
       )
       .await

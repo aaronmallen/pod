@@ -291,16 +291,9 @@ mod tests {
       .await;
       let db = store::open_test().await.unwrap();
       seed_corporation(&db, 2000).await;
-      finance::market_prices_upsert_many(
-        &db,
-        &[store::model::MarketPrice {
-          adjusted_price: Some(10.0),
-          average_price: Some(9.0),
-          type_id: 34,
-        }],
-      )
-      .await
-      .unwrap();
+      finance::market_prices_upsert_many(&db, &[store::model::MarketPrice::esi(34, Some(10.0), Some(9.0))])
+        .await
+        .unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
       let image = eve_image::Client::with_base_url(http, server.uri());

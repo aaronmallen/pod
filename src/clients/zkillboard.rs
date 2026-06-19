@@ -1,4 +1,5 @@
 use std::{
+  collections::HashMap,
   sync::Arc,
   time::{Duration, Instant},
 };
@@ -49,6 +50,30 @@ impl Client {
     self.feed(&format!("characterID/{character_id}/losses/")).await
   }
 
+  pub async fn prices(&self, type_id: i64) -> Result<Option<f64>, clients::Error> {
+    let path = format!("prices/{type_id}/");
+    let mut last_err = None;
+    for attempt in 0..=MAX_RETRIES {
+      if attempt > 0 {
+        tokio::time::sleep(RETRY_DELAY).await;
+      }
+      match self.fetch_prices_once(&path).await {
+        Ok(history) => return Ok(latest_price(&history)),
+        Err(error) if is_transient(&error) => {
+          tracing::warn!(
+            path,
+            attempt = attempt + 1,
+            max_attempts = MAX_RETRIES + 1,
+            "zkillboard: transient error fetching prices: {error}"
+          );
+          last_err = Some(error);
+        }
+        Err(error) => return Err(error),
+      }
+    }
+    Err(last_err.expect("retry loop ran at least once"))
+  }
+
   pub async fn value_for_kill(&self, killmail_id: i64) -> Result<Option<f64>, clients::Error> {
     let killmails = self.feed(&format!("killID/{killmail_id}/")).await?;
     Ok(killmails.first().map(|killmail| killmail.zkb.total_value))
@@ -83,6 +108,12 @@ impl Client {
     self.http.get_json::<Vec<Killmail>>(&url, None, None).await
   }
 
+  async fn fetch_prices_once(&self, path: &str) -> Result<PriceHistory, clients::Error> {
+    self.throttle().await;
+    let url = format!("{}/{path}", self.base_url.trim_end_matches('/'));
+    self.http.get_json::<PriceHistory>(&url, None, None).await
+  }
+
   async fn throttle(&self) {
     // Even though requests go through the shared rate-limited http::Client, zKillboard's THROTTLE
     // must remain local: the shared budgets are driven by ESI's X-Ratelimit-* headers, which
@@ -109,6 +140,26 @@ pub struct Zkb {
   pub hash: String,
   #[serde(rename = "totalValue", default)]
   pub total_value: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum PriceHistory {
+  Dated(HashMap<String, serde_json::Value>),
+  Other(serde::de::IgnoredAny),
+}
+
+fn latest_price(history: &PriceHistory) -> Option<f64> {
+  let PriceHistory::Dated(map) = history else {
+    return None;
+  };
+  map
+    .iter()
+    .filter(|(key, _)| !key.eq_ignore_ascii_case("typeid"))
+    .filter(|(key, _)| key.starts_with(|c: char| c.is_ascii_digit()))
+    .max_by(|(left, _), (right, _)| left.cmp(right))
+    .and_then(|(_, value)| value.as_f64())
+    .filter(|price| *price > 0.0)
 }
 
 fn is_transient(error: &clients::Error) -> bool {
@@ -214,6 +265,65 @@ mod tests {
 
       assert_eq!(losses.len(), 1);
       assert_eq!(losses[0].killmail_id, 300);
+    }
+  }
+
+  mod prices {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn mount(server: &MockServer, type_id: i64, body: &str) {
+      Mock::given(method("GET"))
+        .and(path(format!("/prices/{type_id}/")))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json"))
+        .mount(server)
+        .await;
+    }
+
+    #[tokio::test]
+    async fn it_ignores_the_type_id_key_and_returns_the_latest_dated_price() {
+      let server = MockServer::start().await;
+      let body = r#"{"typeID": 670, "2024-01-01": 100.0, "2024-03-15": 250.5, "2024-02-01": 200.0}"#;
+      mount(&server, 670, body).await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(670).await.unwrap();
+
+      assert_eq!(value, Some(250.5));
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_for_an_empty_array_response() {
+      let server = MockServer::start().await;
+      mount(&server, 999, "[]").await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(999).await.unwrap();
+
+      assert_eq!(value, None);
+    }
+
+    #[tokio::test]
+    async fn it_returns_none_when_only_the_type_id_key_is_present() {
+      let server = MockServer::start().await;
+      mount(&server, 670, r#"{"typeID": 670}"#).await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(670).await.unwrap();
+
+      assert_eq!(value, None);
+    }
+
+    #[tokio::test]
+    async fn it_treats_a_zero_price_as_absent() {
+      let server = MockServer::start().await;
+      mount(&server, 670, r#"{"typeID": 670, "2024-01-01": 0.0}"#).await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(670).await.unwrap();
+
+      assert_eq!(value, None);
     }
   }
 

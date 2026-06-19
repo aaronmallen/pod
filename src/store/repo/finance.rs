@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
@@ -19,6 +19,10 @@ const SQLITE_MAX_BIND_PARAMS: usize = 999;
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 const STATE_OPEN: &str = "open";
+
+fn now_iso() -> String {
+  Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
 
 pub async fn replace_for_character(
   db: &Database,
@@ -800,7 +804,7 @@ pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -
 
 pub async fn market_prices_all(db: &Database) -> Result<Vec<MarketPrice>, Error> {
   let rows = sqlx::query_as::<_, MarketPrice>(
-    "SELECT adjusted_price, average_price, type_id FROM market_prices ORDER BY type_id",
+    "SELECT adjusted_price, average_price, source, type_id FROM market_prices ORDER BY type_id",
   )
   .fetch_all(&db.0)
   .await?;
@@ -810,25 +814,54 @@ pub async fn market_prices_all(db: &Database) -> Result<Vec<MarketPrice>, Error>
 pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
 
-  for chunk in prices.chunks(SQLITE_MAX_BIND_PARAMS / 3) {
-    let mut builder =
-      QueryBuilder::<Sqlite>::new("INSERT INTO market_prices (adjusted_price, average_price, type_id) ");
+  for chunk in prices.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO market_prices (adjusted_price, average_price, fetched_at, source, type_id) ",
+    );
     builder.push_values(chunk, |mut row, price| {
       row
         .push_bind(price.adjusted_price())
         .push_bind(price.average_price())
+        .push_bind(now_iso())
+        .push_bind(price.source().clone())
         .push_bind(price.type_id());
     });
     builder.push(
       " ON CONFLICT(type_id) DO UPDATE SET \
         adjusted_price = excluded.adjusted_price, \
-        average_price = excluded.average_price",
+        average_price = excluded.average_price, \
+        fetched_at = excluded.fetched_at, \
+        source = excluded.source",
     );
     builder.build().execute(&mut *tx).await?;
   }
 
   tx.commit().await?;
   Ok(())
+}
+
+/// Held types whose canonical type price is unresolved and should be refreshed from zKillboard.
+///
+/// Keyed off `source`, not the stored price value: a row is in the set when it is absent, when it
+/// was previously filled by zKill (so a non-zero zKill `average_price` is still re-fetched and does
+/// not go permanently stale), or when ESI priced it to a resolved 0. Blueprint copies are excluded.
+pub async fn market_prices_zkill_gap_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
+  let rows = sqlx::query_scalar::<_, i64>(
+    "WITH held AS ( \
+       SELECT DISTINCT type_id FROM character_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
+       UNION \
+       SELECT DISTINCT type_id FROM corporation_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
+     ) \
+     SELECT held.type_id FROM held \
+     LEFT JOIN market_prices mp ON mp.type_id = held.type_id \
+     WHERE mp.type_id IS NULL \
+        OR mp.source = 'zkill' \
+        OR (mp.source = 'esi' AND COALESCE(mp.adjusted_price, mp.average_price, 0) = 0) \
+     ORDER BY held.type_id",
+  )
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
 }
 
 pub async fn backfill_liquid_from_journal(db: &Database, character_id: i64) -> Result<(), Error> {
@@ -2480,11 +2513,7 @@ mod market_tests {
   }
 
   fn price(type_id: i64, adjusted: Option<f64>, average: Option<f64>) -> MarketPrice {
-    MarketPrice {
-      adjusted_price: adjusted,
-      average_price: average,
-      type_id,
-    }
+    MarketPrice::esi(type_id, adjusted, average)
   }
 
   mod all {
@@ -2637,6 +2666,79 @@ mod market_tests {
       assert_eq!(result.len(), 1);
       assert_eq!(result[0].adjusted_price(), Some(7.25));
       assert_eq!(result[0].average_price(), Some(8.0));
+    }
+  }
+
+  mod zkill_gap_type_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_char_asset(db: &Database, item_id: i64, type_id: i64, is_blueprint_copy: Option<i64>) {
+      sqlx::query(
+        "INSERT INTO character_assets \
+          (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(item_id)
+      .bind(42_i64)
+      .bind(type_id)
+      .bind(60_003_760_i64)
+      .bind("station")
+      .bind("Hangar")
+      .bind(1_i64)
+      .bind(is_blueprint_copy)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    async fn insert_corp_asset(db: &Database, item_id: i64, type_id: i64, is_blueprint_copy: Option<i64>) {
+      sqlx::query(
+        "INSERT INTO corporation_assets \
+          (item_id, corporation_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(item_id)
+      .bind(90_000_001_i64)
+      .bind(type_id)
+      .bind(60_003_760_i64)
+      .bind("station")
+      .bind("Hangar")
+      .bind(1_i64)
+      .bind(is_blueprint_copy)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_includes_absent_zkill_and_zero_esi_but_not_priced_or_blueprint_copies() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      // 100: absent from market_prices -> in the gap set
+      insert_char_asset(&db, 1, 100, None).await;
+      // 200: priced by ESI non-zero -> excluded
+      insert_char_asset(&db, 2, 200, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::esi(200, Some(5.0), None)])
+        .await
+        .unwrap();
+      // 300: ESI row but resolved price 0 -> in the gap set
+      insert_char_asset(&db, 3, 300, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::esi(300, None, Some(0.0))])
+        .await
+        .unwrap();
+      // 400: corp-held type with an existing zkill row -> re-fetched even though non-zero
+      insert_corp_asset(&db, 4, 400, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::zkill(400, 9_000.0)])
+        .await
+        .unwrap();
+      // 500: blueprint copy -> excluded
+      insert_char_asset(&db, 5, 500, Some(1)).await;
+
+      let gaps = market_prices_zkill_gap_type_ids(&db).await.unwrap();
+
+      assert_eq!(gaps, vec![100, 300, 400]);
     }
   }
 }

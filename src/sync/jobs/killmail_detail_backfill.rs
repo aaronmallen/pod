@@ -189,16 +189,9 @@ mod tests {
 
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      finance::market_prices_upsert_many(
-        &db,
-        &[store::model::MarketPrice {
-          adjusted_price: Some(50.0),
-          average_price: None,
-          type_id: 34,
-        }],
-      )
-      .await
-      .unwrap();
+      finance::market_prices_upsert_many(&db, &[store::model::MarketPrice::esi(34, Some(50.0), None)])
+        .await
+        .unwrap();
       character::upsert_killmail(&db, &summary(42, 100, "killhash"))
         .await
         .unwrap();

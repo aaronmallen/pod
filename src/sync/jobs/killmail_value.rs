@@ -144,21 +144,9 @@ mod tests {
 
   fn prices() -> PriceTable {
     PriceTable::from_market_prices(&[
-      MarketPrice {
-        adjusted_price: Some(1_000.0),
-        average_price: Some(900.0),
-        type_id: 587,
-      },
-      MarketPrice {
-        adjusted_price: None,
-        average_price: Some(50.0),
-        type_id: 34,
-      },
-      MarketPrice {
-        adjusted_price: Some(200.0),
-        average_price: Some(150.0),
-        type_id: 2488,
-      },
+      MarketPrice::esi(587, Some(1_000.0), Some(900.0)),
+      MarketPrice::esi(34, None, Some(50.0)),
+      MarketPrice::esi(2488, Some(200.0), Some(150.0)),
     ])
   }
 

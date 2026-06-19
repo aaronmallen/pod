@@ -1,24 +1,54 @@
 use crate::{
-  clients::Error,
+  clients::{Error, zkillboard},
   store::{model::MarketPrice, repo::finance},
   sync::{job::JobCtx, outcome::Outcome},
 };
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
+  run_with_zkill(ctx, &zkillboard::Client::new(ctx.esi.http())).await
+}
+
+async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<Outcome, Error> {
   let prices: Vec<MarketPrice> = ctx
     .esi
     .market()
     .prices()
     .await?
     .into_iter()
-    .map(|price| MarketPrice {
-      adjusted_price: price.adjusted_price,
-      average_price: price.average_price,
-      type_id: price.type_id,
-    })
+    .map(|price| MarketPrice::esi(price.type_id, price.adjusted_price, price.average_price))
     .collect();
   finance::market_prices_upsert_many(ctx.db, &prices).await?;
-  Ok(Outcome::from_rows(prices.len()))
+
+  let filled = fill_gaps_from_zkill(ctx, zkill).await;
+  Ok(Outcome::from_rows(prices.len() + filled))
+}
+
+async fn fill_gaps_from_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> usize {
+  let gaps = match finance::market_prices_zkill_gap_type_ids(ctx.db).await {
+    Ok(gaps) => gaps,
+    Err(error) => {
+      tracing::warn!("market_prices: failed to select zKill gap set: {error}");
+      return 0;
+    }
+  };
+
+  let mut filled = Vec::new();
+  for type_id in gaps {
+    match zkill.prices(type_id).await {
+      Ok(Some(price)) => filled.push(MarketPrice::zkill(type_id, price)),
+      Ok(None) => {}
+      Err(error) => tracing::warn!(type_id, "market_prices: zKill price fetch failed: {error}"),
+    }
+  }
+
+  if filled.is_empty() {
+    return 0;
+  }
+  if let Err(error) = finance::market_prices_upsert_many(ctx.db, &filled).await {
+    tracing::warn!("market_prices: failed to upsert zKill gap prices: {error}");
+    return 0;
+  }
+  filled.len()
 }
 
 #[cfg(test)]
@@ -31,12 +61,35 @@ mod tests {
   use super::*;
   use crate::{
     clients::{esi, eve_image, http},
-    store::{self, images, repo::finance},
+    store::{
+      self, images,
+      model::{Alliance, Bloodline, Character, Corporation, Gender, Race},
+      repo::{character::insert_with_org, finance},
+    },
     sync::{
       job::{JobKey, JobKind},
       subject::Subject,
     },
   };
+
+  async fn insert_character_asset(db: &store::Database, item_id: i64, type_id: i64, is_blueprint_copy: i64) {
+    sqlx::query(
+      "INSERT INTO character_assets \
+        (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(item_id)
+    .bind(42_i64)
+    .bind(type_id)
+    .bind(60_003_760_i64)
+    .bind("station")
+    .bind("Hangar")
+    .bind(1_i64)
+    .bind(is_blueprint_copy)
+    .execute(&db.0)
+    .await
+    .unwrap();
+  }
 
   async fn mount_prices(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("GET"))
@@ -44,6 +97,31 @@ mod tests {
       .respond_with(ResponseTemplate::new(200).set_body_json(body))
       .mount(server)
       .await;
+  }
+
+  async fn mount_zkill_price(server: &MockServer, type_id: i64, body: &str) {
+    Mock::given(method("GET"))
+      .and(path(format!("/prices/{type_id}/")))
+      .respond_with(ResponseTemplate::new(200).set_body_raw(body.to_string(), "application/json"))
+      .mount(server)
+      .await;
+  }
+
+  async fn seed_character(db: &store::Database, id: i64) {
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+    insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .unwrap();
   }
 
   fn ctx<'a>(
@@ -99,16 +177,9 @@ mod tests {
       )
       .await;
       let db = store::open_test().await.unwrap();
-      finance::market_prices_upsert_many(
-        &db,
-        &[MarketPrice {
-          adjusted_price: Some(1.0),
-          average_price: Some(2.0),
-          type_id: 34,
-        }],
-      )
-      .await
-      .unwrap();
+      finance::market_prices_upsert_many(&db, &[MarketPrice::esi(34, Some(1.0), Some(2.0))])
+        .await
+        .unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = esi::Client::with_base_url(http.clone(), server.uri());
       let image = eve_image::Client::with_base_url(http, server.uri());
@@ -154,6 +225,151 @@ mod tests {
       assert_eq!(rows[1].average_price(), Some(6.25));
       assert_eq!(rows[2].adjusted_price(), Some(7.0));
       assert_eq!(rows[2].average_price(), Some(8.0));
+    }
+  }
+
+  mod fill_gaps {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::clients::zkillboard;
+
+    fn find<'a>(rows: &'a [MarketPrice], type_id: i64) -> &'a MarketPrice {
+      rows.iter().find(|row| row.type_id() == type_id).expect("row present")
+    }
+
+    #[tokio::test]
+    async fn it_fills_an_esi_gap_type_from_zkill_tagged_zkill() {
+      let esi_server = MockServer::start().await;
+      mount_prices(&esi_server, serde_json::json!([])).await;
+      let zkill_server = MockServer::start().await;
+      mount_zkill_price(&zkill_server, 671, r#"{"typeID": 671, "2024-01-01": 5000000.0}"#).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 671, 0).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 671);
+      assert_eq!(row.source(), "zkill");
+      assert_eq!(row.average_price(), Some(5_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_never_fetches_a_type_esi_already_priced_non_zero() {
+      let esi_server = MockServer::start().await;
+      mount_prices(
+        &esi_server,
+        serde_json::json!([{ "adjusted_price": 9.0, "type_id": 34 }]),
+      )
+      .await;
+      let zkill_server = MockServer::start().await;
+      mount_zkill_price(&zkill_server, 34, r#"{"typeID": 34, "2024-01-01": 999.0}"#).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 34, 0).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 34);
+      assert_eq!(row.source(), "esi");
+      assert_eq!(row.adjusted_price(), Some(9.0));
+    }
+
+    #[tokio::test]
+    async fn it_refetches_an_existing_zkill_row() {
+      let esi_server = MockServer::start().await;
+      mount_prices(&esi_server, serde_json::json!([])).await;
+      let zkill_server = MockServer::start().await;
+      mount_zkill_price(&zkill_server, 671, r#"{"typeID": 671, "2024-02-01": 7000000.0}"#).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 671, 0).await;
+      finance::market_prices_upsert_many(&db, &[MarketPrice::zkill(671, 1_000.0)])
+        .await
+        .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 671);
+      assert_eq!(row.source(), "zkill");
+      assert_eq!(row.average_price(), Some(7_000_000.0));
+    }
+
+    #[tokio::test]
+    async fn it_lets_esi_reclaim_a_previously_zkill_row() {
+      let esi_server = MockServer::start().await;
+      mount_prices(
+        &esi_server,
+        serde_json::json!([{ "average_price": 4_200.0, "type_id": 671 }]),
+      )
+      .await;
+      let zkill_server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 671, 0).await;
+      finance::market_prices_upsert_many(&db, &[MarketPrice::zkill(671, 1_000.0)])
+        .await
+        .unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 671);
+      assert_eq!(row.source(), "esi");
+      assert_eq!(row.average_price(), Some(4_200.0));
+    }
+
+    #[tokio::test]
+    async fn it_excludes_blueprint_copies_from_the_gap_set() {
+      let esi_server = MockServer::start().await;
+      mount_prices(&esi_server, serde_json::json!([])).await;
+      let zkill_server = MockServer::start().await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 671, 1).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert!(finance::market_prices_all(&db).await.unwrap().is_empty());
     }
   }
 }

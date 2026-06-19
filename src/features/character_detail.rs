@@ -248,7 +248,10 @@ impl Message {
   pub fn loads_data(&self) -> bool {
     matches!(
       self,
-      Message::ContactsPageLoaded(_)
+      Message::ContactAddOpened
+        | Message::ContactEditOpened(_)
+        | Message::ContactEntityChanged(_)
+        | Message::ContactsPageLoaded(_)
         | Message::KillmailDetailLoaded(_)
         | Message::Loaded(_)
         | Message::Reloaded(_)
@@ -456,6 +459,9 @@ impl State {
     }
     if let Some(detail) = &self.selected_killmail {
       keys.extend(detail.stale_images());
+    }
+    if let Some(modal) = &self.contact_modal {
+      keys.extend(modal.stale_key());
     }
     keys
   }
@@ -684,6 +690,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       reset_killlog_pagination(state);
       state.notifications = notifications;
       state.roster = roster;
+      if let Some(modal) = state.contact_modal.as_mut() {
+        modal.refresh_image();
+      }
       trigger_standings_search(state, db)
     }
     Message::Reloaded(reloaded) => match *reloaded {
@@ -3550,6 +3559,26 @@ mod tests {
 
       assert_eq!(state.active_tab, Tab::Clones);
       assert_eq!(state.active(), 42);
+    }
+
+    #[test]
+    fn it_surfaces_an_open_contact_modals_stale_portrait_as_an_image_key() {
+      let mut state = State::new(42, &[]);
+      let contact = CharacterContact {
+        character_id: 42,
+        contact_id: 98_000_001,
+        contact_name: "Test Corp".to_owned(),
+        contact_type: "corporation".to_owned(),
+        is_blocked: false,
+        is_watched: false,
+        label_ids: "[]".to_owned(),
+        standing: 0.0,
+      };
+      state.contact_modal = Some(tabs::contact_modal::ContactModal::edit(&contact, Vec::new()));
+
+      let stale = state.stale_images();
+
+      assert!(stale.contains(&(images::ImageKind::CorporationLogo, 98_000_001)));
     }
 
     #[test]

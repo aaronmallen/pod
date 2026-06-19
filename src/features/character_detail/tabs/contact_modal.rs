@@ -11,7 +11,10 @@ use iced::{
 
 use super::super::Message;
 use crate::{
-  store::model::{CharacterContact, CharacterContactLabel},
+  store::{
+    images::{self, ImageKind, ImageState},
+    model::{CharacterContact, CharacterContactLabel},
+  },
   ui::{
     components::{
       avatar::Avatar,
@@ -42,6 +45,9 @@ pub struct ContactModal {
   edit: bool,
   entity: Option<EntityRef>,
   exclude: Vec<String>,
+  /// Self-healing portrait for the locked/selected entity, resolved from the shared image cache rather than a bare
+  /// path so a missing or evicted file recovers on the next fetch instead of falling back to initials forever.
+  image: Option<ImageState>,
   labels: Vec<i64>,
   search: EntitySearch,
   standing: f64,
@@ -55,6 +61,7 @@ impl ContactModal {
       edit: false,
       entity: None,
       exclude,
+      image: None,
       labels: Vec::new(),
       search: EntitySearch::default(),
       standing: 0.0,
@@ -64,6 +71,7 @@ impl ContactModal {
 
   pub fn edit(contact: &CharacterContact, catalog: Vec<CharacterContactLabel>) -> Self {
     let kind = entity_kind(contact.contact_type());
+    let image = resolve_image(contact.contact_id(), kind);
     ContactModal {
       catalog,
       edit: true,
@@ -74,6 +82,7 @@ impl ContactModal {
         portrait: None,
       }),
       exclude: Vec::new(),
+      image,
       labels: serde_json::from_str(contact.label_ids()).unwrap_or_default(),
       search: EntitySearch::default(),
       standing: snap_standing(contact.standing()),
@@ -93,6 +102,15 @@ impl ContactModal {
     self.entity.as_ref()
   }
 
+  /// Re-resolves the selected entity's portrait against the image cache, picking up a file that a fetch has since
+  /// written so a completed self-heal updates the displayed avatar without reopening the modal.
+  pub fn refresh_image(&mut self) {
+    self.image = self
+      .entity
+      .as_ref()
+      .and_then(|entity| resolve_image(entity.id, entity.kind));
+  }
+
   pub fn is_character(&self) -> bool {
     self
       .entity
@@ -109,6 +127,7 @@ impl ContactModal {
   }
 
   pub fn set_entity(&mut self, entity: Option<EntityRef>) {
+    self.image = entity.as_ref().and_then(|entity| resolve_image(entity.id, entity.kind));
     self.entity = entity;
     self.search.clear();
   }
@@ -119,6 +138,12 @@ impl ContactModal {
 
   pub fn set_standing(&mut self, standing: f64) {
     self.standing = snap_standing(standing);
+  }
+
+  /// The selected entity's portrait staleness key, if its cached image is missing or evicted, so the shell's
+  /// staleness scan can dispatch a refetch for the open modal.
+  pub fn stale_key(&self) -> Option<(ImageKind, i64)> {
+    self.image.as_ref().and_then(ImageState::stale_key)
   }
 
   pub fn standing(&self) -> f64 {
@@ -169,6 +194,22 @@ fn entity_kind(contact_type: &str) -> EntityKind {
     "corporation" => EntityKind::Corporation,
     _ => EntityKind::Character,
   }
+}
+
+/// Maps a portrait-backed entity kind to its image cache kind; location kinds have no portrait and return `None`.
+fn image_kind(kind: EntityKind) -> Option<ImageKind> {
+  match kind {
+    EntityKind::Alliance => Some(ImageKind::AllianceLogo),
+    EntityKind::Character => Some(ImageKind::CharacterPortrait),
+    EntityKind::Corporation => Some(ImageKind::CorporationLogo),
+    EntityKind::SolarSystem | EntityKind::Station => None,
+  }
+}
+
+/// Resolves the selected entity's portrait against the shared image cache, returning `None` for kinds without a
+/// portrait so the avatar falls back to its glyph.
+fn resolve_image(id: i64, kind: EntityKind) -> Option<ImageState> {
+  image_kind(kind).map(|kind| images::resolve(&images::default_store(), kind, id))
 }
 
 fn tier_label(value: f64) -> &'static str {
@@ -283,7 +324,7 @@ fn entity_field(state: &ContactModal) -> Element<'_, Message> {
   };
 
   let control: Element<'_, Message> = if state.edit {
-    locked_entity(state.entity.as_ref())
+    locked_entity(state.entity.as_ref(), state.image.as_ref())
   } else {
     SingleSelect::new(
       state.search.query(),
@@ -668,7 +709,7 @@ fn label_chip(label_id: i64, label_name: &str, active: bool) -> Element<'_, Mess
   .into()
 }
 
-fn locked_entity(entity: Option<&EntityRef>) -> Element<'_, Message> {
+fn locked_entity<'a>(entity: Option<&'a EntityRef>, image: Option<&'a ImageState>) -> Element<'a, Message> {
   let Some(entity) = entity else {
     return Space::new().width(Length::Shrink).height(Length::Shrink).into();
   };
@@ -694,7 +735,7 @@ fn locked_entity(entity: Option<&EntityRef>) -> Element<'_, Message> {
 
   container(
     Row::with_children(vec![
-      entity_avatar(entity),
+      entity_avatar(entity, image),
       identity.into(),
       Icon::lock().size(14.0).color(color::text::tertiary()).render(),
     ])
@@ -720,13 +761,13 @@ fn locked_entity(entity: Option<&EntityRef>) -> Element<'_, Message> {
   .into()
 }
 
-fn entity_avatar(entity: &EntityRef) -> Element<'_, Message> {
+fn entity_avatar<'a>(entity: &'a EntityRef, image: Option<&'a ImageState>) -> Element<'a, Message> {
   Avatar::new(
     entity.id,
     entity.name.clone(),
     Length::Fixed(ENTITY_AVATAR),
     ENTITY_AVATAR,
-    entity.portrait.clone(),
+    image.and_then(ImageState::path),
   )
   .radius(entity.kind.avatar_radius())
   .view()
@@ -848,6 +889,40 @@ mod tests {
       modal.set_entity(Some(corp_entity()));
 
       assert!(modal.can_submit());
+    }
+
+    #[test]
+    fn it_clears_the_image_when_the_entity_is_cleared() {
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
+      modal.set_entity(Some(corp_entity()));
+
+      modal.set_entity(None);
+
+      assert_eq!(
+        modal.stale_key(),
+        None,
+        "no entity selected leaves no portrait to fetch"
+      );
+    }
+
+    #[test]
+    fn it_resolves_a_portrait_image_for_an_edited_contact() {
+      let modal = ContactModal::edit(&contact("corporation", -5.0, false, "[]"), catalog());
+
+      assert_eq!(
+        modal.stale_key(),
+        Some((ImageKind::CorporationLogo, 95_001)),
+        "an uncached corp logo surfaces as a stale fetch key instead of falling back to initials forever"
+      );
+    }
+
+    #[test]
+    fn it_resolves_a_portrait_image_for_a_picked_entity() {
+      let mut modal = ContactModal::add(Vec::new(), Vec::new());
+
+      modal.set_entity(Some(corp_entity()));
+
+      assert_eq!(modal.stale_key(), Some((ImageKind::CorporationLogo, 98_001)));
     }
 
     #[test]

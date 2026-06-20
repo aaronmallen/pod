@@ -651,6 +651,25 @@ impl State {
     &self.budget_chips
   }
 
+  /// Resolution order: a manual per-entry override wins, else the first enabled
+  /// rule whose conditions match, else `None` (Ready-to-Assign).
+  pub(super) fn budget_category_for(&self, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
+    let resolution = &self.budget_chips.resolution;
+    match kind {
+      BudgetEntryKind::Journal => {
+        let entry = self.journal.iter().find(|e| e.owner == owner && e.id == entry_id)?;
+        resolution.resolve_target(kind, entry_id, &entry.match_target())
+      }
+      BudgetEntryKind::Market => {
+        let entry = self
+          .market
+          .iter()
+          .find(|e| e.owner == owner && e.transaction_id == entry_id)?;
+        resolution.resolve_target(kind, entry_id, &entry.match_target())
+      }
+    }
+  }
+
   pub(super) fn budget_filter(&self) -> Option<&BudgetFilter> {
     self.budget_filter.as_ref()
   }
@@ -2707,10 +2726,7 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
     SignFilter::Out if !entry.amount.is_some_and(|amount| amount < 0.0) => return false,
     _ => {}
   }
-  if !query.is_empty()
-    && !entry.ref_type.to_lowercase().contains(query)
-    && !entry.description.to_lowercase().contains(query)
-  {
+  if !query.is_empty() && !entry.match_text().to_lowercase().contains(query) {
     return false;
   }
   true
@@ -2763,7 +2779,7 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   }
   let assigned = chips
     .resolution
-    .override_for(entry.owner, BudgetEntryKind::Journal, entry.id);
+    .resolve_target(BudgetEntryKind::Journal, entry.id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => {
@@ -2782,7 +2798,7 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
   }
   let assigned = chips
     .resolution
-    .override_for(entry.owner, BudgetEntryKind::Market, entry.transaction_id);
+    .resolve_target(BudgetEntryKind::Market, entry.transaction_id, &entry.match_target());
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -2790,20 +2806,7 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
 }
 
 fn humanize_ref_type(ref_type: &str) -> String {
-  if ref_type.is_empty() {
-    return "\u{2014}".to_owned();
-  }
-  ref_type
-    .split('_')
-    .map(|word| {
-      let mut chars = word.chars();
-      match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-      }
-    })
-    .collect::<Vec<_>>()
-    .join(" ")
+  crate::features::budget::humanize_ref_type(ref_type)
 }
 
 pub fn journal_type_glyph(entry: &JournalEntry) -> (&'static str, bool) {
@@ -2979,6 +2982,7 @@ mod tests {
       description: description.to_owned(),
       id: 1,
       owner: BudgetOwner::Character(character_id),
+      reason: None,
       ref_type: ref_type.to_owned(),
     }
   }
@@ -3282,6 +3286,7 @@ mod tests {
           journal_overrides: key(journal),
           market_overrides: key(market),
           ref_overrides: std::collections::HashMap::new(),
+          rules: Vec::new(),
           slug_to_id: std::collections::HashMap::new(),
         },
       }
@@ -3884,6 +3889,21 @@ mod tests {
       assert!(super::journal_matches(&entry, SignFilter::All, "alitura"));
       assert!(super::journal_matches(&entry, SignFilter::All, "mission"));
       assert!(!super::journal_matches(&entry, SignFilter::All, "tritanium"));
+    }
+
+    #[test]
+    fn it_matches_the_humanized_ref_type_label() {
+      let entry = journal_entry(1, Some(1.0), "daily_goal_payouts", "Payout");
+
+      assert!(super::journal_matches(&entry, SignFilter::All, "daily"));
+    }
+
+    #[test]
+    fn it_matches_the_reason_text() {
+      let mut entry = journal_entry(1, Some(-1.0), "player_donation", "Donation");
+      entry.reason = Some("Loot buyback settlement".to_owned());
+
+      assert!(super::journal_matches(&entry, SignFilter::All, "buyback"));
     }
   }
 

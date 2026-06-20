@@ -91,12 +91,22 @@ pub struct JournalEntry {
   pub description: String,
   pub id: i64,
   pub owner: BudgetOwner,
+  pub reason: Option<String>,
   pub ref_type: String,
 }
 
 impl JournalEntry {
   pub fn is_income(&self) -> bool {
     self.amount.is_some_and(|amount| amount > 0.0)
+  }
+
+  pub fn match_target(&self) -> crate::features::budget::MatchTarget {
+    crate::features::budget::MatchTarget::journal(self.owner, &self.ref_type, self.amount, &self.match_text())
+  }
+
+  /// The same enriched text drives both wallet search and rule matching.
+  pub fn match_text(&self) -> String {
+    crate::features::budget::journal_match_text(&self.ref_type, self.reason.as_deref(), &self.description)
   }
 }
 
@@ -117,6 +127,12 @@ pub struct MarketEntry {
   pub type_icon: IconResolution,
   pub type_id: i64,
   pub unit_price: f64,
+}
+
+impl MarketEntry {
+  pub fn match_target(&self) -> crate::features::budget::MatchTarget {
+    crate::features::budget::MatchTarget::market(self.owner, self.is_buy, self.total, &self.item, &self.location)
+  }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -380,6 +396,7 @@ fn map_corp_journal_row(row: &crate::store::model::CorporationWalletJournal) -> 
     description: row.description().clone(),
     id: row.id(),
     owner: BudgetOwner::Corporation(row.corporation_id()),
+    reason: row.reason().clone(),
     ref_type: row.ref_type().clone(),
   }
 }
@@ -419,6 +436,7 @@ fn map_journal_row(row: &crate::store::model::CharacterWalletJournal) -> Journal
     description: row.description().clone(),
     id: row.id(),
     owner: BudgetOwner::Character(row.character_id()),
+    reason: row.reason().clone(),
     ref_type: row.ref_type().clone(),
   }
 }

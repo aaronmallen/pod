@@ -2567,6 +2567,7 @@ mod tests {
         description: "Brokers fee".to_owned(),
         id,
         owner: BudgetOwner::Character(1),
+        reason: None,
         ref_type: "brokers_fee".to_owned(),
       }
     }

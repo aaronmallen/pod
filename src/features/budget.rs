@@ -11,9 +11,16 @@ use std::collections::{HashMap, HashSet};
 
 use crate::store::{
   Database, Error,
-  model::{BudgetEntryAssignment, BudgetEntryKind, BudgetOwner, BudgetScope},
+  model::{
+    BudgetEntryAssignment, BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, Rule, RuleCondition, RuleField, RuleOp,
+  },
   repo::{character, finance, org},
 };
+
+const DIRECTION_IN: &str = "in";
+const DIRECTION_OUT: &str = "out";
+const MARKET_BUY_TYPE: &str = "market_buy";
+const MARKET_SALE_TYPE: &str = "market_sale";
 
 /// A starter category in a seeded group: a stable `slug` (used to attach
 /// default `ref_type` maps without hard-coding row ids), a display `name`, and
@@ -325,6 +332,7 @@ pub struct ResolutionContext {
   pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
   pub market_overrides: HashMap<(BudgetOwner, i64), i64>,
   pub ref_overrides: HashMap<String, i64>,
+  pub rules: Vec<Rule>,
   pub slug_to_id: HashMap<&'static str, i64>,
 }
 
@@ -354,8 +362,25 @@ impl ResolutionContext {
       journal_overrides,
       market_overrides,
       ref_overrides: ref_type_overrides(db, scope).await,
+      rules: crate::store::repo::budget::list_rules(db, scope)
+        .await
+        .unwrap_or_default(),
       slug_to_id: slug_to_category_id(db, scope).await,
     }
+  }
+
+  /// The effective budget category for an already-normalized ledger entry under
+  /// the live resolution order: a manual per-entry override wins; else the first
+  /// enabled rule (priority order) whose conditions match; else `None`
+  /// (Ready-to-Assign). Rules only ever touch outflows. Type defaults stay off,
+  /// so the v1 manual-only behavior is recovered exactly when no rule matches.
+  #[allow(dead_code)]
+  pub fn resolve_target(&self, entry_kind: BudgetEntryKind, entry_id: i64, target: &MatchTarget) -> Option<i64> {
+    let owner = target.owner?;
+    if let Some(id) = self.override_for(owner, entry_kind, entry_id) {
+      return Some(id);
+    }
+    rule_category_for(target, &self.rules)
   }
 
   pub fn override_for(&self, owner: BudgetOwner, entry_kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
@@ -394,6 +419,313 @@ impl ResolutionContext {
       }
     }
   }
+}
+
+/// How a matched outflow is classified in a rule editor's live preview, relative
+/// to the rest of the rule set, the manual override map, and the rule's target
+/// category.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PreviewStatus {
+  /// Already resolves to this rule's category anyway (no other rule claims it and
+  /// it is not manually pinned elsewhere).
+  Already,
+  /// This rule wins — the entry will move into the target category.
+  Assign,
+  /// Pinned by a manual per-entry assignment; rules never touch it.
+  Manual,
+  /// A higher-priority *other* enabled rule claims it first.
+  Preempted,
+}
+
+/// A ledger row (journal or market) flattened into the uniform shape a rule
+/// matches against. Carries the entry's `type` token, signed `direction`,
+/// absolute `amount`, owning character/corp, and the per-field text the matcher
+/// reads.
+///
+/// For a journal row the `item`/`location`/`party`/`reference` fields all carry
+/// the same enriched journal text (humanized ref_type label ∪ reason ∪
+/// description), because journal rows have no resolved party/location/item names
+/// to match against individually. Market rows carry distinct `item` and
+/// `location` names.
+#[allow(dead_code)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MatchTarget {
+  pub amount: f64,
+  pub is_outflow: bool,
+  pub item: String,
+  pub location: String,
+  pub owner: Option<BudgetOwner>,
+  pub party: String,
+  pub reference: String,
+  pub type_token: String,
+}
+
+impl MatchTarget {
+  #[allow(dead_code)]
+  pub fn journal(owner: BudgetOwner, ref_type: &str, amount: Option<f64>, text: &str) -> Self {
+    let amount = amount.unwrap_or(0.0);
+    Self {
+      amount: amount.abs(),
+      is_outflow: amount < 0.0,
+      item: text.to_owned(),
+      location: text.to_owned(),
+      owner: Some(owner),
+      party: text.to_owned(),
+      reference: text.to_owned(),
+      type_token: ref_type.to_owned(),
+    }
+  }
+
+  #[allow(dead_code)]
+  pub fn market(owner: BudgetOwner, is_buy: bool, total: f64, item: &str, location: &str) -> Self {
+    Self {
+      amount: total.abs(),
+      is_outflow: is_buy,
+      item: item.to_owned(),
+      location: location.to_owned(),
+      owner: Some(owner),
+      party: String::new(),
+      reference: item.to_owned(),
+      type_token: if is_buy { MARKET_BUY_TYPE } else { MARKET_SALE_TYPE }.to_owned(),
+    }
+  }
+
+  /// Whether this entry matches a single condition. Text comparisons are
+  /// case-insensitive; `Text` joins every text field; amount conditions parse ISK
+  /// shorthand and compare against the absolute amount.
+  #[allow(dead_code)]
+  pub fn matches_condition(&self, condition: &RuleCondition) -> bool {
+    match condition.field() {
+      RuleField::Amount => self.matches_amount(condition),
+      RuleField::Direction => (condition.value() == DIRECTION_OUT) == self.is_outflow,
+      RuleField::Character => match (self.owner, condition.value().trim().parse::<i64>().ok()) {
+        (Some(owner), Some(id)) => {
+          let same = owner.owner_id() == id;
+          if condition.op() == RuleOp::IsNot { !same } else { same }
+        }
+        _ => condition.op() == RuleOp::IsNot,
+      },
+      RuleField::Type => {
+        let same = self.type_token == *condition.value();
+        if condition.op() == RuleOp::IsNot { !same } else { same }
+      }
+      RuleField::Text => self.matches_text(&self.any_text(), condition),
+      RuleField::Item => self.matches_text(&self.item, condition),
+      RuleField::Location => self.matches_text(&self.location, condition),
+      RuleField::Party => self.matches_text(&self.party, condition),
+      RuleField::Reference => self.matches_text(&self.reference, condition),
+    }
+  }
+
+  /// Whether this entry matches a rule: inactive conditions are dropped, then the
+  /// remaining conditions are joined by the rule's `match_mode`. A rule with no
+  /// active conditions matches nothing.
+  #[allow(dead_code)]
+  pub fn matches_rule(&self, rule: &Rule) -> bool {
+    let mut active = rule.conditions().iter().filter(|c| is_active_condition(c)).peekable();
+    if active.peek().is_none() {
+      return false;
+    }
+    match rule.match_mode() {
+      MatchMode::Any => active.any(|c| self.matches_condition(c)),
+      MatchMode::All => active.all(|c| self.matches_condition(c)),
+    }
+  }
+
+  /// The union of every text field, joined by a separator no needle can span, so
+  /// a `Text` condition searches the whole searchable string at once.
+  fn any_text(&self) -> String {
+    [&self.reference, &self.party, &self.location, &self.item]
+      .map(String::as_str)
+      .join("\u{1}")
+  }
+
+  fn matches_amount(&self, condition: &RuleCondition) -> bool {
+    let value = crate::ui::format::parse_isk(condition.value());
+    match condition.op() {
+      RuleOp::GreaterThan => self.amount > value,
+      RuleOp::LessThan => self.amount < value,
+      RuleOp::Between => {
+        let Some(value2) = condition.value2().as_deref() else {
+          return false;
+        };
+        let other = crate::ui::format::parse_isk(value2);
+        self.amount >= value.min(other) && self.amount <= value.max(other)
+      }
+      _ => false,
+    }
+  }
+
+  fn matches_text(&self, haystack: &str, condition: &RuleCondition) -> bool {
+    let needle = condition.value().trim().to_lowercase();
+    if needle.is_empty() {
+      return condition.op() == RuleOp::NotContains;
+    }
+    let haystack = haystack.to_lowercase();
+    match condition.op() {
+      RuleOp::Contains => haystack.contains(&needle),
+      RuleOp::NotContains => !haystack.contains(&needle),
+      RuleOp::Is => haystack == needle,
+      RuleOp::StartsWith => haystack.starts_with(&needle),
+      _ => false,
+    }
+  }
+}
+
+/// Whether a condition carries a usable value — an empty row is ignored so a
+/// half-built rule never matches the whole ledger. A `Between` amount needs both
+/// bounds.
+#[allow(dead_code)]
+pub fn is_active_condition(condition: &RuleCondition) -> bool {
+  if condition.field() == RuleField::Amount && condition.op() == RuleOp::Between {
+    return !condition.value().trim().is_empty()
+      && condition
+        .value2()
+        .as_deref()
+        .is_some_and(|value2| !value2.trim().is_empty());
+  }
+  !condition.value().trim().is_empty()
+}
+
+/// The number of supplied outflows a rule would catch. Inflows are never passed
+/// in (rules only touch spending), so the caller filters to outflows first.
+#[allow(dead_code)]
+pub fn match_count(rule: &Rule, outflows: &[MatchTarget]) -> usize {
+  outflows.iter().filter(|target| target.matches_rule(rule)).count()
+}
+
+/// Classifies every outflow a `draft` rule matches against the rest of the rule
+/// set and the manual override map, so an editor can preview what will actually
+/// change. `manual` maps an outflow's index in `outflows` to its manually pinned
+/// category. `other_rules` are the live enabled rules in priority order (the
+/// draft excluded). `category_id` is the draft's target envelope.
+///
+/// - `Manual`: a manual override pins the entry.
+/// - `Preempted`: a higher-priority other rule claims it for a different category.
+/// - `Already`: no other rule claims it and it already targets this category.
+/// - `Assign`: this rule wins and moves it into the category.
+#[allow(dead_code)]
+pub fn preview_entries(
+  draft: &Rule,
+  other_rules: &[Rule],
+  manual: &HashMap<usize, i64>,
+  category_id: i64,
+  outflows: &[MatchTarget],
+) -> Vec<(usize, PreviewStatus)> {
+  outflows
+    .iter()
+    .enumerate()
+    .filter(|(_, target)| target.matches_rule(draft))
+    .map(|(index, target)| {
+      let status = if manual.contains_key(&index) {
+        PreviewStatus::Manual
+      } else if let Some(winner) = other_rules
+        .iter()
+        .find(|rule| rule.enabled() && target.matches_rule(rule))
+      {
+        if winner.category_id() == category_id {
+          PreviewStatus::Already
+        } else {
+          PreviewStatus::Preempted
+        }
+      } else {
+        PreviewStatus::Assign
+      };
+      (index, status)
+    })
+    .collect()
+}
+
+/// A short auto-name suggestion derived from a rule's first active condition,
+/// for the editor's "name this rule" affordance. Type and character conditions
+/// need a resolver (`type_label`/`character_name`) to turn their stored id/key
+/// into a label; both default to the raw value when the resolver returns `None`.
+/// Returns an empty string when the rule has no active conditions.
+#[allow(dead_code)]
+pub fn suggest_name(
+  rule: &Rule,
+  type_label: impl Fn(&str) -> Option<String>,
+  character_name: impl Fn(&str) -> Option<String>,
+) -> String {
+  let Some(condition) = rule.conditions().iter().find(|c| is_active_condition(c)) else {
+    return String::new();
+  };
+  match condition.field() {
+    RuleField::Type => type_label(condition.value()).unwrap_or_else(|| condition.value().clone()),
+    RuleField::Character => character_name(condition.value()).unwrap_or_else(|| condition.value().clone()),
+    RuleField::Amount => format!("Amount {} {}", op_label(condition.op()), condition.value()),
+    RuleField::Direction => if condition.value() == DIRECTION_IN {
+      "Inflows"
+    } else {
+      "Outflows"
+    }
+    .to_owned(),
+    _ => condition.value().clone(),
+  }
+}
+
+/// Humanizes an EVE journal `ref_type` (e.g. `daily_goal_payouts`) into its
+/// title-cased display label (`Daily Goal Payouts`). An empty `ref_type` renders
+/// as an em dash. Shared by the wallet's row label, the journal search text, and
+/// the rule engine's matchable text so all three see the same wording.
+pub fn humanize_ref_type(ref_type: &str) -> String {
+  if ref_type.is_empty() {
+    return "\u{2014}".to_owned();
+  }
+  ref_type
+    .split('_')
+    .map(|word| {
+      let mut chars = word.chars();
+      match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+      }
+    })
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+/// The enriched searchable text for a journal entry: the humanized ref_type
+/// label ∪ reason ∪ description, joined by spaces. Shared by the rule matcher and
+/// the wallet's journal search so searching the label a user actually sees (e.g.
+/// "Daily") finds the row even though its raw `ref_type` is `daily_goal_payouts`.
+pub fn journal_match_text(ref_type: &str, reason: Option<&str>, description: &str) -> String {
+  let mut parts: Vec<&str> = vec![ref_type, reason.unwrap_or(""), description];
+  let label = humanize_ref_type(ref_type);
+  parts[0] = label.as_str();
+  parts
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn op_label(op: RuleOp) -> &'static str {
+  match op {
+    RuleOp::Between => "is between",
+    RuleOp::Contains => "contains",
+    RuleOp::GreaterThan => "is over",
+    RuleOp::Is => "is",
+    RuleOp::IsNot => "is not",
+    RuleOp::LessThan => "is under",
+    RuleOp::NotContains => "does not contain",
+    RuleOp::StartsWith => "starts with",
+  }
+}
+
+/// A rule's effective category for a single ledger entry: the first enabled rule
+/// in priority order whose conditions match. Rules only touch outflows, so an
+/// inflow (or empty rule set) yields `None`. Pure over a loaded rule list.
+#[allow(dead_code)]
+fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
+  if !target.is_outflow {
+    return None;
+  }
+  rules
+    .iter()
+    .find(|rule| rule.enabled() && target.matches_rule(rule))
+    .map(Rule::category_id)
 }
 
 /// Resolves a single ledger entry to its effective budget category for a scope,
@@ -641,6 +973,9 @@ struct JournalActivity {
   id: i64,
   owner: BudgetOwner,
   ref_type: String,
+  /// The enriched searchable text for rule matching: humanized ref_type label ∪
+  /// reason ∪ description.
+  text: String,
 }
 
 /// A wallet transaction reduced to the fields the monthly derivation needs, with
@@ -648,6 +983,9 @@ struct JournalActivity {
 struct TransactionActivity {
   amount: f64,
   date: String,
+  is_buy: bool,
+  item: String,
+  location: String,
   owner: BudgetOwner,
   transaction_id: i64,
 }
@@ -692,6 +1030,14 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
 pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
   let context = ResolutionContext::load(db, scope).await;
 
+  // Item/location names back the rule engine's text matching for market rows;
+  // loaded once so per-month resolution stays in-memory. Empty when no rule
+  // touches them, so the lookups are harmless on the manual-only path.
+  let (type_names, location_names) = match context.rules.is_empty() {
+    true => (HashMap::new(), HashMap::new()),
+    false => (transaction_type_names(db).await, transaction_location_names(db).await),
+  };
+
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
   let mut transactions: Vec<TransactionActivity> = Vec::new();
   for character_id in scope_character_ids(db, scope).await {
@@ -705,12 +1051,16 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
         id: row.id(),
         owner,
         ref_type: row.ref_type().clone(),
+        text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
       });
     }
     for tx in finance::wallet_transactions(db, character_id).await.unwrap_or_default() {
       transactions.push(TransactionActivity {
         amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
         date: tx.date().clone(),
+        is_buy: tx.is_buy(),
+        item: type_names.get(&tx.type_id()).cloned().unwrap_or_default(),
+        location: location_names.get(&tx.location_id()).cloned().unwrap_or_default(),
         owner,
         transaction_id: tx.transaction_id(),
       });
@@ -731,6 +1081,7 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
           id: row.id(),
           owner,
           ref_type: row.ref_type().clone(),
+          text: journal_match_text(row.ref_type(), row.reason().as_deref(), row.description()),
         });
       }
       for tx in finance::corporation_wallet_transactions(db, corp, division.division())
@@ -740,6 +1091,9 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
         transactions.push(TransactionActivity {
           amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
           date: tx.date().clone(),
+          is_buy: tx.is_buy(),
+          item: type_names.get(&tx.type_id()).cloned().unwrap_or_default(),
+          location: location_names.get(&tx.location_id()).cloned().unwrap_or_default(),
           owner,
           transaction_id: tx.transaction_id(),
         });
@@ -775,7 +1129,8 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
       continue;
     }
     let Some(amount) = row.amount else { continue };
-    if let Some(category_id) = context.override_for(row.owner, BudgetEntryKind::Journal, row.id) {
+    let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
+    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Journal, row.id, &target) {
       *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
   }
@@ -796,7 +1151,8 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     {
       continue;
     }
-    if let Some(category_id) = context.override_for(tx.owner, BudgetEntryKind::Market, tx.transaction_id) {
+    let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
+    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Market, tx.transaction_id, &target) {
       *by_month
         .entry(month.clone())
         .or_default()
@@ -951,6 +1307,30 @@ pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, mon
   out
 }
 
+/// Station and structure `id → name` map for resolving a market trade's location
+/// name in rule matching. Loaded once per derivation pass.
+async fn transaction_location_names(db: &Database) -> HashMap<i64, String> {
+  let mut names = HashMap::new();
+  for station in crate::store::repo::sde::all_stations(db).await.unwrap_or_default() {
+    names.insert(station.id(), station.name().clone());
+  }
+  for structure in crate::store::repo::sde::all_structures(db).await.unwrap_or_default() {
+    names.insert(structure.id(), structure.name().clone());
+  }
+  names
+}
+
+/// Item-type `id → name` map for resolving a market trade's item name in rule
+/// matching. Loaded once per derivation pass.
+async fn transaction_type_names(db: &Database) -> HashMap<i64, String> {
+  crate::store::repo::sde::all_item_types(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|item| (item.id(), item.name().clone()))
+    .collect()
+}
+
 async fn month_assigned(db: &Database, scope: BudgetScope, month: &str) -> f64 {
   use crate::store::repo::budget;
   let mut total = 0.0;
@@ -971,6 +1351,482 @@ async fn month_assigned(db: &Database, scope: BudgetScope, month: &str) -> f64 {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn condition(field: RuleField, op: RuleOp, value: &str) -> RuleCondition {
+    RuleCondition {
+      field,
+      op,
+      value: value.to_owned(),
+      value2: None,
+    }
+  }
+
+  fn between(lo: &str, hi: &str) -> RuleCondition {
+    RuleCondition {
+      field: RuleField::Amount,
+      op: RuleOp::Between,
+      value: lo.to_owned(),
+      value2: Some(hi.to_owned()),
+    }
+  }
+
+  fn rule(category_id: i64, enabled: bool, match_mode: MatchMode, conditions: Vec<RuleCondition>) -> Rule {
+    Rule {
+      category_id,
+      conditions,
+      enabled,
+      id: category_id,
+      match_mode,
+      name: String::new(),
+    }
+  }
+
+  fn journal_outflow(owner: BudgetOwner, ref_type: &str, amount: f64, text: &str) -> MatchTarget {
+    MatchTarget::journal(owner, ref_type, Some(amount), text)
+  }
+
+  mod match_target {
+    use super::*;
+
+    mod matches_condition {
+      use pretty_assertions::{assert_eq, assert_ne};
+
+      use super::*;
+
+      #[test]
+      fn it_matches_text_contains_and_not_contains() {
+        let target = journal_outflow(BudgetOwner::Character(1), "broker_fee", -10.0, "Daily Goal Payouts");
+
+        assert!(target.matches_condition(&condition(RuleField::Text, RuleOp::Contains, "daily")));
+        assert!(!target.matches_condition(&condition(RuleField::Text, RuleOp::Contains, "weekly")));
+        assert!(target.matches_condition(&condition(RuleField::Text, RuleOp::NotContains, "weekly")));
+        assert!(!target.matches_condition(&condition(RuleField::Text, RuleOp::NotContains, "daily")));
+      }
+
+      #[test]
+      fn it_matches_text_is_and_starts_with() {
+        let target = MatchTarget::market(BudgetOwner::Character(1), true, 5.0, "Hobgoblin II", "Jita IV");
+
+        assert!(target.matches_condition(&condition(RuleField::Item, RuleOp::Is, "hobgoblin ii")));
+        assert!(target.matches_condition(&condition(RuleField::Item, RuleOp::StartsWith, "hobgob")));
+        assert!(!target.matches_condition(&condition(RuleField::Item, RuleOp::Is, "hobgob")));
+      }
+
+      #[test]
+      fn it_matches_distinct_market_item_and_location() {
+        let target = MatchTarget::market(BudgetOwner::Character(1), true, 5.0, "Caracal", "Amarr VIII");
+
+        assert!(target.matches_condition(&condition(RuleField::Location, RuleOp::Contains, "amarr")));
+        assert!(!target.matches_condition(&condition(RuleField::Location, RuleOp::Contains, "caracal")));
+        assert!(target.matches_condition(&condition(RuleField::Item, RuleOp::Contains, "caracal")));
+      }
+
+      #[test]
+      fn it_treats_an_empty_text_needle_as_a_non_match_except_for_not_contains() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+
+        assert!(!target.matches_condition(&condition(RuleField::Text, RuleOp::Contains, "  ")));
+        assert!(target.matches_condition(&condition(RuleField::Text, RuleOp::NotContains, "  ")));
+      }
+
+      #[test]
+      fn it_matches_amount_over_under_and_between() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -150_000_000.0, "Sales Tax");
+
+        assert!(target.matches_condition(&condition(RuleField::Amount, RuleOp::GreaterThan, "100m")));
+        assert!(!target.matches_condition(&condition(RuleField::Amount, RuleOp::GreaterThan, "1b")));
+        assert!(target.matches_condition(&condition(RuleField::Amount, RuleOp::LessThan, "1b")));
+        assert!(target.matches_condition(&between("100m", "200m")));
+        assert!(target.matches_condition(&between("200m", "100m")));
+        assert!(!target.matches_condition(&between("200m", "300m")));
+      }
+
+      #[test]
+      fn it_compares_amount_on_the_absolute_value() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -500_000_000.0, "Sales Tax");
+
+        assert!(target.matches_condition(&condition(RuleField::Amount, RuleOp::GreaterThan, "100m")));
+      }
+
+      #[test]
+      fn it_matches_direction_is() {
+        let outflow = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+        let inflow = MatchTarget::journal(BudgetOwner::Character(1), "bounty", Some(10.0), "Bounty");
+
+        assert!(outflow.matches_condition(&condition(RuleField::Direction, RuleOp::Is, "out")));
+        assert!(!outflow.matches_condition(&condition(RuleField::Direction, RuleOp::Is, "in")));
+        assert!(inflow.matches_condition(&condition(RuleField::Direction, RuleOp::Is, "in")));
+      }
+
+      #[test]
+      fn it_matches_character_is_and_is_not() {
+        let target = journal_outflow(BudgetOwner::Character(42), "tax", -10.0, "Sales Tax");
+
+        assert!(target.matches_condition(&condition(RuleField::Character, RuleOp::Is, "42")));
+        assert!(!target.matches_condition(&condition(RuleField::Character, RuleOp::Is, "7")));
+        assert!(target.matches_condition(&condition(RuleField::Character, RuleOp::IsNot, "7")));
+        assert!(!target.matches_condition(&condition(RuleField::Character, RuleOp::IsNot, "42")));
+      }
+
+      #[test]
+      fn it_matches_type_against_journal_ref_type_and_market_side() {
+        let journal = journal_outflow(BudgetOwner::Character(1), "broker_fee", -10.0, "Broker Fee");
+        let buy = MatchTarget::market(BudgetOwner::Character(1), true, 5.0, "Caracal", "Jita");
+        let sale = MatchTarget::market(BudgetOwner::Character(1), false, 5.0, "Caracal", "Jita");
+
+        assert!(journal.matches_condition(&condition(RuleField::Type, RuleOp::Is, "broker_fee")));
+        assert!(journal.matches_condition(&condition(RuleField::Type, RuleOp::IsNot, "tax")));
+        assert!(buy.matches_condition(&condition(RuleField::Type, RuleOp::Is, "market_buy")));
+        assert!(sale.matches_condition(&condition(RuleField::Type, RuleOp::Is, "market_sale")));
+
+        assert_ne!(buy.type_token, sale.type_token);
+        assert_eq!(buy.type_token, "market_buy");
+      }
+    }
+
+    mod matches_rule {
+      use super::*;
+
+      #[test]
+      fn it_joins_conditions_with_all() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -150_000_000.0, "Sales Tax");
+        let all = rule(
+          1,
+          true,
+          MatchMode::All,
+          vec![
+            condition(RuleField::Text, RuleOp::Contains, "sales"),
+            condition(RuleField::Amount, RuleOp::GreaterThan, "100m"),
+          ],
+        );
+
+        assert!(target.matches_rule(&all));
+      }
+
+      #[test]
+      fn it_requires_every_condition_under_all() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10_000_000.0, "Sales Tax");
+        let all = rule(
+          1,
+          true,
+          MatchMode::All,
+          vec![
+            condition(RuleField::Text, RuleOp::Contains, "sales"),
+            condition(RuleField::Amount, RuleOp::GreaterThan, "100m"),
+          ],
+        );
+
+        assert!(!target.matches_rule(&all));
+      }
+
+      #[test]
+      fn it_joins_conditions_with_any() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10_000_000.0, "Sales Tax");
+        let any = rule(
+          1,
+          true,
+          MatchMode::Any,
+          vec![
+            condition(RuleField::Text, RuleOp::Contains, "missile"),
+            condition(RuleField::Amount, RuleOp::GreaterThan, "1m"),
+          ],
+        );
+
+        assert!(target.matches_rule(&any));
+      }
+
+      #[test]
+      fn it_ignores_inactive_conditions() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+        let with_blank = rule(
+          1,
+          true,
+          MatchMode::All,
+          vec![
+            condition(RuleField::Text, RuleOp::Contains, "sales"),
+            condition(RuleField::Text, RuleOp::Contains, "  "),
+          ],
+        );
+
+        assert!(target.matches_rule(&with_blank));
+      }
+
+      #[test]
+      fn it_never_matches_a_rule_with_no_active_conditions() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+        let empty = rule(
+          1,
+          true,
+          MatchMode::All,
+          vec![condition(RuleField::Text, RuleOp::Contains, "")],
+        );
+
+        assert!(!target.matches_rule(&empty));
+      }
+    }
+  }
+
+  mod is_active_condition {
+    use super::*;
+
+    #[test]
+    fn it_treats_a_blank_value_as_inactive() {
+      assert!(!is_active_condition(&condition(
+        RuleField::Text,
+        RuleOp::Contains,
+        "   "
+      )));
+      assert!(is_active_condition(&condition(RuleField::Text, RuleOp::Contains, "x")));
+    }
+
+    #[test]
+    fn it_requires_both_bounds_for_a_between() {
+      assert!(!is_active_condition(&condition(
+        RuleField::Amount,
+        RuleOp::Between,
+        "100m"
+      )));
+      assert!(is_active_condition(&between("100m", "200m")));
+    }
+  }
+
+  mod rule_category_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_first_enabled_matching_rule_by_priority() {
+      let target = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+      let rules = vec![
+        rule(
+          10,
+          false,
+          MatchMode::All,
+          vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+        ),
+        rule(
+          20,
+          true,
+          MatchMode::All,
+          vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+        ),
+        rule(
+          30,
+          true,
+          MatchMode::All,
+          vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+        ),
+      ];
+
+      assert_eq!(rule_category_for(&target, &rules), Some(20));
+    }
+
+    #[test]
+    fn it_never_resolves_an_inflow() {
+      let inflow = MatchTarget::journal(BudgetOwner::Character(1), "bounty", Some(10.0), "Bounty");
+      let rules = vec![rule(
+        10,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Direction, RuleOp::Is, "in")],
+      )];
+
+      assert_eq!(rule_category_for(&inflow, &rules), None);
+    }
+  }
+
+  mod match_count {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_counts_the_matching_outflows() {
+      let outflows = vec![
+        journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax"),
+        journal_outflow(BudgetOwner::Character(1), "broker_fee", -10.0, "Broker Fee"),
+        journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax"),
+      ];
+      let counted = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+      );
+
+      assert_eq!(match_count(&counted, &outflows), 2);
+    }
+  }
+
+  mod preview_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn fixture() -> Vec<MatchTarget> {
+      vec![
+        journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax"),
+        journal_outflow(BudgetOwner::Character(1), "tax", -20.0, "Sales Tax"),
+        journal_outflow(BudgetOwner::Character(1), "tax", -30.0, "Sales Tax"),
+      ]
+    }
+
+    #[test]
+    fn it_classifies_assign_manual_and_preempted() {
+      let outflows = fixture();
+      let draft = rule(
+        99,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+      );
+      let other = vec![rule(
+        7,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
+      )];
+      let manual = HashMap::from([(0usize, 5i64)]);
+
+      let preview = preview_entries(&draft, &other, &manual, 99, &outflows);
+
+      assert_eq!(
+        preview,
+        vec![
+          (0, PreviewStatus::Manual),
+          (1, PreviewStatus::Assign),
+          (2, PreviewStatus::Preempted),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_classifies_already_when_a_same_category_rule_already_claims_it() {
+      let outflows = fixture();
+      let draft = rule(
+        99,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+      );
+      let other = vec![rule(
+        99,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
+      )];
+
+      let preview = preview_entries(&draft, &other, &HashMap::new(), 99, &outflows);
+
+      assert_eq!(preview[2], (2, PreviewStatus::Already));
+    }
+  }
+
+  mod suggest_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_first_active_conditions_value() {
+      let by_text = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "Cerberus")],
+      );
+
+      assert_eq!(suggest_name(&by_text, |_| None, |_| None), "Cerberus");
+    }
+
+    #[test]
+    fn it_resolves_type_and_character_labels() {
+      let by_type = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Type, RuleOp::Is, "broker_fee")],
+      );
+      let by_char = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Character, RuleOp::Is, "42")],
+      );
+
+      assert_eq!(
+        suggest_name(
+          &by_type,
+          |key| (key == "broker_fee").then(|| "Broker Fees".to_owned()),
+          |_| None
+        ),
+        "Broker Fees"
+      );
+      assert_eq!(
+        suggest_name(&by_char, |_| None, |key| (key == "42").then(|| "Aaron".to_owned())),
+        "Aaron"
+      );
+    }
+
+    #[test]
+    fn it_describes_amount_and_direction_conditions() {
+      let by_amount = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Amount, RuleOp::GreaterThan, "100m")],
+      );
+      let by_direction = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Direction, RuleOp::Is, "in")],
+      );
+
+      assert_eq!(suggest_name(&by_amount, |_| None, |_| None), "Amount is over 100m");
+      assert_eq!(suggest_name(&by_direction, |_| None, |_| None), "Inflows");
+    }
+
+    #[test]
+    fn it_returns_empty_for_a_rule_with_no_active_conditions() {
+      let empty = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "")],
+      );
+
+      assert_eq!(suggest_name(&empty, |_| None, |_| None), "");
+    }
+  }
+
+  mod journal_match_text {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_unions_the_humanized_label_reason_and_description() {
+      let text = journal_match_text("daily_goal_payouts", Some("project bonus"), "Payout for goals");
+
+      assert_eq!(text, "Daily Goal Payouts project bonus Payout for goals");
+    }
+
+    #[test]
+    fn it_finds_a_humanized_word_not_present_in_the_raw_ref_type() {
+      let text = journal_match_text("daily_goal_payouts", None, "");
+
+      assert!(text.to_lowercase().contains("daily"));
+    }
+
+    #[test]
+    fn it_skips_an_absent_reason_and_empty_description() {
+      let text = journal_match_text("broker_fee", None, "");
+
+      assert_eq!(text, "Broker Fee");
+    }
+  }
 
   mod month_key {
     use pretty_assertions::assert_eq;
@@ -2252,6 +3108,202 @@ mod tests {
         by_month["2026-04"],
         monthly_activity(&db, BudgetScope::Character(1), "2026-04").await
       );
+    }
+
+    async fn text_rule(
+      db: &Database,
+      scope: BudgetScope,
+      category_id: i64,
+      enabled: bool,
+      position: i64,
+      needle: &str,
+    ) {
+      use crate::store::repo::budget::{NewRule, create_rule, replace_rule_conditions};
+      let created = create_rule(
+        db,
+        &NewRule {
+          category_id,
+          enabled,
+          match_mode: MatchMode::All,
+          name: needle.to_owned(),
+          position,
+          scope,
+        },
+      )
+      .await
+      .unwrap();
+      replace_rule_conditions(
+        db,
+        created.id(),
+        &[RuleCondition {
+          field: RuleField::Text,
+          op: RuleOp::Contains,
+          value: needle.to_owned(),
+          value2: None,
+        }],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_auto_assigns_a_matching_outflow_via_a_rule_retroactively() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
+        .await
+        .unwrap();
+
+      // No rules yet: the outflow stays in Ready-to-Assign.
+      let before = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+      assert!(before.is_empty());
+
+      text_rule(
+        &db,
+        BudgetScope::Character(1),
+        slug_to_id["fees"],
+        true,
+        0,
+        "Brokers Fee",
+      )
+      .await;
+
+      let after = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.get(&slug_to_id["fees"]), Some(&-120.0));
+    }
+
+    #[tokio::test]
+    async fn it_never_moves_a_manually_assigned_entry_even_when_a_rule_matches() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
+        .await
+        .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      text_rule(
+        &db,
+        BudgetScope::Character(1),
+        slug_to_id["fees"],
+        true,
+        0,
+        "Brokers Fee",
+      )
+      .await;
+
+      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&-120.0));
+      assert_eq!(activity.get(&slug_to_id["fees"]), None);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_disabled_rules_and_inflows() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
+          journal(2, 1, "bounty_prizes", 1_000.0, "2026-06-16T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      // A disabled fee rule (ignored) plus an enabled inflow-only rule. Rules
+      // never touch inflows, so the bounty stays in Ready-to-Assign and the
+      // disabled rule leaves the fee unassigned.
+      text_rule(
+        &db,
+        BudgetScope::Character(1),
+        slug_to_id["fees"],
+        false,
+        0,
+        "Brokers Fee",
+      )
+      .await;
+      {
+        use crate::store::repo::budget::{NewRule, create_rule, replace_rule_conditions};
+        let created = create_rule(
+          &db,
+          &NewRule {
+            category_id: slug_to_id["income"],
+            enabled: true,
+            match_mode: MatchMode::All,
+            name: "inflows".to_owned(),
+            position: 1,
+            scope: BudgetScope::Character(1),
+          },
+        )
+        .await
+        .unwrap();
+        replace_rule_conditions(
+          &db,
+          created.id(),
+          &[RuleCondition {
+            field: RuleField::Direction,
+            op: RuleOp::Is,
+            value: "in".to_owned(),
+            value2: None,
+          }],
+        )
+        .await
+        .unwrap();
+      }
+
+      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert!(activity.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_resolves_to_the_highest_priority_matching_rule() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
+        .await
+        .unwrap();
+      // Two rules match; the lower position (higher priority) wins.
+      text_rule(
+        &db,
+        BudgetScope::Character(1),
+        slug_to_id["fees"],
+        true,
+        0,
+        "Brokers Fee",
+      )
+      .await;
+      text_rule(
+        &db,
+        BudgetScope::Character(1),
+        slug_to_id["trading"],
+        true,
+        1,
+        "Brokers Fee",
+      )
+      .await;
+
+      let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["fees"]), Some(&-120.0));
+      assert_eq!(activity.get(&slug_to_id["trading"]), None);
     }
   }
 

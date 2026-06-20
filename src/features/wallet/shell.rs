@@ -691,7 +691,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
 /// routes to its own envelope under the owner-aware identity.
 fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
-  let assigned = chips.resolution.override_for(owner, kind, entry_id);
+  let assigned = state.budget_category_for(owner, kind, entry_id);
   let open = state.budget_picker() == Some((owner, kind, entry_id));
   let on_press = if open {
     Message::BudgetChipDismissed
@@ -1804,6 +1804,7 @@ mod tests {
         description: "Bounty payout".to_owned(),
         id: 1,
         owner: BudgetOwner::Character(1),
+        reason: None,
         ref_type: ref_type.to_owned(),
       }
     }

@@ -2167,7 +2167,7 @@ mod tests {
 
   mod review_banner {
     use super::*;
-    use crate::features::wallet::loaders::JournalEntry;
+    use crate::{features::wallet::loaders::JournalEntry, store::model::BudgetOwner};
 
     fn uncategorized_entry(id: i64, month: &str) -> JournalEntry {
       JournalEntry {
@@ -2178,6 +2178,7 @@ mod tests {
         date: format!("{month}-15T12:00:00Z"),
         description: "Brokers fee".to_owned(),
         id,
+        owner: BudgetOwner::Character(1),
         ref_type: "brokers_fee".to_owned(),
       }
     }

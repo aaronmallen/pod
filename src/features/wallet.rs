@@ -777,6 +777,16 @@ impl State {
       Scope::Corporation(_) => Vec::new(),
     }
   }
+
+  // Owned corporations whose division wallets the All scope unions into the
+  // ledger; only the All view merges corp rows, so the keyed scopes contribute
+  // none here (the per-corp view loads its own divisions separately).
+  fn corp_scope_ids(&self) -> Vec<i64> {
+    match self.active {
+      Scope::All => self.corporations.iter().map(|corp| corp.id).collect(),
+      Scope::Character(_) | Scope::Corporation(_) => Vec::new(),
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -933,7 +943,8 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
   }
 
   let scope_ids = state.scope_ids();
-  if scope_ids.is_empty() {
+  let corp_scope_ids = state.corp_scope_ids();
+  if scope_ids.is_empty() && corp_scope_ids.is_empty() {
     return Task::none();
   }
 
@@ -944,14 +955,14 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
     Tab::Journal => {
       let cursor = state.journal.last().map(|entry| entry.id);
       Task::perform(
-        async move { loaders::load_journal_page(&db, &scope_ids, cursor, limit).await },
+        async move { loaders::load_journal_page(&db, &scope_ids, &corp_scope_ids, cursor, limit).await },
         move |journal| more_page(scope, tab, MorePage::journal(journal)),
       )
     }
     Tab::Market => {
       let cursor = state.market.last().map(|entry| entry.transaction_id);
       Task::perform(
-        async move { loaders::load_market_page(&db, &scope_ids, cursor, limit).await },
+        async move { loaders::load_market_page(&db, &scope_ids, &corp_scope_ids, cursor, limit).await },
         move |market| more_page(scope, tab, MorePage::market(market)),
       )
     }
@@ -1466,7 +1477,7 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   // A market trade and its journal twin are one event: assigning either one
   // cascades to the other so both rows stay in sync and the trade is counted
   // against the chosen envelope exactly once. The twin shares the row's owner.
-  let counterpart = budget_cascade_target(state, kind, entry_id);
+  let counterpart = budget_cascade_target(state, owner, kind, entry_id);
   let db = db.clone();
   Task::perform(
     async move {
@@ -1812,10 +1823,22 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     }
     Scope::All | Scope::Character(_) => {
       let limit = PAGE_SIZE as i64;
-      let journal = loaders::load_journal_page(&db, &scope_ids, None, limit).await;
-      let market = loaders::load_market_page(&db, &scope_ids, None, limit).await;
+      let corp_scope_ids: Vec<i64> = match scope {
+        Scope::All => corporations.iter().map(|corp| corp.id).collect(),
+        _ => Vec::new(),
+      };
+      let journal = loaders::load_journal_page(&db, &scope_ids, &corp_scope_ids, None, limit).await;
+      let market = loaders::load_market_page(&db, &scope_ids, &corp_scope_ids, None, limit).await;
       let contracts = loaders::load_contracts_page(&db, &scope_ids, None, limit).await;
-      let (journal_total, market_total, contract_total) = count_character_totals(&db, &scope_ids).await;
+      let (mut journal_total, mut market_total, contract_total) = count_character_totals(&db, &scope_ids).await;
+      for &corp_id in &corp_scope_ids {
+        journal_total += finance::count_journal_for_corporation_all_divisions(&db, corp_id)
+          .await
+          .unwrap_or(0);
+        market_total += finance::count_transactions_for_corporation_all_divisions(&db, corp_id)
+          .await
+          .unwrap_or(0);
+      }
       (
         journal,
         market,
@@ -2216,15 +2239,29 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
 /// The matched counterpart of a budget assignment, so an assignment cascades
 /// across a market trade's two records. A transaction links to its journal twin
 /// via `journal_ref_id`; a `market_transaction` journal entry links to its
-/// transaction via `context_id`. Returns `None` when the entry has no 100% match.
-fn budget_cascade_target(state: &State, kind: BudgetEntryKind, entry_id: i64) -> Option<(BudgetEntryKind, i64)> {
+/// transaction via `context_id`. The lookup is scoped to the row's `owner` so a
+/// corp-mirrored trade (the same EVE id in a character and a corp wallet) never
+/// cascades onto the other owner's twin. Returns `None` when the entry has no
+/// 100% match.
+fn budget_cascade_target(
+  state: &State,
+  owner: BudgetOwner,
+  kind: BudgetEntryKind,
+  entry_id: i64,
+) -> Option<(BudgetEntryKind, i64)> {
   match kind {
     BudgetEntryKind::Market => {
-      let transaction = state.market.iter().find(|entry| entry.transaction_id == entry_id)?;
+      let transaction = state
+        .market
+        .iter()
+        .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
       (transaction.journal_ref_id != 0).then_some((BudgetEntryKind::Journal, transaction.journal_ref_id))
     }
     BudgetEntryKind::Journal => {
-      let entry = state.journal.iter().find(|entry| entry.id == entry_id)?;
+      let entry = state
+        .journal
+        .iter()
+        .find(|entry| entry.owner == owner && entry.id == entry_id)?;
       if entry.ref_type != "market_transaction" {
         return None;
       }
@@ -2244,11 +2281,9 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
-  let assigned = chips.resolution.override_for(
-    BudgetOwner::Character(entry.character_id),
-    BudgetEntryKind::Journal,
-    entry.id,
-  );
+  let assigned = chips
+    .resolution
+    .override_for(entry.owner, BudgetEntryKind::Journal, entry.id);
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => {
@@ -2265,11 +2300,9 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
   if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
-  let assigned = chips.resolution.override_for(
-    BudgetOwner::Character(entry.character_id),
-    BudgetEntryKind::Market,
-    entry.transaction_id,
-  );
+  let assigned = chips
+    .resolution
+    .override_for(entry.owner, BudgetEntryKind::Market, entry.transaction_id);
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -2464,6 +2497,7 @@ mod tests {
       date: "2026-05-30T12:00:00Z".to_owned(),
       description: description.to_owned(),
       id: 1,
+      owner: BudgetOwner::Character(character_id),
       ref_type: ref_type.to_owned(),
     }
   }
@@ -2476,6 +2510,7 @@ mod tests {
       item: item.to_owned(),
       journal_ref_id: 0,
       location: location.to_owned(),
+      owner: BudgetOwner::Character(character_id),
       quantity: 1,
       total: 1.0,
       transaction_id: 1,
@@ -2780,8 +2815,31 @@ mod tests {
       state.market = vec![transaction];
 
       assert_eq!(
-        budget_cascade_target(&state, BudgetEntryKind::Market, 500),
+        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
         Some((BudgetEntryKind::Journal, 10))
+      );
+    }
+
+    #[test]
+    fn it_does_not_cascade_to_another_owners_twin_sharing_the_eve_id() {
+      let mut state = State::new();
+      let mut character = market_entry(1, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      character.journal_ref_id = 10;
+      let mut corp = market_entry(1, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.journal_ref_id = 20;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp];
+
+      assert_eq!(
+        budget_cascade_target(
+          &state,
+          BudgetOwner::Corporation(98_000_001),
+          BudgetEntryKind::Market,
+          500
+        ),
+        Some((BudgetEntryKind::Journal, 20))
       );
     }
 
@@ -2794,7 +2852,7 @@ mod tests {
       state.journal = vec![twin];
 
       assert_eq!(
-        budget_cascade_target(&state, BudgetEntryKind::Journal, 10),
+        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
         Some((BudgetEntryKind::Market, 500))
       );
     }
@@ -2807,7 +2865,10 @@ mod tests {
       fee.context_id = Some(500);
       state.journal = vec![fee];
 
-      assert_eq!(budget_cascade_target(&state, BudgetEntryKind::Journal, 11), None);
+      assert_eq!(
+        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 11),
+        None
+      );
     }
 
     #[test]

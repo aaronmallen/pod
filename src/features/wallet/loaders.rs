@@ -10,7 +10,7 @@ use crate::{
   store::{
     Database,
     images::{self, IconResolution},
-    model::BudgetScope,
+    model::{BudgetOwner, BudgetScope},
     repo::finance,
   },
 };
@@ -90,6 +90,7 @@ pub struct JournalEntry {
   pub date: String,
   pub description: String,
   pub id: i64,
+  pub owner: BudgetOwner,
   pub ref_type: String,
 }
 
@@ -109,6 +110,7 @@ pub struct MarketEntry {
   /// to this trade's `market_transaction` journal twin.
   pub journal_ref_id: i64,
   pub location: String,
+  pub owner: BudgetOwner,
   pub quantity: i64,
   pub total: f64,
   pub transaction_id: i64,
@@ -193,7 +195,13 @@ fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> Cont
   }
 }
 
-pub async fn load_journal_page(db: &Database, scope: &[i64], cursor: Option<i64>, limit: i64) -> Vec<JournalEntry> {
+pub async fn load_journal_page(
+  db: &Database,
+  scope: &[i64],
+  corp_scope: &[i64],
+  cursor: Option<i64>,
+  limit: i64,
+) -> Vec<JournalEntry> {
   let mut entries = Vec::new();
   for &character_id in scope {
     let rows = finance::wallet_journal_page(db, character_id, cursor, limit)
@@ -201,12 +209,24 @@ pub async fn load_journal_page(db: &Database, scope: &[i64], cursor: Option<i64>
       .unwrap_or_default();
     entries.extend(rows.into_iter().map(|row| map_journal_row(&row)));
   }
+  for &corporation_id in corp_scope {
+    let rows = finance::corporation_wallet_journal_page(db, corporation_id, cursor, limit)
+      .await
+      .unwrap_or_default();
+    entries.extend(rows.iter().map(map_corp_journal_row));
+  }
   entries.sort_by_key(|entry| std::cmp::Reverse(entry.id));
   entries.truncate(limit as usize);
   entries
 }
 
-pub async fn load_market_page(db: &Database, scope: &[i64], cursor: Option<i64>, limit: i64) -> Vec<MarketEntry> {
+pub async fn load_market_page(
+  db: &Database,
+  scope: &[i64],
+  corp_scope: &[i64],
+  cursor: Option<i64>,
+  limit: i64,
+) -> Vec<MarketEntry> {
   let type_names = load_type_names(db).await;
   let location_names = load_location_names(db).await;
 
@@ -219,6 +239,16 @@ pub async fn load_market_page(db: &Database, scope: &[i64], cursor: Option<i64>,
       rows
         .into_iter()
         .filter_map(|row| map_txn_row(&row, &type_names, &location_names)),
+    );
+  }
+  for &corporation_id in corp_scope {
+    let rows = finance::corporation_wallet_transactions_page(db, corporation_id, cursor, limit)
+      .await
+      .unwrap_or_default();
+    entries.extend(
+      rows
+        .iter()
+        .filter_map(|row| map_corp_txn_row(row, &type_names, &location_names)),
     );
   }
   entries.sort_by_key(|entry| std::cmp::Reverse(entry.transaction_id));
@@ -349,6 +379,7 @@ fn map_corp_journal_row(row: &crate::store::model::CorporationWalletJournal) -> 
     date: row.date().clone(),
     description: row.description().clone(),
     id: row.id(),
+    owner: BudgetOwner::Corporation(row.corporation_id()),
     ref_type: row.ref_type().clone(),
   }
 }
@@ -368,6 +399,7 @@ fn map_corp_txn_row(
     item,
     journal_ref_id: row.journal_ref_id(),
     location,
+    owner: BudgetOwner::Corporation(row.corporation_id()),
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
     transaction_id: row.transaction_id(),
@@ -386,6 +418,7 @@ fn map_journal_row(row: &crate::store::model::CharacterWalletJournal) -> Journal
     date: row.date().clone(),
     description: row.description().clone(),
     id: row.id(),
+    owner: BudgetOwner::Character(row.character_id()),
     ref_type: row.ref_type().clone(),
   }
 }
@@ -405,6 +438,7 @@ fn map_txn_row(
     item,
     journal_ref_id: row.journal_ref_id(),
     location,
+    owner: BudgetOwner::Character(row.character_id()),
     quantity: row.quantity(),
     total: row.unit_price() * row.quantity() as f64,
     transaction_id: row.transaction_id(),
@@ -625,6 +659,7 @@ mod tests {
       assert_eq!(entry.balance, Some(50_000.0));
       assert_eq!(entry.ref_type, "office_rental_fee");
       assert_eq!(entry.character_id, 98_000_001);
+      assert_eq!(entry.owner, BudgetOwner::Corporation(98_000_001));
       assert!(!entry.is_income());
     }
 
@@ -645,6 +680,7 @@ mod tests {
       assert_eq!(entry.total, 400.0);
       assert!(!entry.is_buy);
       assert_eq!(entry.character_id, 98_000_001);
+      assert_eq!(entry.owner, BudgetOwner::Corporation(98_000_001));
     }
 
     #[test]
@@ -843,9 +879,9 @@ mod tests {
       append(&db, 2, 2, "2026-03-01T00:00:00Z").await;
       append(&db, 3, 1, "2026-02-01T00:00:00Z").await;
 
-      let first = load_journal_page(&db, &[1, 2], None, 2).await;
+      let first = load_journal_page(&db, &[1, 2], &[], None, 2).await;
       let cursor = first.last().map(|e| e.id);
-      let next = load_journal_page(&db, &[1, 2], cursor, 2).await;
+      let next = load_journal_page(&db, &[1, 2], &[], cursor, 2).await;
 
       assert_eq!(first.iter().map(|e| e.id).collect::<Vec<_>>(), [3, 2]);
       assert_eq!(next.iter().map(|e| e.id).collect::<Vec<_>>(), [1]);
@@ -859,7 +895,7 @@ mod tests {
       append(&db, 1, 1, "2026-01-01T00:00:00Z").await;
       append(&db, 2, 2, "2026-03-01T00:00:00Z").await;
 
-      let entries = load_journal_page(&db, &[1], None, 50).await;
+      let entries = load_journal_page(&db, &[1], &[], None, 50).await;
 
       assert_eq!(entries.len(), 1);
       assert_eq!(entries[0].character_id, 1);
@@ -874,9 +910,51 @@ mod tests {
       append(&db, 2, 2, "2026-03-01T00:00:00Z").await;
       append(&db, 3, 1, "2026-02-01T00:00:00Z").await;
 
-      let entries = load_journal_page(&db, &[1, 2], None, 50).await;
+      let entries = load_journal_page(&db, &[1, 2], &[], None, 50).await;
 
       assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [3, 2, 1]);
+    }
+
+    #[tokio::test]
+    async fn it_unions_corporation_journal_rows_keyed_to_the_corporation_owner() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      append(&db, 1, 1, "2026-01-01T00:00:00Z").await;
+      let corp_id = 98_000_001;
+      let mut corp = crate::store::model::Corporation::new(corp_id, "Test Corp", "TSTC");
+      corp.set_ceo_id(100);
+      corp.set_creator_id(100);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      crate::store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[crate::store::model::CorporationWalletJournal {
+          amount: Some(1.0),
+          balance: Some(1.0),
+          context_id: None,
+          context_id_type: None,
+          corporation_id: corp_id,
+          date: "2026-02-01T00:00:00Z".to_owned(),
+          description: "Entry".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 2,
+          reason: None,
+          ref_type: "player_donation".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let entries = load_journal_page(&db, &[1], &[corp_id], None, 50).await;
+
+      assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [2, 1]);
+      assert_eq!(entries[0].owner, BudgetOwner::Corporation(corp_id));
+      assert_eq!(entries[1].owner, BudgetOwner::Character(1));
     }
   }
 
@@ -948,7 +1026,7 @@ mod tests {
         .await
         .unwrap();
 
-      let entries = load_market_page(&db, &[42], None, 50).await;
+      let entries = load_market_page(&db, &[42], &[], None, 50).await;
 
       assert!(
         entries.is_empty(),

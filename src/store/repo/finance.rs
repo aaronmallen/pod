@@ -465,6 +465,14 @@ pub async fn count_journal_for_corporation(db: &Database, corporation_id: i64, d
   Ok(count)
 }
 
+pub async fn count_journal_for_corporation_all_divisions(db: &Database, corporation_id: i64) -> Result<i64, Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_wallet_journal WHERE corporation_id = ?")
+    .bind(corporation_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(count)
+}
+
 pub async fn count_transactions_for_character(db: &Database, character_id: i64) -> Result<i64, Error> {
   let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM character_wallet_transaction WHERE character_id = ?")
     .bind(character_id)
@@ -485,6 +493,18 @@ pub async fn count_transactions_for_corporation(
   .bind(division)
   .fetch_one(&db.0)
   .await?;
+  Ok(count)
+}
+
+pub async fn count_transactions_for_corporation_all_divisions(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<i64, Error> {
+  let count =
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM corporation_wallet_transaction WHERE corporation_id = ?")
+      .bind(corporation_id)
+      .fetch_one(&db.0)
+      .await?;
   Ok(count)
 }
 
@@ -714,6 +734,53 @@ pub async fn corporation_wallet_transactions(
   )
   .bind(corporation_id)
   .bind(division)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+/// Pages a corporation's wallet journal across *all* divisions (unlike the per-division
+/// `corporation_wallet_transactions` sibling), cursoring on a descending `id`.
+pub async fn corporation_wallet_journal_page(
+  db: &Database,
+  corporation_id: i64,
+  after_id: Option<i64>,
+  limit: i64,
+) -> Result<Vec<CorporationWalletJournal>, Error> {
+  let rows = sqlx::query_as::<_, CorporationWalletJournal>(
+    "SELECT amount, balance, context_id, context_id_type, corporation_id, date, description, division, \
+    first_party_id, id, reason, ref_type, second_party_id, tax, tax_receiver_id \
+    FROM corporation_wallet_journal \
+    WHERE corporation_id = ? AND (? IS NULL OR id < ?) \
+    ORDER BY id DESC LIMIT ?",
+  )
+  .bind(corporation_id)
+  .bind(after_id)
+  .bind(after_id)
+  .bind(limit)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+/// Pages a corporation's wallet transactions across *all* divisions (unlike the per-division
+/// `corporation_wallet_transactions` sibling), cursoring on a descending `transaction_id`.
+pub async fn corporation_wallet_transactions_page(
+  db: &Database,
+  corporation_id: i64,
+  after_id: Option<i64>,
+  limit: i64,
+) -> Result<Vec<CorporationWalletTransaction>, Error> {
+  let rows = sqlx::query_as::<_, CorporationWalletTransaction>(
+    "SELECT client_id, corporation_id, date, division, is_buy, journal_ref_id, location_id, \
+    quantity, transaction_id, type_id, unit_price FROM corporation_wallet_transaction \
+    WHERE corporation_id = ? AND (? IS NULL OR transaction_id < ?) \
+    ORDER BY transaction_id DESC LIMIT ?",
+  )
+  .bind(corporation_id)
+  .bind(after_id)
+  .bind(after_id)
+  .bind(limit)
   .fetch_all(&db.0)
   .await?;
   Ok(rows)

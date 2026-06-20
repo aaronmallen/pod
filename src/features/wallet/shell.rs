@@ -510,15 +510,10 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   row_shell(vec![
     GlyphBadge::new(glyph, is_in).render(),
     journal_left_col(entry),
-    container(budget_chip(
-      state,
-      BudgetOwner::Character(entry.character_id),
-      BudgetEntryKind::Journal,
-      entry.id,
-    ))
-    .width(Length::Fixed(170.0))
-    .into(),
-    journal_character_col(state, entry.character_id),
+    container(budget_chip(state, entry.owner, BudgetEntryKind::Journal, entry.id))
+      .width(Length::Fixed(170.0))
+      .into(),
+    journal_character_col(state, entry.owner),
     journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
   ])
 }
@@ -540,11 +535,11 @@ fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
   .into()
 }
 
-fn journal_character_col(state: &State, character_id: i64) -> Element<'_, Message> {
-  let name = owner_name(state, character_id);
-  let portrait = roster_portrait(state, character_id);
+fn journal_character_col(state: &State, owner: BudgetOwner) -> Element<'_, Message> {
+  let name = owner_display_name(state, owner);
+  let portrait = owner_portrait(state, owner);
 
-  Avatar::new(character_id, name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
+  Avatar::new(owner.owner_id(), name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
     .radius(radius::SUBTLE)
     .view()
 }
@@ -603,7 +598,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
     item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
     container(budget_chip(
       state,
-      BudgetOwner::Character(entry.character_id),
+      entry.owner,
       BudgetEntryKind::Market,
       entry.transaction_id,
     ))
@@ -632,7 +627,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       Horizontal::Left,
       color::text::secondary(),
     ),
-    character_cell(state, entry.character_id, Length::FillPortion(2)),
+    character_cell(state, entry.owner, Length::FillPortion(2)),
     mono_cell(
       &fmt_relative(&entry.date, now),
       Length::FillPortion(1),
@@ -645,10 +640,9 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
 /// Renders the per-entry budget chip in one of two states: the assigned envelope
 /// (tone dot + name + caret), or an amber "+ Assign category" affordance when the
 /// entry is still uncategorized. Both open the picker on press; every entry —
-/// inflow or outflow — can be assigned to any category.
-///
-/// Callers pass `BudgetOwner::Character` because the wallet only surfaces
-/// character rows today; corp rows will widen this.
+/// inflow or outflow — can be assigned to any category. The row's `owner`
+/// (character or corporation) keys the assignment so a corp row in All-Wallets
+/// routes to its own envelope under the owner-aware identity.
 fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let assigned = chips.resolution.override_for(owner, kind, entry_id);
@@ -988,11 +982,11 @@ fn type_icon<'a>(resolution: &IconResolution) -> Element<'a, Message> {
   }
 }
 
-fn character_cell(state: &State, character_id: i64, width: Length) -> Element<'_, Message> {
-  let name = owner_name(state, character_id);
-  let portrait = roster_portrait(state, character_id);
+fn character_cell(state: &State, owner: BudgetOwner, width: Length) -> Element<'_, Message> {
+  let name = owner_display_name(state, owner);
+  let portrait = owner_portrait(state, owner);
 
-  let swatch = Avatar::new(character_id, &name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
+  let swatch = Avatar::new(owner.owner_id(), &name, Length::Fixed(ROW_AVATAR), ROW_AVATAR, portrait)
     .radius(radius::SUBTLE)
     .view();
 
@@ -1283,6 +1277,28 @@ fn owner_name(state: &State, character_id: i64) -> String {
     .iter()
     .find(|pilot| pilot.id == character_id)
     .map_or_else(|| format!("#{character_id}"), |pilot| pilot.name.clone())
+}
+
+fn owner_display_name(state: &State, owner: BudgetOwner) -> String {
+  match owner {
+    BudgetOwner::Character(id) => owner_name(state, id),
+    BudgetOwner::Corporation(id) => state
+      .corporations
+      .iter()
+      .find(|corp| corp.id == id)
+      .map_or_else(|| format!("#{id}"), |corp| corp.name.clone()),
+  }
+}
+
+fn owner_portrait(state: &State, owner: BudgetOwner) -> Option<std::path::PathBuf> {
+  match owner {
+    BudgetOwner::Character(id) => roster_portrait(state, id),
+    BudgetOwner::Corporation(id) => state
+      .corporations
+      .iter()
+      .find(|corp| corp.id == id)
+      .and_then(|corp| corp.logo.path()),
+  }
 }
 
 fn fmt_relative(iso: &str, now: DateTime<Utc>) -> String {
@@ -1668,6 +1684,7 @@ mod tests {
         date: "2026-05-30T12:00:00Z".to_owned(),
         description: "Bounty payout".to_owned(),
         id: 1,
+        owner: BudgetOwner::Character(1),
         ref_type: ref_type.to_owned(),
       }
     }
@@ -1738,6 +1755,7 @@ mod tests {
         item: "Tritanium".to_owned(),
         journal_ref_id: 0,
         location: "Jita IV - Moon 4".to_owned(),
+        owner: BudgetOwner::Character(1),
         quantity: 1_000,
         total: 5_000.0,
         transaction_id: 1,

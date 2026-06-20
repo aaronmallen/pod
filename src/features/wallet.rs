@@ -164,7 +164,7 @@ pub enum Message {
   BudgetDragStarted(i64),
   BudgetDropReleased,
   BudgetDropTargetEntered(BudgetDropTarget),
-  BudgetDropTargetLeft(BudgetDropTarget),
+  BudgetDropTargetLeft,
   BudgetEditToggled,
   BudgetEditorAmountChanged(String),
   BudgetEditorByDateChanged(String),
@@ -178,6 +178,7 @@ pub enum Message {
   BudgetFilterCleared,
   BudgetGroupAdded,
   BudgetGroupDeleteRequested(i64),
+  BudgetGroupDragStarted(i64),
   BudgetGroupRenameWritten,
   BudgetGroupRenamed(i64, String),
   BudgetGroupToggled(i64),
@@ -249,7 +250,7 @@ impl Message {
         | Message::BudgetDragStarted(_)
         | Message::BudgetDropReleased
         | Message::BudgetDropTargetEntered(_)
-        | Message::BudgetDropTargetLeft(_)
+        | Message::BudgetDropTargetLeft
         | Message::BudgetEditToggled
         | Message::BudgetEditorAmountChanged(_)
         | Message::BudgetEditorByDateChanged(_)
@@ -261,6 +262,7 @@ impl Message {
         | Message::BudgetEditorToneSelected(_)
         | Message::BudgetGroupAdded
         | Message::BudgetGroupDeleteRequested(_)
+        | Message::BudgetGroupDragStarted(_)
         | Message::BudgetGroupRenameWritten
         | Message::BudgetGroupRenamed(_, _)
         | Message::BudgetGroupToggled(_)
@@ -382,6 +384,8 @@ pub struct State {
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
   budget_filter: Option<BudgetFilter>,
+  budget_group_dragging: Option<i64>,
+  budget_group_drop_target: Option<i64>,
   budget_history: Vec<crate::features::budget::MonthFlow>,
   budget_hovered_category: Option<i64>,
   budget_inspector: PaneDrag,
@@ -433,6 +437,8 @@ impl State {
       budget_editing: None,
       budget_editor: None,
       budget_filter: None,
+      budget_group_dragging: None,
+      budget_group_drop_target: None,
       budget_history: Vec::new(),
       budget_hovered_category: None,
       budget_inspector: PaneDrag::new(
@@ -599,6 +605,10 @@ impl State {
 
   pub(super) fn budget_editor(&self) -> Option<&budget::CategoryDraft> {
     self.budget_editor.as_ref()
+  }
+
+  pub(super) fn budget_group_drop_target(&self) -> Option<i64> {
+    self.budget_group_drop_target
   }
 
   pub(super) fn budget_history(&self) -> &[crate::features::budget::MonthFlow] {
@@ -1189,6 +1199,11 @@ fn budget_rename_group(state: &mut State, db: &Database, group_id: i64, name: St
 }
 
 fn budget_drop_released(state: &mut State, db: &Database) -> Task<Message> {
+  // One release message serves both drags; a group drag in progress routes to the
+  // group handler rather than the category-reorder path below.
+  if state.budget_group_dragging.is_some() {
+    return budget_group_drop_released(state, db);
+  }
   let drop = state.budget_dragging.take().zip(state.budget_drop_target.take());
   let Some((dragged, target)) = drop else {
     return Task::none();
@@ -1216,6 +1231,27 @@ fn budget_drop_released(state: &mut State, db: &Database) -> Task<Message> {
   budget_persist_then_reload(state, db, move |db, _scope, _month| {
     let reordered = reordered.clone();
     Box::pin(async move { budget::persist_order(&db, &reordered).await })
+  })
+}
+
+fn budget_group_drop_released(state: &mut State, db: &Database) -> Task<Message> {
+  let drop = state
+    .budget_group_dragging
+    .take()
+    .zip(state.budget_group_drop_target.take());
+  let Some((dragged, target)) = drop else {
+    return Task::none();
+  };
+  let Some(view) = state.budget.as_mut() else {
+    return Task::none();
+  };
+  if !view.move_group(dragged, Some(target)) {
+    return Task::none();
+  }
+  let reordered = view.clone();
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let reordered = reordered.clone();
+    Box::pin(async move { budget::persist_group_order(&db, &reordered).await })
   })
 }
 
@@ -1506,18 +1542,28 @@ fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Tas
     Message::BudgetDragStarted(category_id) => {
       state.budget_dragging = Some(category_id);
       state.budget_drop_target = None;
+      state.budget_group_dragging = None;
+      state.budget_group_drop_target = None;
       Task::none()
     }
     Message::BudgetDropReleased => budget_drop_released(state, db),
     Message::BudgetDropTargetEntered(target) => {
       if state.budget_dragging.is_some() {
         state.budget_drop_target = Some(target);
+      } else if let (Some(_), BudgetDropTarget::Group(group_id)) = (state.budget_group_dragging, target) {
+        // A group drag reuses the group headers as drop targets; hovering one marks
+        // it as the group the dragged group will land before.
+        state.budget_group_drop_target = Some(group_id);
       }
       Task::none()
     }
-    Message::BudgetDropTargetLeft(target) => {
-      if state.budget_drop_target == Some(target) {
+    Message::BudgetDropTargetLeft => {
+      // While a drag is active the last-entered target is preserved through the
+      // release, so leaving a row never clears it (the next enter replaces it).
+      // Only stale highlights outside a drag are cleared.
+      if state.budget_dragging.is_none() && state.budget_group_dragging.is_none() {
         state.budget_drop_target = None;
+        state.budget_group_drop_target = None;
       }
       Task::none()
     }
@@ -1525,11 +1571,20 @@ fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Tas
       state.budget_edit_mode = !state.budget_edit_mode;
       state.budget_dragging = None;
       state.budget_drop_target = None;
+      state.budget_group_dragging = None;
+      state.budget_group_drop_target = None;
       state.budget_pending_group_delete = None;
       Task::none()
     }
     Message::BudgetGroupAdded => budget_add_group(state, db),
     Message::BudgetGroupDeleteRequested(group_id) => budget_request_group_delete(state, db, group_id),
+    Message::BudgetGroupDragStarted(group_id) => {
+      state.budget_group_dragging = Some(group_id);
+      state.budget_group_drop_target = None;
+      state.budget_dragging = None;
+      state.budget_drop_target = None;
+      Task::none()
+    }
     Message::BudgetGroupRenameWritten => Task::none(),
     Message::BudgetGroupRenamed(group_id, name) => budget_rename_group(state, db, group_id, name),
     other => handle_budget_editor(state, other, db),
@@ -1774,7 +1829,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
       is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
     }));
   }
-  if state.budget_dragging.is_some() {
+  if state.budget_dragging.is_some() || state.budget_group_dragging.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       matches!(
         event,
@@ -4833,6 +4888,45 @@ mod tests {
         view.groups[0].categories.iter().map(|c| c.id).collect::<Vec<_>>(),
         [1, 2]
       );
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_drop_target_when_the_cursor_leaves_during_a_drag() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      let _ = update(&mut state, Message::BudgetDragStarted(2), &db);
+      let _ = update(
+        &mut state,
+        Message::BudgetDropTargetEntered(BudgetDropTarget::Category(1)),
+        &db,
+      );
+
+      // Leaving the row mid-drag must not drop the target the release will read.
+      let _ = update(&mut state, Message::BudgetDropTargetLeft, &db);
+
+      assert_eq!(state.budget_drop_target, Some(BudgetDropTarget::Category(1)));
+    }
+
+    #[tokio::test]
+    async fn it_reorders_groups_on_a_group_drop() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_two_categories();
+      let _ = update(&mut state, Message::BudgetGroupDragStarted(20), &db);
+      assert_eq!(state.budget_group_dragging, Some(20));
+
+      let _ = update(
+        &mut state,
+        Message::BudgetDropTargetEntered(BudgetDropTarget::Group(10)),
+        &db,
+      );
+      assert_eq!(state.budget_group_drop_target, Some(10));
+
+      let _ = update(&mut state, Message::BudgetDropReleased, &db);
+
+      let view = state.budget().unwrap();
+      assert_eq!(view.groups.iter().map(|g| g.id).collect::<Vec<_>>(), [20, 10]);
+      assert!(state.budget_group_dragging.is_none());
+      assert!(state.budget_group_drop_target.is_none());
     }
 
     #[tokio::test]

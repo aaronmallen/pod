@@ -334,6 +334,25 @@ impl BudgetView {
     }
     false
   }
+
+  /// Reorders the in-memory groups so `dragged` lands before `before` (or is
+  /// appended when `before` is `None`), mirroring [`move_category`] at the group
+  /// level. A no-op when the drag would not change the order (dropping a group
+  /// onto itself). Returns `true` when the order changed.
+  pub fn move_group(&mut self, dragged: i64, before: Option<i64>) -> bool {
+    if before == Some(dragged) {
+      return false;
+    }
+    let Some(index) = self.groups.iter().position(|g| g.id == dragged) else {
+      return false;
+    };
+    let moving = self.groups.remove(index);
+    let insert = before
+      .and_then(|id| self.groups.iter().position(|g| g.id == id))
+      .unwrap_or(self.groups.len());
+    self.groups.insert(insert, moving);
+    true
+  }
 }
 
 /// The fully-derived Reflect (reporting) view-model for one scope and month: the
@@ -885,6 +904,25 @@ pub async fn persist_order(db: &Database, view: &BudgetView) {
   }
 }
 
+/// Persists the current group ordering: each group's `position` in display order
+/// so a drag-reorder of groups survives a reload. `update_group` writes only the
+/// name and position, so the scope fields are placeholders and never reach the row.
+pub async fn persist_group_order(db: &Database, view: &BudgetView) {
+  let now = chrono::Utc::now().to_rfc3339();
+  for (position, group) in view.groups.iter().enumerate() {
+    let row = crate::store::model::BudgetCategoryGroup {
+      created_at: now.clone(),
+      id: group.id,
+      name: group.name.clone(),
+      position: position as i64,
+      scope_id: None,
+      scope_kind: "all".to_owned(),
+      updated_at: now.clone(),
+    };
+    let _ = budget::update_group(db, &row).await;
+  }
+}
+
 /// Renames a category group, preserving its position.
 pub async fn rename_group(db: &Database, group_id: i64, name: &str) {
   let _ = budget::rename_group(db, group_id, name).await;
@@ -998,6 +1036,64 @@ mod tests {
     }
   }
 
+  mod move_group {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn group(id: i64) -> Group {
+      Group {
+        categories: Vec::new(),
+        id,
+        name: format!("Group {id}"),
+      }
+    }
+
+    fn view() -> BudgetView {
+      BudgetView {
+        groups: vec![group(10), group(20), group(30)],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      }
+    }
+
+    fn ids(view: &BudgetView) -> Vec<i64> {
+      view.groups.iter().map(|g| g.id).collect()
+    }
+
+    #[test]
+    fn it_reorders_a_group_before_the_target() {
+      let mut view = view();
+
+      let moved = view.move_group(30, Some(10));
+
+      assert!(moved);
+      assert_eq!(ids(&view), [30, 10, 20]);
+    }
+
+    #[test]
+    fn it_appends_a_group_when_dropped_with_no_target() {
+      let mut view = view();
+
+      let moved = view.move_group(10, None);
+
+      assert!(moved);
+      assert_eq!(ids(&view), [20, 30, 10]);
+    }
+
+    #[test]
+    fn it_is_a_no_op_when_dropped_on_itself() {
+      let mut view = view();
+
+      let moved = view.move_group(20, Some(20));
+
+      assert!(!moved);
+      assert_eq!(ids(&view), [10, 20, 30]);
+    }
+  }
+
   mod crud {
     use pretty_assertions::assert_eq;
 
@@ -1078,6 +1174,36 @@ mod tests {
 
       let reloaded = list_categories(&db, group_id).await.unwrap();
       assert_eq!(reloaded.iter().map(|c| c.id()).collect::<Vec<_>>(), [second, first]);
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_reordered_group_list() {
+      let db = store::open_test().await.unwrap();
+      let first = seed_group(&db, "Bills").await;
+      let second = seed_group(&db, "Wants").await;
+
+      let view = BudgetView {
+        groups: vec![
+          Group {
+            categories: Vec::new(),
+            id: second,
+            name: "Wants".to_owned(),
+          },
+          Group {
+            categories: Vec::new(),
+            id: first,
+            name: "Bills".to_owned(),
+          },
+        ],
+        month: "2026-06".to_owned(),
+        overspent: 0.0,
+        pool: 0.0,
+        ready_to_assign: 0.0,
+      };
+      persist_group_order(&db, &view).await;
+
+      let reloaded = list_groups(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(reloaded.iter().map(|g| g.id()).collect::<Vec<_>>(), [second, first]);
     }
 
     fn category_row(id: i64) -> Category {

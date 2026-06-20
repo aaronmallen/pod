@@ -753,9 +753,21 @@ fn group_header<'a>(
     .into()
   };
 
+  // In edit mode the group is itself draggable: a grip leads the (Fill) name area
+  // so the money columns stay aligned with the category rows below.
+  let name_lead: Element<'a, Message> = if edit_mode {
+    Row::with_children(vec![group_drag_grip(group.id), name_cell])
+      .align_y(Vertical::Center)
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill)
+      .into()
+  } else {
+    name_cell
+  };
+
   let row = Row::with_children(vec![
     caret_cell,
-    name_cell,
+    name_lead,
     money_cell(totals.assigned, color::text::secondary(), ASSIGNED_COL, true),
     money_cell(totals.activity, color::text::secondary(), ACTIVITY_COL, true),
     money_cell(
@@ -771,7 +783,10 @@ fn group_header<'a>(
   ])
   .align_y(Vertical::Center);
 
-  let over = drop_target == Some(BudgetDropTarget::Group(group.id));
+  // Highlight the header both when a category will drop into the group and when a
+  // dragged group will land before it.
+  let over =
+    drop_target == Some(BudgetDropTarget::Group(group.id)) || state.budget_group_drop_target() == Some(group.id);
   let header = container(row).width(Length::Fill).style(move |_| container::Style {
     background: Some(Background::Color(color::surface::SUNKEN)),
     border: Border {
@@ -786,7 +801,7 @@ fn group_header<'a>(
     let target = BudgetDropTarget::Group(group.id);
     return mouse_area(header)
       .on_enter(Message::BudgetDropTargetEntered(target))
-      .on_exit(Message::BudgetDropTargetLeft(target))
+      .on_exit(Message::BudgetDropTargetLeft)
       .into();
   }
 
@@ -913,16 +928,6 @@ fn category_row<'a>(
   };
 
   let hovered = state.budget_hovered_category() == Some(category.id);
-  let row = Row::with_children(vec![
-    lead,
-    name_cell(category, &status, hovered),
-    assigned_cell(state, category),
-    activity_cell(category.activity),
-    tail,
-  ])
-  .align_y(Vertical::Center)
-  .height(Length::Fixed(58.0));
-
   let over = drop_target == Some(BudgetDropTarget::Category(category.id));
   let background = if selected {
     Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))
@@ -932,16 +937,45 @@ fn category_row<'a>(
   let border_color = if selected { color::accent::PLASMA } else { color::rule() };
 
   if edit_mode {
-    let body = container(row)
+    // The drag handle (lead) keeps its own on_press; selection moves to a separate
+    // inner mouse_area over the remaining cells, and the outer mouse_area carries
+    // only the drop enter/exit. Three non-overlapping press surfaces — handle,
+    // selectable body, and a press-less drop wrapper — let a drag actually start
+    // from the handle instead of being swallowed by the row's selection press.
+    let selectable = mouse_area(
+      Row::with_children(vec![
+        name_cell(category, &status, hovered),
+        assigned_cell(state, category),
+        activity_cell(category.activity),
+        tail,
+      ])
+      .align_y(Vertical::Center)
+      .height(Length::Fixed(58.0))
+      .width(Length::Fill),
+    )
+    .on_press(Message::BudgetCategorySelected(category.id));
+    let inner = Row::with_children(vec![lead, selectable.into()])
+      .align_y(Vertical::Center)
+      .height(Length::Fixed(58.0));
+    let body = container(inner)
       .width(Length::Fill)
       .style(move |_| category_drop_style(over, selected));
     let target = BudgetDropTarget::Category(category.id);
     return mouse_area(body)
-      .on_press(Message::BudgetCategorySelected(category.id))
       .on_enter(Message::BudgetDropTargetEntered(target))
-      .on_exit(Message::BudgetDropTargetLeft(target))
+      .on_exit(Message::BudgetDropTargetLeft)
       .into();
   }
+
+  let row = Row::with_children(vec![
+    lead,
+    name_cell(category, &status, hovered),
+    assigned_cell(state, category),
+    activity_cell(category.activity),
+    tail,
+  ])
+  .align_y(Vertical::Center)
+  .height(Length::Fixed(58.0));
 
   let row_button = button(container(row).width(Length::Fill))
     .padding(Padding::ZERO)
@@ -997,6 +1031,17 @@ fn drag_handle_cell<'a>(category_id: i64) -> Element<'a, Message> {
   container(armed)
     .width(Length::Fixed(DOT_COL))
     .align_x(Horizontal::Center)
+    .into()
+}
+
+fn group_drag_grip<'a>(group_id: i64) -> Element<'a, Message> {
+  let handle = text("\u{283f}")
+    .font(typography::mono::REGULAR)
+    .size(14.0)
+    .style(typography::colored(color::text::tertiary()));
+
+  mouse_area(container(handle).align_x(Horizontal::Center))
+    .on_press(Message::BudgetGroupDragStarted(group_id))
     .into()
 }
 
@@ -2160,6 +2205,16 @@ mod tests {
       state.budget_edit_mode = true;
       state.budget_dragging = Some(2);
       state.budget_drop_target = Some(BudgetDropTarget::Category(1));
+
+      let _el: Element<'_, Message> = surface(&state);
+    }
+
+    #[test]
+    fn it_highlights_a_group_drop_target_while_dragging_a_group() {
+      let mut state = state_with_budget();
+      state.budget_edit_mode = true;
+      state.budget_group_dragging = Some(20);
+      state.budget_group_drop_target = Some(10);
 
       let _el: Element<'_, Message> = surface(&state);
     }

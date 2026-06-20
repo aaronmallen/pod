@@ -13,7 +13,10 @@ use super::{
 use crate::{
   config::Feature,
   features::contract_detail,
-  store::{images::IconResolution, model::BudgetEntryKind},
+  store::{
+    images::IconResolution,
+    model::{BudgetEntryKind, BudgetOwner},
+  },
   ui::{
     components::{
       anchored_dropdown::AnchoredDropdown,
@@ -507,9 +510,14 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   row_shell(vec![
     GlyphBadge::new(glyph, is_in).render(),
     journal_left_col(entry),
-    container(budget_chip(state, BudgetEntryKind::Journal, entry.id))
-      .width(Length::Fixed(170.0))
-      .into(),
+    container(budget_chip(
+      state,
+      BudgetOwner::Character(entry.character_id),
+      BudgetEntryKind::Journal,
+      entry.id,
+    ))
+    .width(Length::Fixed(170.0))
+    .into(),
     journal_character_col(state, entry.character_id),
     journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
   ])
@@ -593,9 +601,14 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   row_shell(vec![
     side_badge(side_label, side_color, Length::FillPortion(1)),
     item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
-    container(budget_chip(state, BudgetEntryKind::Market, entry.transaction_id))
-      .width(Length::FillPortion(2))
-      .into(),
+    container(budget_chip(
+      state,
+      BudgetOwner::Character(entry.character_id),
+      BudgetEntryKind::Market,
+      entry.transaction_id,
+    ))
+    .width(Length::FillPortion(2))
+    .into(),
     mono_cell(
       &entry.quantity.to_string(),
       Length::FillPortion(1),
@@ -633,14 +646,17 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
 /// (tone dot + name + caret), or an amber "+ Assign category" affordance when the
 /// entry is still uncategorized. Both open the picker on press; every entry —
 /// inflow or outflow — can be assigned to any category.
-fn budget_chip<'a>(state: &'a State, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
+///
+/// Callers pass `BudgetOwner::Character` because the wallet only surfaces
+/// character rows today; corp rows will widen this.
+fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
-  let assigned = chips.resolution.override_for(kind, entry_id);
-  let open = state.budget_picker() == Some((kind, entry_id));
+  let assigned = chips.resolution.override_for(owner, kind, entry_id);
+  let open = state.budget_picker() == Some((owner, kind, entry_id));
   let on_press = if open {
     Message::BudgetChipDismissed
   } else {
-    Message::BudgetChipOpened(kind, entry_id)
+    Message::BudgetChipOpened(owner, kind, entry_id)
   };
 
   let trigger = match assigned.and_then(|id| chips.meta.get(&id)) {
@@ -1875,16 +1891,22 @@ mod tests {
     fn it_renders_the_assign_affordance_when_unassigned() {
       let state = State::new();
 
-      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+      let _el: Element<'_, Message> =
+        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
     }
 
     #[test]
     fn it_renders_a_settled_chip_when_assigned() {
       let mut state = State::new();
       state.budget_chips.meta.insert(7, envelope(7, "Bills"));
-      state.budget_chips.resolution.journal_overrides.insert(1, 7);
+      state
+        .budget_chips
+        .resolution
+        .journal_overrides
+        .insert((BudgetOwner::Character(1), 1), 7);
 
-      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+      let _el: Element<'_, Message> =
+        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
     }
 
     #[test]
@@ -1895,9 +1917,10 @@ mod tests {
         categories: vec![envelope(7, "Bills")],
         name: "Group".to_owned(),
       }];
-      state.budget_picker = Some((BudgetEntryKind::Journal, 1));
+      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 1));
 
-      let _el: Element<'_, Message> = super::super::budget_chip(&state, BudgetEntryKind::Journal, 1);
+      let _el: Element<'_, Message> =
+        super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
     }
   }
 }

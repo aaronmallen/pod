@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::store::{
   Database, Error,
-  model::{BudgetEntryAssignment, BudgetEntryKind, BudgetScope},
+  model::{BudgetEntryAssignment, BudgetEntryKind, BudgetOwner, BudgetScope},
   repo::{character, finance, org},
 };
 
@@ -287,20 +287,21 @@ pub fn category_for_ref_type(
 
 /// Persists a per-entry budget envelope override for a single ledger entry,
 /// lazy-seeding the scope's default budget first so an unseeded scope gains real
-/// categories before the assignment lands. Idempotent on `(scope, entry_kind,
-/// entry_id)`: reassigning the same entry replaces its category.
+/// categories before the assignment lands. Idempotent on `(scope, owner,
+/// entry_kind, entry_id)`: reassigning the same entry replaces its category.
 // Per-entry budget assignment (child A); consumed by the Budget UI in child C. Exercised by unit
 // tests until then.
 #[allow(dead_code)]
 pub async fn assign_entry(
   db: &Database,
   scope: BudgetScope,
+  owner: BudgetOwner,
   entry_kind: BudgetEntryKind,
   entry_id: i64,
   category_id: i64,
 ) -> Result<BudgetEntryAssignment, Error> {
   seed_scope(db, scope).await?;
-  crate::store::repo::budget::upsert_entry_assignment(db, scope, entry_kind, entry_id, category_id).await
+  crate::store::repo::budget::upsert_entry_assignment(db, scope, owner, entry_kind, entry_id, category_id).await
 }
 
 // Dormant auto-categorization helper: the v1 derivation is manual-only, so this
@@ -319,8 +320,8 @@ fn market_default_slug(is_buy: bool) -> &'static str {
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct ResolutionContext {
-  pub journal_overrides: HashMap<i64, i64>,
-  pub market_overrides: HashMap<i64, i64>,
+  pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
+  pub market_overrides: HashMap<(BudgetOwner, i64), i64>,
   pub ref_overrides: HashMap<String, i64>,
   pub slug_to_id: HashMap<&'static str, i64>,
 }
@@ -333,12 +334,15 @@ impl ResolutionContext {
       .await
       .unwrap_or_default()
     {
+      let Some(owner) = BudgetOwner::from_key(assignment.owner_kind(), assignment.owner_id()) else {
+        continue;
+      };
       match BudgetEntryKind::from_kind(assignment.entry_kind()) {
         Some(BudgetEntryKind::Journal) => {
-          journal_overrides.insert(assignment.entry_id(), assignment.category_id());
+          journal_overrides.insert((owner, assignment.entry_id()), assignment.category_id());
         }
         Some(BudgetEntryKind::Market) => {
-          market_overrides.insert(assignment.entry_id(), assignment.category_id());
+          market_overrides.insert((owner, assignment.entry_id()), assignment.category_id());
         }
         None => {}
       }
@@ -352,10 +356,10 @@ impl ResolutionContext {
     }
   }
 
-  pub fn override_for(&self, entry_kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
+  pub fn override_for(&self, owner: BudgetOwner, entry_kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
     match entry_kind {
-      BudgetEntryKind::Journal => self.journal_overrides.get(&entry_id).copied(),
-      BudgetEntryKind::Market => self.market_overrides.get(&entry_id).copied(),
+      BudgetEntryKind::Journal => self.journal_overrides.get(&(owner, entry_id)).copied(),
+      BudgetEntryKind::Market => self.market_overrides.get(&(owner, entry_id)).copied(),
     }
   }
 
@@ -365,6 +369,7 @@ impl ResolutionContext {
   #[allow(dead_code)]
   pub fn resolve(
     &self,
+    owner: BudgetOwner,
     entry_kind: BudgetEntryKind,
     entry_id: i64,
     ref_type: Option<&str>,
@@ -372,7 +377,7 @@ impl ResolutionContext {
   ) -> Option<i64> {
     match entry_kind {
       BudgetEntryKind::Journal => {
-        if let Some(&id) = self.journal_overrides.get(&entry_id) {
+        if let Some(&id) = self.journal_overrides.get(&(owner, entry_id)) {
           return Some(id);
         }
         category_for_ref_type(ref_type?, &self.ref_overrides, &self.slug_to_id)
@@ -380,7 +385,7 @@ impl ResolutionContext {
       // Market entries carry a side, not a `ref_type`, so the per-`ref_type` map
       // tier does not apply — they resolve by side once no per-entry override exists.
       BudgetEntryKind::Market => {
-        if let Some(&id) = self.market_overrides.get(&entry_id) {
+        if let Some(&id) = self.market_overrides.get(&(owner, entry_id)) {
           return Some(id);
         }
         self.slug_to_id.get(market_default_slug(is_buy?)).copied()
@@ -400,6 +405,7 @@ impl ResolutionContext {
 pub async fn resolve_entry_category(
   db: &Database,
   scope: BudgetScope,
+  owner: BudgetOwner,
   entry_kind: BudgetEntryKind,
   entry_id: i64,
   ref_type: Option<&str>,
@@ -407,7 +413,7 @@ pub async fn resolve_entry_category(
 ) -> Option<i64> {
   ResolutionContext::load(db, scope)
     .await
-    .resolve(entry_kind, entry_id, ref_type, is_buy)
+    .resolve(owner, entry_kind, entry_id, ref_type, is_buy)
 }
 
 /// Aggregates signed journal `amount` by mapped category id for a set of
@@ -629,6 +635,7 @@ struct JournalActivity {
   context_id_type: Option<String>,
   date: String,
   id: i64,
+  owner: BudgetOwner,
   ref_type: String,
 }
 
@@ -637,6 +644,7 @@ struct JournalActivity {
 struct TransactionActivity {
   amount: f64,
   date: String,
+  owner: BudgetOwner,
   transaction_id: i64,
 }
 
@@ -669,6 +677,7 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
   let mut transactions: Vec<TransactionActivity> = Vec::new();
   for character_id in scope_character_ids(db, scope).await {
+    let owner = BudgetOwner::Character(character_id);
     for row in finance::wallet_journal(db, character_id).await.unwrap_or_default() {
       journal_rows.push(JournalActivity {
         amount: row.amount(),
@@ -676,6 +685,7 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
         context_id_type: row.context_id_type().clone(),
         date: row.date().clone(),
         id: row.id(),
+        owner,
         ref_type: row.ref_type().clone(),
       });
     }
@@ -683,11 +693,13 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
       transactions.push(TransactionActivity {
         amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
         date: tx.date().clone(),
+        owner,
         transaction_id: tx.transaction_id(),
       });
     }
   }
   for corp in scope_corporation_ids(db, scope).await {
+    let owner = BudgetOwner::Corporation(corp);
     for division in finance::divisions(db, corp).await.unwrap_or_default() {
       for row in finance::corporation_wallet_journal(db, corp, division.division())
         .await
@@ -699,6 +711,7 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
           context_id_type: row.context_id_type().clone(),
           date: row.date().clone(),
           id: row.id(),
+          owner,
           ref_type: row.ref_type().clone(),
         });
       }
@@ -709,6 +722,7 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
         transactions.push(TransactionActivity {
           amount: tx.unit_price() * tx.quantity() as f64 * if tx.is_buy() { -1.0 } else { 1.0 },
           date: tx.date().clone(),
+          owner,
           transaction_id: tx.transaction_id(),
         });
       }
@@ -724,23 +738,27 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
     .map(|tx| tx.transaction_id)
     .collect();
 
-  let journal_in_month = journal_rows
+  // v1 is fully manual: only entries the user has explicitly assigned (a per-entry
+  // override) contribute to a category. Everything else stays in Ready-to-Assign.
+  // Overrides are owner-aware, so a character entry and a corp entry sharing an EVE
+  // id resolve to their own categories rather than aliasing onto one.
+  let mut by_category: HashMap<i64, f64> = HashMap::new();
+  for row in journal_rows
     .iter()
     .filter(|row| month_key(&row.date).as_deref() == Some(month))
     .filter(|row| !is_market_twin(row, &ingested))
-    .map(|row| (row.id, row.ref_type.as_str(), row.amount));
-
-  // v1 is fully manual: only entries the user has explicitly assigned (a per-entry
-  // override) contribute to a category. Everything else stays in Ready-to-Assign.
-  let mut by_category = aggregate_activity(journal_in_month, |id, _ref_type| {
-    context.override_for(BudgetEntryKind::Journal, id)
-  });
+  {
+    let Some(amount) = row.amount else { continue };
+    if let Some(category_id) = context.override_for(row.owner, BudgetEntryKind::Journal, row.id) {
+      *by_category.entry(category_id).or_insert(0.0) += amount;
+    }
+  }
 
   for tx in &transactions {
     if month_key(&tx.date).as_deref() != Some(month) {
       continue;
     }
-    if let Some(category_id) = context.override_for(BudgetEntryKind::Market, tx.transaction_id) {
+    if let Some(category_id) = context.override_for(tx.owner, BudgetEntryKind::Market, tx.transaction_id) {
       *by_category.entry(category_id).or_insert(0.0) += tx.amount;
     }
   }
@@ -1310,9 +1328,16 @@ mod tests {
           .is_empty()
       );
 
-      let saved = assign_entry(&db, BudgetScope::Character(1), BudgetEntryKind::Journal, 5, income_id)
-        .await
-        .unwrap();
+      let saved = assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        5,
+        income_id,
+      )
+      .await
+      .unwrap();
 
       assert!(
         !budget::list_groups(&db, BudgetScope::Character(1))
@@ -1325,6 +1350,7 @@ mod tests {
         resolve_entry_category(
           &db,
           BudgetScope::Character(1),
+          BudgetOwner::Character(1),
           BudgetEntryKind::Journal,
           5,
           Some("manufacturing"),
@@ -1350,13 +1376,77 @@ mod tests {
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
       // `manufacturing` defaults to the industry envelope; override entry 5 to income.
-      assign_entry(&db, scope, BudgetEntryKind::Journal, 5, slug_to_id["income"])
-        .await
-        .unwrap();
+      assign_entry(
+        &db,
+        scope,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        5,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
 
       assert_eq!(
-        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 5, Some("manufacturing"), None).await,
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Journal,
+          5,
+          Some("manufacturing"),
+          None
+        )
+        .await,
         Some(slug_to_id["income"])
+      );
+    }
+
+    #[tokio::test]
+    async fn it_keys_an_override_to_its_owner_under_all_scope() {
+      let db = store::open_test().await.unwrap();
+      let scope = BudgetScope::All;
+      seed_scope(&db, scope).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, scope).await;
+
+      // Two owners share EVE journal id 5; only the character's entry is overridden.
+      assign_entry(
+        &db,
+        scope,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        5,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Journal,
+          5,
+          Some("manufacturing"),
+          None
+        )
+        .await,
+        Some(slug_to_id["income"])
+      );
+      // The corporation's same-id entry is untouched and falls back to its ref_type default.
+      assert_eq!(
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Corporation(2),
+          BudgetEntryKind::Journal,
+          5,
+          Some("manufacturing"),
+          None
+        )
+        .await,
+        Some(slug_to_id["industry"])
       );
     }
 
@@ -1373,7 +1463,16 @@ mod tests {
         .unwrap();
 
       assert_eq!(
-        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 9, Some("bounty_prizes"), None).await,
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Journal,
+          9,
+          Some("bounty_prizes"),
+          None
+        )
+        .await,
         Some(slug_to_id["fees"])
       );
     }
@@ -1386,7 +1485,16 @@ mod tests {
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
       assert_eq!(
-        resolve_entry_category(&db, scope, BudgetEntryKind::Journal, 1, Some("bounty_prizes"), None).await,
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Journal,
+          1,
+          Some("bounty_prizes"),
+          None
+        )
+        .await,
         Some(slug_to_id["income"])
       );
     }
@@ -1399,11 +1507,29 @@ mod tests {
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
       assert_eq!(
-        resolve_entry_category(&db, scope, BudgetEntryKind::Market, 10, None, Some(true)).await,
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Market,
+          10,
+          None,
+          Some(true)
+        )
+        .await,
         Some(slug_to_id["trading"])
       );
       assert_eq!(
-        resolve_entry_category(&db, scope, BudgetEntryKind::Market, 11, None, Some(false)).await,
+        resolve_entry_category(
+          &db,
+          scope,
+          BudgetOwner::Character(1),
+          BudgetEntryKind::Market,
+          11,
+          None,
+          Some(false)
+        )
+        .await,
         Some(slug_to_id["income"])
       );
     }
@@ -1416,6 +1542,7 @@ mod tests {
         resolve_entry_category(
           &db,
           BudgetScope::All,
+          BudgetOwner::Character(1),
           BudgetEntryKind::Journal,
           1,
           Some("bounty_prizes"),
@@ -1539,6 +1666,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Journal,
         1,
         slug_to_id["income"],
@@ -1548,6 +1676,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Journal,
         2,
         slug_to_id["fees"],
@@ -1588,6 +1717,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Journal,
         1,
         slug_to_id["income"],
@@ -1612,6 +1742,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Journal,
         1,
         slug_to_id["trading"],
@@ -1673,6 +1804,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Corporation(corp_id),
+        BudgetOwner::Corporation(corp_id),
         BudgetEntryKind::Journal,
         1,
         slug_to_id["tithe"],
@@ -1712,6 +1844,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Market,
         500,
         slug_to_id["income"],
@@ -1738,6 +1871,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Character(1),
+        BudgetOwner::Character(1),
         BudgetEntryKind::Market,
         600,
         slug_to_id["fees"],
@@ -1816,6 +1950,7 @@ mod tests {
       assign_entry(
         &db,
         BudgetScope::Corporation(corp_id),
+        BudgetOwner::Corporation(corp_id),
         BudgetEntryKind::Market,
         700,
         slug_to_id["income"],
@@ -1827,6 +1962,95 @@ mod tests {
 
       assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
       assert_eq!(activity.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_routes_two_owners_sharing_an_eve_id_to_their_own_categories_under_all_scope() {
+      use crate::store::{model::OwnerType, repo::infra};
+
+      let db = store::open_test().await.unwrap();
+      // An owned character and an owned corporation, both in the All scope.
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_010;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      store::repo::finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
+
+      // The character and the corporation both carry journal id 5 — the cross-owner
+      // collision. Each is assigned to a different category for its own owner.
+      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[CorporationWalletJournal {
+          amount: Some(-2_000.0),
+          balance: Some(0.0),
+          context_id: None,
+          context_id_type: None,
+          corporation_id: corp_id,
+          date: "2026-06-10T00:00:00Z".to_owned(),
+          description: "Tax".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 5,
+          reason: None,
+          ref_type: "industry_job_tax".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        5,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Corporation(corp_id),
+        BudgetEntryKind::Journal,
+        5,
+        slug_to_id["tithe"],
+      )
+      .await
+      .unwrap();
+
+      let activity = monthly_activity(&db, BudgetScope::All, "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
+      assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
+      assert_eq!(activity.len(), 2);
     }
   }
 

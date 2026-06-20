@@ -20,7 +20,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      BudgetEntryKind, OwnerType, character_financials::CharacterFinancials,
+      BudgetEntryKind, BudgetOwner, OwnerType, character_financials::CharacterFinancials,
       character_wallet_period_summary::CharacterWalletPeriodSummary,
     },
     repo::{character, finance, infra, org},
@@ -158,7 +158,7 @@ pub enum Message {
   BudgetCategorySelected(i64),
   BudgetChipAssigned(Option<i64>),
   BudgetChipDismissed,
-  BudgetChipOpened(BudgetEntryKind, i64),
+  BudgetChipOpened(BudgetOwner, BudgetEntryKind, i64),
   BudgetChipsReloaded(Box<loaders::BudgetChips>),
   BudgetCoverOverspending,
   BudgetDragStarted(i64),
@@ -243,7 +243,7 @@ impl Message {
         | Message::BudgetCategorySelected(_)
         | Message::BudgetChipAssigned(_)
         | Message::BudgetChipDismissed
-        | Message::BudgetChipOpened(_, _)
+        | Message::BudgetChipOpened(..)
         | Message::BudgetChipsReloaded(_)
         | Message::BudgetCoverOverspending
         | Message::BudgetDragStarted(_)
@@ -388,7 +388,7 @@ pub struct State {
   budget_mode: budget::Mode,
   budget_month: String,
   budget_pending_group_delete: Option<i64>,
-  budget_picker: Option<(BudgetEntryKind, i64)>,
+  budget_picker: Option<(BudgetOwner, BudgetEntryKind, i64)>,
   budget_range: budget::BudgetRange,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
@@ -625,7 +625,7 @@ impl State {
     self.budget_pending_group_delete
   }
 
-  pub(super) fn budget_picker(&self) -> Option<(BudgetEntryKind, i64)> {
+  pub(super) fn budget_picker(&self) -> Option<(BudgetOwner, BudgetEntryKind, i64)> {
     self.budget_picker
   }
 
@@ -1384,8 +1384,8 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
       state.budget_picker = None;
       Task::none()
     }
-    Message::BudgetChipOpened(kind, id) => {
-      state.budget_picker = Some((kind, id));
+    Message::BudgetChipOpened(owner, kind, id) => {
+      state.budget_picker = Some((owner, kind, id));
       if state.budget_chips.envelopes.is_empty() {
         return reload_budget_chips(state, db);
       }
@@ -1459,13 +1459,13 @@ fn budget_apply_loaded(state: &mut State, load: BudgetLoad) -> Task<Message> {
 /// the assignment to a market trade's journal twin so both rows stay in sync.
 /// Split off [`handle_budget`] to keep its complexity bounded.
 fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -> Task<Message> {
-  let Some((kind, entry_id)) = state.budget_picker.take() else {
+  let Some((owner, kind, entry_id)) = state.budget_picker.take() else {
     return Task::none();
   };
   let scope = state.budget_scope();
   // A market trade and its journal twin are one event: assigning either one
   // cascades to the other so both rows stay in sync and the trade is counted
-  // against the chosen envelope exactly once.
+  // against the chosen envelope exactly once. The twin shares the row's owner.
   let counterpart = budget_cascade_target(state, kind, entry_id);
   let db = db.clone();
   Task::perform(
@@ -1473,10 +1473,10 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
       for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterpart) {
         match choice {
           Some(category_id) => {
-            let _ = crate::features::budget::assign_entry(&db, scope, kind, entry_id, category_id).await;
+            let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
           }
           None => {
-            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, kind, entry_id).await;
+            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, owner, kind, entry_id).await;
           }
         }
       }
@@ -2244,7 +2244,11 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
-  let assigned = chips.resolution.override_for(BudgetEntryKind::Journal, entry.id);
+  let assigned = chips.resolution.override_for(
+    BudgetOwner::Character(entry.character_id),
+    BudgetEntryKind::Journal,
+    entry.id,
+  );
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => {
@@ -2261,9 +2265,11 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
   if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
-  let assigned = chips
-    .resolution
-    .override_for(BudgetEntryKind::Market, entry.transaction_id);
+  let assigned = chips.resolution.override_for(
+    BudgetOwner::Character(entry.character_id),
+    BudgetEntryKind::Market,
+    entry.transaction_id,
+  );
   match filter.kind {
     BudgetFilterKind::Category(id) => assigned == Some(id),
     BudgetFilterKind::Uncategorized => assigned.is_none(),
@@ -2599,8 +2605,15 @@ mod tests {
         name: "Group".to_owned(),
       }];
 
-      let _ = update(&mut state, Message::BudgetChipOpened(BudgetEntryKind::Journal, 9), &db);
-      assert_eq!(state.budget_picker, Some((BudgetEntryKind::Journal, 9)));
+      let _ = update(
+        &mut state,
+        Message::BudgetChipOpened(BudgetOwner::Character(1), BudgetEntryKind::Journal, 9),
+        &db,
+      );
+      assert_eq!(
+        state.budget_picker,
+        Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 9))
+      );
 
       let _ = update(&mut state, Message::BudgetChipDismissed, &db);
       assert!(state.budget_picker.is_none());
@@ -2634,7 +2647,7 @@ mod tests {
     async fn it_assigns_the_open_chip_to_a_category() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.budget_picker = Some((BudgetEntryKind::Journal, 9));
+      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
 
@@ -2645,7 +2658,7 @@ mod tests {
     async fn it_clears_the_open_chip_when_assigned_to_nothing() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new();
-      state.budget_picker = Some((BudgetEntryKind::Market, 9));
+      state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Market, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(None), &db);
 
@@ -2737,13 +2750,21 @@ mod tests {
 
     use super::*;
 
+    // The test ledger rows all belong to character 1, so their overrides key on
+    // that owner — matching the owner the chip/filter resolve from each row.
     fn chips(journal: &[(i64, i64)], market: &[(i64, i64)]) -> loaders::BudgetChips {
+      let key = |entries: &[(i64, i64)]| {
+        entries
+          .iter()
+          .map(|&(entry_id, category_id)| ((BudgetOwner::Character(1), entry_id), category_id))
+          .collect()
+      };
       loaders::BudgetChips {
         envelopes: Vec::new(),
         meta: std::collections::HashMap::new(),
         resolution: crate::features::budget::ResolutionContext {
-          journal_overrides: journal.iter().copied().collect(),
-          market_overrides: market.iter().copied().collect(),
+          journal_overrides: key(journal),
+          market_overrides: key(market),
           ref_overrides: std::collections::HashMap::new(),
           slug_to_id: std::collections::HashMap::new(),
         },

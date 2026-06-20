@@ -1,8 +1,8 @@
 use crate::store::{
   Database, Error,
   model::{
-    BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetEntryKind, BudgetRefTypeMap,
-    BudgetScope, BudgetTarget,
+    BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetEntryKind, BudgetOwner,
+    BudgetRefTypeMap, BudgetScope, BudgetTarget,
   },
 };
 
@@ -98,15 +98,18 @@ pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
 pub async fn delete_entry_assignment(
   db: &Database,
   scope: BudgetScope,
+  owner: BudgetOwner,
   entry_kind: BudgetEntryKind,
   entry_id: i64,
 ) -> Result<(), Error> {
   sqlx::query(
     "DELETE FROM budget_entry_assignments \
-    WHERE scope_kind = ? AND scope_id IS ? AND entry_kind = ? AND entry_id = ?",
+    WHERE scope_kind = ? AND scope_id IS ? AND owner_kind = ? AND owner_id = ? AND entry_kind = ? AND entry_id = ?",
   )
   .bind(scope.scope_kind())
   .bind(scope.scope_id())
+  .bind(owner.owner_kind())
+  .bind(owner.owner_id())
   .bind(entry_kind.as_str())
   .bind(entry_id)
   .execute(&db.0)
@@ -195,7 +198,7 @@ pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), 
 #[allow(dead_code)]
 pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetEntryAssignment>, Error> {
   let rows = sqlx::query_as::<_, BudgetEntryAssignment>(
-    "SELECT id, scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at \
+    "SELECT id, scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at \
     FROM budget_entry_assignments \
     WHERE scope_kind = ? AND scope_id IS ? ORDER BY entry_kind, entry_id",
   )
@@ -346,6 +349,7 @@ pub async fn upsert_assignment(
 pub async fn upsert_entry_assignment(
   db: &Database,
   scope: BudgetScope,
+  owner: BudgetOwner,
   entry_kind: BudgetEntryKind,
   entry_id: i64,
   category_id: i64,
@@ -353,14 +357,16 @@ pub async fn upsert_entry_assignment(
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, BudgetEntryAssignment>(
     "INSERT INTO budget_entry_assignments \
-    (scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at) \
-    VALUES (?, ?, ?, ?, ?, ?, ?) \
-    ON CONFLICT(scope_kind, COALESCE(scope_id, -1), entry_kind, entry_id) \
+    (scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    ON CONFLICT(scope_kind, COALESCE(scope_id, -1), owner_kind, owner_id, entry_kind, entry_id) \
     DO UPDATE SET category_id = excluded.category_id, updated_at = excluded.updated_at \
-    RETURNING id, scope_kind, scope_id, entry_kind, entry_id, category_id, created_at, updated_at",
+    RETURNING id, scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at",
   )
   .bind(scope.scope_kind())
   .bind(scope.scope_id())
+  .bind(owner.owner_kind())
+  .bind(owner.owner_id())
   .bind(entry_kind.as_str())
   .bind(entry_id)
   .bind(category_id)
@@ -704,12 +710,26 @@ mod tests {
       let first = category(&db, grp.id(), "Rent").await;
       let second = category(&db, grp.id(), "Power").await;
 
-      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 42, first.id())
-        .await
-        .unwrap();
-      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 42, second.id())
-        .await
-        .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        42,
+        first.id(),
+      )
+      .await
+      .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        42,
+        second.id(),
+      )
+      .await
+      .unwrap();
 
       let assignments = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
 
@@ -720,17 +740,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_separates_two_owners_sharing_an_eve_id_under_all_scope() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let pilot = category(&db, grp.id(), "Rent").await;
+      let corp = category(&db, grp.id(), "Power").await;
+
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        500,
+        pilot.id(),
+      )
+      .await
+      .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Corporation(2),
+        BudgetEntryKind::Market,
+        500,
+        corp.id(),
+      )
+      .await
+      .unwrap();
+
+      let assignments = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(assignments.len(), 2);
+      assert_eq!(
+        assignments
+          .iter()
+          .find(|a| a.owner_kind() == "character")
+          .map(BudgetEntryAssignment::category_id),
+        Some(pilot.id())
+      );
+      assert_eq!(
+        assignments
+          .iter()
+          .find(|a| a.owner_kind() == "corporation")
+          .map(BudgetEntryAssignment::category_id),
+        Some(corp.id())
+      );
+    }
+
+    #[tokio::test]
     async fn it_separates_entry_kinds_and_scopes_with_the_same_entry_id() {
       let db = store::open_test().await.unwrap();
       let grp = group(&db, BudgetScope::Character(1), "Pilot").await;
       let cat = category(&db, grp.id(), "Fuel").await;
 
-      upsert_entry_assignment(&db, BudgetScope::Character(1), BudgetEntryKind::Journal, 7, cat.id())
-        .await
-        .unwrap();
-      upsert_entry_assignment(&db, BudgetScope::Character(1), BudgetEntryKind::Market, 7, cat.id())
-        .await
-        .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        7,
+        cat.id(),
+      )
+      .await
+      .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        7,
+        cat.id(),
+      )
+      .await
+      .unwrap();
 
       let assignments = list_entry_assignments(&db, BudgetScope::Character(1)).await.unwrap();
 
@@ -749,9 +830,16 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let grp = group(&db, BudgetScope::All, "Bills").await;
       let cat = category(&db, grp.id(), "Rent").await;
-      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Market, 99, cat.id())
-        .await
-        .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        99,
+        cat.id(),
+      )
+      .await
+      .unwrap();
 
       delete_category(&db, cat.id()).await.unwrap();
 
@@ -769,16 +857,36 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let grp = group(&db, BudgetScope::All, "Bills").await;
       let cat = category(&db, grp.id(), "Rent").await;
-      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 1, cat.id())
-        .await
-        .unwrap();
-      upsert_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 2, cat.id())
-        .await
-        .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        cat.id(),
+      )
+      .await
+      .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        2,
+        cat.id(),
+      )
+      .await
+      .unwrap();
 
-      delete_entry_assignment(&db, BudgetScope::All, BudgetEntryKind::Journal, 1)
-        .await
-        .unwrap();
+      delete_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+      )
+      .await
+      .unwrap();
 
       let remaining = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
 

@@ -1449,7 +1449,12 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetCategorySelected(id) => budget_select_category(state, id),
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
     Message::BudgetGroupToggled(group_id) => budget_toggle_group(state, group_id),
-    Message::BudgetLoaded(load) => budget_apply_loaded(state, *load),
+    // The Budget-tab view and the ledger picker's `budget_chips` are separate
+    // sources of truth, so any structural edit (add/delete/rename/reorder a
+    // category or group) that reloads the view must also refresh the chips —
+    // otherwise the new category stays invisible to the picker until an
+    // unrelated event (e.g. leaving and re-entering the tab) reloads them.
+    Message::BudgetLoaded(load) => budget_apply_loaded(state, *load).chain(reload_budget_chips(state, db)),
     Message::BudgetModeSelected(mode) => {
       state.budget_mode = mode;
       Task::none()

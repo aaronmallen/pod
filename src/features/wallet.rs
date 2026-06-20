@@ -7,6 +7,7 @@ mod loaders;
 mod selection;
 mod shell;
 mod side_filter;
+mod wallets_view;
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use iced::{Element, Task};
@@ -30,6 +31,11 @@ use crate::{
   ui::components::resizable_pane::PaneDrag,
   window_state,
 };
+
+/// The wallet-read roles whose holder grants the player visibility of a corp's
+/// division balances — the same gate the corporation-wallet sync enforces. The
+/// granting pilot's strongest such role drives the "via · " attribution caption.
+const ACCOUNTING_ROLES: &[&str] = &["Director", "Accountant", "Junior_Accountant"];
 
 const BUDGET_INSPECTOR_DEFAULT_WIDTH: f32 = 300.0;
 
@@ -101,6 +107,27 @@ impl CorpDivision {
   }
 }
 
+/// One accessible corporation's wallet, broken into its divisions, plus the
+/// pilot/role that grants the player read access — the "via · " attribution on
+/// the Wallets balances tab. Held for every owned corp so the All-scope view can
+/// render the full per-corp breakdown without re-querying on tab select.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpWalletSection {
+  pub divisions: Vec<CorpDivision>,
+  pub granted_by: Option<String>,
+  pub id: i64,
+  pub logo: images::ImageState,
+  pub name: String,
+  pub role: Option<String>,
+  pub ticker: String,
+}
+
+impl CorpWalletSection {
+  pub fn subtotal(&self) -> f64 {
+    self.divisions.iter().filter_map(|division| division.balance).sum()
+  }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct JournalFlow {
   pub income: f64,
@@ -124,6 +151,7 @@ pub struct Loaded {
   periods: Vec<CharacterWalletPeriodSummary>,
   right_rail_width: f32,
   roster: Vec<RosterPilot>,
+  wallet_sections: Vec<CorpWalletSection>,
 }
 
 #[derive(Clone, Debug)]
@@ -234,6 +262,7 @@ pub enum Message {
   },
   TabSelected(Tab),
   TimeframeSelected(Timeframe),
+  WalletsSortSelected(WalletSort),
 }
 
 impl Message {
@@ -389,6 +418,15 @@ pub enum SignFilter {
   Out,
 }
 
+/// Within-section ordering on the Wallets balances tab. Affects display only —
+/// it never mutates the underlying balance data.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WalletSort {
+  Ascending,
+  #[default]
+  Descending,
+}
+
 #[derive(Debug)]
 pub struct State {
   active: Scope,
@@ -444,6 +482,8 @@ pub struct State {
   tab_exhausted: bool,
   tab_scroll_offset: f32,
   timeframe: Timeframe,
+  wallet_sections: Vec<CorpWalletSection>,
+  wallets_sort: WalletSort,
 }
 
 impl State {
@@ -510,6 +550,8 @@ impl State {
       tab_exhausted: false,
       tab_scroll_offset: 0.0,
       timeframe: Timeframe::default(),
+      wallet_sections: Vec::new(),
+      wallets_sort: WalletSort::default(),
     }
   }
 
@@ -691,6 +733,18 @@ impl State {
     &self.corp_divisions
   }
 
+  pub(super) fn roster(&self) -> &[RosterPilot] {
+    &self.roster
+  }
+
+  pub(super) fn wallet_sections(&self) -> &[CorpWalletSection] {
+    &self.wallet_sections
+  }
+
+  pub(super) fn wallets_sort(&self) -> WalletSort {
+    self.wallets_sort
+  }
+
   pub(super) fn journal_selected(&self, owner: BudgetOwner, entry_id: i64) -> bool {
     self.journal_selection.contains((owner, entry_id))
   }
@@ -707,7 +761,7 @@ impl State {
     match self.tab {
       Tab::Journal => self.journal_selection.len(),
       Tab::Market => self.market_selection.len(),
-      Tab::Budget | Tab::Contracts => 0,
+      Tab::Budget | Tab::Contracts | Tab::Wallets => 0,
     }
   }
 
@@ -740,6 +794,12 @@ impl State {
     let mut keys: Vec<(images::ImageKind, i64)> = Vec::new();
     keys.extend(self.roster.iter().filter_map(|pilot| pilot.portrait.stale_key()));
     keys.extend(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()));
+    keys.extend(
+      self
+        .wallet_sections
+        .iter()
+        .filter_map(|section| section.logo.stale_key()),
+    );
     for contract in &self.contracts {
       keys.extend(contract.acceptor_image.stale.iter().copied());
       keys.extend(contract.assignee_image.stale.iter().copied());
@@ -851,8 +911,9 @@ pub enum Tab {
   Budget,
   Contracts,
   Journal,
-  #[default]
   Market,
+  #[default]
+  Wallets,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -978,7 +1039,7 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
   let scope = state.active;
   let tab = state.tab;
 
-  if tab == Tab::Budget {
+  if matches!(tab, Tab::Budget | Tab::Wallets) {
     return Task::none();
   }
 
@@ -1033,8 +1094,9 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
         move |contracts| more_page(scope, tab, MorePage::contracts(contracts)),
       )
     }
-    // The Budget tab paginates nothing; the early return above already covered it.
-    Tab::Budget => Task::none(),
+    // The Budget and Wallets tabs paginate nothing; their balance/envelope data
+    // is already fully in State, so there is no cursor to advance.
+    Tab::Budget | Tab::Wallets => Task::none(),
   }
 }
 
@@ -1802,7 +1864,7 @@ fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Tas
   let kind = match menu.tab {
     Tab::Journal => BudgetEntryKind::Journal,
     Tab::Market => BudgetEntryKind::Market,
-    Tab::Budget | Tab::Contracts => return Task::none(),
+    Tab::Budget | Tab::Contracts | Tab::Wallets => return Task::none(),
   };
   let scope = state.budget_scope();
   let order = ledger_order(state, kind);
@@ -1877,6 +1939,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         periods,
         right_rail_width,
         roster,
+        wallet_sections,
       } = *loaded;
       state.budget_chips = chips;
       state.contract_total = contract_total;
@@ -1894,6 +1957,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         state.right_rail.set_ratio_from_store(right_rail_width);
       }
       state.roster = roster;
+      state.wallet_sections = wallet_sections;
       state.loading_more = false;
       state.tab_exhausted = false;
       state.recompute_derived();
@@ -1978,6 +2042,10 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.chart_hover = None;
       Task::none()
     }
+    Message::WalletsSortSelected(sort) => {
+      state.wallets_sort = sort;
+      Task::none()
+    }
     // The Budget surface is dispatched by `handle_budget` via the `is_budget`
     // guard above; this arm only keeps the match exhaustive.
     _ => Task::none(),
@@ -2058,6 +2126,7 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
   let roster = load_roster(&db).await;
   let corporations = load_corporations(&db).await;
+  let wallet_sections = load_wallet_sections(&db).await;
   let financials = finance::financials_all(&db).await.unwrap_or_default();
   let periods = finance::wallet_period_summaries_all(&db).await.unwrap_or_default();
 
@@ -2146,6 +2215,7 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     periods,
     right_rail_width,
     roster,
+    wallet_sections,
   }
 }
 
@@ -2303,6 +2373,55 @@ async fn load_corporations(db: &Database) -> Vec<RosterCorp> {
     });
   }
   roster
+}
+
+async fn load_wallet_sections(db: &Database) -> Vec<CorpWalletSection> {
+  let corporations = org::all_owned_corporations(db).await.unwrap_or_default();
+  let mut sections = Vec::with_capacity(corporations.len());
+  for corp in corporations {
+    let divisions = load_corp_divisions(db, corp.id()).await;
+    let (granted_by, role) = attribution(db, &corp).await;
+    let logo = images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp.id());
+    sections.push(CorpWalletSection {
+      divisions,
+      granted_by,
+      id: corp.id(),
+      logo,
+      name: corp.name().to_owned(),
+      role,
+      ticker: corp.ticker().to_owned(),
+    });
+  }
+  sections
+}
+
+/// Resolve the pilot and accounting role that grant read access to a corp's
+/// wallet: the corp's authorizing character, paired with the strongest
+/// wallet-read role they hold (Director, then Accountant, then Junior
+/// Accountant — the same precedence the corp-wallet sync gates on).
+async fn attribution(db: &Database, corp: &crate::store::model::OwnedCorporation) -> (Option<String>, Option<String>) {
+  let Some(authorized_by) = corp.authorized_by() else {
+    return (None, None);
+  };
+  let name = character::get(db, authorized_by)
+    .await
+    .ok()
+    .flatten()
+    .map(|character| character.name().to_owned());
+  let roles = org::for_corporation(db, corp.id()).await.unwrap_or_default();
+  let role = ACCOUNTING_ROLES
+    .iter()
+    .find(|wanted| {
+      roles
+        .iter()
+        .any(|member| member.character_id() == authorized_by && member.role() == *wanted)
+    })
+    .map(|role| humanize_role(role));
+  (name, role)
+}
+
+fn humanize_role(role: &str) -> String {
+  role.replace('_', " ")
 }
 
 pub fn scope_liquid(state: &State) -> Option<f64> {
@@ -2750,6 +2869,7 @@ mod tests {
       periods: Vec::new(),
       right_rail_width: 280.0,
       roster: Vec::new(),
+      wallet_sections: Vec::new(),
     }
   }
 
@@ -3422,6 +3542,68 @@ mod tests {
     }
   }
 
+  mod wallets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_cold_opens_on_the_wallets_tab() {
+      let state = State::new();
+
+      assert_eq!(state.tab, Tab::Wallets);
+    }
+
+    #[tokio::test]
+    async fn it_toggles_the_section_sort_order() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::WalletsSortSelected(WalletSort::Ascending), &db);
+
+      assert_eq!(state.wallets_sort(), WalletSort::Ascending);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_wallets_tab_off_pagination() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+      state.roster = vec![pilot(1, Some(10.0))];
+      state.active = Scope::All;
+      state.tab = Tab::Wallets;
+
+      let _ = update(
+        &mut state,
+        Message::TabScrolled {
+          absolute: 100.0,
+          relative: 0.99,
+        },
+        &db,
+      );
+
+      assert!(!state.loading_more);
+    }
+
+    #[test]
+    fn it_subtotals_a_section_over_present_division_balances() {
+      let section = CorpWalletSection {
+        divisions: vec![
+          corp_division(1, Some("Master Wallet"), Some(100.0)),
+          corp_division(2, Some("Operations"), None),
+          corp_division(3, Some("Reserve"), Some(50.0)),
+        ],
+        granted_by: Some("Pilot 1".to_owned()),
+        id: 98_000_001,
+        logo: corp_logo_stale(98_000_001),
+        name: "Test Corp".to_owned(),
+        role: Some("Director".to_owned()),
+        ticker: "TSTC".to_owned(),
+      };
+
+      assert_eq!(section.subtotal(), 150.0);
+    }
+  }
+
   mod filtered_contracts {
     use pretty_assertions::assert_eq;
 
@@ -3484,6 +3666,7 @@ mod tests {
           periods: vec![period(1, 100.0, 40.0)],
           right_rail_width: 280.0,
           roster: vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))],
+          wallet_sections: vec![],
         })),
         &db,
       );
@@ -4495,6 +4678,7 @@ mod tests {
       let mut state = State::new();
       state.roster = vec![pilot(1, None)];
       state.active = Scope::All;
+      state.tab = Tab::Journal;
 
       let _ = update(
         &mut state,
@@ -4601,6 +4785,7 @@ mod tests {
           periods: vec![],
           right_rail_width: 280.0,
           roster: vec![pilot(7, Some(10.0))],
+          wallet_sections: vec![],
         })),
         &db,
       );

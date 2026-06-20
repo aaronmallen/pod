@@ -121,6 +121,13 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       .into();
   }
 
+  if state.tab == Tab::Wallets {
+    return Column::with_children(vec![tabs(state), super::wallets_view::surface(state)])
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into();
+  }
+
   let panes = Row::with_children(vec![
     center(state, now),
     pane_handle(Message::RailDragStart),
@@ -163,7 +170,7 @@ fn pinned_header<'a>(state: &State) -> Option<Element<'a, Message>> {
   match state.tab {
     Tab::Market => Some(market_header()),
     Tab::Contracts => Some(contract_header()),
-    Tab::Budget | Tab::Journal => None,
+    Tab::Budget | Tab::Journal | Tab::Wallets => None,
   }
 }
 
@@ -238,9 +245,10 @@ fn tabs(state: &State) -> Element<'_, Message> {
   let market_count = state.market_total;
   let contract_count = state.contract_total;
   let items = [
+    (Tab::Wallets, "Wallets", None),
+    (Tab::Journal, "Journal", Some(journal_count)),
     (Tab::Market, "Transactions", Some(market_count)),
     (Tab::Contracts, "Contracts", Some(contract_count)),
-    (Tab::Journal, "Journal", Some(journal_count)),
     (Tab::Budget, "Budget", None),
   ];
 
@@ -277,6 +285,7 @@ fn tab_icon(tab: Tab) -> Icon {
     Tab::Contracts => Icon::contracts(),
     Tab::Journal => Icon::journal(),
     Tab::Market => Icon::market(),
+    Tab::Wallets => Icon::wallet(),
   }
 }
 
@@ -478,9 +487,11 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       .on_move(Message::LedgerCursorMoved)
       .into(),
     Tab::Contracts => contracts_table(state, now),
-    // The Budget tab takes the dedicated surface path in `body`; this arm is
-    // unreachable from `center` but keeps the match exhaustive.
+    // The Budget and Wallets tabs take the dedicated full-width surface path in
+    // `body`; these arms are unreachable from `center` but keep the match
+    // exhaustive.
     Tab::Budget => empty_ledger("Budget"),
+    Tab::Wallets => empty_ledger("Wallets"),
   }
 }
 

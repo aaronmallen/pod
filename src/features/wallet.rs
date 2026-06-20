@@ -174,6 +174,25 @@ pub enum BudgetDropTarget {
   Group(i64),
 }
 
+/// Which trigger opened the Move Money popover. Both the row's Available pill
+/// and the Inspector button open the same transfer, but only the trigger that
+/// opened it floats the popover, so the two `AnchoredDropdown`s never stack two
+/// copies for one source category.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BudgetMoveAnchor {
+  Inspector,
+  Pill,
+}
+
+/// Amount is prefilled with the source's `max(0, available)` when the popover
+/// opens, then edited freely until a destination commits the transfer.
+#[derive(Clone, Debug)]
+pub struct BudgetMove {
+  pub amount_draft: String,
+  pub anchor: BudgetMoveAnchor,
+  pub from_id: i64,
+}
+
 /// The right-click menu over the selected ledger rows. `picking` flips the menu
 /// from its single "Assign to Budget" action to the reused envelope picker;
 /// `tab` records which tab's selection the bulk assign applies to.
@@ -227,6 +246,10 @@ pub enum Message {
   BudgetLoaded(Box<BudgetLoad>),
   BudgetModeSelected(budget::Mode),
   BudgetMonthStepped(i32),
+  BudgetMoveAmountChanged(String),
+  BudgetMoveClosed,
+  BudgetMoveCommitted(budget::MoveDest),
+  BudgetMoveOpened(i64, BudgetMoveAnchor),
   BudgetQuickAssign(i64, f64),
   BudgetRangeSelected(budget::BudgetRange),
   ChartHovered(Option<f32>),
@@ -316,6 +339,10 @@ impl Message {
         | Message::BudgetLoaded(_)
         | Message::BudgetModeSelected(_)
         | Message::BudgetMonthStepped(_)
+        | Message::BudgetMoveAmountChanged(_)
+        | Message::BudgetMoveClosed
+        | Message::BudgetMoveCommitted(_)
+        | Message::BudgetMoveOpened(..)
         | Message::BudgetQuickAssign(_, _)
         | Message::BudgetRangeSelected(_)
     )
@@ -447,6 +474,7 @@ pub struct State {
   budget_inspector: PaneDrag,
   budget_mode: budget::Mode,
   budget_month: String,
+  budget_move: Option<BudgetMove>,
   budget_pending_group_delete: Option<i64>,
   budget_picker: Option<(BudgetOwner, BudgetEntryKind, i64)>,
   budget_range: budget::BudgetRange,
@@ -511,6 +539,7 @@ impl State {
       .right_anchored(true),
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
+      budget_move: None,
       budget_pending_group_delete: None,
       budget_picker: None,
       budget_range: budget::BudgetRange::default(),
@@ -699,6 +728,10 @@ impl State {
 
   pub(super) fn budget_month(&self) -> &str {
     &self.budget_month
+  }
+
+  pub(super) fn budget_move(&self) -> Option<&BudgetMove> {
+    self.budget_move.as_ref()
   }
 
   pub(super) fn budget_pending_group_delete(&self) -> Option<i64> {
@@ -1142,6 +1175,56 @@ fn budget_quick_assign(state: &mut State, db: &Database, category_id: i64, value
   })
 }
 
+/// Opens the Move Money popover anchored on `category_id`, selecting it and
+/// prefilling the amount with its `max(0, available)`. Blocked for past months,
+/// like inline assign. A no-op when the category is not in the current view.
+fn budget_open_move(state: &mut State, category_id: i64, anchor: BudgetMoveAnchor) -> Task<Message> {
+  if state.budget_is_past() {
+    return Task::none();
+  }
+  let Some(available) = state
+    .budget
+    .as_ref()
+    .and_then(|view| view.category(category_id))
+    .map(budget::Category::available)
+  else {
+    return Task::none();
+  };
+  state.budget_selected = Some(category_id);
+  state.budget_editor = None;
+  state.budget_move = Some(BudgetMove {
+    amount_draft: crate::ui::format::fmt_isk(available.max(0.0)),
+    anchor,
+    from_id: category_id,
+  });
+  Task::none()
+}
+
+/// Commits the open Move Money transfer to `to`, then reloads so RTA, carry and
+/// available re-derive. Amounts that do not parse to a positive whole ISK leave
+/// the popover open (the destination list is inert until the amount is valid),
+/// so a non-positive amount is a guarded no-op rather than a silent close.
+fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) -> Task<Message> {
+  let Some((from_id, amount)) = state
+    .budget_move
+    .as_ref()
+    .map(|m| (m.from_id, crate::ui::format::parse_isk(&m.amount_draft)))
+  else {
+    return Task::none();
+  };
+  if amount.round() <= 0.0 {
+    return Task::none();
+  }
+  let Some(view) = state.budget.clone() else {
+    return Task::none();
+  };
+  state.budget_move = None;
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    let view = view.clone();
+    Box::pin(async move { budget::move_money(&db, &view, from_id, to, amount).await })
+  })
+}
+
 fn budget_auto_assign(state: &mut State, db: &Database) -> Task<Message> {
   let Some(view) = state.budget.clone() else {
     return Task::none();
@@ -1524,8 +1607,21 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetMonthStepped(delta) => {
       state.budget_month = budget::shift_month(&state.budget_month, delta);
       state.budget_editing = None;
+      state.budget_move = None;
       reload_budget(state, db)
     }
+    Message::BudgetMoveAmountChanged(draft) => {
+      if let Some(open) = state.budget_move.as_mut() {
+        open.amount_draft = draft;
+      }
+      Task::none()
+    }
+    Message::BudgetMoveClosed => {
+      state.budget_move = None;
+      Task::none()
+    }
+    Message::BudgetMoveCommitted(to) => budget_commit_move(state, db, to),
+    Message::BudgetMoveOpened(category_id, anchor) => budget_open_move(state, category_id, anchor),
     Message::BudgetQuickAssign(category_id, value) => budget_quick_assign(state, db, category_id, value),
     Message::BudgetRangeSelected(range) => {
       state.budget_range = range;
@@ -5209,6 +5305,59 @@ mod tests {
       let _ = update(&mut state, Message::BudgetAutoAssign, &db);
       let _ = update(&mut state, Message::BudgetCoverOverspending, &db);
       let _ = update(&mut state, Message::BudgetEditorCommitted, &db);
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_move_popover_prefilled_with_the_available_amount() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetMoveOpened(1, BudgetMoveAnchor::Pill), &db);
+
+      let open = state.budget_move().expect("move popover open");
+      assert_eq!(open.from_id, 1);
+      // available = carry 200 + assigned 400 + activity −50 = 550.
+      assert_eq!(open.amount_draft, crate::ui::format::fmt_isk(550.0));
+      assert_eq!(state.budget_selected(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn it_blocks_opening_the_move_popover_in_a_past_month() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      state.budget_month = budget::shift_month(&budget::current_month(), -1);
+
+      let _ = update(&mut state, Message::BudgetMoveOpened(1, BudgetMoveAnchor::Pill), &db);
+
+      assert!(state.budget_move().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_move_popover() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetMoveOpened(1, BudgetMoveAnchor::Pill), &db);
+
+      let _ = update(&mut state, Message::BudgetMoveClosed, &db);
+
+      assert!(state.budget_move().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_move_popover_on_commit() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetMoveOpened(1, BudgetMoveAnchor::Pill), &db);
+
+      // Dispatching the commit runs the synchronous handler path (state mutation
+      // + persist task build) without executing the reload task.
+      let _ = update(
+        &mut state,
+        Message::BudgetMoveCommitted(budget::MoveDest::ReadyToAssign),
+        &db,
+      );
+
+      assert!(state.budget_move().is_none());
     }
 
     fn state_with_two_categories() -> State {

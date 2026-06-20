@@ -5,11 +5,11 @@ use iced::{
 };
 
 use super::{
-  BudgetDropTarget, BudgetFilterKind, Message, State,
-  budget::{self, Category, CategoryDraft, Group, Mode, TargetKind, TargetState},
+  BudgetDropTarget, BudgetFilterKind, BudgetMoveAnchor, Message, State,
+  budget::{self, Category, CategoryDraft, Group, Mode, MoveDest, TargetKind, TargetState},
 };
 use crate::ui::{
-  components::icon::Icon,
+  components::{anchored_dropdown::AnchoredDropdown, icon::Icon},
   style::{color, spacing, typography},
 };
 
@@ -17,6 +17,7 @@ const ASSIGNED_COL: f32 = 152.0;
 const ACTIVITY_COL: f32 = 146.0;
 const AVAILABLE_COL: f32 = 172.0;
 const DOT_COL: f32 = 28.0;
+const MOVE_POPOVER_WIDTH: f32 = 306.0;
 const SIDE_PADDING: f32 = 28.0;
 
 pub(super) fn surface(state: &State) -> Element<'_, Message> {
@@ -924,7 +925,7 @@ fn category_row<'a>(
   let tail: Element<'a, Message> = if edit_mode {
     delete_category_cell(category.id)
   } else {
-    available_cell(category, &status, selected)
+    available_cell(state, category, &status, selected)
   };
 
   let hovered = state.budget_hovered_category() == Some(category.id);
@@ -1325,7 +1326,12 @@ fn assigned_input_style(_theme: &iced::Theme, _status: text_input::Status) -> te
   }
 }
 
-fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, selected: bool) -> Element<'a, Message> {
+fn available_cell<'a>(
+  state: &'a State,
+  category: &'a Category,
+  status: &budget::TargetStatus,
+  selected: bool,
+) -> Element<'a, Message> {
   let available = category.available();
   let (background, fg, border_color) = match status.state {
     TargetState::Over => (
@@ -1360,8 +1366,18 @@ fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, sel
       .into(),
   );
 
-  let border_final = if selected { color::accent::PLASMA } else { border_color };
+  let open = move_open_for(state, category.id, BudgetMoveAnchor::Pill);
+  let border_final = if selected || open {
+    color::accent::PLASMA
+  } else {
+    border_color
+  };
 
+  let on_press = if open {
+    Message::BudgetMoveClosed
+  } else {
+    Message::BudgetMoveOpened(category.id, BudgetMoveAnchor::Pill)
+  };
   let pill = button(Row::with_children(pill_children).spacing(7.0).align_y(Vertical::Center))
     .padding(Padding {
       top: 5.0,
@@ -1369,7 +1385,7 @@ fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, sel
       bottom: 5.0,
       left: 11.0,
     })
-    .on_press(Message::BudgetCategorySelected(category.id))
+    .on_press(on_press)
     .style(move |_, _| button::Style {
       background: Some(Background::Color(background)),
       border: Border {
@@ -1380,7 +1396,12 @@ fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, sel
       ..button::Style::default()
     });
 
-  container(pill)
+  let popover = open.then(|| move_money_popover(state, category));
+  let trigger = AnchoredDropdown::new(pill, popover)
+    .on_dismiss(Message::BudgetMoveClosed)
+    .popover_width(MOVE_POPOVER_WIDTH);
+
+  container(trigger)
     .width(Length::Fixed(AVAILABLE_COL))
     .align_x(Horizontal::Right)
     .padding(Padding {
@@ -1389,6 +1410,255 @@ fn available_cell<'a>(category: &'a Category, status: &budget::TargetStatus, sel
       bottom: 0.0,
       left: 16.0,
     })
+    .into()
+}
+
+/// Whether the Move Money popover is open and sourced on `category_id` from the
+/// given `anchor`. The anchor disambiguates the row pill from the inspector
+/// button so only the trigger that opened the move floats the popover.
+fn move_open_for(state: &State, category_id: i64, anchor: BudgetMoveAnchor) -> bool {
+  state
+    .budget_move()
+    .is_some_and(|open| open.from_id == category_id && open.anchor == anchor)
+}
+
+/// Destinations stay inert until the amount parses to a positive number, so a
+/// stray click cannot move 0 ISK.
+fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a, Message> {
+  let open = state.budget_move();
+  let draft = open.map(|m| m.amount_draft.as_str()).unwrap_or_default();
+  let amount = crate::ui::format::parse_isk(draft).round();
+  let valid = amount > 0.0;
+  let available = source.available();
+
+  let source_label = Row::with_children(vec![
+    color_dot(source.tone.as_deref(), 12.0),
+    text(source.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .width(Length::Fill)
+      .into(),
+    text(format!("{} avail", crate::ui::format::fmt_isk_full(available)))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(if available < 0.0 {
+        color::status::DANGER
+      } else {
+        color::text::secondary()
+      }))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let header = Column::with_children(vec![
+    eyebrow_label("Move money from"),
+    source_label.into(),
+    move_amount_field(draft, available, valid).into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .padding(spacing::SPACE_3);
+
+  let mut rows: Vec<Element<'a, Message>> = vec![
+    eyebrow_label("To"),
+    move_dest_row(
+      "Ready to Assign",
+      color::accent::PLASMA,
+      true,
+      valid.then_some(Message::BudgetMoveCommitted(MoveDest::ReadyToAssign)),
+    ),
+  ];
+  if let Some(view) = state.budget() {
+    for group in &view.groups {
+      let dests: Vec<&Category> = group.categories.iter().filter(|c| c.id != source.id).collect();
+      if dests.is_empty() {
+        continue;
+      }
+      rows.push(
+        text(group.name.clone())
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      );
+      for dest in dests {
+        rows.push(move_dest_row(
+          &dest.name,
+          budget::tone_color(dest.tone.as_deref()),
+          false,
+          valid.then_some(Message::BudgetMoveCommitted(MoveDest::Category(dest.id))),
+        ));
+      }
+    }
+  }
+
+  container(
+    Column::with_children(vec![
+      header.into(),
+      scrollable(Column::with_children(rows).spacing(spacing::SPACE_2))
+        .style(crate::ui::style::control::scrollbar)
+        .height(Length::Fixed(280.0))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2),
+  )
+  .padding(spacing::SPACE_2)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: 11.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+/// "All" prefills `max(0, available)` so negative available does not seed a
+/// negative transfer.
+fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Message> {
+  let input = text_input("0", draft)
+    .on_input(Message::BudgetMoveAmountChanged)
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 8.0,
+      right: 11.0,
+      bottom: 8.0,
+      left: 11.0,
+    })
+    .style(move |_, _| text_input::Style {
+      background: Background::Color(color::surface::SUNKEN),
+      border: Border {
+        color: if valid { color::accent::PLASMA } else { color::rule() },
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      icon: color::text::secondary(),
+      placeholder: color::text::tertiary(),
+      selection: color::with_alpha(color::accent::PLASMA, 0.3),
+      value: color::text::PRIMARY,
+    });
+
+  let all = button(
+    text("All")
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(Padding {
+    top: 9.0,
+    right: 13.0,
+    bottom: 9.0,
+    left: 13.0,
+  })
+  .on_press(Message::BudgetMoveAmountChanged(crate::ui::format::fmt_isk(
+    available.max(0.0),
+  )))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: if active {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  });
+
+  Row::with_children(vec![input.into(), all.into()])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+}
+
+/// One destination row in the Move Money popover. `special` marks the
+/// "Ready to Assign" pool with a hollow square rather than a filled tone dot.
+/// `on_press` is `None` while the amount is invalid, leaving the row inert.
+fn move_dest_row<'a>(label: &str, tone: Color, special: bool, on_press: Option<Message>) -> Element<'a, Message> {
+  let dot: Element<'a, Message> = if special {
+    container(Space::new())
+      .width(Length::Fixed(11.0))
+      .height(Length::Fixed(11.0))
+      .style(move |_| container::Style {
+        border: Border {
+          color: tone,
+          width: 1.5,
+          radius: 3.0.into(),
+        },
+        ..container::Style::default()
+      })
+      .into()
+  } else {
+    container(Space::new())
+      .width(Length::Fixed(11.0))
+      .height(Length::Fixed(11.0))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(tone)),
+        border: Border {
+          radius: 5.5.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into()
+  };
+
+  let row = Row::with_children(vec![
+    dot,
+    text(label.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .width(Length::Fill)
+      .into(),
+    text("\u{2192}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
+
+  let mut entry = button(row).width(Length::Fill).padding(Padding {
+    top: 9.0,
+    right: 14.0,
+    bottom: 9.0,
+    left: 14.0,
+  });
+  if let Some(message) = on_press {
+    entry = entry.on_press(message);
+  }
+  entry
+    .style(|_, status| {
+      let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(if active {
+          color::with_alpha(color::accent::PLASMA, 0.09)
+        } else {
+          Color::TRANSPARENT
+        })),
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+fn eyebrow_label<'a>(label: &'a str) -> Element<'a, Message> {
+  text(label)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()))
     .into()
 }
 
@@ -1568,14 +1838,77 @@ fn inspector_header<'a>(
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Bottom);
 
-  Column::with_children(vec![
+  let mut body: Vec<Element<'a, Message>> = vec![
     Row::with_children(head).spacing(11.0).align_y(Vertical::Center).into(),
     available_row.into(),
-  ])
-  .spacing(spacing::SPACE_3_5)
+  ];
+  if !state.budget_edit_mode() {
+    body.push(inspector_move_button(state, category));
+  }
+
+  Column::with_children(body)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .padding(section_padding())
+    .into()
+}
+
+/// Same Move Money popover as the Available pill but anchored to this button;
+/// renders only when this category's Inspector anchor is open.
+fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let open = move_open_for(state, category.id, BudgetMoveAnchor::Inspector);
+  let on_press = if open {
+    Message::BudgetMoveClosed
+  } else {
+    Message::BudgetMoveOpened(category.id, BudgetMoveAnchor::Inspector)
+  };
+
+  let trigger = button(
+    Row::with_children(vec![
+      text("\u{21C4}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::accent::PLASMA))
+        .into(),
+      text("Move money")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::accent::PLASMA))
+        .into(),
+    ])
+    .spacing(7.0)
+    .align_y(Vertical::Center),
+  )
   .width(Length::Fill)
-  .padding(section_padding())
-  .into()
+  .padding(Padding {
+    top: 9.0,
+    right: 10.0,
+    bottom: 9.0,
+    left: 10.0,
+  })
+  .on_press(on_press)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::accent::PLASMA,
+        if active { 0.18 } else { 0.1 },
+      ))),
+      border: Border {
+        color: color::accent::PLASMA,
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: color::accent::PLASMA,
+      ..button::Style::default()
+    }
+  });
+
+  let popover = open.then(|| move_money_popover(state, category));
+  AnchoredDropdown::new(trigger, popover)
+    .on_dismiss(Message::BudgetMoveClosed)
+    .popover_width(MOVE_POPOVER_WIDTH)
+    .into()
 }
 
 fn editor_toggle_button<'a>(active: bool) -> Element<'a, Message> {

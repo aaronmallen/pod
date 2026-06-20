@@ -23,6 +23,14 @@ pub enum Mode {
   Reflect,
 }
 
+/// RTA is derived (pool − Σ assigned), not stored; a move to it just sheds the
+/// amount from the source rather than writing a second assignment row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MoveDest {
+  Category(i64),
+  ReadyToAssign,
+}
+
 /// The Reflect flow chart's trailing window, mirroring the design's 3M/6M
 /// toggle. `SixMonths` is the default (the wireframe opens on 6).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -865,11 +873,11 @@ fn trailing_average(month: &str, assignments: &[crate::store::model::BudgetAssig
   window.iter().sum::<f64>() / take as f64
 }
 
-/// Persists a single category's assignment for `month`, clamping to a
-/// non-negative whole number (the design rounds and floors assignments at 0).
+/// The value MAY be negative: assigning below zero is the YNAB mechanism for
+/// moving rolled-over (carry) or income out of a category. There is no `>= 0`
+/// clamp; a negative available surfaces in the Cover-Overspending flow.
 pub async fn persist_assignment(db: &Database, category_id: i64, month: &str, value: f64) {
-  let clamped = value.round().max(0.0);
-  let _ = budget::upsert_assignment(db, category_id, month, clamped).await;
+  let _ = budget::upsert_assignment(db, category_id, month, value.round()).await;
 }
 
 /// Auto-assigns the Ready-to-Assign pool to underfunded categories in order,
@@ -902,6 +910,25 @@ pub async fn cover_overspending(db: &Database, view: &BudgetView) {
         persist_assignment(db, category.id, &view.month, category.assigned - available).await;
       }
     }
+  }
+}
+
+/// The source assignment MAY go negative (carry moves the full available into
+/// another envelope). Nothing is silently drawn from RTA; conservation is exact:
+/// whatever leaves the source arrives at the destination or returns to the pool.
+pub async fn move_money(db: &Database, view: &BudgetView, from_id: i64, to: MoveDest, amount: f64) {
+  let amount = amount.round();
+  if amount <= 0.0 {
+    return;
+  }
+  let Some(source) = view.category(from_id) else {
+    return;
+  };
+  let _ = budget::upsert_assignment(db, from_id, &view.month, source.assigned - amount).await;
+  if let MoveDest::Category(to_id) = to
+    && let Some(dest) = view.category(to_id)
+  {
+    let _ = budget::upsert_assignment(db, to_id, &view.month, dest.assigned + amount).await;
   }
 }
 
@@ -1816,6 +1843,245 @@ mod tests {
         },
         tone: None,
       }
+    }
+  }
+
+  mod persist_assignment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      repo::budget::{NewCategory, NewGroup, create_category, create_group},
+    };
+
+    #[tokio::test]
+    async fn it_stores_a_negative_assignment_below_zero() {
+      let db = store::open_test().await.unwrap();
+      let group = create_group(
+        &db,
+        &NewGroup {
+          name: "Bills".to_owned(),
+          position: 0,
+          scope: BudgetScope::Character(1),
+        },
+      )
+      .await
+      .unwrap();
+      let cat = create_category(
+        &db,
+        &NewCategory {
+          group_id: group.id(),
+          name: "First".to_owned(),
+          note: None,
+          position: 0,
+          tone: None,
+        },
+      )
+      .await
+      .unwrap();
+
+      persist_assignment(&db, cat.id(), "2026-06", -750.4).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(view.category(cat.id()).unwrap().assigned, -750.0);
+    }
+  }
+
+  mod move_money {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self,
+      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      repo::{
+        budget::{NewCategory, NewGroup, create_category, create_group},
+        character::insert_with_org,
+        finance, infra,
+      },
+    };
+
+    async fn seed_pilot(db: &Database, liquid: f64) {
+      let id = 1;
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      finance::append_wallet_journal(
+        db,
+        &[store::model::CharacterWalletJournal {
+          amount: Some(liquid),
+          balance: Some(liquid),
+          character_id: id,
+          context_id: None,
+          context_id_type: None,
+          date: "2026-06-18T00:00:00Z".to_owned(),
+          description: "Seed".to_owned(),
+          first_party_id: None,
+          id,
+          reason: None,
+          ref_type: "unmapped_seed_ref".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+    }
+
+    async fn two_categories(db: &Database) -> (i64, i64) {
+      let group = create_group(
+        db,
+        &NewGroup {
+          name: "Bills".to_owned(),
+          position: 0,
+          scope: BudgetScope::Character(1),
+        },
+      )
+      .await
+      .unwrap();
+      let mut ids = Vec::new();
+      for name in ["First", "Second"] {
+        let cat = create_category(
+          db,
+          &NewCategory {
+            group_id: group.id(),
+            name: name.to_owned(),
+            note: None,
+            position: 0,
+            tone: None,
+          },
+        )
+        .await
+        .unwrap();
+        ids.push(cat.id());
+      }
+      (ids[0], ids[1])
+    }
+
+    fn conservation(view: &BudgetView) -> f64 {
+      view.ready_to_assign
+        + view
+          .groups
+          .iter()
+          .flat_map(|g| &g.categories)
+          .map(Category::available)
+          .sum::<f64>()
+    }
+
+    #[tokio::test]
+    async fn it_transfers_assigned_between_two_categories() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-06", 3_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      move_money(&db, &view, first, MoveDest::Category(second), 1_200.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.category(first).unwrap().available(), 1_800.0);
+      assert_eq!(after.category(second).unwrap().available(), 1_200.0);
+      assert_eq!(after.ready_to_assign, 7_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_returns_money_to_ready_to_assign() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, _second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-06", 3_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      move_money(&db, &view, first, MoveDest::ReadyToAssign, 1_200.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.category(first).unwrap().available(), 1_800.0);
+      assert_eq!(after.ready_to_assign, 8_200.0);
+    }
+
+    #[tokio::test]
+    async fn it_drives_the_source_assigned_negative_on_a_full_carry_move() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-05", 2_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(view.category(first).unwrap().assigned, 0.0);
+      assert_eq!(view.category(first).unwrap().available(), 2_000.0);
+
+      move_money(&db, &view, first, MoveDest::Category(second), 2_000.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.category(first).unwrap().assigned, -2_000.0);
+      assert_eq!(after.category(first).unwrap().available(), 0.0);
+      assert_eq!(after.category(second).unwrap().available(), 2_000.0);
+      assert_eq!(after.ready_to_assign, view.ready_to_assign);
+    }
+
+    #[tokio::test]
+    async fn it_raises_ready_to_assign_when_a_carry_move_targets_the_pool() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, _second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-05", 2_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      move_money(&db, &view, first, MoveDest::ReadyToAssign, 2_000.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.category(first).unwrap().assigned, -2_000.0);
+      assert_eq!(after.ready_to_assign, view.ready_to_assign + 2_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_conserves_total_funds_across_a_transfer() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-06", 4_000.0).await;
+      let before = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let funds = conservation(&before);
+
+      move_money(&db, &before, first, MoveDest::Category(second), 4_000.0).await;
+      let cat_to_cat = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      move_money(&db, &cat_to_cat, second, MoveDest::ReadyToAssign, 2_500.0).await;
+      let to_pool = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(conservation(&cat_to_cat), funds);
+      assert_eq!(conservation(&to_pool), funds);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_non_positive_amount() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 10_000.0).await;
+      let (first, second) = two_categories(&db).await;
+      persist_assignment(&db, first, "2026-06", 3_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      move_money(&db, &view, first, MoveDest::Category(second), 0.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(after.category(first).unwrap().assigned, 3_000.0);
+      assert_eq!(after.category(second).unwrap().assigned, 0.0);
     }
   }
 

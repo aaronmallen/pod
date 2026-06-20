@@ -914,7 +914,7 @@ fn category_row<'a>(
 ) -> Element<'a, Message> {
   let selected = state.budget_selected() == Some(category.id);
   let edit_mode = state.budget_edit_mode();
-  let status = category.status();
+  let status = category.status(state.budget_month());
 
   let lead: Element<'a, Message> = if edit_mode {
     drag_handle_cell(category.id)
@@ -1459,7 +1459,7 @@ fn inspector_empty<'a>() -> Element<'a, Message> {
 }
 
 fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
-  let status = category.status();
+  let status = category.status(state.budget_month());
   let editing = state.budget_editor().is_some() || state.budget_edit_mode();
 
   let mut children: Vec<Element<'a, Message>> = vec![inspector_header(state, category, &status)];
@@ -1782,12 +1782,12 @@ fn fmt_signed(value: f64) -> String {
 fn quick_assign_block<'a>(category: &'a Category, month: &str) -> Element<'a, Message> {
   let prev = budget::month_label(&budget::shift_month(month, -1));
   let mut suggestions: Vec<Element<'a, Message>> = Vec::new();
-  if category.status().needed > 0.0 {
+  if category.status(month).needed > 0.0 {
     suggestions.push(quick_assign_row(
       category.id,
       "Underfunded",
       Some("Meet this month\u{2019}s target".to_owned()),
-      category.underfunded_assign(),
+      category.underfunded_assign(month),
     ));
   }
   suggestions.push(quick_assign_row(

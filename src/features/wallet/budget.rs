@@ -233,16 +233,18 @@ impl Category {
     self.carry + self.assigned + self.activity
   }
 
-  pub fn status(&self) -> TargetStatus {
-    target_status(&self.target, self.assigned, self.available())
+  pub fn status(&self, month: &str) -> TargetStatus {
+    target_status(&self.target, self.assigned, self.available(), month)
   }
 
-  /// The "Underfunded" quick-assign suggestion: the assignment that satisfies
-  /// this month's target. Monthly targets raise the assignment to the amount;
-  /// the cumulative targets top the available balance up to the amount.
-  pub fn underfunded_assign(&self) -> f64 {
+  /// The "Underfunded" quick-assign suggestion as of `month`: the assignment
+  /// that satisfies this month's target. Monthly targets raise the assignment to
+  /// the amount; dated goals top up only the paced slice; the other cumulative
+  /// targets top the available balance up to the amount.
+  pub fn underfunded_assign(&self, month: &str) -> f64 {
     match self.target.kind {
       TargetKind::Monthly => self.assigned.max(self.target.amount),
+      TargetKind::GoalBy => self.assigned + goal_needed(&self.target, self.available(), month),
       _ => self.assigned + (self.target.amount - self.available()).max(0.0),
     }
   }
@@ -433,7 +435,7 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::budget::MonthFlo
         tone: category.tone.clone(),
       });
     }
-    let status = category.status();
+    let status = category.status(&view.month);
     match status.state {
       TargetState::Met => tally.met += 1,
       TargetState::Over => {
@@ -577,9 +579,10 @@ fn parse_month(month: &str) -> Option<(i32, i32)> {
   (1..=12).contains(&mon).then_some((year, mon))
 }
 
-/// The target status for an `assigned`/`available` pair, ported verbatim from
-/// `targetStatus` in `budget-data.jsx`.
-pub fn target_status(target: &Target, assigned: f64, available: f64) -> TargetStatus {
+/// The target status for an `assigned`/`available` pair as of `month`
+/// (`YYYY-MM`), ported from `targetStatus` in `budget-data.jsx`. `month` only
+/// affects dated goals, whose monthly `needed` is paced toward `by_date`.
+pub fn target_status(target: &Target, assigned: f64, available: f64, month: &str) -> TargetStatus {
   use crate::ui::format::fmt_isk;
 
   let amount = target.amount;
@@ -618,7 +621,7 @@ pub fn target_status(target: &Target, assigned: f64, available: f64) -> TargetSt
       };
       (
         pct,
-        (amount - available).max(0.0),
+        goal_needed(target, available, month),
         available >= amount - 1.0,
         label,
         format!(
@@ -646,6 +649,52 @@ pub fn target_status(target: &Target, assigned: f64, available: f64) -> TargetSt
     pct,
     state,
   }
+}
+
+/// This month's shortfall for a save-toward target. Open-ended goals demand the
+/// whole remainder; dated goals pace it across the months left until `by_date`,
+/// so `(amount - available) / months_remaining` shrinks as the goal funds and
+/// grows as the deadline nears, collapsing to the full remainder in and after
+/// the final month.
+fn goal_needed(target: &Target, available: f64, month: &str) -> f64 {
+  let remainder = (target.amount - available).max(0.0);
+  if target.kind != TargetKind::GoalBy {
+    return remainder;
+  }
+  match target.by_date.as_deref().and_then(|by| months_remaining(by, month)) {
+    Some(months) => remainder / months as f64,
+    None => remainder,
+  }
+}
+
+/// The count of months from `month` through the `by_date` deadline, inclusive of
+/// both ends, so the deadline month itself is the final pacing slice. `None`
+/// when either side is unparseable; clamped to at least 1 so a past-due or
+/// final-month goal demands its whole remainder.
+fn months_remaining(by_date: &str, month: &str) -> Option<usize> {
+  let (by_year, by_mon) = parse_by_date(by_date)?;
+  let (year, mon) = parse_month(month)?;
+  let span = (by_year * 12 + (by_mon - 1)) - (year * 12 + (mon - 1)) + 1;
+  Some(span.max(1) as usize)
+}
+
+/// Parses a `by_date` label into `(year, month)`. Accepts the editor's
+/// `Mon YYYY` form (e.g. `Jan 2028`) as well as ISO `YYYY-MM` / `YYYY-MM-DD`,
+/// since the field is free text and no single stored format is guaranteed.
+fn parse_by_date(by_date: &str) -> Option<(i32, i32)> {
+  const NAMES: [&str; 12] = [
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+  ];
+  let trimmed = by_date.trim();
+  if let Some((year, rest)) = trimmed.split_once('-') {
+    let year = year.parse::<i32>().ok()?;
+    let mon = rest.split('-').next()?.parse::<i32>().ok()?;
+    return (1..=12).contains(&mon).then_some((year, mon));
+  }
+  let (name, year) = trimmed.split_once(char::is_whitespace)?;
+  let mon = NAMES.iter().position(|n| name.to_ascii_lowercase().starts_with(n))? as i32 + 1;
+  let year = year.trim().parse::<i32>().ok()?;
+  Some((year, mon))
 }
 
 fn progress(numerator: f64, denominator: f64) -> f64 {
@@ -832,7 +881,7 @@ pub async fn auto_assign(db: &Database, view: &BudgetView) {
       if pool <= 0.0 {
         return;
       }
-      let status = category.status();
+      let status = category.status(&view.month);
       if status.needed > 0.0 {
         let give = pool.min(status.needed);
         pool -= give;
@@ -1345,6 +1394,16 @@ mod tests {
 
     use super::*;
 
+    const MONTH: &str = "2026-06";
+
+    fn dated(amount: f64, by_date: &str) -> Target {
+      Target {
+        amount,
+        by_date: Some(by_date.to_owned()),
+        kind: TargetKind::GoalBy,
+      }
+    }
+
     fn target(kind: TargetKind, amount: f64) -> Target {
       Target {
         amount,
@@ -1355,7 +1414,7 @@ mod tests {
 
     #[test]
     fn it_meets_a_monthly_target_on_assignment() {
-      let status = target_status(&target(TargetKind::Monthly, 100.0), 100.0, 100.0);
+      let status = target_status(&target(TargetKind::Monthly, 100.0), 100.0, 100.0, MONTH);
 
       assert_eq!(status.state, TargetState::Met);
       assert_eq!(status.needed, 0.0);
@@ -1364,7 +1423,7 @@ mod tests {
 
     #[test]
     fn it_reports_a_monthly_shortfall_as_under() {
-      let status = target_status(&target(TargetKind::Monthly, 100.0), 40.0, 40.0);
+      let status = target_status(&target(TargetKind::Monthly, 100.0), 40.0, 40.0, MONTH);
 
       assert_eq!(status.state, TargetState::Under);
       assert_eq!(status.needed, 60.0);
@@ -1373,7 +1432,7 @@ mod tests {
     #[test]
     fn it_measures_a_balance_target_against_available_not_assigned() {
       // Balance targets track available; assigned alone does not satisfy them.
-      let status = target_status(&target(TargetKind::Balance, 1_000.0), 100.0, 800.0);
+      let status = target_status(&target(TargetKind::Balance, 1_000.0), 100.0, 800.0, MONTH);
 
       assert_eq!(status.needed, 200.0);
       assert_eq!(status.state, TargetState::Under);
@@ -1381,9 +1440,64 @@ mod tests {
 
     #[test]
     fn it_reports_a_negative_available_as_over() {
-      let status = target_status(&target(TargetKind::Refill, 250.0), 250.0, -50.0);
+      let status = target_status(&target(TargetKind::Refill, 250.0), 250.0, -50.0, MONTH);
 
       assert_eq!(status.state, TargetState::Over);
+    }
+
+    #[test]
+    fn it_demands_the_whole_remainder_for_an_open_ended_goal() {
+      // A dateless goal is unchanged: the full shortfall is needed every month.
+      let status = target_status(&target(TargetKind::Goal, 1_200.0), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0);
+    }
+
+    #[test]
+    fn it_paces_a_dated_goal_across_the_months_until_due() {
+      // 1000 remaining over Jun..Dec inclusive (7 months) → ~142.86 per month.
+      let status = target_status(&dated(1_200.0, "Dec 2026"), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0 / 7.0);
+    }
+
+    #[test]
+    fn it_shrinks_the_dated_slice_as_the_goal_funds() {
+      // Same horizon, but 700 already available → only 500 left over 7 months.
+      let status = target_status(&dated(1_200.0, "Dec 2026"), 0.0, 700.0, MONTH);
+
+      assert_eq!(status.needed, 500.0 / 7.0);
+    }
+
+    #[test]
+    fn it_demands_the_full_remainder_in_the_final_month() {
+      // The deadline month itself is the last slice: pace divides by 1.
+      let status = target_status(&dated(1_200.0, "Jun 2026"), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0);
+    }
+
+    #[test]
+    fn it_demands_the_full_remainder_when_past_due() {
+      // A deadline already behind us clamps months_remaining to 1.
+      let status = target_status(&dated(1_200.0, "Jan 2026"), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0);
+    }
+
+    #[test]
+    fn it_falls_back_to_the_full_remainder_for_an_unparseable_date() {
+      let status = target_status(&dated(1_200.0, "someday"), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0);
+    }
+
+    #[test]
+    fn it_paces_an_iso_dated_goal() {
+      // ISO YYYY-MM-DD is accepted alongside the editor's "Mon YYYY" form.
+      let status = target_status(&dated(1_200.0, "2026-12-01"), 0.0, 200.0, MONTH);
+
+      assert_eq!(status.needed, 1_000.0 / 7.0);
     }
   }
 
@@ -1392,7 +1506,13 @@ mod tests {
 
     use super::*;
 
+    const MONTH: &str = "2026-06";
+
     fn category(kind: TargetKind, amount: f64, assigned: f64, available: f64) -> Category {
+      dated_category(kind, amount, assigned, available, None)
+    }
+
+    fn dated_category(kind: TargetKind, amount: f64, assigned: f64, available: f64, by_date: Option<&str>) -> Category {
       Category {
         activity: available - assigned, // carry 0: available = assigned + activity
         assigned,
@@ -1405,7 +1525,7 @@ mod tests {
         spent_last: 0.0,
         target: Target {
           amount,
-          by_date: None,
+          by_date: by_date.map(str::to_owned),
           kind,
         },
         tone: None,
@@ -1416,7 +1536,7 @@ mod tests {
     fn it_raises_a_monthly_assignment_to_the_amount() {
       let category = category(TargetKind::Monthly, 100.0, 40.0, 40.0);
 
-      assert_eq!(category.underfunded_assign(), 100.0);
+      assert_eq!(category.underfunded_assign(MONTH), 100.0);
     }
 
     #[test]
@@ -1424,7 +1544,15 @@ mod tests {
       // available 800, target 1000 → top up by 200 from the current assignment.
       let category = category(TargetKind::Balance, 1_000.0, 100.0, 800.0);
 
-      assert_eq!(category.underfunded_assign(), 300.0);
+      assert_eq!(category.underfunded_assign(MONTH), 300.0);
+    }
+
+    #[test]
+    fn it_tops_a_dated_goal_by_only_the_paced_slice() {
+      // 1000 remaining over Jun..Dec (7 months); current assignment 50 → +1000/7.
+      let category = dated_category(TargetKind::GoalBy, 1_200.0, 50.0, 200.0, Some("Dec 2026"));
+
+      assert_eq!(category.underfunded_assign(MONTH), 50.0 + 1_000.0 / 7.0);
     }
   }
 

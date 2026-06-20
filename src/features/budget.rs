@@ -729,9 +729,11 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
     }
   }
 
-  // EVE wallet ref ids — journal `id` and `transaction_id` — are globally unique
-  // across the cluster, so a flat id set never collides between two characters in
-  // an All scope; a journal twin's context_id matches only its own transaction.
+  // A market trade can surface in several wallets at once: a corp trade is
+  // mirrored into the trading character's personal wallet under the SAME
+  // transaction_id (a PK in both transaction tables), and each carries a
+  // `market_transaction` journal twin. `ingested` collects every in-month
+  // transaction_id so those journal twins are suppressed below.
   let ingested: HashSet<i64> = transactions
     .iter()
     .filter(|tx| month_key(&tx.date).as_deref() == Some(month))
@@ -754,12 +756,21 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
     }
   }
 
+  // De-duplicate market activity by transaction_id across every in-scope wallet:
+  // a corp trade and its character-wallet mirror share one transaction_id and are
+  // one event, so the trade contributes once. An id is marked counted only once it
+  // resolves to a category, so an unassigned copy never suppresses an assigned one.
+  let mut counted_transactions: HashSet<i64> = HashSet::new();
   for tx in &transactions {
     if month_key(&tx.date).as_deref() != Some(month) {
       continue;
     }
+    if counted_transactions.contains(&tx.transaction_id) {
+      continue;
+    }
     if let Some(category_id) = context.override_for(tx.owner, BudgetEntryKind::Market, tx.transaction_id) {
       *by_category.entry(category_id).or_insert(0.0) += tx.amount;
+      counted_transactions.insert(tx.transaction_id);
     }
   }
 
@@ -2051,6 +2062,113 @@ mod tests {
       assert_eq!(activity.get(&slug_to_id["income"]), Some(&1_000.0));
       assert_eq!(activity.get(&slug_to_id["tithe"]), Some(&-2_000.0));
       assert_eq!(activity.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_counts_a_corp_mirrored_market_trade_once_under_all_scope() {
+      use crate::store::{model::OwnerType, repo::infra};
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_011;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      store::repo::finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
+
+      // One sell trade surfaces three times: the corp transaction, its mirror in the
+      // trader's personal wallet (same transaction_id 700), and the corp journal twin.
+      finance::append_corporation_wallet_transaction(
+        &db,
+        &[CorporationWalletTransaction {
+          client_id: 1_000_035,
+          corporation_id: corp_id,
+          date: "2026-06-09T00:00:00Z".to_owned(),
+          division: 1,
+          is_buy: false,
+          journal_ref_id: 0,
+          location_id: 60_003_760,
+          quantity: 10,
+          transaction_id: 700,
+          type_id: 34,
+          unit_price: 100.0,
+        }],
+      )
+      .await
+      .unwrap();
+      finance::append_wallet_transaction(&db, &[transaction(700, 1, false, 100.0, 10, "2026-06-09T00:00:00Z")])
+        .await
+        .unwrap();
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[CorporationWalletJournal {
+          amount: Some(1_000.0),
+          balance: Some(0.0),
+          context_id: Some(700),
+          context_id_type: Some("market_transaction_id".to_owned()),
+          corporation_id: corp_id,
+          date: "2026-06-09T00:00:00Z".to_owned(),
+          description: "Sale".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 20,
+          reason: None,
+          ref_type: "market_transaction".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+      // Both the corp transaction and its character mirror are assigned to the same
+      // category; the trade must still contribute exactly once, not twice or thrice.
+      assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Corporation(corp_id),
+        BudgetEntryKind::Market,
+        700,
+        slug_to_id["trading"],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        700,
+        slug_to_id["trading"],
+      )
+      .await
+      .unwrap();
+
+      let activity = monthly_activity(&db, BudgetScope::All, "2026-06").await;
+
+      assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
+      assert_eq!(activity.len(), 1);
     }
   }
 

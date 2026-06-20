@@ -213,10 +213,22 @@ where
     // Width-match the trigger; let the popover choose its own height up to the space available.
     let space_below = bounds.height - (self.bounds.y + self.bounds.height + DROPDOWN_GAP);
     let space_above = self.bounds.y - DROPDOWN_GAP;
-    let flip_up = space_below < space_above && space_below < self.bounds.height;
+    let width = self.width.unwrap_or(self.bounds.width).min(bounds.width).max(1.0);
+
+    // Measure the popover's natural height against the larger available band so the
+    // flip decision compares the real popover height to the room below — not the
+    // trigger height, which left a tall popover clipped at the bottom of the screen.
+    let measure_band = space_below.max(space_above).max(1.0);
+    let measure_limits = Limits::new(Size::ZERO, Size::new(width, measure_band)).width(Length::Fixed(width));
+    let popover_height = self
+      .popover
+      .as_widget_mut()
+      .layout(self.tree, renderer, &measure_limits)
+      .size()
+      .height;
+    let flip_up = should_flip_up(space_below, space_above, popover_height);
 
     let max_height = if flip_up { space_above } else { space_below }.max(0.0);
-    let width = self.width.unwrap_or(self.bounds.width).min(bounds.width).max(1.0);
     let limits = Limits::new(Size::ZERO, Size::new(width, max_height.max(1.0))).width(Length::Fixed(width));
 
     let node = self.popover.as_widget_mut().layout(self.tree, renderer, &limits);
@@ -302,6 +314,10 @@ where
   }
 }
 
+fn should_flip_up(space_below: f32, space_above: f32, popover_height: f32) -> bool {
+  space_below < popover_height && space_above > space_below
+}
+
 #[cfg(test)]
 mod tests {
   use iced::widget::{Space, text};
@@ -325,6 +341,26 @@ mod tests {
       let popover: Element<'_, (), iced::Theme, iced::Renderer> = Space::new().into();
       let _el: Element<'_, (), iced::Theme, iced::Renderer> =
         AnchoredDropdown::new(underlay(), Some(popover)).on_dismiss(()).into();
+    }
+  }
+
+  mod should_flip_up {
+    use super::*;
+
+    #[test]
+    fn it_stays_down_when_the_popover_fits_below() {
+      assert!(!should_flip_up(300.0, 100.0, 240.0));
+    }
+
+    #[test]
+    fn it_flips_up_near_the_bottom_when_more_room_is_above() {
+      // A tall popover that does not fit in the 35px below the trigger flips up.
+      assert!(should_flip_up(35.0, 500.0, 240.0));
+    }
+
+    #[test]
+    fn it_stays_down_when_below_is_tight_but_still_the_larger_band() {
+      assert!(!should_flip_up(120.0, 80.0, 240.0));
     }
   }
 }

@@ -634,12 +634,11 @@ impl State {
   }
 
   pub(super) fn budget_scope(&self) -> crate::store::model::BudgetScope {
-    use crate::store::model::BudgetScope;
-    match self.active {
-      Scope::All => BudgetScope::All,
-      Scope::Character(id) => BudgetScope::Character(id),
-      Scope::Corporation(id) => BudgetScope::Corporation(id),
-    }
+    // There is exactly one budget. The active character/corporation selector is a
+    // ledger-row filter, not a separate budget, so every budget read/write — the
+    // picker, the per-row chips, the assignment, and the Budget tab — keys off the
+    // single All budget regardless of which wallet the ledger is filtered to.
+    crate::store::model::BudgetScope::All
   }
 
   pub(super) fn budget_selected(&self) -> Option<i64> {
@@ -1859,12 +1858,9 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     .copied()
     .unwrap_or(RIGHT_RAIL_DEFAULT_WIDTH);
 
-  let budget_scope = match scope {
-    Scope::All => crate::store::model::BudgetScope::All,
-    Scope::Character(id) => crate::store::model::BudgetScope::Character(id),
-    Scope::Corporation(id) => crate::store::model::BudgetScope::Corporation(id),
-  };
-  let chips = loaders::load_budget_chips(&db, budget_scope).await;
+  // The budget is always the single All budget; the wallet scope only filters the
+  // ledger rows, never which budget the chips/picker resolve against.
+  let chips = loaders::load_budget_chips(&db, crate::store::model::BudgetScope::All).await;
 
   Loaded {
     chips,

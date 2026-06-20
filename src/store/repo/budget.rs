@@ -1,8 +1,10 @@
+use sqlx::FromRow;
+
 use crate::store::{
   Database, Error,
   model::{
     BudgetAssignment, BudgetCategory, BudgetCategoryGroup, BudgetEntryAssignment, BudgetEntryKind, BudgetOwner,
-    BudgetRefTypeMap, BudgetScope, BudgetTarget,
+    BudgetRefTypeMap, BudgetScope, BudgetTarget, MatchMode, Rule, RuleCondition, RuleField, RuleOp,
   },
 };
 
@@ -28,6 +30,19 @@ pub struct NewGroup {
   pub scope: BudgetScope,
 }
 
+// Budget automation rule storage (child A); consumed by the matching engine in child B and the
+// inspector UI in child C. Exercised only by unit tests until then.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewRule {
+  pub category_id: i64,
+  pub enabled: bool,
+  pub match_mode: MatchMode,
+  pub name: String,
+  pub position: i64,
+  pub scope: BudgetScope,
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -36,6 +51,35 @@ pub struct TargetInput {
   pub amount: f64,
   pub by_date: Option<String>,
   pub kind: String,
+}
+
+#[derive(Clone, Debug, FromRow, PartialEq)]
+struct RuleConditionRow {
+  field: String,
+  op: String,
+  rule_id: i64,
+  value: String,
+  value2: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow, PartialEq)]
+struct RuleRow {
+  category_id: i64,
+  enabled: i64,
+  id: i64,
+  match_mode: String,
+  name: String,
+}
+
+impl RuleConditionRow {
+  fn into_condition(self) -> RuleCondition {
+    RuleCondition {
+      field: RuleField::from_key(&self.field),
+      op: RuleOp::from_key(&self.op),
+      value: self.value,
+      value2: self.value2,
+    }
+  }
 }
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
@@ -81,6 +125,38 @@ pub async fn create_group(db: &Database, group: &NewGroup) -> Result<BudgetCateg
   Ok(row)
 }
 
+// Budget automation rule storage (child A); consumed by the matching engine in child B and the
+// inspector UI in child C. Exercised only by unit tests until then.
+#[allow(dead_code)]
+pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  let row = sqlx::query_as::<_, RuleRow>(
+    "INSERT INTO budget_rules \
+    (scope_kind, scope_id, category_id, name, enabled, match_mode, position, created_at, updated_at) \
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    RETURNING id, category_id, name, enabled, match_mode",
+  )
+  .bind(rule.scope.scope_kind())
+  .bind(rule.scope.scope_id())
+  .bind(rule.category_id)
+  .bind(&rule.name)
+  .bind(i64::from(rule.enabled))
+  .bind(rule.match_mode.as_str())
+  .bind(rule.position)
+  .bind(&now)
+  .bind(&now)
+  .fetch_one(&db.0)
+  .await?;
+  Ok(Rule {
+    category_id: row.category_id,
+    conditions: Vec::new(),
+    enabled: row.enabled != 0,
+    id: row.id,
+    match_mode: MatchMode::from_key(&row.match_mode),
+    name: row.name,
+  })
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -122,6 +198,17 @@ pub async fn delete_entry_assignment(
 #[allow(dead_code)]
 pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_category_groups WHERE id = ?")
+    .bind(id)
+    .execute(&db.0)
+    .await?;
+  Ok(())
+}
+
+// Budget automation rule storage (child A); deleting a rule cascades its conditions via the FK.
+// Exercised only by unit tests until child B/C wire it.
+#[allow(dead_code)]
+pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
+  sqlx::query("DELETE FROM budget_rules WHERE id = ?")
     .bind(id)
     .execute(&db.0)
     .await?;
@@ -240,6 +327,56 @@ pub async fn list_ref_type_maps(db: &Database, scope: BudgetScope) -> Result<Vec
   Ok(rows)
 }
 
+// Budget automation rule loader (child A): every rule for the active scope, in priority order, with
+// its conditions nested in position order — the exact shape the matching engine in child B consumes.
+#[allow(dead_code)]
+pub async fn list_rules(db: &Database, scope: BudgetScope) -> Result<Vec<Rule>, Error> {
+  let rule_rows = sqlx::query_as::<_, RuleRow>(
+    "SELECT id, category_id, name, enabled, match_mode FROM budget_rules \
+    WHERE scope_kind = ? AND scope_id IS ? ORDER BY position, id",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .fetch_all(&db.0)
+  .await?;
+
+  let condition_rows = sqlx::query_as::<_, RuleConditionRow>(
+    "SELECT c.rule_id, c.field, c.op, c.value, c.value2 FROM budget_rule_conditions c \
+    JOIN budget_rules r ON r.id = c.rule_id \
+    WHERE r.scope_kind = ? AND r.scope_id IS ? ORDER BY c.rule_id, c.position, c.id",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .fetch_all(&db.0)
+  .await?;
+
+  let mut rules = rule_rows
+    .into_iter()
+    .map(|row| {
+      (
+        row.id,
+        Rule {
+          category_id: row.category_id,
+          conditions: Vec::new(),
+          enabled: row.enabled != 0,
+          id: row.id,
+          match_mode: MatchMode::from_key(&row.match_mode),
+          name: row.name,
+        },
+      )
+    })
+    .collect::<Vec<_>>();
+
+  for condition in condition_rows {
+    let rule_id = condition.rule_id;
+    if let Some((_, rule)) = rules.iter_mut().find(|(id, _)| *id == rule_id) {
+      rule.conditions.push(condition.into_condition());
+    }
+  }
+
+  Ok(rules.into_iter().map(|(_, rule)| rule).collect())
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -302,6 +439,51 @@ pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Erro
   Ok(())
 }
 
+// Budget automation rule storage (child A): rewrite the priority order by persisting each rule's new
+// position from its index in `ordered_ids`, in one transaction (cf. skills::reorder_entries).
+#[allow(dead_code)]
+pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  let mut tx = db.0.begin().await?;
+  for (position, id) in ordered_ids.iter().enumerate() {
+    sqlx::query("UPDATE budget_rules SET position = ?, updated_at = ? WHERE id = ?")
+      .bind(position as i64)
+      .bind(&now)
+      .bind(id)
+      .execute(&mut *tx)
+      .await?;
+  }
+  tx.commit().await?;
+  Ok(())
+}
+
+// Budget automation rule storage (child A): replace a rule's full condition set in one transaction,
+// re-numbering positions from slice order so the engine reads them in the builder's order.
+#[allow(dead_code)]
+pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[RuleCondition]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("DELETE FROM budget_rule_conditions WHERE rule_id = ?")
+    .bind(rule_id)
+    .execute(&mut *tx)
+    .await?;
+  for (position, condition) in conditions.iter().enumerate() {
+    sqlx::query(
+      "INSERT INTO budget_rule_conditions (rule_id, field, op, value, value2, position) \
+      VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .bind(rule_id)
+    .bind(condition.field().as_str())
+    .bind(condition.op().as_str())
+    .bind(condition.value())
+    .bind(condition.value2())
+    .bind(position as i64)
+    .execute(&mut *tx)
+    .await?;
+  }
+  tx.commit().await?;
+  Ok(())
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -335,6 +517,25 @@ pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<
     .bind(group.id())
     .execute(&db.0)
     .await?;
+  Ok(())
+}
+
+// Budget automation rule storage (child A): update a rule's editable fields by id. Position is owned
+// by reorder_rules and conditions by replace_rule_conditions, so neither is touched here.
+#[allow(dead_code)]
+pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  sqlx::query(
+    "UPDATE budget_rules SET category_id = ?, name = ?, enabled = ?, match_mode = ?, updated_at = ? WHERE id = ?",
+  )
+  .bind(rule.category_id())
+  .bind(rule.name())
+  .bind(i64::from(rule.enabled()))
+  .bind(rule.match_mode().as_str())
+  .bind(&now)
+  .bind(rule.id())
+  .execute(&db.0)
+  .await?;
   Ok(())
 }
 
@@ -444,6 +645,22 @@ mod tests {
         note: None,
         position: 0,
         tone: Some("plasma".to_owned()),
+      },
+    )
+    .await
+    .unwrap()
+  }
+
+  async fn rule(db: &Database, category_id: i64, name: &str, position: i64) -> Rule {
+    create_rule(
+      db,
+      &NewRule {
+        category_id,
+        enabled: true,
+        match_mode: MatchMode::All,
+        name: name.to_owned(),
+        position,
+        scope: BudgetScope::All,
       },
     )
     .await
@@ -944,6 +1161,234 @@ mod tests {
 
       assert_eq!(remaining.len(), 1);
       assert_eq!(remaining[0].entry_id(), 2);
+    }
+  }
+
+  mod list_rules {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_round_trips_a_multi_condition_rule_with_order_preserved() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      let created = rule(&db, cat.id(), "Landlord", 0).await;
+      let conditions = vec![
+        RuleCondition {
+          field: RuleField::Party,
+          op: RuleOp::Contains,
+          value: "Estate".to_owned(),
+          value2: None,
+        },
+        RuleCondition {
+          field: RuleField::Amount,
+          op: RuleOp::Between,
+          value: "100".to_owned(),
+          value2: Some("500".to_owned()),
+        },
+        RuleCondition {
+          field: RuleField::Direction,
+          op: RuleOp::Is,
+          value: "out".to_owned(),
+          value2: None,
+        },
+      ];
+      replace_rule_conditions(&db, created.id(), &conditions).await.unwrap();
+
+      let rules = list_rules(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(rules.len(), 1);
+      assert_eq!(rules[0].category_id(), cat.id());
+      assert_eq!(rules[0].name(), "Landlord");
+      assert!(rules[0].enabled());
+      assert_eq!(rules[0].match_mode(), MatchMode::All);
+      assert_eq!(rules[0].conditions(), &conditions);
+    }
+
+    #[tokio::test]
+    async fn it_orders_rules_by_position() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      rule(&db, cat.id(), "Second", 1).await;
+      rule(&db, cat.id(), "First", 0).await;
+
+      let rules = list_rules(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(rules.iter().map(Rule::name).collect::<Vec<_>>(), ["First", "Second"]);
+    }
+
+    #[tokio::test]
+    async fn it_isolates_rules_per_scope() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      rule(&db, cat.id(), "Shared", 0).await;
+      let char_grp = group(&db, BudgetScope::Character(1), "Pilot").await;
+      let char_cat = category(&db, char_grp.id(), "Fuel").await;
+      create_rule(
+        &db,
+        &NewRule {
+          category_id: char_cat.id(),
+          enabled: true,
+          match_mode: MatchMode::Any,
+          name: "Scoped".to_owned(),
+          position: 0,
+          scope: BudgetScope::Character(1),
+        },
+      )
+      .await
+      .unwrap();
+
+      let all = list_rules(&db, BudgetScope::All).await.unwrap();
+      let scoped = list_rules(&db, BudgetScope::Character(1)).await.unwrap();
+
+      assert_eq!(all.iter().map(Rule::name).collect::<Vec<_>>(), ["Shared"]);
+      assert_eq!(scoped.iter().map(Rule::name).collect::<Vec<_>>(), ["Scoped"]);
+    }
+  }
+
+  mod delete_rule {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_cascades_conditions() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      let created = rule(&db, cat.id(), "Landlord", 0).await;
+      replace_rule_conditions(
+        &db,
+        created.id(),
+        &[RuleCondition {
+          field: RuleField::Party,
+          op: RuleOp::Contains,
+          value: "Estate".to_owned(),
+          value2: None,
+        }],
+      )
+      .await
+      .unwrap();
+
+      delete_rule(&db, created.id()).await.unwrap();
+
+      let orphans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM budget_rule_conditions")
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+
+      assert_eq!(orphans, 0);
+      assert!(list_rules(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_cascades_when_the_category_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      rule(&db, cat.id(), "Landlord", 0).await;
+
+      delete_category(&db, cat.id()).await.unwrap();
+
+      assert!(list_rules(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+  }
+
+  mod replace_rule_conditions {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_replaces_the_whole_condition_set() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      let created = rule(&db, cat.id(), "Landlord", 0).await;
+      replace_rule_conditions(
+        &db,
+        created.id(),
+        &[
+          RuleCondition {
+            field: RuleField::Party,
+            op: RuleOp::Contains,
+            value: "Estate".to_owned(),
+            value2: None,
+          },
+          RuleCondition {
+            field: RuleField::Reference,
+            op: RuleOp::StartsWith,
+            value: "RENT".to_owned(),
+            value2: None,
+          },
+        ],
+      )
+      .await
+      .unwrap();
+
+      let replacement = vec![RuleCondition {
+        field: RuleField::Amount,
+        op: RuleOp::GreaterThan,
+        value: "1000".to_owned(),
+        value2: None,
+      }];
+      replace_rule_conditions(&db, created.id(), &replacement).await.unwrap();
+
+      let rules = list_rules(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(rules[0].conditions(), &replacement);
+    }
+  }
+
+  mod reorder_rules {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_rewrites_priority_order() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      let a = rule(&db, cat.id(), "A", 0).await;
+      let b = rule(&db, cat.id(), "B", 1).await;
+      let c = rule(&db, cat.id(), "C", 2).await;
+
+      reorder_rules(&db, &[c.id(), a.id(), b.id()]).await.unwrap();
+
+      let rules = list_rules(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(rules.iter().map(Rule::name).collect::<Vec<_>>(), ["C", "A", "B"]);
+    }
+  }
+
+  mod update_rule {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_changes_the_editable_fields() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::All, "Bills").await;
+      let cat = category(&db, grp.id(), "Rent").await;
+      let other = category(&db, grp.id(), "Power").await;
+      let mut created = rule(&db, cat.id(), "Landlord", 0).await;
+
+      created.category_id = other.id();
+      created.enabled = false;
+      created.match_mode = MatchMode::Any;
+      created.name = "Utilities".to_owned();
+      update_rule(&db, &created).await.unwrap();
+
+      let rules = list_rules(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(rules[0].category_id(), other.id());
+      assert!(!rules[0].enabled());
+      assert_eq!(rules[0].match_mode(), MatchMode::Any);
+      assert_eq!(rules[0].name(), "Utilities");
     }
   }
 }

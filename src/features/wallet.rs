@@ -4,6 +4,7 @@ mod budget_view;
 mod header;
 mod hero;
 mod loaders;
+mod selection;
 mod shell;
 mod side_filter;
 
@@ -145,6 +146,16 @@ pub enum BudgetDropTarget {
   Group(i64),
 }
 
+/// The right-click menu over the selected ledger rows. `picking` flips the menu
+/// from its single "Assign to Budget" action to the reused envelope picker;
+/// `tab` records which tab's selection the bulk assign applies to.
+#[derive(Clone, Copy, Debug)]
+struct LedgerMenu {
+  anchor: iced::Point,
+  picking: bool,
+  tab: Tab,
+}
+
 #[derive(Clone, Debug)]
 pub enum Message {
   BudgetAssignCancelled,
@@ -196,6 +207,13 @@ pub enum Message {
   ContractSelected(i64),
   DivisionSelected(i64),
   FiltersCleared,
+  LedgerBulkAssignChosen(i64),
+  LedgerBulkAssignOpened,
+  LedgerCursorMoved(iced::Point),
+  LedgerMenuDismissed,
+  LedgerModifiersChanged(iced::keyboard::Modifiers),
+  LedgerRowClicked(BudgetEntryKind, BudgetOwner, i64),
+  LedgerRowRightPressed(BudgetEntryKind, BudgetOwner, i64),
   Loaded(Box<Loaded>),
   MoreLoaded(Box<MorePage>),
   PaneSettled(&'static str, f32),
@@ -404,9 +422,14 @@ pub struct State {
   dirty: bool,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
+  journal_selection: selection::RowSelection,
   journal_total: i64,
+  ledger_cursor: Option<iced::Point>,
+  ledger_menu: Option<LedgerMenu>,
+  ledger_modifiers: iced::keyboard::Modifiers,
   loading_more: bool,
   market: Vec<MarketEntry>,
+  market_selection: selection::RowSelection,
   market_total: i64,
   net_worth_series: Vec<NetWorthPoint>,
   periods: Vec<CharacterWalletPeriodSummary>,
@@ -461,9 +484,14 @@ impl State {
       dirty: false,
       financials: Vec::new(),
       journal: Vec::new(),
+      journal_selection: selection::RowSelection::default(),
       journal_total: 0,
+      ledger_cursor: None,
+      ledger_menu: None,
+      ledger_modifiers: iced::keyboard::Modifiers::default(),
       loading_more: false,
       market: Vec::new(),
+      market_selection: selection::RowSelection::default(),
       market_total: 0,
       net_worth_series: Vec::new(),
       periods: Vec::new(),
@@ -661,6 +689,26 @@ impl State {
 
   pub fn corp_divisions(&self) -> &[CorpDivision] {
     &self.corp_divisions
+  }
+
+  pub(super) fn journal_selected(&self, owner: BudgetOwner, entry_id: i64) -> bool {
+    self.journal_selection.contains((owner, entry_id))
+  }
+
+  pub(super) fn market_selected(&self, owner: BudgetOwner, entry_id: i64) -> bool {
+    self.market_selection.contains((owner, entry_id))
+  }
+
+  pub(super) fn ledger_menu_open(&self) -> Option<(iced::Point, bool)> {
+    self.ledger_menu.map(|menu| (menu.anchor, menu.picking))
+  }
+
+  pub(super) fn ledger_selection_count(&self) -> usize {
+    match self.tab {
+      Tab::Journal => self.journal_selection.len(),
+      Tab::Market => self.market_selection.len(),
+      Tab::Budget | Tab::Contracts => 0,
+    }
   }
 
   pub fn has_contracts(&self) -> bool {
@@ -1635,12 +1683,150 @@ fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task
   state.budget_selected = None;
   state.budget_editing = None;
   state.budget_editor = None;
+  state.journal_selection.clear();
+  state.market_selection.clear();
+  state.ledger_menu = None;
   let budget_task = if state.tab == Tab::Budget {
     reload_budget(state, db)
   } else {
     Task::none()
   };
   reload(db, scope, state.active_division).chain(budget_task)
+}
+
+/// The ledger multi-select messages (modifier tracking, row click/right-click,
+/// the context menu, and the bulk "Assign to Budget" action), split off
+/// [`update`] to keep its complexity bounded.
+fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::LedgerModifiersChanged(modifiers) => {
+      state.ledger_modifiers = modifiers;
+      Task::none()
+    }
+    Message::LedgerCursorMoved(point) => {
+      state.ledger_cursor = Some(point);
+      Task::none()
+    }
+    Message::LedgerRowClicked(kind, owner, entry_id) => {
+      let order = ledger_order(state, kind);
+      let click =
+        selection::ClickKind::from_modifiers(state.ledger_modifiers.command(), state.ledger_modifiers.shift());
+      ledger_selection_mut(state, kind).apply((owner, entry_id), click, &order);
+      Task::none()
+    }
+    Message::LedgerRowRightPressed(kind, owner, entry_id) => {
+      // Right-clicking a row outside the current selection makes it the selection
+      // so the menu always acts on what the user pointed at.
+      let key = (owner, entry_id);
+      if !ledger_selection(state, kind).contains(key) {
+        let order = ledger_order(state, kind);
+        ledger_selection_mut(state, kind).apply(key, selection::ClickKind::Plain, &order);
+      }
+      if let Some(anchor) = state.ledger_cursor {
+        state.ledger_menu = Some(LedgerMenu {
+          anchor,
+          picking: false,
+          tab: state.tab,
+        });
+      }
+      Task::none()
+    }
+    Message::LedgerMenuDismissed => {
+      state.ledger_menu = None;
+      Task::none()
+    }
+    Message::LedgerBulkAssignOpened => {
+      if let Some(menu) = state.ledger_menu.as_mut() {
+        menu.picking = true;
+      }
+      // The picker reuses the envelope chip set; load it if it has not been yet.
+      if state.budget_chips.envelopes.is_empty() {
+        return reload_budget_chips(state, db);
+      }
+      Task::none()
+    }
+    Message::LedgerBulkAssignChosen(category_id) => budget_bulk_assign(state, db, category_id),
+    _ => Task::none(),
+  }
+}
+
+fn ledger_selection(state: &State, kind: BudgetEntryKind) -> &selection::RowSelection {
+  match kind {
+    BudgetEntryKind::Journal => &state.journal_selection,
+    BudgetEntryKind::Market => &state.market_selection,
+  }
+}
+
+fn ledger_selection_mut(state: &mut State, kind: BudgetEntryKind) -> &mut selection::RowSelection {
+  match kind {
+    BudgetEntryKind::Journal => &mut state.journal_selection,
+    BudgetEntryKind::Market => &mut state.market_selection,
+  }
+}
+
+/// Drops selected rows that a reload or filter change has removed from the live
+/// ledgers so a stale selection never points at rows the user can no longer see.
+fn prune_ledger_selections(state: &mut State) {
+  let journal_order = ledger_order(state, BudgetEntryKind::Journal);
+  state.journal_selection.prune(&journal_order);
+  let market_order = ledger_order(state, BudgetEntryKind::Market);
+  state.market_selection.prune(&market_order);
+}
+
+fn ledger_order(state: &State, kind: BudgetEntryKind) -> Vec<selection::RowKey> {
+  match kind {
+    BudgetEntryKind::Journal => filtered_journal(state)
+      .iter()
+      .map(|entry| (entry.owner, entry.id))
+      .collect(),
+    BudgetEntryKind::Market => filtered_market(state)
+      .iter()
+      .map(|entry| (entry.owner, entry.transaction_id))
+      .collect(),
+  }
+}
+
+/// Assigns every selected row in the menu's tab to `category_id` in one action,
+/// looping the same per-row assign-plus-cascade path the chip uses so the result
+/// is identical to assigning each row individually. Assignment is owner-keyed at
+/// the single All budget, so it is correct under every ledger filter.
+fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Task<Message> {
+  let Some(menu) = state.ledger_menu.take() else {
+    return Task::none();
+  };
+  let kind = match menu.tab {
+    Tab::Journal => BudgetEntryKind::Journal,
+    Tab::Market => BudgetEntryKind::Market,
+    Tab::Budget | Tab::Contracts => return Task::none(),
+  };
+  let scope = state.budget_scope();
+  let order = ledger_order(state, kind);
+  let selected = ledger_selection(state, kind).ordered(&order);
+
+  // Expand each selected row to itself plus its market/journal cascade twin so a
+  // bulk assign mirrors the per-row chip exactly.
+  let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
+  for (owner, entry_id) in selected {
+    targets.push((owner, kind, entry_id));
+    if let Some((twin_kind, twin_id)) = budget_cascade_target(state, owner, kind, entry_id) {
+      targets.push((owner, twin_kind, twin_id));
+    }
+  }
+  ledger_selection_mut(state, kind).clear();
+  if targets.is_empty() {
+    return Task::none();
+  }
+
+  let db = db.clone();
+  Task::perform(
+    async move {
+      for (owner, kind, entry_id) in targets {
+        let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
+      }
+      loaders::load_budget_chips(&db, scope).await
+    },
+    |chips| Message::BudgetChipsReloaded(Box::new(chips)),
+  )
 }
 
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -1663,6 +1849,13 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.tab_scroll_offset = 0.0;
       reload(db, state.active, division)
     }
+    msg @ (Message::LedgerBulkAssignChosen(_)
+    | Message::LedgerBulkAssignOpened
+    | Message::LedgerCursorMoved(_)
+    | Message::LedgerMenuDismissed
+    | Message::LedgerModifiersChanged(_)
+    | Message::LedgerRowClicked(..)
+    | Message::LedgerRowRightPressed(..)) => handle_ledger(state, msg, db),
     Message::Loaded(loaded) => {
       let Loaded {
         chips,
@@ -1699,6 +1892,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.loading_more = false;
       state.tab_exhausted = false;
       state.recompute_derived();
+      prune_ledger_selections(state);
       Task::none()
     }
     Message::MoreLoaded(page) => {
@@ -1719,6 +1913,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.contracts.extend(contracts);
       state.tab_exhausted = appended == 0;
       state.recompute_derived();
+      prune_ledger_selections(state);
       Task::none()
     }
     Message::PaneSettled(..) => Task::none(),
@@ -1767,6 +1962,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.tab = tab;
       state.tab_scroll_offset = 0.0;
       state.tab_exhausted = false;
+      state.ledger_menu = None;
       if tab == Tab::Budget {
         return reload_budget(state, db);
       }
@@ -1836,6 +2032,19 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
         iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
       )
       .then_some(Message::BudgetDropReleased)
+    }));
+  }
+  if matches!(state.tab, Tab::Journal | Tab::Market) {
+    subs.push(iced::event::listen_with(|event, _status, _id| match event {
+      iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+        Some(Message::LedgerModifiersChanged(modifiers))
+      }
+      _ => None,
+    }));
+  }
+  if state.ledger_menu.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::LedgerMenuDismissed)
     }));
   }
   iced::Subscription::batch(subs)
@@ -5152,6 +5361,120 @@ mod tests {
       state.budget_dragging = Some(1);
 
       let _sub: iced::Subscription<Message> = super::super::subscription(&state);
+    }
+  }
+
+  mod ledger_selection {
+    use super::*;
+
+    fn journal_state() -> State {
+      let mut state = State::new();
+      state.tab = Tab::Journal;
+      let mut first = journal_entry(1, Some(10.0), "bounty_prizes", "first");
+      first.id = 1;
+      let mut second = journal_entry(1, Some(20.0), "bounty_prizes", "second");
+      second.id = 2;
+      let mut third = journal_entry(1, Some(30.0), "bounty_prizes", "third");
+      third.id = 3;
+      state.journal = vec![first, second, third];
+      state.recompute_derived();
+      state
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_row_on_a_plain_click() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 2),
+        &db,
+      );
+
+      assert!(state.journal_selected(BudgetOwner::Character(1), 2));
+    }
+
+    #[tokio::test]
+    async fn it_extends_the_selection_with_a_shift_click() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::LedgerModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 3),
+        &db,
+      );
+
+      assert!(state.journal_selected(BudgetOwner::Character(1), 1));
+      assert!(state.journal_selected(BudgetOwner::Character(1), 2));
+      assert!(state.journal_selected(BudgetOwner::Character(1), 3));
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_bulk_menu_on_a_right_press() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      state.ledger_cursor = Some(iced::Point::new(12.0, 34.0));
+
+      let _ = update(
+        &mut state,
+        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+
+      assert!(state.ledger_menu_open().is_some());
+      assert!(state.journal_selected(BudgetOwner::Character(1), 1));
+      assert_eq!(state.ledger_selection_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_selection_and_menu_after_a_bulk_assign() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+      state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
+      let _ = update(
+        &mut state,
+        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+      let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
+
+      let _ = update(&mut state, Message::LedgerBulkAssignChosen(7), &db);
+
+      assert!(!state.journal_selected(BudgetOwner::Character(1), 1));
+      assert!(state.ledger_menu_open().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_dismisses_the_menu() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
+      let _ = update(
+        &mut state,
+        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::LedgerMenuDismissed, &db);
+
+      assert!(state.ledger_menu_open().is_none());
     }
   }
 }

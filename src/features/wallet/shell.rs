@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use iced::{
-  Background, Border, ContentFit, Element, Length, Padding,
+  Background, Border, ContentFit, Element, Length, Padding, Point,
   alignment::{Horizontal, Vertical},
   mouse,
   widget::{Column, Row, Space, Stack, button, container, image, mouse_area, scrollable, text},
@@ -21,11 +21,12 @@ use crate::{
     components::{
       anchored_dropdown::AnchoredDropdown,
       avatar::Avatar,
-      backdrop,
+      backdrop, context_menu,
       eyebrow::eyebrow_text,
       forbidden,
       glyph_badge::GlyphBadge,
       icon::Icon,
+      modal_overlay::modal_overlay,
       positioned_dropdown::positioned_dropdown,
       resizable_pane::pane_handle,
       rule,
@@ -85,6 +86,24 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into();
+  }
+
+  if let Some((anchor, picking)) = state.ledger_menu_open() {
+    let overlay = if picking {
+      bulk_assign_picker(state, anchor)
+    } else {
+      let count = state.ledger_selection_count();
+      let title = format!("{count} row{}", if count == 1 { "" } else { "s" });
+      context_menu::context_menu(
+        &title,
+        vec![context_menu::Item::action(
+          "Assign to Budget\u{2026}",
+          Message::LedgerBulkAssignOpened,
+        )],
+        anchor,
+      )
+    };
+    return modal_overlay(base.into(), Some(Message::LedgerMenuDismissed), overlay);
   }
 
   base.into()
@@ -450,8 +469,14 @@ fn sign_control(state: &State) -> Element<'_, Message> {
 
 fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   match state.tab {
-    Tab::Journal => journal_table(state, now),
-    Tab::Market => market_table(state, now),
+    // Track the cursor over the selectable ledgers so a right-click can anchor the
+    // bulk-assign menu where the user clicked.
+    Tab::Journal => mouse_area(journal_table(state, now))
+      .on_move(Message::LedgerCursorMoved)
+      .into(),
+    Tab::Market => mouse_area(market_table(state, now))
+      .on_move(Message::LedgerCursorMoved)
+      .into(),
     Tab::Contracts => contracts_table(state, now),
     // The Budget tab takes the dedicated surface path in `body`; this arm is
     // unreachable from `center` but keeps the match exhaustive.
@@ -507,15 +532,20 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
   let sign = if is_in { "+" } else { "\u{2212}" };
   let delta = format!("{sign}{}", fmt_isk(entry.amount.map(f64::abs)));
 
-  row_shell(vec![
-    GlyphBadge::new(glyph, is_in).render(),
-    journal_left_col(entry),
-    container(budget_chip(state, entry.owner, BudgetEntryKind::Journal, entry.id))
-      .width(Length::Fixed(170.0))
-      .into(),
-    journal_character_col(state, entry.owner),
-    journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now)),
-  ])
+  let select = |cell| select_wrap(cell, BudgetEntryKind::Journal, entry.owner, entry.id);
+  let selected = state.journal_selected(entry.owner, entry.id);
+  row_shell(
+    vec![
+      select(GlyphBadge::new(glyph, is_in).render()),
+      select(journal_left_col(entry)),
+      container(budget_chip(state, entry.owner, BudgetEntryKind::Journal, entry.id))
+        .width(Length::Fixed(170.0))
+        .into(),
+      select(journal_character_col(state, entry.owner)),
+      select(journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now))),
+    ],
+    selected,
+  )
 }
 
 fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
@@ -593,48 +623,53 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
     ("\u{2191} SELL", color::status::ONLINE)
   };
 
-  row_shell(vec![
-    side_badge(side_label, side_color, Length::FillPortion(1)),
-    item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3)),
-    container(budget_chip(
-      state,
-      entry.owner,
-      BudgetEntryKind::Market,
-      entry.transaction_id,
-    ))
-    .width(Length::FillPortion(2))
-    .into(),
-    mono_cell(
-      &entry.quantity.to_string(),
-      Length::FillPortion(1),
-      Horizontal::Right,
-      color::text::PRIMARY,
-    ),
-    mono_cell(
-      &fmt_isk(Some(entry.unit_price)),
-      Length::FillPortion(2),
-      Horizontal::Right,
-      color::text::secondary(),
-    ),
-    amount_cell(
-      &fmt_isk(Some(entry.total)),
-      Length::FillPortion(2),
-      color::text::PRIMARY,
-    ),
-    mono_cell(
-      &entry.location,
-      Length::FillPortion(2),
-      Horizontal::Left,
-      color::text::secondary(),
-    ),
-    character_cell(state, entry.owner, Length::FillPortion(2)),
-    mono_cell(
-      &fmt_relative(&entry.date, now),
-      Length::FillPortion(1),
-      Horizontal::Left,
-      color::text::secondary(),
-    ),
-  ])
+  let select = |cell| select_wrap(cell, BudgetEntryKind::Market, entry.owner, entry.transaction_id);
+  let selected = state.market_selected(entry.owner, entry.transaction_id);
+  row_shell(
+    vec![
+      select(side_badge(side_label, side_color, Length::FillPortion(1))),
+      select(item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3))),
+      container(budget_chip(
+        state,
+        entry.owner,
+        BudgetEntryKind::Market,
+        entry.transaction_id,
+      ))
+      .width(Length::FillPortion(2))
+      .into(),
+      select(mono_cell(
+        &entry.quantity.to_string(),
+        Length::FillPortion(1),
+        Horizontal::Right,
+        color::text::PRIMARY,
+      )),
+      select(mono_cell(
+        &fmt_isk(Some(entry.unit_price)),
+        Length::FillPortion(2),
+        Horizontal::Right,
+        color::text::secondary(),
+      )),
+      select(amount_cell(
+        &fmt_isk(Some(entry.total)),
+        Length::FillPortion(2),
+        color::text::PRIMARY,
+      )),
+      select(mono_cell(
+        &entry.location,
+        Length::FillPortion(2),
+        Horizontal::Left,
+        color::text::secondary(),
+      )),
+      select(character_cell(state, entry.owner, Length::FillPortion(2))),
+      select(mono_cell(
+        &fmt_relative(&entry.date, now),
+        Length::FillPortion(1),
+        Horizontal::Left,
+        color::text::secondary(),
+      )),
+    ],
+    selected,
+  )
 }
 
 /// Renders the per-entry budget chip in one of two states: the assigned envelope
@@ -820,9 +855,9 @@ fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<
       let tint = super::budget::tone_color(cat.tone.as_deref());
       rows.push(budget_picker_row(
         &cat.name,
-        Some(cat.id),
         current == Some(cat.id),
         tint,
+        Message::BudgetChipAssigned(Some(cat.id)),
       ));
     }
   }
@@ -845,7 +880,60 @@ fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<
   .into()
 }
 
-fn budget_picker_row<'a>(label: &str, id: Option<i64>, selected: bool, tint: iced::Color) -> Element<'a, Message> {
+/// The category picker for the bulk "Assign to Budget" action: the same envelope
+/// rows as the per-row chip picker, but each emits [`Message::LedgerBulkAssignChosen`]
+/// so the chosen category applies to every selected row.
+fn bulk_assign_picker<'a>(state: &'a State, anchor: Point) -> Element<'a, Message> {
+  let chips = state.budget_chips();
+  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+  for group in &chips.envelopes {
+    rows.push(
+      text(group.name.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+    for cat in &group.categories {
+      let tint = super::budget::tone_color(cat.tone.as_deref());
+      rows.push(budget_picker_row(
+        &cat.name,
+        false,
+        tint,
+        Message::LedgerBulkAssignChosen(cat.id),
+      ));
+    }
+  }
+
+  let panel = container(
+    scrollable(Column::with_children(rows).spacing(spacing::SPACE_2))
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fixed(240.0)),
+  )
+  .width(Length::Fixed(context_menu::MENU_WIDTH))
+  .padding(spacing::SPACE_3)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top: anchor.y.max(0.0),
+      left: anchor.x.max(0.0),
+      ..Padding::ZERO
+    })
+    .into()
+}
+
+fn budget_picker_row<'a>(label: &str, selected: bool, tint: iced::Color, on_press: Message) -> Element<'a, Message> {
   let dot = container(Space::new())
     .width(Length::Fixed(6.0))
     .height(Length::Fixed(6.0))
@@ -911,7 +999,7 @@ fn budget_picker_row<'a>(label: &str, id: Option<i64>, selected: bool, tint: ice
       },
       ..iced::widget::button::Style::default()
     })
-    .on_press(Message::BudgetChipAssigned(id))
+    .on_press(on_press)
     .into()
 }
 
@@ -1038,39 +1126,42 @@ fn contract_row<'a>(entry: &'a ContractEntry, now: DateTime<Utc>) -> Element<'a,
   let (counterparty_name, counterparty_id) = contract_counterparty(entry);
   let counterparty_image = contract_counterparty_image(entry);
 
-  let row = row_shell(vec![
-    body_cell(
-      humanize_contract_type(&entry.r#type),
-      Length::FillPortion(2),
-      color::text::PRIMARY,
-    ),
-    contract_status_cell(&entry.derived_status(now), Length::FillPortion(2)),
-    party_cell(
-      Some(entry.issuer_id),
-      entry.issuer.as_deref(),
-      &entry.issuer_image,
-      Length::FillPortion(2),
-    ),
-    party_cell(
-      counterparty_id,
-      counterparty_name,
-      counterparty_image,
-      Length::FillPortion(2),
-    ),
-    amount_cell(&fmt_isk(entry.value), Length::FillPortion(2), color::text::PRIMARY),
-    mono_cell(
-      &fmt_isk(entry.collateral),
-      Length::FillPortion(2),
-      Horizontal::Right,
-      color::text::tertiary(),
-    ),
-    mono_cell(
-      &fmt_relative(&entry.date_issued, now),
-      Length::FillPortion(1),
-      Horizontal::Left,
-      color::text::secondary(),
-    ),
-  ]);
+  let row = row_shell(
+    vec![
+      body_cell(
+        humanize_contract_type(&entry.r#type),
+        Length::FillPortion(2),
+        color::text::PRIMARY,
+      ),
+      contract_status_cell(&entry.derived_status(now), Length::FillPortion(2)),
+      party_cell(
+        Some(entry.issuer_id),
+        entry.issuer.as_deref(),
+        &entry.issuer_image,
+        Length::FillPortion(2),
+      ),
+      party_cell(
+        counterparty_id,
+        counterparty_name,
+        counterparty_image,
+        Length::FillPortion(2),
+      ),
+      amount_cell(&fmt_isk(entry.value), Length::FillPortion(2), color::text::PRIMARY),
+      mono_cell(
+        &fmt_isk(entry.collateral),
+        Length::FillPortion(2),
+        Horizontal::Right,
+        color::text::tertiary(),
+      ),
+      mono_cell(
+        &fmt_relative(&entry.date_issued, now),
+        Length::FillPortion(1),
+        Horizontal::Left,
+        color::text::secondary(),
+      ),
+    ],
+    false,
+  );
 
   mouse_area(row)
     .on_press(Message::ContractSelected(entry.contract_id))
@@ -1204,7 +1295,8 @@ fn table_header<'a>(columns: &[(&str, Length, Horizontal)]) -> Element<'a, Messa
   .into()
 }
 
-fn row_shell<'a>(cells: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+fn row_shell<'a>(cells: Vec<Element<'a, Message>>, selected: bool) -> Element<'a, Message> {
+  let background = selected.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)));
   container(
     Row::with_children(cells)
       .spacing(spacing::SPACE_3)
@@ -1217,7 +1309,8 @@ fn row_shell<'a>(cells: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     bottom: spacing::SPACE_3,
     left: HEADER_SIDE_PADDING,
   })
-  .style(|_| container::Style {
+  .style(move |_| container::Style {
+    background,
     border: Border {
       color: color::with_alpha(color::text::PRIMARY, 0.06),
       width: 1.0,
@@ -1226,6 +1319,21 @@ fn row_shell<'a>(cells: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     ..container::Style::default()
   })
   .into()
+}
+
+/// Wraps a ledger cell so a left-click selects the row (honoring the active
+/// keyboard modifiers) and a right-click opens the bulk-assign menu. The envelope
+/// chip is deliberately left unwrapped so its own press is never swallowed.
+fn select_wrap<'a>(
+  cell: Element<'a, Message>,
+  kind: BudgetEntryKind,
+  owner: BudgetOwner,
+  entry_id: i64,
+) -> Element<'a, Message> {
+  mouse_area(cell)
+    .on_press(Message::LedgerRowClicked(kind, owner, entry_id))
+    .on_right_press(Message::LedgerRowRightPressed(kind, owner, entry_id))
+    .into()
 }
 
 fn sized_cell<'a>(cell: TableCell, width: Length) -> Element<'a, Message> {
@@ -1895,10 +2003,18 @@ mod tests {
 
     #[test]
     fn it_renders_a_selected_and_an_unselected_row() {
-      let _selected: Element<'_, Message> =
-        super::super::budget_picker_row("Bills", Some(7), true, color::status::WARNING);
-      let _unselected: Element<'_, Message> =
-        super::super::budget_picker_row("Uncategorized", None, false, color::status::WARNING);
+      let _selected: Element<'_, Message> = super::super::budget_picker_row(
+        "Bills",
+        true,
+        color::status::WARNING,
+        Message::BudgetChipAssigned(Some(7)),
+      );
+      let _unselected: Element<'_, Message> = super::super::budget_picker_row(
+        "Uncategorized",
+        false,
+        color::status::WARNING,
+        Message::BudgetChipAssigned(None),
+      );
     }
   }
 

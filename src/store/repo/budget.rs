@@ -253,6 +253,23 @@ pub async fn load_target(db: &Database, category_id: i64) -> Result<Option<Budge
   Ok(row)
 }
 
+// Budget activity math (B2): the global Ready-to-Assign basis. Consumed by the Budget Plan UI.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
+pub async fn scope_assigned_total(db: &Database, scope: BudgetScope) -> Result<f64, Error> {
+  let total: Option<f64> = sqlx::query_scalar(
+    "SELECT SUM(a.assigned) FROM budget_assignments a \
+    JOIN budget_categories c ON c.id = a.category_id \
+    JOIN budget_category_groups g ON g.id = c.group_id \
+    WHERE g.scope_kind = ? AND g.scope_id IS ?",
+  )
+  .bind(scope.scope_kind())
+  .bind(scope.scope_id())
+  .fetch_one(&db.0)
+  .await?;
+  Ok(total.unwrap_or(0.0))
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]
@@ -645,6 +662,41 @@ mod tests {
         assignments.iter().map(BudgetAssignment::month).collect::<Vec<_>>(),
         ["2026-05", "2026-06"]
       );
+    }
+  }
+
+  mod scope_assigned_total {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_sums_every_assignment_across_categories_and_months_for_the_scope() {
+      let db = store::open_test().await.unwrap();
+      let grp = group(&db, BudgetScope::Character(1), "Bills").await;
+      let rent = category(&db, grp.id(), "Rent").await;
+      let food = category(&db, grp.id(), "Food").await;
+      upsert_assignment(&db, rent.id(), "2026-05", 100.0).await.unwrap();
+      upsert_assignment(&db, rent.id(), "2026-06", 120.0).await.unwrap();
+      upsert_assignment(&db, food.id(), "2026-06", 80.0).await.unwrap();
+      // A different scope's assignment must not leak into the total.
+      let other = group(&db, BudgetScope::Character(2), "Other").await;
+      let other_cat = category(&db, other.id(), "Misc").await;
+      upsert_assignment(&db, other_cat.id(), "2026-06", 999.0).await.unwrap();
+
+      let total = scope_assigned_total(&db, BudgetScope::Character(1)).await.unwrap();
+
+      assert_eq!(total, 300.0);
+    }
+
+    #[tokio::test]
+    async fn it_is_zero_for_a_scope_with_no_assignments() {
+      let db = store::open_test().await.unwrap();
+      group(&db, BudgetScope::All, "Bills").await;
+
+      let total = scope_assigned_total(&db, BudgetScope::All).await.unwrap();
+
+      assert_eq!(total, 0.0);
     }
   }
 

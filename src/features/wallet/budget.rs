@@ -664,17 +664,31 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
   // re-seeds the defaults on the next load.
   let _ = math::seed_scope(db, scope).await;
 
-  let activity = math::monthly_activity(db, scope, month).await;
+  // One batched pass yields every month's activity, so the multi-month carry
+  // chain reads real per-month activity without a query per (category, month).
+  let activity_by_month = math::activity_by_month(db, scope).await;
+  let empty_month = std::collections::HashMap::new();
+  let activity = activity_by_month.get(month).unwrap_or(&empty_month);
   let pool = math::budgetable_pool(db, scope).await;
+  let assigned_total = budget::scope_assigned_total(db, scope).await.unwrap_or(0.0);
   let prev_month = shift_month(month, -1);
-  let prev_activity = math::monthly_activity(db, scope, &prev_month).await;
+  let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
 
   let mut groups: Vec<Group> = Vec::new();
   let mut availables: Vec<f64> = Vec::new();
   for group_row in budget::list_groups(db, scope).await.unwrap_or_default() {
     let mut categories: Vec<Category> = Vec::new();
     for category_row in budget::list_categories(db, group_row.id()).await.unwrap_or_default() {
-      let category = build_category(db, &category_row, month, &activity, &prev_month, &prev_activity).await;
+      let category = build_category(
+        db,
+        &category_row,
+        month,
+        activity,
+        &prev_month,
+        prev_activity,
+        &activity_by_month,
+      )
+      .await;
       availables.push(category.available());
       categories.push(category);
     }
@@ -685,7 +699,7 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
     });
   }
 
-  let summary = math::pool_summary(pool, availables);
+  let summary = math::pool_summary(pool, assigned_total, availables);
   BudgetView {
     groups,
     month: month.to_owned(),
@@ -702,6 +716,7 @@ async fn build_category(
   activity: &std::collections::HashMap<i64, f64>,
   prev_month: &str,
   prev_activity: &std::collections::HashMap<i64, f64>,
+  activity_by_month: &std::collections::HashMap<String, std::collections::HashMap<i64, f64>>,
 ) -> Category {
   let assignments = budget::list_assignments(db, row.id()).await.unwrap_or_default();
   let assigned_for = |key: &str| {
@@ -711,7 +726,7 @@ async fn build_category(
       .map_or(0.0, |a| a.assigned())
   };
 
-  let carry = carry_into(month, &assignments, prev_activity, prev_month, row.id());
+  let carry = carry_into(month, &assignments, activity_by_month, row.id());
   let last_assigned = assigned_for(prev_month);
   let avg_assigned = trailing_average(month, &assignments);
   let spent_last = (-prev_activity.get(&row.id()).copied().unwrap_or(0.0)).max(0.0);
@@ -740,34 +755,49 @@ async fn build_category(
   }
 }
 
-/// The carry rolled into `month` for a category: every assigned month strictly
-/// before `month`, in order, rolled forward through the B2 carry-over math. Only
-/// the prior month's activity is known here, so earlier months carry their
-/// assignment with zero activity — exact for the common case where the user is
-/// budgeting the current or next month from a populated prior month.
+/// The carry rolled into `month` for a category: every month strictly before
+/// `month` that has an assignment or real activity, in chronological order,
+/// rolled forward through the B2 carry-over math. Each prior month contributes
+/// its own assigned amount and its own real per-month activity (sourced from the
+/// batched `activity_by_month` map), so spending in a non-adjacent prior month
+/// reduces the carry exactly — not only the immediately preceding month.
 fn carry_into(
   month: &str,
   assignments: &[crate::store::model::BudgetAssignment],
-  prev_activity: &std::collections::HashMap<i64, f64>,
-  prev_month: &str,
+  activity_by_month: &std::collections::HashMap<String, std::collections::HashMap<i64, f64>>,
   category_id: i64,
 ) -> f64 {
-  let months: Vec<(f64, f64)> = assignments
-    .iter()
-    .filter(|a| a.month().as_str() < month)
-    .map(|a| {
-      let act = if a.month() == prev_month {
-        prev_activity.get(&category_id).copied().unwrap_or(0.0)
-      } else {
-        0.0
-      };
-      (a.assigned(), act)
-    })
-    .collect();
-  if months.is_empty() {
+  let mut keys: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+  for assignment in assignments {
+    if assignment.month().as_str() < month {
+      keys.insert(assignment.month().as_str());
+    }
+  }
+  for key in activity_by_month.keys() {
+    if key.as_str() < month && activity_by_month[key].contains_key(&category_id) {
+      keys.insert(key.as_str());
+    }
+  }
+  if keys.is_empty() {
     return 0.0;
   }
-  // Already in ascending month order because list_assignments orders by month.
+
+  let months: Vec<(f64, f64)> = keys
+    .iter()
+    .map(|&key| {
+      let assigned = assignments
+        .iter()
+        .find(|a| a.month() == key)
+        .map_or(0.0, |a| a.assigned());
+      let activity = activity_by_month
+        .get(key)
+        .and_then(|m| m.get(&category_id))
+        .copied()
+        .unwrap_or(0.0);
+      (assigned, activity)
+    })
+    .collect();
+  // BTreeSet yields keys in ascending month order, matching roll_carry's contract.
   let rolled = math::roll_carry(0.0, &months);
   math::carry_from(rolled.last().map(|m| m.available()))
 }
@@ -1476,6 +1506,94 @@ mod tests {
 
       assert_eq!(after.category(category_id).unwrap().assigned, 2_500.0);
       assert_eq!(after.ready_to_assign, 7_500.0);
+    }
+
+    #[tokio::test]
+    async fn it_draws_down_ready_to_assign_for_a_future_month_assignment() {
+      let db = store::open_test().await.unwrap();
+      seed_pilot(&db, 1, 10_000.0).await;
+      let view = load(&db, BudgetScope::Character(1), "2026-06").await;
+      let category_id = view.first_category_id().unwrap();
+
+      // Assign the same ISK in the current month and a future one. Global RTA is
+      // a single pool, so both draws count and the displayed month sees them.
+      persist_assignment(&db, category_id, "2026-06", 8_000.0).await;
+      persist_assignment(&db, category_id, "2026-08", 8_000.0).await;
+      let after = load(&db, BudgetScope::Character(1), "2026-06").await;
+
+      // 10_000 pool − 16_000 assigned across months = −6_000: the same ISK
+      // cannot be assigned twice without RTA going negative.
+      assert_eq!(after.ready_to_assign, -6_000.0);
+    }
+  }
+
+  mod carry_into {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn assignment(month: &str, assigned: f64) -> crate::store::model::BudgetAssignment {
+      crate::store::model::BudgetAssignment {
+        assigned,
+        category_id: 1,
+        id: 0,
+        month: month.to_owned(),
+      }
+    }
+
+    fn activity_map(entries: &[(&str, f64)]) -> HashMap<String, HashMap<i64, f64>> {
+      entries
+        .iter()
+        .map(|(month, activity)| ((*month).to_owned(), HashMap::from([(1, *activity)])))
+        .collect()
+    }
+
+    #[test]
+    fn it_applies_real_activity_for_a_non_adjacent_prior_month() {
+      // Spend lands in N-2 (April), not the adjacent month. The carry into June
+      // must reflect that real April spend, not treat it as zero.
+      // April: 0 + 100 assigned − 70 spend = 30 available → carries 30.
+      // May:   30 + 0 assigned + 0 = 30 available → carries 30.
+      let assignments = [assignment("2026-04", 100.0)];
+      let activity = activity_map(&[("2026-04", -70.0)]);
+
+      let carry = carry_into("2026-06", &assignments, &activity, 1);
+
+      assert_eq!(carry, 30.0);
+    }
+
+    #[test]
+    fn it_includes_a_month_with_activity_but_no_assignment() {
+      // May has spend but no assignment row; it still belongs in the chain.
+      // April: 0 + 100 − 0 = 100 → carries 100.
+      // May:   100 + 0 − 40 = 60 → carries 60.
+      let assignments = [assignment("2026-04", 100.0)];
+      let activity = activity_map(&[("2026-05", -40.0)]);
+
+      let carry = carry_into("2026-06", &assignments, &activity, 1);
+
+      assert_eq!(carry, 60.0);
+    }
+
+    #[test]
+    fn it_resets_carry_to_zero_on_an_overspent_prior_month() {
+      // April overspends: 0 + 50 − 200 = −150 available → carries 0, and the
+      // 150 loss is absorbed by the pool (RTA), never by next month's carry.
+      let assignments = [assignment("2026-04", 50.0)];
+      let activity = activity_map(&[("2026-04", -200.0)]);
+
+      let carry = carry_into("2026-06", &assignments, &activity, 1);
+
+      assert_eq!(carry, 0.0);
+    }
+
+    #[test]
+    fn it_carries_zero_with_no_prior_months() {
+      let carry = carry_into("2026-06", &[], &HashMap::new(), 1);
+
+      assert_eq!(carry, 0.0);
     }
   }
 

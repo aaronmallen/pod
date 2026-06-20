@@ -194,11 +194,13 @@ pub struct MonthFlow {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PoolSummary {
-  /// Σ min(0, available) across categories (≤ 0); fuels B3's Cover-overspending.
+  /// Σ min(0, available) across the displayed month's categories (≤ 0); fuels
+  /// B3's Cover-overspending.
   pub overspent: f64,
   /// Σ liquid balances of the scope's character + corp-division wallets.
   pub pool: f64,
-  /// pool − Σ available(all categories).
+  /// pool − Σ assigned across every category and every month (the global
+  /// running pool). A single timeline-wide value, not the displayed month.
   pub ready_to_assign: f64,
 }
 
@@ -439,17 +441,19 @@ pub fn aggregate_activity<'a>(
   by_category
 }
 
-/// Ready-to-Assign and overspending from a pool and the categories' `available`
-/// figures. `ready_to_assign = pool − Σ available`; `overspent = Σ min(0,
-/// available)`.
+/// Ready-to-Assign and overspending for a scope. Ready-to-Assign is the global
+/// running pool `ready_to_assign = pool − assigned_total`, where `assigned_total`
+/// is the sum of every assignment across all categories and all months — so ISK
+/// assigned in a future month draws down the same pool the current month sees and
+/// can never be assigned twice. `overspent = Σ min(0, available)` over the
+/// displayed month's `availables` only (it drives Cover-overspending for that
+/// month).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
 #[allow(dead_code)]
-pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
-  let mut total_available = 0.0;
+pub fn pool_summary(pool: f64, assigned_total: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
   let mut overspent = 0.0;
   for available in availables {
-    total_available += available;
     if available < 0.0 {
       overspent += available;
     }
@@ -457,7 +461,7 @@ pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> Poo
   PoolSummary {
     overspent,
     pool,
-    ready_to_assign: pool - total_available,
+    ready_to_assign: pool - assigned_total,
   }
 }
 
@@ -672,6 +676,20 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
 // until then.
 #[allow(dead_code)]
 pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) -> HashMap<i64, f64> {
+  activity_by_month(db, scope).await.remove(month).unwrap_or_default()
+}
+
+/// Aggregates a scope's signed activity by category for *every* UTC calendar
+/// month in one batched pass, keyed `month → (category id → signed activity)`.
+/// Loads each in-scope wallet's journal and transactions once, then groups by
+/// month so the multi-month carry chain has real per-month activity without an
+/// O(history) query-per-month blow-up. Market-twin de-duplication and the
+/// owner-aware manual override resolution match [`monthly_activity`] exactly,
+/// applied independently within each month.
+// Budget activity math (B2); consumed by the carry chain in the Budget Plan UI. Exercised by unit
+// tests until then.
+#[allow(dead_code)]
+pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
   let context = ResolutionContext::load(db, scope).await;
 
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
@@ -732,49 +750,63 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
   // A market trade can surface in several wallets at once: a corp trade is
   // mirrored into the trading character's personal wallet under the SAME
   // transaction_id (a PK in both transaction tables), and each carries a
-  // `market_transaction` journal twin. `ingested` collects every in-month
-  // transaction_id so those journal twins are suppressed below.
-  let ingested: HashSet<i64> = transactions
-    .iter()
-    .filter(|tx| month_key(&tx.date).as_deref() == Some(month))
-    .map(|tx| tx.transaction_id)
-    .collect();
+  // `market_transaction` journal twin. `ingested_by_month` collects every
+  // transaction_id per month so those journal twins are suppressed below within
+  // their own month.
+  let mut ingested_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
+  for tx in &transactions {
+    if let Some(month) = month_key(&tx.date) {
+      ingested_by_month.entry(month).or_default().insert(tx.transaction_id);
+    }
+  }
 
   // v1 is fully manual: only entries the user has explicitly assigned (a per-entry
   // override) contribute to a category. Everything else stays in Ready-to-Assign.
   // Overrides are owner-aware, so a character entry and a corp entry sharing an EVE
   // id resolve to their own categories rather than aliasing onto one.
-  let mut by_category: HashMap<i64, f64> = HashMap::new();
-  for row in journal_rows
-    .iter()
-    .filter(|row| month_key(&row.date).as_deref() == Some(month))
-    .filter(|row| !is_market_twin(row, &ingested))
-  {
+  let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
+  let empty = HashSet::new();
+  for row in &journal_rows {
+    let Some(month) = month_key(&row.date) else {
+      continue;
+    };
+    let ingested = ingested_by_month.get(&month).unwrap_or(&empty);
+    if is_market_twin(row, ingested) {
+      continue;
+    }
     let Some(amount) = row.amount else { continue };
     if let Some(category_id) = context.override_for(row.owner, BudgetEntryKind::Journal, row.id) {
-      *by_category.entry(category_id).or_insert(0.0) += amount;
+      *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
   }
 
-  // De-duplicate market activity by transaction_id across every in-scope wallet:
-  // a corp trade and its character-wallet mirror share one transaction_id and are
-  // one event, so the trade contributes once. An id is marked counted only once it
-  // resolves to a category, so an unassigned copy never suppresses an assigned one.
-  let mut counted_transactions: HashSet<i64> = HashSet::new();
+  // De-duplicate market activity by transaction_id within each month: a corp trade
+  // and its character-wallet mirror share one transaction_id and are one event, so
+  // the trade contributes once. An id is marked counted only once it resolves to a
+  // category, so an unassigned copy never suppresses an assigned one.
+  let mut counted_by_month: HashMap<String, HashSet<i64>> = HashMap::new();
   for tx in &transactions {
-    if month_key(&tx.date).as_deref() != Some(month) {
+    let Some(month) = month_key(&tx.date) else {
       continue;
-    }
-    if counted_transactions.contains(&tx.transaction_id) {
+    };
+    if counted_by_month
+      .entry(month.clone())
+      .or_default()
+      .contains(&tx.transaction_id)
+    {
       continue;
     }
     if let Some(category_id) = context.override_for(tx.owner, BudgetEntryKind::Market, tx.transaction_id) {
-      *by_category.entry(category_id).or_insert(0.0) += tx.amount;
-      counted_transactions.insert(tx.transaction_id);
+      *by_month
+        .entry(month.clone())
+        .or_default()
+        .entry(category_id)
+        .or_insert(0.0) += tx.amount;
+      counted_by_month.entry(month).or_default().insert(tx.transaction_id);
     }
   }
 
-  by_category
+  by_month
 }
 
 fn epoch_day(date: &str) -> Option<i64> {
@@ -1150,8 +1182,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_ready_to_assign_as_pool_minus_total_available() {
-      let summary = pool_summary(1_000.0, [300.0, 200.0, 100.0]);
+    fn it_derives_ready_to_assign_as_pool_minus_global_assigned() {
+      // Global RTA draws down by every assignment across all months, not the
+      // displayed month's availables. 600 assigned somewhere on the timeline.
+      let summary = pool_summary(1_000.0, 600.0, [300.0, 200.0, 100.0]);
 
       assert_eq!(summary.pool, 1_000.0);
       assert_eq!(summary.ready_to_assign, 400.0);
@@ -1160,16 +1194,17 @@ mod tests {
 
     #[test]
     fn it_sums_only_negative_availables_into_overspent() {
-      let summary = pool_summary(500.0, [300.0, -150.0, -50.0]);
+      let summary = pool_summary(500.0, 100.0, [300.0, -150.0, -50.0]);
 
       assert_eq!(summary.overspent, -200.0);
-      // ready = 500 − (300 − 150 − 50) = 500 − 100 = 400.
+      // ready = 500 − 100 assigned = 400, independent of the availables.
       assert_eq!(summary.ready_to_assign, 400.0);
     }
 
     #[test]
     fn it_can_report_a_negative_ready_to_assign_when_over_assigned() {
-      let summary = pool_summary(100.0, [80.0, 80.0]);
+      // Assigning the same ISK across two months over-draws the global pool.
+      let summary = pool_summary(100.0, 160.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
     }
@@ -2169,6 +2204,54 @@ mod tests {
 
       assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
       assert_eq!(activity.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_groups_assigned_activity_by_month_in_one_batched_pass() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
+      finance::append_wallet_journal(
+        &db,
+        &[
+          journal(1, 1, "bounty_prizes", 1_000.0, "2026-04-02T00:00:00Z"),
+          journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
+        ],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        1,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      assign_entry(
+        &db,
+        BudgetScope::Character(1),
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        2,
+        slug_to_id["fees"],
+      )
+      .await
+      .unwrap();
+
+      let by_month = activity_by_month(&db, BudgetScope::Character(1)).await;
+
+      assert_eq!(by_month["2026-04"].get(&slug_to_id["income"]), Some(&1_000.0));
+      assert_eq!(by_month["2026-06"].get(&slug_to_id["fees"]), Some(&-120.0));
+      assert!(!by_month.contains_key("2026-05"));
+      // The single-month wrapper agrees with the batched map for that month.
+      assert_eq!(
+        by_month["2026-04"],
+        monthly_activity(&db, BudgetScope::Character(1), "2026-04").await
+      );
     }
   }
 

@@ -4138,62 +4138,90 @@ fn handle_nav_to(app: &mut App, destination: rail::Destination, sub_section: Opt
 // the tab is correct even before a runtime exists; the load handler is a no-op until one does.
 fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -> Task<Message> {
   match destination {
-    rail::Destination::Assets => match assets::Tab::from_id(id) {
-      Some(tab) if app.assets.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
-        update(app, Message::Assets(assets::Message::TabSelected(tab)))
-      }
-      _ => Task::none(),
-    },
-    rail::Destination::Calendar => match calendar::View::from_id(id) {
-      Some(view) if app.calendar.as_mut().is_some_and(|state| state.select_view_by_id(id)) => {
-        update(app, Message::Calendar(calendar::Message::ViewSelected(view)))
-      }
-      _ => Task::none(),
-    },
-    rail::Destination::Characters => match character_manager::Pane::from_id(id) {
-      Some(pane)
-        if app
-          .character_manager
-          .as_mut()
-          .is_some_and(|state| state.select_pane_by_id(id)) =>
-      {
-        update(
-          app,
-          Message::CharacterManager(character_manager::Message::TabSelected(pane)),
-        )
-      }
-      _ => Task::none(),
-    },
-    rail::Destination::Industry => match industry::Tab::from_id(id) {
-      Some(tab) if app.industry.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
-        update(app, Message::Industry(industry::Message::TabSelected(tab)))
-      }
-      _ => Task::none(),
-    },
-    rail::Destination::Settings => match settings::Category::from_id(id) {
-      Some(category)
-        if app
-          .settings
-          .as_mut()
-          .is_some_and(|state| state.select_category_by_id(id)) =>
-      {
-        update(app, Message::Settings(settings::Message::CategorySelected(category)))
-      }
-      _ => Task::none(),
-    },
-    rail::Destination::Wallet => match wallet::Tab::from_id(id) {
-      Some(tab) if app.wallet.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
-        update(app, Message::Wallet(wallet::Message::TabSelected(tab)))
-      }
-      _ => Task::none(),
-    },
+    rail::Destination::Assets => select_assets_sub_section(app, id),
+    rail::Destination::Calendar => select_calendar_sub_section(app, id),
+    rail::Destination::Characters => select_characters_sub_section(app, id),
+    rail::Destination::Industry => select_industry_sub_section(app, id),
+    rail::Destination::Settings => select_settings_sub_section(app, id),
+    rail::Destination::Wallet => select_wallet_sub_section(app, id),
     // Skills' "queue" surface is the default landing view, so nav alone shows it; "compare" is a
     // separate window the Skills view opens via OpenCompare, so reuse that handler here.
-    rail::Destination::Skills => match id {
-      "compare" => handle_skills(app, skills::Message::OpenCompare),
-      _ => Task::none(),
-    },
+    rail::Destination::Skills => select_skills_sub_section(app, id),
     rail::Destination::Mail => Task::none(),
+  }
+}
+
+fn select_assets_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match assets::Tab::from_id(id) {
+    Some(tab) if app.assets.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+      update(app, Message::Assets(assets::Message::TabSelected(tab)))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_calendar_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match calendar::View::from_id(id) {
+    Some(view) if app.calendar.as_mut().is_some_and(|state| state.select_view_by_id(id)) => {
+      update(app, Message::Calendar(calendar::Message::ViewSelected(view)))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_characters_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match character_manager::Pane::from_id(id) {
+    Some(pane)
+      if app
+        .character_manager
+        .as_mut()
+        .is_some_and(|state| state.select_pane_by_id(id)) =>
+    {
+      update(
+        app,
+        Message::CharacterManager(character_manager::Message::TabSelected(pane)),
+      )
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_industry_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match industry::Tab::from_id(id) {
+    Some(tab) if app.industry.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+      update(app, Message::Industry(industry::Message::TabSelected(tab)))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_settings_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match settings::Category::from_id(id) {
+    Some(category)
+      if app
+        .settings
+        .as_mut()
+        .is_some_and(|state| state.select_category_by_id(id)) =>
+    {
+      update(app, Message::Settings(settings::Message::CategorySelected(category)))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_wallet_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match wallet::Tab::from_id(id) {
+    Some(tab) if app.wallet.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+      update(app, Message::Wallet(wallet::Message::TabSelected(tab)))
+    }
+    _ => Task::none(),
+  }
+}
+
+fn select_skills_sub_section(app: &mut App, id: &str) -> Task<Message> {
+  match id {
+    "compare" => handle_skills(app, skills::Message::OpenCompare),
+    _ => Task::none(),
   }
 }
 
@@ -8782,6 +8810,28 @@ mod tests {
       let _ = update(&mut app, Message::Palette(PaletteMessage::Close));
 
       assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn it_maps_each_palette_key_to_its_palette_message() {
+      fn payload(key: shortcuts::PaletteKey) -> PaletteMessage {
+        match palette_message(key) {
+          Message::Palette(message) => message,
+          other => panic!("palette_message produced a non-Palette message: {other:?}"),
+        }
+      }
+
+      assert!(matches!(
+        payload(shortcuts::PaletteKey::Activate),
+        PaletteMessage::ActivateSelected
+      ));
+      assert!(matches!(payload(shortcuts::PaletteKey::Close), PaletteMessage::Close));
+      assert!(matches!(
+        payload(shortcuts::PaletteKey::MoveDown),
+        PaletteMessage::MoveDown
+      ));
+      assert!(matches!(payload(shortcuts::PaletteKey::MoveUp), PaletteMessage::MoveUp));
+      assert!(matches!(payload(shortcuts::PaletteKey::Open), PaletteMessage::Open));
     }
   }
 

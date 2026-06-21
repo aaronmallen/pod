@@ -556,4 +556,73 @@ mod tests {
       assert!(entry.icon().is_none());
     }
   }
+
+  mod kind_tag {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_labels_every_kind() {
+      assert_eq!(Kind::Character.tag(), "Character");
+      assert_eq!(Kind::Command.tag(), "Command");
+      assert_eq!(Kind::Corporation.tag(), "Corporation");
+      assert_eq!(Kind::Section.tag(), "Section");
+      assert_eq!(Kind::Tab.tag(), "Tab");
+    }
+  }
+
+  mod rendering {
+    use super::*;
+
+    fn command_entry() -> Entry {
+      Entry {
+        action: Action::Command(Command::SyncNow),
+        detail: Some("Command".to_owned()),
+        kind: Kind::Command,
+        label: "Sync now".to_owned(),
+      }
+    }
+
+    fn nav_entry() -> Entry {
+      build_entries(&features(), &[], &[], "wallet")
+        .into_iter()
+        .find(|entry| entry.kind == Kind::Section)
+        .expect("a nav section entry")
+    }
+
+    #[test]
+    fn it_builds_a_row_for_an_active_entry_with_an_icon() {
+      // The nav entry carries an icon and a detail line, so this exercises the icon + detail arms.
+      let _row: Element<'_, ()> = row(nav_entry(), true, 0, |_| (), |_| ());
+    }
+
+    #[test]
+    fn it_builds_a_row_for_an_inactive_iconless_entry() {
+      // The command entry has no icon, so this exercises the Space placeholder arm.
+      let _row: Element<'_, ()> = row(command_entry(), false, 3, |_| (), |_| ());
+    }
+
+    #[test]
+    fn it_builds_the_palette_view_with_results() {
+      let state = State {
+        query: "wallet".to_owned(),
+        selected: 0,
+      };
+      let entries = build_entries(&features(), &[], &[], "wallet");
+
+      let _view: Element<'_, ()> = view(&state, entries, |_| (), |_| (), |_| (), ());
+    }
+
+    #[test]
+    fn it_builds_the_palette_view_with_no_matches() {
+      let state = State {
+        query: "zzqqxx-no-such-thing".to_owned(),
+        selected: 0,
+      };
+
+      // The empty-results branch renders the "No matches" placeholder.
+      let _view: Element<'_, ()> = view(&state, Vec::new(), |_| (), |_| (), |_| (), ());
+    }
+  }
 }

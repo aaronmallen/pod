@@ -9,6 +9,7 @@ use iced::{
 
 use crate::ui::style::{color, typography};
 
+const CORP_BADGE_RATIO: f32 = 0.5;
 const GRADIENT_ANGLE: f32 = std::f32::consts::FRAC_PI_4 * 3.0;
 const HUE_SHIFT: f32 = 40.0;
 const HUE_STEP: i64 = 47;
@@ -18,6 +19,7 @@ const STATUS_DOT_SIZE: f32 = 8.0;
 
 pub struct Avatar {
   border: Option<(Color, f32)>,
+  corp_badge: Option<PathBuf>,
   height: f32,
   id: i64,
   name: String,
@@ -31,6 +33,7 @@ impl Avatar {
   pub fn new(id: i64, name: impl Into<String>, width: Length, height: f32, portrait: Option<PathBuf>) -> Self {
     Self {
       border: None,
+      corp_badge: None,
       height,
       id,
       name: name.into(),
@@ -43,6 +46,13 @@ impl Avatar {
 
   pub fn border(mut self, color: Color, width: f32) -> Self {
     self.border = Some((color, width));
+    self
+  }
+
+  /// Overlays a corporation logo as a corner badge, signalling that a market
+  /// trade exists in both this character's and the corp's wallet.
+  pub fn corp_badge(mut self, logo: Option<PathBuf>) -> Self {
+    self.corp_badge = logo;
     self
   }
 
@@ -81,10 +91,12 @@ impl Avatar {
       })
       .into();
 
-    match self.status_dot {
-      None => framed,
-      Some(dot) => Stack::with_children(vec![
-        framed,
+    let mut layers: Vec<Element<'a, M>> = vec![framed];
+    if let Some(logo) = self.corp_badge {
+      layers.push(corp_badge_overlay(logo, self.height));
+    }
+    if let Some(dot) = self.status_dot {
+      layers.push(
         container(super::status::dot_sized::<M>(dot, STATUS_DOT_SIZE))
           .width(Length::Fill)
           .height(Length::Fixed(self.height))
@@ -92,10 +104,50 @@ impl Avatar {
           .align_y(Vertical::Bottom)
           .padding(STATUS_DOT_INSET)
           .into(),
-      ])
-      .into(),
+      );
+    }
+
+    if layers.len() == 1 {
+      layers.pop().expect("the framed avatar layer is always present")
+    } else {
+      Stack::with_children(layers).into()
     }
   }
+}
+
+fn corp_badge_overlay<'a, M>(logo: PathBuf, height: f32) -> Element<'a, M>
+where
+  M: 'a,
+{
+  let badge = height * CORP_BADGE_RATIO;
+
+  container(
+    container(super::clip::clip_layer(
+      image(image::Handle::from_path(logo))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .content_fit(ContentFit::Cover),
+      Length::Fill,
+      Length::Fill,
+    ))
+    .width(Length::Fixed(badge))
+    .height(Length::Fixed(badge))
+    .clip(true)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::surface::BASE,
+        width: 1.0,
+        radius: 2.0.into(),
+      },
+      ..container::Style::default()
+    }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(height))
+  .align_x(Horizontal::Right)
+  .align_y(Vertical::Bottom)
+  .into()
 }
 
 pub fn avatar<'a, M>(id: i64, name: &str, width: Length, height: f32, portrait: Option<PathBuf>) -> Element<'a, M>
@@ -221,6 +273,22 @@ mod tests {
     fn it_renders_with_a_status_dot() {
       let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
         .status_dot(color::status::ONLINE)
+        .view();
+    }
+
+    #[test]
+    fn it_renders_with_a_corp_badge() {
+      let logo = Some(PathBuf::from("/tmp/corp-logo.png"));
+
+      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
+        .corp_badge(logo)
+        .view();
+    }
+
+    #[test]
+    fn it_renders_without_a_corp_badge_when_none() {
+      let _el: Element<'_, ()> = Avatar::new(PILOT_ID, "Test Pilot", Length::Fixed(HEIGHT), HEIGHT, None)
+        .corp_badge(None)
         .view();
     }
   }

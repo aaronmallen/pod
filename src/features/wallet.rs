@@ -1026,6 +1026,7 @@ impl State {
       .market
       .iter()
       .enumerate()
+      .filter(|(_, entry)| !self.is_redundant_dual_wallet_copy(entry))
       .filter(|(_, entry)| market_matches(entry, self.sign_filter, self.side_filter, &query))
       .filter(|(_, entry)| budget_filter.is_none_or(|filter| market_budget_match(entry, filter, &self.budget_chips)))
       .map(|(index, _)| index)
@@ -1073,6 +1074,19 @@ impl State {
       Scope::All => self.corporations.iter().map(|corp| corp.id).collect(),
       Scope::Character(_) | Scope::Corporation(_) => Vec::new(),
     }
+  }
+
+  // Whether a market entry is the redundant second copy of a genuine dual-wallet
+  // trade and should be hidden from the Transactions table. A trade a character
+  // makes on behalf of the corp is stored under BOTH the character and the
+  // corporation wallet with the same `transaction_id`; both copies are kept in
+  // `self.market` so the composite character+corp avatar can be derived, but the
+  // table must render the trade only ONCE. We keep the character copy (which
+  // carries the composite avatar's portrait base) and drop the corporation copy.
+  // A purely personal trade has no corp pair and is never hidden.
+  fn is_redundant_dual_wallet_copy(&self, entry: &MarketEntry) -> bool {
+    matches!(entry.owner, BudgetOwner::Corporation(_))
+      && market_dual_wallet_owners(self, entry.transaction_id).is_some()
   }
 }
 
@@ -2285,7 +2299,7 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   let db = db.clone();
   Task::perform(
     async move {
-      for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterparts) {
+      for (owner, kind, entry_id) in std::iter::once((owner, kind, entry_id)).chain(counterparts) {
         match choice {
           Some(category_id) => {
             let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
@@ -2529,9 +2543,7 @@ fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Tas
   let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
   for (owner, entry_id) in selected {
     targets.push((owner, kind, entry_id));
-    for (twin_kind, twin_id) in budget_cascade_targets(state, owner, kind, entry_id) {
-      targets.push((owner, twin_kind, twin_id));
-    }
+    targets.extend(budget_cascade_targets(state, owner, kind, entry_id));
   }
   ledger_selection_mut(state, kind).clear();
   if targets.is_empty() {
@@ -3328,21 +3340,62 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
 }
 
 /// Every other record a budget assignment cascades onto, so a market trade's
-/// principal twin, Transaction Tax, and Broker's Fee all land in one envelope.
-/// A transaction links to its journal twin via `journal_ref_id`; the twin and
-/// the fee rows link back to the transaction via `context_id`. Every lookup is
-/// scoped to the row's `owner` so a corp-mirrored trade (the same EVE id in a
-/// character and a corp wallet) never cascades onto the other owner's rows.
+/// principal twin, Transaction Tax, and Broker's Fee all land in one envelope —
+/// across owners when the trade is a corp-on-behalf trade.
 ///
-/// A fee row that already carries a manual override is skipped: an explicit
-/// per-entry assignment is the escape hatch and is never clobbered. The
-/// originally-assigned entry is the caller's responsibility and is not included.
+/// A transaction links to its journal twin via `journal_ref_id`; the twin and
+/// the fee rows link back to the transaction via `context_id`. When a character
+/// trades on behalf of a corp the same `transaction_id` lands in BOTH a
+/// character and a corp wallet, so the cascade also discovers every OTHER owner
+/// holding that `transaction_id` and sweeps in their copy (and its twins) too,
+/// keeping all owners' copies in one envelope.
+///
+/// A fee row that already carries a manual override is skipped on every owner:
+/// an explicit per-entry assignment is the escape hatch and is never clobbered.
+/// The originally-assigned entry is the caller's responsibility and is not
+/// included; cross-owner copies of it, however, are.
 fn budget_cascade_targets(
   state: &State,
   owner: BudgetOwner,
   kind: BudgetEntryKind,
   entry_id: i64,
-) -> Vec<(BudgetEntryKind, i64)> {
+) -> Vec<(BudgetOwner, BudgetEntryKind, i64)> {
+  let Some(transaction_id) = cascade_transaction_id(state, owner, kind, entry_id) else {
+    return owner_cascade_targets(state, owner, kind, entry_id);
+  };
+
+  let mut targets = owner_cascade_targets(state, owner, kind, entry_id);
+  for &other in &cross_owners(state, transaction_id, owner) {
+    let Some(copy) = state
+      .market
+      .iter()
+      .find(|entry| entry.owner == other && entry.transaction_id == transaction_id)
+    else {
+      continue;
+    };
+    if !is_overridden(state, other, BudgetEntryKind::Market, copy.transaction_id) {
+      targets.push((other, BudgetEntryKind::Market, copy.transaction_id));
+    }
+    targets.extend(owner_cascade_targets(
+      state,
+      other,
+      BudgetEntryKind::Market,
+      copy.transaction_id,
+    ));
+  }
+  targets
+}
+
+/// The same-owner records a market trade's assignment cascades onto: its journal
+/// twin plus its Transaction Tax and Broker's Fee rows, each only when it lacks
+/// a manual override. Returned tuples carry `owner` so callers compose
+/// cross-owner copies uniformly.
+fn owner_cascade_targets(
+  state: &State,
+  owner: BudgetOwner,
+  kind: BudgetEntryKind,
+  entry_id: i64,
+) -> Vec<(BudgetOwner, BudgetEntryKind, i64)> {
   let mut targets = Vec::new();
   let transaction_id = match kind {
     BudgetEntryKind::Market => {
@@ -3353,8 +3406,9 @@ fn budget_cascade_targets(
       else {
         return targets;
       };
-      if transaction.journal_ref_id != 0 {
-        targets.push((BudgetEntryKind::Journal, transaction.journal_ref_id));
+      let twin = transaction.journal_ref_id;
+      if twin != 0 && !is_overridden(state, owner, BudgetEntryKind::Journal, twin) {
+        targets.push((owner, BudgetEntryKind::Journal, twin));
       }
       entry_id
     }
@@ -3372,7 +3426,9 @@ fn budget_cascade_targets(
       let Some(transaction_id) = entry.context_id else {
         return targets;
       };
-      targets.push((BudgetEntryKind::Market, transaction_id));
+      if !is_overridden(state, owner, BudgetEntryKind::Market, transaction_id) {
+        targets.push((owner, BudgetEntryKind::Market, transaction_id));
+      }
       transaction_id
     }
   };
@@ -3382,17 +3438,69 @@ fn budget_cascade_targets(
       && entry.context_id == Some(transaction_id)
       && MARKET_FEE_REF_TYPES.contains(&entry.ref_type.as_str())
   }) {
-    let overridden = state
-      .budget_chips()
-      .resolution
-      .override_for(owner, BudgetEntryKind::Journal, fee.id)
-      .is_some();
-    if !overridden {
-      targets.push((BudgetEntryKind::Journal, fee.id));
+    if !is_overridden(state, owner, BudgetEntryKind::Journal, fee.id) {
+      targets.push((owner, BudgetEntryKind::Journal, fee.id));
     }
   }
 
   targets
+}
+
+/// The `transaction_id` a market row or its `market_transaction` journal twin
+/// refers to, used to find the trade's copies under other owners. `None` for any
+/// row that is not part of a market trade.
+fn cascade_transaction_id(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
+  match kind {
+    BudgetEntryKind::Market => Some(entry_id),
+    BudgetEntryKind::Journal => state
+      .journal
+      .iter()
+      .find(|entry| entry.owner == owner && entry.id == entry_id)
+      .filter(|entry| entry.ref_type == "market_transaction")
+      .and_then(|entry| entry.context_id),
+  }
+}
+
+/// Every owner *other* than `owner` whose wallet holds a market row for
+/// `transaction_id` — the corp (or character) a corp-on-behalf trade is mirrored
+/// into. Empty for a purely personal trade.
+fn cross_owners(state: &State, transaction_id: i64, owner: BudgetOwner) -> Vec<BudgetOwner> {
+  let mut owners: Vec<BudgetOwner> = state
+    .market
+    .iter()
+    .filter(|entry| entry.transaction_id == transaction_id && entry.owner != owner)
+    .map(|entry| entry.owner)
+    .collect();
+  owners.sort_by_key(|owner| owner.owner_id());
+  owners.dedup();
+  owners
+}
+
+fn is_overridden(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> bool {
+  state
+    .budget_chips()
+    .resolution
+    .override_for(owner, kind, entry_id)
+    .is_some()
+}
+
+/// The trading character and the corporation a market trade is mirrored into,
+/// when the same `transaction_id` exists in BOTH a character and a corporation
+/// wallet — i.e. a character traded on behalf of the corp. `None` for a purely
+/// personal trade (no corp copy) so the composite character+corp avatar is shown
+/// only for genuine dual-wallet trades, not for every character who belongs to a
+/// corp. Both copies of the trade render the same character-base, corp-badge
+/// avatar so the relationship reads identically wherever the trade appears.
+pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> Option<(i64, i64)> {
+  let character_id = state.market.iter().find_map(|entry| match entry.owner {
+    BudgetOwner::Character(id) if entry.transaction_id == transaction_id => Some(id),
+    _ => None,
+  })?;
+  let corporation_id = state.market.iter().find_map(|entry| match entry.owner {
+    BudgetOwner::Corporation(id) if entry.transaction_id == transaction_id => Some(id),
+    _ => None,
+  })?;
+  Some((character_id, corporation_id))
 }
 
 /// Whether a journal entry satisfies an active Budget filter: in the filter's
@@ -3929,12 +4037,12 @@ mod tests {
 
       assert_eq!(
         budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-        vec![(BudgetEntryKind::Journal, 10)]
+        vec![(BudgetOwner::Character(1), BudgetEntryKind::Journal, 10)]
       );
     }
 
     #[test]
-    fn it_does_not_cascade_to_another_owners_twin_sharing_the_eve_id() {
+    fn it_cascades_to_another_owners_copy_sharing_the_transaction_id() {
       let mut state = State::new();
       let mut character = market_entry(1, true, "Tritanium", "Jita");
       character.transaction_id = 500;
@@ -3946,13 +4054,12 @@ mod tests {
       state.market = vec![character, corp];
 
       assert_eq!(
-        budget_cascade_targets(
-          &state,
-          BudgetOwner::Corporation(98_000_001),
-          BudgetEntryKind::Market,
-          500
-        ),
-        vec![(BudgetEntryKind::Journal, 20)]
+        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
+        vec![
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Market, 500),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
+        ]
       );
     }
 
@@ -3966,7 +4073,7 @@ mod tests {
 
       assert_eq!(
         budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-        vec![(BudgetEntryKind::Market, 500)]
+        vec![(BudgetOwner::Character(1), BudgetEntryKind::Market, 500)]
       );
     }
 
@@ -4008,9 +4115,9 @@ mod tests {
       assert_eq!(
         targets,
         vec![
-          (BudgetEntryKind::Journal, 10),
-          (BudgetEntryKind::Journal, 12),
-          (BudgetEntryKind::Journal, 13),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 13),
         ]
       );
     }
@@ -4030,7 +4137,10 @@ mod tests {
 
       assert_eq!(
         targets,
-        vec![(BudgetEntryKind::Market, 500), (BudgetEntryKind::Journal, 12)]
+        vec![
+          (BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
+        ]
       );
     }
 
@@ -4055,8 +4165,192 @@ mod tests {
 
       assert_eq!(
         targets,
-        vec![(BudgetEntryKind::Journal, 10), (BudgetEntryKind::Journal, 12)]
+        vec![
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
+        ]
       );
+    }
+
+    #[test]
+    fn it_co_assigns_a_corp_on_behalf_trades_copy_and_its_twins_under_both_owners() {
+      let mut state = State::new();
+      let mut character = market_entry(1, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      character.journal_ref_id = 10;
+      let mut corp = market_entry(1, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.journal_ref_id = 20;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp];
+      let mut char_fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
+      char_fee.id = 12;
+      char_fee.context_id = Some(500);
+      let mut corp_fee = journal_entry(1, Some(-9.0), "brokers_fee", "Fee");
+      corp_fee.id = 22;
+      corp_fee.context_id = Some(500);
+      corp_fee.owner = BudgetOwner::Corporation(98_000_001);
+      state.journal = vec![char_fee, corp_fee];
+
+      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
+
+      assert_eq!(
+        targets,
+        vec![
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 12),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Market, 500),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 22),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_preserves_a_cross_owner_copys_manual_override() {
+      let mut state = State::new();
+      let mut character = market_entry(1, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      character.journal_ref_id = 10;
+      let mut corp = market_entry(1, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.journal_ref_id = 20;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp];
+      // The corp's copy of the trade carries its own manual override, so the
+      // cross-owner cascade must skip it (its twin still co-assigns).
+      let mut market_overrides = std::collections::HashMap::new();
+      market_overrides.insert((BudgetOwner::Corporation(98_000_001), 500), 77);
+      state.budget_chips = loaders::BudgetChips {
+        envelopes: Vec::new(),
+        meta: std::collections::HashMap::new(),
+        resolution: crate::features::budget::ResolutionContext {
+          journal_overrides: std::collections::HashMap::new(),
+          market_overrides,
+          ref_overrides: std::collections::HashMap::new(),
+          rules: Vec::new(),
+          slug_to_id: std::collections::HashMap::new(),
+        },
+      };
+
+      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
+
+      assert_eq!(
+        targets,
+        vec![
+          (BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+          (BudgetOwner::Corporation(98_000_001), BudgetEntryKind::Journal, 20),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_does_not_cross_owners_for_a_purely_personal_trade() {
+      let mut state = State::new();
+      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
+      transaction.transaction_id = 500;
+      transaction.journal_ref_id = 10;
+      state.market = vec![transaction];
+
+      assert_eq!(
+        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
+        vec![(BudgetOwner::Character(1), BudgetEntryKind::Journal, 10)]
+      );
+    }
+
+    #[test]
+    fn it_pairs_the_owners_of_a_genuine_dual_wallet_trade() {
+      let mut state = State::new();
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp];
+
+      assert_eq!(market_dual_wallet_owners(&state, 500), Some((7, 98_000_001)));
+    }
+
+    #[test]
+    fn it_does_not_pair_owners_for_a_purely_personal_trade() {
+      let mut state = State::new();
+      let mut transaction = market_entry(7, true, "Tritanium", "Jita");
+      transaction.transaction_id = 500;
+      state.market = vec![transaction];
+
+      assert_eq!(market_dual_wallet_owners(&state, 500), None);
+    }
+
+    #[test]
+    fn it_does_not_pair_owners_for_a_corp_only_trade() {
+      let mut state = State::new();
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![corp];
+
+      assert_eq!(market_dual_wallet_owners(&state, 500), None);
+    }
+
+    #[test]
+    fn it_collapses_a_dual_wallet_trade_to_one_display_row_keeping_the_character_copy() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp];
+      state.recompute_derived();
+
+      let rows = filtered_market(&state);
+      assert_eq!(rows.len(), 1, "dual-wallet trade must render exactly one row");
+      assert_eq!(
+        rows[0].owner,
+        BudgetOwner::Character(7),
+        "the kept row is the character copy that carries the composite avatar",
+      );
+      // The composite avatar still resolves for the surviving row.
+      assert_eq!(
+        market_dual_wallet_owners(&state, 500),
+        Some((7, 98_000_001)),
+        "both copies stay in state.market so the composite avatar is derivable",
+      );
+    }
+
+    #[test]
+    fn it_collapses_a_dual_wallet_trade_regardless_of_copy_order() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      state.market = vec![corp, character];
+      state.recompute_derived();
+
+      let rows = filtered_market(&state);
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].owner, BudgetOwner::Character(7));
+    }
+
+    #[test]
+    fn it_keeps_a_single_owner_trade_as_one_display_row() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      let mut corp_only = market_entry(7, true, "Pyerite", "Jita");
+      corp_only.transaction_id = 501;
+      corp_only.owner = BudgetOwner::Corporation(98_000_001);
+      state.market = vec![character, corp_only];
+      state.recompute_derived();
+
+      // A purely personal trade and a corp-only trade each survive as one row;
+      // neither is dropped because neither has a dual-wallet pair.
+      let rows = filtered_market(&state);
+      assert_eq!(rows.len(), 2);
+      assert!(rows.iter().any(|row| row.transaction_id == 500));
+      assert!(rows.iter().any(|row| row.transaction_id == 501));
     }
 
     #[test]

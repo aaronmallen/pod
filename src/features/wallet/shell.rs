@@ -703,7 +703,7 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
         Horizontal::Left,
         color::text::secondary(),
       )),
-      select(character_cell(state, entry.owner, Length::FillPortion(2))),
+      select(market_character_cell(state, entry, Length::FillPortion(2))),
       select(mono_cell(
         &fmt_relative(&entry.date, now),
         Length::FillPortion(1),
@@ -1135,6 +1135,52 @@ fn character_cell(state: &State, owner: BudgetOwner, width: Length) -> Element<'
   .align_y(Vertical::Center)
   .width(width)
   .into()
+}
+
+/// A market row's Character cell. For a corp-on-behalf trade — one whose
+/// `transaction_id` exists in both a character and a corp wallet — it shows the
+/// trading character's portrait with the corp logo composited as a corner badge.
+/// A purely personal trade renders the plain owner cell.
+fn market_character_cell<'a>(state: &'a State, entry: &'a MarketEntry, width: Length) -> Element<'a, Message> {
+  let Some((character_id, corporation_id)) = super::market_dual_wallet_owners(state, entry.transaction_id) else {
+    return character_cell(state, entry.owner, width);
+  };
+
+  let owner = BudgetOwner::Character(character_id);
+  let name = owner_display_name(state, owner);
+  let swatch = Avatar::new(
+    character_id,
+    &name,
+    Length::Fixed(ROW_AVATAR),
+    ROW_AVATAR,
+    owner_portrait(state, owner),
+  )
+  .radius(radius::SUBTLE)
+  .corp_badge(corp_logo(state, corporation_id))
+  .view();
+
+  Row::with_children(vec![
+    swatch,
+    text(name)
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .width(Length::Fill)
+      .wrapping(text::Wrapping::Word)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(width)
+  .into()
+}
+
+fn corp_logo(state: &State, corporation_id: i64) -> Option<std::path::PathBuf> {
+  state
+    .corporations
+    .iter()
+    .find(|corp| corp.id == corporation_id)
+    .and_then(|corp| corp.logo.path())
 }
 
 fn contract_header<'a>() -> Element<'a, Message> {

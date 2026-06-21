@@ -80,6 +80,55 @@ where
     .into()
 }
 
+pub fn toggle_disabled<'a, M>(on: bool) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let thumb_left = if on {
+    TRACK_WIDTH - THUMB_SIZE - THUMB_INSET
+  } else {
+    THUMB_INSET
+  };
+
+  let thumb = container(
+    container(Space::new())
+      .width(Length::Fixed(THUMB_SIZE))
+      .height(Length::Fixed(THUMB_SIZE))
+      .style(move |_| container::Style {
+        background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.3))),
+        border: Border {
+          radius: (THUMB_SIZE / 2.0).into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Left)
+  .align_y(Vertical::Center)
+  .padding(Padding {
+    top: 0.0,
+    right: 0.0,
+    bottom: 0.0,
+    left: thumb_left,
+  });
+
+  container(thumb)
+    .width(Length::Fixed(TRACK_WIDTH))
+    .height(Length::Fixed(TRACK_HEIGHT))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04))),
+      border: Border {
+        color: color::with_alpha(color::rule_strong(), 0.5),
+        width: 1.0,
+        radius: (TRACK_HEIGHT / 2.0).into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -95,6 +144,15 @@ mod tests {
     #[test]
     fn it_renders_an_on_switch() {
       let _el: Element<'_, i32> = toggle(true, 1);
+    }
+  }
+
+  mod toggle_disabled {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_disabled_switch() {
+      let _el: Element<'_, i32> = toggle_disabled::<i32>(false);
     }
   }
 }

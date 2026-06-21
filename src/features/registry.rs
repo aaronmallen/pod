@@ -488,6 +488,46 @@ mod tests {
     }
   }
 
+  mod skill_queue_dual_surface {
+    use super::*;
+    use crate::config::FeatureFlags;
+
+    // The skill-queue card (`is_sub_enabled(SkillQueue)`) and the Skills rail tab
+    // (`feature_for_destination(Skills)` filtered by the enabled feature set) must follow ONE toggle.
+    fn rail_skills_visible(flags: &FeatureFlags) -> bool {
+      feature_for_destination(Destination::Skills).is_some_and(|feature| flags.is_enabled(feature))
+    }
+
+    #[test]
+    fn both_surfaces_are_on_together_by_default() {
+      let flags = FeatureFlags::default();
+
+      assert!(flags.is_sub_enabled(SubFeature::SkillQueue), "the card section is on");
+      assert!(rail_skills_visible(&flags), "the rail tab is on");
+    }
+
+    #[test]
+    fn the_single_toggle_hides_both_surfaces() {
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::SkillQueue, false);
+
+      assert!(
+        !flags.is_sub_enabled(SubFeature::SkillQueue),
+        "the card section follows the toggle"
+      );
+      assert!(!rail_skills_visible(&flags), "the rail tab follows the same toggle");
+    }
+
+    #[test]
+    fn the_master_skills_toggle_drives_the_lone_child() {
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::SkillMonitoring, false);
+
+      assert!(!flags.is_sub_enabled(SubFeature::SkillQueue));
+      assert!(!rail_skills_visible(&flags));
+    }
+  }
+
   mod feature_for_tab {
     use pretty_assertions::assert_eq;
 

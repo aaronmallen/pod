@@ -197,7 +197,7 @@ fn center(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 
 fn pinned_header<'a>(state: &State) -> Option<Element<'a, Message>> {
   match state.tab {
-    Tab::Market => Some(market_header()),
+    Tab::Market => Some(market_header(state)),
     Tab::Contracts => Some(contract_header()),
     Tab::Budget | Tab::Journal | Tab::Wallets => None,
   }
@@ -596,18 +596,24 @@ fn journal_row<'a>(state: &'a State, entry: &'a JournalEntry, now: DateTime<Utc>
 
   let select = |cell| select_wrap(cell, BudgetEntryKind::Journal, entry.owner, entry.id);
   let selected = state.journal_selected(entry.owner, entry.id);
-  row_shell(
-    vec![
-      select(GlyphBadge::new(glyph, is_in).render()),
-      select(journal_left_col(entry)),
+  let mut cells = vec![
+    select(GlyphBadge::new(glyph, is_in).render()),
+    select(journal_left_col(entry)),
+  ];
+  if state.budget_enabled() {
+    cells.push(
       container(budget_chip(state, entry.owner, BudgetEntryKind::Journal, entry.id))
         .width(Length::Fixed(170.0))
         .into(),
-      select(journal_character_col(state, entry.owner)),
-      select(journal_right_col(&delta, delta_color, &fmt_relative(&entry.date, now))),
-    ],
-    selected,
-  )
+    );
+  }
+  cells.push(select(journal_character_col(state, entry.owner)));
+  cells.push(select(journal_right_col(
+    &delta,
+    delta_color,
+    &fmt_relative(&entry.date, now),
+  )));
+  row_shell(cells, selected)
 }
 
 fn journal_left_col<'a>(entry: &'a JournalEntry) -> Element<'a, Message> {
@@ -655,18 +661,23 @@ fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> E
   .into()
 }
 
-fn market_header<'a>() -> Element<'a, Message> {
-  table_header(&[
+fn market_header<'a>(state: &State) -> Element<'a, Message> {
+  let mut columns = vec![
     ("Side", Length::FillPortion(1), Horizontal::Left),
     ("Item", Length::FillPortion(3), Horizontal::Left),
-    ("Budget", Length::FillPortion(2), Horizontal::Left),
+  ];
+  if state.budget_enabled() {
+    columns.push(("Budget", Length::FillPortion(2), Horizontal::Left));
+  }
+  columns.extend([
     ("Qty", Length::FillPortion(1), Horizontal::Right),
     ("Unit", Length::FillPortion(2), Horizontal::Right),
     ("Total", Length::FillPortion(2), Horizontal::Right),
     ("Location", Length::FillPortion(2), Horizontal::Left),
     ("Character", Length::FillPortion(2), Horizontal::Left),
     ("When", Length::FillPortion(1), Horizontal::Left),
-  ])
+  ]);
+  table_header(&columns)
 }
 
 fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
@@ -687,10 +698,12 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
 
   let select = |cell| select_wrap(cell, BudgetEntryKind::Market, entry.owner, entry.transaction_id);
   let selected = state.market_selected(entry.owner, entry.transaction_id);
-  row_shell(
-    vec![
-      select(side_badge(side_label, side_color, Length::FillPortion(1))),
-      select(item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3))),
+  let mut cells = vec![
+    select(side_badge(side_label, side_color, Length::FillPortion(1))),
+    select(item_cell(&entry.item, &entry.type_icon, Length::FillPortion(3))),
+  ];
+  if state.budget_enabled() {
+    cells.push(
       container(budget_chip(
         state,
         entry.owner,
@@ -699,39 +712,41 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
       ))
       .width(Length::FillPortion(2))
       .into(),
-      select(mono_cell(
-        &entry.quantity.to_string(),
-        Length::FillPortion(1),
-        Horizontal::Right,
-        color::text::PRIMARY,
-      )),
-      select(mono_cell(
-        &fmt_isk(Some(entry.unit_price)),
-        Length::FillPortion(2),
-        Horizontal::Right,
-        color::text::secondary(),
-      )),
-      select(amount_cell(
-        &fmt_isk(Some(entry.total)),
-        Length::FillPortion(2),
-        color::text::PRIMARY,
-      )),
-      select(mono_cell(
-        &entry.location,
-        Length::FillPortion(2),
-        Horizontal::Left,
-        color::text::secondary(),
-      )),
-      select(market_character_cell(state, entry, Length::FillPortion(2))),
-      select(mono_cell(
-        &fmt_relative(&entry.date, now),
-        Length::FillPortion(1),
-        Horizontal::Left,
-        color::text::secondary(),
-      )),
-    ],
-    selected,
-  )
+    );
+  }
+  cells.extend([
+    select(mono_cell(
+      &entry.quantity.to_string(),
+      Length::FillPortion(1),
+      Horizontal::Right,
+      color::text::PRIMARY,
+    )),
+    select(mono_cell(
+      &fmt_isk(Some(entry.unit_price)),
+      Length::FillPortion(2),
+      Horizontal::Right,
+      color::text::secondary(),
+    )),
+    select(amount_cell(
+      &fmt_isk(Some(entry.total)),
+      Length::FillPortion(2),
+      color::text::PRIMARY,
+    )),
+    select(mono_cell(
+      &entry.location,
+      Length::FillPortion(2),
+      Horizontal::Left,
+      color::text::secondary(),
+    )),
+    select(market_character_cell(state, entry, Length::FillPortion(2))),
+    select(mono_cell(
+      &fmt_relative(&entry.date, now),
+      Length::FillPortion(1),
+      Horizontal::Left,
+      color::text::secondary(),
+    )),
+  ]);
+  row_shell(cells, selected)
 }
 
 /// Renders the per-entry budget chip in one of two states: the assigned envelope
@@ -2031,6 +2046,38 @@ mod tests {
 
       state.tab = Tab::Journal;
       assert!(super::super::pinned_header(&state).is_none());
+    }
+  }
+
+  mod budget_gating {
+    use super::*;
+
+    fn budget_off() -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(crate::config::SubFeature::Budget, false);
+      flags
+    }
+
+    #[test]
+    fn the_chip_is_suppressed_when_the_budget_sub_feature_is_off() {
+      let on = State::new(crate::config::FeatureFlags::default());
+      let off = State::new(budget_off());
+
+      assert!(on.budget_enabled(), "Budget chips render while the sub-feature is on");
+      assert!(
+        !off.budget_enabled(),
+        "the journal/market chip columns are dropped while Budget is off"
+      );
+    }
+
+    #[test]
+    fn the_market_header_renders_with_and_without_the_budget_column() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Market;
+      let _with_budget: Element<'_, Message> = super::super::market_header(&state);
+
+      state.sync_features(budget_off());
+      let _without_budget: Element<'_, Message> = super::super::market_header(&state);
     }
   }
 

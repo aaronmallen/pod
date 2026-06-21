@@ -383,6 +383,18 @@ impl FeatureFlags {
 
   pub fn set_sub_enabled(&mut self, sub: SubFeature, value: bool) {
     self.enabled[Self::index_of(sub)] = value;
+    self.enforce_couplings();
+  }
+
+  /// Budget has no ESI scope of its own; it derives entirely from Journal and Transactions activity.
+  /// It can only be on while at least one of those is on, so a toggle that leaves both off forces
+  /// Budget off too (this also makes enabling Budget a no-op while both are disabled).
+  fn enforce_couplings(&mut self) {
+    let derives_budget =
+      self.enabled[Self::index_of(SubFeature::Journal)] || self.enabled[Self::index_of(SubFeature::Transactions)];
+    if !derives_budget {
+      self.enabled[Self::index_of(SubFeature::Budget)] = false;
+    }
   }
 
   fn index_of(sub: SubFeature) -> usize {
@@ -968,6 +980,69 @@ mod tests {
     }
 
     #[test]
+    fn disabling_both_journal_and_transactions_auto_disables_budget() {
+      let mut flags = FeatureFlags::default();
+
+      flags.set_sub_enabled(SubFeature::Journal, false);
+      assert!(
+        flags.is_sub_enabled(SubFeature::Budget),
+        "one wallet activity source keeps Budget alive"
+      );
+
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+
+      assert!(
+        !flags.is_sub_enabled(SubFeature::Budget),
+        "Budget has no activity to derive from once both Journal and Transactions are off"
+      );
+    }
+
+    #[test]
+    fn budget_cannot_be_enabled_while_both_sources_are_off() {
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Journal, false);
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+
+      flags.set_sub_enabled(SubFeature::Budget, true);
+
+      assert!(
+        !flags.is_sub_enabled(SubFeature::Budget),
+        "enabling Budget is a no-op while both Journal and Transactions are off"
+      );
+    }
+
+    #[test]
+    fn re_enabling_an_activity_source_lets_budget_be_enabled_again() {
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Journal, false);
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+      assert!(!flags.is_sub_enabled(SubFeature::Budget));
+
+      flags.set_sub_enabled(SubFeature::Journal, true);
+      flags.set_sub_enabled(SubFeature::Budget, true);
+
+      assert!(
+        flags.is_sub_enabled(SubFeature::Budget),
+        "Budget can be turned back on once an activity source returns"
+      );
+    }
+
+    #[test]
+    fn a_legacy_config_with_budget_on_but_no_sources_loads_with_budget_off() {
+      let mut flags = FeatureFlags::default();
+
+      // Mirror a hand-edited nested config that turned both activity sources off but left Budget on.
+      flags.set_sub_enabled(SubFeature::Journal, false);
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+      flags.set_sub_enabled(SubFeature::Budget, true);
+
+      assert!(
+        !flags.is_sub_enabled(SubFeature::Budget),
+        "the coupling self-heals an inconsistent state"
+      );
+    }
+
+    #[test]
     fn enabled_sub_features_of_lists_only_the_groups_children() {
       let mut flags = FeatureFlags::default();
       flags.set_sub_enabled(SubFeature::Journal, false);
@@ -1224,6 +1299,24 @@ mod tests {
         "the next save re-serializes in the nested form: {serialized}"
       );
       assert!(serialized.contains("budget = false"), "{serialized}");
+    }
+
+    #[test]
+    fn it_forces_budget_off_when_a_nested_config_disables_both_activity_sources() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(
+        &path,
+        "[features.wallet]\njournal = false\ntransactions = false\nbudget = true\n",
+      )
+      .unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      assert!(
+        !features.is_sub_enabled(SubFeature::Budget),
+        "a config that leaves Budget on with both sources off loads with Budget coupled off"
+      );
     }
 
     #[test]

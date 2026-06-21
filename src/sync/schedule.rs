@@ -363,6 +363,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_suppresses_the_abyssals_job_while_keeping_asset_sync_for_other_sub_features() {
+      let now = Instant::now();
+      // Abyssals off (no MutaMarket evaluation), but Inventory/Values keep AssetSync alive.
+      let flags: FeatureFlags = toml::from_str("[asset_tracking]\nabyssals = false").unwrap();
+      let mut schedule = Schedule::with_features(flags);
+
+      schedule.enroll(CHARACTER, now);
+      let due = schedule.due(now);
+
+      assert!(
+        !due.contains(&JobKey::new(JobKind::CharacterAbyssals, CHARACTER)),
+        "the MutaMarket-backed abyssals job must not be scheduled while Abyssals is off, got {due:?}"
+      );
+      assert!(
+        due.contains(&JobKey::new(JobKind::AssetSync, CHARACTER)),
+        "AssetSync still runs for Inventory/Values, got {due:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_asset_sync_success_does_not_revive_a_disabled_abyssals_job() {
+      let now = Instant::now();
+      let flags: FeatureFlags = toml::from_str("[asset_tracking]\nabyssals = false").unwrap();
+      let mut schedule = Schedule::with_features(flags);
+
+      schedule.enroll(CHARACTER, now);
+      // Mirror the engine's on-success trigger: AssetSync would make the abyssals job due now.
+      schedule.make_due_now_for_subject(JobKind::CharacterAbyssals, CHARACTER, now);
+
+      assert!(
+        !schedule
+          .due(now)
+          .contains(&JobKey::new(JobKind::CharacterAbyssals, CHARACTER)),
+        "a disabled abyssals job has no schedule entry to make due, so no MutaMarket call fires"
+      );
+    }
+
+    #[tokio::test]
     async fn it_enrolls_a_subject_due_immediately() {
       let now = Instant::now();
       let mut schedule = Schedule::new();

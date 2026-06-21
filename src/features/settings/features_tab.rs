@@ -483,17 +483,32 @@ fn master_status(group: GroupState) -> &'static str {
   }
 }
 
+fn dependency_unmet(sub: SubFeature, settings: &Settings) -> bool {
+  let flags = settings.features();
+  match sub {
+    SubFeature::Budget => !flags.is_sub_enabled(SubFeature::Journal) && !flags.is_sub_enabled(SubFeature::Transactions),
+    _ => false,
+  }
+}
+
 fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Message> {
   let on = settings.features().is_sub_enabled(entry.sub);
+  // Budget derives from Journal/Transactions activity and has no scope of its own, so it cannot be
+  // enabled while both are off. Lock its toggle and explain why instead of letting a press no-op.
+  let locked = dependency_unmet(entry.sub, settings);
 
   let title = text(entry.title)
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let description = text(entry.description)
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary()));
+  let description = text(if locked {
+    "Enable Journal or Market Transactions to use Budget."
+  } else {
+    entry.description
+  })
+  .font(typography::body::REGULAR)
+  .size(typography::size::SM)
+  .style(typography::colored(color::text::secondary()));
   let labels = Column::with_children(vec![
     title.into(),
     container(description).max_width(DESCRIPTION_MAX_WIDTH).into(),
@@ -501,12 +516,14 @@ fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Mess
   .spacing(spacing::UNIT)
   .width(Length::Fill);
 
-  let row = Row::with_children(vec![
-    labels.into(),
-    toggle::toggle(on, Message::SubToggled(entry.sub, !on)),
-  ])
-  .align_y(Vertical::Center)
-  .spacing(spacing::SPACE_6);
+  let control = if locked {
+    toggle::toggle_disabled::<Message>(false)
+  } else {
+    toggle::toggle(on, Message::SubToggled(entry.sub, !on))
+  };
+  let row = Row::with_children(vec![labels.into(), control])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_6);
 
   let cell = container(row).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_3,

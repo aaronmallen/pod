@@ -703,6 +703,10 @@ impl State {
     &self.enabled_tabs
   }
 
+  pub(super) fn budget_enabled(&self) -> bool {
+    self.features.is_sub_enabled(crate::config::SubFeature::Budget)
+  }
+
   pub(super) fn sync_features(&mut self, features: crate::config::FeatureFlags) {
     self.features = features;
     self.enabled_tabs = enabled_tabs(&features);

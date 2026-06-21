@@ -101,6 +101,15 @@ impl Tab {
     }
   }
 
+  pub fn id(self) -> &'static str {
+    match self {
+      Tab::Blueprints => "blueprints",
+      Tab::Extractions => "extractions",
+      Tab::Jobs => "jobs",
+      Tab::Planner => "planner",
+    }
+  }
+
   pub fn label(self) -> &'static str {
     match self {
       Tab::Blueprints => "Blueprints",

@@ -1152,6 +1152,16 @@ impl Tab {
     }
   }
 
+  pub fn id(self) -> &'static str {
+    match self {
+      Tab::Budget => "budget",
+      Tab::Contracts => "contracts",
+      Tab::Journal => "journal",
+      Tab::Market => "market",
+      Tab::Wallets => "wallets",
+    }
+  }
+
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
     crate::features::registry::sub_descriptor(self.sub_feature())
       .scopes

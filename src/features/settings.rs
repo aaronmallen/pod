@@ -67,6 +67,18 @@ impl Category {
     categories
   }
 
+  pub fn id(self) -> &'static str {
+    match self {
+      Category::About => "about",
+      Category::Accessibility => "accessibility",
+      Category::Features => "features",
+      Category::Industry => "industry",
+      Category::Storage => "storage",
+      Category::Tags => "tags",
+      Category::Ui => "ui",
+    }
+  }
+
   fn label(self) -> &'static str {
     match self {
       Category::About => "About",

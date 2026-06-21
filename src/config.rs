@@ -103,6 +103,27 @@ pub enum CalendarWeekStart {
   Sunday,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CascadeMode {
+  #[default]
+  Flyout,
+  None,
+  SubRail,
+}
+
+impl CascadeMode {
+  pub const ALL: [CascadeMode; 3] = [CascadeMode::Flyout, CascadeMode::SubRail, CascadeMode::None];
+
+  pub fn label(self) -> &'static str {
+    match self {
+      CascadeMode::Flyout => "Flyout",
+      CascadeMode::None => "Off",
+      CascadeMode::SubRail => "Sub-rail",
+    }
+  }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
   #[error("failed to determine the user's config directory")]
@@ -666,6 +687,9 @@ pub enum StorageMode {
 #[getset(set = "pub")]
 pub struct UiConfig {
   #[getset(get = "pub")]
+  #[serde(default, deserialize_with = "deserialize_cascade_mode")]
+  cascade_mode: CascadeMode,
+  #[getset(get = "pub")]
   #[serde(default)]
   nav_location: NavLocation,
   #[getset(get = "pub", get_mut = "pub")]
@@ -700,6 +724,7 @@ impl UiConfig {
 impl Default for UiConfig {
   fn default() -> Self {
     Self {
+      cascade_mode: CascadeMode::default(),
       nav_location: NavLocation::default(),
       rail_order: default_rail_order(),
     }
@@ -755,6 +780,21 @@ fn default_eve_client_id() -> String {
 
 fn default_rail_order() -> Vec<Destination> {
   Destination::REORDERABLE.to_vec()
+}
+
+/// Deserializes the cascade mode while healing an unknown value (a renamed or removed mode from an
+/// older config) back to the default rather than failing the whole load.
+fn deserialize_cascade_mode<'de, D>(deserializer: D) -> Result<CascadeMode, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let raw = String::deserialize(deserializer)?;
+  Ok(match raw.as_str() {
+    "flyout" => CascadeMode::Flyout,
+    "none" => CascadeMode::None,
+    "sub_rail" => CascadeMode::SubRail,
+    _ => CascadeMode::default(),
+  })
 }
 
 /// Deserializes the rail order while silently dropping ids that are not a known [`Destination`], so a
@@ -1908,6 +1948,61 @@ mod tests {
         ui.set_nav_location(NavLocation::Right);
 
         assert!(!ui.is_default());
+      }
+
+      #[test]
+      fn it_is_false_once_the_cascade_mode_moves() {
+        let mut ui = UiConfig::default();
+        ui.set_cascade_mode(CascadeMode::None);
+
+        assert!(!ui.is_default());
+      }
+    }
+
+    mod cascade_mode {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_defaults_to_flyout() {
+        assert_eq!(*UiConfig::default().cascade_mode(), CascadeMode::Flyout);
+      }
+
+      #[test]
+      fn it_deserializes_each_known_mode() {
+        for (raw, expected) in [
+          ("flyout", CascadeMode::Flyout),
+          ("sub_rail", CascadeMode::SubRail),
+          ("none", CascadeMode::None),
+        ] {
+          let toml = format!("cascade_mode = \"{raw}\"\nnav_location = \"left\"\nrail_order = []\n");
+          let ui: UiConfig = toml::from_str(&toml).unwrap();
+
+          assert_eq!(*ui.cascade_mode(), expected, "mode `{raw}` must deserialize");
+        }
+      }
+
+      #[test]
+      fn it_heals_an_unknown_mode_back_to_the_default() {
+        let toml = "cascade_mode = \"carousel\"\nnav_location = \"left\"\nrail_order = []\n";
+
+        let ui: UiConfig = toml::from_str(toml).unwrap();
+
+        assert_eq!(*ui.cascade_mode(), CascadeMode::Flyout);
+      }
+
+      #[test]
+      fn it_round_trips_each_mode_through_toml() {
+        for mode in CascadeMode::ALL {
+          let mut ui = UiConfig::default();
+          ui.set_cascade_mode(mode);
+
+          let toml = toml::to_string_pretty(&ui).unwrap();
+          let restored: UiConfig = toml::from_str(&toml).unwrap();
+
+          assert_eq!(*restored.cascade_mode(), mode);
+        }
       }
     }
 

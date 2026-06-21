@@ -55,6 +55,16 @@ impl View {
     }
   }
 
+  pub fn id(self) -> &'static str {
+    match self {
+      View::Agenda => "agenda",
+      View::Day => "day",
+      View::Month => "month",
+      View::Week => "week",
+      View::Year => "year",
+    }
+  }
+
   pub fn label(self) -> &'static str {
     match self {
       View::Agenda => "Agenda",

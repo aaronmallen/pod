@@ -84,6 +84,10 @@ const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
 
+/// Grace window before a rail flyout closes after the pointer leaves the icon, so the cursor can
+/// cross the gap into the flyout without it snapping shut.
+const RAIL_HOVER_GRACE: Duration = Duration::from_millis(160);
+
 const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
 
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
@@ -140,6 +144,8 @@ struct App {
   outbox: sync::OutboxStatus,
   pending_auth: Option<auth::Message>,
   pending_images: HashSet<(store::images::ImageKind, i64)>,
+  rail_hover: Option<rail::Destination>,
+  rail_hover_gen: u64,
   read_only: Option<HolderInfo>,
   roster_dirty: bool,
   route: Route,
@@ -236,6 +242,8 @@ enum Message {
   Pulled(bool),
   Pushed(Option<SystemTime>),
   Quit,
+  RailHover(Option<rail::Destination>),
+  RailHoverExpire(u64),
   ReacquireLease,
   Ready(Runtime),
   ReauthCharacter(i64),
@@ -801,6 +809,8 @@ fn boot() -> (App, Task<Message>) {
     outbox: sync::OutboxStatus::new(),
     pending_auth: None,
     pending_images: HashSet::new(),
+    rail_hover: None,
+    rail_hover_gen: 0,
     read_only: None,
     roster_dirty: false,
     route: Route::default(),
@@ -1746,15 +1756,20 @@ fn main_view(app: &App) -> Element<'_, Message> {
   let enabled_features = enabled_features(app);
   let ui = ui_config(app);
   let nav_location = *ui.nav_location();
-  let rail_element = rail(
-    app.route.destination(),
+  let rail_props = rail::RailProps {
+    active: app.route.destination(),
+    active_sub: active_sub_section(app),
+    calendar_attention: app.calendar_attention,
+    cascade_mode: *ui.cascade_mode(),
+    enabled_features: &enabled_features,
+    hovered: app.rail_hover,
     mail_unread,
-    app.calendar_attention,
-    &enabled_features,
-    ui.rail_order(),
     nav_location,
-    Message::Nav,
-  );
+    rail_order: ui.rail_order(),
+  };
+  let rail_element = rail(rail_props, Message::Nav, Message::RailHover, |dest, id| {
+    Message::NavTo(dest, Some(id))
+  });
   let body_children: Vec<Element<'_, Message>> = match nav_location {
     config::NavLocation::Left => vec![rail_element, content.into()],
     config::NavLocation::Right => vec![content.into(), rail_element],
@@ -2605,6 +2620,8 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::Nav(destination) => handle_nav(app, destination),
     Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
+    Message::RailHover(destination) => handle_rail_hover(app, destination),
+    Message::RailHoverExpire(generation) => handle_rail_hover_expire(app, generation),
     Message::Settings(msg) => handle_settings(app, msg),
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
     Message::Skills(msg) => handle_skills(app, msg),
@@ -3948,6 +3965,46 @@ fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -
   }
 }
 
+// The catalog sub-section id of the active tab on the current route, so the flyout can highlight the
+// open tab. Destinations without inner tabs (Mail) have no active sub-section.
+fn active_sub_section(app: &App) -> Option<&'static str> {
+  match app.route.destination() {
+    rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
+    rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
+    rail::Destination::Characters => app.character_manager.as_ref().map(|state| state.active_pane().id()),
+    rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
+    rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),
+    rail::Destination::Wallet => app.wallet.as_ref().map(|state| state.active_tab().id()),
+    rail::Destination::Mail | rail::Destination::Skills => None,
+  }
+}
+
+fn handle_rail_hover(app: &mut App, destination: Option<rail::Destination>) -> Task<Message> {
+  match destination {
+    Some(destination) => {
+      app.rail_hover = Some(destination);
+      app.rail_hover_gen = app.rail_hover_gen.wrapping_add(1);
+      Task::none()
+    }
+    None => {
+      // Defer the close so the pointer can cross into the flyout; a re-entry bumps the generation
+      // and strands this expiry.
+      app.rail_hover_gen = app.rail_hover_gen.wrapping_add(1);
+      let generation = app.rail_hover_gen;
+      Task::perform(async move { tokio::time::sleep(RAIL_HOVER_GRACE).await }, move |()| {
+        Message::RailHoverExpire(generation)
+      })
+    }
+  }
+}
+
+fn handle_rail_hover_expire(app: &mut App, generation: u64) -> Task<Message> {
+  if app.rail_hover_gen == generation {
+    app.rail_hover = None;
+  }
+  Task::none()
+}
+
 fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   let load_roster = character_manager::load(&runtime.db, *runtime.settings.features());
   app.character_manager = Some(character_manager::State::new());
@@ -4583,6 +4640,8 @@ mod tests {
       outbox: sync::OutboxStatus::new(),
       pending_auth: None,
       pending_images: HashSet::new(),
+      rail_hover: None,
+      rail_hover_gen: 0,
       read_only: None,
       roster_dirty: false,
       route: Route::default(),
@@ -8016,6 +8075,74 @@ mod tests {
         app.wallet.as_ref().map(wallet::State::active_tab),
         Some(wallet::Tab::default())
       );
+    }
+
+    #[test]
+    fn it_records_the_hovered_rail_destination() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::RailHover(Some(rail::Destination::Wallet)));
+
+      assert_eq!(app.rail_hover, Some(rail::Destination::Wallet));
+    }
+
+    #[test]
+    fn it_defers_the_flyout_close_until_the_grace_window_expires() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::RailHover(Some(rail::Destination::Wallet)));
+
+      let _ = update(&mut app, Message::RailHover(None));
+
+      assert_eq!(
+        app.rail_hover,
+        Some(rail::Destination::Wallet),
+        "the close is deferred, not immediate"
+      );
+    }
+
+    #[test]
+    fn it_closes_the_flyout_when_the_current_expiry_fires() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::RailHover(Some(rail::Destination::Wallet)));
+      let _ = update(&mut app, Message::RailHover(None));
+      let generation = app.rail_hover_gen;
+
+      let _ = update(&mut app, Message::RailHoverExpire(generation));
+
+      assert_eq!(app.rail_hover, None);
+    }
+
+    #[test]
+    fn it_strands_a_stale_expiry_after_a_re_entry() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::RailHover(Some(rail::Destination::Wallet)));
+      let _ = update(&mut app, Message::RailHover(None));
+      let stale = app.rail_hover_gen;
+      let _ = update(&mut app, Message::RailHover(Some(rail::Destination::Assets)));
+
+      let _ = update(&mut app, Message::RailHoverExpire(stale));
+
+      assert_eq!(
+        app.rail_hover,
+        Some(rail::Destination::Assets),
+        "re-entry survives the stale expiry"
+      );
+    }
+
+    #[test]
+    fn it_reports_the_active_sub_section_for_the_open_tab() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Wallet, Some("budget")));
+
+      assert_eq!(active_sub_section(&app), Some("budget"));
+    }
+
+    #[test]
+    fn it_reports_no_active_sub_section_for_a_tabless_destination() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Nav(rail::Destination::Mail));
+
+      assert_eq!(active_sub_section(&app), None);
     }
 
     #[test]

@@ -1,18 +1,31 @@
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Border, Element, Event, Length, Padding, Rectangle, Size, Vector,
+  advanced::{
+    Clipboard, Layout, Shell, Widget,
+    layout::{Limits, Node},
+    mouse,
+    overlay::{self, Element as OverlayElement},
+    renderer,
+    widget::{Operation, Tree},
+  },
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, stack, svg},
+  widget::{Column, Row, Space, button, container, mouse_area, stack, svg, text},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  config::{Feature, NavLocation},
-  features::registry,
-  ui::style::{color, radius, spacing},
+  config::{CascadeMode, Feature, NavLocation},
+  features::{nav_catalog, registry},
+  ui::style::{color, radius, spacing, typography},
 };
 
 const BADGE_INSET: f32 = 8.0;
 const BADGE_SIZE: f32 = 6.0;
+const FLYOUT_GAP: f32 = 10.0;
+const FLYOUT_MIN_WIDTH: f32 = 212.0;
+/// Upper bound on the flyout panel width so it stays a narrow side-anchored panel (matching the
+/// design's `minWidth: 212`) instead of stretching to fill the viewport.
+const FLYOUT_MAX_WIDTH: f32 = 260.0;
 const ICON_SIZE: f32 = 22.0;
 const INDICATOR_HEIGHT: f32 = 24.0;
 const INDICATOR_WIDTH: f32 = 2.0;
@@ -20,6 +33,7 @@ const LOGO_SIZE: f32 = 28.0;
 const NAV_ITEM_SIZE: f32 = 44.0;
 const RAIL_WIDTH: f32 = 68.0;
 const SETTINGS_BOTTOM_INSET: f32 = 16.0;
+const SUB_ICON_SIZE: f32 = 16.0;
 
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
@@ -73,18 +87,43 @@ impl Destination {
   }
 }
 
+/// Inputs the cascade-aware rail needs beyond the per-frame `on_*` closures: which icon is hovered,
+/// which sub-section is active (for highlight), and how the cascade should surface (flyout/off).
+pub struct RailProps<'a> {
+  pub active: Destination,
+  pub active_sub: Option<&'static str>,
+  pub calendar_attention: i64,
+  pub cascade_mode: CascadeMode,
+  pub enabled_features: &'a [Feature],
+  pub hovered: Option<Destination>,
+  pub mail_unread: i64,
+  pub nav_location: NavLocation,
+  pub rail_order: &'a [Destination],
+}
+
 pub fn rail<'a, M>(
-  active: Destination,
-  mail_unread: i64,
-  calendar_attention: i64,
-  enabled_features: &[Feature],
-  rail_order: &[Destination],
-  nav_location: NavLocation,
+  props: RailProps<'_>,
   on_nav: impl Fn(Destination) -> M + 'a,
+  on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
 ) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
+  let RailProps {
+    active,
+    active_sub,
+    calendar_attention,
+    cascade_mode,
+    enabled_features,
+    hovered,
+    mail_unread,
+    nav_location,
+    rail_order,
+  } = props;
+
+  let flyouts_enabled = cascade_mode == CascadeMode::Flyout;
+
   let logo_cell = container(
     svg(svg::Handle::from_memory(POD_MARK))
       .width(LOGO_SIZE)
@@ -123,7 +162,22 @@ where
       _ => false,
     };
 
-    let item = nav_item_badged(icon_for(destination), active == destination, badge, on_nav(destination));
+    let is_active = active == destination;
+    let icon = nav_item_badged(icon_for(destination), is_active, badge, on_nav(destination));
+    let item = if flyouts_enabled {
+      wrap_with_flyout(
+        icon,
+        destination,
+        hovered == Some(destination),
+        is_active.then_some(active_sub).flatten(),
+        false,
+        nav_location,
+        on_hover.clone(),
+        on_sub_nav.clone(),
+      )
+    } else {
+      icon
+    };
 
     let cell = if is_first_item {
       container(item).padding(Padding {
@@ -140,12 +194,23 @@ where
     column_children.push(cell.into());
   }
 
-  let settings = container(nav_item(
-    SETTINGS_ICON,
-    active == Destination::Settings,
-    on_nav(Destination::Settings),
-  ))
-  .padding(Padding {
+  let settings_active = active == Destination::Settings;
+  let settings_icon = nav_item(SETTINGS_ICON, settings_active, on_nav(Destination::Settings));
+  let settings_item = if flyouts_enabled {
+    wrap_with_flyout(
+      settings_icon,
+      Destination::Settings,
+      hovered == Some(Destination::Settings),
+      settings_active.then_some(active_sub).flatten(),
+      true,
+      nav_location,
+      on_hover.clone(),
+      on_sub_nav,
+    )
+  } else {
+    settings_icon
+  };
+  let settings = container(settings_item).padding(Padding {
     top: 0.0,
     right: 0.0,
     bottom: SETTINGS_BOTTOM_INSET,
@@ -181,6 +246,215 @@ where
   };
 
   Row::with_children(children).height(Length::Fill).into()
+}
+
+fn wrap_with_flyout<'a, M>(
+  icon: Element<'a, M>,
+  destination: Destination,
+  is_hovered: bool,
+  active_sub: Option<&'static str>,
+  open_up: bool,
+  nav_location: NavLocation,
+  on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let Some(section) = nav_catalog::section(destination) else {
+    return icon;
+  };
+  if section.sub_sections.is_empty() {
+    return icon;
+  }
+
+  let trigger: Element<'a, M> = mouse_area(icon)
+    .on_enter(on_hover(Some(destination)))
+    .on_exit(on_hover(None))
+    .into();
+
+  if !is_hovered {
+    return trigger;
+  }
+
+  let panel = flyout_panel(
+    section,
+    active_sub,
+    destination,
+    nav_location,
+    on_hover.clone(),
+    on_sub_nav,
+  );
+
+  SideFlyout::new(trigger, panel, open_up).into()
+}
+
+fn flyout_panel<'a, M>(
+  section: &'static nav_catalog::Section,
+  active_id: Option<&'static str>,
+  destination: Destination,
+  nav_location: NavLocation,
+  on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let head_icon = svg(svg::Handle::from_memory(section.icon()))
+    .width(Length::Fixed(SUB_ICON_SIZE))
+    .height(Length::Fixed(SUB_ICON_SIZE))
+    .style(|_, _| svg::Style {
+      color: Some(color::accent::PLASMA),
+    });
+  let head_label = text(section.label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let kicker = text(section.kicker)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let head = container(
+    Row::with_children(vec![
+      head_icon.into(),
+      head_label.into(),
+      Space::new().width(Length::Fill).into(),
+      kicker.into(),
+    ])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_2_5,
+  });
+
+  let mut children: Vec<Element<'a, M>> = vec![head.into(), divider()];
+  for sub in section.sub_sections {
+    let active = active_id == Some(sub.id);
+    children.push(flyout_row(sub, active, destination, on_sub_nav.clone()));
+  }
+
+  let panel = container(Column::with_children(children).spacing(2.0).width(Length::Fill))
+    .padding(spacing::UNIT)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    });
+
+  // Pad the rail-facing side with the visual gap so the transparent gutter between the icon and the
+  // panel is part of the hover region: moving the pointer from the icon onto the panel never crosses
+  // dead space, so the flyout keeps the hover alive instead of snapping shut mid-gap.
+  let (pad_left, pad_right) = match nav_location {
+    NavLocation::Left => (FLYOUT_GAP, 0.0),
+    NavLocation::Right => (0.0, FLYOUT_GAP),
+  };
+  let gutter = container(panel).padding(Padding {
+    top: 0.0,
+    right: pad_right,
+    bottom: 0.0,
+    left: pad_left,
+  });
+
+  mouse_area(gutter)
+    .on_enter(on_hover(Some(destination)))
+    .on_exit(on_hover(None))
+    .into()
+}
+
+fn divider<'a, M>() -> Element<'a, M>
+where
+  M: 'a,
+{
+  container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 4.0,
+      left: 0.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn flyout_row<'a, M>(
+  sub: &'static nav_catalog::SubSection,
+  active: bool,
+  destination: Destination,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let icon_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let label_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+
+  let icon = svg(svg::Handle::from_memory(sub.icon))
+    .width(Length::Fixed(SUB_ICON_SIZE))
+    .height(Length::Fixed(SUB_ICON_SIZE))
+    .style(move |_, _| svg::Style {
+      color: Some(icon_color),
+    });
+  let label = text(sub.label)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(label_color));
+
+  let row = container(
+    Row::with_children(vec![icon.into(), label.into()])
+      .align_y(Vertical::Center)
+      .spacing(spacing::SPACE_2_5),
+  )
+  .width(Length::Fill);
+
+  button(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_2_5,
+    })
+    .on_press(on_sub_nav(destination, sub.id))
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      let background = if active {
+        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+      } else if hovered {
+        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
+      } else {
+        None
+      };
+      button::Style {
+        background,
+        border: Border {
+          radius: radius::SUBTLE.into(),
+          ..Border::default()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
 }
 
 fn icon_for(destination: Destination) -> &'static [u8] {
@@ -303,9 +577,288 @@ where
     .into()
 }
 
+/// The flyout's keep-open predicate: the popover must stay open while the cursor rests anywhere over
+/// the panel (its full layout bounds, including the transparent icon→panel gutter). When this is
+/// true the overlay captures the event so the rail icon's `on_exit` close never fires; when it is
+/// false (cursor over neither icon nor panel) the rail's leave-grace timer is left to close it.
+fn flyout_keeps_open(cursor: mouse::Cursor, panel_bounds: Rectangle) -> bool {
+  cursor.is_over(panel_bounds)
+}
+
+/// A side-anchored flyout: floats `popover` to the right of `underlay` (left when the rail is docked
+/// right via the viewport-edge clamp) and opens downward, or upward for a near-bottom trigger.
+struct SideFlyout<'a, M, Theme, Renderer> {
+  open_up: bool,
+  popover: Element<'a, M, Theme, Renderer>,
+  underlay: Element<'a, M, Theme, Renderer>,
+}
+
+impl<'a, M, Theme, Renderer> SideFlyout<'a, M, Theme, Renderer>
+where
+  Renderer: iced::advanced::Renderer,
+{
+  fn new(
+    underlay: impl Into<Element<'a, M, Theme, Renderer>>,
+    popover: impl Into<Element<'a, M, Theme, Renderer>>,
+    open_up: bool,
+  ) -> Self {
+    Self {
+      open_up,
+      popover: popover.into(),
+      underlay: underlay.into(),
+    }
+  }
+}
+
+impl<M, Theme, Renderer> Widget<M, Theme, Renderer> for SideFlyout<'_, M, Theme, Renderer>
+where
+  M: Clone,
+  Renderer: iced::advanced::Renderer,
+{
+  fn children(&self) -> Vec<Tree> {
+    vec![Tree::new(&self.underlay), Tree::new(&self.popover)]
+  }
+
+  fn diff(&self, tree: &mut Tree) {
+    tree.diff_children(&[&self.underlay, &self.popover]);
+  }
+
+  fn size(&self) -> Size<Length> {
+    self.underlay.as_widget().size()
+  }
+
+  fn size_hint(&self) -> Size<Length> {
+    self.underlay.as_widget().size_hint()
+  }
+
+  fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &Limits) -> Node {
+    self
+      .underlay
+      .as_widget_mut()
+      .layout(&mut tree.children[0], renderer, limits)
+  }
+
+  fn update(
+    &mut self,
+    tree: &mut Tree,
+    event: &Event,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    renderer: &Renderer,
+    clipboard: &mut dyn Clipboard,
+    shell: &mut Shell<'_, M>,
+    viewport: &Rectangle,
+  ) {
+    self.underlay.as_widget_mut().update(
+      &mut tree.children[0],
+      event,
+      layout,
+      cursor,
+      renderer,
+      clipboard,
+      shell,
+      viewport,
+    );
+  }
+
+  fn draw(
+    &self,
+    tree: &Tree,
+    renderer: &mut Renderer,
+    theme: &Theme,
+    style: &renderer::Style,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    viewport: &Rectangle,
+  ) {
+    self
+      .underlay
+      .as_widget()
+      .draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport);
+  }
+
+  fn mouse_interaction(
+    &self,
+    tree: &Tree,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    viewport: &Rectangle,
+    renderer: &Renderer,
+  ) -> mouse::Interaction {
+    self
+      .underlay
+      .as_widget()
+      .mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+  }
+
+  fn operate(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
+    self
+      .underlay
+      .as_widget_mut()
+      .operate(&mut tree.children[0], layout, renderer, operation);
+  }
+
+  fn overlay<'b>(
+    &'b mut self,
+    tree: &'b mut Tree,
+    layout: Layout<'b>,
+    _renderer: &Renderer,
+    viewport: &Rectangle,
+    translation: Vector,
+  ) -> Option<OverlayElement<'b, M, Theme, Renderer>> {
+    let (_, popover_tree) = tree.children.split_at_mut(1);
+
+    Some(OverlayElement::new(Box::new(FlyoutOverlay {
+      bounds: layout.bounds() + translation,
+      open_up: self.open_up,
+      popover: &mut self.popover,
+      tree: &mut popover_tree[0],
+      viewport: *viewport,
+    })))
+  }
+}
+
+struct FlyoutOverlay<'a, 'b, M, Theme, Renderer> {
+  bounds: Rectangle,
+  open_up: bool,
+  popover: &'a mut Element<'b, M, Theme, Renderer>,
+  tree: &'a mut Tree,
+  viewport: Rectangle,
+}
+
+impl<M, Theme, Renderer> overlay::Overlay<M, Theme, Renderer> for FlyoutOverlay<'_, '_, M, Theme, Renderer>
+where
+  M: Clone,
+  Renderer: iced::advanced::Renderer,
+{
+  fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
+    let max_height = if self.open_up {
+      self.bounds.y + self.bounds.height
+    } else {
+      bounds.height - self.bounds.y
+    }
+    .max(1.0);
+    // Constrain the panel to a narrow side-anchored width; never let it stretch to the viewport. The
+    // popover carries the icon→panel gap as transparent internal padding (a contiguous hover
+    // region), so allow that extra `FLYOUT_GAP` on top of the visible panel width.
+    let max_width = (FLYOUT_MAX_WIDTH + FLYOUT_GAP).min(bounds.width).max(FLYOUT_MIN_WIDTH);
+    let limits = Limits::new(Size::new(FLYOUT_MIN_WIDTH, 0.0), Size::new(max_width, max_height));
+
+    let node = self.popover.as_widget_mut().layout(self.tree, renderer, &limits);
+    let size = node.size();
+
+    // Anchor the popover flush to the trigger; the visible gap is the popover's own gutter padding,
+    // so there is no dead space between the icon and the panel. Prefer the right of the trigger;
+    // flip to the left if it would overflow the viewport (the rail docked on the right edge).
+    let right_x = self.bounds.x + self.bounds.width;
+    let x = if right_x + size.width <= bounds.width {
+      right_x
+    } else {
+      (self.bounds.x - size.width).max(0.0)
+    };
+    let y = if self.open_up {
+      (self.bounds.y + self.bounds.height - size.height).max(0.0)
+    } else {
+      self.bounds.y.min((bounds.height - size.height).max(0.0))
+    };
+
+    node.move_to(iced::Point::new(x, y))
+  }
+
+  fn draw(
+    &self,
+    renderer: &mut Renderer,
+    theme: &Theme,
+    style: &renderer::Style,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+  ) {
+    self
+      .popover
+      .as_widget()
+      .draw(self.tree, renderer, theme, style, layout, cursor, &layout.bounds());
+  }
+
+  fn update(
+    &mut self,
+    event: &Event,
+    layout: Layout<'_>,
+    cursor: mouse::Cursor,
+    renderer: &Renderer,
+    clipboard: &mut dyn Clipboard,
+    shell: &mut Shell<'_, M>,
+  ) {
+    let viewport = self.viewport;
+    self
+      .popover
+      .as_widget_mut()
+      .update(self.tree, event, layout, cursor, renderer, clipboard, shell, &viewport);
+
+    // Keep the flyout open while the cursor rests anywhere over the panel. The panel's own
+    // `mouse_area` publishes the keep-open message via `on_enter`, but that is not enough on its own:
+    // in the same frame iced still feeds the *base* rail tree the live cursor, and the rail icon's
+    // `mouse_area` — now that the pointer sits over the panel rather than the icon — fires `on_exit`
+    // (`RailHover(None)`) which lands *after* the overlay's `on_enter` and wins, snapping the flyout
+    // shut. Capturing the event whenever the cursor is over the panel makes iced skip that base-tree
+    // update (see `UserInterface::update`: a `Captured` overlay status short-circuits the base
+    // pass), so the spurious close never fires and the steady "cursor on panel" state stays open.
+    if flyout_keeps_open(cursor, layout.bounds()) {
+      shell.capture_event();
+    }
+  }
+
+  fn mouse_interaction(&self, layout: Layout<'_>, cursor: mouse::Cursor, renderer: &Renderer) -> mouse::Interaction {
+    let inner = self
+      .popover
+      .as_widget()
+      .mouse_interaction(self.tree, layout, cursor, &layout.bounds(), renderer);
+    // Report a non-`None` interaction whenever the cursor is over the panel so iced masks the base
+    // cursor (`Cursor::Unavailable`) for the rail tree, reinforcing that the hover belongs to the
+    // flyout and not the icon underneath.
+    if inner == mouse::Interaction::None && flyout_keeps_open(cursor, layout.bounds()) {
+      mouse::Interaction::Idle
+    } else {
+      inner
+    }
+  }
+
+  fn index(&self) -> f32 {
+    1.0
+  }
+}
+
+impl<'a, M, Theme, Renderer> From<SideFlyout<'a, M, Theme, Renderer>> for Element<'a, M, Theme, Renderer>
+where
+  M: Clone + 'a,
+  Theme: 'a,
+  Renderer: iced::advanced::Renderer + 'a,
+{
+  fn from(flyout: SideFlyout<'a, M, Theme, Renderer>) -> Self {
+    Element::new(flyout)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn props<'a>(active: Destination, features: &'a [Feature], order: &'a [Destination]) -> RailProps<'a> {
+    RailProps {
+      active,
+      active_sub: None,
+      calendar_attention: 0,
+      cascade_mode: CascadeMode::Flyout,
+      enabled_features: features,
+      hovered: None,
+      mail_unread: 0,
+      nav_location: NavLocation::Left,
+      rail_order: order,
+    }
+  }
+
+  fn render(props: RailProps<'_>) -> Element<'_, Destination> {
+    rail(props, |d| d, |_| Destination::Characters, |d, _| d)
+  }
 
   #[test]
   fn nav_item_badged_renders_with_and_without_a_badge() {
@@ -324,24 +877,10 @@ mod tests {
   fn rail_docks_to_either_side() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let _left: Element<'_, Destination> = rail(
-      Destination::Characters,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-    let _right: Element<'_, Destination> = rail(
-      Destination::Characters,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Right,
-      |d| d,
-    );
+    let _left: Element<'_, Destination> = render(props(Destination::Characters, &all_features, &order));
+    let mut right = props(Destination::Characters, &all_features, &order);
+    right.nav_location = NavLocation::Right;
+    let _right: Element<'_, Destination> = render(right);
   }
 
   #[test]
@@ -349,26 +888,10 @@ mod tests {
     let order = Destination::REORDERABLE;
 
     let no_features: Vec<Feature> = vec![];
-    let _el: Element<'_, Destination> = rail(
-      Destination::Characters,
-      0,
-      0,
-      &no_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
+    let _el: Element<'_, Destination> = render(props(Destination::Characters, &no_features, &order));
 
     let mail_only = vec![Feature::Mail];
-    let _el: Element<'_, Destination> = rail(
-      Destination::Characters,
-      0,
-      0,
-      &mail_only,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
+    let _el: Element<'_, Destination> = render(props(Destination::Characters, &mail_only, &order));
   }
 
   #[test]
@@ -383,15 +906,7 @@ mod tests {
       Destination::Mail,
       Destination::Calendar,
     ];
-    let _el: Element<'_, Destination> = rail(
-      Destination::Wallet,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
+    let _el: Element<'_, Destination> = render(props(Destination::Wallet, &all_features, &order));
   }
 
   #[test]
@@ -401,126 +916,154 @@ mod tests {
       .filter(|&feature| feature != Feature::Industry)
       .collect();
     let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
-      Destination::Characters,
-      0,
-      0,
-      &features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
+    let _el: Element<'_, Destination> = render(props(Destination::Characters, &features, &order));
   }
 
   #[test]
-  fn rail_renders_with_assets_active() {
+  fn rail_renders_each_active_destination() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
+    for active in [
       Destination::Assets,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-  }
-
-  #[test]
-  fn rail_renders_with_calendar_active_and_attention_badge() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
       Destination::Calendar,
-      0,
-      2,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-  }
-
-  #[test]
-  fn rail_renders_with_characters_active() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
       Destination::Characters,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-  }
-
-  #[test]
-  fn rail_renders_with_industry_active() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
       Destination::Industry,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-  }
-
-  #[test]
-  fn rail_renders_with_mail_active_and_unread_badge() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(Destination::Mail, 3, 0, &all_features, &order, NavLocation::Left, |d| d);
-  }
-
-  #[test]
-  fn rail_renders_with_settings_active() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
+      Destination::Mail,
       Destination::Settings,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
-  }
-
-  #[test]
-  fn rail_renders_with_skills_active() {
-    let all_features = Feature::ALL;
-    let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
       Destination::Skills,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
+      Destination::Wallet,
+    ] {
+      let _el: Element<'_, Destination> = render(props(active, &all_features, &order));
+    }
+  }
+
+  #[test]
+  fn rail_renders_badges_for_mail_and_calendar() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let mut mail = props(Destination::Mail, &all_features, &order);
+    mail.mail_unread = 3;
+    let _mail: Element<'_, Destination> = render(mail);
+
+    let mut calendar = props(Destination::Calendar, &all_features, &order);
+    calendar.calendar_attention = 2;
+    let _calendar: Element<'_, Destination> = render(calendar);
+  }
+
+  #[test]
+  fn rail_opens_a_flyout_for_a_hovered_section_with_sub_sections() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let mut hovered = props(Destination::Wallet, &all_features, &order);
+    hovered.hovered = Some(Destination::Wallet);
+    hovered.active_sub = Some("budget");
+
+    let _el: Element<'_, Destination> = render(hovered);
+  }
+
+  #[test]
+  fn flyout_width_is_bounded_not_full_screen() {
+    // The flyout must stay a narrow side-anchored panel: the bounded width keeps the overlay from
+    // stretching across the viewport (the original full-width bug).
+    assert!(FLYOUT_MIN_WIDTH > 0.0);
+    assert!(
+      FLYOUT_MAX_WIDTH >= FLYOUT_MIN_WIDTH,
+      "max width must not undercut the min width"
+    );
+    assert!(
+      FLYOUT_MAX_WIDTH <= 320.0,
+      "flyout must remain a narrow panel, not a full-width sheet"
     );
   }
 
   #[test]
-  fn rail_renders_with_wallet_active() {
+  fn flyout_stays_open_while_the_cursor_is_over_the_panel() {
+    // The keep-open predicate drives the overlay's event-capture: cursor anywhere over the panel
+    // bounds must report "stay open" (so the icon's on_exit close is suppressed), and a cursor over
+    // neither icon nor panel must report "close" (so the rail's leave-grace timer can fire).
+    let panel = Rectangle {
+      x: 68.0,
+      y: 100.0,
+      width: 222.0,
+      height: 240.0,
+    };
+
+    let over_panel = mouse::Cursor::Available(iced::Point::new(150.0, 200.0));
+    assert!(
+      flyout_keeps_open(over_panel, panel),
+      "resting on the panel keeps the flyout open"
+    );
+
+    let panel_edge = mouse::Cursor::Available(iced::Point::new(panel.x + 1.0, panel.y + 1.0));
+    assert!(
+      flyout_keeps_open(panel_edge, panel),
+      "the rail-facing gutter edge of the panel still counts as over the panel"
+    );
+
+    let off_panel = mouse::Cursor::Available(iced::Point::new(500.0, 500.0));
+    assert!(
+      !flyout_keeps_open(off_panel, panel),
+      "cursor over neither icon nor panel lets the flyout close"
+    );
+
+    assert!(
+      !flyout_keeps_open(mouse::Cursor::Unavailable, panel),
+      "an unavailable cursor cannot keep the flyout open"
+    );
+  }
+
+  #[test]
+  fn flyout_panel_builds_for_either_dock_side() {
+    // Both dock sides build the panel through the gap-bridging gutter (the keep-open-on-flyout-hover
+    // path): the panel's mouse_area carries the icon→panel gap as part of its hover region.
+    let section = nav_catalog::section(Destination::Wallet).expect("wallet section");
+    let _left: Element<'_, Destination> = flyout_panel(
+      section,
+      Some("budget"),
+      Destination::Wallet,
+      NavLocation::Left,
+      |_| Destination::Wallet,
+      |d, _| d,
+    );
+    let _right: Element<'_, Destination> = flyout_panel(
+      section,
+      Some("budget"),
+      Destination::Wallet,
+      NavLocation::Right,
+      |_| Destination::Wallet,
+      |d, _| d,
+    );
+  }
+
+  #[test]
+  fn rail_opens_the_settings_flyout_upward() {
     let all_features = Feature::ALL;
     let order = Destination::REORDERABLE;
-    let _el: Element<'_, Destination> = rail(
-      Destination::Wallet,
-      0,
-      0,
-      &all_features,
-      &order,
-      NavLocation::Left,
-      |d| d,
-    );
+    let mut hovered = props(Destination::Settings, &all_features, &order);
+    hovered.hovered = Some(Destination::Settings);
+
+    let _el: Element<'_, Destination> = render(hovered);
+  }
+
+  #[test]
+  fn rail_with_cascade_off_is_a_plain_rail() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let mut off = props(Destination::Wallet, &all_features, &order);
+    off.cascade_mode = CascadeMode::None;
+    off.hovered = Some(Destination::Wallet);
+
+    let _el: Element<'_, Destination> = render(off);
+  }
+
+  #[test]
+  fn rail_with_sub_rail_mode_does_not_open_a_flyout() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let mut sub_rail = props(Destination::Wallet, &all_features, &order);
+    sub_rail.cascade_mode = CascadeMode::SubRail;
+    sub_rail.hovered = Some(Destination::Wallet);
+
+    let _el: Element<'_, Destination> = render(sub_rail);
   }
 }

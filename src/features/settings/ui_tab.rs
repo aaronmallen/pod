@@ -6,7 +6,7 @@ use iced::{
 
 use super::Outcome;
 use crate::{
-  config::{NavLocation, Settings},
+  config::{CascadeMode, NavLocation, Settings},
   features::registry,
   ui::{
     components::rule,
@@ -25,6 +25,7 @@ const RAIL_SIDES: [NavLocation; 2] = [NavLocation::Left, NavLocation::Right];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Message {
+  CascadeSelected(CascadeMode),
   Dropped,
   HoverSlot(usize),
   LeaveSlot(usize),
@@ -64,6 +65,14 @@ impl Direction {
 
 pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
+    Message::CascadeSelected(mode) => {
+      if *settings.ui().cascade_mode() == mode {
+        Outcome::None
+      } else {
+        settings.ui_mut().set_cascade_mode(mode);
+        Outcome::UiChanged
+      }
+    }
     Message::Dropped => {
       let from = state.dragging.take();
       let to = state.drop_index.take();
@@ -207,6 +216,13 @@ fn body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   );
   let side_cards = side_cards(settings);
 
+  let cascade_head = section_head(
+    "Rail cascade",
+    "How a view\u{2019}s sub-sections surface from the rail. Flyout pops them on hover; off keeps a plain rail.",
+    live_chip("Applies live \u{00b7} all views"),
+  );
+  let cascade_cards = cascade_cards(settings);
+
   let order_head = section_head(
     "Icon order",
     "Drag a row \u{2014} or use the arrows \u{2014} to reorder the rail. Settings stays pinned at the end.",
@@ -215,9 +231,16 @@ fn body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   let order_list = order_list(state, settings);
 
   let inner = container(
-    Column::with_children(vec![side_head, side_cards, order_head, order_list])
-      .spacing(spacing::SPACE_3_5)
-      .width(Length::Fill),
+    Column::with_children(vec![
+      side_head,
+      side_cards,
+      cascade_head,
+      cascade_cards,
+      order_head,
+      order_list,
+    ])
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -340,6 +363,77 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
       ..button::Style::default()
     })
     .into()
+}
+
+fn cascade_cards(settings: &Settings) -> Element<'_, Message> {
+  let selected = *settings.ui().cascade_mode();
+  let cards: Vec<Element<'_, Message>> = CascadeMode::ALL
+    .into_iter()
+    .map(|mode| cascade_card(mode, selected == mode))
+    .collect();
+
+  Row::with_children(cards)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .into()
+}
+
+fn cascade_card<'a>(mode: CascadeMode, selected: bool) -> Element<'a, Message> {
+  let label = text(mode.label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(if selected {
+      color::text::PRIMARY
+    } else {
+      color::text::secondary()
+    }));
+  let note = text(cascade_note(mode))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::tertiary()));
+  let identity = Column::with_children(vec![label.into(), note.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let footer = Row::with_children(vec![
+    identity.into(),
+    Space::new().width(Length::Fill).into(),
+    radio_dot(selected),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2_5);
+
+  button(container(footer).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3_5,
+  }))
+  .padding(0)
+  .width(Length::FillPortion(1))
+  .on_press(Message::CascadeSelected(mode))
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: if selected {
+        color::accent::PLASMA
+      } else {
+        color::with_alpha(color::text::PRIMARY, 0.1)
+      },
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn cascade_note(mode: CascadeMode) -> &'static str {
+  match mode {
+    CascadeMode::Flyout => "Hover pops sub-sections out",
+    CascadeMode::None => "Plain rail, no cascade",
+    CascadeMode::SubRail => "A pinned second column",
+  }
 }
 
 fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
@@ -729,6 +823,27 @@ mod tests {
       let mut settings = settings();
 
       let outcome = update(&mut state, Message::SideSelected(NavLocation::Left), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+    }
+
+    #[test]
+    fn it_changes_the_cascade_mode_and_signals_a_live_change() {
+      let mut state = State::default();
+      let mut settings = settings();
+
+      let outcome = update(&mut state, Message::CascadeSelected(CascadeMode::None), &mut settings);
+
+      assert_eq!(outcome, Outcome::UiChanged);
+      assert_eq!(settings.ui().cascade_mode(), &CascadeMode::None);
+    }
+
+    #[test]
+    fn it_ignores_selecting_the_current_cascade_mode() {
+      let mut state = State::default();
+      let mut settings = settings();
+
+      let outcome = update(&mut state, Message::CascadeSelected(CascadeMode::Flyout), &mut settings);
 
       assert_eq!(outcome, Outcome::None);
     }

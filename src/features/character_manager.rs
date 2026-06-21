@@ -241,6 +241,13 @@ impl Pane {
       _ => None,
     }
   }
+
+  pub fn id(self) -> &'static str {
+    match self {
+      Pane::Characters => "characters",
+      Pane::Corporations => "corporations",
+    }
+  }
 }
 
 #[derive(Clone, Debug)]

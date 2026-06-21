@@ -19,6 +19,7 @@ const ICON_SIZE: f32 = 20.0;
 const ORDER_BUTTON_SIZE: f32 = 28.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PREVIEW_HEIGHT: f32 = 100.0;
+const SIDE_CARD_MAX_WIDTH: f32 = 240.0;
 const ROW_LIST_MAX_WIDTH: f32 = 560.0;
 
 const RAIL_SIDES: [NavLocation; 2] = [NavLocation::Left, NavLocation::Right];
@@ -302,10 +303,11 @@ fn live_chip<'a>(label: &'a str) -> Element<'a, Message> {
 
 fn side_cards(settings: &Settings) -> Element<'_, Message> {
   let selected = *settings.ui().nav_location();
-  let cards: Vec<Element<'_, Message>> = RAIL_SIDES
+  let mut cards: Vec<Element<'_, Message>> = RAIL_SIDES
     .into_iter()
     .map(|side| nav_card(side, selected == side))
     .collect();
+  cards.push(Space::new().width(Length::Fill).into());
 
   Row::with_children(cards)
     .spacing(spacing::SPACE_3_5)
@@ -345,9 +347,9 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
 
   let card = Column::with_children(vec![preview.into(), rule::horizontal(), footer.into()]).width(Length::Fill);
 
-  button(card)
+  let card_button = button(card)
     .padding(0)
-    .width(Length::FillPortion(1))
+    .width(Length::Fill)
     .on_press(Message::SideSelected(side))
     .style(move |_, _| button::Style {
       background: Some(Background::Color(color::surface::RAISED)),
@@ -361,7 +363,11 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
         radius: radius::CONTROL.into(),
       },
       ..button::Style::default()
-    })
+    });
+
+  container(card_button)
+    .width(Length::Fill)
+    .max_width(SIDE_CARD_MAX_WIDTH)
     .into()
 }
 
@@ -436,6 +442,14 @@ fn cascade_note(mode: CascadeMode) -> &'static str {
   }
 }
 
+fn portion(width: f32) -> u16 {
+  (width.clamp(0.0, 1.0) * 100.0) as u16
+}
+
+fn complement_portion(width: f32) -> u16 {
+  100 - portion(width)
+}
+
 fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
   let rail_color = if selected {
     color::accent::PLASMA
@@ -473,7 +487,7 @@ fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
 
   let stub = |width: f32, height: f32, fill: Color| -> Element<'a, Message> {
     container(Space::new())
-      .width(Length::FillPortion((width * 100.0) as u16))
+      .width(Length::FillPortion(portion(width)))
       .height(Length::Fixed(height))
       .style(move |_| container::Style {
         background: Some(Background::Color(fill)),
@@ -486,7 +500,8 @@ fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
       .into()
   };
   let stub_row = |width: f32, height: f32, fill: Color| -> Element<'a, Message> {
-    Row::with_children(vec![stub(width, height, fill), Space::new().width(Length::Fill).into()])
+    let rest = Length::FillPortion(complement_portion(width));
+    Row::with_children(vec![stub(width, height, fill), Space::new().width(rest).into()])
       .width(Length::Fill)
       .into()
   };
@@ -957,6 +972,43 @@ mod tests {
       };
 
       let _sub: iced::Subscription<Message> = subscription(&state);
+    }
+  }
+
+  mod preview_rows {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_caps_the_side_card_max_width_at_the_design_grid_bound() {
+      assert_eq!(SIDE_CARD_MAX_WIDTH, 240.0);
+    }
+
+    #[test]
+    fn it_maps_a_fractional_width_to_a_hundredths_fill_portion() {
+      assert_eq!(portion(0.7), 70);
+      assert_eq!(portion(0.4), 40);
+      assert_eq!(portion(0.55), 55);
+      assert_eq!(portion(0.32), 32);
+    }
+
+    #[test]
+    fn it_pairs_each_stub_with_a_complementary_remainder() {
+      for width in [0.7, 0.4, 0.55, 0.32] {
+        assert_eq!(portion(width) + complement_portion(width), 100);
+      }
+    }
+
+    #[test]
+    fn it_keeps_body_rows_staggered_and_short_not_full_width() {
+      let widths = [portion(0.7), portion(0.4), portion(0.55), portion(0.32)];
+
+      assert!(widths.iter().all(|&w| w < 100), "no row should span the full body");
+      assert!(
+        widths.iter().collect::<std::collections::HashSet<_>>().len() == widths.len(),
+        "rows are staggered at distinct widths"
+      );
     }
   }
 

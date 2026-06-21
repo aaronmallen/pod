@@ -348,9 +348,6 @@ impl FeatureFlags {
       .collect()
   }
 
-  // Foundation roll-up API for the granular sub-feature epic; the scope/shell/UI consumers land in
-  // sibling tasks B/C/D, so today these are exercised only by this module's tests.
-  #[allow(dead_code)]
   pub fn enabled_sub_features(&self) -> Vec<SubFeature> {
     SubFeature::ALL
       .into_iter()
@@ -358,6 +355,8 @@ impl FeatureFlags {
       .collect()
   }
 
+  // The per-group roll-up's scope/shell consumers land in sibling tasks B/C, so today this is
+  // exercised only by this module's tests.
   #[allow(dead_code)]
   pub fn enabled_sub_features_of(&self, feature: Feature) -> Vec<SubFeature> {
     feature

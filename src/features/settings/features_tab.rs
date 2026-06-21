@@ -6,97 +6,146 @@ use iced::{
 
 use super::Outcome;
 use crate::{
-  config::{Feature, Settings},
+  config::{Feature, Settings, SubFeature},
   ui::{
     components::{empty_state, icon::Icon, rule, text_input::TextInput, toggle},
     style::{color, radius, spacing, typography},
   },
 };
 
+const CHILD_INDENT: f32 = spacing::SPACE_6;
 const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
 const PANEL_BLURB: &str = "Toggle individual Pod capabilities on or off. Changes apply live across every window and your \
   linked characters \u{2014} no restart.";
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
-const CATALOG: [Catalog; 12] = [
+const CATALOG: [Catalog; 23] = [
   Catalog {
-    feature: Feature::CloneMonitoring,
-    section: Section::Character,
+    sub: SubFeature::CloneMonitoring,
     title: "Clone Monitoring",
     description: "Track jump clones and the implants installed in each.",
   },
   Catalog {
-    feature: Feature::Contacts,
-    section: Section::Character,
+    sub: SubFeature::Contacts,
     title: "Contacts",
     description: "Sync your personal contact list and their standings.",
   },
   Catalog {
-    feature: Feature::CombatLog,
-    section: Section::Character,
-    title: "Combat Log",
+    sub: SubFeature::KillLog,
+    title: "Kill Log",
     description: "Capture combat activity for after-action review.",
   },
   Catalog {
-    feature: Feature::EveNotifications,
-    section: Section::Character,
+    sub: SubFeature::Notifications,
     title: "EVE Notifications",
     description: "Sync in-game notifications from EVE Online.",
   },
   Catalog {
-    feature: Feature::Standings,
-    section: Section::Character,
+    sub: SubFeature::Standings,
     title: "Standings",
     description: "Sync your standings toward characters, corporations, and alliances.",
   },
   Catalog {
-    feature: Feature::LocationTracking,
-    section: Section::World,
+    sub: SubFeature::LocationTracking,
     title: "Location Tracking",
     description: "Track each character's current solar system, station, and ship.",
   },
   Catalog {
-    feature: Feature::SkillMonitoring,
-    section: Section::World,
-    title: "Skill Monitoring",
+    sub: SubFeature::SkillQueue,
+    title: "Skill Queue",
     description: "Monitor trained skills and the active training queue.",
   },
   Catalog {
-    feature: Feature::Industry,
-    section: Section::World,
-    title: "Industry",
+    sub: SubFeature::JobMonitoring,
+    title: "Job Monitoring",
     description: "Monitor running manufacturing, research, and reaction jobs.",
   },
   Catalog {
-    feature: Feature::Mail,
-    section: Section::World,
+    sub: SubFeature::Blueprints,
+    title: "Blueprints",
+    description: "Track owned blueprints with their material and time efficiency.",
+  },
+  Catalog {
+    sub: SubFeature::Planner,
+    title: "Build Planner",
+    description: "Plan recursive build orders with materials, costs, and facilities.",
+  },
+  Catalog {
+    sub: SubFeature::Extractions,
+    title: "Moon Extractions",
+    description: "Track corporation moon-extraction timers.",
+  },
+  Catalog {
+    sub: SubFeature::Mail,
     title: "Mail",
     description: "Sync EVE mail headers and message bodies.",
   },
   Catalog {
-    feature: Feature::Calendar,
-    section: Section::World,
+    sub: SubFeature::Calendar,
     title: "Calendar",
     description: "Sync calendar events and respond to invitations.",
   },
   Catalog {
-    feature: Feature::Wallet,
-    section: Section::World,
-    title: "Wallet",
-    description: "Sync wallet balances and the transaction journal.",
+    sub: SubFeature::Wallets,
+    title: "Wallets",
+    description: "Show character and corporation wallet balances.",
   },
   Catalog {
-    feature: Feature::AssetTracking,
-    section: Section::World,
-    title: "Asset Tracking",
+    sub: SubFeature::Journal,
+    title: "Journal",
+    description: "Sync the wallet transaction journal.",
+  },
+  Catalog {
+    sub: SubFeature::Transactions,
+    title: "Market Transactions",
+    description: "Sync market orders and traded items.",
+  },
+  Catalog {
+    sub: SubFeature::Contracts,
+    title: "Contracts",
+    description: "Sync outstanding and historical contracts.",
+  },
+  Catalog {
+    sub: SubFeature::Budget,
+    title: "Budget",
+    description: "Plan a zero-based budget over your wallet activity.",
+  },
+  Catalog {
+    sub: SubFeature::Inventory,
+    title: "Inventory",
     description: "Track assets across stations, structures, and hangars.",
+  },
+  Catalog {
+    sub: SubFeature::Abyssals,
+    title: "Abyssals",
+    description: "Appraise abyssal modules against MutaMarket pricing.",
+  },
+  Catalog {
+    sub: SubFeature::Stockpiles,
+    title: "Stockpiles",
+    description: "Watch curated stockpiles against target quantities.",
+  },
+  Catalog {
+    sub: SubFeature::Values,
+    title: "Values",
+    description: "Value owned assets at market pricing.",
+  },
+  Catalog {
+    sub: SubFeature::Tracker,
+    title: "Net Worth Tracker",
+    description: "Chart net worth over time across every owner.",
   },
 ];
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  GroupToggled(Group, bool),
   SearchChanged(String),
+  SubToggled(SubFeature, bool),
+  // Cascade a single top-level config Feature on or off. The Features tab itself no longer renders a
+  // per-Feature master (the display now groups by `Group`), but other surfaces — the rail context
+  // menus and reset flows in `app.rs` — drive feature enablement through this same message.
   Toggled(Feature, bool),
 }
 
@@ -113,24 +162,107 @@ impl State {
 
 struct Catalog {
   description: &'static str,
-  feature: Feature,
-  section: Section,
+  sub: SubFeature,
   title: &'static str,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Section {
-  Character,
-  World,
+/// A display-only grouping of sub-features in the Features tab. These four groups exist purely for
+/// presentation: each renders a Plasma-blue master-toggle header over its child rows. They do NOT
+/// mirror the [`config::Feature`](crate::config::Feature) model one-to-one — the Characters group
+/// folds several standalone top-level Features (Skill Queue, Mail, Calendar, and the
+/// character-status features) under a single header, and its master cascades over all of them at
+/// the display layer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Group {
+  Characters,
+  Industry,
+  Wallet,
+  Assets,
 }
 
-impl Section {
-  fn label(self) -> &'static str {
+impl Group {
+  const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
+
+  fn title(self) -> &'static str {
     match self {
-      Section::Character => "Character",
-      Section::World => "World",
+      Group::Assets => "Assets",
+      Group::Characters => "Characters",
+      Group::Industry => "Industry",
+      Group::Wallet => "Wallet",
     }
   }
+
+  /// The sub-features displayed under this group, in render order. Every [`SubFeature`] appears under
+  /// exactly one group (asserted in tests), so the four groups partition the catalog.
+  fn sub_features(self) -> &'static [SubFeature] {
+    match self {
+      Group::Characters => &[
+        SubFeature::LocationTracking,
+        SubFeature::SkillQueue,
+        SubFeature::CloneMonitoring,
+        SubFeature::Contacts,
+        SubFeature::KillLog,
+        SubFeature::Notifications,
+        SubFeature::Standings,
+        SubFeature::Mail,
+        SubFeature::Calendar,
+      ],
+      Group::Industry => &[
+        SubFeature::JobMonitoring,
+        SubFeature::Blueprints,
+        SubFeature::Planner,
+        SubFeature::Extractions,
+      ],
+      Group::Wallet => &[
+        SubFeature::Wallets,
+        SubFeature::Transactions,
+        SubFeature::Contracts,
+        SubFeature::Journal,
+        SubFeature::Budget,
+      ],
+      Group::Assets => &[
+        SubFeature::Inventory,
+        SubFeature::Abyssals,
+        SubFeature::Stockpiles,
+        SubFeature::Values,
+        SubFeature::Tracker,
+      ],
+    }
+  }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GroupState {
+  Empty,
+  Full,
+  Partial,
+}
+
+impl GroupState {
+  fn of(group: Group, settings: &Settings) -> GroupState {
+    let flags = settings.features();
+    let subs = group.sub_features();
+    let enabled = subs.iter().filter(|&&sub| flags.is_sub_enabled(sub)).count();
+
+    if enabled == 0 {
+      GroupState::Empty
+    } else if enabled == subs.len() {
+      GroupState::Full
+    } else {
+      GroupState::Partial
+    }
+  }
+
+  fn is_on(self) -> bool {
+    !matches!(self, GroupState::Empty)
+  }
+}
+
+fn entry(sub: SubFeature) -> &'static Catalog {
+  CATALOG
+    .iter()
+    .find(|entry| entry.sub == sub)
+    .expect("every sub-feature is listed in the catalog")
 }
 
 fn matches(entry: &Catalog, query: &str) -> bool {
@@ -141,11 +273,33 @@ fn matches(entry: &Catalog, query: &str) -> bool {
   entry.title.to_lowercase().contains(&query) || entry.description.to_lowercase().contains(&query)
 }
 
+fn group_matches(group: Group, query: &str) -> bool {
+  let trimmed = query.trim().to_lowercase();
+  if trimmed.is_empty() {
+    return true;
+  }
+  group.title().to_lowercase().contains(&trimmed)
+}
+
 pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
+    Message::GroupToggled(group, value) => {
+      // The display group can span several standalone top-level Features (Characters folds in Skill
+      // Queue, Mail, and Calendar), so cascade at the sub-feature level over exactly the displayed
+      // children. Render order keeps Budget last, after Journal, so its coupling stays satisfied when
+      // turning the whole group on.
+      for &sub in group.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, value);
+      }
+      Outcome::Persist
+    }
     Message::SearchChanged(query) => {
       state.query = query;
       Outcome::None
+    }
+    Message::SubToggled(sub, value) => {
+      settings.features_mut().set_sub_enabled(sub, value);
+      Outcome::Persist
     }
     Message::Toggled(feature, value) => {
       settings.features_mut().set_enabled(feature, value);
@@ -155,8 +309,8 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
 }
 
 pub fn badge(settings: &Settings) -> String {
-  let total = Feature::ALL.len();
-  let on = settings.features().enabled().len();
+  let total = SubFeature::ALL.len();
+  let on = settings.features().enabled_sub_features().len();
   format!("{on}/{total}")
 }
 
@@ -183,10 +337,8 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let total = Feature::ALL.len();
-  let on = settings.features().enabled().len();
   let count = container(
-    text(format!("{on}/{total}"))
+    text(badge(settings))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::secondary())),
@@ -237,17 +389,15 @@ fn search_well(state: &State) -> Element<'_, Message> {
 }
 
 fn feature_list<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
-  let mut sections: Vec<Element<'a, Message>> = Vec::new();
-  for section in [Section::Character, Section::World] {
-    if let Some(rendered) = section_block(section, state, settings) {
-      sections.push(rendered);
-    }
-  }
+  let groups: Vec<Element<'a, Message>> = Group::ALL
+    .into_iter()
+    .filter_map(|group| group_block(group, state, settings))
+    .collect();
 
-  let body: Element<'a, Message> = if sections.is_empty() {
+  let body: Element<'a, Message> = if groups.is_empty() {
     no_matches(state.query.trim())
   } else {
-    Column::with_children(sections).width(Length::Fill).into()
+    Column::with_children(groups).width(Length::Fill).into()
   };
 
   let inner = container(body).width(Length::Fill).padding(Padding {
@@ -264,50 +414,80 @@ fn feature_list<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .into()
 }
 
-fn section_block<'a>(section: Section, state: &'a State, settings: &'a Settings) -> Option<Element<'a, Message>> {
-  let rows: Vec<Element<'a, Message>> = CATALOG
+fn group_block<'a>(group: Group, state: &'a State, settings: &'a Settings) -> Option<Element<'a, Message>> {
+  let query = state.query.as_str();
+  let group_matched = group_matches(group, query);
+
+  let children: Vec<&'static Catalog> = group
+    .sub_features()
     .iter()
-    .filter(|entry| entry_in_section(entry, section))
-    .filter(|entry| matches(entry, &state.query))
-    .map(|entry| feature_row(entry, settings))
+    .map(|&sub| entry(sub))
+    .filter(|entry| group_matched || matches(entry, query))
     .collect();
 
-  if rows.is_empty() {
+  if children.is_empty() {
     return None;
   }
 
-  let header = container(
-    text(section.label())
-      .font(typography::mono::MEDIUM)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::accent::PLASMA)),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
+  let state = GroupState::of(group, settings);
+  let master = master_row(group, state);
+
+  let mut rows: Vec<Element<'a, Message>> = vec![master];
+  for entry in children {
+    rows.push(child_row(entry, settings));
+  }
+
+  Some(Column::with_children(rows).width(Length::Fill).into())
+}
+
+fn master_row<'a>(group: Group, state: GroupState) -> Element<'a, Message> {
+  let on = state.is_on();
+  // Plasma-blue master-toggle header: the group title carries the accent so each of the four groups
+  // reads as a section header that also toggles its whole displayed child list on or off.
+  let title = text(group.title())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(color::accent::PLASMA));
+  let status = text(master_status(state))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::secondary()));
+  let labels = Column::with_children(vec![title.into(), status.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![
+    labels.into(),
+    toggle::toggle(on, Message::GroupToggled(group, !on)),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_6);
+
+  let cell = container(row).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_6,
-    right: 0.0,
-    bottom: spacing::SPACE_3,
-    left: 0.0,
+    right: spacing::UNIT,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::UNIT,
   });
 
-  let mut children: Vec<Element<'a, Message>> = vec![header.into(), rule::horizontal_alpha(0.18)];
-  children.extend(rows);
-
-  Some(Column::with_children(children).width(Length::Fill).into())
+  Column::with_children(vec![cell.into(), rule::horizontal_alpha(0.18)])
+    .width(Length::Fill)
+    .into()
 }
 
-fn entry_in_section(entry: &Catalog, section: Section) -> bool {
-  matches!(
-    (entry.section, section),
-    (Section::Character, Section::Character) | (Section::World, Section::World)
-  )
+fn master_status(group: GroupState) -> &'static str {
+  match group {
+    GroupState::Empty => "Off",
+    GroupState::Full => "On",
+    GroupState::Partial => "Some on",
+  }
 }
 
-fn feature_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Message> {
-  let on = settings.features().is_enabled(entry.feature);
+fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Message> {
+  let on = settings.features().is_sub_enabled(entry.sub);
 
   let title = text(entry.title)
-    .font(typography::body::MEDIUM)
+    .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
   let description = text(entry.description)
@@ -323,19 +503,19 @@ fn feature_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Me
 
   let row = Row::with_children(vec![
     labels.into(),
-    toggle::toggle(on, Message::Toggled(entry.feature, !on)),
+    toggle::toggle(on, Message::SubToggled(entry.sub, !on)),
   ])
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_6);
 
   let cell = container(row).width(Length::Fill).padding(Padding {
-    top: spacing::SPACE_3_5,
+    top: spacing::SPACE_3,
     right: spacing::UNIT,
-    bottom: spacing::SPACE_3_5,
-    left: spacing::UNIT,
+    bottom: spacing::SPACE_3,
+    left: CHILD_INDENT,
   });
 
-  Column::with_children(vec![cell.into(), rule::horizontal()])
+  Column::with_children(vec![cell.into(), rule::horizontal_alpha(0.08)])
     .width(Length::Fill)
     .into()
 }
@@ -348,94 +528,397 @@ fn no_matches(query: &str) -> Element<'_, Message> {
 
 #[cfg(test)]
 mod tests {
-  use pretty_assertions::assert_eq;
-
   use super::*;
 
   fn state() -> State {
     State::from_settings(&Settings::default())
   }
 
-  #[test]
-  fn an_empty_query_matches_every_capability() {
-    for entry in &CATALOG {
-      assert!(matches(entry, ""), "{:?} should match the empty query", entry.feature);
+  mod badge {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reports_enabled_sub_features_over_the_total() {
+      let settings = Settings::default();
+
+      assert_eq!(
+        badge(&settings),
+        format!("{}/{}", SubFeature::ALL.len(), SubFeature::ALL.len())
+      );
+    }
+
+    #[test]
+    fn it_drops_the_count_when_a_child_is_disabled() {
+      let mut settings = Settings::default();
+      settings.features_mut().set_sub_enabled(SubFeature::Budget, false);
+
+      assert_eq!(
+        badge(&settings),
+        format!("{}/{}", SubFeature::ALL.len() - 1, SubFeature::ALL.len())
+      );
     }
   }
 
-  #[test]
-  fn badge_reports_enabled_over_total() {
-    let settings = Settings::default();
+  mod catalog {
+    use pretty_assertions::assert_eq;
 
-    assert_eq!(
-      badge(&settings),
-      format!("{}/{}", Feature::ALL.len(), Feature::ALL.len())
-    );
-  }
+    use super::*;
 
-  #[test]
-  fn catalog_covers_every_capability_once() {
-    for feature in Feature::ALL {
-      let count = CATALOG.iter().filter(|entry| entry.feature == feature).count();
-      assert_eq!(count, 1, "{feature:?} should appear exactly once in the catalog");
+    #[test]
+    fn it_covers_every_sub_feature_exactly_once() {
+      for sub in SubFeature::ALL {
+        let count = CATALOG.iter().filter(|entry| entry.sub == sub).count();
+        assert_eq!(count, 1, "{sub:?} should appear exactly once in the catalog");
+      }
+
+      assert_eq!(CATALOG.len(), SubFeature::ALL.len());
     }
-    assert_eq!(CATALOG.len(), Feature::ALL.len());
+
+    #[test]
+    fn it_matches_the_empty_query_for_every_entry() {
+      for entry in &CATALOG {
+        assert!(matches(entry, ""), "{:?} should match the empty query", entry.sub);
+      }
+    }
   }
 
-  #[test]
-  fn editing_the_search_query_updates_state_without_persisting() {
-    let mut state = state();
-    let mut settings = Settings::default();
+  mod group_state {
+    use pretty_assertions::assert_eq;
 
-    let outcome = update(&mut state, Message::SearchChanged("wallet".to_owned()), &mut settings);
+    use super::*;
 
-    assert_eq!(outcome, Outcome::None);
-    assert_eq!(state.query, "wallet");
-    assert_eq!(
-      settings.features(),
-      &Settings::default().features().to_owned(),
-      "a search edit must not touch the flags"
-    );
+    #[test]
+    fn it_is_full_when_every_child_is_enabled() {
+      let settings = Settings::default();
+
+      assert_eq!(GroupState::of(Group::Wallet, &settings), GroupState::Full);
+    }
+
+    #[test]
+    fn it_is_partial_when_only_some_children_are_enabled() {
+      let mut settings = Settings::default();
+      settings.features_mut().set_sub_enabled(SubFeature::Budget, false);
+
+      assert_eq!(GroupState::of(Group::Wallet, &settings), GroupState::Partial);
+    }
+
+    #[test]
+    fn it_is_empty_when_every_child_is_disabled() {
+      let mut settings = Settings::default();
+      for &sub in Group::Wallet.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+
+      assert_eq!(GroupState::of(Group::Wallet, &settings), GroupState::Empty);
+    }
+
+    #[test]
+    fn it_reflects_state_across_a_display_group_that_spans_several_features() {
+      // The Characters group folds in Skill Queue, Mail, and Calendar, which are standalone top-level
+      // Features in the model. Its state must roll up across all of them, not just one Feature.
+      let mut settings = Settings::default();
+      assert_eq!(GroupState::of(Group::Characters, &settings), GroupState::Full);
+
+      settings.features_mut().set_sub_enabled(SubFeature::Mail, false);
+      assert_eq!(
+        GroupState::of(Group::Characters, &settings),
+        GroupState::Partial,
+        "disabling a folded Mail child moves the Characters master to partial"
+      );
+
+      for &sub in Group::Characters.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+      assert_eq!(GroupState::of(Group::Characters, &settings), GroupState::Empty);
+    }
+
+    #[test]
+    fn its_on_state_is_a_simple_any_child_predicate() {
+      let mut settings = Settings::default();
+
+      assert!(GroupState::of(Group::Assets, &settings).is_on());
+
+      for &sub in Group::Assets.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+      assert!(!GroupState::of(Group::Assets, &settings).is_on());
+    }
   }
 
-  #[test]
-  fn search_matches_a_word_only_in_the_description() {
-    let clones = CATALOG
-      .iter()
-      .find(|entry| entry.feature == Feature::CloneMonitoring)
-      .unwrap();
+  mod update {
+    use pretty_assertions::assert_eq;
 
-    assert!(matches(clones, "implants"));
-    assert!(!clones.title.to_lowercase().contains("implants"));
+    use super::*;
+
+    #[test]
+    fn it_updates_the_query_without_persisting() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::SearchChanged("wallet".to_owned()), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(state.query, "wallet");
+      assert_eq!(
+        settings.features(),
+        &Settings::default().features().to_owned(),
+        "a search edit must not touch the flags"
+      );
+    }
+
+    #[test]
+    fn a_master_toggle_off_cascades_to_every_displayed_child_and_persists() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::GroupToggled(Group::Wallet, false), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(
+        Group::Wallet
+          .sub_features()
+          .iter()
+          .all(|&sub| !settings.features().is_sub_enabled(sub)),
+        "a master toggle off clears every displayed child"
+      );
+      assert!(
+        Group::Assets
+          .sub_features()
+          .iter()
+          .all(|&sub| settings.features().is_sub_enabled(sub)),
+        "other groups are untouched"
+      );
+    }
+
+    #[test]
+    fn a_master_toggle_on_cascades_to_every_displayed_child_and_persists() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      for &sub in Group::Industry.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+
+      let outcome = update(&mut state, Message::GroupToggled(Group::Industry, true), &mut settings);
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(
+        Group::Industry
+          .sub_features()
+          .iter()
+          .all(|&sub| settings.features().is_sub_enabled(sub)),
+        "a master toggle on enables every displayed child"
+      );
+    }
+
+    #[test]
+    fn the_characters_master_cascades_to_mail_calendar_and_skill_queue() {
+      // Mail, Calendar, and Skill Queue are standalone top-level Features in the model but render
+      // under the Characters group; the master must cascade to all of them at the display layer.
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let outcome = update(
+        &mut state,
+        Message::GroupToggled(Group::Characters, false),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::Persist);
+      for sub in [
+        SubFeature::Mail,
+        SubFeature::Calendar,
+        SubFeature::SkillQueue,
+        SubFeature::LocationTracking,
+        SubFeature::Standings,
+      ] {
+        assert!(
+          !settings.features().is_sub_enabled(sub),
+          "{sub:?} must follow the Characters master off"
+        );
+      }
+
+      let outcome = update(
+        &mut state,
+        Message::GroupToggled(Group::Characters, true),
+        &mut settings,
+      );
+      assert_eq!(outcome, Outcome::Persist);
+      for sub in [SubFeature::Mail, SubFeature::Calendar, SubFeature::SkillQueue] {
+        assert!(
+          settings.features().is_sub_enabled(sub),
+          "{sub:?} must follow the Characters master on"
+        );
+      }
+    }
+
+    #[test]
+    fn enabling_the_wallet_master_satisfies_budgets_coupling() {
+      // Render order keeps Budget last, after Journal, so a whole-group enable leaves Budget on.
+      let mut state = state();
+      let mut settings = Settings::default();
+      for &sub in Group::Wallet.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+
+      update(&mut state, Message::GroupToggled(Group::Wallet, true), &mut settings);
+
+      assert!(
+        settings.features().is_sub_enabled(SubFeature::Budget),
+        "Budget stays on because Journal is enabled before it"
+      );
+    }
+
+    #[test]
+    fn a_child_toggle_flips_only_that_child_and_updates_the_master_state() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      assert_eq!(GroupState::of(Group::Wallet, &settings), GroupState::Full);
+
+      let outcome = update(
+        &mut state,
+        Message::SubToggled(SubFeature::Budget, false),
+        &mut settings,
+      );
+
+      assert_eq!(outcome, Outcome::Persist);
+      assert!(!settings.features().is_sub_enabled(SubFeature::Budget));
+      assert!(
+        settings.features().is_sub_enabled(SubFeature::Journal),
+        "siblings are untouched"
+      );
+      assert_eq!(
+        GroupState::of(Group::Wallet, &settings),
+        GroupState::Partial,
+        "disabling one child moves the master to a partial state"
+      );
+    }
+
+    #[test]
+    fn disabling_the_last_child_empties_the_master() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      let subs = Group::Assets.sub_features();
+      for &sub in &subs[..subs.len() - 1] {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+      let last = *subs.last().unwrap();
+
+      update(&mut state, Message::SubToggled(last, false), &mut settings);
+
+      assert_eq!(GroupState::of(Group::Assets, &settings), GroupState::Empty);
+    }
   }
 
-  #[test]
-  fn search_matches_title_case_insensitively() {
-    let wallet = CATALOG.iter().find(|entry| entry.feature == Feature::Wallet).unwrap();
+  mod search {
+    use super::*;
 
-    assert!(matches(wallet, "WALLET"));
-    assert!(matches(wallet, "wal"));
-    assert!(!matches(wallet, "no-such-feature"));
+    #[test]
+    fn it_matches_a_word_only_in_the_description() {
+      let clones = entry(SubFeature::CloneMonitoring);
+
+      assert!(matches(clones, "implants"));
+      assert!(!clones.title.to_lowercase().contains("implants"));
+    }
+
+    #[test]
+    fn it_matches_a_group_title() {
+      assert!(group_matches(Group::Wallet, "wallet"));
+      assert!(group_matches(Group::Assets, "ASSET"));
+      assert!(group_matches(Group::Characters, "character"));
+      assert!(!group_matches(Group::Wallet, "no-such-group"));
+    }
+
+    #[test]
+    fn it_matches_a_child_title_case_insensitively() {
+      let budget = entry(SubFeature::Budget);
+
+      assert!(matches(budget, "BUDGET"));
+      assert!(matches(budget, "bud"));
+      assert!(!matches(budget, "no-such-feature"));
+    }
   }
 
-  #[test]
-  fn the_character_capabilities_are_grouped_under_character() {
-    let character: Vec<Feature> = CATALOG
-      .iter()
-      .filter(|entry| entry_in_section(entry, Section::Character))
-      .map(|entry| entry.feature)
-      .collect();
+  mod group {
+    use pretty_assertions::assert_eq;
 
-    assert_eq!(
-      character,
-      vec![
-        Feature::CloneMonitoring,
-        Feature::Contacts,
-        Feature::CombatLog,
-        Feature::EveNotifications,
-        Feature::Standings,
-      ]
-    );
+    use super::*;
+
+    #[test]
+    fn the_four_display_groups_partition_every_sub_feature_exactly_once() {
+      assert_eq!(Group::ALL.len(), 4, "exactly four display groups");
+
+      for sub in SubFeature::ALL {
+        let count = Group::ALL
+          .into_iter()
+          .filter(|group| group.sub_features().contains(&sub))
+          .count();
+        assert_eq!(count, 1, "{sub:?} must belong to exactly one display group");
+      }
+
+      let total: usize = Group::ALL.into_iter().map(|group| group.sub_features().len()).sum();
+      assert_eq!(total, SubFeature::ALL.len(), "the groups cover the whole catalog");
+    }
+
+    #[test]
+    fn the_characters_group_folds_in_mail_calendar_and_skill_queue() {
+      let chars = Group::Characters.sub_features();
+      for sub in [
+        SubFeature::LocationTracking,
+        SubFeature::SkillQueue,
+        SubFeature::CloneMonitoring,
+        SubFeature::Contacts,
+        SubFeature::KillLog,
+        SubFeature::Notifications,
+        SubFeature::Standings,
+        SubFeature::Mail,
+        SubFeature::Calendar,
+      ] {
+        assert!(chars.contains(&sub), "{sub:?} must render under Characters");
+      }
+      assert_eq!(chars.len(), 9, "Characters shows exactly its nine children");
+    }
+
+    #[test]
+    fn every_group_title_is_one_of_the_four_expected_labels() {
+      let titles: Vec<&str> = Group::ALL.into_iter().map(Group::title).collect();
+      assert_eq!(titles, vec!["Characters", "Industry", "Wallet", "Assets"]);
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    #[test]
+    fn it_renders_with_an_empty_query() {
+      let settings = Settings::default();
+      let state = state();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_empty_state_for_an_unmatched_query() {
+      let settings = Settings::default();
+      let mut state = state();
+      state.query = "zzz-no-match".to_owned();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_with_a_group_fully_disabled() {
+      let mut settings = Settings::default();
+      for &sub in Group::Wallet.sub_features() {
+        settings.features_mut().set_sub_enabled(sub, false);
+      }
+      let state = state();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
   }
 
   #[test]
@@ -448,71 +931,5 @@ mod tests {
       !PANEL_BLURB.contains("next restart"),
       "the stale 'applies on next restart' copy must be gone"
     );
-  }
-
-  #[test]
-  fn the_world_capabilities_are_grouped_under_world() {
-    let world: Vec<Feature> = CATALOG
-      .iter()
-      .filter(|entry| entry_in_section(entry, Section::World))
-      .map(|entry| entry.feature)
-      .collect();
-
-    assert_eq!(
-      world,
-      vec![
-        Feature::LocationTracking,
-        Feature::SkillMonitoring,
-        Feature::Industry,
-        Feature::Mail,
-        Feature::Calendar,
-        Feature::Wallet,
-        Feature::AssetTracking,
-      ]
-    );
-  }
-
-  #[test]
-  fn toggling_a_flag_back_on_persists() {
-    let mut state = state();
-    let mut settings = Settings::default();
-    settings.features_mut().set_enabled(Feature::Mail, false);
-
-    let outcome = update(&mut state, Message::Toggled(Feature::Mail, true), &mut settings);
-
-    assert_eq!(outcome, Outcome::Persist);
-    assert!(settings.features().is_enabled(Feature::Mail));
-  }
-
-  #[test]
-  fn toggling_a_flag_off_flips_only_that_capability_and_persists() {
-    let mut state = state();
-    let mut settings = Settings::default();
-
-    let outcome = update(&mut state, Message::Toggled(Feature::Wallet, false), &mut settings);
-
-    assert_eq!(outcome, Outcome::Persist);
-    assert!(!settings.features().is_enabled(Feature::Wallet));
-    assert!(
-      settings.features().is_enabled(Feature::Mail),
-      "other capabilities are untouched"
-    );
-  }
-
-  #[test]
-  fn view_renders_the_empty_state_for_an_unmatched_query() {
-    let settings = Settings::default();
-    let mut state = state();
-    state.query = "zzz-no-match".to_owned();
-
-    let _el: Element<'_, Message> = view(&state, &settings);
-  }
-
-  #[test]
-  fn view_renders_with_an_empty_query() {
-    let settings = Settings::default();
-    let state = state();
-
-    let _el: Element<'_, Message> = view(&state, &settings);
   }
 }

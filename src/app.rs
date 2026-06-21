@@ -2821,7 +2821,11 @@ fn reauth_corporation(app: &mut App, corporation_id: i64) -> Task<Message> {
 fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   let features_changed = matches!(
     msg,
-    settings::Message::Features(settings::features_tab::Message::Toggled(..)) | settings::Message::ResetToDefaults
+    settings::Message::Features(
+      settings::features_tab::Message::GroupToggled(..)
+        | settings::features_tab::Message::SubToggled(..)
+        | settings::features_tab::Message::Toggled(..)
+    ) | settings::Message::ResetToDefaults
   );
 
   let Some(state) = app.settings.as_mut() else {

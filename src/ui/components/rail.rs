@@ -83,7 +83,7 @@ impl Destination {
     match self {
       Destination::Assets => "Assets",
       Destination::Calendar => "Calendar",
-      Destination::Characters => "Characters",
+      Destination::Characters => "Roster",
       Destination::Industry => "Industry",
       Destination::Mail => "Mail",
       Destination::Settings => "Settings",

@@ -29,7 +29,7 @@ static WALLET_ICON: &[u8] = include_bytes!("../../assets/images/icons/wallet.svg
 static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Characters,
-    // The rail icon keeps the Characters identity, but the cascade header reads "Roster".
+    // The Destination enum keeps the Characters identity; this screen reads "Roster" to users.
     label_override: Some("Roster"),
     kicker: "Pilots & corporations",
     sub_sections: &[

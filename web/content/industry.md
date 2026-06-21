@@ -2,16 +2,16 @@
 title: Industry
 section: Features
 order: 7
-description: Track running and finished industry jobs, browse your blueprint library, plan build costs and material needs, and watch corporation moon-extraction timers — all from Pod's Industry feature.
+description: Track running and finished industry jobs, browse your blueprint library, plan build costs and material needs, and watch corporation moon-extraction timers from Pod's Industry feature.
 ---
 
 # Industry
 
-The Industry feature pulls four tools into one rail entry: a Jobs tab that tracks
-running and finished industry jobs, a Blueprints tab that lists your blueprint
-library, a Planner that works out what a build costs and what it needs, and an
-Extractions tab that shows corporation moon-mining timers. Switch between the
-four tabs from the row at the top of the window.
+The Industry feature pulls four tools into one rail entry. A Jobs tab tracks
+running and finished industry jobs, a Blueprints tab lists your blueprint
+library, a Planner works out what a build costs and what it needs, and an
+Extractions tab shows corporation moon-mining timers. Switch between the four
+tabs from the row at the top of the window.
 
 A scope picker sits above the tabs. It defaults to All, which combines every
 authorized pilot and every corporation you own into one view. You can narrow it
@@ -24,9 +24,9 @@ banner names the pilots you still need to re-authorize.
 The Jobs tab lists the industry jobs Pod has synced from ESI for the current
 scope. It covers every activity EVE runs through the industry system:
 manufacturing, time research, material research, copying, invention, and
-reactions. Each job carries a short activity tag so you can read the list at a
-glance: MANUF for manufacturing, TE for time research, ME for material research,
-COPY for copying, INVENT for invention, and REACT for reactions.
+reactions. Each job carries a short activity tag: MANUF for manufacturing, TE for
+time research, ME for material research, COPY for copying, INVENT for invention,
+and REACT for reactions.
 
 ![Jobs tab](/docs/img/industry/jobs.png)
 
@@ -149,23 +149,112 @@ two jobs that both want the same material draw from it in the order you toggle
 them, and the planner never counts the same unit twice or drops a needed quantity
 below zero. A line drawing from stock shows a stock chip in place of the toggle.
 
+### Splitting a build-order job into segments
+
+A build-order job runs as one block by default. Right-clicking the job's header
+opens a menu that lets you split its runs into independent segments. The first
+split offers "Split job in two"; once a job is already split the same action
+reads "Split job again" and adds another segment, and a "Merge back into one job"
+option folds every segment back into a single block. When a job has too few runs
+to divide any further, the split option is disabled and reads "Too few runs to
+split further".
+
+A split job carries an "N-WAY" badge next to its name, where N is the number of
+segments, and each segment appears as its own indented row beneath the job
+header. Each segment row shows a "SPLIT i/n" label, an editable run-count field,
+and the segment's own build time. Editing a segment's run count clamps the value
+and redistributes the remainder across the other segments, so the segments always
+sum to the job's total runs. Removing a segment folds its runs back into the
+survivors.
+
+The Build order section header tracks the totals: it reads "N jobs", adds "M
+runs" once any job has been split, then "x/y assigned" for how many segments
+carry a pilot, and ends with "right-click to split". A segment counts as assigned
+once it has a pilot.
+
+### Assigning a pilot and clone
+
+Each segment can carry a pilot and one of that pilot's clones, which is what the
+build-time math reads. An unsplit job shows the picker on its header row; a split
+job shows a per-segment picker on each segment row instead, and the header
+summarizes how many distinct pilots are in use.
+
+The picker trigger shows the assigned pilot's portrait and name with the clone's
+name beside it, or "active clone" when the active clone is selected. When nothing
+is assigned it reads "Assign pilot".
+
+Opening the picker shows a two-level list. The first level lists each eligible
+pilot with an "N clone(s)" subtitle. Expanding a pilot reveals that pilot's
+clones, the active clone first followed by each jump clone. Each clone row shows
+its name, an implant summary of the form "N implant(s) · first implant" (or "no
+implants"), and the clone's location. An "Unassign" action at the top clears the
+slot.
+
+Picking a clone never changes the facility a type builds at. The clone's location
+is shown for context only, and the build still installs at the facility you chose
+on the type's build card.
+
+The picker is only offered when both the Skill and Clone-Monitoring sub-features
+are enabled, since those are the features that supply the skill and implant data.
+When either is off, the slot shows an inert hint reading "Enable Skills + Clones
+to assign pilots" in place of the picker.
+
+### How skills and implants change build time
+
+Assigning a pilot and clone changes build time only. It never changes the
+materials a job consumes, the job fee, or the revenue. An unassigned segment, or
+any segment while assignment is disabled, uses the blueprint-time-efficiency-only
+build time with no further reduction.
+
+When a segment is assigned, Pod applies the pilot's industry skills and the
+clone's strongest time-bonus implant on top of the blueprint time efficiency.
+The Industry skill cuts manufacturing time by 4% per level and does not touch
+reactions. The Advanced Industry skill cuts both manufacturing and reaction time
+by 3% per level. The single strongest time-bonus implant in the clone applies for
+the activity, the manufacturing implant for manufacturing and the reaction
+implant for reactions. Only the strongest implant counts, so multiple time
+implants do not stack. All of these reductions multiply together with the
+blueprint time efficiency to give the segment's effective build time.
+
 ### Economics
 
 The detail pane sums the plan into a set of numbers. Material cost is the total
-of every raw input the bill of materials says you must buy. Each in-house job adds
-an install fee, computed as the job's output value times the facility's cost
-index times the install rate, so the cost matches what EVE charges to start the
-job. Revenue is the product's market price times the output quantity. Profit is
-revenue minus material cost and install fees, and margin is that profit as a
+of every raw input the bill of materials says you must buy. Each in-house job
+adds a job fee, which Pod computes the same way EVE charges you to install a job.
+Revenue is the product's market price times the output quantity. Profit is
+revenue minus material cost and job fees, and margin is that profit as a
 percentage of revenue. The pane also shows the per-unit cost, the total build
 time summed across every job, and an ISK-per-hour figure derived from profit over
 build time. A profitable flag turns on when profit is above zero.
+
+#### How the job fee is computed
+
+Every in-house job starts from its estimated item value (EIV). The EIV is the
+sum of each base material quantity times CCP's adjusted price for that material,
+before any material-efficiency reduction. Material efficiency lowers what the job
+consumes, but it never lowers the value the job is taxed against, so the EIV uses
+the pre-ME base quantities.
+
+The job fee is then three parts added together:
+
+1. The system cost: EIV times the system cost index for the facility's system,
+   times the structure bonus. Pod treats the structure bonus as 1.0, so the cost
+   index carries the system component of the fee.
+2. The facility tax: a flat 0.25% of EIV.
+3. The SCC surcharge: a flat 4% of EIV that EVE levies on every job regardless of
+   where it installs.
+
+Adding those three gives the fee Pod charges that job in the plan. The cost index
+comes from the facility you pick for the type, so changing a type's facility
+changes only its system cost, not the facility tax or the SCC surcharge.
 
 ### Saved plans
 
 A Plans tab on the right side of the Planner holds the plans you save. Saving
 stores the product, the run count, and the per-type settings: built-or-buy, ME,
-TE, facility, and use-stock. The list orders the newest plan first. Each saved
+TE, facility, and use-stock. A saved plan also stores how each job is split into
+segments and the pilot and clone assigned to every segment, so a plan you reload
+keeps its splits and assignments. The list orders the newest plan first. Each saved
 plan reprices itself against current market prices every time you view it, so the
 economics stay live rather than frozen at the moment you saved. Load a plan to
 restore its tree and settings, or delete one you no longer need.

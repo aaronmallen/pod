@@ -298,10 +298,6 @@ pub fn section(destination: Destination) -> Option<&'static Section> {
   SECTIONS.iter().find(|section| section.destination == destination)
 }
 
-pub fn sections() -> &'static [Section] {
-  SECTIONS
-}
-
 pub fn visible_sections(enabled_features: &[Feature]) -> impl Iterator<Item = &'static Section> {
   SECTIONS
     .iter()
@@ -363,7 +359,7 @@ mod tests {
     fn no_sub_section_carries_a_route_today() {
       // The route marker is a mechanism for the deep-nav consumer; no sub-section is its own
       // top-level route yet, so every entry must stay `None` until one genuinely is.
-      for section in sections() {
+      for section in SECTIONS {
         for sub in section.sub_sections {
           assert_eq!(
             sub.route,
@@ -378,7 +374,7 @@ mod tests {
 
     #[test]
     fn sub_section_ids_are_unique_within_a_section() {
-      for section in sections() {
+      for section in SECTIONS {
         let mut ids: Vec<&str> = section.sub_sections.iter().map(|sub| sub.id).collect();
         let count = ids.len();
         ids.sort_unstable();

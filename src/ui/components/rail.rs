@@ -1192,15 +1192,17 @@ mod tests {
   fn flyout_width_is_bounded_not_full_screen() {
     // The flyout must stay a narrow side-anchored panel: the bounded width keeps the overlay from
     // stretching across the viewport (the original full-width bug).
-    assert!(FLYOUT_MIN_WIDTH > 0.0);
-    assert!(
-      FLYOUT_MAX_WIDTH >= FLYOUT_MIN_WIDTH,
-      "max width must not undercut the min width"
-    );
-    assert!(
-      FLYOUT_MAX_WIDTH <= 320.0,
-      "flyout must remain a narrow panel, not a full-width sheet"
-    );
+    const {
+      assert!(FLYOUT_MIN_WIDTH > 0.0);
+      assert!(
+        FLYOUT_MAX_WIDTH >= FLYOUT_MIN_WIDTH,
+        "max width must not undercut the min width"
+      );
+      assert!(
+        FLYOUT_MAX_WIDTH <= 320.0,
+        "flyout must remain a narrow panel, not a full-width sheet"
+      );
+    }
   }
 
   #[test]

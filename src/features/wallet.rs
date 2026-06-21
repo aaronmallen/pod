@@ -6203,6 +6203,100 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_applies_a_budget_filter_and_jumps_to_the_journal() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Wallets;
+      state.tab_scroll_offset = 900.0;
+
+      let _ = update(
+        &mut state,
+        Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized),
+        &db,
+      );
+
+      assert_eq!(state.tab, Tab::Journal);
+      assert_eq!(state.tab_scroll_offset(), 0.0);
+      assert_eq!(
+        state.budget_filter,
+        Some(BudgetFilter {
+          kind: BudgetFilterKind::Uncategorized,
+          month: state.budget_month.clone(),
+        })
+      );
+    }
+
+    #[tokio::test]
+    async fn it_records_the_hovered_budget_category() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+
+      let _ = update(&mut state, Message::BudgetCategoryHovered(Some(7)), &db);
+      assert_eq!(state.budget_hovered_category, Some(7));
+
+      let _ = update(&mut state, Message::BudgetCategoryHovered(None), &db);
+      assert_eq!(state.budget_hovered_category, None);
+    }
+
+    #[tokio::test]
+    async fn it_redirects_off_a_disabled_active_tab_when_features_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Wallets;
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(crate::config::SubFeature::Wallets, false);
+
+      let _ = update(&mut state, Message::FeaturesChanged(flags), &db);
+
+      assert_eq!(state.tab, Tab::Journal);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_active_tab_when_features_change_without_disabling_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Budget;
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(crate::config::SubFeature::Wallets, false);
+
+      let _ = update(&mut state, Message::FeaturesChanged(flags), &db);
+
+      assert_eq!(state.tab, Tab::Budget);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_reauth_request() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let before = state.tab;
+
+      let _ = update(&mut state, Message::ReauthRequested(42), &db);
+
+      assert_eq!(state.tab, before);
+    }
+
+    #[tokio::test]
+    async fn it_records_the_settled_pane_without_mutation() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let before = state.tab;
+
+      let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 360.0), &db);
+
+      assert_eq!(state.tab, before);
+    }
+
+    #[tokio::test]
+    async fn it_selects_a_wallets_sort_order() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+
+      let _ = update(&mut state, Message::WalletsSortSelected(WalletSort::Ascending), &db);
+
+      assert_eq!(state.wallets_sort, WalletSort::Ascending);
+    }
+
+    #[tokio::test]
     async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());

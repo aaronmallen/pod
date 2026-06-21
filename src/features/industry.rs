@@ -858,60 +858,35 @@ fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -
 
 pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<Utc>) -> Task<Message> {
   match message {
-    Message::AssignPilotsChanged(enabled) => {
-      state.assign_pilots = enabled;
-      state.planner.set_assign_pilots(enabled);
-      if enabled && state.tab == Tab::Planner {
-        load_pilots(db, state.pilot_identities())
-      } else {
-        Task::none()
-      }
+    Message::BlueprintKindSelected(..)
+    | Message::BlueprintScrolled {
+      ..
     }
-    Message::BlueprintKindSelected(kind) => {
-      state.blueprint_kind = kind;
-      state.blueprint_scroll_offset = 0.0;
-      Task::none()
+    | Message::BlueprintSearchChanged(..)
+    | Message::BlueprintSortSelected(..) => update_blueprints(state, message),
+    Message::FilterSelected(..)
+    | Message::GroupBySelected(..)
+    | Message::JobsScrolled {
+      ..
     }
-    Message::BlueprintScrolled {
-      absolute,
-    } => {
-      state.blueprint_scroll_offset = absolute;
-      Task::none()
+    | Message::Tick => update_jobs(state, message, now),
+    Message::RailPaneDrag(..) | Message::RailPaneDragEnd | Message::RailPaneDragStart => {
+      update_rail_pane(state, message)
     }
-    Message::BlueprintSearchChanged(query) => {
-      state.blueprint_search = query;
-      state.blueprint_scroll_offset = 0.0;
-      Task::none()
-    }
-    Message::BlueprintSortSelected(sort) => {
-      state.blueprint_sort = sort;
-      state.blueprint_scroll_offset = 0.0;
-      Task::none()
-    }
+    Message::AssignPilotsChanged(..)
+    | Message::PilotsLoaded(..)
+    | Message::PlanBuild(..)
+    | Message::Planner(..)
+    | Message::PlannerLoaded(..)
+    | Message::PlannerOnHandLoaded {
+      ..
+    } => update_planner_messages(state, message, db),
     Message::FeaturesChanged(features) => {
       let prev = state.tab;
       state.sync_features(features);
       if state.tab != prev {
         return update(state, Message::TabSelected(state.tab), db, now);
       }
-      Task::none()
-    }
-    Message::FilterSelected(filter) => {
-      state.filter = filter;
-      state.jobs_scroll_offset = 0.0;
-      state.rebuild_job_view(now);
-      Task::none()
-    }
-    Message::GroupBySelected(group_by) => {
-      state.group_by = group_by;
-      state.jobs_scroll_offset = 0.0;
-      state.rebuild_job_view(now);
-      Task::none()
-    }
-    Message::JobsScrolled {
-      absolute,
-    } => {
-      state.jobs_scroll_offset = absolute;
       Task::none()
     }
     Message::Loaded(loaded) => {
@@ -941,46 +916,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    Message::PilotsLoaded(pilots) => {
-      state.planner.set_pilots(pilots);
-      Task::none()
-    }
     Message::PaneSettled(..) => Task::none(),
-    Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
-    Message::Planner(planner_message) => handle_planner(state, db, planner_message),
-    Message::PlannerLoaded(data) => {
-      // Capture the static catalog from the first full load so later loads (rail re-entry, scope change) reuse
-      // it instead of rebuilding it; the app layer hoists this into its session-lived cache.
-      if state.planner_catalog.is_none() {
-        state.planner_catalog = Some(StaticCatalog::from_planner_data(&data));
-      }
-      state.planner.apply_data(*data);
-      let epoch = state.on_hand_epoch.next();
-      load_on_hand(db, state.planner.build_sites(), epoch)
-    }
-    Message::PlannerOnHandLoaded {
-      epoch,
-      on_hand,
-    } => {
-      if !state.on_hand_epoch.matches(epoch) {
-        return Task::none();
-      }
-      state.planner.set_on_hand(on_hand);
-      Task::none()
-    }
-    Message::RailPaneDrag(x) => {
-      state.rail_pane.drag_to(x);
-      Task::none()
-    }
-    // After a resize settles, lift the new ratio to the app layer so it persists to the window state.
-    Message::RailPaneDragEnd => {
-      state.rail_pane.end();
-      Task::done(Message::PaneSettled(RAIL_PANE_KEY, state.rail_pane.ratio()))
-    }
-    Message::RailPaneDragStart => {
-      state.rail_pane.start();
-      Task::none()
-    }
     Message::ReauthRequested(_) => Task::none(),
     Message::RequiredScopesChanged(scopes) => {
       state.set_required_scopes(scopes);
@@ -1014,12 +950,124 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       }
       Task::none()
     }
-    Message::Tick => {
-      // Jobs cross their completion time between ticks, flipping the ready/active partition that drives
-      // both the sort order and the filter-bar tallies, so the memoized view must be refreshed each tick.
+  }
+}
+
+/// Handles the blueprint-tab control messages (kind/sort/search/scroll). Each resets the scroll offset
+/// except the scroll message itself, which records it.
+fn update_blueprints(state: &mut State, message: Message) -> Task<Message> {
+  match message {
+    Message::BlueprintKindSelected(kind) => {
+      state.blueprint_kind = kind;
+      state.blueprint_scroll_offset = 0.0;
+    }
+    Message::BlueprintScrolled {
+      absolute,
+    } => {
+      state.blueprint_scroll_offset = absolute;
+    }
+    Message::BlueprintSearchChanged(query) => {
+      state.blueprint_search = query;
+      state.blueprint_scroll_offset = 0.0;
+    }
+    Message::BlueprintSortSelected(sort) => {
+      state.blueprint_sort = sort;
+      state.blueprint_scroll_offset = 0.0;
+    }
+    _ => unreachable!("update_blueprints only handles blueprint-tab messages"),
+  }
+  Task::none()
+}
+
+/// Handles the jobs-tab control messages (filter/group/scroll) plus the periodic tick. Each rebuilds the
+/// memoized job view, since the ready/active partition shifts as jobs complete.
+fn update_jobs(state: &mut State, message: Message, now: DateTime<Utc>) -> Task<Message> {
+  match message {
+    Message::FilterSelected(filter) => {
+      state.filter = filter;
+      state.jobs_scroll_offset = 0.0;
       state.rebuild_job_view(now);
+    }
+    Message::GroupBySelected(group_by) => {
+      state.group_by = group_by;
+      state.jobs_scroll_offset = 0.0;
+      state.rebuild_job_view(now);
+    }
+    Message::JobsScrolled {
+      absolute,
+    } => {
+      state.jobs_scroll_offset = absolute;
+    }
+    // Jobs cross their completion time between ticks, flipping the ready/active partition that drives
+    // both the sort order and the filter-bar tallies, so the memoized view must be refreshed each tick.
+    Message::Tick => {
+      state.rebuild_job_view(now);
+    }
+    _ => unreachable!("update_jobs only handles jobs-tab messages"),
+  }
+  Task::none()
+}
+
+/// Handles the rail resize-pane drag lifecycle. The end of a drag lifts the settled ratio to the app
+/// layer so it persists to the window state.
+fn update_rail_pane(state: &mut State, message: Message) -> Task<Message> {
+  match message {
+    Message::RailPaneDrag(x) => {
+      state.rail_pane.drag_to(x);
       Task::none()
     }
+    Message::RailPaneDragEnd => {
+      state.rail_pane.end();
+      Task::done(Message::PaneSettled(RAIL_PANE_KEY, state.rail_pane.ratio()))
+    }
+    Message::RailPaneDragStart => {
+      state.rail_pane.start();
+      Task::none()
+    }
+    _ => unreachable!("update_rail_pane only handles rail-pane messages"),
+  }
+}
+
+/// Handles the planner-tab messages: pilot assignment toggling/loading, plan builds, nested planner
+/// messages, and the asynchronous planner/on-hand load results.
+fn update_planner_messages(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::AssignPilotsChanged(enabled) => {
+      state.assign_pilots = enabled;
+      state.planner.set_assign_pilots(enabled);
+      if enabled && state.tab == Tab::Planner {
+        load_pilots(db, state.pilot_identities())
+      } else {
+        Task::none()
+      }
+    }
+    Message::PilotsLoaded(pilots) => {
+      state.planner.set_pilots(pilots);
+      Task::none()
+    }
+    Message::PlanBuild(blueprint_type_id) => handle_plan_build(state, db, blueprint_type_id),
+    Message::Planner(planner_message) => handle_planner(state, db, planner_message),
+    Message::PlannerLoaded(data) => {
+      // Capture the static catalog from the first full load so later loads (rail re-entry, scope change) reuse
+      // it instead of rebuilding it; the app layer hoists this into its session-lived cache.
+      if state.planner_catalog.is_none() {
+        state.planner_catalog = Some(StaticCatalog::from_planner_data(&data));
+      }
+      state.planner.apply_data(*data);
+      let epoch = state.on_hand_epoch.next();
+      load_on_hand(db, state.planner.build_sites(), epoch)
+    }
+    Message::PlannerOnHandLoaded {
+      epoch,
+      on_hand,
+    } => {
+      if !state.on_hand_epoch.matches(epoch) {
+        return Task::none();
+      }
+      state.planner.set_on_hand(on_hand);
+      Task::none()
+    }
+    _ => unreachable!("update_planner_messages only handles planner-tab messages"),
   }
 }
 

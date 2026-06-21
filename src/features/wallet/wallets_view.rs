@@ -407,8 +407,6 @@ fn hero_stat<'a>(label: &'a str, value: f64, value_color: Color) -> Element<'a, 
 }
 
 fn section_card<'a>(section: Section) -> Element<'a, Message> {
-  let max = section.rows.iter().map(|row| row.balance).fold(0.0_f64, f64::max);
-
   let Section {
     caption,
     rows,
@@ -420,7 +418,7 @@ fn section_card<'a>(section: Section) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![section_head(title, caption, subtotal, swatch, rows.len())];
   let last = rows.len().saturating_sub(1);
   for (index, row) in rows.into_iter().enumerate() {
-    children.push(wallet_row(row, max, index == last));
+    children.push(wallet_row(row, subtotal, index == last));
   }
 
   container(Column::with_children(children).width(Length::Fill))
@@ -546,7 +544,7 @@ fn section_swatch<'a>(swatch: SectionSwatch, size: f32) -> Element<'a, Message> 
   }
 }
 
-fn wallet_row<'a>(row: RowData, max: f64, last: bool) -> Element<'a, Message> {
+fn wallet_row<'a>(row: RowData, section_subtotal: f64, last: bool) -> Element<'a, Message> {
   let lead: Element<'a, Message> = match row.swatch {
     Some(swatch) => Avatar::new(
       swatch.id,
@@ -581,7 +579,7 @@ fn wallet_row<'a>(row: RowData, max: f64, last: bool) -> Element<'a, Message> {
     );
   }
 
-  let share = if max > 0.0 { (row.balance / max) as f32 } else { 0.0 };
+  let share = row_share(row.balance, section_subtotal);
 
   let left_pad = if row.indent { 20.0 } else { 24.0 };
   container(
@@ -620,6 +618,14 @@ fn wallet_row<'a>(row: RowData, max: f64, last: bool) -> Element<'a, Message> {
     ..container::Style::default()
   })
   .into()
+}
+
+fn row_share(balance: f64, section_subtotal: f64) -> f32 {
+  if section_subtotal > 0.0 {
+    (balance / section_subtotal) as f32
+  } else {
+    0.0
+  }
 }
 
 fn share_bar<'a>(share: f32) -> Element<'a, Message> {
@@ -724,6 +730,50 @@ mod tests {
     #[test]
     fn it_falls_back_to_an_ordinal_for_later_divisions() {
       assert_eq!(super::division_label(&division(7, None)), "7th Wallet");
+    }
+  }
+
+  mod row_share {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_sums_to_one_across_a_multi_row_section() {
+      let balances = [40.0, 35.0, 25.0];
+      let subtotal: f64 = balances.iter().sum();
+
+      let total: f32 = balances
+        .iter()
+        .map(|balance| super::row_share(*balance, subtotal))
+        .sum();
+
+      assert!((total - 1.0).abs() < 1e-5, "shares summed to {total}");
+    }
+
+    #[test]
+    fn it_yields_equal_shares_for_equal_balances() {
+      let subtotal = 300.0;
+
+      let first = super::row_share(100.0, subtotal);
+      let second = super::row_share(100.0, subtotal);
+      let third = super::row_share(100.0, subtotal);
+
+      assert_eq!(first, second);
+      assert_eq!(second, third);
+    }
+
+    #[test]
+    fn it_fills_a_single_row_section() {
+      assert_eq!(super::row_share(500.0, 500.0), 1.0);
+    }
+
+    #[test]
+    fn it_yields_no_fill_for_a_zero_subtotal() {
+      assert_eq!(super::row_share(0.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn it_yields_no_fill_for_a_negative_subtotal() {
+      assert_eq!(super::row_share(100.0, -50.0), 0.0);
     }
   }
 }

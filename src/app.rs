@@ -1385,6 +1385,19 @@ fn industry_required_scopes() -> Vec<&'static str> {
   registry::descriptor(config::Feature::Industry).scopes.to_vec()
 }
 
+/// Whether the industry planner may offer the pilot/clone assignment picker: the clone/implant data it reads is
+/// gated behind BOTH the Skills and Clone-Monitoring features (never Industry), so both must be enabled.
+fn industry_assign_pilots(app: &App) -> bool {
+  app
+    .runtime
+    .as_ref()
+    .map(|runtime| {
+      let features = runtime.settings.features();
+      features.is_enabled(config::Feature::SkillMonitoring) && features.is_enabled(config::Feature::CloneMonitoring)
+    })
+    .unwrap_or(false)
+}
+
 fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
   navigate(app, Route::Industry);
   let required = industry_required_scopes();
@@ -1394,12 +1407,14 @@ fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
     .as_ref()
     .map(|runtime| industry::FacilityDefaults::from(runtime.settings.industry()))
     .unwrap_or_default();
+  let assign_pilots = industry_assign_pilots(app);
   app.industry = Some(
     industry::State::new(
       selection,
       required.clone(),
       facility_defaults,
       app.industry_catalog.clone(),
+      assign_pilots,
     )
     .with_restored_panes(&app.ui_state),
   );
@@ -2905,8 +2920,13 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   }
 
   if let Some(state) = app.industry.as_ref() {
+    let assign_pilots =
+      flags.is_enabled(config::Feature::SkillMonitoring) && flags.is_enabled(config::Feature::CloneMonitoring);
     tasks.push(Task::done(Message::Industry(industry::Message::RequiredScopesChanged(
       industry_required_scopes(),
+    ))));
+    tasks.push(Task::done(Message::Industry(industry::Message::AssignPilotsChanged(
+      assign_pilots,
     ))));
     if route == Route::Industry {
       tasks.push(industry::reload(&db, state.active(), &industry_required_scopes()).map(Message::Industry));
@@ -5282,6 +5302,7 @@ mod tests {
         Vec::new(),
         industry::FacilityDefaults::default(),
         None,
+        false,
       )
     }
 
@@ -8098,6 +8119,7 @@ mod tests {
         industry_required_scopes(),
         industry::FacilityDefaults::default(),
         None,
+        false,
       ));
       app.runtime = Some(runtime);
       app.sync_popover_open = true;

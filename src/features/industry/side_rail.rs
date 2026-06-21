@@ -353,6 +353,7 @@ mod tests {
       Vec::new(),
       super::super::FacilityDefaults::default(),
       None,
+      false,
     );
     state.active = active;
     state.roster = vec![owner(1, false), owner(2, false), owner(98, true)];

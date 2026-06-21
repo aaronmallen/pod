@@ -121,6 +121,7 @@ pub enum BlueprintSort {
 
 #[derive(Clone, Debug)]
 pub enum Message {
+  AssignPilotsChanged(bool),
   BlueprintKindSelected(BlueprintKind),
   BlueprintScrolled {
     absolute: f32,
@@ -135,6 +136,7 @@ pub enum Message {
   Loaded(Box<Loaded>),
   PaneSettled(&'static str, f32),
   PickerToggled,
+  PilotsLoaded(Vec<planner_loaders::PlanPilot>),
   PlanBuild(i64),
   Planner(planner::Message),
   PlannerLoaded(Box<planner_loaders::PlannerData>),
@@ -164,6 +166,9 @@ impl Message {
 #[derive(Debug)]
 pub struct State {
   active: Scope,
+  /// Whether the planner's pilot/clone assignment picker is offered. True only when BOTH the Skills and
+  /// Clone-Monitoring features are enabled (the features that gate the clone/implant data the picker reads).
+  assign_pilots: bool,
   blueprint_kind: BlueprintKind,
   blueprint_scroll_offset: f32,
   blueprint_search: String,
@@ -194,15 +199,18 @@ impl State {
     required_scopes: Vec<&'static str>,
     facility_defaults: FacilityDefaults,
     planner_catalog: Option<StaticCatalog>,
+    assign_pilots: bool,
   ) -> Self {
     let mut planner = Planner::new();
     planner.set_facility_defaults(facility_defaults);
+    planner.set_assign_pilots(assign_pilots);
     State {
       active: if active == EMPTY_INDUSTRY_SELECTION {
         Scope::All
       } else {
         Scope::Char(active)
       },
+      assign_pilots,
       blueprint_kind: BlueprintKind::default(),
       blueprint_scroll_offset: 0.0,
       blueprint_search: String::new(),
@@ -351,6 +359,27 @@ impl State {
 
   pub(super) fn picker_open(&self) -> bool {
     self.picker_open
+  }
+
+  /// The authenticated-character identities `(id, name, portrait)` eligible for a pilot assignment under the
+  /// current scope — the planner pilot pool. Only characters (never corp roster entries) appear; `Scope::Corp`
+  /// keeps that corporation's members and `Scope::Char` keeps the single pilot. These are the only owners whose
+  /// skills/clones/implants are synced.
+  fn pilot_identities(&self) -> Vec<(i64, String, Option<std::path::PathBuf>)> {
+    self
+      .roster
+      .iter()
+      .filter(|owner| !owner.is_corporation)
+      .filter(|owner| match self.active {
+        Scope::All => true,
+        Scope::Char(id) => owner.id == id,
+        Scope::Corp(id) => owner.corporation_id == Some(id),
+      })
+      .map(|owner| {
+        let portrait = owner.portrait.as_ref().and_then(images::ImageState::path);
+        (owner.id, owner.name.clone(), portrait)
+      })
+      .collect()
   }
 
   pub(super) fn planner(&self) -> &Planner {
@@ -572,6 +601,19 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
   }
 }
 
+/// Loads the planner pilot pool (scope-filtered authenticated characters with their clones+implants) for the
+/// assignment picker. A no-op when the gating features are off or no character is in scope.
+fn load_pilots(db: &Database, identities: Vec<(i64, String, Option<std::path::PathBuf>)>) -> Task<Message> {
+  if identities.is_empty() {
+    return Task::done(Message::PilotsLoaded(Vec::new()));
+  }
+  let db = db.clone();
+  Task::perform(
+    async move { planner_loaders::plan_pilots(&db, &identities).await },
+    Message::PilotsLoaded,
+  )
+}
+
 /// Refreshes the planner's on-hand stock map for its current build sites, so "Use Stock" reflects what each
 /// consuming facility actually holds. A no-op (empty map) when no facility has been picked yet.
 fn load_on_hand(db: &Database, sites: Vec<i64>, epoch: u64) -> Task<Message> {
@@ -735,6 +777,15 @@ fn handle_plan_build(state: &mut State, db: &Database, blueprint_type_id: i64) -
 
 pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<Utc>) -> Task<Message> {
   match message {
+    Message::AssignPilotsChanged(enabled) => {
+      state.assign_pilots = enabled;
+      state.planner.set_assign_pilots(enabled);
+      if enabled && state.tab == Tab::Planner {
+        load_pilots(db, state.pilot_identities())
+      } else {
+        Task::none()
+      }
+    }
     Message::BlueprintKindSelected(kind) => {
       state.blueprint_kind = kind;
       state.blueprint_scroll_offset = 0.0;
@@ -789,11 +840,20 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         state.jobs = jobs;
         state.roster = roster;
         state.rebuild_job_view(now);
+        // The pilot pool is derived from the just-loaded roster, so refresh it here once the roster is
+        // present (gated to the Planner tab where the picker shows).
+        if state.assign_pilots && state.tab == Tab::Planner {
+          return load_pilots(db, state.pilot_identities());
+        }
       }
       Task::none()
     }
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
+      Task::none()
+    }
+    Message::PilotsLoaded(pilots) => {
+      state.planner.set_pilots(pilots);
       Task::none()
     }
     Message::PaneSettled(..) => Task::none(),
@@ -848,6 +908,8 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         tasks.push(load_planner(db, scope, state.planner_catalog.clone()));
       }
       Task::batch(tasks)
+      // The pilot pool reloads off the fresh roster in the `Loaded` arm below, since it depends on the
+      // scope-filtered roster a `reload` is about to fetch.
     }
     Message::TabSelected(tab) => {
       state.tab = tab;
@@ -855,6 +917,9 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
         let mut tasks = vec![list_plans(db)];
         if !state.planner.is_loaded() {
           tasks.push(load_planner(db, state.active, state.planner_catalog.clone()));
+        }
+        if state.assign_pilots {
+          tasks.push(load_pilots(db, state.pilot_identities()));
         }
         return Task::batch(tasks);
       }
@@ -957,7 +1022,13 @@ mod tests {
   }
 
   fn state_with(active: Scope, roster: Vec<RosterOwner>, jobs: Vec<IndustryJob>) -> State {
-    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required(), FacilityDefaults::default(), None);
+    let mut state = State::new(
+      EMPTY_INDUSTRY_SELECTION,
+      required(),
+      FacilityDefaults::default(),
+      None,
+      false,
+    );
     state.active = active;
     state.roster = roster;
     state.jobs = jobs;
@@ -1096,6 +1167,54 @@ mod tests {
     }
   }
 
+  mod pilot_identities {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn roster() -> Vec<RosterOwner> {
+      vec![
+        character_owner(1, None),
+        character_owner(2, None),
+        corporation_owner(98),
+      ]
+    }
+
+    #[test]
+    fn it_keeps_only_characters_under_the_all_scope() {
+      let state = state_with(Scope::All, roster(), Vec::new());
+
+      let ids: Vec<i64> = state.pilot_identities().into_iter().map(|(id, ..)| id).collect();
+
+      assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn it_keeps_the_single_pilot_under_a_character_scope() {
+      let state = state_with(Scope::Char(2), roster(), Vec::new());
+
+      let ids: Vec<i64> = state.pilot_identities().into_iter().map(|(id, ..)| id).collect();
+
+      assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
+    fn it_keeps_the_corporations_members_under_a_corp_scope() {
+      let state = state_with(Scope::Corp(98), roster(), Vec::new());
+
+      let ids: Vec<i64> = state.pilot_identities().into_iter().map(|(id, ..)| id).collect();
+
+      assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn it_is_empty_for_a_corp_scope_with_no_members() {
+      let state = state_with(Scope::Corp(999), roster(), Vec::new());
+
+      assert!(state.pilot_identities().is_empty());
+    }
+  }
+
   mod dispatch {
     use super::*;
 
@@ -1184,6 +1303,9 @@ mod tests {
       let _ = update(&mut state, Message::RailPaneDrag(640.0), &db, n);
       let _ = update(&mut state, Message::RailPaneDragEnd, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
+      let _ = update(&mut state, Message::PilotsLoaded(Vec::new()), &db, n);
+      let _ = update(&mut state, Message::AssignPilotsChanged(true), &db, n);
+      let _ = update(&mut state, Message::AssignPilotsChanged(false), &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Char(1)), &db, n);
 

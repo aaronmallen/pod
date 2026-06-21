@@ -376,7 +376,13 @@ mod tests {
   }
 
   fn state_with(extractions: Vec<Extraction>) -> State {
-    let mut state = State::new(EMPTY_INDUSTRY_SELECTION, required(), FacilityDefaults::default(), None);
+    let mut state = State::new(
+      EMPTY_INDUSTRY_SELECTION,
+      required(),
+      FacilityDefaults::default(),
+      None,
+      false,
+    );
     state.seed_extractions(extractions);
     state.seed_tab(Tab::Extractions);
     state

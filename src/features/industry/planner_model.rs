@@ -489,6 +489,24 @@ pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<P
   next
 }
 
+/// Sets (or clears, when both ids are `None`) the pilot+clone of the segment at `index`, reconciling the stored
+/// set against `total` first so a not-yet-split job materializes its single full segment before being assigned.
+/// Runs are untouched; an out-of-range index is a no-op.
+pub fn set_segment_assignment(
+  stored: &[PlanSegment],
+  total: i64,
+  index: usize,
+  pilot_id: Option<i64>,
+  clone_id: Option<i64>,
+) -> Vec<PlanSegment> {
+  let mut segments = reconcile_segments(stored, total);
+  if let Some(segment) = segments.get_mut(index) {
+    segment.clone_id = clone_id;
+    segment.pilot_id = pilot_id;
+  }
+  segments
+}
+
 /// Sets the runs of the segment at `index` (clamped so every other segment keeps at least one run) and spreads
 /// the remainder evenly across the rest. A single-segment job is left unchanged — its runs track the total.
 pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value: i64) -> Vec<PlanSegment> {
@@ -1506,6 +1524,54 @@ mod tests {
       let result = runs_for(11, 4);
 
       assert_eq!(result, 3);
+    }
+  }
+
+  mod set_segment_assignment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_assigns_a_pilot_and_clone_to_an_absent_segment() {
+      let next = set_segment_assignment(&[], 10, 0, Some(7), Some(3));
+
+      assert_eq!(next.len(), 1);
+      assert_eq!(next[0].pilot_id, Some(7));
+      assert_eq!(next[0].clone_id, Some(3));
+      assert_eq!(next[0].runs, 10);
+    }
+
+    #[test]
+    fn it_clears_an_assignment_when_both_ids_are_none() {
+      let stored = vec![PlanSegment {
+        clone_id: Some(3),
+        pilot_id: Some(7),
+        runs: 10,
+      }];
+
+      let next = set_segment_assignment(&stored, 10, 0, None, None);
+
+      assert_eq!(next[0].pilot_id, None);
+      assert_eq!(next[0].clone_id, None);
+    }
+
+    #[test]
+    fn it_leaves_other_segments_untouched() {
+      let stored = vec![PlanSegment::unassigned(5), PlanSegment::unassigned(5)];
+
+      let next = set_segment_assignment(&stored, 10, 1, Some(2), None);
+
+      assert_eq!(next[0].pilot_id, None);
+      assert_eq!(next[1].pilot_id, Some(2));
+      assert_eq!(next[1].clone_id, None);
+    }
+
+    #[test]
+    fn it_ignores_an_out_of_range_index() {
+      let next = set_segment_assignment(&[], 10, 9, Some(7), Some(3));
+
+      assert_eq!(next[0].pilot_id, None);
     }
   }
 

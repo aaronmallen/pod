@@ -4,10 +4,10 @@ use iced::Point;
 
 use super::{
   Scope,
-  planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
+  planner_loaders::{self, Category, PlanPilot, PlannerData, PlannerFacility, Recipe},
   planner_model::{
     BuildNode, BuildPlan, MergedBuildJob, PlanSegment, RawTotal, StockAllocation, StockSelection, allocate_stock,
-    merge_segments, reconcile_segments, remove_segment, set_segment_runs, split_segments,
+    merge_segments, reconcile_segments, remove_segment, set_segment_assignment, set_segment_runs, split_segments,
   },
 };
 use crate::{
@@ -166,6 +166,21 @@ pub enum Message {
     type_id: i64,
   },
   OrderMenuClosed,
+  OrderPilotAssigned {
+    clone_id: Option<i64>,
+    index: usize,
+    pilot_id: Option<i64>,
+    type_id: i64,
+  },
+  OrderPilotPickerExpanded {
+    index: usize,
+    pilot_id: i64,
+    type_id: i64,
+  },
+  OrderPilotPickerToggled {
+    index: usize,
+    type_id: i64,
+  },
   OrderSegmentRemoved {
     index: usize,
     type_id: i64,
@@ -241,6 +256,10 @@ struct Derived {
 
 #[derive(Debug)]
 pub struct Planner {
+  /// Whether the build-order pilot/clone picker is offered. True only when BOTH Skills and Clone-Monitoring are
+  /// enabled (the features that gate the clone/implant data); the app layer sets it. When false the assignment
+  /// control is replaced by a one-line hint and the planner behaves exactly as before.
+  assign_pilots: bool,
   /// Reverse index from a recipe's `blueprint_type_id` to the product type it makes, built once in
   /// [`apply_data`] from the recipe table (whose keys are product type ids). Turns `runs_me`'s former
   /// linear scan of the whole recipe map into an O(1) lookup.
@@ -275,6 +294,13 @@ pub struct Planner {
   /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
   /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
   pending_blueprint_seed: Option<i64>,
+  /// The open build-order pilot picker: `(type_id, segment index, explicitly-expanded pilot)`. A non-split job
+  /// uses index 0; the expanded pilot is `None` until the user expands a pilot row (the view then falls back to
+  /// the assigned pilot, or the first pilot).
+  pilot_picker: Option<(i64, usize, Option<i64>)>,
+  /// The authenticated-pilot pool (scope-filtered) with each pilot's clones+implants, the picker's source. Empty
+  /// until loaded, and always empty while `assign_pilots` is false.
+  pilots: Vec<PlanPilot>,
   picker_open: bool,
   picker_scroll_offset: f32,
   placeholder: String,
@@ -297,6 +323,7 @@ pub struct Planner {
 impl Planner {
   pub fn new() -> Self {
     Planner {
+      assign_pilots: false,
       bp_to_product: HashMap::new(),
       built: BTreeSet::new(),
       category: Category::Other,
@@ -319,6 +346,8 @@ impl Planner {
       order_menu: None,
       order_segments: BTreeMap::new(),
       pending_blueprint_seed: None,
+      pilot_picker: None,
+      pilots: Vec::new(),
       picker_open: false,
       picker_scroll_offset: 0.0,
       placeholder: String::new(),
@@ -392,6 +421,11 @@ impl Planner {
       }
     }
     sites.into_iter().collect()
+  }
+
+  /// Whether the build-order pilot/clone picker is available (both Skills and Clone-Monitoring enabled).
+  pub fn assign_pilots(&self) -> bool {
+    self.assign_pilots
   }
 
   pub fn category(&self) -> Category {
@@ -552,6 +586,27 @@ impl Planner {
     self.picker_open
   }
 
+  /// The pilot in the pool with `id`, if any — used to resolve an assignment back to a name+clone for display.
+  pub fn pilot(&self, id: i64) -> Option<&PlanPilot> {
+    self.pilots.iter().find(|pilot| pilot.id == id)
+  }
+
+  /// Whether the pilot picker for `(type_id, index)` is currently open.
+  pub fn pilot_picker_open(&self, type_id: i64, index: usize) -> bool {
+    self
+      .pilot_picker
+      .is_some_and(|(open_type, open_index, _)| open_type == type_id && open_index == index)
+  }
+
+  /// The pilot whose clone list is explicitly expanded in the open picker, if the user expanded one.
+  pub fn pilot_picker_expanded(&self) -> Option<i64> {
+    self.pilot_picker.and_then(|(_, _, pilot_id)| pilot_id)
+  }
+
+  pub fn pilots(&self) -> &[PlanPilot] {
+    &self.pilots
+  }
+
   pub fn picker_scroll_offset(&self) -> f32 {
     self.picker_scroll_offset
   }
@@ -641,6 +696,7 @@ impl Planner {
     self.restore_stock_selections(tree);
     self.facility_picker = None;
     self.order_menu = None;
+    self.pilot_picker = None;
     self.order_segments.clear();
     self.collapsed_rows.clear();
     self.push_recent(tree.product_type_id);
@@ -718,8 +774,27 @@ impl Planner {
     }
   }
 
+  /// Sets whether the build-order pilot picker is offered. Turning it off also closes any open picker and drops
+  /// the loaded pool so the planner reverts to exactly its prior behavior (assignments already persisted stay
+  /// in the segment overlay, simply un-rendered).
+  pub fn set_assign_pilots(&mut self, enabled: bool) {
+    self.assign_pilots = enabled;
+    if !enabled {
+      self.pilot_picker = None;
+      self.pilots.clear();
+    }
+  }
+
   pub fn set_facility_defaults(&mut self, defaults: FacilityDefaults) {
     self.facility_defaults = defaults;
+  }
+
+  /// Replaces the pilot pool the picker draws from (scope-filtered authenticated characters with their clones).
+  /// Ignored while assignment is disabled, so a stale load can never re-populate a gated planner.
+  pub fn set_pilots(&mut self, pilots: Vec<PlanPilot>) {
+    if self.assign_pilots {
+      self.pilots = pilots;
+    }
   }
 
   /// Replaces the on-hand stock map (keyed by `(site, type_id)`) feeding the stock-allocation pass, loaded
@@ -938,6 +1013,15 @@ impl Planner {
         ..
       }
       | Message::OrderMenuClosed
+      | Message::OrderPilotAssigned {
+        ..
+      }
+      | Message::OrderPilotPickerExpanded {
+        ..
+      }
+      | Message::OrderPilotPickerToggled {
+        ..
+      }
       | Message::OrderSegmentRemoved {
         ..
       }
@@ -1125,6 +1209,24 @@ impl Planner {
         self.order_menu = None;
       }
       Message::OrderMenuClosed => self.order_menu = None,
+      Message::OrderPilotAssigned {
+        clone_id,
+        index,
+        pilot_id,
+        type_id,
+      } => {
+        self.assign_pilot(type_id, index, pilot_id, clone_id);
+        self.pilot_picker = None;
+      }
+      Message::OrderPilotPickerExpanded {
+        index,
+        pilot_id,
+        type_id,
+      } => self.expand_pilot(type_id, index, pilot_id),
+      Message::OrderPilotPickerToggled {
+        index,
+        type_id,
+      } => self.toggle_pilot_picker(type_id, index),
       Message::OrderSegmentRemoved {
         index,
         type_id,
@@ -1301,12 +1403,40 @@ impl Planner {
     });
   }
 
+  /// Records (or clears) a pilot+clone on segment `index` of `type_id`, writing it through the same per-job
+  /// segment overlay the split/merge path uses so it persists with the plan. A no-op when assignment is off.
+  fn assign_pilot(&mut self, type_id: i64, index: usize, pilot_id: Option<i64>, clone_id: Option<i64>) {
+    if !self.assign_pilots {
+      return;
+    }
+    let total = self.total_runs_for(type_id);
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    self.order_segments.insert(
+      type_id,
+      set_segment_assignment(stored, total, index, pilot_id, clone_id),
+    );
+  }
+
   fn remove_order_segment(&mut self, type_id: i64, index: usize) {
     let total = self.total_runs_for(type_id);
     let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
     self
       .order_segments
       .insert(type_id, remove_segment(stored, total, index));
+  }
+
+  fn toggle_pilot_picker(&mut self, type_id: i64, index: usize) {
+    if self.pilot_picker_open(type_id, index) {
+      self.pilot_picker = None;
+    } else {
+      self.pilot_picker = Some((type_id, index, None));
+    }
+  }
+
+  fn expand_pilot(&mut self, type_id: i64, index: usize, pilot_id: i64) {
+    if self.pilot_picker_open(type_id, index) {
+      self.pilot_picker = Some((type_id, index, Some(pilot_id)));
+    }
   }
 
   fn split_order_job(&mut self, type_id: i64) {
@@ -1408,6 +1538,7 @@ impl Planner {
     self.collapsed_rows.clear();
     self.order_segments.clear();
     self.order_menu = None;
+    self.pilot_picker = None;
     self.facility_picker = None;
   }
 
@@ -1734,7 +1865,7 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     let segment_count = segments.len();
     let total: i64 = segments.iter().map(|segment| segment.runs).sum();
     let mut items = Vec::new();
-    if total >= segment_count as i64 + 1 {
+    if total > segment_count as i64 {
       items.push(context_menu::Item::action(
         if menu.split {
           "Split job again"
@@ -1785,13 +1916,14 @@ mod view {
   use super::{Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time};
   use crate::{
     features::industry::{
-      planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
+      planner_loaders::{Category, OwnedSummary, PlanClone, PlanPilot, PlannerData, PlannerFacility, Recipe},
       planner_model::{MergedBuildJob, NeededBlueprint, PlanSegment, eff_qty, needed_blueprints_from, runs_for},
     },
     store::images::IconResolution,
     ui::{
       components::{
         anchored_dropdown::AnchoredDropdown,
+        avatar::avatar,
         badge::badge,
         clip::clip_layer,
         facility_combobox::{FacilityCombobox, FacilityRef},
@@ -1821,6 +1953,8 @@ mod view {
   const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
   const PANE_PADDING: f32 = 24.0;
   const PICKER_MAX_RESULTS: usize = 200;
+  const PILOT_PICKER_MAX_HEIGHT: f32 = 360.0;
+  const PILOT_PICKER_WIDTH: f32 = 280.0;
   const RUNS_FIELD_WIDTH: f32 = 34.0;
   const RUNS_STEPPER_HEIGHT: f32 = 34.0;
   const RUNS_STEP_WIDTH: f32 = 30.0;
@@ -3340,7 +3474,7 @@ mod view {
       .spacing(spacing::UNIT)
       .width(Length::Fill)
       .into(),
-      assignment_slot(&segments, split),
+      assignment_slot(planner, job.type_id, &segments, split),
       runs_pill(job.runs, is_reaction, is_final),
       text(fmt_duration_coarse(time as i64))
         .font(typography::mono::REGULAR)
@@ -3365,16 +3499,15 @@ mod view {
 
     let mut rows: Vec<Element<'a, Message>> = vec![header_area.into()];
     if split {
+      let ctx = SegmentRow {
+        count: segments.len(),
+        is_reaction,
+        recipe: &recipe,
+        te: job.node.te,
+        type_id,
+      };
       for (i, segment) in segments.iter().enumerate() {
-        rows.push(segment_row(
-          &recipe,
-          type_id,
-          i,
-          segments.len(),
-          segment,
-          job.node.te,
-          is_reaction,
-        ));
+        rows.push(segment_row(planner, &ctx, i, segment));
       }
     }
 
@@ -3392,10 +3525,15 @@ mod view {
       .into()
   }
 
-  /// The per-job assignment slot in a build-order row. Single-segment jobs get an inert "Assign pilot" stub
-  /// (the pilot/clone picker is wired by a separate task); split jobs show how many pilots are used and defer
-  /// the actual pickers to the per-segment rows below.
-  fn assignment_slot<'a>(segments: &[PlanSegment], split: bool) -> Element<'a, Message> {
+  /// The per-job assignment slot in a build-order row. A single-segment job carries the real pilot/clone picker
+  /// for segment 0; a split job shows how many distinct pilots are used and defers the pickers to the per-segment
+  /// rows below. With assignment disabled (Skills or Clone-Monitoring off), a one-line hint stands in.
+  fn assignment_slot<'a>(
+    planner: &'a Planner,
+    type_id: i64,
+    segments: &[PlanSegment],
+    split: bool,
+  ) -> Element<'a, Message> {
     if split {
       let pilots: std::collections::BTreeSet<i64> = segments.iter().filter_map(|segment| segment.pilot_id).collect();
       let lead = if pilots.is_empty() {
@@ -3421,15 +3559,29 @@ mod view {
       .into();
     }
 
-    assign_stub()
+    pilot_slot(planner, type_id, 0, segments.first())
   }
 
-  /// An inert "Assign pilot" affordance, a dashed placeholder for the pilot/clone picker a later task fills.
-  fn assign_stub<'a>() -> Element<'a, Message> {
+  /// The pilot/clone control for one segment: the live two-level picker when assignment is enabled, otherwise the
+  /// inert "Enable Skills + Clones to assign pilots" hint.
+  fn pilot_slot<'a>(
+    planner: &'a Planner,
+    type_id: i64,
+    index: usize,
+    segment: Option<&PlanSegment>,
+  ) -> Element<'a, Message> {
+    if !planner.assign_pilots() {
+      return assign_disabled_hint();
+    }
+    pilot_picker(planner, type_id, index, segment)
+  }
+
+  /// The one-line hint shown in place of the picker when Skills or Clone-Monitoring is disabled.
+  fn assign_disabled_hint<'a>() -> Element<'a, Message> {
     container(
-      text("Assign pilot")
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM)
+      text("Enable Skills + Clones to assign pilots")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),
     )
     .width(Length::Fixed(ASSIGN_SLOT_WIDTH))
@@ -3441,29 +3593,354 @@ mod view {
       right: spacing::SPACE_2,
       ..Padding::ZERO
     })
+    .into()
+  }
+
+  /// The two-level pilot \u{2192} clone picker for one segment, anchored under its trigger via [`AnchoredDropdown`].
+  /// The trigger shows the assigned pilot avatar + clone name, or a dashed "Assign pilot" affordance. Opening it
+  /// lists eligible pilots; the expanded pilot's clones (active + jump) each carry an implant summary. An
+  /// "Unassign" action clears the slot. Selecting a clone never touches the build facility.
+  fn pilot_picker<'a>(
+    planner: &'a Planner,
+    type_id: i64,
+    index: usize,
+    segment: Option<&PlanSegment>,
+  ) -> Element<'a, Message> {
+    let assigned = segment.and_then(|segment| {
+      let pilot_id = segment.pilot_id?;
+      let pilot = planner.pilot(pilot_id)?;
+      Some((pilot, pilot.clone_named(segment.clone_id)))
+    });
+
+    let trigger = pilot_trigger(type_id, index, assigned);
+    let open = planner
+      .pilot_picker_open(type_id, index)
+      .then(|| pilot_popover(planner, type_id, index, segment));
+
+    AnchoredDropdown::new(trigger, open)
+      .popover_width(PILOT_PICKER_WIDTH)
+      .on_dismiss(Message::OrderPilotPickerToggled {
+        index,
+        type_id,
+      })
+      .into()
+  }
+
+  fn pilot_trigger<'a>(
+    type_id: i64,
+    index: usize,
+    assigned: Option<(&'a PlanPilot, Option<&'a PlanClone>)>,
+  ) -> Element<'a, Message> {
+    let body: Element<'a, Message> = match assigned {
+      Some((pilot, clone)) => {
+        let clone_label = clone
+          .map(|clone| clone.name.clone())
+          .unwrap_or_else(|| "active clone".to_owned());
+        Row::with_children(vec![
+          avatar(
+            pilot.id,
+            &pilot.name,
+            Length::Fixed(ASSIGN_SLOT_HEIGHT - 12.0),
+            ASSIGN_SLOT_HEIGHT - 12.0,
+            pilot.portrait.clone(),
+          ),
+          Column::with_children(vec![
+            text(pilot.name.clone())
+              .font(typography::body::MEDIUM)
+              .size(typography::size::SM)
+              .style(typography::colored(color::text::PRIMARY))
+              .into(),
+            text(clone_label)
+              .font(typography::mono::REGULAR)
+              .size(typography::size::XS)
+              .style(typography::colored(color::text::tertiary()))
+              .into(),
+          ])
+          .spacing(spacing::UNIT)
+          .width(Length::Fill)
+          .into(),
+        ])
+        .spacing(spacing::SPACE_2)
+        .align_y(Vertical::Center)
+        .width(Length::Fill)
+        .into()
+      }
+      None => text("Assign pilot")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .width(Length::Fill)
+        .into(),
+    };
+
+    let solid = assigned.is_some();
+    button(
+      Row::with_children(vec![
+        body,
+        Icon::chevron()
+          .color(color::text::secondary())
+          .size(13.0)
+          .render::<Message>(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .width(Length::Fill),
+    )
+    .width(Length::Fixed(ASSIGN_SLOT_WIDTH))
+    .padding(Padding {
+      left: spacing::SPACE_2,
+      right: spacing::SPACE_2,
+      ..Padding::ZERO
+    })
+    .on_press(Message::OrderPilotPickerToggled {
+      index,
+      type_id,
+    })
+    .style(move |_, status| {
+      let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: solid.then_some(Background::Color(color::surface::SUNKEN)),
+        border: Border {
+          color: if active {
+            color::accent::PLASMA
+          } else if solid {
+            color::rule_strong()
+          } else {
+            color::rule()
+          },
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      }
+    })
+    .into()
+  }
+
+  /// The floating pilot list: an "Unassign" action (when assigned) followed by each pilot, the expanded pilot's
+  /// clones nested beneath it with an implant summary. The pilot whose row is expanded is the currently assigned
+  /// one (or the first pilot when nothing is assigned yet).
+  fn pilot_popover<'a>(
+    planner: &'a Planner,
+    type_id: i64,
+    index: usize,
+    segment: Option<&PlanSegment>,
+  ) -> Element<'a, Message> {
+    let assigned_pilot = segment.and_then(|segment| segment.pilot_id);
+    let assigned_clone = segment.and_then(|segment| segment.clone_id);
+    let expanded = planner
+      .pilot_picker_expanded()
+      .or(assigned_pilot)
+      .or_else(|| planner.pilots().first().map(|pilot| pilot.id));
+
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    if assigned_pilot.is_some() {
+      rows.push(
+        button(
+          text("\u{00D7}  Unassign")
+            .font(typography::body::REGULAR)
+            .size(typography::size::SM)
+            .style(typography::colored(color::text::secondary())),
+        )
+        .width(Length::Fill)
+        .padding(spacing::SPACE_2)
+        .on_press(Message::OrderPilotAssigned {
+          clone_id: None,
+          index,
+          pilot_id: None,
+          type_id,
+        })
+        .style(pilot_row_style(false))
+        .into(),
+      );
+    }
+
+    if planner.pilots().is_empty() {
+      rows.push(
+        container(
+          text("No pilots in scope")
+            .font(typography::body::REGULAR)
+            .size(typography::size::SM)
+            .style(typography::colored(color::text::tertiary())),
+        )
+        .padding(spacing::SPACE_2)
+        .into(),
+      );
+    }
+
+    for pilot in planner.pilots() {
+      let is_expanded = expanded == Some(pilot.id);
+      rows.push(pilot_header_row(type_id, index, pilot, is_expanded));
+      if is_expanded {
+        for clone in &pilot.clones {
+          let selected = assigned_pilot == Some(pilot.id) && assigned_clone == clone.id;
+          rows.push(clone_row(type_id, index, pilot.id, clone, selected));
+        }
+      }
+    }
+
+    container(
+      scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
+        .style(crate::ui::style::control::scrollbar)
+        .height(Length::Shrink),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_2)
+    .max_height(PILOT_PICKER_MAX_HEIGHT)
     .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::rule(),
-        radius: radius::CONTROL.into(),
+        color: color::rule_strong(),
+        radius: radius::CARD.into(),
         width: 1.0,
       },
+      shadow: crate::ui::style::shadow::CARD,
       ..container::Style::default()
     })
     .into()
   }
 
+  /// A pilot's expandable header row: avatar + name + clone count. Pressing it expands that pilot's clone list
+  /// (it does not assign — the assignment happens on a clone row, since a clone fixes the active implant set).
+  fn pilot_header_row<'a>(type_id: i64, index: usize, pilot: &'a PlanPilot, expanded: bool) -> Element<'a, Message> {
+    button(
+      Row::with_children(vec![
+        avatar(pilot.id, &pilot.name, Length::Fixed(24.0), 24.0, pilot.portrait.clone()),
+        Column::with_children(vec![
+          text(pilot.name.clone())
+            .font(typography::body::MEDIUM)
+            .size(typography::size::MD)
+            .style(typography::colored(color::text::PRIMARY))
+            .into(),
+          text(format!(
+            "{} clone{}",
+            pilot.clones.len(),
+            if pilot.clones.len() == 1 { "" } else { "s" }
+          ))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+        ])
+        .spacing(spacing::UNIT)
+        .width(Length::Fill)
+        .into(),
+        Icon::chevron()
+          .color(color::text::secondary())
+          .size(13.0)
+          .render::<Message>(),
+      ])
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_2)
+    .on_press(Message::OrderPilotPickerExpanded {
+      pilot_id: pilot.id,
+      index,
+      type_id,
+    })
+    .style(pilot_row_style(expanded))
+    .into()
+  }
+
+  /// A single clone row beneath an expanded pilot: name/location + implant summary; pressing it assigns the
+  /// pilot+clone. The location is context only and does not constrain the build facility.
+  fn clone_row<'a>(
+    type_id: i64,
+    index: usize,
+    pilot_id: i64,
+    clone: &'a PlanClone,
+    selected: bool,
+  ) -> Element<'a, Message> {
+    let mut lines: Vec<Element<'a, Message>> = vec![
+      text(clone.name.clone())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(if selected {
+          color::accent::PLASMA
+        } else {
+          color::text::PRIMARY
+        }))
+        .into(),
+      text(clone.implant_summary())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    ];
+    if let Some(location) = clone.location.as_ref().filter(|location| !location.is_empty()) {
+      lines.push(
+        text(location.clone())
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      );
+    }
+
+    let clone_id = clone.id;
+    button(Column::with_children(lines).spacing(spacing::UNIT).width(Length::Fill))
+      .width(Length::Fill)
+      .padding(Padding {
+        left: spacing::SPACE_6,
+        right: spacing::SPACE_2,
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_2,
+      })
+      .on_press(Message::OrderPilotAssigned {
+        clone_id,
+        index,
+        pilot_id: Some(pilot_id),
+        type_id,
+      })
+      .style(pilot_row_style(selected))
+      .into()
+  }
+
+  fn pilot_row_style(lit: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: (lit || hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+        border: Border {
+          radius: radius::CONTROL.into(),
+          ..Border::default()
+        },
+        text_color: color::text::PRIMARY,
+        ..button::Style::default()
+      }
+    }
+  }
+
   /// One per-segment row beneath a split build-order job: a `Split i/n` label, a runs editor (text input +
   /// clamp), the runs/cycles word, an inert assignment stub, the segment's build time, and a remove button
   /// that folds its runs back into the survivors.
-  fn segment_row<'a>(
-    recipe: &Recipe,
-    type_id: i64,
-    index: usize,
+  /// Shared per-job context for the [`segment_row`] of a split build-order job, grouping the fields every
+  /// segment row of the same job repeats so the row helper stays under the argument-count lint.
+  struct SegmentRow<'r> {
     count: usize,
-    segment: &PlanSegment,
-    te: i64,
     is_reaction: bool,
+    recipe: &'r Recipe,
+    te: i64,
+    type_id: i64,
+  }
+
+  fn segment_row<'a>(
+    planner: &'a Planner,
+    ctx: &SegmentRow<'_>,
+    index: usize,
+    segment: &PlanSegment,
   ) -> Element<'a, Message> {
+    let SegmentRow {
+      count,
+      is_reaction,
+      recipe,
+      te,
+      type_id,
+    } = *ctx;
     let time = node_build_time(recipe, segment.runs, te);
     let unit = if is_reaction { "cycles" } else { "runs" };
 
@@ -3484,7 +3961,7 @@ mod view {
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::text::tertiary()))
         .into(),
-      assign_stub(),
+      pilot_slot(planner, type_id, index, Some(segment)),
       Space::new().width(Length::Fill).into(),
       text(fmt_duration_coarse(time as i64))
         .font(typography::mono::REGULAR)
@@ -5712,6 +6189,165 @@ mod tests {
       let segments = planner.segments_for(HULK);
       assert_eq!(segments.len(), 2);
       assert_eq!(segments.iter().map(|segment| segment.runs).sum::<i64>(), 10);
+    }
+  }
+
+  mod pilot_assignment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::industry::planner_loaders::{PlanClone, PlanPilot};
+
+    fn pilot(id: i64, name: &str) -> PlanPilot {
+      PlanPilot {
+        clones: vec![
+          PlanClone {
+            id: None,
+            implant_names: vec!["Zainou 'Beancounter'".to_owned()],
+            location: Some("Jita IV - Moon 4".to_owned()),
+            name: "Active clone".to_owned(),
+          },
+          PlanClone {
+            id: Some(7),
+            implant_names: Vec::new(),
+            location: Some("Amarr VIII".to_owned()),
+            name: "Industry clone".to_owned(),
+          },
+        ],
+        id,
+        name: name.to_owned(),
+        portrait: None,
+      }
+    }
+
+    fn assignable() -> Planner {
+      let mut planner = planner();
+      planner.set_assign_pilots(true);
+      planner.set_pilots(vec![pilot(1, "Miner Joe")]);
+      planner.update(Message::RunsChanged(10));
+      planner
+    }
+
+    #[test]
+    fn it_assigns_a_pilot_and_clone_to_the_lone_segment() {
+      let mut planner = assignable();
+
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: Some(7),
+        index: 0,
+        pilot_id: Some(1),
+        type_id: HULK,
+      });
+
+      let segment = &planner.segments_for(HULK)[0];
+      assert_eq!(segment.pilot_id, Some(1));
+      assert_eq!(segment.clone_id, Some(7));
+      assert_eq!(planner.order_assignment(), (1, 1));
+    }
+
+    #[test]
+    fn it_assigns_the_active_clone_with_a_null_clone_id() {
+      let mut planner = assignable();
+
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: None,
+        index: 0,
+        pilot_id: Some(1),
+        type_id: HULK,
+      });
+
+      let segment = &planner.segments_for(HULK)[0];
+      assert_eq!(segment.pilot_id, Some(1));
+      assert_eq!(segment.clone_id, None);
+    }
+
+    #[test]
+    fn it_unassigns_a_segment() {
+      let mut planner = assignable();
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: Some(7),
+        index: 0,
+        pilot_id: Some(1),
+        type_id: HULK,
+      });
+
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: None,
+        index: 0,
+        pilot_id: None,
+        type_id: HULK,
+      });
+
+      let segment = &planner.segments_for(HULK)[0];
+      assert_eq!(segment.pilot_id, None);
+      assert_eq!(planner.order_assignment(), (0, 1));
+    }
+
+    #[test]
+    fn it_keeps_assignment_inert_when_the_feature_is_disabled() {
+      let mut planner = planner();
+      planner.set_assign_pilots(false);
+      planner.set_pilots(vec![pilot(1, "Miner Joe")]);
+      planner.update(Message::RunsChanged(10));
+
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: Some(7),
+        index: 0,
+        pilot_id: Some(1),
+        type_id: HULK,
+      });
+
+      assert!(!planner.assign_pilots());
+      assert!(planner.pilots().is_empty());
+      assert_eq!(planner.segments_for(HULK)[0].pilot_id, None);
+    }
+
+    #[test]
+    fn it_drops_the_pool_and_closes_the_picker_when_disabled() {
+      let mut planner = assignable();
+      planner.update(Message::OrderPilotPickerToggled {
+        index: 0,
+        type_id: HULK,
+      });
+      assert!(planner.pilot_picker_open(HULK, 0));
+
+      planner.set_assign_pilots(false);
+
+      assert!(!planner.pilot_picker_open(HULK, 0));
+      assert!(planner.pilots().is_empty());
+    }
+
+    #[test]
+    fn it_resolves_an_assigned_pilots_clone_for_display() {
+      let mut planner = assignable();
+      planner.update(Message::OrderPilotAssigned {
+        clone_id: Some(7),
+        index: 0,
+        pilot_id: Some(1),
+        type_id: HULK,
+      });
+
+      let resolved = planner.pilot(1).unwrap();
+      assert_eq!(resolved.name, "Miner Joe");
+      assert_eq!(resolved.clone_named(Some(7)).unwrap().name, "Industry clone");
+    }
+
+    #[test]
+    fn it_tracks_the_expanded_pilot_in_the_open_picker() {
+      let mut planner = assignable();
+      planner.set_pilots(vec![pilot(1, "Miner Joe"), pilot(2, "Hauler Sue")]);
+      planner.update(Message::OrderPilotPickerToggled {
+        index: 0,
+        type_id: HULK,
+      });
+
+      planner.update(Message::OrderPilotPickerExpanded {
+        index: 0,
+        pilot_id: 2,
+        type_id: HULK,
+      });
+
+      assert_eq!(planner.pilot_picker_expanded(), Some(2));
     }
   }
 

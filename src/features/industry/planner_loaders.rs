@@ -9,8 +9,11 @@ use crate::{
   store::{
     Database,
     images::{self, IconIndex, IconResolution},
-    model::Facility,
-    repo::{blueprints, finance, industry, sde},
+    model::{
+      Facility,
+      character_clone_view::{CharacterClones, CloneWithImplants},
+    },
+    repo::{blueprints, character, finance, industry, sde},
   },
   ui::components::facility_combobox::FacilityRef,
 };
@@ -127,6 +130,47 @@ pub struct OwnedSummary {
   pub is_original: bool,
   pub material_efficiency: i64,
   pub time_efficiency: i64,
+}
+
+/// One installable clone of a pilot: an implant set the build-time math reads. `id` is the ESI `jump_clone_id`;
+/// `None` marks the pilot's active clone. `location` is shown as context only — it never constrains the build
+/// facility (EVE installs jobs remotely).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PlanClone {
+  pub id: Option<i64>,
+  pub implant_names: Vec<String>,
+  pub location: Option<String>,
+  pub name: String,
+}
+
+impl PlanClone {
+  /// A short "3 implants \u{00B7} <first implant>" summary; the full list is surfaced on expand. Empty clones
+  /// read "no implants".
+  pub fn implant_summary(&self) -> String {
+    match self.implant_names.first() {
+      None => "no implants".to_owned(),
+      Some(first) => {
+        let count = self.implant_names.len();
+        format!("{count} implant{} \u{00B7} {first}", if count == 1 { "" } else { "s" })
+      }
+    }
+  }
+}
+
+/// An authenticated pilot eligible for a build-order assignment, with the clones (active + jump) whose implant
+/// sets the time math consumes. Built only when both Skills and Clone-Monitoring are enabled.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanPilot {
+  pub clones: Vec<PlanClone>,
+  pub id: i64,
+  pub name: String,
+  pub portrait: Option<std::path::PathBuf>,
+}
+
+impl PlanPilot {
+  pub fn clone_named(&self, clone_id: Option<i64>) -> Option<&PlanClone> {
+    self.clones.iter().find(|clone| clone.id == clone_id)
+  }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -335,6 +379,58 @@ pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: 
     .await
     .ok()
     .flatten()
+}
+
+/// Loads the pilot pool for the build-order assignment picker: each `(id, name, portrait)` identity (already
+/// scope-filtered by the caller) paired with its active + jump clones and per-clone implant names. A character
+/// with no synced clones still appears, just without an active clone. Built only when the caller has confirmed
+/// both Skills and Clone-Monitoring are enabled — the features that gate this data.
+pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::path::PathBuf>)]) -> Vec<PlanPilot> {
+  let mut pilots = Vec::with_capacity(identities.len());
+  for (id, name, portrait) in identities {
+    let clones = match character::clones(db, *id).await {
+      Ok(Some(clones)) => plan_clones(&clones),
+      _ => Vec::new(),
+    };
+    pilots.push(PlanPilot {
+      clones,
+      id: *id,
+      name: name.clone(),
+      portrait: portrait.clone(),
+    });
+  }
+  pilots
+}
+
+/// Projects a [`CharacterClones`] into the planner's [`PlanClone`] list: the active clone first (`id` = `None`),
+/// then each jump clone keyed by its `jump_clone_id`.
+fn plan_clones(clones: &CharacterClones) -> Vec<PlanClone> {
+  let mut out = vec![PlanClone {
+    id: None,
+    implant_names: implant_names(&clones.active),
+    location: clones.active.clone.home_location_name().clone(),
+    name: "Active clone".to_owned(),
+  }];
+  for jump in &clones.jump_clones {
+    let label = jump
+      .clone
+      .name()
+      .clone()
+      .filter(|name| !name.is_empty())
+      .or_else(|| jump.clone.location_name().clone())
+      .unwrap_or_else(|| format!("Clone {}", jump.clone.jump_clone_id()));
+    out.push(PlanClone {
+      id: Some(jump.clone.jump_clone_id()),
+      implant_names: implant_names(jump),
+      location: jump.clone.location_name().clone(),
+      name: label,
+    });
+  }
+  out
+}
+
+fn implant_names<C>(clone: &CloneWithImplants<C>) -> Vec<String> {
+  clone.implants.iter().map(|implant| implant.name().clone()).collect()
 }
 
 pub async fn prices(db: &Database) -> HashMap<i64, f64> {
@@ -1049,6 +1145,108 @@ mod tests {
       let after = super::load_data_with_catalog(&db, Scope::All, catalog).await;
       let owned = after.owned.get(&HULK).unwrap();
       assert_eq!(owned.material_efficiency, 9);
+    }
+  }
+
+  mod plan_clone {
+    use super::*;
+
+    mod implant_summary {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_reads_no_implants_for_an_empty_clone() {
+        let clone = PlanClone::default();
+
+        assert_eq!(clone.implant_summary(), "no implants");
+      }
+
+      #[test]
+      fn it_singularizes_a_lone_implant() {
+        let clone = PlanClone {
+          implant_names: vec!["Ocular Filter".to_owned()],
+          ..PlanClone::default()
+        };
+
+        assert_eq!(clone.implant_summary(), "1 implant \u{00B7} Ocular Filter");
+      }
+
+      #[test]
+      fn it_counts_and_names_the_first_of_several() {
+        let clone = PlanClone {
+          implant_names: vec!["Ocular Filter".to_owned(), "Memory Augmentation".to_owned()],
+          ..PlanClone::default()
+        };
+
+        assert_eq!(clone.implant_summary(), "2 implants \u{00B7} Ocular Filter");
+      }
+    }
+  }
+
+  mod plan_clones {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{
+      CharacterClone, CharacterCloneImplant, CharacterJumpClone, character_clone_view::CharacterClones,
+    };
+
+    fn implant(name: &str) -> CharacterCloneImplant {
+      CharacterCloneImplant {
+        character_id: 42,
+        clone_id: None,
+        icon: None,
+        name: name.to_owned(),
+        resolved_icon: IconResolution::Missing,
+        type_id: 9899,
+      }
+    }
+
+    fn clones() -> CharacterClones {
+      CharacterClones {
+        active: CloneWithImplants {
+          clone: CharacterClone {
+            character_id: 42,
+            home_location_id: 60_003_760,
+            home_location_name: Some("Jita IV - Moon 4".to_owned()),
+            home_location_type: "station".to_owned(),
+            last_clone_jump_date: None,
+            last_station_change_date: None,
+          },
+          implants: vec![implant("Ocular Filter")],
+        },
+        jump_clones: vec![CloneWithImplants {
+          clone: CharacterJumpClone {
+            character_id: 42,
+            jump_clone_id: 7,
+            location_id: 60_008_494,
+            location_name: Some("Amarr VIII".to_owned()),
+            location_type: "station".to_owned(),
+            name: Some("Industry clone".to_owned()),
+          },
+          implants: Vec::new(),
+        }],
+      }
+    }
+
+    #[test]
+    fn it_puts_the_active_clone_first_with_a_null_id() {
+      let projected = super::plan_clones(&clones());
+
+      assert_eq!(projected[0].id, None);
+      assert_eq!(projected[0].name, "Active clone");
+      assert_eq!(projected[0].implant_names, vec!["Ocular Filter".to_owned()]);
+      assert_eq!(projected[0].location, Some("Jita IV - Moon 4".to_owned()));
+    }
+
+    #[test]
+    fn it_keys_jump_clones_by_their_jump_clone_id() {
+      let projected = super::plan_clones(&clones());
+
+      assert_eq!(projected[1].id, Some(7));
+      assert_eq!(projected[1].name, "Industry clone");
     }
   }
 

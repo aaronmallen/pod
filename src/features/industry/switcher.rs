@@ -184,6 +184,7 @@ mod tests {
       vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS],
       super::super::FacilityDefaults::default(),
       None,
+      false,
     );
     state.active = active;
     state.roster = roster;

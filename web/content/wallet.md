@@ -2,7 +2,7 @@
 title: Wallet
 section: Features
 order: 4
-description: Track ISK across every character and corporation in Pod's Wallet feature — market transactions, contracts, the journal, a zero-based Budget, and a net-worth history built from daily snapshots.
+description: Track ISK across every character and corporation in Pod's Wallet feature. It covers market transactions, contracts, the journal, a zero-based Budget, and a net-worth history built from daily snapshots.
 ---
 
 # Wallet
@@ -44,7 +44,7 @@ To the right of the number sit three composition chips that split net worth into
 its parts. Liquid is your cash, drawn in plasma. Assets is the appraised value
 of what you own, drawn in muted grey. Escrow is ISK locked in standing market
 orders, drawn in red. Each chip pairs a colored dot with the formatted ISK
-amount so you can see at a glance where your wealth sits.
+amount, so you can read where your wealth sits.
 
 A timeframe selector lets you choose how far back the panel looks: 1W, 1M, 3M,
 6M, or 1Y. The default is 3M. The selection drives both the graph and the
@@ -67,7 +67,7 @@ the bar names every character with its ISK total and percentage of the whole.
 
 ## Wallets tab
 
-The Wallets tab is a read-only balances overview — a single read on the liquid
+The Wallets tab is a read-only balances overview, a single read on the liquid
 ISK sitting in every wallet the active scope covers. It is the tab the window
 cold-opens on, and it changes nothing: it only reports balances that sync has
 already collected.
@@ -88,8 +88,8 @@ character it shows one "Master Wallet" section. On a corporation it shows just
 that corp's own section.
 
 The Personal Wallets section carries the caption "Liquid ISK across your pilots".
-It holds one row per pilot — portrait, name, corp sub-line, and liquid balance —
-and its subtotal is the sum across those pilots.
+It holds one row per pilot, each with a portrait, name, corp sub-line, and
+liquid balance, and its subtotal is the sum across those pilots.
 
 A corporation section is titled with the corp name and logo. Its caption reads
 "Corporation wallet", or "Corporation wallet · via {granter} · {role}" when the
@@ -102,17 +102,17 @@ rows at zero.
 Each section header pairs a colour swatch and the title with a mono "{n}
 WALLET(S)" count and, under the eyebrow "Subtotal", the section total drawn in
 plasma. Each row leads with an avatar (blank for corp divisions), then the name,
-then a share bar sized by that row's share within its own section — non-zero rows
-always show at least a sliver — and finally the balance in mono with a trailing
+then a share bar sized by that row's share within its own section (non-zero rows
+always show at least a sliver), and finally the balance in mono with a trailing
 " ISK".
 
 On a single character, a pilot hero card prepends the surface: the pilot's
-avatar and name, their corp in uppercase, and three stats — "Liquid · master
+avatar and name, their corp in uppercase, and three stats: "Liquid · master
 wallet", "Assets · est.", and "Net worth". This pilot hero is the only hero on
 the Wallets tab; the Liquid / Net worth / Change hero from the ledger tabs does
 not appear here.
 
-When there is nothing to show, the tab reads "No wallets to show yet — sync
+When there is nothing to show, the tab reads "No wallets to show yet, sync
 populates balances."
 
 ![Wallets balances overview](/docs/img/wallet/wallets.png)
@@ -229,9 +229,14 @@ yet handed to an envelope, shown as a large ISK figure. It carries one of three
 state messages. When the pool is zero it reads "Every ISK has a job. Nothing
 left idle." in green. When it is positive it reads "Idle ISK earns nothing. Give
 it a job." in plasma, and an Auto-Assign button appears beside it to spread the
-pool across underfunded categories for you. When it is negative — you have
-assigned more than you hold — it reads "You've assigned more than you hold. Pull
+pool across underfunded categories for you. When it is negative, meaning you have
+assigned more than you hold, it reads "You've assigned more than you hold. Pull
 some back." in red, and the Auto-Assign button is hidden.
+
+Internal transfers between your own wallets do not affect Ready to Assign. EVE
+mirrors one transfer into both wallets as a matched pair of legs, one positive
+and one negative, and those legs cancel each other out, so moving ISK from one
+pilot to another nets to zero rather than reading as fresh income.
 
 When a category is overspent, its Available pill shows an Overspent state with a
 "Click to cover" affordance, so you can move ISK in to bring it back to zero.
@@ -243,25 +248,33 @@ transactions need a category" when there is more than one), with the sub-line
 assign button on the right jumps to the ledger filtered to the uncategorized
 entries so you can clear them out.
 
+The count is exact, not a tally of whatever rows happen to be loaded. Pod
+derives it straight from the database across every entry in the month, then
+subtracts the spending that already has a home: entries you picked by hand,
+entries an automation rule resolved, and the journal twins that mirror a market
+trade you have already counted from the Transactions side. A corp trade carried
+out on behalf of a corporation lands in two wallets at once, and the count
+de-dupes those into a single transaction so it is never double-counted.
+
 #### The envelope table
 
 The body is a table of envelopes grouped into collapsible category groups. A
-fresh scope is seeded with starter groups — Income, Trading, and Obligations,
-rendered in uppercase — holding starter envelopes: Bounties & rewards and
+fresh scope is seeded with starter groups (Income, Trading, and Obligations,
+rendered in uppercase) holding starter envelopes: Bounties & rewards and
 Transfers in/out under Income; Market trading and Sales tax & broker fees under
 Trading; and Corp tithe & tax, Contracts, and Industry under Obligations. These
 are only seeds. You can rename, add, and delete groups and envelopes freely.
 
 Each row carries four columns:
 
-- Category — the envelope name, with a small tone dot for its colour. Rows with
+- Category: the envelope name, with a small tone dot for its colour. Rows with
   a by-date target also show a "DUE {label}" pill, and a "View transactions"
   link reveals on hover that filters the ledger to that category.
-- Assigned — what you have handed this envelope this month. Click the figure to
+- Assigned: what you have handed this envelope this month. Click the figure to
   edit it inline; on past months it is read-only.
-- Activity — the signed total of what actually moved through the envelope this
+- Activity: the signed total of what actually moved through the envelope this
   month.
-- Available — a pill showing what is left. It turns red with a "!" when the
+- Available: a pill showing what is left. It turns red with a "!" when the
   envelope is overspent, green with a "✓" when it is funded, and stays neutral
   when it is underfunded but not overspent.
 
@@ -275,11 +288,14 @@ Select an envelope and the inspector fills in. Two tabs sit beneath the header:
 "Detail", the default, holds the target, funding, and activity content described
 below; "Automation" holds the envelope's rules and carries a badge with the
 count of rules that file into it. The Detail tab's header shows the name, any
-note, and the available balance, with a pencil to jump into editing. A View
-transactions button filters the ledger to that envelope. A Target block shows a
-state tag — Overspent, Funded, or Underfunded — with a progress bar toward the
-target. A This month block breaks the envelope down into Rolled over, Assigned,
-Activity, and Available.
+note, and the available balance, with a pencil to jump into editing. Next to it,
+a Transactions button filters the ledger to that envelope. There used to be a
+second, full-width "View transactions" button lower in the pane; that duplicate
+is gone now, so the header's Transactions button and the per-row hover link are
+the two ways into the filtered ledger. A Target block shows a state tag
+(Overspent, Funded, or Underfunded) with a progress bar toward the target. A
+This month block breaks the envelope down into Rolled over, Assigned, Activity,
+and Available.
 
 Below that, the inspector offers Auto-assign suggestions as one-click rows:
 Underfunded (top it up to its target), Assigned last month, Spent last month,
@@ -297,11 +313,11 @@ In edit mode the inspector becomes a category editor with fields for Name, an
 optional Note, a Colour swatch picker, and a target. The target type chooses how
 the envelope is funded:
 
-- Monthly — assign a set amount every month, then spend it down.
-- Refill — top the Available balance back up to a number each month.
-- Balance — build a standing reserve and hold it there, open-ended.
-- Goal — save toward a number, no deadline.
-- By date — save a number by a deadline, with a "By date" field for the
+- Monthly: assign a set amount every month, then spend it down.
+- Refill: top the Available balance back up to a number each month.
+- Balance: build a standing reserve and hold it there, open-ended.
+- Goal: save toward a number, no deadline.
+- By date: save a number by a deadline, with a "By date" field for the
   deadline.
 
 ### Reflect mode
@@ -311,12 +327,12 @@ figures: Net this month, Assigned, Income, Spent, and Age of ISK (in days).
 
 Below the band sit four report cards:
 
-- Income vs spending — grouped monthly bars over a trailing window, with a 3M /
+- Income vs spending: grouped monthly bars over a trailing window, with a 3M /
   6M toggle that defaults to 6M.
-- Age of ISK — a sparkline with an explainer of how long ISK sits in your wallet
+- Age of ISK: a sparkline with an explainer of how long ISK sits in your wallet
   before it is spent.
-- Spending by category — horizontal bars ranking where the ISK went.
-- Target health — a segmented bar with Funded, Underfunded, and Overspent
+- Spending by category: horizontal bars ranking where the ISK went.
+- Target health: a segmented bar with Funded, Underfunded, and Overspent
   tallies, followed by a Needs attention list of the envelopes that fell short.
 
 ### Assigning spending to an envelope
@@ -330,11 +346,27 @@ one the entry is currently assigned to.
 Assignment is manual-first with automation underneath. Hand-file any entry and
 that pick always wins; automation rules (below) file the rest for you,
 automatically and retroactively; and only spending that neither a manual pick
-nor a rule catches stays uncategorized — exactly what the amber banner in Plan
+nor a rule catches stays uncategorized, exactly what the amber banner in Plan
 mode warns about. Because of that automation, the per-row Budget chip does not
 distinguish a rule-filed entry from a hand-assigned one: both show the settled
 tone dot, the category name, and the caret. A chip may already be filled before
 you have touched the entry, because a rule filed it.
+
+When you assign a market trade, its fees ride along. A single trade also leaves a
+Transaction Tax and a Broker's Fee in the journal, and assigning the trade files
+those fee rows into the same envelope automatically, matched to the trade by its
+transaction id. The one exception is a fee row you assigned by hand: a manual
+pick on a fee is left exactly where you put it rather than being swept up with
+the trade.
+
+A trade a character makes on behalf of a corporation shows up in two wallets at
+once, the character's and the corp's, under the same transaction id. Pod treats
+the pair as one trade. The row carries a composite avatar, the trading
+character's portrait with a small corp logo badged into the corner, which marks
+it plainly as a corp-on-behalf trade. Assigning either copy
+co-assigns the other (fee rows included), per-owner manual overrides are still
+respected on both sides, and the trade counts only once toward your spending
+rather than twice.
 
 After you follow a View transactions link or the Review & assign banner, a
 dismissible filter badge appears in the filter bar. It reads "Uncategorized
@@ -395,15 +427,15 @@ Item, Amount, Direction, and Character. The operators depend on the field:
 
 Matching is case-insensitive, and "Any text" spans the reference, party,
 location, and item at once. Journal rows match against the humanized ref-type
-label you see in the tab — for example "Daily Goal Payouts" — not the raw game
+label you see in the tab, for example "Daily Goal Payouts", not the raw game
 code. The rule name auto-suggests from the first condition, falling back to
 "Untitled rule".
 
 A live preview pane sits alongside the editor. Under the eyebrow "Live preview"
 it shows a large match count and, in green, "{n} will file into {category}",
 then the matching entries themselves, each chipped to show what would happen:
-"Will file here" in green, "Already here" in grey, "Manual — kept" in amber, and
-"Higher rule wins" in plasma. Before you have entered anything it reads "Type a
+"Will file here" in green, "Already here" in grey, a kept-manual chip in amber,
+and "Higher rule wins" in plasma. Before you have entered anything it reads "Type a
 search or add a condition to see which transactions this rule catches." When the
 search is valid but nothing matches yet it reads "No spending matches yet. It'll
 still file matching transactions as they arrive."
@@ -436,7 +468,7 @@ an empty state.
 
 For any ledger entry, the order is fixed: a manual per-entry pick wins; failing
 that, the highest-priority enabled rule whose conditions match files it; failing
-that, the entry stays in Ready to Assign. Rules are retroactive — adding a rule
+that, the entry stays in Ready to Assign. Rules are retroactive: adding a rule
 reclaims past entries it matches, not just new ones. With no rules in place, the
 budget behaves exactly as the manual-only flow it replaces.
 

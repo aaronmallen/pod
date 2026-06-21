@@ -5231,6 +5231,84 @@ mod view {
 
       assert_eq!(merged_feeds_line(&data, &job), "feeds \u{2192} Hulk");
     }
+
+    fn plan_clone(id: Option<i64>, name: &str, implants: &[&str]) -> PlanClone {
+      PlanClone {
+        id,
+        implant_names: implants.iter().map(|implant| (*implant).to_owned()).collect(),
+        location: Some("Jita IV - Moon 4".to_owned()),
+        name: name.to_owned(),
+        ..PlanClone::default()
+      }
+    }
+
+    fn plan_pilot(id: i64, name: &str) -> PlanPilot {
+      PlanPilot {
+        clones: vec![
+          plan_clone(None, "Active clone", &["Zainou 'Beancounter'"]),
+          plan_clone(Some(7), "Industry clone", &[]),
+        ],
+        id,
+        name: name.to_owned(),
+        portrait: None,
+        ..PlanPilot::default()
+      }
+    }
+
+    fn assignable_planner() -> Planner {
+      let mut planner = Planner::new();
+      planner.set_assign_pilots(true);
+      planner.set_pilots(vec![plan_pilot(1, "Miner Joe"), plan_pilot(2, "Hauler Sue")]);
+      planner
+    }
+
+    #[test]
+    fn it_renders_the_unassigned_pilot_trigger() {
+      let trigger = pilot_trigger(22_544, 0, None);
+      let _ = Tree::new(trigger.as_widget());
+    }
+
+    #[test]
+    fn it_renders_an_assigned_pilot_trigger_with_a_named_clone() {
+      let pilot = plan_pilot(1, "Miner Joe");
+      let clone = &pilot.clones[1];
+      let trigger = pilot_trigger(22_544, 0, Some((&pilot, Some(clone))));
+      let _ = Tree::new(trigger.as_widget());
+    }
+
+    #[test]
+    fn it_renders_an_assigned_pilot_trigger_with_the_active_clone() {
+      let pilot = plan_pilot(1, "Miner Joe");
+      let trigger = pilot_trigger(22_544, 0, Some((&pilot, None)));
+      let _ = Tree::new(trigger.as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_popover_with_unassigned_segment_and_pilots() {
+      let planner = assignable_planner();
+      let segment = PlanSegment::unassigned(10);
+      let popover = pilot_popover(&planner, 22_544, 0, Some(&segment));
+      let _ = Tree::new(popover.as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_popover_with_an_assigned_pilot_and_unassign_action() {
+      let planner = assignable_planner();
+      let segment = PlanSegment {
+        clone_id: Some(7),
+        pilot_id: Some(1),
+        runs: 10,
+      };
+      let popover = pilot_popover(&planner, 22_544, 0, Some(&segment));
+      let _ = Tree::new(popover.as_widget());
+    }
+
+    #[test]
+    fn it_renders_the_popover_empty_state_without_pilots_in_scope() {
+      let planner = Planner::new();
+      let popover = pilot_popover(&planner, 22_544, 0, None);
+      let _ = Tree::new(popover.as_widget());
+    }
   }
 }
 

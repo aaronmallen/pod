@@ -1442,6 +1442,113 @@ mod tests {
     }
   }
 
+  mod plan_pilots {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{CharacterClone, CharacterCloneImplant, CharacterJumpClone, CharacterSkill};
+
+    const PILOT_A: i64 = 42;
+
+    const PILOT_B: i64 = 43;
+
+    fn identity(id: i64, name: &str) -> (i64, String, Option<std::path::PathBuf>) {
+      (id, name.to_owned(), None)
+    }
+
+    async fn seed_clones_and_skills(db: &Database) {
+      seed_character(db, PILOT_A).await;
+      let active = CharacterClone {
+        character_id: PILOT_A,
+        home_location_id: 60_003_760,
+        home_location_name: Some("Jita IV - Moon 4".to_owned()),
+        home_location_type: "station".to_owned(),
+        last_clone_jump_date: None,
+        last_station_change_date: None,
+      };
+      let jump = CharacterJumpClone {
+        character_id: PILOT_A,
+        jump_clone_id: 7,
+        location_id: 60_008_494,
+        location_name: Some("Amarr VIII".to_owned()),
+        location_type: "station".to_owned(),
+        name: Some("Industry clone".to_owned()),
+      };
+      let implant = CharacterCloneImplant {
+        character_id: PILOT_A,
+        clone_id: None,
+        icon: None,
+        name: "Ocular Filter".to_owned(),
+        resolved_icon: IconResolution::Missing,
+        type_id: 9899,
+      };
+      character::replace_clones_for_character(db, PILOT_A, &active, &[jump], &[implant])
+        .await
+        .unwrap();
+
+      let skills = [
+        CharacterSkill {
+          active_skill_level: 4,
+          character_id: PILOT_A,
+          skill_id: SKILL_INDUSTRY,
+          skillpoints_in_skill: 256_000,
+          trained_skill_level: 5,
+        },
+        CharacterSkill {
+          active_skill_level: 3,
+          character_id: PILOT_A,
+          skill_id: SKILL_ADVANCED_INDUSTRY,
+          skillpoints_in_skill: 256_000,
+          trained_skill_level: 4,
+        },
+      ];
+      character::replace_skills(db, PILOT_A, &skills).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_builds_a_pilot_from_synced_clones_and_skills() {
+      let db = store::open_test().await.unwrap();
+      seed_clones_and_skills(&db).await;
+
+      let pilots = super::plan_pilots(&db, &[identity(PILOT_A, "Miner Joe")]).await;
+
+      assert_eq!(pilots.len(), 1);
+      let pilot = &pilots[0];
+      assert_eq!(pilot.id, PILOT_A);
+      assert_eq!(pilot.name, "Miner Joe");
+      assert_eq!(pilot.industry, 5);
+      assert_eq!(pilot.advanced_industry, 4);
+      // Active clone first, then the synced jump clone.
+      assert_eq!(pilot.clones.len(), 2);
+      assert_eq!(pilot.clones[0].id, None);
+      assert_eq!(pilot.clones[1].id, Some(7));
+    }
+
+    #[tokio::test]
+    async fn it_still_lists_a_pilot_with_no_synced_clones_or_skills() {
+      let db = store::open_test().await.unwrap();
+
+      let pilots = super::plan_pilots(&db, &[identity(PILOT_B, "Hauler Sue")]).await;
+
+      assert_eq!(pilots.len(), 1);
+      let pilot = &pilots[0];
+      assert_eq!(pilot.id, PILOT_B);
+      assert_eq!(pilot.name, "Hauler Sue");
+      assert!(pilot.clones.is_empty());
+      assert_eq!(pilot.industry, 0);
+      assert_eq!(pilot.advanced_industry, 0);
+    }
+
+    #[tokio::test]
+    async fn it_is_empty_for_no_identities() {
+      let db = store::open_test().await.unwrap();
+
+      let pilots = super::plan_pilots(&db, &[]).await;
+
+      assert!(pilots.is_empty());
+    }
+  }
+
   mod plan_pilot {
     use super::*;
 

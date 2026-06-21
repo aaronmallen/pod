@@ -146,7 +146,7 @@ fn render_manifest(
   out.push_str(&format!("  logs:     {}\n", diagnostics.log_dir.display()));
   out.push_str("\nIncluded files:\n");
   if included.is_empty() {
-    out.push_str("  (none — no log lines in range)\n");
+    out.push_str("  (none: no log lines in range)\n");
   }
   for file in included {
     out.push_str(&format!(

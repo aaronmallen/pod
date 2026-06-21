@@ -103,7 +103,7 @@ pub fn remap_availability(
 
   let count = u32::from(annual_available) + bonus;
   let reason = if count == 0 {
-    format!("No neural remaps available — next remap accrues in {cooldown_days_remaining} days")
+    format!("No neural remaps available. Next remap accrues in {cooldown_days_remaining} days.")
   } else {
     String::new()
   };

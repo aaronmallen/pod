@@ -4185,7 +4185,7 @@ fn preview_status_chip(status: engine::PreviewStatus) -> (&'static str, Color) {
   match status {
     engine::PreviewStatus::Already => ("Already here", color::text::secondary()),
     engine::PreviewStatus::Assign => ("Will file here", color::status::ONLINE),
-    engine::PreviewStatus::Manual => ("Manual \u{2014} kept", color::status::WARNING),
+    engine::PreviewStatus::Manual => ("Manual, kept", color::status::WARNING),
     engine::PreviewStatus::Preempted => ("Higher rule wins", color::accent::PLASMA),
   }
 }

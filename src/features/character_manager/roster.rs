@@ -220,7 +220,7 @@ fn squad_section<'a>(
   if !collapsed {
     let body: Element<'a, Message> = if group.cards.is_empty() {
       empty_drop(
-        &format!("No pilots in {} yet — drag a pilot here to assign them.", group.name),
+        &format!("No pilots in {} yet. Drag a pilot here to assign them.", group.name),
         group.squad_id,
         drag,
       )
@@ -1068,7 +1068,7 @@ mod tests {
       let group = squad_group(2, "Reserves", Vec::new());
 
       let drop: Element<'_, Message> = empty_drop(
-        "No pilots in Reserves yet — drag a pilot here to assign them.",
+        "No pilots in Reserves yet. Drag a pilot here to assign them.",
         2,
         no_drag(),
       );

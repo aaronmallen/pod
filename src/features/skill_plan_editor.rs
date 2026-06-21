@@ -4820,7 +4820,7 @@ mod tests {
       let mut state = State::new(42);
       state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
       state.remap_availability = 0;
-      state.remap_reason = "No neural remaps available — next remap accrues in 30 days".to_owned();
+      state.remap_reason = "No neural remaps available. Next remap accrues in 30 days.".to_owned();
       state.refresh_rows();
 
       let _el: Element<'_, Message> = view(&state, now());

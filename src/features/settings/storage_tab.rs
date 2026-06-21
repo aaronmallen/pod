@@ -70,7 +70,7 @@ impl PathKind {
     match self {
       PathKind::Cache => "Portraits, item icons, and other ESI image cache. Safe to clear; rebuilt on demand.",
       PathKind::Database => {
-        "The canonical SQLite database — character cache, mail bodies, market snapshots, and skill \
+        "The canonical SQLite database holding character cache, mail bodies, market snapshots, and skill \
           plans. Point this at a shared volume to use the same data across machines."
       }
       PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; retains 5 daily files.",
@@ -500,7 +500,7 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
   let blurb = text(
-    "Where Pod keeps its files on disk. Paths follow platform conventions by default — change them \
+    "Where Pod keeps its files on disk. Paths follow platform conventions by default. Change them \
       to put Pod's data on a different volume or share it between installs. The daemon picks up \
       changes on next launch.",
   )
@@ -942,7 +942,7 @@ fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
     .size(typography::size::SM)
     .style(typography::colored(color::text::PRIMARY));
   let explanation =
-    text("Read-only — the live database runs here on local disk; the share never drives the DB over the wire.")
+    text("Read-only. The live database runs here on local disk; the share never drives the DB over the wire.")
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()));

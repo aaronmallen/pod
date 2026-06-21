@@ -194,7 +194,7 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
       })
       .width(Length::Fill)
       .into(),
-    None => text("\u{2014} empty slot \u{2014}")
+    None => text("(empty slot)")
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {

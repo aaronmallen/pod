@@ -66,7 +66,7 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
 
   if rec.is_current {
     children.push(
-      text("Already optimal — no remap improves your current queue.")
+      text("Already optimal. No remap improves your current queue.")
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {

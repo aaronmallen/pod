@@ -73,7 +73,7 @@ impl SortMode {
   fn label(self) -> &'static str {
     match self {
       SortMode::Manual => "Manual",
-      SortMode::Name => "A\u{2013}Z",
+      SortMode::Name => "A to Z",
       SortMode::Color => "Color",
     }
   }

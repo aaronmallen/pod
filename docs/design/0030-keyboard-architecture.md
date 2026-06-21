@@ -54,13 +54,13 @@ Keyboard support before this work was thin and mac-biased:
 | Ctrl/Cmd+Q  | Quit                            | All platforms (drops the former macOS cfg-gate).                       |
 | Ctrl/Cmd+,  | Open Settings                   | Cross-platform "preferences" idiom; routes to the Settings rail dest.  |
 | Ctrl/Cmd+K  | Focus the current view's search | No-op on routes without a registered search (`focus_search` registry). |
-| /           | Open the command palette        | Only when no text input is focused. **Planned** — see below.           |
+| /           | Open the command palette        | Only when no text input is focused. **Shipped** — see below.           |
 
 Shortcuts are a fixed set in v1 — not user-rebindable.
 
 The `Chord` enum that shipped covers the three modifier chords (`FocusSearch`, `OpenSettings`, `Quit`). The bare-key
-`/` command-palette trigger is **planned/in-progress**: the focus-tracking substrate it depends on is in place, but the
-palette surface and its `/` gating land in a later task of the keyboard epic.
+`/` command-palette trigger is **shipped**: the focus-tracking substrate it depends on is in place, and the palette
+surface and its `/` gating landed in a later task of the keyboard epic.
 
 ## Affected Areas
 
@@ -82,7 +82,7 @@ palette surface and its `/` gating land in a later task of the keyboard epic.
 ### Negative
 
 - Chords are a fixed set in v1; user rebinding is out of scope and would need a config-backed table later.
-- The command palette is not yet wired; only its substrate (central dispatch + focus tracking) shipped here.
+- The command palette is now wired on top of this substrate (central dispatch + focus tracking).
 
 ## Alternatives considered
 

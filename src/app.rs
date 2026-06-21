@@ -35,6 +35,10 @@ use crate::{
   ui::{
     components::{
       backdrop,
+      command_palette::{
+        self, Action as PaletteAction, Command as PaletteCommand, Entity as PaletteEntity,
+        EntityKind as PaletteEntityKind,
+      },
       esi_status::esi_status,
       eve_time::eve_time,
       rail::{self, rail},
@@ -142,6 +146,7 @@ struct App {
   next_trash_purge: Option<Instant>,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
+  palette: Option<command_palette::State>,
   pending_auth: Option<auth::Message>,
   pending_images: HashSet<(store::images::ImageKind, i64)>,
   rail_hover: Option<rail::Destination>,
@@ -237,6 +242,7 @@ enum Message {
   MailUnreadCounted(i64),
   Nav(rail::Destination),
   NavTo(rail::Destination, Option<&'static str>),
+  Palette(PaletteMessage),
   PeriodicPull,
   PeriodicPush,
   Pulled(bool),
@@ -271,6 +277,18 @@ enum Message {
   Wallet(wallet::Message),
   Window(window::Id, window::Event),
   WindowOpened(window::Id),
+}
+
+#[derive(Clone, Debug)]
+enum PaletteMessage {
+  Activate(usize),
+  ActivateSelected,
+  Close,
+  MoveDown,
+  MoveUp,
+  Open,
+  QueryChanged(String),
+  Select(usize),
 }
 
 impl Message {
@@ -339,6 +357,7 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
+      Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
@@ -807,6 +826,7 @@ fn boot() -> (App, Task<Message>) {
     next_trash_purge: None,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
+    palette: None,
     pending_auth: None,
     pending_images: HashSet::new(),
     rail_hover: None,
@@ -1767,9 +1787,13 @@ fn main_view(app: &App) -> Element<'_, Message> {
     nav_location,
     rail_order: ui.rail_order(),
   };
-  let rail_element = rail(rail_props, Message::Nav, Message::RailHover, |dest, id| {
-    Message::NavTo(dest, Some(id))
-  });
+  let rail_element = rail(
+    rail_props,
+    Message::Nav,
+    Message::RailHover,
+    |dest, id| Message::NavTo(dest, Some(id)),
+    Message::Palette(PaletteMessage::Open),
+  );
   let body_children: Vec<Element<'_, Message>> = match nav_location {
     config::NavLocation::Left => vec![rail_element, content.into()],
     config::NavLocation::Right => vec![content.into(), rail_element],
@@ -1822,11 +1846,26 @@ fn main_view(app: &App) -> Element<'_, Message> {
   if let Some(toast) = toast {
     layers.push(toast);
   }
+  if let Some(state) = &app.palette {
+    let entries = palette_entries(app);
+    layers.push(palette_overlay(state, entries));
+  }
 
   Stack::with_children(layers)
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+fn palette_overlay(state: &command_palette::State, entries: Vec<command_palette::Entry>) -> Element<'_, Message> {
+  command_palette::view(
+    state,
+    entries,
+    |query| Message::Palette(PaletteMessage::QueryChanged(query)),
+    |index| Message::Palette(PaletteMessage::Select(index)),
+    |index| Message::Palette(PaletteMessage::Activate(index)),
+    Message::Palette(PaletteMessage::Close),
+  )
 }
 
 fn sde_stale_banner<'a>() -> Element<'a, Message> {
@@ -2360,6 +2399,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
   subs.push(shortcuts::subscription(Message::Shortcut));
+  subs.push(palette_key_subscription(app));
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
@@ -2394,6 +2434,40 @@ fn subscription(app: &App) -> Subscription<Message> {
     subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
   }
   Subscription::batch(subs)
+}
+
+fn palette_key_subscription(app: &App) -> Subscription<Message> {
+  // `iced::event::listen_with` only accepts a non-capturing `fn`, so the open/focus context is
+  // threaded by picking one of three fixed mappers rather than by capturing into a closure.
+  if app.palette.is_some() {
+    iced::event::listen_with(map_palette_open)
+  } else if app.keyboard_focus.is_text_input_focused() {
+    iced::event::listen_with(map_palette_closed_focused)
+  } else {
+    iced::event::listen_with(map_palette_closed_unfocused)
+  }
+}
+
+fn palette_message(key: shortcuts::PaletteKey) -> Message {
+  Message::Palette(match key {
+    shortcuts::PaletteKey::Activate => PaletteMessage::ActivateSelected,
+    shortcuts::PaletteKey::Close => PaletteMessage::Close,
+    shortcuts::PaletteKey::MoveDown => PaletteMessage::MoveDown,
+    shortcuts::PaletteKey::MoveUp => PaletteMessage::MoveUp,
+    shortcuts::PaletteKey::Open => PaletteMessage::Open,
+  })
+}
+
+fn map_palette_open(event: iced::Event, _status: iced::event::Status, _id: window::Id) -> Option<Message> {
+  shortcuts::PaletteKey::for_event(&event, true, false).map(palette_message)
+}
+
+fn map_palette_closed_focused(event: iced::Event, _status: iced::event::Status, _id: window::Id) -> Option<Message> {
+  shortcuts::PaletteKey::for_event(&event, false, true).map(palette_message)
+}
+
+fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status, _id: window::Id) -> Option<Message> {
+  shortcuts::PaletteKey::for_event(&event, false, false).map(palette_message)
 }
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
@@ -2679,6 +2753,7 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
+    Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),
     Message::TextInputFocused(id) => handle_text_input_focused(app, id),
@@ -2712,6 +2787,135 @@ fn focus_route_search(app: &App) -> Task<Message> {
 fn handle_text_input_focused(app: &mut App, id: iced::widget::Id) -> Task<Message> {
   app.keyboard_focus.set_focused(Some(id));
   Task::none()
+}
+
+fn handle_palette(app: &mut App, message: PaletteMessage) -> Task<Message> {
+  match message {
+    PaletteMessage::Activate(index) => palette_activate(app, index),
+    PaletteMessage::ActivateSelected => {
+      let index = app.palette.as_ref().map(|state| state.selected).unwrap_or(0);
+      palette_activate(app, index)
+    }
+    PaletteMessage::Close => {
+      app.palette = None;
+      Task::none()
+    }
+    PaletteMessage::MoveDown => {
+      let count = palette_entries(app).len();
+      if let Some(state) = app.palette.as_mut() {
+        let max = count.saturating_sub(1);
+        state.selected = (state.selected + 1).min(max);
+      }
+      Task::none()
+    }
+    PaletteMessage::MoveUp => {
+      if let Some(state) = app.palette.as_mut() {
+        state.selected = state.selected.saturating_sub(1);
+      }
+      Task::none()
+    }
+    PaletteMessage::Open => palette_open(app),
+    PaletteMessage::QueryChanged(query) => {
+      if let Some(state) = app.palette.as_mut() {
+        state.query = query;
+        state.selected = 0;
+      }
+      Task::none()
+    }
+    PaletteMessage::Select(index) => {
+      if let Some(state) = app.palette.as_mut() {
+        state.selected = index;
+      }
+      Task::none()
+    }
+  }
+}
+
+fn palette_open(app: &mut App) -> Task<Message> {
+  app.palette = Some(command_palette::State::default());
+  // The palette's own field owns text focus; clear the global tracker so a still-focused page input
+  // can't keep stealing the focus-gated `/` while the palette is up.
+  app.keyboard_focus.set_focused(None);
+  iced::widget::operation::focus(command_palette::input_id())
+}
+
+fn palette_activate(app: &mut App, index: usize) -> Task<Message> {
+  let entries = palette_entries(app);
+  let Some(entry) = entries.get(index) else {
+    return Task::none();
+  };
+  let action = entry.action.clone();
+  palette_activate_action(app, action)
+}
+
+fn palette_activate_action(app: &mut App, action: PaletteAction) -> Task<Message> {
+  app.palette = None;
+  match action {
+    PaletteAction::Command(command) => palette_command(app, command),
+    PaletteAction::Detail(PaletteEntity {
+      id,
+      kind,
+      ..
+    }) => match kind {
+      PaletteEntityKind::Character => navigate_to_character_detail(app, id),
+      PaletteEntityKind::Corporation => navigate_to_corporation_detail(app, id),
+    },
+    PaletteAction::NavTo(section, sub) => handle_nav_to(app, section.destination, sub),
+  }
+}
+
+fn palette_command(app: &mut App, command: PaletteCommand) -> Task<Message> {
+  match command {
+    PaletteCommand::AddCharacter => update(app, Message::Auth(auth::Message::Start(feature_flags(app)))),
+    PaletteCommand::OpenSettings => handle_nav(app, rail::Destination::Settings),
+    PaletteCommand::SyncNow => sync_now(app),
+    PaletteCommand::ToggleHighContrast => toggle_high_contrast(app),
+  }
+}
+
+fn toggle_high_contrast(app: &mut App) -> Task<Message> {
+  let enabled = !app.accessibility.high_contrast();
+  app.accessibility.set_high_contrast(enabled);
+  color::set_high_contrast(enabled);
+  if let Some(runtime) = app.runtime.as_mut() {
+    runtime.settings.accessibility_mut().set_high_contrast(enabled);
+    config::save(&runtime.settings);
+  }
+  // The Settings screen builds its own accessibility copy on open; rebuild it so a live screen mirrors
+  // the toggle instead of showing the pre-toggle value.
+  if let (Some(runtime), Some(_)) = (app.runtime.as_ref(), app.settings.as_ref()) {
+    app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+  }
+  refresh_all_windows(app)
+}
+
+fn palette_entries(app: &App) -> Vec<command_palette::Entry> {
+  let query = app.palette.as_ref().map(|state| state.query.as_str()).unwrap_or("");
+  command_palette::build_entries(
+    &enabled_features(app),
+    &palette_characters(app),
+    &palette_corporations(app),
+    query,
+  )
+}
+
+fn palette_characters(app: &App) -> Vec<(i64, String)> {
+  app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_roster)
+    .unwrap_or_default()
+    .into_iter()
+    .map(|pilot| (pilot.id, pilot.name))
+    .collect()
+}
+
+fn palette_corporations(app: &App) -> Vec<(i64, String)> {
+  app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_corporations)
+    .unwrap_or_default()
 }
 
 fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
@@ -4638,6 +4842,7 @@ mod tests {
       next_trash_purge: None,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
+      palette: None,
       pending_auth: None,
       pending_images: HashSet::new(),
       rail_hover: None,
@@ -8381,6 +8586,174 @@ mod tests {
 
       assert_eq!(app.init_error.as_deref(), Some("download failed"));
       assert!(app.runtime.is_none(), "a seed failure must not enter the main runtime");
+    }
+
+    #[test]
+    fn it_opens_the_palette_on_the_slash_key_when_no_text_input_is_focused() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+
+      assert!(app.palette.is_some());
+    }
+
+    #[test]
+    fn it_does_not_open_the_palette_on_slash_while_a_text_input_is_focused() {
+      let mut app = test_app();
+      app.keyboard_focus.set_focused(Some(iced::widget::Id::from("search")));
+
+      let opener = shortcuts::PaletteKey::for_key(
+        &iced::keyboard::Key::Character("/".into()),
+        app.palette.is_some(),
+        app.keyboard_focus.is_text_input_focused(),
+      );
+
+      assert_eq!(opener, None);
+      assert!(app.palette.is_none());
+    }
+
+    #[test]
+    fn it_filters_synchronously_across_nav_commands_and_entities() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+
+      let _ = update(
+        &mut app,
+        Message::Palette(PaletteMessage::QueryChanged("budget".to_owned())),
+      );
+      let nav = palette_entries(&app);
+      let _ = update(
+        &mut app,
+        Message::Palette(PaletteMessage::QueryChanged("sync".to_owned())),
+      );
+      let commands = palette_entries(&app);
+
+      assert!(
+        nav
+          .iter()
+          .any(|e| matches!(e.kind, command_palette::Kind::Section | command_palette::Kind::Tab)),
+        "a nav query resolves nav results"
+      );
+      assert!(
+        commands.iter().any(|e| e.kind == command_palette::Kind::Command),
+        "a command query resolves a curated command"
+      );
+    }
+
+    #[test]
+    fn it_moves_the_selection_with_the_arrow_messages() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+
+      let _ = update(&mut app, Message::Palette(PaletteMessage::MoveDown));
+      let after_down = app.palette.as_ref().map(|s| s.selected);
+      let _ = update(&mut app, Message::Palette(PaletteMessage::MoveUp));
+      let after_up = app.palette.as_ref().map(|s| s.selected);
+
+      assert_eq!(after_down, Some(1));
+      assert_eq!(after_up, Some(0));
+    }
+
+    #[test]
+    fn it_deep_navigates_when_a_nav_result_is_activated() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+      let _ = update(
+        &mut app,
+        Message::Palette(PaletteMessage::QueryChanged("budget".to_owned())),
+      );
+      let index = palette_entries(&app)
+        .iter()
+        .position(|e| e.label == "Budget")
+        .expect("a Budget tab result");
+
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Activate(index)));
+
+      assert_eq!(app.route, Route::Wallet);
+      assert_eq!(
+        app.wallet.as_ref().map(wallet::State::active_tab),
+        Some(wallet::Tab::Budget)
+      );
+      assert!(app.palette.is_none(), "activating a result closes the palette");
+    }
+
+    #[test]
+    fn it_maps_the_skills_compare_result_to_the_open_compare_action() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+      let _ = update(
+        &mut app,
+        Message::Palette(PaletteMessage::QueryChanged("compare".to_owned())),
+      );
+
+      let compare = palette_entries(&app)
+        .into_iter()
+        .find(|entry| entry.label == "Compare")
+        .expect("a Compare result");
+
+      // The Compare surface is a separate window, so the palette entry must carry the Skills
+      // "compare" sub-section that select_sub_section turns into skills::Message::OpenCompare.
+      assert_eq!(
+        compare.action,
+        command_palette::Action::NavTo(
+          *crate::features::nav_catalog::section(rail::Destination::Skills).expect("the Skills section"),
+          Some("compare"),
+        ),
+      );
+    }
+
+    #[test]
+    fn it_routes_the_skills_compare_sub_section_through_open_compare() {
+      let mut app = featured_app();
+
+      // With no synced pilots there are no seed ids, so OpenCompare's guard leaves the window
+      // closed — but reaching that guard (rather than the old Skills no-op) is the wiring under test.
+      let _ = handle_nav_to(&mut app, rail::Destination::Skills, Some("compare"));
+
+      assert_eq!(app.route.destination(), rail::Destination::Skills);
+      assert!(
+        app.compare.is_none(),
+        "OpenCompare bails without at least two pilots to compare"
+      );
+    }
+
+    #[test]
+    fn it_opens_a_character_detail_when_an_entity_result_is_activated() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+
+      let action = command_palette::Action::Detail(command_palette::Entity {
+        id: 42,
+        kind: command_palette::EntityKind::Character,
+        name: "Pilot".to_owned(),
+      });
+      let _ = palette_activate_action(&mut app, action);
+
+      assert_eq!(app.route, Route::CharacterDetail(42));
+      assert!(app.character_detail.is_some());
+    }
+
+    #[test]
+    fn it_dispatches_a_curated_command_when_activated() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+
+      let _ = palette_command(&mut app, command_palette::Command::OpenSettings);
+
+      assert_eq!(app.route, Route::Settings);
+    }
+
+    #[test]
+    fn it_closes_the_palette_on_the_escape_message() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+      assert!(app.palette.is_some());
+
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Close));
+
+      assert!(app.palette.is_none());
     }
   }
 

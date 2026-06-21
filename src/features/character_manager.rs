@@ -1568,6 +1568,14 @@ pub fn owned_roster(state: &State) -> Vec<OwnedPilot> {
     .collect()
 }
 
+pub fn owned_corporations(state: &State) -> Vec<(i64, String)> {
+  state
+    .corps
+    .iter()
+    .map(|corp| (corp.corporation_id, corp.name.clone()))
+    .collect()
+}
+
 pub fn is_squad_collapsed(state: &State, squad_id: i64) -> bool {
   state.collapsed_squads.contains(&squad_id)
 }

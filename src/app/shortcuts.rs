@@ -39,6 +39,46 @@ impl Chord {
   }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaletteKey {
+  Activate,
+  Close,
+  MoveDown,
+  MoveUp,
+  Open,
+}
+
+impl PaletteKey {
+  /// Maps a key event to a palette action. `open` is whether the palette is already up and
+  /// `text_focused` whether a page text input holds focus; the `/` open key is suppressed while a text
+  /// input is focused so typing a slash never pops the palette.
+  pub fn for_event(event: &iced::Event, open: bool, text_focused: bool) -> Option<PaletteKey> {
+    let iced::Event::Keyboard(keyboard::Event::KeyPressed {
+      key, ..
+    }) = event
+    else {
+      return None;
+    };
+    PaletteKey::for_key(key, open, text_focused)
+  }
+
+  pub fn for_key(key: &keyboard::Key, open: bool, text_focused: bool) -> Option<PaletteKey> {
+    if open {
+      return match key {
+        keyboard::Key::Named(keyboard::key::Named::ArrowDown) => Some(PaletteKey::MoveDown),
+        keyboard::Key::Named(keyboard::key::Named::ArrowUp) => Some(PaletteKey::MoveUp),
+        keyboard::Key::Named(keyboard::key::Named::Enter) => Some(PaletteKey::Activate),
+        keyboard::Key::Named(keyboard::key::Named::Escape) => Some(PaletteKey::Close),
+        _ => None,
+      };
+    }
+    match key {
+      keyboard::Key::Character(c) if c.as_str() == "/" && !text_focused => Some(PaletteKey::Open),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FocusTracker {
   focused: Option<Id>,
@@ -68,8 +108,6 @@ pub fn subscription<M: Send + 'static>(map: impl Fn(Chord) -> M + Clone + Send +
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-
   mod chord {
     mod for_key {
       use pretty_assertions::assert_eq;
@@ -184,6 +222,69 @@ mod tests {
         let event = iced::Event::Keyboard(keyboard::Event::ModifiersChanged(keyboard::Modifiers::COMMAND));
 
         assert_eq!(Chord::for_event(&event), None);
+      }
+    }
+  }
+
+  mod palette_key {
+    mod for_key {
+      use pretty_assertions::assert_eq;
+
+      use super::super::super::*;
+
+      fn slash() -> keyboard::Key {
+        keyboard::Key::Character("/".into())
+      }
+
+      fn named(key: keyboard::key::Named) -> keyboard::Key {
+        keyboard::Key::Named(key)
+      }
+
+      #[test]
+      fn it_opens_on_slash_when_no_text_input_is_focused() {
+        assert_eq!(PaletteKey::for_key(&slash(), false, false), Some(PaletteKey::Open));
+      }
+
+      #[test]
+      fn it_ignores_slash_when_a_text_input_is_focused() {
+        assert_eq!(PaletteKey::for_key(&slash(), false, true), None);
+      }
+
+      #[test]
+      fn it_ignores_slash_while_already_open() {
+        assert_eq!(PaletteKey::for_key(&slash(), true, false), None);
+      }
+
+      #[test]
+      fn it_maps_arrows_enter_and_escape_while_open() {
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::ArrowDown), true, false),
+          Some(PaletteKey::MoveDown)
+        );
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::ArrowUp), true, false),
+          Some(PaletteKey::MoveUp)
+        );
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::Enter), true, false),
+          Some(PaletteKey::Activate)
+        );
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::Escape), true, false),
+          Some(PaletteKey::Close)
+        );
+      }
+
+      #[test]
+      fn it_ignores_navigation_keys_while_closed() {
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::ArrowDown), false, false),
+          None
+        );
+        assert_eq!(
+          PaletteKey::for_key(&named(keyboard::key::Named::Escape), false, false),
+          None
+        );
       }
     }
   }

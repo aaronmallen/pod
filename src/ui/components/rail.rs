@@ -106,6 +106,7 @@ pub fn rail<'a, M>(
   on_nav: impl Fn(Destination) -> M + 'a,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
+  on_palette: M,
 ) -> Element<'a, M>
 where
   M: Clone + 'a,
@@ -218,6 +219,7 @@ where
   });
 
   column_children.push(Space::new().width(Length::Fill).height(Length::Fill).into());
+  column_children.push(nav_item(PALETTE_ICON, false, on_palette));
   column_children.push(settings.into());
 
   let body = container(
@@ -857,7 +859,13 @@ mod tests {
   }
 
   fn render(props: RailProps<'_>) -> Element<'_, Destination> {
-    rail(props, |d| d, |_| Destination::Characters, |d, _| d)
+    rail(
+      props,
+      |d| d,
+      |_| Destination::Characters,
+      |d, _| d,
+      Destination::Characters,
+    )
   }
 
   #[test]
@@ -1043,6 +1051,13 @@ mod tests {
     hovered.hovered = Some(Destination::Settings);
 
     let _el: Element<'_, Destination> = render(hovered);
+  }
+
+  #[test]
+  fn rail_renders_a_palette_button() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let _el: Element<'_, Destination> = render(props(Destination::Characters, &all_features, &order));
   }
 
   #[test]

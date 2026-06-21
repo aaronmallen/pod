@@ -9,10 +9,11 @@ description: Track ISK across every character and corporation in Pod's Wallet fe
 
 The Wallet feature tracks ISK across every character and corporation you have
 added. It collects market transactions, contracts, and wallet journal entries,
-and it builds a net-worth history from daily snapshots. The window has four
-tabs: Transactions, Contracts, Journal, and Budget. A header at the top
-summarizes the active scope, and a hero panel below it shows the net-worth graph
-and the breakdown of what makes up your balance.
+and it builds a net-worth history from daily snapshots. The window has five
+tabs, each with a leading icon: Wallets, Journal, Transactions, Contracts, and
+Budget. It cold-opens on the Wallets tab, a read-only balances overview. A
+header at the top summarizes the active scope, and a hero panel below it shows
+the net-worth graph and the breakdown of what makes up your balance.
 
 ## Header and scope
 
@@ -63,6 +64,58 @@ daily aggregation run.
 When All Wallets is active, a stacked bar under the graph splits net worth by
 character. Each segment is sized by that character's share, and a legend below
 the bar names every character with its ISK total and percentage of the whole.
+
+## Wallets tab
+
+The Wallets tab is a read-only balances overview — a single read on the liquid
+ISK sitting in every wallet the active scope covers. It is the tab the window
+cold-opens on, and it changes nothing: it only reports balances that sync has
+already collected.
+
+A toolbar runs across the top. On the left, the eyebrow "Showing" sits above a
+context label that names what you are looking at. On the right, the eyebrow
+"Sort" sits above a two-segment toggle, "High → Low" / "Low → High", that orders
+the rows within each section. The default is High → Low.
+
+The context label follows the scope picker. On All Wallets it reads "All wallets
+· {n} pilots + {m} corp wallets", with the counts pluralized to match. On a
+single character it reads "{name} · personal wallet". On a corporation it reads
+"{name} · corporation wallet".
+
+The body is a scrollable column of section cards. On All Wallets it leads with a
+"Personal Wallets" section, then one section per owned corporation. On a single
+character it shows one "Master Wallet" section. On a corporation it shows just
+that corp's own section.
+
+The Personal Wallets section carries the caption "Liquid ISK across your pilots".
+It holds one row per pilot — portrait, name, corp sub-line, and liquid balance —
+and its subtotal is the sum across those pilots.
+
+A corporation section is titled with the corp name and logo. Its caption reads
+"Corporation wallet", or "Corporation wallet · via {granter} · {role}" when the
+access came through another character's role. Its rows are the corp's seven
+wallet divisions, each labeled by its name or, when unnamed, "Master Wallet",
+"2nd Wallet", "3rd Wallet", and "{n}th Wallet" for the rest. The subtotal sums
+across the divisions. A corp with no divisions synced still appears, with its
+rows at zero.
+
+Each section header pairs a colour swatch and the title with a mono "{n}
+WALLET(S)" count and, under the eyebrow "Subtotal", the section total drawn in
+plasma. Each row leads with an avatar (blank for corp divisions), then the name,
+then a share bar sized by that row's share within its own section — non-zero rows
+always show at least a sliver — and finally the balance in mono with a trailing
+" ISK".
+
+On a single character, a pilot hero card prepends the surface: the pilot's
+avatar and name, their corp in uppercase, and three stats — "Liquid · master
+wallet", "Assets · est.", and "Net worth". This pilot hero is the only hero on
+the Wallets tab; the Liquid / Net worth / Change hero from the ledger tabs does
+not appear here.
+
+When there is nothing to show, the tab reads "No wallets to show yet — sync
+populates balances."
+
+![Wallets balances overview](/docs/img/wallet/wallets.png)
 
 ## Journal tab
 
@@ -218,7 +271,10 @@ A resizable inspector pane sits to the right; drag its edge to size it. With
 nothing selected it reads "Select a category to inspect its target, set funding,
 and review activity."
 
-Select an envelope and the inspector fills in. The header shows the name, any
+Select an envelope and the inspector fills in. Two tabs sit beneath the header:
+"Detail", the default, holds the target, funding, and activity content described
+below; "Automation" holds the envelope's rules and carries a badge with the
+count of rules that file into it. The Detail tab's header shows the name, any
 note, and the available balance, with a pencil to jump into editing. A View
 transactions button filters the ledger to that envelope. A Target block shows a
 state tag — Overspent, Funded, or Underfunded — with a progress bar toward the
@@ -271,15 +327,118 @@ When it is not, the column shows an amber "+ Assign category" pill. Click either
 one to open an anchored, grouped picker of your envelopes, with a "✓" beside the
 one the entry is currently assigned to.
 
-In this first version, assignment is fully manual: spending only counts against
-an envelope after you assign the entry to it. Until then it stays uncategorized —
-exactly what the amber banner in Plan mode warns about.
+Assignment is manual-first with automation underneath. Hand-file any entry and
+that pick always wins; automation rules (below) file the rest for you,
+automatically and retroactively; and only spending that neither a manual pick
+nor a rule catches stays uncategorized — exactly what the amber banner in Plan
+mode warns about. Because of that automation, the per-row Budget chip does not
+distinguish a rule-filed entry from a hand-assigned one: both show the settled
+tone dot, the category name, and the caret. A chip may already be filled before
+you have touched the entry, because a rule filed it.
 
 After you follow a View transactions link or the Review & assign banner, a
 dismissible filter badge appears in the filter bar. It reads "Uncategorized
 only" in amber when filtered to unassigned spending, or shows the category name
 with its tone dot when filtered to one envelope. Press its "×" to clear the
 filter.
+
+### Budget automation rules
+
+Rather than hand-file the same kind of transaction over and over, you can teach
+an envelope to file matching entries for itself. A rule is a saved search
+attached to a category; any ledger entry it matches lands in that category
+automatically. Rules are surfaced from the Automation tab of a category's
+inspector and managed across the whole budget from one global list.
+
+#### The Automation tab
+
+Open a category's inspector and switch to the Automation tab. It opens with the
+intro "Rules file matching spending into {category} automatically. Manual picks
+always win." and a plasma "+ New rule" button. With no rules yet it reads "No
+rules yet. Add one to stop hand-filing the same kind of transaction into this
+envelope."
+
+Each rule shows as a card: an on/off switch, the rule name, a "{n} match(es)"
+pill counting what it currently catches, a one-line summary of its conditions,
+and an "✕" to delete it. Click a card to reopen it in the editor. A footer link,
+"Manage all rules & priority →", carries a "{n} rules · {m} transactions filed
+here" summary and opens the global manager described below.
+
+#### The rule editor
+
+The rule editor opens as a modal, its eyebrow reading "New rule" or "Edit rule"
+and its title "File matches into {category}".
+
+In simple mode it shows one field, labeled "Match transactions containing", with
+a search input (placeholder "e.g. Cerberus, broker fee, Jita…") and the caption
+"Searches reference, party, location & item." An "Add conditions" toggle expands
+the advanced editor; once open it reads "Hide advanced".
+
+Advanced mode lets you combine conditions. A "Match [ALL/ANY] of these
+conditions" selector chooses whether every condition must hold or any one
+suffices; the default is ALL. Below it sit condition rows, each a Field, an
+Operator, and a Value, with an "✕" to remove the row and a "+ Add condition" to
+add another.
+
+The Field options are Any text (the default), Type, Party, Reference, Location,
+Item, Amount, Direction, and Character. The operators depend on the field:
+
+- Text fields (Any text, Party, Reference, Location, Item) offer "contains" and
+  "does not contain". Reference also offers "starts with". Party, Item, and
+  Location also offer "is".
+- Type and Character offer "is" and "is not", choosing from the ledger types
+  sync has seen or from your roster.
+- Amount offers "is over", "is under", and "is between", and accepts ISK
+  shorthand like 100M or 1B.
+- Direction offers "is", with the choices "Outflow (spend)" and "Inflow
+  (income)".
+
+Matching is case-insensitive, and "Any text" spans the reference, party,
+location, and item at once. Journal rows match against the humanized ref-type
+label you see in the tab — for example "Daily Goal Payouts" — not the raw game
+code. The rule name auto-suggests from the first condition, falling back to
+"Untitled rule".
+
+A live preview pane sits alongside the editor. Under the eyebrow "Live preview"
+it shows a large match count and, in green, "{n} will file into {category}",
+then the matching entries themselves, each chipped to show what would happen:
+"Will file here" in green, "Already here" in grey, "Manual — kept" in amber, and
+"Higher rule wins" in plasma. Before you have entered anything it reads "Type a
+search or add a condition to see which transactions this rule catches." When the
+search is valid but nothing matches yet it reads "No spending matches yet. It'll
+still file matching transactions as they arrive."
+
+A footer note reads "Applies to matching past transactions and everything new.
+Manual assignments are never overridden." Cancel backs out; the confirm button
+reads "Create rule" or "Save rule" and stays disabled until at least one
+condition has a value.
+
+Most rules target spending, and the editor's copy speaks in those terms. A rule
+is not limited to spending, though: the Direction condition lets you scope a rule
+to "Outflow (spend)" or "Inflow (income)", so a rule can file income as readily
+as spend.
+
+#### The global rules manager
+
+The "Manage all rules & priority →" link opens a single, flat list of every rule
+across every envelope, ordered by priority. Its header reads "Automation rules"
+with an "N rules · M active · drag to set priority" summary, and a note banner
+reads "When a transaction matches more than one rule, the highest one wins.
+Manual assignments override all rules."
+
+Each row carries a drag handle and its priority index, the category's colour dot,
+the rule name, its condition summary, its match count, an on/off switch, and edit
+and delete controls. Drag a row to a new position and the priority resets and the
+budget re-derives against the new order. With no rules anywhere, the list shows
+an empty state.
+
+#### Precedence
+
+For any ledger entry, the order is fixed: a manual per-entry pick wins; failing
+that, the highest-priority enabled rule whose conditions match files it; failing
+that, the entry stays in Ready to Assign. Rules are retroactive — adding a rule
+reclaims past entries it matches, not just new ones. With no rules in place, the
+budget behaves exactly as the manual-only flow it replaces.
 
 ## Corporation wallets
 
@@ -295,4 +454,5 @@ The All Wallets scope sits at the top of the picker and combines every
 character's liquid ISK into one view, with the net-worth graph and composition
 split across all of them. Use it for a single read on your whole financial
 position, then drop into a single character or a corporation division when you
-need the detail.
+need the detail. For a balances-only read that lists every pilot and every corp
+division side by side, the Wallets tab covers all of them at once.

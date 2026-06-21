@@ -39,6 +39,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0027] | Canonical Asset Valuation Chain                 | ![Active][badge-active] | 2026-06-19 |
 | [0028] | Owner-Aware Budget Assignment Identity          | ![Active][badge-active] | 2026-06-20 |
 | [0029] | Two-Level Feature Model w/ Tolerant Migration   | ![Active][badge-active] | 2026-06-21 |
+| [0030] | Cross-Platform Keyboard Architecture            | ![Active][badge-active] | 2026-06-21 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -72,5 +73,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0027]: 0027-canonical-asset-valuation.md
 [0028]: 0028-owner-aware-budget-assignment-identity.md
 [0029]: 0029-two-level-feature-model.md
+[0030]: 0030-keyboard-architecture.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

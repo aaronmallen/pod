@@ -23,7 +23,6 @@ const DEFAULT_ME: i64 = 10;
 const DEFAULT_TE: i64 = 20;
 const DETAIL_PANE_DEFAULT_WIDTH: f32 = 340.0;
 const DETAIL_PANE_MIN_WIDTH: f32 = 280.0;
-const INSTALL_FEE_RATE: f64 = 0.5;
 const MATERIAL_PLAN_SCROLL_ID: &str = "industry-planner-material-plan";
 const ME_MAX: i64 = 10;
 const RECENT_LIMIT: usize = 8;
@@ -407,7 +406,8 @@ impl Planner {
 
     let output_qty = recipe.output_per_run * self.runs;
     let revenue = self.data.price(product) * output_qty as f64;
-    let install_fee = revenue * self.cost_index(product).unwrap_or(0.0) * INSTALL_FEE_RATE;
+    let eiv = estimated_item_value(&self.data, recipe, self.runs);
+    let install_fee = install_fee(eiv, self.cost_index(product).unwrap_or(0.0));
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
     let per_unit = if output_qty > 0 {
@@ -1123,8 +1123,8 @@ impl Planner {
       .iter()
       .filter(|job| !job.is_root)
       .map(|job| {
-        let produced = job.node.output_per_run * job.runs;
-        self.data.price(job.type_id) * produced as f64 * cost_index(job.type_id) * INSTALL_FEE_RATE
+        let eiv = node_eiv(&self.data, &job.node, job.runs);
+        install_fee(eiv, cost_index(job.type_id))
       })
       .sum();
 
@@ -1295,7 +1295,8 @@ impl Planner {
     let output_qty = recipe.output_per_run * runs;
     let revenue = self.data.price(product) * output_qty as f64;
     let cost_index = self.cost_index_for(tree.root_facility_system, recipe.is_reaction);
-    let install_fee = revenue * cost_index * INSTALL_FEE_RATE;
+    let eiv = estimated_item_value(&self.data, recipe, runs);
+    let install_fee = install_fee(eiv, cost_index);
     let profit = revenue - material_cost - install_fee;
     let margin = if revenue > 0.0 { profit / revenue * 100.0 } else { 0.0 };
     let per_unit = if output_qty > 0 {
@@ -1397,6 +1398,39 @@ fn buildable_inputs(data: &PlannerData, type_id: i64) -> Vec<i64> {
     .map(|material| material.type_id)
     .filter(|&mat| data.recipe(mat).is_some())
     .collect()
+}
+
+// EIV uses pre-ME base quantities and CCP adjusted prices, never the live market or ME-reduced demand:
+// ME affects the materials consumed, not the value EVE taxes the job against.
+fn estimated_item_value(data: &PlannerData, recipe: &Recipe, runs: i64) -> f64 {
+  let per_run: f64 = recipe
+    .materials
+    .iter()
+    .map(|material| material.base_qty as f64 * data.adjusted_price(material.type_id))
+    .sum();
+  per_run * runs as f64
+}
+
+fn node_eiv(data: &PlannerData, node: &BuildNode, runs: i64) -> f64 {
+  let per_run: f64 = node
+    .materials
+    .iter()
+    .map(|material| material.base_qty as f64 * data.adjusted_price(material.type_id))
+    .sum();
+  per_run * runs as f64
+}
+
+fn install_fee(eiv: f64, cost_index: f64) -> f64 {
+  install_fee_with_facility_tax(eiv, cost_index, planner_loaders::FACILITY_TAX_RATE)
+}
+
+fn install_fee_with_facility_tax(eiv: f64, cost_index: f64, facility_tax_rate: f64) -> f64 {
+  // Structure rig/role fee bonus is out of scope; the cost index already carries the system component.
+  const STRUCTURE_BONUS: f64 = 1.0;
+  let gross_cost = eiv * cost_index * STRUCTURE_BONUS;
+  let facility_tax = eiv * facility_tax_rate;
+  let scc_surcharge = eiv * planner_loaders::SCC_SURCHARGE_RATE;
+  gross_cost + facility_tax + scc_surcharge
 }
 
 /// Returns total build time in seconds. `te` is a 0–20 integer (EVE TE %, applied as
@@ -2277,9 +2311,8 @@ mod view {
       .iter()
       .map(|m| eff_qty(m.base_qty, job.runs, config.me, recipe.is_reaction) as f64 * data.price(m.type_id))
       .sum();
-    let produced = recipe.output_per_run * job.runs;
-    let fee =
-      data.price(type_id) * produced as f64 * planner.cost_index(type_id).unwrap_or(0.0) * super::INSTALL_FEE_RATE;
+    let eiv = super::estimated_item_value(data, recipe, job.runs);
+    let fee = super::install_fee(eiv, planner.cost_index(type_id).unwrap_or(0.0));
     let build_cost = material_cost + fee;
     let buy_cost = job.needed_qty as f64 * data.price(type_id);
     let savings = buy_cost - build_cost;
@@ -4525,10 +4558,11 @@ mod tests {
         .sum();
 
       // With a component built in-house, material cost is the bill-of-materials acquisition total
-      // (raw inputs only — the sub-built component is no longer bought) plus its sub-job install fee,
-      // which diverges sharply from pricing the root recipe's immediate materials at market.
+      // (raw inputs only — the sub-built component is no longer bought) plus its sub-job install fee.
+      // The RETRIEVER sub-job's EIV is 10 base Tritanium x 5 x 2 runs = 100; its install fee is
+      // 100 x (0.02 cost index + 0.0025 facility tax + 0.04 SCC) = 6.25, so material cost is 115 + 6.25.
       assert!(eco.material_cost > acquisition);
-      assert_eq!(eco.material_cost, 600_115.0);
+      assert_eq!(eco.material_cost, 121.25);
       assert_eq!(acquisition, 115.0);
       assert_eq!(eco.profit, eco.revenue - eco.material_cost - eco.install_fee);
     }
@@ -4562,6 +4596,59 @@ mod tests {
       let eco = planner.economics().unwrap();
 
       assert_eq!(eco.isk_per_hour(), 0.0);
+    }
+  }
+
+  mod estimated_item_value {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn priced_data() -> PlannerData {
+      let mut data = PlannerData::default();
+      data.adjusted_prices.insert(TRITANIUM, 6.0);
+      data.adjusted_prices.insert(RETRIEVER, 1_000.0);
+      data
+    }
+
+    #[test]
+    fn it_falls_back_to_the_market_average_when_no_adjusted_price() {
+      let mut data = PlannerData::default();
+      data.prices.insert(TRITANIUM, 7.0);
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 100)]);
+
+      assert_eq!(super::estimated_item_value(&data, &recipe, 1), 700.0);
+    }
+
+    #[test]
+    fn it_ignores_me_and_prices_base_quantities_at_the_adjusted_price() {
+      let data = priced_data();
+      let recipe = recipe(
+        HULK + 1,
+        1,
+        false,
+        vec![Material::new(RETRIEVER, 2), Material::new(TRITANIUM, 50)],
+      );
+
+      // ME never enters EIV: 2 x 1000 + 50 x 6 = 2300 per run.
+      assert_eq!(super::estimated_item_value(&data, &recipe, 1), 2_300.0);
+    }
+
+    #[test]
+    fn it_scales_linearly_with_runs() {
+      let data = priced_data();
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 50)]);
+
+      assert_eq!(super::estimated_item_value(&data, &recipe, 4), 1_200.0);
+    }
+
+    #[test]
+    fn it_prices_a_reaction_at_its_base_quantities() {
+      let mut data = priced_data();
+      data.adjusted_prices.insert(34_001, 100.0);
+      let recipe = recipe(HULK + 1, 40, true, vec![Material::new(34_001, 25)]);
+
+      assert_eq!(super::estimated_item_value(&data, &recipe, 3), 7_500.0);
     }
   }
 
@@ -4897,6 +4984,40 @@ mod tests {
 
       assert_eq!(planner.settings_for(HULK).me, 8);
       assert_eq!(planner.settings_for(HULK).te, 16);
+    }
+  }
+
+  mod install_fee {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_sums_gross_cost_facility_tax_and_scc_surcharge() {
+      // EIV 1_000_000 at a 0.05 cost index: gross 50_000 + facility tax 2_500 (0.25%) + SCC 40_000 (4%).
+      let fee = super::install_fee(1_000_000.0, 0.05);
+
+      assert_eq!(fee, 92_500.0);
+    }
+
+    #[test]
+    fn it_charges_only_the_flat_fees_at_a_zero_cost_index() {
+      // With no system cost index the job still owes facility tax + SCC: 2_500 + 40_000.
+      let fee = super::install_fee(1_000_000.0, 0.0);
+
+      assert_eq!(fee, 42_500.0);
+    }
+
+    #[test]
+    fn it_matches_an_eve_ref_reference_job_within_rounding() {
+      // EVE-Ref industry-cost worked example (docs.everef.net/api/industry-cost.html):
+      // EIV 6_147_769_967, structure facility tax 2%, SCC 4%; the reference cost-index component
+      // (system_cost_index field) is 79_306_233 -> index 0.012899... The canonical total is the sum of
+      // the three components: 79_306_233 + facility tax (2% = 122_955_399.34) + SCC (4% = 245_910_798.68).
+      let eiv = 6_147_769_967.0_f64;
+      let cost_index = 79_306_233.0 / eiv;
+
+      let fee = super::install_fee_with_facility_tax(eiv, cost_index, 0.02);
+
+      assert!((fee - 448_172_431.0).abs() < 1.0);
     }
   }
 

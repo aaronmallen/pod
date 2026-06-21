@@ -15,7 +15,14 @@ use crate::{
   ui::components::facility_combobox::FacilityRef,
 };
 
+/// NPC-station facility tax, the fixed 0.25% of EIV CCP levies on jobs installed at an NPC station. Player
+/// structures set their own rate (capped at 10%); the planner has no per-structure tax data, so every job
+/// falls back to this NPC default rather than guessing a structure's configured rate.
+pub const FACILITY_TAX_RATE: f64 = 0.0025;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
+/// SCC (Secure Commerce Commission) surcharge, the flat 4% of EIV CCP adds to every industry job
+/// regardless of facility. Single-sourced here so the install-fee model carries no magic numbers.
+pub const SCC_SURCHARGE_RATE: f64 = 0.04;
 const TILE_ICON_SIZE: Size = Size::S64;
 
 // Planner data-loading API: built and unit-tested as the foundation for the not-yet-wired build planner; kept until the planner UI consumes it.
@@ -124,6 +131,8 @@ pub struct OwnedSummary {
 
 #[derive(Clone, Debug, Default)]
 pub struct PlannerData {
+  // EIV input: CCP adjusted prices, distinct from `prices` (market average). Falls back to average per type.
+  pub adjusted_prices: HashMap<i64, f64>,
   pub blueprint_icons: HashMap<(i64, bool), IconResolution>,
   pub catalog: Vec<CatalogEntry>,
   pub facilities: Vec<PlannerFacility>,
@@ -136,6 +145,14 @@ pub struct PlannerData {
 }
 
 impl PlannerData {
+  pub fn adjusted_price(&self, type_id: i64) -> f64 {
+    self
+      .adjusted_prices
+      .get(&type_id)
+      .copied()
+      .unwrap_or_else(|| self.price(type_id))
+  }
+
   /// The pre-resolved blueprint (BPO/BPC) icon keyed on `blueprint_type_id`; `is_copy` selects the BPC variant.
   /// Resolved once at load so `view` never stats the filesystem; unknown keys read [`IconResolution::Missing`].
   pub fn blueprint_icon(&self, blueprint_type_id: i64, is_copy: bool) -> &IconResolution {
@@ -275,6 +292,20 @@ pub async fn build_time(db: &Database, blueprint_type_id: i64, activity_id: i64)
     .flatten()
 }
 
+pub async fn adjusted_prices(db: &Database) -> HashMap<i64, f64> {
+  finance::market_prices_all(db)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|price| {
+      price
+        .adjusted_price()
+        .or_else(|| price.average_price())
+        .map(|value| (price.type_id(), value))
+    })
+    .collect()
+}
+
 pub async fn cost_index(db: &Database, solar_system_id: i64, activity_id: i64) -> Option<f64> {
   industry::cost_index_for(db, solar_system_id, activity_id)
     .await
@@ -378,11 +409,13 @@ pub async fn load_data(db: &Database, scope: Scope) -> PlannerData {
 /// [`StaticCatalog`], assembling the [`PlannerData`] the planner consumes. Re-entering Industry or changing
 /// scope runs only this half; the static catalog is reused untouched.
 pub async fn load_data_with_catalog(db: &Database, scope: Scope, catalog: StaticCatalog) -> PlannerData {
+  let adjusted_prices = adjusted_prices(db).await;
   let owned = owned_index(db, &catalog.recipes, scope).await;
   let facilities = planner_facilities(db).await;
   let prices = prices(db).await;
 
   PlannerData {
+    adjusted_prices,
     blueprint_icons: catalog.blueprint_icons,
     catalog: catalog.catalog,
     facilities,

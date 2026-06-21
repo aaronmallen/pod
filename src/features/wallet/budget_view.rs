@@ -1428,11 +1428,32 @@ fn move_open_for(state: &State, category_id: i64, anchor: BudgetMoveAnchor) -> b
 
 /// Destinations stay inert until the amount parses to a positive number, so a
 /// stray click cannot move 0 ISK.
+/// The transfer amount (ISK, rounded) and whether it is a usable positive
+/// amount, parsed from the Move Money draft. Split off [`move_money_popover`]
+/// so the parse/validity is unit-testable.
+fn move_amount_state(draft: &str) -> (f64, bool) {
+  let amount = crate::ui::format::parse_isk(draft).round();
+  (amount, amount > 0.0)
+}
+
+/// The destination groups offered by the Move Money popover: every group with at
+/// least one category other than the source, paired with those categories. Split
+/// off [`move_money_popover`] so the eligibility rule is unit-testable.
+fn eligible_move_dests(view: &budget::BudgetView, source_id: i64) -> Vec<(&str, Vec<&Category>)> {
+  view
+    .groups
+    .iter()
+    .filter_map(|group| {
+      let dests: Vec<&Category> = group.categories.iter().filter(|c| c.id != source_id).collect();
+      (!dests.is_empty()).then_some((group.name.as_str(), dests))
+    })
+    .collect()
+}
+
 fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a, Message> {
   let open = state.budget_move();
   let draft = open.map(|m| m.amount_draft.as_str()).unwrap_or_default();
-  let amount = crate::ui::format::parse_isk(draft).round();
-  let valid = amount > 0.0;
+  let (_amount, valid) = move_amount_state(draft);
   let available = source.available();
 
   let source_label = Row::with_children(vec![
@@ -1474,13 +1495,9 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
     ),
   ];
   if let Some(view) = state.budget() {
-    for group in &view.groups {
-      let dests: Vec<&Category> = group.categories.iter().filter(|c| c.id != source.id).collect();
-      if dests.is_empty() {
-        continue;
-      }
+    for (group_name, dests) in eligible_move_dests(view, source.id) {
       rows.push(
-        text(group.name.clone())
+        text(group_name.to_owned())
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::tertiary()))
@@ -1518,6 +1535,13 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
     ..container::Style::default()
   })
   .into()
+}
+
+/// The "All" prefill value: `max(0, available)`, formatted, so a negative
+/// available balance never seeds a negative transfer. Split off
+/// [`move_amount_field`] for unit testing.
+fn move_all_prefill(available: f64) -> String {
+  crate::ui::format::fmt_isk(available.max(0.0))
 }
 
 /// "All" prefills `max(0, available)` so negative available does not seed a
@@ -1558,9 +1582,7 @@ fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Me
     bottom: 9.0,
     left: 13.0,
   })
-  .on_press(Message::BudgetMoveAmountChanged(crate::ui::format::fmt_isk(
-    available.max(0.0),
-  )))
+  .on_press(Message::BudgetMoveAmountChanged(move_all_prefill(available)))
   .style(|_, status| {
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
@@ -3317,13 +3339,19 @@ fn global_rules_empty_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn global_rule_row<'a>(state: &'a State, rule: &'a Rule, index: usize, count: usize) -> Element<'a, Message> {
-  let rule_id = rule.id();
-  let category = state.budget().and_then(|view| view.category(rule.category_id()));
-  let (tone, category_name) = match category {
+/// The tone color and display name of the category a rule files into, or no
+/// tone and an empty label when it points at a category not in the active view.
+/// Split off [`global_rule_row`] for unit testing.
+fn global_rule_category_label<'a>(state: &'a State, rule: &Rule) -> (Option<&'a str>, String) {
+  match state.budget().and_then(|view| view.category(rule.category_id())) {
     Some(category) => (category.tone.as_deref(), category.name.clone()),
     None => (None, String::new()),
-  };
+  }
+}
+
+fn global_rule_row<'a>(state: &'a State, rule: &'a Rule, index: usize, count: usize) -> Element<'a, Message> {
+  let rule_id = rule.id();
+  let (tone, category_name) = global_rule_category_label(state, rule);
   let dragging = state.budget_rule_dragging() == Some(rule_id);
   let is_drop_target = state.budget_rule_drop_target() == Some(rule_id);
 
@@ -4809,6 +4837,127 @@ mod tests {
       state.journal = vec![uncategorized_entry(1, "2026-06"), uncategorized_entry(2, "2026-06")];
 
       assert!(super::super::review_banner(&state).is_some());
+    }
+  }
+
+  mod move_money {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::wallet::{BudgetMove, BudgetMoveAnchor};
+
+    #[test]
+    fn it_parses_and_validates_a_positive_amount() {
+      assert_eq!(move_amount_state("550"), (550.0, true));
+    }
+
+    #[test]
+    fn it_rejects_a_blank_or_zero_amount() {
+      assert_eq!(move_amount_state(""), (0.0, false));
+      assert_eq!(move_amount_state("0"), (0.0, false));
+    }
+
+    #[test]
+    fn it_clamps_the_all_prefill_to_zero_for_a_negative_balance() {
+      assert_eq!(move_all_prefill(-200.0), crate::ui::format::fmt_isk(0.0));
+      assert_eq!(move_all_prefill(1_000.0), crate::ui::format::fmt_isk(1_000.0));
+    }
+
+    #[test]
+    fn it_offers_every_group_with_a_non_source_destination() {
+      let view = view();
+      let dests = eligible_move_dests(&view, 1);
+
+      assert_eq!(dests.len(), 1);
+      let (group_name, categories) = &dests[0];
+      assert_eq!(*group_name, "Bills");
+      assert_eq!(categories.iter().map(|c| c.id).collect::<Vec<_>>(), vec![2]);
+    }
+
+    #[test]
+    fn it_renders_the_move_popover_and_its_rows() {
+      let mut state = state_with_budget();
+      state.budget_move = Some(BudgetMove {
+        amount_draft: "100".to_owned(),
+        anchor: BudgetMoveAnchor::Pill,
+        from_id: 1,
+      });
+      let source = state.budget().unwrap().category(1).unwrap();
+
+      let _el: Element<'_, Message> = move_money_popover(&state, source);
+      let _amount: Row<'_, Message> = move_amount_field("100", 1_000.0, true);
+      let _ready: Element<'_, Message> = move_dest_row("Ready to Assign", color::accent::PLASMA, true, None);
+      let _dest: Element<'_, Message> = move_dest_row(
+        "Groceries",
+        color::accent::PLASMA,
+        false,
+        Some(Message::BudgetMoveCommitted(MoveDest::ReadyToAssign)),
+      );
+    }
+  }
+
+  mod global_rules {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_labels_the_target_category_with_its_tone() {
+      let state = state_with_budget();
+
+      let (tone, name) = global_rule_category_label(&state, &sample_rule(1, 1));
+
+      assert_eq!(tone, Some("plasma"));
+      assert_eq!(name, "Category 1");
+    }
+
+    #[test]
+    fn it_falls_back_to_an_empty_label_for_an_unknown_category() {
+      let state = state_with_budget();
+
+      let (tone, name) = global_rule_category_label(&state, &sample_rule(1, 999));
+
+      assert_eq!(tone, None);
+      assert_eq!(name, String::new());
+    }
+
+    #[test]
+    fn it_renders_a_global_rule_row() {
+      let state = state_with_budget();
+      let rule = sample_rule(1, 1);
+
+      let _el: Element<'_, Message> = global_rule_row(&state, &rule, 0, 3);
+    }
+  }
+
+  mod condition_value_editor {
+    use super::*;
+
+    fn condition(field: RuleField, op: RuleOp) -> crate::store::model::RuleCondition {
+      crate::store::model::RuleCondition {
+        field,
+        op,
+        value: "100m".to_owned(),
+        value2: Some("1b".to_owned()),
+      }
+    }
+
+    #[test]
+    fn it_renders_an_editor_for_every_field_kind() {
+      let state = state_with_budget();
+      let draft = budget::RuleDraft::new(1);
+      let conditions = [
+        condition(RuleField::Type, RuleOp::Is),
+        condition(RuleField::Character, RuleOp::Is),
+        condition(RuleField::Direction, RuleOp::Is),
+        condition(RuleField::Amount, RuleOp::Between),
+        condition(RuleField::Amount, RuleOp::GreaterThan),
+        condition(RuleField::Text, RuleOp::Contains),
+      ];
+
+      for (index, condition) in conditions.iter().enumerate() {
+        let _el: Element<'_, Message> = super::super::condition_value_editor(&state, &draft, index, condition);
+      }
     }
   }
 }

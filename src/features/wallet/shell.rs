@@ -2093,4 +2093,77 @@ mod tests {
         super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
     }
   }
+
+  mod owner_display_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      features::wallet::{RosterCorp, RosterPilot},
+      store::images,
+    };
+
+    fn pilot(id: i64, name: &str) -> RosterPilot {
+      RosterPilot {
+        corp: "TST".to_owned(),
+        granted_scopes: None,
+        id,
+        liquid: None,
+        name: name.to_owned(),
+        portrait: images::ImageState::Stale {
+          id,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      }
+    }
+
+    fn corp(id: i64, name: &str) -> RosterCorp {
+      RosterCorp {
+        id,
+        liquid: None,
+        logo: images::ImageState::Stale {
+          id,
+          kind: images::ImageKind::CorporationLogo,
+        },
+        name: name.to_owned(),
+        ticker: "TSTC".to_owned(),
+      }
+    }
+
+    #[test]
+    fn it_names_a_character_from_the_roster() {
+      let mut state = State::new();
+      state.roster = vec![pilot(1, "Pilot One")];
+
+      assert_eq!(
+        super::super::owner_display_name(&state, BudgetOwner::Character(1)),
+        "Pilot One"
+      );
+    }
+
+    #[test]
+    fn it_names_a_corporation_from_the_roster() {
+      let mut state = State::new();
+      state.corporations = vec![corp(98, "Test Corp")];
+
+      assert_eq!(
+        super::super::owner_display_name(&state, BudgetOwner::Corporation(98)),
+        "Test Corp"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_to_the_id_for_unknown_owners() {
+      let state = State::new();
+
+      assert_eq!(
+        super::super::owner_display_name(&state, BudgetOwner::Character(5)),
+        "#5"
+      );
+      assert_eq!(
+        super::super::owner_display_name(&state, BudgetOwner::Corporation(7)),
+        "#7"
+      );
+    }
+  }
 }

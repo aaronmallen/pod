@@ -691,3 +691,39 @@ fn empty_state<'a>() -> Element<'a, Message> {
   .center_x(Length::Fill)
   .into()
 }
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn division(number: i64, name: Option<&str>) -> CorpDivision {
+    CorpDivision {
+      balance: None,
+      division: number,
+      name: name.map(str::to_owned),
+    }
+  }
+
+  mod division_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_prefers_the_synced_name() {
+      assert_eq!(super::division_label(&division(1, Some("Trading"))), "Trading");
+    }
+
+    #[test]
+    fn it_names_the_first_three_divisions() {
+      assert_eq!(super::division_label(&division(1, None)), "Master Wallet");
+      assert_eq!(super::division_label(&division(2, None)), "2nd Wallet");
+      assert_eq!(super::division_label(&division(3, None)), "3rd Wallet");
+    }
+
+    #[test]
+    fn it_falls_back_to_an_ordinal_for_later_divisions() {
+      assert_eq!(super::division_label(&division(7, None)), "7th Wallet");
+    }
+  }
+}

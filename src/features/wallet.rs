@@ -260,6 +260,7 @@ pub enum Message {
   BudgetMoveOpened(i64, BudgetMoveAnchor),
   BudgetQuickAssign(i64, f64),
   BudgetRangeSelected(budget::BudgetRange),
+  BudgetReviewCounted(usize),
   BudgetRuleConditionAdded,
   BudgetRuleConditionFieldChanged(usize, RuleField),
   BudgetRuleConditionOpChanged(usize, RuleOp),
@@ -377,6 +378,7 @@ impl Message {
         | Message::BudgetMoveOpened(..)
         | Message::BudgetQuickAssign(_, _)
         | Message::BudgetRangeSelected(_)
+        | Message::BudgetReviewCounted(_)
         | Message::BudgetRuleConditionAdded
         | Message::BudgetRuleConditionFieldChanged(..)
         | Message::BudgetRuleConditionOpChanged(..)
@@ -533,6 +535,7 @@ pub struct State {
   budget_pending_group_delete: Option<i64>,
   budget_picker: Option<(BudgetOwner, BudgetEntryKind, i64)>,
   budget_range: budget::BudgetRange,
+  budget_review_total: usize,
   budget_rule_dragging: Option<i64>,
   budget_rule_drop_target: Option<i64>,
   budget_rule_editor: Option<budget::RuleDraft>,
@@ -603,6 +606,7 @@ impl State {
       budget_pending_group_delete: None,
       budget_picker: None,
       budget_range: budget::BudgetRange::default(),
+      budget_review_total: 0,
       budget_rule_dragging: None,
       budget_rule_drop_target: None,
       budget_rule_editor: None,
@@ -741,24 +745,12 @@ impl State {
     self.budget_hovered_category
   }
 
-  /// How many loaded ledger entries in the selected budget month still need a
-  /// category — the Review &amp; assign banner's count.
-  pub(super) fn budget_uncategorized_count(&self) -> usize {
-    let filter = BudgetFilter {
-      kind: BudgetFilterKind::Uncategorized,
-      month: self.budget_month.clone(),
-    };
-    let journal = self
-      .journal
-      .iter()
-      .filter(|entry| journal_budget_match(entry, &filter, &self.budget_chips))
-      .count();
-    let market = self
-      .market
-      .iter()
-      .filter(|entry| market_budget_match(entry, &filter, &self.budget_chips))
-      .count();
-    journal + market
+  /// How many ledger entries in the selected budget month still need a category
+  /// — the Review &amp; assign banner's count. Sourced from the DB
+  /// ([`budget::uncategorized_count_for_month`]) so it reflects every entry in
+  /// the month, not just the loaded page.
+  pub(super) fn budget_review_total(&self) -> usize {
+    self.budget_review_total
   }
 
   pub(super) fn has_active_filters(&self) -> bool {
@@ -1200,6 +1192,16 @@ fn reload_budget_chips(state: &State, db: &Database) -> Task<Message> {
   Task::perform(async move { loaders::load_budget_chips(&db, scope).await }, |c| {
     Message::BudgetChipsReloaded(Box::new(c))
   })
+}
+
+fn reload_budget_review(state: &State, db: &Database) -> Task<Message> {
+  let scope = state.budget_scope();
+  let month = state.budget_month.clone();
+  let db = db.clone();
+  Task::perform(
+    async move { crate::features::budget::uncategorized_count_for_month(&db, scope, &month).await },
+    Message::BudgetReviewCounted,
+  )
 }
 
 fn reload_kind(kind: JobKind) -> bool {
@@ -2201,6 +2203,14 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
       if state.budget_filter.is_some() {
         state.recompute_derived();
       }
+      // A new chip resolution (manual assignment or rule change) can move rows in
+      // or out of needs-review, so re-derive the DB-sourced banner count. Every
+      // month change / sync path also funnels through a chips reload, keeping the
+      // count fresh from one chokepoint.
+      reload_budget_review(state, db)
+    }
+    Message::BudgetReviewCounted(total) => {
+      state.budget_review_total = total;
       Task::none()
     }
     other => handle_budget_edit(state, other, db),
@@ -4073,27 +4083,21 @@ mod tests {
     }
 
     #[test]
-    fn it_counts_uncategorized_entries_for_the_selected_month() {
+    fn it_reports_the_db_sourced_review_total() {
       let mut state = State::new();
-      let mut buy = journal_entry(1, Some(-100.0), "manufacturing", "Buy");
-      buy.id = 1;
-      buy.date = "2026-06-05T00:00:00Z".to_owned();
-      // Inflows are assignable now, so an unassigned one also needs a category.
-      let mut inflow = journal_entry(1, Some(900.0), "bounty_prizes", "Bounty");
-      inflow.id = 2;
-      inflow.date = "2026-06-05T00:00:00Z".to_owned();
-      // A market_transaction twin is excluded (assigned from the Transactions tab).
-      let mut twin = journal_entry(1, Some(-300.0), "market_transaction", "Twin");
-      twin.id = 3;
-      twin.date = "2026-06-05T00:00:00Z".to_owned();
-      // Out-of-month entries never count.
-      let mut last_month = journal_entry(1, Some(-100.0), "manufacturing", "Old");
-      last_month.id = 4;
-      last_month.date = "2026-05-30T00:00:00Z".to_owned();
-      state.journal = vec![buy, inflow, twin, last_month];
-      state.budget_month = "2026-06".to_owned();
+      state.budget_review_total = 7;
 
-      assert_eq!(state.budget_uncategorized_count(), 2);
+      assert_eq!(state.budget_review_total(), 7);
+    }
+
+    #[tokio::test]
+    async fn it_stores_the_counted_review_total_from_the_message() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::BudgetReviewCounted(4), &db);
+
+      assert_eq!(state.budget_review_total(), 4);
     }
   }
 

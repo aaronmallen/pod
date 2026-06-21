@@ -46,7 +46,7 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
 /// The amber "Review & assign" banner: surfaces how many of the selected month's
 /// entries still need a category and jumps to the ledger filtered to them.
 fn review_banner(state: &State) -> Option<Element<'_, Message>> {
-  let count = state.budget_uncategorized_count();
+  let count = state.budget_review_total();
   if count == 0 {
     return None;
   }
@@ -4797,25 +4797,9 @@ mod tests {
 
   mod review_banner {
     use super::*;
-    use crate::{features::wallet::loaders::JournalEntry, store::model::BudgetOwner};
-
-    fn uncategorized_entry(id: i64, month: &str) -> JournalEntry {
-      JournalEntry {
-        amount: Some(-400.0),
-        balance: Some(5_000.0),
-        character_id: 1,
-        context_id: None,
-        date: format!("{month}-15T12:00:00Z"),
-        description: "Brokers fee".to_owned(),
-        id,
-        owner: BudgetOwner::Character(1),
-        reason: None,
-        ref_type: "brokers_fee".to_owned(),
-      }
-    }
 
     #[test]
-    fn it_renders_nothing_when_everything_is_categorized() {
+    fn it_renders_nothing_when_the_review_total_is_zero() {
       let state = state_with_budget();
 
       assert!(super::super::review_banner(&state).is_none());
@@ -4824,8 +4808,7 @@ mod tests {
     #[test]
     fn it_renders_the_singular_banner_for_one_uncategorized_entry() {
       let mut state = state_with_budget();
-      state.budget_month = "2026-06".to_owned();
-      state.journal = vec![uncategorized_entry(1, "2026-06")];
+      state.budget_review_total = 1;
 
       assert!(super::super::review_banner(&state).is_some());
     }
@@ -4833,8 +4816,7 @@ mod tests {
     #[test]
     fn it_renders_the_plural_banner_for_several_uncategorized_entries() {
       let mut state = state_with_budget();
-      state.budget_month = "2026-06".to_owned();
-      state.journal = vec![uncategorized_entry(1, "2026-06"), uncategorized_entry(2, "2026-06")];
+      state.budget_review_total = 3;
 
       assert!(super::super::review_banner(&state).is_some());
     }

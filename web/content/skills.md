@@ -153,15 +153,16 @@ The neural remap card sits below the matrix. It reads "Neural remap" and shows
 how many bonus remaps are available, when the last remap happened, and when the
 annual remap accrues again. EVE grants one remap on an annual cooldown plus any
 bonus remaps the character has banked. When no remap is available, the card shows
-the reason, such as "No neural remaps available — next remap accrues in 90 days."
+the reason, telling you no neural remaps are available and how many days until the
+next one accrues.
 
 The card also shows a recommended remap for the current queue, under the heading
 "Fastest remap for your current queue." Pod weighs every attribute pair by the SP
 your queue demands, then searches all legal attribute spreads between 17 and 27
 that sum to 99. It shows the spread that finishes the queue fastest, the time it
 would take, and how much it saves against your current attributes. If your
-current spread is already best, the card reads "Already optimal — no remap
-improves your current queue." The recommendation never suggests a slower spread.
+current spread is already best, the card says it is already optimal and that no
+remap improves your current queue. The recommendation never suggests a slower spread.
 
 ### Plans
 
@@ -232,8 +233,8 @@ of plan" or "After step {N}," with steppers to raise and lower each attribute.
 The editor recomputes the plan as if you remapped at that point, so a remap early
 in a long plan can shorten the steps that follow. The number of remaps you can
 insert is capped by the character's available remaps. When that budget is spent,
-the gap shows the reason instead, such as "No neural remaps available — next
-remap accrues in {N} days."
+the gap shows the reason instead, noting that no neural remaps are available and
+when the next one accrues.
 
 ### The summary
 

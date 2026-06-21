@@ -2,7 +2,7 @@
 title: Characters
 section: Features
 order: 1
-description: Manage your roster of EVE Online pilots in Pod — add characters through single sign-on, group them into named squads, and read per-character and per-corporation stats at a glance.
+description: Manage your roster of EVE Online pilots in Pod. Add characters through single sign-on, group them into named squads, and read per-character and per-corporation stats from one view.
 ---
 
 # Characters
@@ -145,7 +145,7 @@ The Clones tab lists your active clone and your jump clones with their implants.
 
 The **Active clone** section names the home location and marks it **active**.
 Below it, an implant grid runs slots `01` through `10`; a filled slot shows the
-implant icon and name, an empty one reads `— empty slot —`. The **Jump clones**
+implant icon and name, and an empty one is labeled as an empty slot. The **Jump clones**
 section lists each installed clone with its location and an implant count
 (`N implants`, or `empty`), each with its own slot grid. Before any data syncs
 the tab reads **No clones synced yet**.

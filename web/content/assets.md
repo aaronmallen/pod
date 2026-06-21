@@ -98,7 +98,7 @@ so they each carry their own values rather than a fixed type price.
 
 Each module appears as a card with its icon, name, owner, location, and an estimated value.
 A colored tier badge marks the mutation grade: Unstable, Gravid, and Decayed, plus the
-Glorified variants. The badge color encodes the tier so you can scan grades at a glance.
+Glorified variants. The badge color encodes the tier, which makes the grades easy to scan.
 
 The sidebar holds a range filter, one slider per rolled stat for the selected module type.
 Each slider has a low handle and a high handle. Drag them to keep only the modules whose stat

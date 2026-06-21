@@ -23,7 +23,7 @@ use iced::{
 };
 
 use crate::{
-  config::Feature,
+  config::FeatureFlags,
   features::{auth as auth_feature, registry},
   store::{
     Database, images,
@@ -245,7 +245,7 @@ pub type Roster = (
   i64,
   Vec<Tag>,
   Vec<CorpCardModel>,
-  Vec<Feature>,
+  FeatureFlags,
   HashMap<i64, Option<String>>,
 );
 
@@ -322,7 +322,7 @@ pub struct State {
   cursor: Option<iced::Point>,
   dragging: Option<Drag>,
   drop_target: Option<DropTarget>,
-  enabled_features: Vec<Feature>,
+  features: FeatureFlags,
   filtered: Option<Filtered>,
   granted_scopes_by_id: HashMap<i64, Option<String>>,
   groups: Vec<SquadGroup>,
@@ -353,7 +353,8 @@ impl State {
   // enabled; with all of them off it would render nothing, so the card name is left non-clickable.
   pub(super) fn detail_navigable(&self) -> bool {
     self
-      .enabled_features
+      .features
+      .enabled()
       .iter()
       .any(|&feature| registry::descriptor(feature).tab.is_some())
   }
@@ -475,8 +476,8 @@ fn color_to_hex(color: Color) -> String {
   )
 }
 
-pub fn load(db: &Database, enabled_features: Vec<Feature>) -> Task<Message> {
-  Task::perform(load_roster(db.clone(), enabled_features), Message::CharactersLoaded)
+pub fn load(db: &Database, features: FeatureFlags) -> Task<Message> {
+  Task::perform(load_roster(db.clone(), features), Message::CharactersLoaded)
 }
 
 /// Shows a placeholder card built from just the character id and JWT name, with no `characters` row required yet.
@@ -1030,7 +1031,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
     Message::CharacterRemoved(Ok(()))
     | Message::CorporationRemoved(Ok(()))
     | Message::SquadsChanged(Ok(()))
-    | Message::TagsChanged(Ok(())) => load(db, state.enabled_features.clone()),
+    | Message::TagsChanged(Ok(())) => load(db, state.features),
     Message::CharacterRemoved(Err(error))
     | Message::CorporationRemoved(Err(error))
     | Message::SquadsChanged(Err(error))
@@ -1052,7 +1053,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       unassigned_squad_id,
       all_tags,
       corps,
-      enabled_features,
+      features,
       granted_scopes_by_id,
     ))) => {
       state.reauth_by_id = groups
@@ -1063,7 +1064,7 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
         .collect();
       state.all_tags = all_tags;
       state.corps = corps;
-      state.enabled_features = enabled_features;
+      state.features = features;
       state.granted_scopes_by_id = granted_scopes_by_id;
       state.groups = groups;
       state.unassigned = unassigned;
@@ -1617,8 +1618,8 @@ pub fn corp_failure(sync: &SyncStatus, corporation_id: i64) -> Option<Phase> {
     .find(|phase| matches!(phase, Phase::Failed | Phase::BackingOff))
 }
 
-async fn load_roster(db: Database, enabled_features: Vec<Feature>) -> Result<Roster, String> {
-  load_roster_at(&db, Utc::now(), &enabled_features)
+async fn load_roster(db: Database, features: FeatureFlags) -> Result<Roster, String> {
+  load_roster_at(&db, Utc::now(), features)
     .await
     .map_err(|err| err.to_string())
 }
@@ -1626,7 +1627,7 @@ async fn load_roster(db: Database, enabled_features: Vec<Feature>) -> Result<Ros
 async fn load_roster_at(
   db: &Database,
   now: DateTime<Utc>,
-  enabled_features: &[Feature],
+  features: FeatureFlags,
 ) -> Result<Roster, crate::store::Error> {
   let characters = character::all_owned(db).await?;
   let corporations = org::all_corporations(db).await?;
@@ -1643,7 +1644,7 @@ async fn load_roster_at(
   let tags = infra::tag_all(db).await?;
   let tag_memberships = infra::memberships(db, ENTITY_TYPE_CHARACTER).await?;
 
-  let required_scopes = auth_feature::scopes_for(enabled_features);
+  let required_scopes = auth_feature::scopes_for(&features);
   let credentials = infra::all(db).await?;
   let granted_by_id: HashMap<i64, Option<String>> = credentials
     .iter()
@@ -1702,7 +1703,7 @@ async fn load_roster_at(
   let groups = assemble_groups(&squads, &squad_memberships, &mut card_by_id);
   let unassigned = assemble_unassigned(&characters, &squad_memberships, reserved_unassigned_id, &mut card_by_id);
 
-  let corps = load_corps(db, enabled_features).await?;
+  let corps = load_corps(db, features).await?;
 
   Ok((
     groups,
@@ -1710,7 +1711,7 @@ async fn load_roster_at(
     reserved_unassigned_id,
     tags,
     corps,
-    enabled_features.to_vec(),
+    features,
     granted_by_id,
   ))
 }
@@ -1837,7 +1838,7 @@ fn tag_chips_by_entity(tags: &[Tag], memberships: &[EntityTag]) -> HashMap<i64, 
   by_entity
 }
 
-async fn load_corps(db: &Database, enabled_features: &[Feature]) -> Result<Vec<CorpCardModel>, crate::store::Error> {
+async fn load_corps(db: &Database, features: FeatureFlags) -> Result<Vec<CorpCardModel>, crate::store::Error> {
   let owned = org::all_owned_corporations(db).await?;
   let store = images::default_store();
 
@@ -1845,7 +1846,7 @@ async fn load_corps(db: &Database, enabled_features: &[Feature]) -> Result<Vec<C
   let tag_memberships = infra::memberships(db, ENTITY_TYPE_CORPORATION).await?;
   let mut tags_by_corp = tag_chips_by_entity(&tags, &tag_memberships);
 
-  let required_scopes = auth_feature::corp_scopes_for(enabled_features);
+  let required_scopes = auth_feature::corp_scopes_for(&features);
   let credentials = infra::all(db).await?;
   let granted_by_id: HashMap<i64, Option<String>> = credentials
     .iter()
@@ -2288,6 +2289,16 @@ async fn remove_corporation(db: Database, corporation_id: i64) -> Result<(), Str
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::config::Feature;
+
+  /// Feature flags with exactly the named groups enabled (every child on) and all others off.
+  fn flags_with(features: &[Feature]) -> FeatureFlags {
+    let mut flags = FeatureFlags::default();
+    for feature in Feature::ALL {
+      flags.set_enabled(feature, features.contains(&feature));
+    }
+    flags
+  }
 
   mod card_failure {
     use pretty_assertions::assert_eq;
@@ -2400,7 +2411,7 @@ mod tests {
     }
 
     async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(db, now(), FeatureFlags::default()).await.unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
     }
 
@@ -2533,7 +2544,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_owned_corporation(&db, 2_000_001, 8001).await;
 
-      let enabled = [Feature::Industry, Feature::Wallet];
+      let enabled = flags_with(&[Feature::Industry, Feature::Wallet]);
       let required = auth_feature::corp_scopes_for(&enabled);
 
       async fn grant(db: &Database, scopes: &str) {
@@ -2554,7 +2565,7 @@ mod tests {
       // A grant dropping one required corp scope is a strict subset of the required set.
       let strict_subset = required[1..].join(" ");
       grant(&db, &strict_subset).await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
+      let corps = load_corps(&db, enabled).await.unwrap();
       assert_eq!(corps.len(), 1);
       assert!(
         corps[0].needs_reauth,
@@ -2563,7 +2574,7 @@ mod tests {
 
       // A grant covering every required corp scope must clear the flag.
       grant(&db, &required.join(" ")).await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
+      let corps = load_corps(&db, enabled).await.unwrap();
       assert!(
         !corps[0].needs_reauth,
         "a corp grant covering every required corp scope must clear needs-reauth"
@@ -2575,7 +2586,7 @@ mod tests {
         &format!("{} {}", required.join(" "), scopes::CORPORATION_KILLMAILS),
       )
       .await;
-      let corps = load_corps(&db, &enabled).await.unwrap();
+      let corps = load_corps(&db, enabled).await.unwrap();
       assert!(
         !corps[0].needs_reauth,
         "a superset corp grant must not flag needs-reauth"
@@ -2587,7 +2598,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       super::load_roster::seed_character(&db, 1, "Solo Pilot").await;
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(corps.is_empty());
     }
@@ -2613,7 +2624,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_owned_corporation(&db, 2_000_001, 8001).await;
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(corps.len(), 1);
       let corp = &corps[0];
@@ -2663,7 +2674,7 @@ mod tests {
         .await
         .unwrap();
 
-      let (.., corps, _features, _granted) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (.., corps, _features, _granted) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       let corp = &corps[0];
       assert_eq!(
@@ -2950,17 +2961,19 @@ mod tests {
         "rt",
         9999,
         None,
-        Some(&format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS)),
+        Some(&format!("{} {}", scopes::CHARACTER_WALLET, scopes::CHARACTER_CONTRACTS,)),
       )
       .await
       .unwrap();
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet, Feature::Mail])
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), flags_with(&[Feature::Wallet, Feature::Mail]))
         .await
         .unwrap();
       assert!(unassigned[0].needs_reauth);
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &[Feature::Wallet]).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), flags_with(&[Feature::Wallet]))
+        .await
+        .unwrap();
       assert!(!unassigned[0].needs_reauth);
     }
 
@@ -2980,7 +2993,7 @@ mod tests {
           .unwrap();
       }
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(unassigned[0].total_sp, Some(6_250_000));
     }
@@ -2992,7 +3005,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Reauth Pilot").await;
 
-      let enabled = [Feature::Wallet, Feature::Mail];
+      let enabled = flags_with(&[Feature::Wallet, Feature::Mail]);
       infra::upsert(
         &db,
         1,
@@ -3006,34 +3019,19 @@ mod tests {
       .await
       .unwrap();
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &enabled).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), enabled).await.unwrap();
       assert!(
         unassigned[0].needs_reauth,
         "a grant missing a required scope must flag needs-reauth"
       );
 
-      infra::upsert(
-        &db,
-        1,
-        OwnerType::Character,
-        "tok",
-        "rt",
-        9999,
-        None,
-        Some(&format!(
-          "{} {} {} {} {} {}",
-          scopes::CHARACTER_WALLET,
-          scopes::CHARACTER_CONTRACTS,
-          scopes::CHARACTER_MAIL,
-          scopes::CHARACTER_MAIL_SEND,
-          scopes::CHARACTER_MAIL_ORGANIZE,
-          scopes::CHARACTER_SEARCH,
-        )),
-      )
-      .await
-      .unwrap();
+      // The full required set for Wallet + Mail; granting all of it must clear the flag.
+      let wider = auth_feature::scopes_for(&enabled).join(" ");
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9999, None, Some(&wider))
+        .await
+        .unwrap();
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &enabled).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), enabled).await.unwrap();
       assert!(
         !unassigned[0].needs_reauth,
         "a grant covering every required scope must clear needs-reauth"
@@ -3047,7 +3045,7 @@ mod tests {
       let group = character::create(&db, "Supers", None, Some("#3FB8DB")).await.unwrap();
       character::assign(&db, 1, group.id(), 0).await.unwrap();
 
-      let (groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (groups, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(groups.len(), 1);
       assert_eq!(groups[0].name, "Supers");
@@ -3061,7 +3059,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Unskilled Pilot").await;
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(unassigned[0].total_sp.is_none());
     }
@@ -3071,7 +3069,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Idle Pilot").await;
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(unassigned[0].training.is_none());
     }
@@ -3090,7 +3088,7 @@ mod tests {
         .await
         .unwrap();
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(
         unassigned[0]
@@ -3107,7 +3105,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1, "Solo Pilot").await;
 
-      let (groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (groups, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(groups.is_empty());
       assert_eq!(unassigned.len(), 1);
@@ -3131,7 +3129,7 @@ mod tests {
       };
       character::replace_skillqueue(&db, 1, &[entry]).await.unwrap();
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
       let training = unassigned[0].training.as_ref().unwrap();
 
       assert_eq!(training.level, 5);
@@ -3146,7 +3144,7 @@ mod tests {
       let main = infra::create(&db, "Main", None, Some("#5BB97E")).await.unwrap();
       infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
 
-      let (_, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(unassigned[0].tags.len(), 1);
       assert_eq!(unassigned[0].tags[0].name, "Main");
@@ -3161,7 +3159,7 @@ mod tests {
       seed_character(&db, 1, "Straggler One").await;
       character::unassign(&db, 5).await.unwrap();
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(
         unassigned.iter().map(|card| card.character_id).collect::<Vec<_>>(),
@@ -3175,7 +3173,7 @@ mod tests {
       seed_character(&db, 1, "Solo Pilot").await;
       character::unassign(&db, 1).await.unwrap();
 
-      let (groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (groups, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert!(groups.is_empty());
       assert_eq!(unassigned.len(), 1);
@@ -3192,7 +3190,7 @@ mod tests {
       character::unassign(&db, 30).await.unwrap();
       character::unassign(&db, 10).await.unwrap();
 
-      let (_groups, unassigned, ..) = load_roster_at(&db, now(), &Feature::ALL).await.unwrap();
+      let (_groups, unassigned, ..) = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
 
       assert_eq!(
         unassigned.iter().map(|card| card.character_id).collect::<Vec<_>>(),
@@ -3216,7 +3214,7 @@ mod tests {
     #[test]
     fn a_skill_monitoring_grant_lacking_implants_needs_reauth() {
       let granted = format!("{} {}", scopes::CHARACTER_SKILLS, scopes::CHARACTER_SKILLQUEUE);
-      let required = auth_feature::scopes_for(&[Feature::SkillMonitoring]);
+      let required = auth_feature::scopes_for(&flags_with(&[Feature::SkillMonitoring]));
 
       assert!(needs_reauthorization(Some(&granted), &required));
     }
@@ -3272,9 +3270,13 @@ mod tests {
     use crate::store;
 
     async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(), &Feature::ALL)
-        .await
-        .unwrap();
+      let roster = load_roster_at(
+        db,
+        Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap(),
+        FeatureFlags::default(),
+      )
+      .await
+      .unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
     }
 
@@ -4010,7 +4012,7 @@ mod tests {
     }
 
     async fn reload_tag_names(state: &mut State, db: &Database, character_id: i64) -> Vec<String> {
-      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(db, Utc::now(), FeatureFlags::default()).await.unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
       unassigned(state)
         .iter()
@@ -4020,7 +4022,7 @@ mod tests {
     }
 
     async fn reload_squad_of(state: &mut State, db: &Database, character_id: i64) -> Option<i64> {
-      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(db, Utc::now(), FeatureFlags::default()).await.unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
       groups(state)
         .iter()
@@ -4038,7 +4040,7 @@ mod tests {
     }
 
     async fn reload(state: &mut State, db: &Database) {
-      let roster = load_roster_at(db, Utc::now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(db, Utc::now(), FeatureFlags::default()).await.unwrap();
       let _ = update(state, Message::CharactersLoaded(Ok(roster)), db);
     }
 
@@ -4932,7 +4934,7 @@ mod tests {
       let alt = infra::create(&db, "Alt", None, None).await.unwrap();
       infra::assign(&db, ENTITY_TYPE_CHARACTER, 1, main.id()).await.unwrap();
       let mut state = State::new();
-      let roster = load_roster_at(&db, Utc::now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(&db, Utc::now(), FeatureFlags::default()).await.unwrap();
       let _ = update(&mut state, Message::CharactersLoaded(Ok(roster)), &db);
 
       let (name, assigned, assignable) = resolve_add_tag_modal(&state, ENTITY_TYPE_CHARACTER, 1);
@@ -5023,7 +5025,7 @@ mod tests {
       infra::create(&db, "Hauler", None, None).await.unwrap();
       let sync = SyncStatus::new();
       let mut state = State::new();
-      let roster = load_roster_at(&db, Utc::now(), &Feature::ALL).await.unwrap();
+      let roster = load_roster_at(&db, Utc::now(), FeatureFlags::default()).await.unwrap();
       let _ = update(&mut state, Message::CharactersLoaded(Ok(roster)), &db);
 
       {

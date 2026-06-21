@@ -35,11 +35,9 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
       reason: "no SSO client".to_string(),
     });
   };
-  let enabled = config::load()
-    .map(|settings| settings.features().enabled())
-    .unwrap_or_default();
+  let features = config::load().map(|settings| *settings.features()).unwrap_or_default();
   let credentials = infra::all(ctx.db).await?;
-  Ok(audit(ctx.db, sso, &credentials, &enabled).await)
+  Ok(audit(ctx.db, sso, &credentials, features).await)
 }
 
 /// Audits the supplied credentials and returns how many were flagged this pass. Split out from
@@ -49,7 +47,7 @@ pub async fn audit(
   db: &Database,
   sso: &eve_sso::Client,
   credentials: &[Credential],
-  enabled_features: &[config::Feature],
+  features: config::FeatureFlags,
 ) -> Outcome {
   // First pass: learn which character tokens are dead, so the second pass can cascade a dead
   // director's revocation onto the corporations it authorizes.
@@ -65,13 +63,13 @@ pub async fn audit(
     let owner_id = credential.owner_id();
     let owner_type = credential.owner_type();
     let healthy = match owner_type {
-      OwnerType::Character => !dead_characters.contains(&owner_id) && scopes_sufficient(credential, enabled_features),
+      OwnerType::Character => !dead_characters.contains(&owner_id) && scopes_sufficient(credential, features),
       OwnerType::Corporation => {
         let director_dead = credential
           .authorized_by()
           .is_some_and(|director| dead_characters.contains(&director));
         let token_dead = is_token_dead(db, sso, credential).await;
-        !director_dead && !token_dead && scopes_sufficient(credential, enabled_features)
+        !director_dead && !token_dead && scopes_sufficient(credential, features)
       }
     };
 
@@ -91,10 +89,10 @@ pub async fn audit(
 }
 
 /// True when the credential's granted scopes already cover everything the enabled features require.
-fn scopes_sufficient(credential: &Credential, enabled_features: &[config::Feature]) -> bool {
+fn scopes_sufficient(credential: &Credential, features: config::FeatureFlags) -> bool {
   let required = match credential.owner_type() {
-    OwnerType::Character => auth::scopes_for(enabled_features),
-    OwnerType::Corporation => auth::corp_scopes_for(enabled_features),
+    OwnerType::Character => auth::scopes_for(&features),
+    OwnerType::Corporation => auth::corp_scopes_for(&features),
   };
   !character_manager::needs_reauthorization(credential.scopes().as_deref(), &required)
 }
@@ -138,7 +136,11 @@ mod tests {
   };
 
   use super::*;
-  use crate::{clients::http, config::Feature, store};
+  use crate::{clients::http, config::FeatureFlags, store};
+
+  fn all_features() -> FeatureFlags {
+    FeatureFlags::default()
+  }
 
   fn jwt_access(character_id: i64) -> String {
     let encode = |raw: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
@@ -178,7 +180,7 @@ mod tests {
 
   // A scope every enabled feature is known to need, so a credential lacking it is under-scoped.
   fn a_required_character_scope() -> String {
-    auth::scopes_for(&Feature::ALL)
+    auth::scopes_for(&all_features())
       .first()
       .expect("the full feature set requires at least one character scope")
       .to_string()
@@ -192,8 +194,8 @@ mod tests {
     let db = store::open_test().await.unwrap();
     let sso = sso_for(&server, &db);
     let far_future = chrono::Utc::now().timestamp() + 86_400;
-    let char_scopes = auth::scopes_for(&Feature::ALL).join(" ");
-    let corp_scopes = auth::corp_scopes_for(&Feature::ALL).join(" ");
+    let char_scopes = auth::scopes_for(&all_features()).join(" ");
+    let corp_scopes = auth::corp_scopes_for(&all_features()).join(" ");
     // Director character 400 authorizes corporation 9000.
     infra::upsert(
       &db,
@@ -221,7 +223,7 @@ mod tests {
     .unwrap();
 
     let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+    let outcome = audit(&db, &sso, &credentials, all_features()).await;
 
     assert_eq!(
       outcome,
@@ -244,7 +246,7 @@ mod tests {
     let db = store::open_test().await.unwrap();
     let sso = sso_for(&server, &db);
     let far_future = chrono::Utc::now().timestamp() + 86_400;
-    let scopes = auth::scopes_for(&Feature::ALL).join(" ");
+    let scopes = auth::scopes_for(&all_features()).join(" ");
     infra::upsert(
       &db,
       300,
@@ -260,7 +262,7 @@ mod tests {
     infra::mark_needs_reauth(&db, 300, OwnerType::Character).await.unwrap();
 
     let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+    let outcome = audit(&db, &sso, &credentials, all_features()).await;
 
     assert_eq!(outcome, Outcome::Empty, "a healthy entity flags nobody");
     let after = infra::get(&db, 300, OwnerType::Character).await.unwrap().unwrap();
@@ -283,7 +285,7 @@ mod tests {
       .unwrap();
 
     let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+    let outcome = audit(&db, &sso, &credentials, all_features()).await;
 
     assert_eq!(
       outcome,
@@ -321,7 +323,7 @@ mod tests {
     .unwrap();
 
     let credentials = infra::all(&db).await.unwrap();
-    let outcome = audit(&db, &sso, &credentials, &Feature::ALL).await;
+    let outcome = audit(&db, &sso, &credentials, all_features()).await;
 
     assert_eq!(
       outcome,

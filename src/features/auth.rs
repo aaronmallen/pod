@@ -12,7 +12,7 @@ pub use session::{CorporationAdded, SignedIn};
 
 use crate::{
   clients::{esi, esi::scopes, eve_sso},
-  config::Feature,
+  config::{FeatureFlags, SubFeature},
   features::registry,
   services::corp_eligibility,
   store::Database,
@@ -34,8 +34,8 @@ pub enum Message {
   Cancel,
   Completed(Result<SignedIn, String>),
   CorporationCompleted(Result<CorporationAdded, String>),
-  Start(Vec<Feature>),
-  StartAddCorporation(Vec<Feature>),
+  Start(FeatureFlags),
+  StartAddCorporation(FeatureFlags),
 }
 
 #[derive(Debug, Default)]
@@ -51,7 +51,7 @@ impl State {
 
 #[derive(Debug)]
 struct Flow {
-  features: Vec<Feature>,
+  features: FeatureFlags,
   kind: Kind,
   pending: eve_sso::PendingAuth,
   status: Status,
@@ -70,32 +70,39 @@ enum Status {
   Waiting,
 }
 
-fn corp_feature_scopes(feature: Feature) -> impl Iterator<Item = &'static str> {
-  registry::descriptor(feature)
+fn sub_corp_scopes(sub: SubFeature) -> impl Iterator<Item = &'static str> {
+  registry::sub_descriptor(sub)
     .jobs
     .iter()
     // `gating_scope` matches on the subject variant only, so the id here is an unused placeholder.
     .filter_map(|job| job.gating_scope(Subject::Corporation(0)))
 }
 
-fn feature_scopes(feature: Feature) -> &'static [&'static str] {
-  registry::descriptor(feature).scopes
+fn sub_scopes(sub: SubFeature) -> &'static [&'static str] {
+  registry::sub_descriptor(sub).scopes
 }
 
-pub fn corp_scopes_for(features: &[Feature]) -> Vec<&'static str> {
+/// The corp scopes the SSO sign-in requests: the baseline corp companions plus the union of the
+/// gating scopes of every corp job owned by an enabled sub-feature. A shared corp scope is requested
+/// while ANY sub-feature needing it is on and dropped only when the last is off.
+pub fn corp_scopes_for(features: &FeatureFlags) -> Vec<&'static str> {
   scopes::BASELINE_CORP_SCOPES
     .iter()
     .copied()
-    .chain(features.iter().flat_map(|&feature| corp_feature_scopes(feature)))
+    .chain(features.enabled_sub_features().into_iter().flat_map(sub_corp_scopes))
     .collect::<BTreeSet<_>>()
     .into_iter()
     .collect()
 }
 
-pub fn scopes_for(features: &[Feature]) -> Vec<&'static str> {
+/// The character scopes the SSO sign-in requests: the union of scopes over every enabled
+/// sub-feature. A shared scope (e.g. `CHARACTER_WALLET`, `CHARACTER_ASSETS`) is requested while ANY
+/// sub-feature needing it is on and dropped only when the last is off.
+pub fn scopes_for(features: &FeatureFlags) -> Vec<&'static str> {
   features
-    .iter()
-    .flat_map(|&feature| feature_scopes(feature).iter().copied())
+    .enabled_sub_features()
+    .into_iter()
+    .flat_map(|sub| sub_scopes(sub).iter().copied())
     .collect::<BTreeSet<_>>()
     .into_iter()
     .collect()
@@ -321,7 +328,7 @@ fn start_flow(
   sso: &eve_sso::Client,
   kind: Kind,
   scopes: &[&str],
-  features: Vec<Feature>,
+  features: FeatureFlags,
 ) -> Task<Message> {
   let pending = sso.sign_in(scopes, &session::redirect_uri());
   let url = pending.url.clone();
@@ -344,7 +351,27 @@ mod tests {
   use std::sync::Arc;
 
   use super::*;
-  use crate::clients::{esi, eve_sso, http};
+  use crate::{
+    clients::{esi, eve_sso, http},
+    config::Feature,
+  };
+
+  /// Flags with exactly the named groups enabled (every child of each on) and all others off.
+  fn flags_with(features: &[Feature]) -> FeatureFlags {
+    let mut flags = FeatureFlags::default();
+    for feature in Feature::ALL {
+      flags.set_enabled(feature, features.contains(&feature));
+    }
+    flags
+  }
+
+  fn flags_all() -> FeatureFlags {
+    FeatureFlags::default()
+  }
+
+  fn flags_none() -> FeatureFlags {
+    flags_with(&[])
+  }
 
   impl State {
     fn completing() -> Self {
@@ -353,7 +380,7 @@ mod tests {
           kind: Kind::SignIn,
           pending: pending(),
           status: Status::Completing,
-          features: Vec::new(),
+          features: flags_none(),
         }),
       }
     }
@@ -368,7 +395,7 @@ mod tests {
           kind,
           pending: pending(),
           status: Status::Waiting,
-          features: Vec::new(),
+          features: flags_none(),
         }),
       }
     }
@@ -547,7 +574,7 @@ mod tests {
 
     #[test]
     fn it_always_requests_the_baseline_companions() {
-      let requested = corp_scopes_for(&[]);
+      let requested = corp_scopes_for(&flags_none());
 
       assert!(requested.contains(&scopes::CORPORATION_DIVISIONS));
       assert!(requested.contains(&scopes::CORPORATION_MEMBERS));
@@ -556,7 +583,7 @@ mod tests {
 
     #[test]
     fn it_derives_corp_asset_and_wallet_scopes_from_their_features() {
-      let requested = corp_scopes_for(&[Feature::AssetTracking, Feature::Wallet]);
+      let requested = corp_scopes_for(&flags_with(&[Feature::AssetTracking, Feature::Wallet]));
 
       assert!(requested.contains(&scopes::CORPORATION_ASSETS));
       assert!(requested.contains(&scopes::CORPORATION_WALLET));
@@ -564,7 +591,7 @@ mod tests {
 
     #[test]
     fn it_derives_corp_contracts_when_wallet_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Wallet]);
+      let requested = corp_scopes_for(&flags_with(&[Feature::Wallet]));
 
       assert!(
         requested.contains(&scopes::CORPORATION_CONTRACTS),
@@ -574,7 +601,7 @@ mod tests {
 
     #[test]
     fn it_derives_corp_industry_jobs_when_industry_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Industry]);
+      let requested = corp_scopes_for(&flags_with(&[Feature::Industry]));
 
       assert!(
         requested.contains(&scopes::CORPORATION_INDUSTRY_JOBS),
@@ -584,7 +611,7 @@ mod tests {
 
     #[test]
     fn it_derives_corp_mining_extractions_when_industry_is_enabled() {
-      let requested = corp_scopes_for(&[Feature::Industry]);
+      let requested = corp_scopes_for(&flags_with(&[Feature::Industry]));
 
       assert!(
         requested.contains(&scopes::CORPORATION_MINING_EXTRACTIONS),
@@ -594,14 +621,61 @@ mod tests {
 
     #[test]
     fn it_omits_a_disabled_features_corp_scope() {
-      let without_industry = corp_scopes_for(&[Feature::Wallet]);
+      let without_industry = corp_scopes_for(&flags_with(&[Feature::Wallet]));
 
       assert!(!without_industry.contains(&scopes::CORPORATION_INDUSTRY_JOBS));
     }
 
     #[test]
+    fn disabling_all_asset_sub_features_drops_the_corp_asset_scope() {
+      let mut flags = flags_with(&[Feature::AssetTracking]);
+      assert!(corp_scopes_for(&flags).contains(&scopes::CORPORATION_ASSETS));
+
+      for &sub in Feature::AssetTracking.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+
+      assert!(
+        !corp_scopes_for(&flags).contains(&scopes::CORPORATION_ASSETS),
+        "with every asset sub-feature off, the corp asset scope must be dropped"
+      );
+    }
+
+    #[test]
+    fn keeping_one_asset_sub_feature_retains_the_corp_asset_scope() {
+      let mut flags = flags_with(&[Feature::AssetTracking]);
+      for &sub in Feature::AssetTracking.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+      flags.set_sub_enabled(SubFeature::Inventory, true);
+
+      assert!(
+        corp_scopes_for(&flags).contains(&scopes::CORPORATION_ASSETS),
+        "one surviving asset sub-feature must keep the shared corp asset scope"
+      );
+    }
+
+    #[test]
+    fn disabling_extractions_drops_the_corp_structures_scope_independently() {
+      let mut flags = flags_with(&[Feature::Industry]);
+      assert!(corp_scopes_for(&flags).contains(&scopes::CORPORATION_STRUCTURES));
+
+      flags.set_sub_enabled(SubFeature::Extractions, false);
+
+      let requested = corp_scopes_for(&flags);
+      assert!(
+        !requested.contains(&scopes::CORPORATION_MINING_EXTRACTIONS),
+        "disabling Extractions drops the mining-extractions scope"
+      );
+      assert!(
+        requested.contains(&scopes::CORPORATION_INDUSTRY_JOBS),
+        "disabling Extractions leaves the distinct job-monitoring scope intact"
+      );
+    }
+
+    #[test]
     fn the_union_is_deduplicated_and_sorted() {
-      let requested = corp_scopes_for(&Feature::ALL);
+      let requested = corp_scopes_for(&flags_all());
       let mut sorted = requested.clone();
       sorted.sort_unstable();
       sorted.dedup();
@@ -631,9 +705,9 @@ mod tests {
 
     #[test]
     fn a_representative_config_requests_exactly_its_features_union() {
-      let features = [Feature::Wallet, Feature::SkillMonitoring, Feature::LocationTracking];
+      let flags = flags_with(&[Feature::Wallet, Feature::SkillMonitoring, Feature::LocationTracking]);
 
-      let requested = scopes_for(&features);
+      let requested = scopes_for(&flags);
 
       let expected: Vec<&str> = [
         scopes::CHARACTER_WALLET,
@@ -660,7 +734,7 @@ mod tests {
 
     #[test]
     fn all_features_on_is_a_superset_of_the_legacy_set() {
-      let requested: BTreeSet<&str> = scopes_for(&Feature::ALL).into_iter().collect();
+      let requested: BTreeSet<&str> = scopes_for(&flags_all()).into_iter().collect();
 
       for scope in LEGACY_SIGN_IN_SCOPES {
         assert!(
@@ -672,8 +746,8 @@ mod tests {
 
     #[test]
     fn disabling_a_feature_drops_its_scopes() {
-      let with_mail = scopes_for(&[Feature::Mail, Feature::Wallet]);
-      let without_mail = scopes_for(&[Feature::Wallet]);
+      let with_mail = scopes_for(&flags_with(&[Feature::Mail, Feature::Wallet]));
+      let without_mail = scopes_for(&flags_with(&[Feature::Wallet]));
 
       assert!(with_mail.contains(&scopes::CHARACTER_MAIL));
       assert!(!without_mail.contains(&scopes::CHARACTER_MAIL));
@@ -681,10 +755,103 @@ mod tests {
     }
 
     #[test]
+    fn disabling_all_asset_sub_features_drops_the_character_asset_scope() {
+      let mut flags = flags_with(&[Feature::AssetTracking]);
+      assert!(scopes_for(&flags).contains(&scopes::CHARACTER_ASSETS));
+
+      for &sub in Feature::AssetTracking.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+
+      assert!(
+        !scopes_for(&flags).contains(&scopes::CHARACTER_ASSETS),
+        "with every asset sub-feature off, the shared character asset scope is dropped"
+      );
+    }
+
+    #[test]
+    fn keeping_one_asset_sub_feature_retains_the_character_asset_scope() {
+      let mut flags = flags_with(&[Feature::AssetTracking]);
+      for &sub in Feature::AssetTracking.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+      flags.set_sub_enabled(SubFeature::Stockpiles, true);
+
+      assert!(
+        scopes_for(&flags).contains(&scopes::CHARACTER_ASSETS),
+        "one surviving asset sub-feature keeps the shared character asset scope"
+      );
+    }
+
+    #[test]
+    fn disabling_contracts_drops_its_scope_while_sibling_wallet_subs_stay_on() {
+      let mut flags = flags_with(&[Feature::Wallet]);
+      assert!(scopes_for(&flags).contains(&scopes::CHARACTER_CONTRACTS));
+
+      flags.set_sub_enabled(SubFeature::Contracts, false);
+
+      let requested = scopes_for(&flags);
+      assert!(
+        !requested.contains(&scopes::CHARACTER_CONTRACTS),
+        "disabling Contracts drops its distinct scope"
+      );
+      assert!(
+        requested.contains(&scopes::CHARACTER_WALLET),
+        "the shared wallet scope survives because other wallet sub-features are still on"
+      );
+    }
+
+    #[test]
+    fn enabling_only_transactions_requests_the_wallet_scope_but_not_contracts() {
+      let mut flags = flags_with(&[Feature::Wallet]);
+      for &sub in Feature::Wallet.sub_features() {
+        flags.set_sub_enabled(sub, false);
+      }
+      flags.set_sub_enabled(SubFeature::Transactions, true);
+
+      let requested = scopes_for(&flags);
+      assert!(requested.contains(&scopes::CHARACTER_WALLET));
+      assert!(
+        !requested.contains(&scopes::CHARACTER_ORDERS),
+        "Transactions must not request the market-orders scope (no breaking re-auth)"
+      );
+      assert!(
+        !requested.contains(&scopes::CHARACTER_CONTRACTS),
+        "with Contracts off, its scope is gone even though Transactions shares the wallet scope"
+      );
+    }
+
+    #[test]
+    fn industry_sub_features_map_to_distinct_scopes() {
+      let mut flags = flags_with(&[Feature::Industry]);
+      let full = scopes_for(&flags);
+      assert!(full.contains(&scopes::CHARACTER_INDUSTRY_JOBS));
+      assert!(full.contains(&scopes::CHARACTER_BLUEPRINTS));
+      assert!(full.contains(&scopes::CHARACTER_SEARCH));
+
+      flags.set_sub_enabled(SubFeature::Blueprints, false);
+      let without_blueprints = scopes_for(&flags);
+      assert!(
+        !without_blueprints.contains(&scopes::CHARACTER_BLUEPRINTS),
+        "disabling Blueprints drops only its scope"
+      );
+      assert!(
+        without_blueprints.contains(&scopes::CHARACTER_INDUSTRY_JOBS),
+        "Job Monitoring keeps its distinct scope when Blueprints is off"
+      );
+
+      flags.set_sub_enabled(SubFeature::Planner, false);
+      assert!(
+        !scopes_for(&flags).contains(&scopes::CHARACTER_SEARCH),
+        "disabling Planner drops the facility-search scope independently"
+      );
+    }
+
+    #[test]
     fn each_feature_maps_to_a_nonempty_scope_set() {
       for feature in Feature::ALL {
         assert!(
-          !feature_scopes(feature).is_empty(),
+          !scopes_for(&flags_with(&[feature])).is_empty(),
           "{feature:?} must map to at least one scope"
         );
       }
@@ -692,14 +859,14 @@ mod tests {
 
     #[test]
     fn mail_requests_the_search_scope_for_recipient_lookup() {
-      let mail = scopes_for(&[Feature::Mail]);
+      let mail = scopes_for(&flags_with(&[Feature::Mail]));
 
       assert!(mail.contains(&scopes::CHARACTER_SEARCH));
     }
 
     #[test]
     fn mail_requests_the_send_and_organize_scopes() {
-      let mail = scopes_for(&[Feature::Mail]);
+      let mail = scopes_for(&flags_with(&[Feature::Mail]));
 
       assert!(mail.contains(&scopes::CHARACTER_MAIL));
       assert!(mail.contains(&scopes::CHARACTER_MAIL_SEND));
@@ -708,12 +875,12 @@ mod tests {
 
     #[test]
     fn no_features_requests_no_scopes() {
-      assert!(scopes_for(&[]).is_empty());
+      assert!(scopes_for(&flags_none()).is_empty());
     }
 
     #[test]
     fn the_union_is_deduplicated_and_sorted() {
-      let requested = scopes_for(&Feature::ALL);
+      let requested = scopes_for(&flags_all());
       let mut sorted = requested.clone();
       sorted.sort_unstable();
       sorted.dedup();
@@ -935,7 +1102,7 @@ mod tests {
 
       let (_task, event) = update(
         &mut state,
-        Message::StartAddCorporation(vec![Feature::Industry]),
+        Message::StartAddCorporation(flags_with(&[Feature::Industry])),
         &sso,
         &esi,
         &db,
@@ -943,7 +1110,7 @@ mod tests {
 
       let flow = state.flow.as_ref().expect("a corp flow should be active");
       assert_eq!(flow.kind, Kind::AddCorporation);
-      assert_eq!(flow.features, vec![Feature::Industry]);
+      assert_eq!(flow.features, flags_with(&[Feature::Industry]));
       assert!(event.is_none());
     }
   }
@@ -959,7 +1126,7 @@ mod tests {
         kind: Kind::SignIn,
         pending: pending(),
         status: Status::Failed("nope".to_owned()),
-        features: Vec::new(),
+        features: flags_none(),
       }),
     };
 

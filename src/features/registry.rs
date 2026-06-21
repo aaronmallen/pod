@@ -18,10 +18,6 @@ pub struct Descriptor {
 
 /// The registry entry for a single sub-feature; the group [`Descriptor`] is the roll-up over the
 /// children returned by [`Feature::sub_features`].
-///
-/// The granular grain is consumed by sibling tasks B (scope/job derivation) and D (rail/tab/catalog);
-/// until those land it is exercised only by this module's roll-up invariant tests.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SubDescriptor {
   pub jobs: &'static [JobKind],
@@ -153,7 +149,6 @@ pub fn descriptor(feature: Feature) -> Descriptor {
   }
 }
 
-#[allow(dead_code)]
 pub fn sub_descriptor(sub: SubFeature) -> SubDescriptor {
   match sub {
     SubFeature::Abyssals => SubDescriptor {
@@ -314,6 +309,65 @@ pub fn feature_for_job(job: JobKind) -> Option<Feature> {
   Feature::ALL
     .into_iter()
     .find(|&feature| descriptor(feature).jobs.contains(&job))
+}
+
+/// The set of sub-features that depend on `job`: a shared sync job (e.g. `AssetSync` feeds every
+/// asset reader, `CharacterWallet` feeds every wallet reader) is owned by several sub-features, and
+/// the engine keeps it scheduled while ANY owner is enabled — dropping it only when the last owner is
+/// off. Distinct from [`SubDescriptor::jobs`], which partitions jobs one-to-one for the group
+/// roll-up; ownership for scheduling follows real data dependencies and so a job may be shared.
+///
+/// Returns empty for the feature-less maintenance jobs that always run (character/corp profiles).
+pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
+  // Every asset reader needs the asset table the AssetSync job populates.
+  const ASSET_READERS: &[SubFeature] = &[
+    SubFeature::Inventory,
+    SubFeature::Abyssals,
+    SubFeature::Stockpiles,
+    SubFeature::Values,
+    SubFeature::Tracker,
+  ];
+  // Every wallet reader needs the wallet/journal the wallet jobs populate.
+  const CHAR_WALLET_READERS: &[SubFeature] = &[SubFeature::Wallets, SubFeature::Journal, SubFeature::Transactions];
+  const CORP_WALLET_READERS: &[SubFeature] = &[SubFeature::Wallets, SubFeature::Journal];
+  // Valuation maintenance feeds both the asset Values surface and the wallet net-worth surfaces.
+  const VALUATION_READERS: &[SubFeature] = &[
+    SubFeature::Wallets,
+    SubFeature::Journal,
+    SubFeature::Transactions,
+    SubFeature::Values,
+    SubFeature::Tracker,
+  ];
+
+  let owners: &[SubFeature] = match job {
+    JobKind::AssetSync => ASSET_READERS,
+    JobKind::CharacterAbyssals | JobKind::CorporationAbyssals => &[SubFeature::Abyssals],
+    JobKind::CharacterBlueprints | JobKind::CorporationBlueprints => &[SubFeature::Blueprints],
+    JobKind::CharacterCalendar => &[SubFeature::Calendar],
+    JobKind::CharacterClones => &[SubFeature::CloneMonitoring],
+    JobKind::CharacterContacts | JobKind::CorporationContacts => &[SubFeature::Contacts],
+    JobKind::CharacterContracts | JobKind::CorporationContracts => &[SubFeature::Contracts],
+    JobKind::CharacterIndustryJobs | JobKind::CorporationIndustryJobs => &[SubFeature::JobMonitoring],
+    JobKind::CharacterKillmails
+    | JobKind::CorporationKillmails
+    | JobKind::KillmailDetailBackfill
+    | JobKind::KillmailReconcile => &[SubFeature::KillLog],
+    JobKind::CharacterMail => &[SubFeature::Mail],
+    JobKind::CharacterMarketOrders => &[SubFeature::Transactions],
+    JobKind::CharacterNotifications => &[SubFeature::Notifications],
+    JobKind::CharacterSkills => &[SubFeature::SkillQueue],
+    JobKind::CharacterStandings | JobKind::CorporationStandings => &[SubFeature::Standings],
+    JobKind::CharacterTelemetry => &[SubFeature::LocationTracking],
+    JobKind::CharacterWallet => CHAR_WALLET_READERS,
+    JobKind::CorporationWallet => CORP_WALLET_READERS,
+    JobKind::CorporationMiningExtractions | JobKind::CorporationStructures => &[SubFeature::Extractions],
+    JobKind::MarketPrices | JobKind::NetWorthSnapshot => VALUATION_READERS,
+    // The maintenance jobs that always run belong to no sub-feature: the character/corp profiles, the
+    // global industry cost-index refresh (a cheap public sync feeding the planner on demand), and the
+    // global token audit.
+    JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
+  };
+  owners.to_vec()
 }
 
 pub fn feature_for_tab(tab: Tab) -> Option<Feature> {
@@ -516,13 +570,202 @@ mod tests {
     }
 
     #[test]
-    fn no_job_is_claimed_by_two_sub_features() {
+    fn the_descriptor_jobs_partition_one_to_one_for_the_group_roll_up() {
+      // The SubDescriptor::jobs field exists only to roll the group descriptor up; it stays a
+      // one-to-one partition. Shared ownership for scheduling lives in `sub_features_for_job`, which
+      // the next module relaxes to a SET.
       let mut seen: HashSet<JobKind> = HashSet::new();
 
       for sub in SubFeature::ALL {
         for &job in sub_descriptor(sub).jobs {
-          assert!(seen.insert(job), "{job:?} is claimed by more than one sub-feature");
+          assert!(
+            seen.insert(job),
+            "{job:?} is claimed by more than one sub-feature descriptor"
+          );
         }
+      }
+    }
+  }
+
+  mod sub_features_for_job {
+    use std::collections::HashSet;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::config::FeatureFlags;
+
+    const FEATURELESS: [JobKind; 4] = [
+      JobKind::CharacterProfile,
+      JobKind::CorporationProfile,
+      JobKind::IndustryCostIndices,
+      JobKind::TokenAudit,
+    ];
+
+    /// Flags with exactly `sub` enabled and every other sub-feature off.
+    fn only(sub: SubFeature) -> FeatureFlags {
+      let mut flags = FeatureFlags::default();
+      for candidate in SubFeature::ALL {
+        flags.set_sub_enabled(candidate, candidate == sub);
+      }
+      flags
+    }
+
+    #[test]
+    fn every_gated_job_is_owned_by_at_least_one_sub_feature() {
+      for &job in JobKind::ALL {
+        if FEATURELESS.contains(&job) {
+          continue;
+        }
+        assert!(
+          !sub_features_for_job(job).is_empty(),
+          "{job:?} must be owned by at least one sub-feature so a config can gate it"
+        );
+      }
+    }
+
+    #[test]
+    fn the_maintenance_jobs_belong_to_no_sub_feature() {
+      for job in FEATURELESS {
+        assert!(
+          sub_features_for_job(job).is_empty(),
+          "{job:?} must always run regardless of the enabled sub-features"
+        );
+      }
+    }
+
+    #[test]
+    fn a_per_group_jobs_owners_all_live_in_that_group() {
+      // Per-feature jobs (everything but the cross-group valuation maintenance) must have owners that
+      // all roll up to the group its descriptor names, so the finer ownership never contradicts the
+      // coarse `feature_for_job` mapping.
+      const CROSS_GROUP: [JobKind; 2] = [JobKind::MarketPrices, JobKind::NetWorthSnapshot];
+
+      for &job in JobKind::ALL {
+        if CROSS_GROUP.contains(&job) {
+          continue;
+        }
+        let Some(group) = feature_for_job(job) else {
+          continue;
+        };
+        for owner in sub_features_for_job(job) {
+          assert_eq!(
+            owner.group(),
+            group,
+            "{job:?} owner {owner:?} must live in the job's group {group:?}"
+          );
+        }
+      }
+    }
+
+    #[test]
+    fn the_valuation_jobs_feed_both_assets_and_wallet() {
+      // The valuation maintenance jobs are genuinely cross-group: they keep running while EITHER an
+      // asset valuation surface or a wallet net-worth surface is enabled.
+      for job in [JobKind::MarketPrices, JobKind::NetWorthSnapshot] {
+        let groups: HashSet<Feature> = sub_features_for_job(job).into_iter().map(SubFeature::group).collect();
+        assert!(
+          groups.contains(&Feature::AssetTracking),
+          "{job:?} feeds asset valuation"
+        );
+        assert!(groups.contains(&Feature::Wallet), "{job:?} feeds wallet net worth");
+      }
+    }
+
+    #[test]
+    fn the_asset_sync_job_is_shared_by_every_asset_reader() {
+      let owners: HashSet<SubFeature> = sub_features_for_job(JobKind::AssetSync).into_iter().collect();
+
+      let expected: HashSet<SubFeature> = Feature::AssetTracking.sub_features().iter().copied().collect();
+      assert_eq!(
+        owners, expected,
+        "AssetSync feeds every asset sub-feature, so all of them must own it"
+      );
+    }
+
+    #[test]
+    fn a_shared_job_runs_until_its_last_owner_is_disabled() {
+      // AssetSync survives as long as ANY asset reader is on, and stops only when all are off.
+      let mut flags = only(SubFeature::Stockpiles);
+      assert!(
+        JobKind::AssetSync.is_feature_enabled(&flags),
+        "one surviving asset sub-feature keeps the shared AssetSync job scheduled"
+      );
+
+      flags.set_sub_enabled(SubFeature::Stockpiles, false);
+      assert!(
+        !JobKind::AssetSync.is_feature_enabled(&flags),
+        "with every asset sub-feature off, the shared AssetSync job stops"
+      );
+    }
+
+    #[test]
+    fn the_wallet_job_is_shared_across_the_wallet_readers() {
+      let owners: HashSet<SubFeature> = sub_features_for_job(JobKind::CharacterWallet).into_iter().collect();
+
+      assert!(owners.contains(&SubFeature::Wallets));
+      assert!(owners.contains(&SubFeature::Journal));
+      assert!(owners.contains(&SubFeature::Transactions));
+
+      // Disabling Journal alone leaves the wallet job running for the other readers.
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Journal, false);
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+      assert!(
+        JobKind::CharacterWallet.is_feature_enabled(&flags),
+        "the Wallets balances sub-feature still needs the wallet job"
+      );
+    }
+
+    #[test]
+    fn the_market_orders_job_is_owned_only_by_transactions() {
+      assert_eq!(
+        sub_features_for_job(JobKind::CharacterMarketOrders),
+        vec![SubFeature::Transactions]
+      );
+
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Transactions, false);
+      assert!(
+        !JobKind::CharacterMarketOrders.is_feature_enabled(&flags),
+        "disabling Transactions stops the market-orders job even with other wallet readers on"
+      );
+    }
+
+    #[test]
+    fn the_industry_jobs_drop_independently_by_sub_feature() {
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Blueprints, false);
+      assert!(
+        !JobKind::CharacterBlueprints.is_feature_enabled(&flags),
+        "disabling Blueprints stops the blueprints job"
+      );
+      assert!(
+        JobKind::CharacterIndustryJobs.is_feature_enabled(&flags),
+        "Job Monitoring's job survives when only Blueprints is off"
+      );
+
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Extractions, false);
+      assert!(
+        !JobKind::CorporationMiningExtractions.is_feature_enabled(&flags),
+        "disabling Extractions stops the mining-extractions job"
+      );
+    }
+
+    #[test]
+    fn every_sub_feature_has_a_scope_or_is_explicitly_scope_free() {
+      // Budget derives everything from already-synced local data, so it requests no scope; every
+      // other sub-feature (the asset Tracker still shares CHARACTER_ASSETS) must request at least one.
+      const SCOPE_FREE: [SubFeature; 1] = [SubFeature::Budget];
+
+      for sub in SubFeature::ALL {
+        let has_scope = !sub_descriptor(sub).scopes.is_empty();
+        let is_scope_free = SCOPE_FREE.contains(&sub);
+        assert!(
+          has_scope || is_scope_free,
+          "{sub:?} must request a scope or be an explicit scope-free sub-feature"
+        );
       }
     }
   }

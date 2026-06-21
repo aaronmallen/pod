@@ -3,7 +3,7 @@ use std::{collections::HashSet, time::Duration};
 use super::{outcome::Outcome, subject::Subject};
 use crate::{
   clients::{self, esi, esi::scopes, eve_image, eve_sso, eve_sso::Grant},
-  config::{Feature, FeatureFlags},
+  config::{Feature, FeatureFlags, SubFeature},
   store::{Database, images},
 };
 
@@ -95,8 +95,16 @@ impl JobKind {
     crate::features::registry::feature_for_job(self)
   }
 
+  /// The set of sub-features that own this job; empty for the feature-less maintenance jobs.
+  pub fn owning_sub_features(self) -> Vec<SubFeature> {
+    crate::features::registry::sub_features_for_job(self)
+  }
+
+  /// A job runs while ANY of its owning sub-features is enabled. A feature-less maintenance job (no
+  /// owners) always runs.
   pub fn is_feature_enabled(self, features: &FeatureFlags) -> bool {
-    self.feature().is_none_or(|feature| features.is_enabled(feature))
+    let owners = self.owning_sub_features();
+    owners.is_empty() || owners.iter().any(|&sub| features.is_sub_enabled(sub))
   }
 
   pub fn is_global(self) -> bool {
@@ -631,15 +639,15 @@ mod tests {
       }
 
       #[test]
-      fn it_never_grants_market_orders_since_that_scope_is_never_requested() {
+      fn it_keeps_market_orders_dormant_because_the_orders_scope_is_never_requested() {
         let subject = Subject::Character(7);
-        let everything: HashSet<&str> = crate::features::auth::scopes_for(&crate::config::Feature::ALL)
+        let everything: HashSet<&str> = crate::features::auth::scopes_for(&crate::config::FeatureFlags::default())
           .into_iter()
           .collect();
 
         assert!(
           !JobKind::CharacterMarketOrders.is_scope_granted(subject, &everything),
-          "esi-markets.read_character_orders.v1 is requested by no feature, so the job can never run"
+          "Pod never requests esi-markets.read_character_orders.v1, so the market-orders job stays dormant"
         );
       }
 

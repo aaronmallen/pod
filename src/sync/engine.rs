@@ -1700,7 +1700,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_does_not_enroll_the_snapshot_when_wallet_is_off() {
+    async fn it_does_not_enroll_the_snapshot_when_wallet_and_assets_are_off() {
       let server = MockServer::start().await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 7701).await;
@@ -1708,7 +1708,9 @@ mod tests {
         .await
         .unwrap();
       insert_journal(&db, 1, 7701, 999.0).await;
-      let flags: FeatureFlags = toml::from_str("wallet = false").unwrap();
+      // Net worth is assets + wallet, so the snapshot serves either group; only with BOTH off does it
+      // stop enrolling.
+      let flags: FeatureFlags = toml::from_str("wallet = false\nasset_tracking = false").unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = Arc::new(esi::Client::with_base_url(http.clone(), server.uri()));
       let image = Arc::new(eve_image::Client::with_base_url(http.clone(), server.uri()));
@@ -1736,13 +1738,16 @@ mod tests {
           assert_ne!(
             key.kind,
             JobKind::NetWorthSnapshot,
-            "the snapshot lane must not enroll while Wallet is off"
+            "the snapshot lane must not enroll while both Wallet and Assets are off"
           );
         }
       }
 
       let rows = finance::for_character_since(&db, 7701, "2000-01-01").await.unwrap();
-      assert!(rows.is_empty(), "no snapshot should be written while Wallet is off");
+      assert!(
+        rows.is_empty(),
+        "no snapshot should be written while both Wallet and Assets are off"
+      );
     }
 
     #[tokio::test]

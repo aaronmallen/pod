@@ -1100,13 +1100,17 @@ fn read_only_engine_state(held_by: Option<HolderInfo>) -> EngineState {
 }
 
 fn enabled_features(app: &App) -> Vec<config::Feature> {
+  feature_flags(app).enabled()
+}
+
+fn feature_flags(app: &App) -> config::FeatureFlags {
   if let Some(state) = app.settings.as_ref() {
-    return state.settings().features().enabled();
+    return *state.settings().features();
   }
   if let Some(runtime) = app.runtime.as_ref() {
-    return runtime.settings.features().enabled();
+    return *runtime.settings.features();
   }
-  config::Feature::ALL.to_vec()
+  config::FeatureFlags::default()
 }
 
 fn ui_config(app: &App) -> config::UiConfig {
@@ -1582,7 +1586,7 @@ fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
   }
   app.roster_dirty = false;
   let runtime = app.runtime.as_ref()?;
-  Some(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager))
+  Some(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager))
 }
 
 fn drain_wallet_dirty(app: &mut App) -> Option<Task<Message>> {
@@ -1674,7 +1678,7 @@ fn image_reload(app: &App) -> Task<Message> {
     }
     Route::Characters => {
       if app.character_manager.is_some() {
-        tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
+        tasks.push(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager));
       }
     }
     Route::CorporationDetail(_) => {
@@ -2794,23 +2798,23 @@ fn handle_mail_unread_counted(app: &mut App, unread: i64) -> Task<Message> {
 }
 
 fn handle_reauth_character(app: &mut App, character_id: i64) -> Task<Message> {
-  let features = enabled_features(app);
+  let flags = feature_flags(app);
   tracing::info!(
     character_id,
-    scopes = ?auth::scopes_for(&features),
+    scopes = ?auth::scopes_for(&flags),
     "re-authorizing character via SSO sign-in"
   );
-  update(app, Message::Auth(auth::Message::Start(features)))
+  update(app, Message::Auth(auth::Message::Start(flags)))
 }
 
 fn reauth_corporation(app: &mut App, corporation_id: i64) -> Task<Message> {
-  let features = enabled_features(app);
+  let flags = feature_flags(app);
   tracing::info!(
     corporation_id,
-    scopes = ?auth::corp_scopes_for(&features),
+    scopes = ?auth::corp_scopes_for(&flags),
     "re-authorizing corporation via SSO sign-in"
   );
-  update(app, Message::Auth(auth::Message::StartAddCorporation(features)))
+  update(app, Message::Auth(auth::Message::StartAddCorporation(flags)))
 }
 
 fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
@@ -2906,10 +2910,7 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   let flags = *runtime.settings.features();
   let db = runtime.db.clone();
   runtime.sync.set_features(flags);
-  let mut tasks = vec![
-    base,
-    character_manager::load(&db, enabled.clone()).map(Message::CharacterManager),
-  ];
+  let mut tasks = vec![base, character_manager::load(&db, flags).map(Message::CharacterManager)];
 
   let route = app.route;
   if let Some(state) = app.calendar.as_ref() {
@@ -3583,7 +3584,7 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
     runtime.sync.run_now(subject);
     runtime.sync.discover();
     if app.character_manager.is_some() {
-      tasks.push(character_manager::load(&runtime.db, enabled_features(app)).map(Message::CharacterManager));
+      tasks.push(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager));
     }
   }
   Task::batch(tasks)
@@ -3592,11 +3593,11 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
 fn handle_character_manager(app: &mut App, msg: character_manager::Message) -> Task<Message> {
   match msg {
     character_manager::Message::AddCharacterRequested => {
-      update(app, Message::Auth(auth::Message::Start(enabled_features(app))))
+      update(app, Message::Auth(auth::Message::Start(feature_flags(app))))
     }
     character_manager::Message::AddCorporationRequested => update(
       app,
-      Message::Auth(auth::Message::StartAddCorporation(enabled_features(app))),
+      Message::Auth(auth::Message::StartAddCorporation(feature_flags(app))),
     ),
     character_manager::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
     character_manager::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
@@ -3837,7 +3838,7 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
 }
 
 fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
-  let load_roster = character_manager::load(&runtime.db, runtime.settings.features().enabled());
+  let load_roster = character_manager::load(&runtime.db, *runtime.settings.features());
   app.character_manager = Some(character_manager::State::new());
   let settings_state = settings::State::new(runtime.settings.clone(), runtime.db.clone());
   let load_tags = settings::load(&settings_state).map(Message::Settings);
@@ -4431,6 +4432,15 @@ mod tests {
       id,
       name: format!("Pilot {id}"),
     }
+  }
+
+  /// Feature flags with exactly `feature` enabled (all its children on) and every other group off.
+  fn only(feature: config::Feature) -> config::FeatureFlags {
+    let mut flags = config::FeatureFlags::default();
+    for candidate in config::Feature::ALL {
+      flags.set_enabled(candidate, candidate == feature);
+    }
+    flags
   }
 
   fn test_app() -> App {
@@ -5330,12 +5340,12 @@ mod tests {
         Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
       );
 
-      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+      let Some(auth::Message::Start(flags)) = app.pending_auth.clone() else {
         panic!("the re-auth must defer an auth Start, got {:?}", app.pending_auth);
       };
       assert!(
-        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
-        "a re-auth after re-enabling features must request their scopes, got {features:?}"
+        flags.is_enabled(config::Feature::Mail) && flags.is_enabled(config::Feature::SkillMonitoring),
+        "a re-auth after re-enabling features must request their scopes, got {flags:?}"
       );
     }
 
@@ -5573,23 +5583,23 @@ mod tests {
 
       let _ = handle_reauth_character(&mut app, 7);
 
-      let Some(auth::Message::Start(features)) = app.pending_auth.clone() else {
+      let Some(auth::Message::Start(flags)) = app.pending_auth.clone() else {
         panic!("a re-auth defers an auth Start, got {:?}", app.pending_auth);
       };
       assert!(
-        features.contains(&config::Feature::Mail) && features.contains(&config::Feature::SkillMonitoring),
+        flags.is_enabled(config::Feature::Mail) && flags.is_enabled(config::Feature::SkillMonitoring),
         "the single re-auth carries the full enabled-feature set, not a per-feature subset"
       );
 
-      let scopes = auth::scopes_for(&features);
+      let scopes = auth::scopes_for(&flags);
+      let mail_only = only(config::Feature::Mail);
+      let skills_only = only(config::Feature::SkillMonitoring);
       assert!(
-        auth::scopes_for(&[config::Feature::Mail])
-          .iter()
-          .all(|scope| scopes.contains(scope)),
+        auth::scopes_for(&mail_only).iter().all(|scope| scopes.contains(scope)),
         "re-auth requests Mail scopes"
       );
       assert!(
-        auth::scopes_for(&[config::Feature::SkillMonitoring])
+        auth::scopes_for(&skills_only)
           .iter()
           .all(|scope| scopes.contains(scope)),
         "the same single re-auth also requests Skills scopes"
@@ -6691,17 +6701,16 @@ mod tests {
 
       // Close the settings screen so the enabled set resolves from the running runtime, not the panel.
       app.settings = None;
-      let features = enabled_features(&app);
+      let flags = feature_flags(&app);
 
       assert!(
-        features.contains(&config::Feature::Mail),
+        flags.is_enabled(config::Feature::Mail),
         "re-enabling Mail restores it to the live runtime the re-auth reads from"
       );
-      let scopes = auth::scopes_for(&features);
+      let scopes = auth::scopes_for(&flags);
+      let mail_only = only(config::Feature::Mail);
       assert!(
-        auth::scopes_for(&[config::Feature::Mail])
-          .iter()
-          .all(|scope| scopes.contains(scope)),
+        auth::scopes_for(&mail_only).iter().all(|scope| scopes.contains(scope)),
         "the re-auth requests the re-enabled Mail scopes"
       );
     }

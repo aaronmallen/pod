@@ -1787,6 +1787,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     nav_location,
     rail_order: ui.rail_order(),
   };
+  let cascade_mode = *ui.cascade_mode();
   let rail_element = rail(
     rail_props,
     Message::Nav,
@@ -1794,10 +1795,37 @@ fn main_view(app: &App) -> Element<'_, Message> {
     |dest, id| Message::NavTo(dest, Some(id)),
     Message::Palette(PaletteMessage::Open),
   );
-  let body_children: Vec<Element<'_, Message>> = match nav_location {
-    config::NavLocation::Left => vec![rail_element, content.into()],
-    config::NavLocation::Right => vec![content.into(), rail_element],
-  };
+  // In sub-rail mode a persistent sub-section column sits inboard of the edge rail (between the rail
+  // and the content), mirrored to whichever side the rail is docked. Decision: every view keeps its
+  // own in-view tab strip even in sub-rail mode; hiding it per view would mean threading cascade_mode
+  // through six feature view signatures, which is more invasive than the duplicate strip is worth.
+  let sub_rail_element = (cascade_mode == config::CascadeMode::SubRail)
+    .then(|| {
+      rail::sub_rail(
+        app.route.destination(),
+        active_sub_section(app),
+        nav_location,
+        |dest, id| Message::NavTo(dest, Some(id)),
+      )
+    })
+    .flatten();
+  let mut body_children: Vec<Element<'_, Message>> = Vec::with_capacity(3);
+  match nav_location {
+    config::NavLocation::Left => {
+      body_children.push(rail_element);
+      if let Some(sub_rail) = sub_rail_element {
+        body_children.push(sub_rail);
+      }
+      body_children.push(content.into());
+    }
+    config::NavLocation::Right => {
+      body_children.push(content.into());
+      if let Some(sub_rail) = sub_rail_element {
+        body_children.push(sub_rail);
+      }
+      body_children.push(rail_element);
+    }
+  }
   let body = Row::with_children(body_children)
     .width(Length::Fill)
     .height(Length::Fill);

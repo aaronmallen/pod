@@ -34,12 +34,18 @@ const NAV_ITEM_SIZE: f32 = 44.0;
 const RAIL_WIDTH: f32 = 68.0;
 const SETTINGS_BOTTOM_INSET: f32 = 16.0;
 const SUB_ICON_SIZE: f32 = 16.0;
+const SUB_RAIL_HEADER_HEIGHT: f32 = 92.0;
+const SUB_RAIL_INDICATOR_HEIGHT: f32 = 22.0;
+const SUB_RAIL_INDICATOR_WIDTH: f32 = 2.0;
+const SUB_RAIL_ROW_ICON_SIZE: f32 = 17.0;
+const SUB_RAIL_WIDTH: f32 = 206.0;
 
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
+static PALETTE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/slash.svg");
 static POD_MARK: &[u8] = include_bytes!("../../../assets/images/identity/pod-mark.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/settings.svg");
 static SKILLS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
@@ -250,6 +256,219 @@ where
   Row::with_children(children).height(Length::Fill).into()
 }
 
+pub fn sub_rail<'a, M>(
+  active: Destination,
+  active_sub: Option<&'static str>,
+  nav_location: NavLocation,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
+) -> Option<Element<'a, M>>
+where
+  M: Clone + 'a,
+{
+  let section = nav_catalog::section(active)?;
+
+  let head_icon = svg(svg::Handle::from_memory(section.icon()))
+    .width(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
+    .height(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
+    .style(|_, _| svg::Style {
+      color: Some(color::accent::PLASMA),
+    });
+  let head_label = text(section.label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(color::text::PRIMARY));
+  let title = Row::with_children(vec![head_icon.into(), head_label.into()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5);
+  let kicker = text(section.kicker)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let head_rule = container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .height(Length::Fixed(1.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    });
+  let head_cell = container(
+    Column::with_children(vec![title.into(), kicker.into()])
+      .spacing(spacing::UNIT)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fixed(SUB_RAIL_HEADER_HEIGHT))
+  .padding(Padding {
+    top: 0.0,
+    right: spacing::SPACE_4_5,
+    bottom: 0.0,
+    left: spacing::SPACE_4_5,
+  })
+  .align_y(Vertical::Center);
+  let head = Column::with_children(vec![head_cell.into(), head_rule.into()]).width(Length::Fill);
+
+  let mut rows: Vec<Element<'a, M>> = Vec::new();
+  if section.sub_sections.is_empty() {
+    rows.push(sub_rail_empty_state());
+  } else {
+    for sub in section.sub_sections {
+      let is_active = active_sub == Some(sub.id);
+      rows.push(sub_rail_row(sub, is_active, active, nav_location, on_sub_nav.clone()));
+    }
+  }
+
+  let list = container(Column::with_children(rows).spacing(2.0).width(Length::Fill))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_2_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_2_5,
+    });
+
+  let body = container(Column::with_children(vec![head.into(), list.into()]).width(Length::Fill))
+    .width(Length::Fixed(SUB_RAIL_WIDTH))
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    });
+
+  let edge = container(Space::new().width(Length::Fixed(1.0)).height(Length::Fill))
+    .width(Length::Fixed(1.0))
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    });
+
+  // The dividing rule sits on the inboard side of the sub-rail (toward the content), so right-docked
+  // nav mirrors it to the left edge.
+  let children: Vec<Element<'a, M>> = match nav_location {
+    NavLocation::Left => vec![body.into(), edge.into()],
+    NavLocation::Right => vec![edge.into(), body.into()],
+  };
+
+  Some(Row::with_children(children).height(Length::Fill).into())
+}
+
+fn sub_rail_empty_state<'a, M>() -> Element<'a, M>
+where
+  M: 'a,
+{
+  container(
+    text("No sub-sections")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary())),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_3,
+  })
+  .into()
+}
+
+fn sub_rail_row<'a, M>(
+  sub: &'static nav_catalog::SubSection,
+  active: bool,
+  destination: Destination,
+  nav_location: NavLocation,
+  on_sub_nav: impl Fn(Destination, &'static str) -> M + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let icon_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let label_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+
+  let icon = svg(svg::Handle::from_memory(sub.icon))
+    .width(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
+    .height(Length::Fixed(SUB_RAIL_ROW_ICON_SIZE))
+    .style(move |_, _| svg::Style {
+      color: Some(icon_color),
+    });
+  let label = text(sub.label)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(label_color));
+
+  let row = container(
+    Row::with_children(vec![icon.into(), label.into()])
+      .align_y(Vertical::Center)
+      .spacing(spacing::SPACE_3),
+  )
+  .width(Length::Fill);
+
+  let inner: Element<'a, M> = if active {
+    let strip = container(
+      container(Space::new())
+        .width(Length::Fixed(SUB_RAIL_INDICATOR_WIDTH))
+        .height(Length::Fixed(SUB_RAIL_INDICATOR_HEIGHT))
+        .style(|_| container::Style {
+          background: Some(Background::Color(color::accent::PLASMA)),
+          border: Border {
+            radius: radius::SUBTLE.into(),
+            ..Border::default()
+          },
+          ..container::Style::default()
+        }),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(match nav_location {
+      NavLocation::Left => Horizontal::Left,
+      NavLocation::Right => Horizontal::Right,
+    })
+    .align_y(Vertical::Center);
+    stack(vec![row.into(), strip.into()]).width(Length::Fill).into()
+  } else {
+    row.into()
+  };
+
+  button(inner)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3,
+    })
+    .on_press(on_sub_nav(destination, sub.id))
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      let background = if active {
+        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+      } else if hovered {
+        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
+      } else {
+        None
+      };
+      button::Style {
+        background,
+        border: Border {
+          radius: radius::SUBTLE.into(),
+          ..Border::default()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn wrap_with_flyout<'a, M>(
   icon: Element<'a, M>,
   destination: Destination,
@@ -1080,5 +1299,54 @@ mod tests {
     sub_rail.hovered = Some(Destination::Wallet);
 
     let _el: Element<'_, Destination> = render(sub_rail);
+  }
+
+  #[test]
+  fn sub_rail_renders_the_active_sections_sub_sections() {
+    let el = sub_rail(Destination::Wallet, Some("budget"), NavLocation::Left, |d, _| d);
+
+    assert!(el.is_some(), "a section with sub-sections renders a sub-rail");
+  }
+
+  #[test]
+  fn sub_rail_renders_each_destinations_sub_sections() {
+    for active in [
+      Destination::Assets,
+      Destination::Calendar,
+      Destination::Characters,
+      Destination::Industry,
+      Destination::Mail,
+      Destination::Settings,
+      Destination::Skills,
+      Destination::Wallet,
+    ] {
+      let el = sub_rail(active, None, NavLocation::Left, |d, _| d);
+      assert!(el.is_some(), "{active:?} has a catalog section so its sub-rail renders");
+    }
+  }
+
+  #[test]
+  fn sub_rail_renders_an_empty_state_for_a_sectionless_destination() {
+    // Mail has a catalog section but no sub-sections; the column still renders (with its empty-state
+    // line) rather than collapsing.
+    let el = sub_rail(Destination::Mail, None, NavLocation::Left, |d, _| d);
+
+    assert!(el.is_some(), "Mail renders the empty-state sub-rail");
+  }
+
+  #[test]
+  fn sub_rail_docks_to_either_side() {
+    let left = sub_rail(Destination::Wallet, Some("journal"), NavLocation::Left, |d, _| d);
+    let right = sub_rail(Destination::Wallet, Some("journal"), NavLocation::Right, |d, _| d);
+
+    assert!(left.is_some());
+    assert!(right.is_some());
+  }
+
+  #[test]
+  fn sub_rail_renders_without_an_active_sub_section() {
+    let el = sub_rail(Destination::Wallet, None, NavLocation::Left, |d, _| d);
+
+    assert!(el.is_some());
   }
 }

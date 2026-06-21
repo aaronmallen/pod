@@ -2,6 +2,7 @@ pub const SPACE_2: f32 = 8.0;
 pub const SPACE_2_5: f32 = 10.0;
 pub const SPACE_3: f32 = 12.0;
 pub const SPACE_3_5: f32 = 14.0;
+pub const SPACE_4_5: f32 = 18.0;
 pub const SPACE_6: f32 = 24.0;
 pub const UNIT: f32 = 4.0;
 

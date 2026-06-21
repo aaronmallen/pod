@@ -333,6 +333,21 @@ fn sort_divider<'a>() -> Element<'a, Message> {
     .into()
 }
 
+fn divider_count(rows: usize) -> usize {
+  rows.saturating_sub(1)
+}
+
+fn row_divider<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fixed(1.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+}
+
 fn pilot_hero<'a>(pilot: &RosterPilot, composition: Composition) -> Element<'a, Message> {
   let liquid = composition.liquid.unwrap_or(0.0);
   let assets = composition.asset_value.unwrap_or(0.0);
@@ -416,9 +431,12 @@ fn section_card<'a>(section: Section) -> Element<'a, Message> {
   } = section;
 
   let mut children: Vec<Element<'a, Message>> = vec![section_head(title, caption, subtotal, swatch, rows.len())];
-  let last = rows.len().saturating_sub(1);
+  let last = divider_count(rows.len());
   for (index, row) in rows.into_iter().enumerate() {
-    children.push(wallet_row(row, subtotal, index == last));
+    children.push(wallet_row(row, subtotal));
+    if index < last {
+      children.push(row_divider());
+    }
   }
 
   container(Column::with_children(children).width(Length::Fill))
@@ -544,7 +562,7 @@ fn section_swatch<'a>(swatch: SectionSwatch, size: f32) -> Element<'a, Message> 
   }
 }
 
-fn wallet_row<'a>(row: RowData, section_subtotal: f64, last: bool) -> Element<'a, Message> {
+fn wallet_row<'a>(row: RowData, section_subtotal: f64) -> Element<'a, Message> {
   let lead: Element<'a, Message> = match row.swatch {
     Some(swatch) => Avatar::new(
       swatch.id,
@@ -608,14 +626,6 @@ fn wallet_row<'a>(row: RowData, section_subtotal: f64, last: bool) -> Element<'a
     right: 24.0,
     bottom: if row.indent { 9.0 } else { 12.0 },
     left: left_pad,
-  })
-  .style(move |_| container::Style {
-    border: Border {
-      color: if last { Color::TRANSPARENT } else { color::rule() },
-      width: if last { 0.0 } else { 1.0 },
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
   })
   .into()
 }
@@ -730,6 +740,26 @@ mod tests {
     #[test]
     fn it_falls_back_to_an_ordinal_for_later_divisions() {
       assert_eq!(super::division_label(&division(7, None)), "7th Wallet");
+    }
+  }
+
+  mod divider_count {
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn it_draws_one_fewer_divider_than_rows() {
+      assert_eq!(super::divider_count(3), 2);
+      assert_eq!(super::divider_count(5), 4);
+    }
+
+    #[test]
+    fn it_draws_no_divider_for_a_single_row() {
+      assert_eq!(super::divider_count(1), 0);
+    }
+
+    #[test]
+    fn it_draws_no_divider_for_an_empty_section() {
+      assert_eq!(super::divider_count(0), 0);
     }
   }
 

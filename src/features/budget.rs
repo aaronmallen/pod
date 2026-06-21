@@ -158,6 +158,11 @@ const MARKET_TRANSACTION_CONTEXT_ID_TYPE: &str = "market_transaction_id";
 /// never suppressed by de-duplication.
 const MARKET_TRANSACTION_REF_TYPE: &str = "market_transaction";
 
+/// The largest residual (in ISK) under which an internal transfer's mirrored
+/// legs are treated as cancelling. Journal amounts are whole-ISK so any genuine
+/// transfer nets to exactly zero; the slack only absorbs float round-off.
+const TRANSFER_NET_EPSILON: f64 = 0.5;
+
 /// A single category's month figures, derived live.
 ///
 /// `available = carry + assigned + activity`. `activity` is the signed sum of
@@ -1161,6 +1166,45 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
     && row.context_id.is_some_and(|id| ingested.contains(&id))
 }
 
+/// The shared category every leg of each internal transfer must resolve to, so
+/// the legs cancel.
+///
+/// An internal transfer (ISK moved between two of the user's own wallets) is one
+/// EVE journal event mirrored into both wallets under the same journal `id`, once
+/// positive and once negative. Both legs are real activity and both are kept, but
+/// they only net to zero in `categorized_inflow_total` when they land in the same
+/// category. So for every `id` carried by two-or-more in-scope legs whose signed
+/// amounts cancel, this pins all of those legs to the lowest category id any leg
+/// already resolves to (via an assignment or rule). When no leg resolves the id
+/// is left unpinned: both legs stay in Ready-to-Assign, where the pool already
+/// nets them, so no phantom inflow leaks in.
+fn internal_transfer_categories(rows: &[JournalActivity], context: &ResolutionContext) -> HashMap<i64, i64> {
+  let mut legs_by_id: HashMap<i64, Vec<&JournalActivity>> = HashMap::new();
+  for row in rows {
+    legs_by_id.entry(row.id).or_default().push(row);
+  }
+
+  let mut shared: HashMap<i64, i64> = HashMap::new();
+  for (journal_id, legs) in legs_by_id {
+    if legs.len() < 2 {
+      continue;
+    }
+    let net: f64 = legs.iter().filter_map(|leg| leg.amount).sum();
+    if net.abs() >= TRANSFER_NET_EPSILON {
+      continue;
+    }
+    let resolved = legs.iter().filter_map(|leg| {
+      let amount = leg.amount?;
+      let target = MatchTarget::journal(leg.owner, &leg.ref_type, Some(amount), &leg.text);
+      context.resolve_target(BudgetEntryKind::Journal, leg.id, &target)
+    });
+    if let Some(category_id) = resolved.min() {
+      shared.insert(journal_id, category_id);
+    }
+  }
+  shared
+}
+
 /// Aggregates a scope's signed activity by category for a single UTC calendar
 /// `month` (`YYYY-MM`), unioning every in-scope character and covered
 /// corp-division journal with the matching wallet transactions. v1 is fully
@@ -1276,6 +1320,14 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
   // override) contribute to a category. Everything else stays in Ready-to-Assign.
   // Overrides are owner-aware, so a character entry and a corp entry sharing an EVE
   // id resolve to their own categories rather than aliasing onto one.
+  //
+  // An internal transfer is one EVE journal event mirrored into two owned wallets
+  // under the same journal id with opposite signs. Both legs are kept, but they
+  // are pinned to one shared category so they net to zero there rather than
+  // leaking a phantom inflow into Ready-to-Assign when filed into different
+  // categories (or only one leg is assigned).
+  let transfer_categories = internal_transfer_categories(&journal_rows, &context);
+
   let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
   let empty = HashSet::new();
   for row in &journal_rows {
@@ -1287,8 +1339,11 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
       continue;
     }
     let Some(amount) = row.amount else { continue };
-    let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Journal, row.id, &target) {
+    let category = transfer_categories.get(&row.id).copied().or_else(|| {
+      let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
+      context.resolve_target(BudgetEntryKind::Journal, row.id, &target)
+    });
+    if let Some(category_id) = category {
       *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
   }
@@ -3404,6 +3459,96 @@ mod tests {
 
       assert_eq!(activity.get(&slug_to_id["trading"]), Some(&1_000.0));
       assert_eq!(activity.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_cancels_internal_transfer_legs_sharing_a_journal_id() {
+      use crate::store::{model::OwnerType, repo::infra};
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_020;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      store::repo::finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
+
+      // One internal transfer: the SAME EVE journal id 900 mirrored into the corp
+      // wallet (-10B leg) and the trading character's personal wallet (+10B leg).
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[CorporationWalletJournal {
+          amount: Some(-10_000_000_000.0),
+          balance: Some(0.0),
+          context_id: None,
+          context_id_type: None,
+          corporation_id: corp_id,
+          date: "2026-06-12T00:00:00Z".to_owned(),
+          description: "Transfer out".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 900,
+          reason: None,
+          ref_type: "corporation_account_withdrawal".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+      finance::append_wallet_journal(
+        &db,
+        &[journal(
+          900,
+          1,
+          "corporation_account_withdrawal",
+          10_000_000_000.0,
+          "2026-06-12T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+      // Only the inflow leg is filed into an envelope — exactly the bug shape that
+      // drives Ready-to-Assign negative. The matching outflow leg must be pinned to
+      // the same category so the two cancel rather than reserving a phantom inflow.
+      assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        900,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+
+      let by_month = activity_by_month(&db, BudgetScope::All).await;
+      let activity = by_month.get("2026-06").cloned().unwrap_or_default();
+
+      assert_eq!(activity.get(&slug_to_id["income"]), Some(&0.0));
+      assert_eq!(categorized_inflow_total(&by_month), 0.0);
     }
 
     #[tokio::test]

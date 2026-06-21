@@ -424,7 +424,6 @@ impl ResolutionContext {
 /// How a matched outflow is classified in a rule editor's live preview, relative
 /// to the rest of the rule set, the manual override map, and the rule's target
 /// category.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PreviewStatus {
   /// Already resolves to this rule's category anyway (no other rule claims it and
@@ -448,7 +447,6 @@ pub enum PreviewStatus {
 /// description), because journal rows have no resolved party/location/item names
 /// to match against individually. Market rows carry distinct `item` and
 /// `location` names.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MatchTarget {
   pub amount: f64,
@@ -462,7 +460,6 @@ pub struct MatchTarget {
 }
 
 impl MatchTarget {
-  #[allow(dead_code)]
   pub fn journal(owner: BudgetOwner, ref_type: &str, amount: Option<f64>, text: &str) -> Self {
     let amount = amount.unwrap_or(0.0);
     Self {
@@ -477,7 +474,6 @@ impl MatchTarget {
     }
   }
 
-  #[allow(dead_code)]
   pub fn market(owner: BudgetOwner, is_buy: bool, total: f64, item: &str, location: &str) -> Self {
     Self {
       amount: total.abs(),
@@ -494,7 +490,6 @@ impl MatchTarget {
   /// Whether this entry matches a single condition. Text comparisons are
   /// case-insensitive; `Text` joins every text field; amount conditions parse ISK
   /// shorthand and compare against the absolute amount.
-  #[allow(dead_code)]
   pub fn matches_condition(&self, condition: &RuleCondition) -> bool {
     match condition.field() {
       RuleField::Amount => self.matches_amount(condition),
@@ -521,7 +516,6 @@ impl MatchTarget {
   /// Whether this entry matches a rule: inactive conditions are dropped, then the
   /// remaining conditions are joined by the rule's `match_mode`. A rule with no
   /// active conditions matches nothing.
-  #[allow(dead_code)]
   pub fn matches_rule(&self, rule: &Rule) -> bool {
     let mut active = rule.conditions().iter().filter(|c| is_active_condition(c)).peekable();
     if active.peek().is_none() {
@@ -576,7 +570,6 @@ impl MatchTarget {
 /// Whether a condition carries a usable value — an empty row is ignored so a
 /// half-built rule never matches the whole ledger. A `Between` amount needs both
 /// bounds.
-#[allow(dead_code)]
 pub fn is_active_condition(condition: &RuleCondition) -> bool {
   if condition.field() == RuleField::Amount && condition.op() == RuleOp::Between {
     return !condition.value().trim().is_empty()
@@ -590,7 +583,6 @@ pub fn is_active_condition(condition: &RuleCondition) -> bool {
 
 /// The number of supplied outflows a rule would catch. Inflows are never passed
 /// in (rules only touch spending), so the caller filters to outflows first.
-#[allow(dead_code)]
 pub fn match_count(rule: &Rule, outflows: &[MatchTarget]) -> usize {
   outflows.iter().filter(|target| target.matches_rule(rule)).count()
 }
@@ -605,7 +597,6 @@ pub fn match_count(rule: &Rule, outflows: &[MatchTarget]) -> usize {
 /// - `Preempted`: a higher-priority other rule claims it for a different category.
 /// - `Already`: no other rule claims it and it already targets this category.
 /// - `Assign`: this rule wins and moves it into the category.
-#[allow(dead_code)]
 pub fn preview_entries(
   draft: &Rule,
   other_rules: &[Rule],
@@ -642,7 +633,6 @@ pub fn preview_entries(
 /// need a resolver (`type_label`/`character_name`) to turn their stored id/key
 /// into a label; both default to the raw value when the resolver returns `None`.
 /// Returns an empty string when the rule has no active conditions.
-#[allow(dead_code)]
 pub fn suggest_name(
   rule: &Rule,
   type_label: impl Fn(&str) -> Option<String>,
@@ -701,7 +691,7 @@ pub fn journal_match_text(ref_type: &str, reason: Option<&str>, description: &st
     .join(" ")
 }
 
-fn op_label(op: RuleOp) -> &'static str {
+pub fn op_label(op: RuleOp) -> &'static str {
   match op {
     RuleOp::Between => "is between",
     RuleOp::Contains => "contains",
@@ -711,6 +701,156 @@ fn op_label(op: RuleOp) -> &'static str {
     RuleOp::LessThan => "is under",
     RuleOp::NotContains => "does not contain",
     RuleOp::StartsWith => "starts with",
+  }
+}
+
+pub fn field_label(field: RuleField) -> &'static str {
+  match field {
+    RuleField::Amount => "Amount",
+    RuleField::Character => "Character",
+    RuleField::Direction => "Direction",
+    RuleField::Item => "Item",
+    RuleField::Location => "Location",
+    RuleField::Party => "Party",
+    RuleField::Reference => "Reference",
+    RuleField::Text => "Any text",
+    RuleField::Type => "Type",
+  }
+}
+
+/// Every rule field in the editor's field-picker order, mirroring the design's
+/// vocabulary (Any text first, then Type, Party, Reference, Location, Item,
+/// Amount, Direction, Character).
+pub fn rule_fields() -> [RuleField; 9] {
+  [
+    RuleField::Text,
+    RuleField::Type,
+    RuleField::Party,
+    RuleField::Reference,
+    RuleField::Location,
+    RuleField::Item,
+    RuleField::Amount,
+    RuleField::Direction,
+    RuleField::Character,
+  ]
+}
+
+/// The operators the editor offers for a given field, in menu order. The first
+/// entry is the field's default operator when a condition switches to it.
+pub fn ops_for_field(field: RuleField) -> &'static [RuleOp] {
+  match field {
+    RuleField::Amount => &[RuleOp::GreaterThan, RuleOp::LessThan, RuleOp::Between],
+    RuleField::Character | RuleField::Type => &[RuleOp::Is, RuleOp::IsNot],
+    RuleField::Direction => &[RuleOp::Is],
+    RuleField::Reference => &[RuleOp::Contains, RuleOp::NotContains, RuleOp::StartsWith],
+    RuleField::Item | RuleField::Location | RuleField::Party => &[RuleOp::Contains, RuleOp::NotContains, RuleOp::Is],
+    RuleField::Text => &[RuleOp::Contains, RuleOp::NotContains],
+  }
+}
+
+/// The kind of value editor a field needs: drives whether the rule builder shows
+/// a free-text input, an amount input, or a fixed select.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FieldKind {
+  Amount,
+  Character,
+  Direction,
+  Text,
+  Type,
+}
+
+pub fn field_kind(field: RuleField) -> FieldKind {
+  match field {
+    RuleField::Amount => FieldKind::Amount,
+    RuleField::Character => FieldKind::Character,
+    RuleField::Direction => FieldKind::Direction,
+    RuleField::Type => FieldKind::Type,
+    _ => FieldKind::Text,
+  }
+}
+
+/// A fresh condition for `field`, seeded with the field's default operator and an
+/// empty value (Direction defaults to "out"; a Between amount seeds its upper
+/// bound). Mirrors the design's `newCondition`.
+pub fn new_condition(field: RuleField) -> RuleCondition {
+  let op = ops_for_field(field).first().copied().unwrap_or(RuleOp::Contains);
+  let value = if field == RuleField::Direction {
+    DIRECTION_OUT.to_owned()
+  } else {
+    String::new()
+  };
+  let value2 = (field == RuleField::Amount && op == RuleOp::Between).then(String::new);
+  RuleCondition {
+    field,
+    op,
+    value,
+    value2,
+  }
+}
+
+/// The two direction options, as `(stored value, label)` pairs.
+pub fn direction_options() -> [(&'static str, &'static str); 2] {
+  [(DIRECTION_OUT, "Outflow (spend)"), (DIRECTION_IN, "Inflow (income)")]
+}
+
+/// A one-line human summary of a rule's active conditions, joined by "and"/"or"
+/// per the rule's match mode (e.g. `Reference contains "Cerberus" or Item
+/// contains "Caracal"`). Returns "No conditions yet" for a rule with no active
+/// conditions. `type_label`/`character_name` resolve the stored id/key of Type
+/// and Character conditions; both fall back to the raw value when `None`.
+pub fn summarize_rule(
+  rule: &Rule,
+  type_label: impl Fn(&str) -> Option<String>,
+  character_name: impl Fn(&str) -> Option<String>,
+) -> String {
+  let parts: Vec<String> = rule
+    .conditions()
+    .iter()
+    .filter(|c| is_active_condition(c))
+    .map(|c| condition_text(c, &type_label, &character_name))
+    .collect();
+  if parts.is_empty() {
+    return "No conditions yet".to_owned();
+  }
+  let joiner = match rule.match_mode() {
+    MatchMode::Any => " or ",
+    MatchMode::All => " and ",
+  };
+  parts.join(joiner)
+}
+
+fn condition_text(
+  condition: &RuleCondition,
+  type_label: &impl Fn(&str) -> Option<String>,
+  character_name: &impl Fn(&str) -> Option<String>,
+) -> String {
+  let op = op_label(condition.op());
+  match condition.field() {
+    RuleField::Amount => match condition.op() {
+      RuleOp::Between => format!(
+        "Amount is between {} and {}",
+        condition.value(),
+        condition.value2().as_deref().unwrap_or("")
+      ),
+      _ => format!("Amount {op} {}", condition.value()),
+    },
+    RuleField::Direction => {
+      let value = if condition.value() == DIRECTION_IN {
+        "inflow"
+      } else {
+        "outflow"
+      };
+      format!("Direction is {value}")
+    }
+    RuleField::Type => {
+      let value = type_label(condition.value()).unwrap_or_else(|| condition.value().clone());
+      format!("Type {op} {value}")
+    }
+    RuleField::Character => {
+      let value = character_name(condition.value()).unwrap_or_else(|| condition.value().clone());
+      format!("Character {op} {value}")
+    }
+    field => format!("{} {op} \u{201c}{}\u{201d}", field_label(field), condition.value()),
   }
 }
 
@@ -1798,6 +1938,139 @@ mod tests {
       );
 
       assert_eq!(suggest_name(&empty, |_| None, |_| None), "");
+    }
+  }
+
+  mod summarize_rule {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_joins_active_conditions_with_the_match_mode_word() {
+      let any = rule(
+        1,
+        true,
+        MatchMode::Any,
+        vec![
+          condition(RuleField::Reference, RuleOp::Contains, "Cerberus"),
+          condition(RuleField::Item, RuleOp::Contains, "Caracal"),
+        ],
+      );
+
+      assert_eq!(
+        summarize_rule(&any, |_| None, |_| None),
+        "Reference contains \u{201c}Cerberus\u{201d} or Item contains \u{201c}Caracal\u{201d}"
+      );
+    }
+
+    #[test]
+    fn it_renders_type_and_character_through_the_resolvers() {
+      let typed = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Type, RuleOp::Is, "broker_fee")],
+      );
+      let by_char = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Character, RuleOp::Is, "42")],
+      );
+
+      assert_eq!(
+        summarize_rule(
+          &typed,
+          |key| (key == "broker_fee").then(|| "Broker Fee".to_owned()),
+          |_| None
+        ),
+        "Type is Broker Fee"
+      );
+      assert_eq!(
+        summarize_rule(&by_char, |_| None, |key| (key == "42").then(|| "Aaron".to_owned())),
+        "Character is Aaron"
+      );
+    }
+
+    #[test]
+    fn it_summarizes_an_amount_between_with_both_bounds() {
+      let amount = rule(1, true, MatchMode::All, vec![between("100m", "1b")]);
+
+      assert_eq!(
+        summarize_rule(&amount, |_| None, |_| None),
+        "Amount is between 100m and 1b"
+      );
+    }
+
+    #[test]
+    fn it_falls_back_when_there_are_no_active_conditions() {
+      let empty = rule(
+        1,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "")],
+      );
+
+      assert_eq!(summarize_rule(&empty, |_| None, |_| None), "No conditions yet");
+    }
+  }
+
+  mod new_condition {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_seeds_a_field_with_its_default_operator_and_empty_value() {
+      let text = new_condition(RuleField::Text);
+
+      assert_eq!(text.field(), RuleField::Text);
+      assert_eq!(text.op(), RuleOp::Contains);
+      assert_eq!(text.value(), "");
+    }
+
+    #[test]
+    fn it_defaults_direction_to_outflow() {
+      let direction = new_condition(RuleField::Direction);
+
+      assert_eq!(direction.value(), "out");
+    }
+
+    #[test]
+    fn it_seeds_an_upper_bound_when_the_default_op_is_between() {
+      let amount = new_condition(RuleField::Amount);
+
+      assert_eq!(amount.op(), RuleOp::GreaterThan);
+      assert_eq!(amount.value2(), &None);
+    }
+  }
+
+  mod field_kind {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_maps_each_field_to_its_editor_kind() {
+      assert_eq!(field_kind(RuleField::Amount), FieldKind::Amount);
+      assert_eq!(field_kind(RuleField::Type), FieldKind::Type);
+      assert_eq!(field_kind(RuleField::Character), FieldKind::Character);
+      assert_eq!(field_kind(RuleField::Direction), FieldKind::Direction);
+      assert_eq!(field_kind(RuleField::Reference), FieldKind::Text);
+    }
+  }
+
+  mod ops_for_field {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_offers_the_default_op_first_for_each_field() {
+      assert_eq!(ops_for_field(RuleField::Amount).first(), Some(&RuleOp::GreaterThan));
+      assert_eq!(ops_for_field(RuleField::Type).first(), Some(&RuleOp::Is));
+      assert_eq!(ops_for_field(RuleField::Reference).first(), Some(&RuleOp::Contains));
     }
   }
 

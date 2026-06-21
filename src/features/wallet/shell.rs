@@ -106,6 +106,30 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     return modal_overlay(base.into(), Some(Message::LedgerMenuDismissed), overlay);
   }
 
+  if state.budget_global_rules_open() {
+    let manager = modal_overlay(
+      base.into(),
+      Some(Message::BudgetGlobalRulesClosed),
+      super::budget_view::global_rules_modal(state),
+    );
+    if state.budget_rule_editor().is_some() {
+      return modal_overlay(
+        manager,
+        Some(Message::BudgetRuleEditorClosed),
+        super::budget_view::rule_editor_modal(state),
+      );
+    }
+    return manager;
+  }
+
+  if state.budget_rule_editor().is_some() {
+    return modal_overlay(
+      base.into(),
+      Some(Message::BudgetRuleEditorClosed),
+      super::budget_view::rule_editor_modal(state),
+    );
+  }
+
   base.into()
 }
 

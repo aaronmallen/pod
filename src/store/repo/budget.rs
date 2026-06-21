@@ -32,7 +32,6 @@ pub struct NewGroup {
 
 // Budget automation rule storage (child A); consumed by the matching engine in child B and the
 // inspector UI in child C. Exercised only by unit tests until then.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewRule {
   pub category_id: i64,
@@ -127,7 +126,6 @@ pub async fn create_group(db: &Database, group: &NewGroup) -> Result<BudgetCateg
 
 // Budget automation rule storage (child A); consumed by the matching engine in child B and the
 // inspector UI in child C. Exercised only by unit tests until then.
-#[allow(dead_code)]
 pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, RuleRow>(
@@ -206,7 +204,6 @@ pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
 
 // Budget automation rule storage (child A); deleting a rule cascades its conditions via the FK.
 // Exercised only by unit tests until child B/C wire it.
-#[allow(dead_code)]
 pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_rules WHERE id = ?")
     .bind(id)
@@ -329,7 +326,6 @@ pub async fn list_ref_type_maps(db: &Database, scope: BudgetScope) -> Result<Vec
 
 // Budget automation rule loader (child A): every rule for the active scope, in priority order, with
 // its conditions nested in position order — the exact shape the matching engine in child B consumes.
-#[allow(dead_code)]
 pub async fn list_rules(db: &Database, scope: BudgetScope) -> Result<Vec<Rule>, Error> {
   let rule_rows = sqlx::query_as::<_, RuleRow>(
     "SELECT id, category_id, name, enabled, match_mode FROM budget_rules \
@@ -459,7 +455,6 @@ pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Err
 
 // Budget automation rule storage (child A): replace a rule's full condition set in one transaction,
 // re-numbering positions from slice order so the engine reads them in the builder's order.
-#[allow(dead_code)]
 pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[RuleCondition]) -> Result<(), Error> {
   let mut tx = db.0.begin().await?;
   sqlx::query("DELETE FROM budget_rule_conditions WHERE rule_id = ?")
@@ -522,7 +517,6 @@ pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<
 
 // Budget automation rule storage (child A): update a rule's editable fields by id. Position is owned
 // by reorder_rules and conditions by replace_rule_conditions, so neither is touched here.
-#[allow(dead_code)]
 pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(

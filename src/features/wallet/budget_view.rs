@@ -8,9 +8,13 @@ use super::{
   BudgetDropTarget, BudgetFilterKind, BudgetMoveAnchor, Message, State,
   budget::{self, Category, CategoryDraft, Group, Mode, MoveDest, TargetKind, TargetState},
 };
-use crate::ui::{
-  components::{anchored_dropdown::AnchoredDropdown, icon::Icon},
-  style::{color, spacing, typography},
+use crate::{
+  features::budget as engine,
+  store::model::{MatchMode, Rule, RuleField, RuleOp},
+  ui::{
+    components::{anchored_dropdown::AnchoredDropdown, icon::Icon},
+    style::{color, spacing, typography},
+  },
 };
 
 const ASSIGNED_COL: f32 = 152.0;
@@ -1733,18 +1737,175 @@ fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Me
   let editing = state.budget_editor().is_some() || state.budget_edit_mode();
 
   let mut children: Vec<Element<'a, Message>> = vec![inspector_header(state, category, &status)];
-  if editing {
+
+  // The bulk edit-mode table owns the inspector wholesale, so the Detail/Automation
+  // tab bar only shows for a normal single-category inspection.
+  if state.budget_edit_mode() {
     if let Some(draft) = state.budget_editor() {
       children.push(category_editor(draft));
     }
-  } else {
-    children.push(view_transactions_button(category.id));
-    children.push(target_block(&status));
-    children.push(this_month_block(category, &status));
-    children.push(quick_assign_block(category, state.budget_month()));
+    return Column::with_children(children).width(Length::Fill).into();
+  }
+
+  children.push(inspector_tab_bar(state, category));
+
+  match state.budget_inspector_tab() {
+    budget::InspectorTab::Automation => children.push(automation_tab(state, category)),
+    budget::InspectorTab::Detail if editing => {
+      if let Some(draft) = state.budget_editor() {
+        children.push(category_editor(draft));
+      }
+    }
+    budget::InspectorTab::Detail => {
+      children.push(view_transactions_button(category.id));
+      children.push(target_block(&status));
+      children.push(this_month_block(category, &status));
+      children.push(quick_assign_block(category, state.budget_month()));
+    }
   }
 
   Column::with_children(children).width(Length::Fill).into()
+}
+
+fn inspector_tab_bar<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let active = state.budget_inspector_tab();
+  let rule_count = state
+    .budget_rules()
+    .iter()
+    .filter(|rule| rule.category_id() == category.id)
+    .count();
+
+  let tabs = Row::with_children(vec![
+    inspector_tab_button(
+      "Detail",
+      None,
+      active == budget::InspectorTab::Detail,
+      budget::InspectorTab::Detail,
+    ),
+    inspector_tab_button(
+      "Automation",
+      Some(rule_count),
+      active == budget::InspectorTab::Automation,
+      budget::InspectorTab::Automation,
+    ),
+  ])
+  .spacing(20.0);
+
+  container(tabs)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 20.0,
+      bottom: 0.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn inspector_tab_button<'a>(
+  label: &'a str,
+  badge: Option<usize>,
+  active: bool,
+  tab: budget::InspectorTab,
+) -> Element<'a, Message> {
+  let text_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+
+  let mut row: Vec<Element<'a, Message>> = vec![
+    text(label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(text_color))
+      .into(),
+  ];
+  if let Some(count) = badge.filter(|count| *count > 0) {
+    row.push(count_badge(count, active));
+  }
+
+  // A 2px bottom underline marks the active tab (iced borders are uniform, so the
+  // underline is its own hairline container rather than a button border edge).
+  let underline = container(Space::new())
+    .width(Length::Fill)
+    .height(Length::Fixed(2.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if active {
+        color::accent::PLASMA
+      } else {
+        Color::TRANSPARENT
+      })),
+      ..container::Style::default()
+    });
+
+  let label_button = button(
+    Row::with_children(row)
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: 11.0,
+    right: 0.0,
+    bottom: 9.0,
+    left: 0.0,
+  })
+  .on_press(Message::BudgetInspectorTabSelected(tab))
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    text_color,
+    ..button::Style::default()
+  });
+
+  Column::with_children(vec![label_button.into(), underline.into()])
+    .align_x(Horizontal::Center)
+    .into()
+}
+
+fn count_badge<'a>(count: usize, active: bool) -> Element<'a, Message> {
+  let tint = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::tertiary()
+  };
+  container(
+    text(count.to_string())
+      .font(typography::mono::REGULAR)
+      .size(9.5)
+      .style(typography::colored(tint)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: 6.0,
+    bottom: 1.0,
+    left: 6.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(if active {
+      color::with_alpha(color::accent::PLASMA, 0.12)
+    } else {
+      Color::TRANSPARENT
+    })),
+    border: Border {
+      color: if active {
+        color::with_alpha(color::accent::PLASMA, 0.3)
+      } else {
+        color::rule()
+      },
+      width: 1.0,
+      radius: 9.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 /// The inspector's full-width "View transactions →" button: filters the ledger
@@ -2425,6 +2586,1945 @@ fn editor_commit_button<'a>() -> Element<'a, Message> {
   .into()
 }
 
+fn automation_tab<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
+  let outflows = state.budget_outflows();
+  let mine: Vec<&Rule> = state
+    .budget_rules()
+    .iter()
+    .filter(|rule| rule.category_id() == category.id)
+    .collect();
+  let total_matched: usize = mine.iter().map(|rule| engine::match_count(rule, &outflows)).sum();
+
+  let intro = Column::with_children(vec![automation_intro(category), new_rule_button(category.id)])
+    .spacing(14.0)
+    .width(Length::Fill);
+
+  let mut children: Vec<Element<'a, Message>> = vec![bordered_section(intro)];
+
+  if mine.is_empty() {
+    children.push(automation_empty_state());
+  } else {
+    let cards = mine
+      .iter()
+      .map(|rule| rule_card(state, rule, engine::match_count(rule, &outflows)))
+      .collect::<Vec<Element<'a, Message>>>();
+    children.push(
+      Column::with_children(cards)
+        .spacing(8.0)
+        .padding(Padding {
+          top: 10.0,
+          right: 14.0,
+          bottom: 4.0,
+          left: 14.0,
+        })
+        .into(),
+    );
+  }
+
+  children.push(global_link(mine.len(), total_matched));
+
+  Column::with_children(children).width(Length::Fill).into()
+}
+
+fn automation_intro<'a>(category: &'a Category) -> Element<'a, Message> {
+  let line = Row::with_children(vec![
+    text("Rules file matching spending into")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    color_dot(category.tone.as_deref(), 9.0),
+    text(category.name.clone())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text("automatically. Manual picks always win.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .wrap();
+  line.into()
+}
+
+fn new_rule_button<'a>(category_id: i64) -> Element<'a, Message> {
+  button(
+    Row::with_children(vec![
+      text("+")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::LG)
+        .style(typography::colored(color::accent::PLASMA))
+        .into(),
+      text("New rule")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::accent::PLASMA))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 10.0,
+    right: spacing::SPACE_3,
+    bottom: 10.0,
+    left: spacing::SPACE_3,
+  })
+  .on_press(Message::BudgetRuleNewOpened(category_id))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(color::with_alpha(
+        color::accent::PLASMA,
+        if active { 0.2 } else { 0.12 },
+      ))),
+      border: Border {
+        color: color::accent::PLASMA,
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: color::accent::PLASMA,
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn automation_empty_state<'a>() -> Element<'a, Message> {
+  Column::with_children(vec![
+    Icon::budget().size(18.0).color(color::text::tertiary()).render(),
+    container(
+      text("No rules yet. Add one to stop hand-filing the same kind of transaction into this envelope.")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .align_x(Horizontal::Center)
+        .style(typography::colored(color::text::secondary())),
+    )
+    .max_width(220.0)
+    .into(),
+  ])
+  .spacing(12.0)
+  .align_x(Horizontal::Center)
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 34.0,
+    right: 26.0,
+    bottom: 34.0,
+    left: 26.0,
+  })
+  .into()
+}
+
+fn rule_card<'a>(state: &'a State, rule: &'a Rule, count: usize) -> Element<'a, Message> {
+  let dim = !rule.enabled();
+  let name = rule_display_name(state, rule);
+  let summary = engine::summarize_rule(
+    rule,
+    |token| Some(engine::humanize_ref_type(token)),
+    |key| character_name(state, key),
+  );
+
+  let header = Row::with_children(vec![
+    rule_switch(rule.id(), rule.enabled()),
+    text(name)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .width(Length::Fill)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    count_pill(count, rule.enabled()),
+    rule_delete_button(rule.id()),
+  ])
+  .spacing(9.0)
+  .align_y(Vertical::Center);
+
+  let body = Column::with_children(vec![
+    header.into(),
+    container(
+      text(summary)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::secondary())),
+    )
+    .padding(Padding {
+      top: 8.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: 39.0,
+    })
+    .into(),
+  ])
+  .width(Length::Fill);
+
+  let card = container(body)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 11.0,
+      right: 12.0,
+      bottom: 11.0,
+      left: 12.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if dim {
+        color::with_alpha(color::surface::RAISED, 0.5)
+      } else {
+        color::surface::RAISED
+      })),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 9.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  mouse_area(card)
+    .on_press(Message::BudgetRuleEditOpened(rule.id()))
+    .interaction(iced::mouse::Interaction::Pointer)
+    .into()
+}
+
+fn rule_switch<'a>(rule_id: i64, on: bool) -> Element<'a, Message> {
+  switch(on, Message::BudgetRuleToggled(rule_id, !on))
+}
+
+fn rule_delete_button<'a>(rule_id: i64) -> Element<'a, Message> {
+  button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(5.0)
+  .on_press(Message::BudgetRuleDeleted(rule_id))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active {
+          color::with_alpha(color::status::DANGER, 0.4)
+        } else {
+          color::rule()
+        },
+        width: 1.0,
+        radius: 6.0.into(),
+      },
+      text_color: if active {
+        color::status::DANGER
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+/// A compact pill toggle that reads as an on/off switch (iced has no native
+/// switch widget). Plasma-tinted when on, hollow when off.
+fn switch<'a>(on: bool, on_press: Message) -> Element<'a, Message> {
+  let knob = container(Space::new())
+    .width(Length::Fixed(13.0))
+    .height(Length::Fixed(13.0))
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if on {
+        color::accent::PLASMA
+      } else {
+        color::text::tertiary()
+      })),
+      border: Border {
+        radius: 6.5.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+
+  let track = Row::with_children(vec![
+    if on {
+      Space::new().width(Length::Fill).into()
+    } else {
+      Space::new().width(Length::Fixed(0.0)).into()
+    },
+    knob.into(),
+    if on {
+      Space::new().width(Length::Fixed(0.0)).into()
+    } else {
+      Space::new().width(Length::Fill).into()
+    },
+  ])
+  .align_y(Vertical::Center);
+
+  button(track)
+    .width(Length::Fixed(32.0))
+    .height(Length::Fixed(18.0))
+    .padding(Padding {
+      top: 1.0,
+      right: 2.0,
+      bottom: 1.0,
+      left: 2.0,
+    })
+    .on_press(on_press)
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(if on {
+        color::with_alpha(color::accent::PLASMA, 0.22)
+      } else {
+        color::with_alpha(color::text::PRIMARY, 0.05)
+      })),
+      border: Border {
+        color: if on {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        width: 1.0,
+        radius: 9.0.into(),
+      },
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn count_pill<'a>(count: usize, enabled: bool) -> Element<'a, Message> {
+  let tint = if count > 0 && enabled {
+    color::accent::PLASMA
+  } else {
+    color::text::tertiary()
+  };
+  let label = format!("{count} match{}", if count == 1 { "" } else { "es" });
+  container(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(10.0)
+      .style(typography::colored(tint)),
+  )
+  .padding(Padding {
+    top: 2.0,
+    right: 7.0,
+    bottom: 2.0,
+    left: 7.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(if count > 0 {
+      color::with_alpha(tint, 0.12)
+    } else {
+      Color::TRANSPARENT
+    })),
+    border: Border {
+      color: if count > 0 {
+        color::with_alpha(tint, 0.3)
+      } else {
+        color::rule()
+      },
+      width: 1.0,
+      radius: 10.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn global_link<'a>(rule_count: usize, total_matched: usize) -> Element<'a, Message> {
+  let link = button(
+    Row::with_children(vec![
+      text("Manage all rules & priority")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .width(Length::Fill)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      text("\u{2192}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    ])
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 10.0,
+    right: 12.0,
+    bottom: 10.0,
+    left: 12.0,
+  })
+  .on_press(Message::BudgetGlobalRulesOpened)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    }
+  });
+
+  let mut children: Vec<Element<'a, Message>> = vec![link.into()];
+  if rule_count > 0 {
+    let summary = format!(
+      "{rule_count} rule{} \u{00b7} {total_matched} transaction{} filed here",
+      if rule_count == 1 { "" } else { "s" },
+      if total_matched == 1 { "" } else { "s" },
+    );
+    children.push(
+      container(mono_caption(summary, color::text::tertiary(), 9.5))
+        .width(Length::Fill)
+        .align_x(Horizontal::Center)
+        .padding(Padding {
+          top: 9.0,
+          right: 0.0,
+          bottom: 0.0,
+          left: 0.0,
+        })
+        .into(),
+    );
+  }
+
+  container(Column::with_children(children).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 20.0,
+      bottom: 22.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+/// Falls back through the user-given name, then the engine's auto-suggested name,
+/// then an "Untitled rule" placeholder.
+fn rule_display_name(state: &State, rule: &Rule) -> String {
+  if !rule.name().is_empty() {
+    return rule.name().clone();
+  }
+  let suggested = engine::suggest_name(
+    rule,
+    |token| Some(engine::humanize_ref_type(token)),
+    |key| character_name(state, key),
+  );
+  if suggested.is_empty() {
+    "Untitled rule".to_owned()
+  } else {
+    suggested
+  }
+}
+
+fn character_name(state: &State, key: &str) -> Option<String> {
+  let id = key.trim().parse::<i64>().ok()?;
+  state
+    .roster()
+    .iter()
+    .find(|pilot| pilot.id == id)
+    .map(|pilot| pilot.name.clone())
+}
+
+const RULE_MODAL_WIDTH: f32 = 860.0;
+const RULE_PREVIEW_WIDTH: f32 = 332.0;
+
+/// Mounted over the wallet shell via `modal_overlay`, and also reused as the edit
+/// action of the global rules manager. Open it by seeding `State.budget_rule_editor`
+/// via [`Message::BudgetRuleEditOpened`]; renders nothing when that is `None`.
+pub(super) fn rule_editor_modal(state: &State) -> Element<'_, Message> {
+  let Some(draft) = state.budget_rule_editor() else {
+    return Space::new().into();
+  };
+  let category = state.budget().and_then(|view| view.category(draft.category_id));
+
+  let panel = container(
+    Column::with_children(vec![
+      rule_modal_header(draft, category),
+      rule_modal_body(state, draft, category),
+      rule_modal_footer(draft),
+    ])
+    .width(Length::Fill),
+  )
+  .width(Length::Fixed(RULE_MODAL_WIDTH))
+  .max_height(720.0)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: 14.0.into(),
+    },
+    ..container::Style::default()
+  });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(28.0)
+    .into()
+}
+
+const GLOBAL_RULES_MODAL_WIDTH: f32 = 760.0;
+
+/// The "Automation rules" manager: every rule across all envelopes in priority
+/// order, drag-to-reorder. Mounted over the wallet shell via `modal_overlay`; the
+/// edit action seeds `State.budget_rule_editor` so the editor stacks on top.
+/// Renders nothing unless `budget_global_rules_open` is set.
+pub(super) fn global_rules_modal(state: &State) -> Element<'_, Message> {
+  let rules = state.budget_rules();
+  let outflows = state.budget_outflows();
+  let enabled_count = rules.iter().filter(|rule| rule.enabled()).count();
+
+  let mut sections: Vec<Element<'_, Message>> =
+    vec![global_rules_header(rules.len(), enabled_count), global_rules_note()];
+
+  if rules.is_empty() {
+    sections.push(global_rules_empty_state());
+  } else {
+    let rows = rules
+      .iter()
+      .enumerate()
+      .map(|(index, rule)| global_rule_row(state, rule, index, engine::match_count(rule, &outflows)))
+      .collect::<Vec<Element<'_, Message>>>();
+    sections.push(
+      container(
+        scrollable(Column::with_children(rows).width(Length::Fill))
+          .style(crate::ui::style::control::scrollbar)
+          .width(Length::Fill)
+          .height(Length::Fill),
+      )
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into(),
+    );
+  }
+
+  let panel = container(Column::with_children(sections).width(Length::Fill))
+    .width(Length::Fixed(GLOBAL_RULES_MODAL_WIDTH))
+    .max_height(680.0)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: 14.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  container(panel)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .padding(28.0)
+    .into()
+}
+
+fn global_rules_header<'a>(rule_count: usize, enabled_count: usize) -> Element<'a, Message> {
+  let summary = format!(
+    "{rule_count} rule{} \u{00b7} {enabled_count} active \u{00b7} drag to set priority",
+    if rule_count == 1 { "" } else { "s" },
+  );
+
+  let left = Column::with_children(vec![
+    text("Automation rules")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    mono_caption(summary, color::text::secondary(), typography::size::XS_PLUS),
+  ])
+  .spacing(4.0)
+  .width(Length::Fill);
+
+  let header = Row::with_children(vec![left.into(), global_rules_close_button()])
+    .spacing(14.0)
+    .align_y(Vertical::Center);
+
+  container(header)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 18.0,
+      right: 20.0,
+      bottom: 18.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn global_rules_close_button<'a>() -> Element<'a, Message> {
+  button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(7.0)
+  .on_press(Message::BudgetGlobalRulesClosed)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: if active {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn global_rules_note<'a>() -> Element<'a, Message> {
+  let line = Row::with_children(vec![
+    text("When a transaction matches more than one rule, the")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    text("highest one wins")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(". Manual assignments override all rules.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(4.0)
+  .align_y(Vertical::Center)
+  .wrap();
+
+  container(line)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 11.0,
+      right: 20.0,
+      bottom: 11.0,
+      left: 20.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn global_rules_empty_state<'a>() -> Element<'a, Message> {
+  container(
+    text("No rules yet. Create one from any budget envelope\u{2019}s Automation tab.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .align_x(Horizontal::Center)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .width(Length::Fill)
+  .align_x(Horizontal::Center)
+  .padding(Padding {
+    top: 48.0,
+    right: 24.0,
+    bottom: 48.0,
+    left: 24.0,
+  })
+  .into()
+}
+
+fn global_rule_row<'a>(state: &'a State, rule: &'a Rule, index: usize, count: usize) -> Element<'a, Message> {
+  let rule_id = rule.id();
+  let category = state.budget().and_then(|view| view.category(rule.category_id()));
+  let (tone, category_name) = match category {
+    Some(category) => (category.tone.as_deref(), category.name.clone()),
+    None => (None, String::new()),
+  };
+  let dragging = state.budget_rule_dragging() == Some(rule_id);
+  let is_drop_target = state.budget_rule_drop_target() == Some(rule_id);
+
+  let title = Row::with_children(vec![
+    text(rule_display_name(state, rule))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    mono_caption(
+      format!("\u{2192} {category_name}"),
+      color::text::tertiary(),
+      typography::size::XS,
+    ),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let summary = engine::summarize_rule(
+    rule,
+    |token| Some(engine::humanize_ref_type(token)),
+    |key| character_name(state, key),
+  );
+
+  let detail = Column::with_children(vec![
+    title.into(),
+    mono_caption(summary, color::text::secondary(), typography::size::XS_PLUS),
+  ])
+  .spacing(3.0)
+  .width(Length::Fill);
+
+  let row = Row::with_children(vec![
+    global_rule_drag_grip(rule_id),
+    container(mono_caption(
+      format!("{}", index + 1),
+      color::text::secondary(),
+      typography::size::SM,
+    ))
+    .width(Length::Fixed(18.0))
+    .align_x(Horizontal::Right)
+    .into(),
+    color_dot(tone, 9.0),
+    detail.into(),
+    count_pill(count, rule.enabled()),
+    rule_switch(rule_id, rule.enabled()),
+    global_rule_edit_button(rule_id),
+    rule_delete_button(rule_id),
+  ])
+  .spacing(12.0)
+  .align_y(Vertical::Center);
+
+  let body = container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 13.0,
+      right: 20.0,
+      bottom: 13.0,
+      left: 20.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if dragging {
+        color::with_alpha(color::accent::PLASMA, 0.06)
+      } else {
+        Color::TRANSPARENT
+      })),
+      border: Border {
+        color: if is_drop_target {
+          color::accent::PLASMA
+        } else {
+          color::rule()
+        },
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  mouse_area(body)
+    .on_enter(Message::BudgetRuleDropTargetEntered(rule_id))
+    .on_exit(Message::BudgetRuleDropTargetLeft)
+    .into()
+}
+
+fn global_rule_drag_grip<'a>(rule_id: i64) -> Element<'a, Message> {
+  let handle = text("\u{283f}")
+    .font(typography::mono::REGULAR)
+    .size(15.0)
+    .style(typography::colored(color::text::tertiary()));
+
+  mouse_area(container(handle).align_x(Horizontal::Center))
+    .on_press(Message::BudgetRuleDragStarted(rule_id))
+    .interaction(iced::mouse::Interaction::Grab)
+    .into()
+}
+
+fn global_rule_edit_button<'a>(rule_id: i64) -> Element<'a, Message> {
+  button(Icon::pencil().size(13.0).color(color::text::secondary()).render())
+    .width(Length::Fixed(28.0))
+    .height(Length::Fixed(28.0))
+    .padding(Padding::ZERO)
+    .on_press(Message::BudgetRuleEditOpened(rule_id))
+    .style(|_, status| {
+      let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        border: Border {
+          color: if active { color::accent::PLASMA } else { color::rule() },
+          width: 1.0,
+          radius: 6.0.into(),
+        },
+        text_color: if active {
+          color::accent::PLASMA
+        } else {
+          color::text::secondary()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+fn rule_modal_header<'a>(draft: &'a budget::RuleDraft, category: Option<&'a Category>) -> Element<'a, Message> {
+  let eyebrow = if draft.rule_id.is_some() {
+    "Edit rule"
+  } else {
+    "New rule"
+  };
+
+  let mut title: Vec<Element<'a, Message>> = vec![
+    text("File matches into")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ];
+  if let Some(category) = category {
+    title.push(color_dot(category.tone.as_deref(), 9.0));
+    title.push(
+      text(category.name.clone())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+    );
+  }
+
+  let left = Column::with_children(vec![
+    crate::ui::components::eyebrow::eyebrow_text(eyebrow, None).into(),
+    Row::with_children(title)
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Center)
+      .into(),
+  ])
+  .spacing(5.0)
+  .width(Length::Fill);
+
+  let header = Row::with_children(vec![left.into(), rule_modal_close_button()])
+    .spacing(14.0)
+    .align_y(Vertical::Center);
+
+  container(header)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 16.0,
+      right: 18.0,
+      bottom: 16.0,
+      left: 18.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn rule_modal_close_button<'a>() -> Element<'a, Message> {
+  button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(7.0)
+  .on_press(Message::BudgetRuleEditorClosed)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: if active {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn rule_modal_body<'a>(
+  state: &'a State,
+  draft: &'a budget::RuleDraft,
+  category: Option<&'a Category>,
+) -> Element<'a, Message> {
+  let builder = container(
+    scrollable(rule_builder(state, draft))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  });
+
+  let preview = container(rule_preview(state, draft, category))
+    .width(Length::Fixed(RULE_PREVIEW_WIDTH))
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      ..container::Style::default()
+    });
+
+  container(
+    Row::with_children(vec![builder.into(), preview.into()])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn rule_builder<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = vec![rule_search_box(draft)];
+  if draft.show_advanced {
+    children.push(rule_advanced_block(state, draft));
+  }
+  children.push(rule_name_block(state, draft));
+
+  Column::with_children(children)
+    .spacing(16.0)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 18.0,
+      right: 20.0,
+      bottom: 18.0,
+      left: 20.0,
+    })
+    .into()
+}
+
+fn rule_search_box<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
+  let input = text_input("e.g. Cerberus, broker fee, Jita\u{2026}", draft.search_value())
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 8.0,
+      right: 11.0,
+      bottom: 8.0,
+      left: 11.0,
+    })
+    .width(Length::Fill)
+    .on_input(Message::BudgetRuleEditorSearchChanged)
+    .style(editor_input_style);
+
+  let search_row = Row::with_children(vec![
+    Icon::search().size(14.0).color(color::text::secondary()).render(),
+    input.into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let caption = Row::with_children(vec![
+    text("Searches reference, party, location & item.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .width(Length::Fill)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    advanced_toggle(draft.show_advanced),
+  ])
+  .align_y(Vertical::Center);
+
+  Column::with_children(vec![
+    eyebrow_label("Match transactions containing"),
+    search_row.into(),
+    caption.into(),
+  ])
+  .spacing(9.0)
+  .width(Length::Fill)
+  .into()
+}
+
+fn advanced_toggle<'a>(advanced: bool) -> Element<'a, Message> {
+  let tint = if advanced {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let label = if advanced { "Hide advanced" } else { "Add conditions" };
+  button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(tint)),
+  )
+  .padding(0)
+  .on_press(Message::BudgetRuleEditorAdvancedToggled)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(Color::TRANSPARENT)),
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn rule_advanced_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Element<'a, Message> {
+  let mode_row = Row::with_children(vec![
+    text("Match")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    match_mode_segment(draft.match_mode),
+    text("of these conditions")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(10.0)
+  .align_y(Vertical::Center);
+
+  let removable = draft.conditions.len() > 1;
+  let rows = draft
+    .conditions
+    .iter()
+    .enumerate()
+    .map(|(index, condition)| condition_row(state, draft, index, condition, removable))
+    .collect::<Vec<Element<'a, Message>>>();
+
+  let add = button(
+    Row::with_children(vec![
+      text("+")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      text("Add condition")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    ])
+    .spacing(7.0)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: 7.0,
+    right: 12.0,
+    bottom: 7.0,
+    left: 12.0,
+  })
+  .on_press(Message::BudgetRuleConditionAdded)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active {
+          color::accent::PLASMA
+        } else {
+          color::rule_strong()
+        },
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    }
+  });
+
+  let mut children: Vec<Element<'a, Message>> = vec![mode_row.into()];
+  children.extend(rows);
+  children.push(add.into());
+
+  container(Column::with_children(children).spacing(8.0).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: 0.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn condition_row<'a>(
+  state: &'a State,
+  draft: &'a budget::RuleDraft,
+  index: usize,
+  condition: &'a crate::store::model::RuleCondition,
+  removable: bool,
+) -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    field_select(draft, index, condition.field()),
+    op_select(draft, index, condition.field(), condition.op()),
+    condition_value_editor(state, draft, index, condition),
+    remove_condition_button(index, removable),
+  ])
+  .spacing(7.0)
+  .align_y(Vertical::Center);
+
+  row.into()
+}
+
+fn field_select<'a>(draft: &'a budget::RuleDraft, index: usize, active: RuleField) -> Element<'a, Message> {
+  let key = budget::RuleSelectKey::Field(index);
+  let options = engine::rule_fields()
+    .into_iter()
+    .map(|field| {
+      anchored_option(
+        engine::field_label(field),
+        field == active,
+        Message::BudgetRuleConditionFieldChanged(index, field),
+      )
+    })
+    .collect::<Vec<Element<'a, Message>>>();
+
+  select_dropdown(
+    engine::field_label(active),
+    options,
+    144.0,
+    key,
+    draft.open_select == Some(key),
+  )
+}
+
+fn op_select<'a>(draft: &'a budget::RuleDraft, index: usize, field: RuleField, active: RuleOp) -> Element<'a, Message> {
+  let key = budget::RuleSelectKey::Op(index);
+  let options = engine::ops_for_field(field)
+    .iter()
+    .map(|op| {
+      anchored_option(
+        engine::op_label(*op),
+        *op == active,
+        Message::BudgetRuleConditionOpChanged(index, *op),
+      )
+    })
+    .collect::<Vec<Element<'a, Message>>>();
+
+  select_dropdown(
+    engine::op_label(active),
+    options,
+    150.0,
+    key,
+    draft.open_select == Some(key),
+  )
+}
+
+fn condition_value_editor<'a>(
+  state: &'a State,
+  draft: &'a budget::RuleDraft,
+  index: usize,
+  condition: &'a crate::store::model::RuleCondition,
+) -> Element<'a, Message> {
+  let open = draft.open_select == Some(budget::RuleSelectKey::Value(index));
+  match engine::field_kind(condition.field()) {
+    engine::FieldKind::Type => value_select(
+      index,
+      condition.value(),
+      "Select type\u{2026}",
+      rule_type_options(state),
+      open,
+    ),
+    engine::FieldKind::Character => value_select(
+      index,
+      condition.value(),
+      "Select character\u{2026}",
+      rule_character_options(state),
+      open,
+    ),
+    engine::FieldKind::Direction => value_select(
+      index,
+      condition.value(),
+      "",
+      engine::direction_options()
+        .into_iter()
+        .map(|(id, label)| (id.to_owned(), label.to_owned()))
+        .collect(),
+      open,
+    ),
+    engine::FieldKind::Amount if condition.op() == RuleOp::Between => amount_between_editor(index, condition),
+    engine::FieldKind::Amount => amount_value_input(index, condition.value()),
+    engine::FieldKind::Text => condition_text_input(index, condition.value()),
+  }
+}
+
+fn condition_text_input<'a>(index: usize, value: &'a str) -> Element<'a, Message> {
+  text_input("e.g. Cerberus", value)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 7.0,
+      right: 10.0,
+      bottom: 7.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
+    .style(editor_input_style)
+    .into()
+}
+
+fn amount_value_input<'a>(index: usize, value: &'a str) -> Element<'a, Message> {
+  text_input("100M", value)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 7.0,
+      right: 10.0,
+      bottom: 7.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
+    .style(editor_input_style)
+    .into()
+}
+
+fn amount_between_editor<'a>(index: usize, condition: &'a crate::store::model::RuleCondition) -> Element<'a, Message> {
+  let lower = text_input("100M", condition.value())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 7.0,
+      right: 10.0,
+      bottom: 7.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
+    .style(editor_input_style);
+
+  let upper = text_input("1B", condition.value2().as_deref().unwrap_or(""))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 7.0,
+      right: 10.0,
+      bottom: 7.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .align_x(Horizontal::Right)
+    .on_input(move |value| Message::BudgetRuleConditionValue2Changed(index, value))
+    .style(editor_input_style);
+
+  Row::with_children(vec![
+    lower.into(),
+    text("\u{2013}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    upper.into(),
+  ])
+  .spacing(6.0)
+  .align_y(Vertical::Center)
+  .width(Length::Fill)
+  .into()
+}
+
+fn value_select<'a>(
+  index: usize,
+  active: &'a str,
+  placeholder: &'a str,
+  options: Vec<(String, String)>,
+  open: bool,
+) -> Element<'a, Message> {
+  let label = options
+    .iter()
+    .find(|(id, _)| id == active)
+    .map(|(_, label)| label.clone())
+    .unwrap_or_else(|| placeholder.to_owned());
+
+  let rows = options
+    .into_iter()
+    .map(|(id, label)| {
+      let selected = id == active;
+      anchored_option(&label, selected, Message::BudgetRuleConditionValueChanged(index, id))
+    })
+    .collect::<Vec<Element<'a, Message>>>();
+
+  select_dropdown(&label, rows, 0.0, budget::RuleSelectKey::Value(index), open)
+}
+
+fn remove_condition_button<'a>(index: usize, removable: bool) -> Element<'a, Message> {
+  let mut remove = button(
+    text("\u{2715}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(if removable {
+        color::text::secondary()
+      } else {
+        color::text::tertiary()
+      })),
+  )
+  .padding(6.0)
+  .style(move |_, status| {
+    let active = removable && matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::status::DANGER } else { color::rule() },
+        width: 1.0,
+        radius: 6.0.into(),
+      },
+      text_color: if active {
+        color::status::DANGER
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  });
+  if removable {
+    remove = remove.on_press(Message::BudgetRuleConditionRemoved(index));
+  }
+  remove.into()
+}
+
+fn rule_name_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Element<'a, Message> {
+  let suggestion = rule_draft_suggestion(state, draft);
+  let value = if draft.name_edited {
+    draft.name.clone()
+  } else if draft.name.is_empty() {
+    suggestion.clone()
+  } else {
+    draft.name.clone()
+  };
+  let placeholder = if suggestion.is_empty() {
+    "Name this rule".to_owned()
+  } else {
+    suggestion
+  };
+
+  let input = text_input(&placeholder, &value)
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: 7.0,
+      right: 10.0,
+      bottom: 7.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .on_input(Message::BudgetRuleEditorNameChanged)
+    .style(editor_input_style);
+
+  container(
+    Column::with_children(vec![eyebrow_label("Rule name"), input.into()])
+      .spacing(8.0)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 16.0,
+    right: 0.0,
+    bottom: 0.0,
+    left: 0.0,
+  })
+  .style(|_| container::Style {
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn rule_preview<'a>(
+  state: &'a State,
+  draft: &'a budget::RuleDraft,
+  category: Option<&'a Category>,
+) -> Element<'a, Message> {
+  let outflows = state.budget_outflows();
+  let rule = draft_to_rule(draft);
+  let other_rules = other_rules(state, draft);
+  let manual = state.budget_manual_index();
+  let rows = engine::preview_entries(&rule, &other_rules, &manual, draft.category_id, &outflows);
+  let active_conditions = draft.conditions.iter().any(engine::is_active_condition);
+  let will_assign = rows
+    .iter()
+    .filter(|(_, status)| *status == engine::PreviewStatus::Assign)
+    .count();
+
+  let count_color = if active_conditions {
+    color::text::PRIMARY
+  } else {
+    color::text::tertiary()
+  };
+  let count_row = Row::with_children(vec![
+    text(rows.len().to_string())
+      .font(typography::body::MEDIUM)
+      .size(26.0)
+      .style(typography::colored(count_color))
+      .into(),
+    text(if rows.len() == 1 { "match" } else { "matches" })
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Bottom);
+
+  let mut head: Vec<Element<'a, Message>> = vec![eyebrow_label("Live preview"), count_row.into()];
+  if active_conditions {
+    let name = category.map(|category| category.name.clone()).unwrap_or_default();
+    head.push(mono_caption(
+      format!("{will_assign} will file into {name}"),
+      if will_assign > 0 {
+        color::status::ONLINE
+      } else {
+        color::text::tertiary()
+      },
+      10.0,
+    ));
+  }
+
+  let header = container(Column::with_children(head).spacing(8.0).width(Length::Fill))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 16.0,
+      bottom: 14.0,
+      left: 16.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let list: Element<'a, Message> = if !active_conditions {
+    preview_empty("Type a search or add a condition to see which transactions this rule catches.")
+  } else if rows.is_empty() {
+    preview_empty("No spending matches yet. It\u{2019}ll still file matching transactions as they arrive.")
+  } else {
+    let cards = rows
+      .iter()
+      .map(|(index, status)| preview_row(&outflows[*index], *status))
+      .collect::<Vec<Element<'a, Message>>>();
+    scrollable(Column::with_children(cards).width(Length::Fill))
+      .style(crate::ui::style::control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .into()
+  };
+
+  Column::with_children(vec![
+    header.into(),
+    container(list).width(Length::Fill).height(Length::Fill).into(),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .into()
+}
+
+fn preview_empty<'a>(message: &'a str) -> Element<'a, Message> {
+  container(
+    text(message.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .align_x(Horizontal::Center)
+      .style(typography::colored(color::text::tertiary())),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .padding(Padding {
+    top: 40.0,
+    right: 22.0,
+    bottom: 40.0,
+    left: 22.0,
+  })
+  .into()
+}
+
+fn preview_row<'a>(target: &engine::MatchTarget, status: engine::PreviewStatus) -> Element<'a, Message> {
+  let (label, tint) = preview_status_chip(status);
+  let primary = if target.item.is_empty() {
+    target.reference.clone()
+  } else {
+    target.item.clone()
+  };
+
+  let info = Column::with_children(vec![
+    text(primary)
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(target.type_token.clone())
+      .font(typography::mono::REGULAR)
+      .size(9.5)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .spacing(3.0)
+  .width(Length::Fill);
+
+  let row = Row::with_children(vec![
+    info.into(),
+    text(format!("-{}", crate::ui::format::fmt_isk(target.amount)))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::status::DANGER))
+      .into(),
+    status_chip(label, tint),
+  ])
+  .spacing(10.0)
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 9.0,
+      right: 14.0,
+      bottom: 9.0,
+      left: 14.0,
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn preview_status_chip(status: engine::PreviewStatus) -> (&'static str, Color) {
+  match status {
+    engine::PreviewStatus::Already => ("Already here", color::text::secondary()),
+    engine::PreviewStatus::Assign => ("Will file here", color::status::ONLINE),
+    engine::PreviewStatus::Manual => ("Manual \u{2014} kept", color::status::WARNING),
+    engine::PreviewStatus::Preempted => ("Higher rule wins", color::accent::PLASMA),
+  }
+}
+
+fn status_chip<'a>(label: &'a str, tint: Color) -> Element<'a, Message> {
+  container(
+    text(label.to_owned())
+      .font(typography::mono::REGULAR)
+      .size(8.5)
+      .style(typography::colored(tint)),
+  )
+  .padding(Padding {
+    top: 3.0,
+    right: 7.0,
+    bottom: 3.0,
+    left: 7.0,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.11))),
+    border: Border {
+      color: color::with_alpha(tint, 0.32),
+      width: 1.0,
+      radius: 4.0.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn rule_modal_footer<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
+  let can_save = draft.conditions.iter().any(engine::is_active_condition);
+  let save_label = if draft.rule_id.is_some() {
+    "Save rule"
+  } else {
+    "Create rule"
+  };
+
+  let footer = Row::with_children(vec![
+    text("Applies to matching past transactions and everything new. Manual assignments are never overridden.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .width(Length::Fill)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+    cancel_button(),
+    save_button(save_label, can_save),
+  ])
+  .spacing(12.0)
+  .align_y(Vertical::Center);
+
+  container(footer)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 14.0,
+      right: 18.0,
+      bottom: 14.0,
+      left: 18.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 0.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn cancel_button<'a>() -> Element<'a, Message> {
+  button(
+    text("Cancel")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding(Padding {
+    top: 9.0,
+    right: 16.0,
+    bottom: 9.0,
+    left: 16.0,
+  })
+  .on_press(Message::BudgetRuleEditorClosed)
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: if active { color::rule_strong() } else { color::rule() },
+        width: 1.0,
+        radius: 8.0.into(),
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn save_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Message> {
+  let mut save = button(
+    text(label.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(if enabled {
+        color::on_fill(color::accent::PLASMA)
+      } else {
+        color::text::tertiary()
+      })),
+  )
+  .padding(Padding {
+    top: 9.0,
+    right: 18.0,
+    bottom: 9.0,
+    left: 18.0,
+  })
+  .style(move |_, _| button::Style {
+    background: Some(Background::Color(if enabled {
+      color::accent::PLASMA
+    } else {
+      color::rule()
+    })),
+    border: Border {
+      radius: 8.0.into(),
+      ..Border::default()
+    },
+    text_color: if enabled {
+      color::on_fill(color::accent::PLASMA)
+    } else {
+      color::text::tertiary()
+    },
+    ..button::Style::default()
+  });
+  if enabled {
+    save = save.on_press(Message::BudgetRuleEditorCommitted);
+  }
+  save.into()
+}
+
+/// A select rendered as an `AnchoredDropdown`: a bordered trigger showing the
+/// current label that floats its option list when `open`. Clicking the trigger
+/// toggles the open select via [`Message::BudgetRuleSelectToggled`]; picking an
+/// option emits its own message (which closes the select). The dropdown also
+/// dismisses on outside click.
+fn select_dropdown<'a>(
+  label: &str,
+  options: Vec<Element<'a, Message>>,
+  fixed_width: f32,
+  key: budget::RuleSelectKey,
+  open: bool,
+) -> Element<'a, Message> {
+  let toggle = if open {
+    Message::BudgetRuleSelectToggled(None)
+  } else {
+    Message::BudgetRuleSelectToggled(Some(key))
+  };
+  let trigger = select_trigger(label, toggle);
+
+  let popover = open.then(|| {
+    container(
+      scrollable(Column::with_children(options).spacing(2.0))
+        .style(crate::ui::style::control::scrollbar)
+        .height(Length::Shrink),
+    )
+    .padding(spacing::SPACE_2)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: crate::ui::style::radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+  });
+
+  let dropdown = AnchoredDropdown::new(trigger, popover).on_dismiss(Message::BudgetRuleSelectToggled(None));
+
+  let element: Element<'a, Message> = dropdown.into();
+  if fixed_width > 0.0 {
+    container(element).width(Length::Fixed(fixed_width)).into()
+  } else {
+    container(element).width(Length::Fill).into()
+  }
+}
+
+fn select_trigger<'a>(label: &str, toggle: Message) -> Element<'a, Message> {
+  button(
+    Row::with_children(vec![
+      text(label.to_owned())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .width(Length::Fill)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      text("\u{25BE}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 7.0,
+    right: 10.0,
+    bottom: 7.0,
+    left: 10.0,
+  })
+  .on_press(toggle)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(color::surface::SUNKEN)),
+    border: Border {
+      color: color::rule(),
+      width: 1.0,
+      radius: 6.0.into(),
+    },
+    text_color: color::text::PRIMARY,
+    ..button::Style::default()
+  })
+  .into()
+}
+
+fn anchored_option<'a>(label: &str, selected: bool, on_press: Message) -> Element<'a, Message> {
+  button(
+    text(label.to_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(if selected {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      })),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_2_5,
+  })
+  .on_press(on_press)
+  .style(move |_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: Some(Background::Color(if selected || active {
+        color::with_alpha(color::accent::PLASMA, 0.08)
+      } else {
+        Color::TRANSPARENT
+      })),
+      border: Border {
+        radius: crate::ui::style::radius::SUBTLE.into(),
+        ..Border::default()
+      },
+      text_color: if selected {
+        color::text::PRIMARY
+      } else {
+        color::text::secondary()
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
+fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
+  let segments = [(MatchMode::All, "ALL"), (MatchMode::Any, "ANY")];
+  let buttons = segments
+    .into_iter()
+    .map(|(mode, label)| {
+      let is_active = mode == active;
+      button(
+        text(label)
+          .font(typography::body::MEDIUM)
+          .size(typography::size::SM)
+          .style(typography::colored(if is_active {
+            color::accent::PLASMA
+          } else {
+            color::text::secondary()
+          })),
+      )
+      .padding(Padding {
+        top: 6.0,
+        right: 13.0,
+        bottom: 6.0,
+        left: 13.0,
+      })
+      .on_press(Message::BudgetRuleEditorMatchModeSelected(mode))
+      .style(move |_, _| button::Style {
+        background: Some(Background::Color(if is_active {
+          color::with_alpha(color::accent::PLASMA, 0.14)
+        } else {
+          Color::TRANSPARENT
+        })),
+        text_color: if is_active {
+          color::accent::PLASMA
+        } else {
+          color::text::secondary()
+        },
+        ..button::Style::default()
+      })
+      .into()
+    })
+    .collect::<Vec<Element<'a, Message>>>();
+
+  container(Row::with_children(buttons))
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+/// Type options for the Type condition select: the humanized type tokens present
+/// in the loaded outflows (journal ref_types + the two market sides), de-duped and
+/// sorted by label.
+fn rule_type_options(state: &State) -> Vec<(String, String)> {
+  let mut seen = std::collections::BTreeMap::new();
+  for target in state.budget_outflows() {
+    seen
+      .entry(target.type_token.clone())
+      .or_insert_with(|| engine::humanize_ref_type(&target.type_token));
+  }
+  let mut options: Vec<(String, String)> = seen.into_iter().collect();
+  options.sort_by(|a, b| a.1.cmp(&b.1));
+  options
+}
+
+fn rule_character_options(state: &State) -> Vec<(String, String)> {
+  state
+    .roster()
+    .iter()
+    .map(|pilot| (pilot.id.to_string(), pilot.name.clone()))
+    .collect()
+}
+
+fn rule_draft_suggestion(state: &State, draft: &budget::RuleDraft) -> String {
+  engine::suggest_name(
+    &draft_to_rule(draft),
+    |token| Some(engine::humanize_ref_type(token)),
+    |key| character_name(state, key),
+  )
+}
+
+fn draft_to_rule(draft: &budget::RuleDraft) -> Rule {
+  Rule {
+    category_id: draft.category_id,
+    conditions: draft.conditions.clone(),
+    enabled: draft.enabled,
+    id: draft.rule_id.unwrap_or(0),
+    match_mode: draft.match_mode,
+    name: draft.name.clone(),
+  }
+}
+
+/// The live enabled rules excluding the one being edited, for preempt detection.
+fn other_rules(state: &State, draft: &budget::RuleDraft) -> Vec<Rule> {
+  state
+    .budget_rules()
+    .iter()
+    .filter(|rule| Some(rule.id()) != draft.rule_id)
+    .cloned()
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -2472,6 +4572,67 @@ mod tests {
     state.budget = Some(view());
     state.budget_selected = Some(1);
     state
+  }
+
+  fn sample_rule(id: i64, category_id: i64) -> Rule {
+    Rule {
+      category_id,
+      conditions: vec![crate::store::model::RuleCondition {
+        field: RuleField::Text,
+        op: RuleOp::Contains,
+        value: "Cerberus".to_owned(),
+        value2: None,
+      }],
+      enabled: true,
+      id,
+      match_mode: MatchMode::All,
+      name: "Doctrine hulls".to_owned(),
+    }
+  }
+
+  mod automation {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_automation_tab_with_a_rule() {
+      let mut state = state_with_budget();
+      state.budget_inspector_tab = budget::InspectorTab::Automation;
+      state.budget_chips.resolution.rules = vec![sample_rule(1, 1)];
+
+      let _el: Element<'_, Message> = inspector(&state);
+    }
+
+    #[test]
+    fn it_renders_the_automation_empty_state() {
+      let mut state = state_with_budget();
+      state.budget_inspector_tab = budget::InspectorTab::Automation;
+
+      let _el: Element<'_, Message> = inspector(&state);
+    }
+
+    #[test]
+    fn it_renders_the_rule_editor_modal_for_a_new_rule() {
+      let mut state = state_with_budget();
+      state.budget_rule_editor = Some(budget::RuleDraft::new(1));
+
+      let _el: Element<'_, Message> = rule_editor_modal(&state);
+    }
+
+    #[test]
+    fn it_renders_the_rule_editor_modal_in_advanced_mode() {
+      let mut state = state_with_budget();
+      let mut draft = budget::RuleDraft::from_rule(&sample_rule(5, 1));
+      draft.show_advanced = true;
+      draft.conditions.push(crate::store::model::RuleCondition {
+        field: RuleField::Amount,
+        op: RuleOp::Between,
+        value: "100m".to_owned(),
+        value2: Some("1b".to_owned()),
+      });
+      state.budget_rule_editor = Some(draft);
+
+      let _el: Element<'_, Message> = rule_editor_modal(&state);
+    }
   }
 
   mod surface {

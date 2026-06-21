@@ -22,7 +22,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      BudgetEntryKind, BudgetOwner, OwnerType, character_financials::CharacterFinancials,
+      BudgetEntryKind, BudgetOwner, MatchMode, OwnerType, RuleField, RuleOp, character_financials::CharacterFinancials,
       character_wallet_period_summary::CharacterWalletPeriodSummary,
     },
     repo::{character, finance, infra, org},
@@ -234,6 +234,8 @@ pub enum Message {
   BudgetEditorToneSelected(String),
   BudgetFilterApplied(BudgetFilterKind),
   BudgetFilterCleared,
+  BudgetGlobalRulesClosed,
+  BudgetGlobalRulesOpened,
   BudgetGroupAdded,
   BudgetGroupDeleteRequested(i64),
   BudgetGroupDragStarted(i64),
@@ -243,6 +245,7 @@ pub enum Message {
   BudgetInspectorDragEnd,
   BudgetInspectorDragged(f32),
   BudgetInspectorDragStart,
+  BudgetInspectorTabSelected(budget::InspectorTab),
   BudgetLoaded(Box<BudgetLoad>),
   BudgetModeSelected(budget::Mode),
   BudgetMonthStepped(i32),
@@ -252,6 +255,27 @@ pub enum Message {
   BudgetMoveOpened(i64, BudgetMoveAnchor),
   BudgetQuickAssign(i64, f64),
   BudgetRangeSelected(budget::BudgetRange),
+  BudgetRuleConditionAdded,
+  BudgetRuleConditionFieldChanged(usize, RuleField),
+  BudgetRuleConditionOpChanged(usize, RuleOp),
+  BudgetRuleConditionRemoved(usize),
+  BudgetRuleConditionValue2Changed(usize, String),
+  BudgetRuleConditionValueChanged(usize, String),
+  BudgetRuleDeleted(i64),
+  BudgetRuleDragStarted(i64),
+  BudgetRuleDropReleased,
+  BudgetRuleDropTargetEntered(i64),
+  BudgetRuleDropTargetLeft,
+  BudgetRuleEditOpened(i64),
+  BudgetRuleEditorAdvancedToggled,
+  BudgetRuleEditorClosed,
+  BudgetRuleEditorCommitted,
+  BudgetRuleEditorMatchModeSelected(MatchMode),
+  BudgetRuleEditorNameChanged(String),
+  BudgetRuleEditorSearchChanged(String),
+  BudgetRuleNewOpened(i64),
+  BudgetRuleSelectToggled(Option<budget::RuleSelectKey>),
+  BudgetRuleToggled(i64, bool),
   ChartHovered(Option<f32>),
   CloseContractDetail,
   ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
@@ -330,12 +354,15 @@ impl Message {
         | Message::BudgetEditorNoteChanged(_)
         | Message::BudgetEditorToggled
         | Message::BudgetEditorToneSelected(_)
+        | Message::BudgetGlobalRulesClosed
+        | Message::BudgetGlobalRulesOpened
         | Message::BudgetGroupAdded
         | Message::BudgetGroupDeleteRequested(_)
         | Message::BudgetGroupDragStarted(_)
         | Message::BudgetGroupRenameWritten
         | Message::BudgetGroupRenamed(_, _)
         | Message::BudgetGroupToggled(_)
+        | Message::BudgetInspectorTabSelected(_)
         | Message::BudgetLoaded(_)
         | Message::BudgetModeSelected(_)
         | Message::BudgetMonthStepped(_)
@@ -345,6 +372,27 @@ impl Message {
         | Message::BudgetMoveOpened(..)
         | Message::BudgetQuickAssign(_, _)
         | Message::BudgetRangeSelected(_)
+        | Message::BudgetRuleConditionAdded
+        | Message::BudgetRuleConditionFieldChanged(..)
+        | Message::BudgetRuleConditionOpChanged(..)
+        | Message::BudgetRuleConditionRemoved(_)
+        | Message::BudgetRuleConditionValue2Changed(..)
+        | Message::BudgetRuleConditionValueChanged(..)
+        | Message::BudgetRuleDeleted(_)
+        | Message::BudgetRuleDragStarted(_)
+        | Message::BudgetRuleDropReleased
+        | Message::BudgetRuleDropTargetEntered(_)
+        | Message::BudgetRuleDropTargetLeft
+        | Message::BudgetRuleEditOpened(_)
+        | Message::BudgetRuleEditorAdvancedToggled
+        | Message::BudgetRuleEditorClosed
+        | Message::BudgetRuleEditorCommitted
+        | Message::BudgetRuleEditorMatchModeSelected(_)
+        | Message::BudgetRuleEditorNameChanged(_)
+        | Message::BudgetRuleEditorSearchChanged(_)
+        | Message::BudgetRuleNewOpened(_)
+        | Message::BudgetRuleSelectToggled(_)
+        | Message::BudgetRuleToggled(_, _)
     )
   }
 }
@@ -467,17 +515,22 @@ pub struct State {
   budget_editing: Option<budget::EditingCell>,
   budget_editor: Option<budget::CategoryDraft>,
   budget_filter: Option<BudgetFilter>,
+  budget_global_rules_open: bool,
   budget_group_dragging: Option<i64>,
   budget_group_drop_target: Option<i64>,
   budget_history: Vec<crate::features::budget::MonthFlow>,
   budget_hovered_category: Option<i64>,
   budget_inspector: PaneDrag,
+  budget_inspector_tab: budget::InspectorTab,
   budget_mode: budget::Mode,
   budget_month: String,
   budget_move: Option<BudgetMove>,
   budget_pending_group_delete: Option<i64>,
   budget_picker: Option<(BudgetOwner, BudgetEntryKind, i64)>,
   budget_range: budget::BudgetRange,
+  budget_rule_dragging: Option<i64>,
+  budget_rule_drop_target: Option<i64>,
+  budget_rule_editor: Option<budget::RuleDraft>,
   budget_selected: Option<i64>,
   chart_hover: Option<f32>,
   contract_total: i64,
@@ -528,6 +581,7 @@ impl State {
       budget_editing: None,
       budget_editor: None,
       budget_filter: None,
+      budget_global_rules_open: false,
       budget_group_dragging: None,
       budget_group_drop_target: None,
       budget_history: Vec::new(),
@@ -537,12 +591,16 @@ impl State {
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       )
       .right_anchored(true),
+      budget_inspector_tab: budget::InspectorTab::default(),
       budget_mode: budget::Mode::default(),
       budget_month: budget::current_month(),
       budget_move: None,
       budget_pending_group_delete: None,
       budget_picker: None,
       budget_range: budget::BudgetRange::default(),
+      budget_rule_dragging: None,
+      budget_rule_drop_target: None,
+      budget_rule_editor: None,
       budget_selected: None,
       chart_hover: None,
       contract_total: 0,
@@ -725,6 +783,10 @@ impl State {
     self.budget_editor.as_ref()
   }
 
+  pub(super) fn budget_global_rules_open(&self) -> bool {
+    self.budget_global_rules_open
+  }
+
   pub(super) fn budget_group_drop_target(&self) -> Option<i64> {
     self.budget_group_drop_target
   }
@@ -733,12 +795,45 @@ impl State {
     &self.budget_history
   }
 
+  pub(super) fn budget_inspector_tab(&self) -> budget::InspectorTab {
+    self.budget_inspector_tab
+  }
+
   pub(super) fn budget_inspector_width(&self) -> f32 {
     self.budget_inspector.width()
   }
 
   pub(super) fn budget_is_past(&self) -> bool {
     self.budget_month.as_str() < budget::current_month().as_str()
+  }
+
+  /// Maps an outflow's index in [`Self::budget_outflows`] to its manually-pinned
+  /// category, so the rule editor's preview keeps hand-assigned rows out of a
+  /// rule's reach. The iteration order MUST match `budget_outflows` (journal then
+  /// market, outflows only).
+  pub(super) fn budget_manual_index(&self) -> std::collections::HashMap<usize, i64> {
+    let resolution = &self.budget_chips.resolution;
+    let mut map = std::collections::HashMap::new();
+    let mut index = 0;
+    for entry in &self.journal {
+      if !entry.match_target().is_outflow {
+        continue;
+      }
+      if let Some(category) = resolution.journal_overrides.get(&(entry.owner, entry.id)) {
+        map.insert(index, *category);
+      }
+      index += 1;
+    }
+    for entry in &self.market {
+      if !entry.match_target().is_outflow {
+        continue;
+      }
+      if let Some(category) = resolution.market_overrides.get(&(entry.owner, entry.transaction_id)) {
+        map.insert(index, *category);
+      }
+      index += 1;
+    }
+    map
   }
 
   pub(super) fn budget_mode(&self) -> budget::Mode {
@@ -753,6 +848,20 @@ impl State {
     self.budget_move.as_ref()
   }
 
+  /// Every loaded outflow flattened into a rule match target, for the rule editor's
+  /// live preview and per-rule match counts. Drawn from the in-memory journal +
+  /// market ledger (the loaded-and-paginated rows), mirroring the scope of the
+  /// uncategorized-count surface.
+  pub(super) fn budget_outflows(&self) -> Vec<crate::features::budget::MatchTarget> {
+    self
+      .journal
+      .iter()
+      .map(loaders::JournalEntry::match_target)
+      .chain(self.market.iter().map(loaders::MarketEntry::match_target))
+      .filter(|target| target.is_outflow)
+      .collect()
+  }
+
   pub(super) fn budget_pending_group_delete(&self) -> Option<i64> {
     self.budget_pending_group_delete
   }
@@ -763,6 +872,24 @@ impl State {
 
   pub(super) fn budget_range(&self) -> budget::BudgetRange {
     self.budget_range
+  }
+
+  pub(super) fn budget_rule_dragging(&self) -> Option<i64> {
+    self.budget_rule_dragging
+  }
+
+  pub(super) fn budget_rule_drop_target(&self) -> Option<i64> {
+    self.budget_rule_drop_target
+  }
+
+  pub(super) fn budget_rule_editor(&self) -> Option<&budget::RuleDraft> {
+    self.budget_rule_editor.as_ref()
+  }
+
+  /// The live automation rules in priority order, loaded into the chips'
+  /// resolution context.
+  pub(super) fn budget_rules(&self) -> &[crate::store::model::Rule] {
+    &self.budget_chips.resolution.rules
   }
 
   pub(super) fn budget_scope(&self) -> crate::store::model::BudgetScope {
@@ -1244,6 +1371,260 @@ fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) ->
   })
 }
 
+/// Opens the rule editor seeded from an existing rule by id. A no-op when the
+/// rule is no longer in the loaded set. Shared entry point reused by D's global
+/// rules manager.
+fn budget_open_rule_editor(state: &mut State, rule_id: i64) -> Task<Message> {
+  if let Some(rule) = state.budget_rules().iter().find(|rule| rule.id() == rule_id) {
+    state.budget_rule_editor = Some(budget::RuleDraft::from_rule(rule));
+  }
+  Task::none()
+}
+
+fn budget_open_global_rules(state: &mut State) -> Task<Message> {
+  state.budget_global_rules_open = true;
+  state.budget_rule_dragging = None;
+  state.budget_rule_drop_target = None;
+  Task::none()
+}
+
+/// Commits a drag-reorder of the global rule list: removes the dragged rule and
+/// re-inserts it ahead of the drop-target rule, persists the new priority via A's
+/// reorder repo, then re-derives so the winning rule for contested entries updates
+/// immediately. A drop onto the dragged rule itself (or with nothing dragging) is a
+/// no-op.
+fn budget_rule_drop_released(state: &mut State, db: &Database) -> Task<Message> {
+  let drop = state
+    .budget_rule_dragging
+    .take()
+    .zip(state.budget_rule_drop_target.take());
+  let Some((dragged, before)) = drop else {
+    return Task::none();
+  };
+  if dragged == before {
+    return Task::none();
+  }
+  let mut ordered: Vec<i64> = state
+    .budget_rules()
+    .iter()
+    .map(|rule| rule.id())
+    .filter(|id| *id != dragged)
+    .collect();
+  let position = ordered.iter().position(|id| *id == before).unwrap_or(ordered.len());
+  ordered.insert(position, dragged);
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    Box::pin(async move {
+      let _ = crate::store::repo::budget::reorder_rules(&db, &ordered).await;
+    })
+  })
+}
+
+fn budget_mutate_condition(
+  state: &mut State,
+  index: usize,
+  mutate: impl FnOnce(&mut crate::store::model::RuleCondition),
+) {
+  if let Some(condition) = state
+    .budget_rule_editor
+    .as_mut()
+    .and_then(|draft| draft.conditions.get_mut(index))
+  {
+    mutate(condition);
+  }
+}
+
+fn budget_close_rule_select(state: &mut State) {
+  if let Some(draft) = state.budget_rule_editor.as_mut() {
+    draft.open_select = None;
+  }
+}
+
+/// Threads the simple search box into the draft's first text-contains condition,
+/// inserting one at the front when the rule has none yet.
+fn budget_set_rule_search(state: &mut State, value: String) {
+  let Some(draft) = state.budget_rule_editor.as_mut() else {
+    return;
+  };
+  match draft.search_index() {
+    Some(index) => draft.conditions[index].value = value,
+    None => draft.conditions.insert(
+      0,
+      crate::store::model::RuleCondition {
+        field: RuleField::Text,
+        op: RuleOp::Contains,
+        value,
+        value2: None,
+      },
+    ),
+  }
+}
+
+/// Persists the open rule draft (create or update) then re-derives so matching
+/// outflows re-file into the category and the per-row chips refresh. A draft with
+/// no active condition is a guarded no-op (the Save button is also disabled).
+fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
+  let Some(draft) = state.budget_rule_editor.take() else {
+    return Task::none();
+  };
+  let active: Vec<crate::store::model::RuleCondition> = draft
+    .conditions
+    .iter()
+    .filter(|c| crate::features::budget::is_active_condition(c))
+    .cloned()
+    .collect();
+  if active.is_empty() {
+    return Task::none();
+  }
+  let name = budget_effective_rule_name(state, &draft);
+  let position = i64::try_from(state.budget_rules().len()).unwrap_or(i64::MAX);
+  let category_id = draft.category_id;
+  let enabled = draft.enabled;
+  let match_mode = draft.match_mode;
+  let rule_id = draft.rule_id;
+
+  budget_persist_then_reload(state, db, move |db, budget_scope, _month| {
+    Box::pin(async move {
+      persist_rule_draft(
+        &db,
+        budget_scope,
+        rule_id,
+        category_id,
+        enabled,
+        match_mode,
+        name,
+        position,
+        active,
+      )
+      .await;
+    })
+  })
+}
+
+/// Writes a rule draft to A's repo: updates the existing row (or creates one) then
+/// replaces its full condition set. Shared by the commit handler and its test so
+/// the persisted shape is exercised directly.
+#[allow(clippy::too_many_arguments)]
+async fn persist_rule_draft(
+  db: &Database,
+  scope: crate::store::model::BudgetScope,
+  rule_id: Option<i64>,
+  category_id: i64,
+  enabled: bool,
+  match_mode: MatchMode,
+  name: String,
+  position: i64,
+  conditions: Vec<crate::store::model::RuleCondition>,
+) {
+  let rule_id = match rule_id {
+    Some(id) => {
+      let _ = crate::store::repo::budget::update_rule(
+        db,
+        &crate::store::model::Rule {
+          category_id,
+          conditions: Vec::new(),
+          enabled,
+          id,
+          match_mode,
+          name,
+        },
+      )
+      .await;
+      Some(id)
+    }
+    None => crate::store::repo::budget::create_rule(
+      db,
+      &crate::store::repo::budget::NewRule {
+        category_id,
+        enabled,
+        match_mode,
+        name,
+        position,
+        scope,
+      },
+    )
+    .await
+    .ok()
+    .map(|rule| rule.id()),
+  };
+  if let Some(rule_id) = rule_id {
+    let _ = crate::store::repo::budget::replace_rule_conditions(db, rule_id, &conditions).await;
+  }
+}
+
+/// The name a draft would persist: the user's name when set, else B's auto-suggestion,
+/// else a fallback. Resolves Type/Character labels from the journal humanizer and the
+/// roster.
+fn budget_effective_rule_name(state: &State, draft: &budget::RuleDraft) -> String {
+  if draft.name_edited && !draft.name.trim().is_empty() {
+    return draft.name.clone();
+  }
+  let rule = crate::store::model::Rule {
+    category_id: draft.category_id,
+    conditions: draft.conditions.clone(),
+    enabled: draft.enabled,
+    id: draft.rule_id.unwrap_or(0),
+    match_mode: draft.match_mode,
+    name: draft.name.clone(),
+  };
+  let suggested = crate::features::budget::suggest_name(
+    &rule,
+    |token| Some(crate::features::budget::humanize_ref_type(token)),
+    |key| budget_character_name(state, key),
+  );
+  if suggested.trim().is_empty() {
+    "Untitled rule".to_owned()
+  } else {
+    suggested
+  }
+}
+
+fn budget_character_name(state: &State, key: &str) -> Option<String> {
+  let id = key.trim().parse::<i64>().ok()?;
+  state
+    .roster
+    .iter()
+    .find(|pilot| pilot.id == id)
+    .map(|pilot| pilot.name.clone())
+    .or_else(|| {
+      state
+        .corporations
+        .iter()
+        .find(|corp| corp.id == id)
+        .map(|corp| corp.name.clone())
+    })
+}
+
+/// Toggles a rule's enabled flag then re-derives so its effect appears/disappears
+/// across activity and chips.
+fn budget_toggle_rule(state: &mut State, db: &Database, rule_id: i64, enabled: bool) -> Task<Message> {
+  let Some(mut rule) = state.budget_rules().iter().find(|rule| rule.id() == rule_id).cloned() else {
+    return Task::none();
+  };
+  rule.enabled = enabled;
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    Box::pin(async move {
+      let _ = crate::store::repo::budget::update_rule(&db, &rule).await;
+    })
+  })
+}
+
+/// Deletes a rule (its conditions cascade) then re-derives. Closes the editor if it
+/// was editing the deleted rule.
+fn budget_delete_rule(state: &mut State, db: &Database, rule_id: i64) -> Task<Message> {
+  if state
+    .budget_rule_editor
+    .as_ref()
+    .is_some_and(|draft| draft.rule_id == Some(rule_id))
+  {
+    state.budget_rule_editor = None;
+  }
+  budget_persist_then_reload(state, db, move |db, _scope, _month| {
+    Box::pin(async move {
+      let _ = crate::store::repo::budget::delete_rule(&db, rule_id).await;
+    })
+  })
+}
+
 fn budget_auto_assign(state: &mut State, db: &Database) -> Task<Message> {
   let Some(view) = state.budget.clone() else {
     return Task::none();
@@ -1612,7 +1993,18 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
     Message::BudgetAutoAssign => budget_auto_assign(state, db),
     Message::BudgetCategorySelected(id) => budget_select_category(state, id),
     Message::BudgetCoverOverspending => budget_cover_overspending(state, db),
+    Message::BudgetGlobalRulesClosed => {
+      state.budget_global_rules_open = false;
+      state.budget_rule_dragging = None;
+      state.budget_rule_drop_target = None;
+      Task::none()
+    }
+    Message::BudgetGlobalRulesOpened => budget_open_global_rules(state),
     Message::BudgetGroupToggled(group_id) => budget_toggle_group(state, group_id),
+    Message::BudgetInspectorTabSelected(tab) => {
+      state.budget_inspector_tab = tab;
+      Task::none()
+    }
     // The Budget-tab view and the ledger picker's `budget_chips` are separate
     // sources of truth, so any structural edit (add/delete/rename/reorder a
     // category or group) that reloads the view must also refresh the chips —
@@ -1646,6 +2038,118 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.budget_range = range;
       Task::none()
     }
+    other => handle_budget_rule(state, other, db),
+  }
+}
+
+/// The Automation tab + rule editor messages: opening/closing the editor, editing
+/// its draft, and committing/toggling/deleting rules through A's repo. Split off
+/// [`handle_budget`] to keep its complexity bounded; unmatched messages fall
+/// through to [`handle_budget_chip`].
+fn handle_budget_rule(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::BudgetRuleConditionAdded => {
+      if let Some(draft) = state.budget_rule_editor.as_mut() {
+        draft
+          .conditions
+          .push(crate::features::budget::new_condition(RuleField::Party));
+      }
+      Task::none()
+    }
+    Message::BudgetRuleConditionFieldChanged(index, field) => {
+      budget_mutate_condition(state, index, |condition| {
+        *condition = crate::features::budget::new_condition(field);
+      });
+      budget_close_rule_select(state);
+      Task::none()
+    }
+    Message::BudgetRuleConditionOpChanged(index, op) => {
+      budget_mutate_condition(state, index, |condition| {
+        condition.op = op;
+        if op == RuleOp::Between && condition.value2.is_none() {
+          condition.value2 = Some(String::new());
+        }
+      });
+      budget_close_rule_select(state);
+      Task::none()
+    }
+    Message::BudgetRuleConditionRemoved(index) => {
+      if let Some(draft) = state.budget_rule_editor.as_mut()
+        && draft.conditions.len() > 1
+        && index < draft.conditions.len()
+      {
+        draft.conditions.remove(index);
+      }
+      Task::none()
+    }
+    Message::BudgetRuleConditionValue2Changed(index, value) => {
+      budget_mutate_condition(state, index, |condition| condition.value2 = Some(value));
+      Task::none()
+    }
+    Message::BudgetRuleConditionValueChanged(index, value) => {
+      budget_mutate_condition(state, index, |condition| condition.value = value);
+      budget_close_rule_select(state);
+      Task::none()
+    }
+    Message::BudgetRuleDeleted(rule_id) => budget_delete_rule(state, db, rule_id),
+    Message::BudgetRuleDragStarted(rule_id) => {
+      state.budget_rule_dragging = Some(rule_id);
+      state.budget_rule_drop_target = None;
+      Task::none()
+    }
+    Message::BudgetRuleDropReleased => budget_rule_drop_released(state, db),
+    Message::BudgetRuleDropTargetEntered(rule_id) => {
+      if state.budget_rule_dragging.is_some() {
+        state.budget_rule_drop_target = Some(rule_id);
+      }
+      Task::none()
+    }
+    Message::BudgetRuleDropTargetLeft => {
+      if state.budget_rule_dragging.is_none() {
+        state.budget_rule_drop_target = None;
+      }
+      Task::none()
+    }
+    Message::BudgetRuleEditOpened(rule_id) => budget_open_rule_editor(state, rule_id),
+    Message::BudgetRuleEditorAdvancedToggled => {
+      if let Some(draft) = state.budget_rule_editor.as_mut() {
+        draft.show_advanced = !draft.show_advanced;
+      }
+      Task::none()
+    }
+    Message::BudgetRuleEditorClosed => {
+      state.budget_rule_editor = None;
+      Task::none()
+    }
+    Message::BudgetRuleEditorCommitted => budget_commit_rule(state, db),
+    Message::BudgetRuleEditorMatchModeSelected(mode) => {
+      if let Some(draft) = state.budget_rule_editor.as_mut() {
+        draft.match_mode = mode;
+      }
+      Task::none()
+    }
+    Message::BudgetRuleEditorNameChanged(name) => {
+      if let Some(draft) = state.budget_rule_editor.as_mut() {
+        draft.name = name;
+        draft.name_edited = true;
+      }
+      Task::none()
+    }
+    Message::BudgetRuleEditorSearchChanged(value) => {
+      budget_set_rule_search(state, value);
+      Task::none()
+    }
+    Message::BudgetRuleNewOpened(category_id) => {
+      state.budget_rule_editor = Some(budget::RuleDraft::new(category_id));
+      Task::none()
+    }
+    Message::BudgetRuleSelectToggled(key) => {
+      if let Some(draft) = state.budget_rule_editor.as_mut() {
+        draft.open_select = if draft.open_select == key { None } else { key };
+      }
+      Task::none()
+    }
+    Message::BudgetRuleToggled(rule_id, enabled) => budget_toggle_rule(state, db, rule_id, enabled),
     other => handle_budget_chip(state, other, db),
   }
 }
@@ -1685,6 +2189,7 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
 fn budget_select_category(state: &mut State, id: i64) -> Task<Message> {
   state.budget_selected = Some(id);
   state.budget_editor = None;
+  state.budget_inspector_tab = budget::InspectorTab::Detail;
   // In edit mode the inspector shows the category editor, so seed its draft
   // from the freshly-selected category.
   if state.budget_edit_mode {
@@ -2213,6 +2718,11 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
       is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
     }));
   }
+  if state.budget_global_rules_open && state.budget_rule_editor.is_none() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::BudgetGlobalRulesClosed)
+    }));
+  }
   if state.budget_dragging.is_some() || state.budget_group_dragging.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       matches!(
@@ -2220,6 +2730,15 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
         iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
       )
       .then_some(Message::BudgetDropReleased)
+    }));
+  }
+  if state.budget_rule_dragging.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
+      )
+      .then_some(Message::BudgetRuleDropReleased)
     }));
   }
   if matches!(state.tab, Tab::Journal | Tab::Market) {
@@ -5601,6 +6120,243 @@ mod tests {
       let _ = update(&mut state, Message::BudgetGroupDeleteRequested(20), &db);
 
       assert!(state.budget_pending_group_delete().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_switches_the_inspector_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(
+        &mut state,
+        Message::BudgetInspectorTabSelected(budget::InspectorTab::Automation),
+        &db,
+      );
+
+      assert_eq!(state.budget_inspector_tab(), budget::InspectorTab::Automation);
+    }
+
+    #[tokio::test]
+    async fn it_resets_the_inspector_tab_when_selecting_a_category() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      state.budget_inspector_tab = budget::InspectorTab::Automation;
+
+      let _ = update(&mut state, Message::BudgetCategorySelected(1), &db);
+
+      assert_eq!(state.budget_inspector_tab(), budget::InspectorTab::Detail);
+    }
+
+    #[tokio::test]
+    async fn it_opens_and_closes_the_rule_editor_for_a_new_rule() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+      assert_eq!(state.budget_rule_editor().map(|draft| draft.category_id), Some(1));
+      assert!(state.budget_rule_editor().is_some_and(|draft| draft.rule_id.is_none()));
+
+      let _ = update(&mut state, Message::BudgetRuleEditorClosed, &db);
+      assert!(state.budget_rule_editor().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_threads_the_search_box_into_the_first_text_condition() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let _ = update(
+        &mut state,
+        Message::BudgetRuleEditorSearchChanged("Cerberus".to_owned()),
+        &db,
+      );
+
+      assert_eq!(state.budget_rule_editor().unwrap().search_value(), "Cerberus");
+    }
+
+    #[tokio::test]
+    async fn it_adds_and_removes_advanced_conditions() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let _ = update(&mut state, Message::BudgetRuleConditionAdded, &db);
+      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 2);
+
+      let _ = update(&mut state, Message::BudgetRuleConditionRemoved(1), &db);
+      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_at_least_one_condition_when_removing() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let _ = update(&mut state, Message::BudgetRuleConditionRemoved(0), &db);
+
+      assert_eq!(state.budget_rule_editor().unwrap().conditions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_changes_a_condition_field_and_seeds_its_default_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let _ = update(
+        &mut state,
+        Message::BudgetRuleConditionFieldChanged(0, RuleField::Amount),
+        &db,
+      );
+
+      let condition = &state.budget_rule_editor().unwrap().conditions[0];
+      assert_eq!(condition.field(), RuleField::Amount);
+      assert_eq!(condition.op(), RuleOp::GreaterThan);
+    }
+
+    #[tokio::test]
+    async fn it_tracks_the_open_select_dropdown() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let key = budget::RuleSelectKey::Field(0);
+      let _ = update(&mut state, Message::BudgetRuleSelectToggled(Some(key)), &db);
+      assert_eq!(state.budget_rule_editor().unwrap().open_select, Some(key));
+
+      let _ = update(&mut state, Message::BudgetRuleSelectToggled(Some(key)), &db);
+      assert!(state.budget_rule_editor().unwrap().open_select.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_persists_a_created_rule_and_closes_the_editor() {
+      let db = crate::store::open_test().await.unwrap();
+      let scope = crate::store::model::BudgetScope::All;
+      let group = crate::store::repo::budget::create_group(
+        &db,
+        &crate::store::repo::budget::NewGroup {
+          name: "Bills".to_owned(),
+          position: 0,
+          scope,
+        },
+      )
+      .await
+      .unwrap();
+      let category = crate::store::repo::budget::create_category(
+        &db,
+        &crate::store::repo::budget::NewCategory {
+          group_id: group.id,
+          name: "SRP".to_owned(),
+          note: None,
+          position: 0,
+          tone: Some("plasma".to_owned()),
+        },
+      )
+      .await
+      .unwrap();
+
+      persist_rule_draft(
+        &db,
+        scope,
+        None,
+        category.id,
+        true,
+        MatchMode::All,
+        "Cerberus".to_owned(),
+        0,
+        vec![crate::store::model::RuleCondition {
+          field: RuleField::Text,
+          op: RuleOp::Contains,
+          value: "Cerberus".to_owned(),
+          value2: None,
+        }],
+      )
+      .await;
+
+      let rules = crate::store::repo::budget::list_rules(&db, scope).await.unwrap();
+      assert_eq!(rules.len(), 1);
+      assert_eq!(rules[0].category_id(), category.id);
+      assert_eq!(rules[0].name(), "Cerberus");
+      assert_eq!(rules[0].conditions().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_updates_an_existing_rule_in_place() {
+      let db = crate::store::open_test().await.unwrap();
+      let scope = crate::store::model::BudgetScope::All;
+      let group = crate::store::repo::budget::create_group(
+        &db,
+        &crate::store::repo::budget::NewGroup {
+          name: "Bills".to_owned(),
+          position: 0,
+          scope,
+        },
+      )
+      .await
+      .unwrap();
+      let category = crate::store::repo::budget::create_category(
+        &db,
+        &crate::store::repo::budget::NewCategory {
+          group_id: group.id,
+          name: "SRP".to_owned(),
+          note: None,
+          position: 0,
+          tone: None,
+        },
+      )
+      .await
+      .unwrap();
+      let created = crate::store::repo::budget::create_rule(
+        &db,
+        &crate::store::repo::budget::NewRule {
+          category_id: category.id,
+          enabled: true,
+          match_mode: MatchMode::All,
+          name: "Old".to_owned(),
+          position: 0,
+          scope,
+        },
+      )
+      .await
+      .unwrap();
+
+      persist_rule_draft(
+        &db,
+        scope,
+        Some(created.id()),
+        category.id,
+        false,
+        MatchMode::Any,
+        "New".to_owned(),
+        0,
+        vec![crate::store::model::RuleCondition {
+          field: RuleField::Item,
+          op: RuleOp::Contains,
+          value: "Missile".to_owned(),
+          value2: None,
+        }],
+      )
+      .await;
+
+      let rules = crate::store::repo::budget::list_rules(&db, scope).await.unwrap();
+      assert_eq!(rules.len(), 1);
+      assert_eq!(rules[0].name(), "New");
+      assert!(!rules[0].enabled());
+      assert_eq!(rules[0].conditions().len(), 1);
+      assert_eq!(rules[0].conditions()[0].value(), "Missile");
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_editor_on_commit() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      let _ = update(&mut state, Message::BudgetRuleNewOpened(1), &db);
+
+      let _ = update(&mut state, Message::BudgetRuleEditorCommitted, &db);
+
+      assert!(state.budget_rule_editor().is_none());
     }
   }
 

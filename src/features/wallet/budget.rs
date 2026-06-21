@@ -23,6 +23,13 @@ pub enum Mode {
   Reflect,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum InspectorTab {
+  #[default]
+  Detail,
+  Automation,
+}
+
 /// RTA is derived (pool − Σ assigned), not stored; a move to it just sheds the
 /// amount from the source rather than writing a second assignment row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +120,88 @@ impl CategoryDraft {
       by_date: (self.target_kind == TargetKind::GoalBy && !self.by_date.is_empty()).then(|| self.by_date.clone()),
       kind: self.target_kind,
     }
+  }
+}
+
+/// Which advanced-mode select dropdown is open in the rule editor, by condition
+/// row index and slot. Only one is open at a time; the value-editor select is the
+/// field's keyed picker (Type/Character/Direction).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuleSelectKey {
+  Field(usize),
+  Op(usize),
+  Value(usize),
+}
+
+/// The rule editor's working copy: a new or existing automation rule edited
+/// locally until committed. `rule_id` is `None` for a brand-new rule and
+/// `Some(id)` when editing an existing one. `conditions` carries the live,
+/// possibly-incomplete condition rows; inactive rows are dropped at match time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuleDraft {
+  pub category_id: i64,
+  pub conditions: Vec<crate::store::model::RuleCondition>,
+  pub enabled: bool,
+  pub match_mode: crate::store::model::MatchMode,
+  pub name: String,
+  pub name_edited: bool,
+  pub open_select: Option<RuleSelectKey>,
+  pub rule_id: Option<i64>,
+  pub show_advanced: bool,
+}
+
+impl RuleDraft {
+  /// A fresh draft filing into `category_id`, seeded with one empty text-contains
+  /// condition so the search box has a row to bind to.
+  pub fn new(category_id: i64) -> Self {
+    RuleDraft {
+      category_id,
+      conditions: vec![math::new_condition(crate::store::model::RuleField::Text)],
+      enabled: true,
+      match_mode: crate::store::model::MatchMode::All,
+      name: String::new(),
+      name_edited: false,
+      open_select: None,
+      rule_id: None,
+      show_advanced: false,
+    }
+  }
+
+  /// A draft seeded from an existing rule, opening advanced mode unless the rule
+  /// is a single text-contains condition (the search-box-first shape).
+  pub fn from_rule(rule: &crate::store::model::Rule) -> Self {
+    use crate::store::model::{RuleField, RuleOp};
+    let conditions = rule.conditions().clone();
+    let simple = matches!(
+      conditions.as_slice(),
+      [only] if only.field() == RuleField::Text && only.op() == RuleOp::Contains
+    );
+    RuleDraft {
+      category_id: rule.category_id(),
+      conditions,
+      enabled: rule.enabled(),
+      match_mode: rule.match_mode(),
+      name: rule.name().clone(),
+      name_edited: !rule.name().is_empty(),
+      open_select: None,
+      rule_id: Some(rule.id()),
+      show_advanced: !simple,
+    }
+  }
+
+  pub fn search_index(&self) -> Option<usize> {
+    use crate::store::model::{RuleField, RuleOp};
+    self
+      .conditions
+      .iter()
+      .position(|c| c.field() == RuleField::Text && c.op() == RuleOp::Contains)
+  }
+
+  pub fn search_value(&self) -> &str {
+    self
+      .search_index()
+      .map(|index| self.conditions[index].value())
+      .map_or("", String::as_str)
   }
 }
 
@@ -1052,6 +1141,82 @@ pub async fn persist_category_edit(db: &Database, category: &crate::store::model
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod rule_draft {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{MatchMode, Rule, RuleCondition, RuleField, RuleOp};
+
+    fn rule(conditions: Vec<RuleCondition>) -> Rule {
+      Rule {
+        category_id: 7,
+        conditions,
+        enabled: true,
+        id: 11,
+        match_mode: MatchMode::All,
+        name: "Broker fees".to_owned(),
+      }
+    }
+
+    fn contains(value: &str) -> RuleCondition {
+      RuleCondition {
+        field: RuleField::Text,
+        op: RuleOp::Contains,
+        value: value.to_owned(),
+        value2: None,
+      }
+    }
+
+    #[test]
+    fn it_seeds_a_new_draft_with_one_empty_text_condition() {
+      let draft = RuleDraft::new(3);
+
+      assert_eq!(draft.category_id, 3);
+      assert_eq!(draft.conditions.len(), 1);
+      assert_eq!(draft.conditions[0].field(), RuleField::Text);
+      assert_eq!(draft.rule_id, None);
+      assert!(!draft.show_advanced);
+    }
+
+    #[test]
+    fn it_opens_advanced_for_a_multi_condition_rule() {
+      let draft = RuleDraft::from_rule(&rule(vec![
+        contains("Cerberus"),
+        RuleCondition {
+          field: RuleField::Type,
+          op: RuleOp::Is,
+          value: "broker_fee".to_owned(),
+          value2: None,
+        },
+      ]));
+
+      assert_eq!(draft.rule_id, Some(11));
+      assert!(draft.show_advanced);
+      assert!(draft.name_edited);
+    }
+
+    #[test]
+    fn it_keeps_simple_mode_for_a_single_text_contains_rule() {
+      let draft = RuleDraft::from_rule(&rule(vec![contains("SKIN")]));
+
+      assert!(!draft.show_advanced);
+      assert_eq!(draft.search_value(), "SKIN");
+    }
+
+    #[test]
+    fn it_reports_an_empty_search_when_no_text_contains_condition_exists() {
+      let draft = RuleDraft::from_rule(&rule(vec![RuleCondition {
+        field: RuleField::Amount,
+        op: RuleOp::GreaterThan,
+        value: "100m".to_owned(),
+        value2: None,
+      }]));
+
+      assert_eq!(draft.search_index(), None);
+      assert_eq!(draft.search_value(), "");
+    }
+  }
 
   mod move_category {
     use pretty_assertions::assert_eq;

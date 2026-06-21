@@ -38,7 +38,6 @@ const OP_NOT_CONTAINS: &str = "ncontains";
 
 const OP_STARTS_WITH: &str = "starts";
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum MatchMode {
   #[default]
@@ -46,7 +45,6 @@ pub enum MatchMode {
   Any,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum RuleField {
   Amount,
@@ -61,7 +59,6 @@ pub enum RuleField {
   Type,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum RuleOp {
   Between,
@@ -75,7 +72,6 @@ pub enum RuleOp {
   StartsWith,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, CopyGetters, Debug, Getters, PartialEq)]
 pub struct Rule {
   #[getset(get_copy = "pub")]
@@ -92,7 +88,6 @@ pub struct Rule {
   pub name: String,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, CopyGetters, Debug, Getters, PartialEq)]
 pub struct RuleCondition {
   #[getset(get_copy = "pub")]
@@ -114,7 +109,6 @@ impl MatchMode {
   }
 
   /// Parses a DB key, returning `All` for any unrecognised value rather than panicking.
-  #[allow(dead_code)]
   pub fn from_key(key: &str) -> Self {
     match key {
       MATCH_MODE_ANY => MatchMode::Any,
@@ -139,7 +133,6 @@ impl RuleField {
   }
 
   /// Parses a DB key, returning `Text` for any unrecognised value rather than panicking.
-  #[allow(dead_code)]
   pub fn from_key(key: &str) -> Self {
     match key {
       FIELD_AMOUNT => RuleField::Amount,
@@ -170,7 +163,6 @@ impl RuleOp {
   }
 
   /// Parses a DB key, returning `Contains` for any unrecognised value rather than panicking.
-  #[allow(dead_code)]
   pub fn from_key(key: &str) -> Self {
     match key {
       OP_BETWEEN => RuleOp::Between,

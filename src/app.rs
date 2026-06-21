@@ -94,6 +94,12 @@ const RAIL_HOVER_GRACE: Duration = Duration::from_millis(160);
 
 const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Trailing-debounce window for the heavy `load_roster_at` reload. A sync burst re-marks
+/// `roster_dirty` on every `Finished` event, and the 450ms pulse would otherwise drain it ~2x/s.
+/// Collapsing those to one reload per window keeps the interactive reader pool from starving while
+/// still refreshing the roster within a couple of pulses of the burst settling.
+const ROSTER_RELOAD_DEBOUNCE: Duration = Duration::from_millis(1500);
+
 const RUNTIME_CHANNEL_BUFFER: usize = 64;
 
 const SCALE_MAX: u8 = 150;
@@ -101,6 +107,27 @@ const SCALE_MAX: u8 = 150;
 const SCALE_MIN: u8 = 85;
 
 const TRASH_PURGE_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
+
+/// Clock-tick cadences (in 1-second ticks) for the periodic interactive-DB checks. The tick handler
+/// fires every second, so each check runs only on ticks where `clock_tick % N == offset`. Staggering
+/// the offsets keeps the ~7 queries from all landing on the same tick, and stretching the low-urgency
+/// checks cuts the steady-state interactive load that was starving the reader pool.
+///
+/// Snooze wake and mail-unread are user-facing freshness signals, so they stay snappy (every 2s on
+/// opposite ticks). Calendar attention is a quieter badge (every 3s). The route-scoped reloads only
+/// fire when their screen is open, but the long-lived industry jobs need far less polling than the
+/// faster-moving mail and calendar views.
+const TICK_SNOOZE_WAKE: u64 = 2;
+
+const TICK_MAIL_UNREAD: u64 = 2;
+
+const TICK_MAIL_RELOAD: u64 = 2;
+
+const TICK_CALENDAR_ATTENTION: u64 = 3;
+
+const TICK_CALENDAR_RELOAD: u64 = 2;
+
+const TICK_INDUSTRY_RELOAD: u64 = 5;
 
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   height: 0.0,
@@ -120,6 +147,9 @@ struct App {
   calendar_attention: i64,
   character_detail: Option<character_detail::State>,
   character_manager: Option<character_manager::State>,
+  /// Monotonic count of 1-second clock ticks, used to stagger the periodic interactive-DB checks
+  /// across ticks (see the `TICK_*` cadences) instead of firing them all on every tick.
+  clock_tick: u64,
   coalescer: WriteCoalescer,
   compare: Option<(window::Id, skills_compare::State)>,
   /// Whether the data-loss confirmation gate is open. `true` means the first "Take over" click has
@@ -141,6 +171,10 @@ struct App {
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
+  /// Trailing-debounce floor for the heavy roster reload. `None` lets the next dirty pulse reload
+  /// immediately; `Some` holds the earliest instant another reload may fire, so a sync burst that
+  /// keeps re-marking `roster_dirty` collapses into one reload per [`ROSTER_RELOAD_DEBOUNCE`] window.
+  next_roster_reload: Option<Instant>,
   /// `None` arms the purge for the very next clock tick (fires once shortly after launch); `Some`
   /// holds the earliest instant it may run again.
   next_trash_purge: Option<Instant>,
@@ -808,6 +842,7 @@ fn boot() -> (App, Task<Message>) {
     calendar_attention: 0,
     character_detail: None,
     character_manager: None,
+    clock_tick: 0,
     coalescer: WriteCoalescer::new(),
     compare: None,
     confirm_force_takeover: false,
@@ -823,6 +858,7 @@ fn boot() -> (App, Task<Message>) {
     last_synced: None,
     mail: None,
     mail_unread: 0,
+    next_roster_reload: None,
     next_trash_purge: None,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
@@ -1625,10 +1661,22 @@ fn drain_detail_dirty(app: &mut App) -> Option<Task<Message>> {
 }
 
 fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
+  drain_roster_dirty_at(app, Instant::now())
+}
+
+/// Trailing-debounced drain of the roster-reload flag. During a sync burst `roster_dirty` is re-set
+/// on every `Finished` event, so without a floor the 450ms pulse would re-fire the heavy reload
+/// ~2x/s. Holding the dirty flag until [`ROSTER_RELOAD_DEBOUNCE`] has elapsed collapses the burst
+/// into one reload per window; the flag stays set so a later pulse reloads once the window opens.
+fn drain_roster_dirty_at(app: &mut App, now: Instant) -> Option<Task<Message>> {
   if !app.roster_dirty || app.character_manager.is_none() {
     return None;
   }
+  if app.next_roster_reload.is_some_and(|floor| now < floor) {
+    return None;
+  }
   app.roster_dirty = false;
+  app.next_roster_reload = Some(now + ROSTER_RELOAD_DEBOUNCE);
   let runtime = app.runtime.as_ref()?;
   Some(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager))
 }
@@ -4054,18 +4102,61 @@ fn owned_pilot_ids(app: &App) -> Vec<i64> {
     .collect()
 }
 
+/// Which staggered interactive-DB checks are due on a given 1-second tick. Each check runs only on
+/// the ticks where `tick % cadence == offset`, so the ~7 per-second queries are spread across ticks
+/// (and the low-urgency ones stretched to multi-second cadences) instead of all firing every tick.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ClockChecks {
+  calendar_attention: bool,
+  calendar_reload: bool,
+  industry_reload: bool,
+  mail_reload: bool,
+  mail_unread: bool,
+  snooze_wake: bool,
+}
+
+impl ClockChecks {
+  fn for_tick(tick: u64) -> Self {
+    Self {
+      calendar_attention: tick % TICK_CALENDAR_ATTENTION == 1,
+      calendar_reload: tick % TICK_CALENDAR_RELOAD == 1,
+      industry_reload: tick % TICK_INDUSTRY_RELOAD == 2,
+      mail_reload: tick.is_multiple_of(TICK_MAIL_RELOAD),
+      mail_unread: tick % TICK_MAIL_UNREAD == 1,
+      snooze_wake: tick.is_multiple_of(TICK_SNOOZE_WAKE),
+    }
+  }
+}
+
 fn handle_clock_tick(app: &mut App) -> Task<Message> {
   app.now = Utc::now();
+  app.clock_tick = app.clock_tick.wrapping_add(1);
   drain_due_save(app, Instant::now());
-  Task::batch([
-    snooze_wake_tick(app),
-    trash_purge_tick(app),
-    mail_unread_tick(app),
-    mail_clock_reload(app),
-    calendar_attention_tick(app),
-    calendar_clock_reload(app),
-    industry_clock_reload(app),
-  ])
+
+  // Stagger the periodic interactive-DB checks across ticks (see the `TICK_*` cadences) so the ~7
+  // queries no longer all fire on every 1s tick and starve the reader pool. `trash_purge_tick`
+  // carries its own multi-hour floor, so it stays on every tick (the gate is a cheap time compare).
+  let due = ClockChecks::for_tick(app.clock_tick);
+  let mut tasks: Vec<Task<Message>> = vec![trash_purge_tick(app)];
+  if due.snooze_wake {
+    tasks.push(snooze_wake_tick(app));
+  }
+  if due.mail_unread {
+    tasks.push(mail_unread_tick(app));
+  }
+  if due.mail_reload {
+    tasks.push(mail_clock_reload(app));
+  }
+  if due.calendar_attention {
+    tasks.push(calendar_attention_tick(app));
+  }
+  if due.calendar_reload {
+    tasks.push(calendar_clock_reload(app));
+  }
+  if due.industry_reload {
+    tasks.push(industry_clock_reload(app));
+  }
+  Task::batch(tasks)
 }
 
 fn handle_init_failed(app: &mut App, error: String) -> Task<Message> {
@@ -4885,6 +4976,7 @@ mod tests {
       calendar_attention: 0,
       character_detail: None,
       character_manager: None,
+      clock_tick: 0,
       coalescer: WriteCoalescer::new(),
       compare: None,
       confirm_force_takeover: false,
@@ -4900,6 +4992,7 @@ mod tests {
       last_synced: None,
       mail: None,
       mail_unread: 0,
+      next_roster_reload: None,
       next_trash_purge: None,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
@@ -8110,6 +8203,112 @@ mod tests {
 
       let _ = update(&mut app, Message::SyncPulse);
       assert!(!app.roster_dirty, "a quiet pulse schedules no further reload");
+    }
+
+    #[test]
+    fn it_holds_a_re_dirtied_roster_until_the_debounce_window_opens() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      let start = Instant::now();
+
+      // First drain in the burst reloads immediately and arms the trailing-debounce floor.
+      app.roster_dirty = true;
+      let _ = drain_roster_dirty_at(&mut app, start);
+      assert!(!app.roster_dirty, "the first dirty pulse reloads and clears the flag");
+      assert!(app.next_roster_reload.is_some(), "the reload arms a debounce floor");
+
+      // A later Finished event inside the window re-marks the roster, but a pulse must not reload yet.
+      app.roster_dirty = true;
+      let _ = drain_roster_dirty_at(&mut app, start + Duration::from_millis(450));
+      assert!(
+        app.roster_dirty,
+        "a re-dirty inside the debounce window is held, not reloaded ~2x/s"
+      );
+    }
+
+    #[test]
+    fn it_reloads_the_roster_again_once_the_debounce_window_elapses() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+      let start = Instant::now();
+
+      app.roster_dirty = true;
+      let _ = drain_roster_dirty_at(&mut app, start);
+
+      app.roster_dirty = true;
+      let _ = drain_roster_dirty_at(&mut app, start + ROSTER_RELOAD_DEBOUNCE + Duration::from_millis(1));
+      assert!(
+        !app.roster_dirty,
+        "once the debounce window opens the held refresh fires and clears the flag"
+      );
+    }
+
+    #[test]
+    fn it_staggers_the_clock_checks_so_they_do_not_all_fire_on_one_tick() {
+      // No single tick should carry every staggered check; the whole point is to spread the load.
+      for tick in 0..30u64 {
+        let due = ClockChecks::for_tick(tick);
+        let firing = [
+          due.snooze_wake,
+          due.mail_unread,
+          due.mail_reload,
+          due.calendar_attention,
+          due.calendar_reload,
+          due.industry_reload,
+        ]
+        .iter()
+        .filter(|fired| **fired)
+        .count();
+        assert!(
+          firing < 6,
+          "tick {tick} fired all staggered checks at once; they should be spread across ticks"
+        );
+      }
+    }
+
+    #[test]
+    fn it_keeps_user_facing_checks_fresh_within_their_cadence() {
+      // Snooze, mail, and calendar freshness must still fire at least once across any short window so
+      // there is no behavioral regression in wake/unread/attention promptness.
+      let window: Vec<ClockChecks> = (0..6).map(ClockChecks::for_tick).collect();
+      assert!(
+        window.iter().any(|c| c.snooze_wake),
+        "snooze wake still fires regularly"
+      );
+      assert!(
+        window.iter().any(|c| c.mail_unread),
+        "mail unread still fires regularly"
+      );
+      assert!(
+        window.iter().any(|c| c.mail_reload),
+        "mail reload still fires regularly"
+      );
+      assert!(
+        window.iter().any(|c| c.calendar_attention),
+        "calendar attention still fires regularly"
+      );
+      assert!(
+        window.iter().any(|c| c.calendar_reload),
+        "calendar reload still fires regularly"
+      );
+      // Industry jobs are long-lived, so its reload is the rarest but must still recur.
+      let long_window: Vec<ClockChecks> = (0..10).map(ClockChecks::for_tick).collect();
+      assert!(
+        long_window.iter().any(|c| c.industry_reload),
+        "industry reload still recurs on its slower cadence"
+      );
+    }
+
+    #[test]
+    fn it_advances_the_clock_tick_counter_each_tick() {
+      let mut app = test_app();
+      assert_eq!(app.clock_tick, 0);
+
+      let _ = update(&mut app, Message::ClockTick);
+      assert_eq!(app.clock_tick, 1);
+
+      let _ = update(&mut app, Message::ClockTick);
+      assert_eq!(app.clock_tick, 2);
     }
 
     #[test]

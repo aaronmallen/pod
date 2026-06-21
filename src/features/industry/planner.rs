@@ -5,10 +5,13 @@ use iced::Point;
 use super::{
   Scope,
   planner_loaders::{self, Category, PlannerData, PlannerFacility, Recipe},
-  planner_model::{BuildNode, BuildPlan, MergedBuildJob, RawTotal, StockAllocation, StockSelection, allocate_stock},
+  planner_model::{
+    BuildNode, BuildPlan, MergedBuildJob, PlanSegment, RawTotal, StockAllocation, StockSelection, allocate_stock,
+    merge_segments, reconcile_segments, remove_segment, set_segment_runs, split_segments,
+  },
 };
 use crate::{
-  store::repo::industry::{PlanTree, PlanType},
+  store::repo::industry::{self as industry_repo, PlanTree, PlanType},
   ui::components::resizable_pane::PaneDrag,
   window_state::UiState,
 };
@@ -107,6 +110,15 @@ pub struct MaterialMenu {
   pub mat: i64,
 }
 
+/// The build-order right-click menu: which job (by product `type_id`) it targets, where to anchor it, and
+/// whether that job is already split (so the menu can offer "Merge back into one job").
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderMenu {
+  pub anchor: Point,
+  pub split: bool,
+  pub type_id: i64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Message {
   BreakDownAll,
@@ -144,6 +156,25 @@ pub enum Message {
   NodeCollapsed {
     type_id: i64,
   },
+  OrderJobMerged {
+    type_id: i64,
+  },
+  OrderJobRightPressed {
+    type_id: i64,
+  },
+  OrderJobSplit {
+    type_id: i64,
+  },
+  OrderMenuClosed,
+  OrderSegmentRemoved {
+    index: usize,
+    type_id: i64,
+  },
+  OrderSegmentRunsChanged {
+    index: usize,
+    type_id: i64,
+    value: String,
+  },
   PaneDrag(f32),
   PaneDragEnd,
   PaneDragStart,
@@ -153,7 +184,10 @@ pub enum Message {
   PickerToggled,
   PlanDeleteRequested(i64),
   PlanLoadRequested(i64),
-  PlanRestored(Box<PlanTree>),
+  PlanRestored {
+    segments: Vec<industry_repo::PlanSegment>,
+    tree: Box<PlanTree>,
+  },
   PlanSaveRequested,
   PlansListed(Vec<SavedPlanData>),
   ProductPicked(i64),
@@ -232,6 +266,12 @@ pub struct Planner {
   /// On-hand quantity at the build sites keyed by `(site, type_id)`, the input to [`allocate_stock`]. Loaded
   /// from `store::repo::assets::on_hand_at_build_sites`; empty until that load lands.
   on_hand: HashMap<(i64, i64), i64>,
+  /// The open build-order right-click menu, if any.
+  order_menu: Option<OrderMenu>,
+  /// Per-TYPE stored build-order segments (the split of a job's runs across pilot/clone slots), keyed by
+  /// product `type_id`. Stored positionally; reconciled against the type's live total runs on read so the
+  /// segments always sum to the job total. A type absent here renders as one implicit full segment.
+  order_segments: BTreeMap<i64, Vec<PlanSegment>>,
   /// A blueprint type id queued by "Plan Build" before the catalog finished loading; consumed by
   /// [`Planner::apply_data`] to seed its product as the root once recipes are available.
   pending_blueprint_seed: Option<i64>,
@@ -276,6 +316,8 @@ impl Planner {
       loaded: false,
       menu: None,
       on_hand: HashMap::new(),
+      order_menu: None,
+      order_segments: BTreeMap::new(),
       pending_blueprint_seed: None,
       picker_open: false,
       picker_scroll_offset: 0.0,
@@ -455,6 +497,30 @@ impl Planner {
     self.menu.as_ref()
   }
 
+  pub fn order_menu(&self) -> Option<&OrderMenu> {
+    self.order_menu.as_ref()
+  }
+
+  /// The build-order segments for `type_id`, reconciled against its current total runs so they always sum to
+  /// the job total: a type with no stored split renders as one implicit full unassigned segment.
+  pub fn segments_for(&self, type_id: i64) -> Vec<PlanSegment> {
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    reconcile_segments(stored, self.total_runs_for(type_id))
+  }
+
+  /// Total assigned vs total segments across every build-order job, for the section header
+  /// "x/y assigned". A segment counts as assigned once it carries a pilot.
+  pub fn order_assignment(&self) -> (usize, usize) {
+    let mut assigned = 0;
+    let mut total = 0;
+    for job in self.merged_build_order() {
+      let segments = self.segments_for(job.type_id);
+      assigned += segments.iter().filter(|segment| segment.pilot_id.is_some()).count();
+      total += segments.len();
+    }
+    (assigned, total)
+  }
+
   /// Whether a memoized plan is present (a product is chosen and its tree assembled). Lets `view` gate the
   /// bill of materials / build order without cloning the cached [`BuildPlan`].
   pub fn has_plan(&self) -> bool {
@@ -574,9 +640,29 @@ impl Planner {
     self.recompute();
     self.restore_stock_selections(tree);
     self.facility_picker = None;
+    self.order_menu = None;
+    self.order_segments.clear();
     self.collapsed_rows.clear();
     self.push_recent(tree.product_type_id);
     self.recompute();
+  }
+
+  /// Rehydrates per-type build-order segments from persisted rows (grouped by `type_id`, ordered by
+  /// `segment_index`). Reconciliation against the live total runs happens lazily on read, so the stored
+  /// runs are kept verbatim here. Call after [`restore`], which clears any prior segments.
+  pub fn restore_segments(&mut self, segments: &[industry_repo::PlanSegment]) {
+    self.order_segments.clear();
+    for segment in segments {
+      self
+        .order_segments
+        .entry(segment.type_id)
+        .or_default()
+        .push(PlanSegment {
+          clone_id: segment.clone_id,
+          pilot_id: segment.pilot_id,
+          runs: segment.runs,
+        });
+    }
   }
 
   /// Rebuilds the use-stock intent from a saved tree: each `use_stock` type with a pinned facility becomes a
@@ -765,6 +851,30 @@ impl Planner {
     })
   }
 
+  /// The build-order segments to persist for the current plan: one indexed [`industry_repo::PlanSegment`]
+  /// row per stored segment, reconciled to its type's live total runs. A type carrying only one implicit
+  /// full unassigned segment is omitted (it reconstructs from absence), so an untouched plan persists none.
+  pub fn segments(&self) -> Vec<industry_repo::PlanSegment> {
+    let mut out = Vec::new();
+    for &type_id in self.order_segments.keys() {
+      let segments = self.segments_for(type_id);
+      let trivial = segments.len() == 1 && segments[0].pilot_id.is_none() && segments[0].clone_id.is_none();
+      if trivial {
+        continue;
+      }
+      for (index, segment) in segments.iter().enumerate() {
+        out.push(industry_repo::PlanSegment {
+          clone_id: segment.clone_id,
+          pilot_id: segment.pilot_id,
+          runs: segment.runs,
+          segment_index: index as i64,
+          type_id,
+        });
+      }
+    }
+    out
+  }
+
   pub fn with_restored_panes(mut self, ui: &UiState) -> Self {
     let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
     self.detail_pane = PaneDrag::from_store_with_min(
@@ -818,6 +928,22 @@ impl Planner {
       | Message::NodeCollapsed {
         ..
       } => self.update_menu(message),
+      Message::OrderJobMerged {
+        ..
+      }
+      | Message::OrderJobRightPressed {
+        ..
+      }
+      | Message::OrderJobSplit {
+        ..
+      }
+      | Message::OrderMenuClosed
+      | Message::OrderSegmentRemoved {
+        ..
+      }
+      | Message::OrderSegmentRunsChanged {
+        ..
+      } => self.update_order(message),
       Message::PaneDrag(x) => {
         self.detail_pane.drag_to(x);
       }
@@ -830,8 +956,12 @@ impl Planner {
       // The DB round trips for save/load/delete are performed by the parent industry::update, which
       // owns the database handle; here only the resolved list and restored tree touch planner state.
       Message::PlanDeleteRequested(_) | Message::PlanLoadRequested(_) | Message::PlanSaveRequested => {}
-      Message::PlanRestored(tree) => {
+      Message::PlanRestored {
+        segments,
+        tree,
+      } => {
         self.restore(&tree);
+        self.restore_segments(&segments);
         self.right_tab = RightTab::Detail;
       }
       Message::PlansListed(plans) => self.apply_saved(plans),
@@ -974,6 +1104,40 @@ impl Planner {
     }
   }
 
+  /// Build-order split/merge/segment-runs message arms, split out of [`update`] to keep its cyclomatic
+  /// complexity in check. None of these change the build plan (raw totals, economics) — they only edit the
+  /// per-job segment overlay — so they never set `dirty`.
+  fn update_order(&mut self, message: Message) {
+    match message {
+      Message::OrderJobMerged {
+        type_id,
+      } => {
+        self.merge_order_job(type_id);
+        self.order_menu = None;
+      }
+      Message::OrderJobRightPressed {
+        type_id,
+      } => self.open_order_menu(type_id),
+      Message::OrderJobSplit {
+        type_id,
+      } => {
+        self.split_order_job(type_id);
+        self.order_menu = None;
+      }
+      Message::OrderMenuClosed => self.order_menu = None,
+      Message::OrderSegmentRemoved {
+        index,
+        type_id,
+      } => self.remove_order_segment(type_id, index),
+      Message::OrderSegmentRunsChanged {
+        index,
+        type_id,
+        value,
+      } => self.edit_segment_runs(type_id, index, value),
+      _ => {}
+    }
+  }
+
   fn apply_saved(&mut self, plans: Vec<SavedPlanData>) {
     self.saved = plans
       .into_iter()
@@ -1095,6 +1259,25 @@ impl Planner {
     fresh_settings(&self.data, &self.facility_defaults, type_id)
   }
 
+  /// Applies a raw segment runs-field edit (digits only, mirroring [`edit_runs`]): the parsed value
+  /// becomes the segment's runs and [`set_segment_runs`] redistributes the remainder across the others so
+  /// the sum still equals the job total. An empty field holds at one run.
+  fn edit_segment_runs(&mut self, type_id: i64, index: usize, raw: String) {
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+    let value = digits.parse::<i64>().unwrap_or(1);
+    let total = self.total_runs_for(type_id);
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    self
+      .order_segments
+      .insert(type_id, set_segment_runs(stored, total, index, value));
+  }
+
+  fn merge_order_job(&mut self, type_id: i64) {
+    let total = self.total_runs_for(type_id);
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    self.order_segments.insert(type_id, merge_segments(stored, total));
+  }
+
   fn open_menu(&mut self, type_id: i64) {
     let Some(anchor) = self.cursor else {
       return;
@@ -1105,6 +1288,42 @@ impl Planner {
       built: self.built.contains(&type_id),
       mat: type_id,
     });
+  }
+
+  fn open_order_menu(&mut self, type_id: i64) {
+    let Some(anchor) = self.cursor else {
+      return;
+    };
+    self.order_menu = Some(OrderMenu {
+      anchor,
+      split: self.segments_for(type_id).len() > 1,
+      type_id,
+    });
+  }
+
+  fn remove_order_segment(&mut self, type_id: i64, index: usize) {
+    let total = self.total_runs_for(type_id);
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    self
+      .order_segments
+      .insert(type_id, remove_segment(stored, total, index));
+  }
+
+  fn split_order_job(&mut self, type_id: i64) {
+    let total = self.total_runs_for(type_id);
+    let stored = self.order_segments.get(&type_id).map(Vec::as_slice).unwrap_or(&[]);
+    self.order_segments.insert(type_id, split_segments(stored, total));
+  }
+
+  /// Total runs the merged build order currently schedules for `type_id` — the figure segments reconcile
+  /// against. Delegates to the memoized plan so it never re-walks the tree (no plan yet means zero runs).
+  fn total_runs_for(&self, type_id: i64) -> i64 {
+    self
+      .derived
+      .plan
+      .as_ref()
+      .map(|plan| plan.total_runs_for(type_id))
+      .unwrap_or(0)
   }
 
   /// Total acquisition cost of a build plan: every raw input priced at market plus the install fee of
@@ -1187,6 +1406,8 @@ impl Planner {
     self.built.clear();
     self.stock_selections.clear();
     self.collapsed_rows.clear();
+    self.order_segments.clear();
+    self.order_menu = None;
     self.facility_picker = None;
   }
 
@@ -1508,6 +1729,42 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+  } else if let Some(menu) = planner.order_menu() {
+    let segments = planner.segments_for(menu.type_id);
+    let segment_count = segments.len();
+    let total: i64 = segments.iter().map(|segment| segment.runs).sum();
+    let mut items = Vec::new();
+    if total >= segment_count as i64 + 1 {
+      items.push(context_menu::Item::action(
+        if menu.split {
+          "Split job again"
+        } else {
+          "Split job in two"
+        },
+        Message::OrderJobSplit {
+          type_id: menu.type_id,
+        },
+      ));
+    } else {
+      items.push(context_menu::Item::disabled("Too few runs to split further"));
+    }
+    if menu.split {
+      items.push(context_menu::Item::action(
+        "Merge back into one job",
+        Message::OrderJobMerged {
+          type_id: menu.type_id,
+        },
+      ));
+    }
+
+    let title = planner.data().name(menu.type_id);
+    Stack::with_children(vec![
+      backdrop::click_catcher(Message::OrderMenuClosed),
+      context_menu::context_menu(&title, items, menu.anchor),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
   } else {
     Space::new().width(Length::Shrink).height(Length::Shrink).into()
   };
@@ -1529,7 +1786,7 @@ mod view {
   use crate::{
     features::industry::{
       planner_loaders::{Category, OwnedSummary, PlannerData, PlannerFacility, Recipe},
-      planner_model::{MergedBuildJob, NeededBlueprint, eff_qty, needed_blueprints_from, runs_for},
+      planner_model::{MergedBuildJob, NeededBlueprint, PlanSegment, eff_qty, needed_blueprints_from, runs_for},
     },
     store::images::IconResolution,
     ui::{
@@ -1551,8 +1808,13 @@ mod view {
     },
   };
 
+  const ASSIGN_SLOT_HEIGHT: f32 = 34.0;
+  const ASSIGN_SLOT_WIDTH: f32 = 200.0;
   const ESTIMATED_PICKER_ROW: f32 = 52.0;
   const FACILITY_PICKER_WIDTH: f32 = 450.0;
+  const SEGMENT_INDENT: f32 = 64.0;
+  const SEGMENT_REMOVE_BOX: f32 = 24.0;
+  const SEGMENT_RUNS_FIELD_WIDTH: f32 = 46.0;
   /// Smallest id EVE assigns a player-owned structure; NPC stations sit well below it. A live result at or
   /// above this id is a structure that must be pinned (persisted) when selected, since it never reaches the
   /// SDE/corp-sync facility tables.
@@ -3000,20 +3262,25 @@ mod view {
   fn build_order<'a>(planner: &'a Planner) -> Element<'a, Message> {
     let jobs = planner.merged_build_order();
     let count = jobs.len();
+    let (assigned, total_segments) = planner.order_assignment();
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
     for (index, job) in jobs.iter().enumerate() {
       rows.push(build_order_row(planner, index, job));
     }
 
+    // "N jobs · M runs · x/y assigned · right-click to split" — the run count appears only once a job has
+    // been split (otherwise the segment count equals the job count and adds nothing).
+    let mut hint = format!("{count} job{}", if count == 1 { "" } else { "s" });
+    if total_segments > count {
+      hint.push_str(&format!(" \u{00B7} {total_segments} runs"));
+    }
+    hint.push_str(&format!(
+      " \u{00B7} {assigned}/{total_segments} assigned \u{00B7} right-click to split"
+    ));
+
     Column::with_children(vec![
-      section_label(
-        "Build order",
-        Some(format!(
-          "{count} job{} \u{00B7} dependencies first",
-          if count == 1 { "" } else { "s" }
-        )),
-      ),
+      section_label("Build order", Some(hint)),
       container(Column::with_children(rows).width(Length::Fill))
         .width(Length::Fill)
         .style(bordered_table)
@@ -3023,14 +3290,32 @@ mod view {
     .into()
   }
 
-  /// One build-order row: numbered index, item tile, name + activity badge with a `feeds →` / `final product`
-  /// subline, a prominent `×N` runs/cycles pill, and the build time. The final-product row is plasma-accented.
+  /// One build-order row: numbered index, item tile, name + activity badge (and an N-WAY split badge) with a
+  /// `feeds →` / `final product` subline, an assignment slot, a prominent `×N` runs/cycles pill, and the build
+  /// time. Right-clicking the header opens the split/merge menu. A split job appends one per-segment row each
+  /// with a runs editor, a remove button, and a build-time readout. The final-product row is plasma-accented.
   fn build_order_row<'a>(planner: &'a Planner, index: usize, job: &MergedBuildJob) -> Element<'a, Message> {
     let data = planner.data();
     let is_final = job.is_root;
-    let time = node_build_time(&recipe_for(data, job.type_id), job.runs, job.node.te);
+    let recipe = recipe_for(data, job.type_id);
+    let is_reaction = job.node.is_reaction;
+    let segments = planner.segments_for(job.type_id);
+    let split = segments.len() > 1;
+    let time = node_build_time(&recipe, job.runs, job.node.te);
 
-    let body = Row::with_children(vec![
+    let mut name_row: Vec<Element<'a, Message>> = vec![
+      text(data.name(job.type_id))
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      activity_badge(is_reaction),
+    ];
+    if split {
+      name_row.push(badge(format!("{}-WAY", segments.len()), Some(color::accent::PLASMA)));
+    }
+
+    let header = Row::with_children(vec![
       text(format!("{:02}", index + 1))
         .font(typography::mono::MEDIUM)
         .size(typography::size::MD)
@@ -3042,17 +3327,10 @@ mod view {
         .into(),
       type_tile(data.type_icon(job.type_id)),
       Column::with_children(vec![
-        Row::with_children(vec![
-          text(data.name(job.type_id))
-            .font(typography::body::MEDIUM)
-            .size(typography::size::MD)
-            .style(typography::colored(color::text::PRIMARY))
-            .into(),
-          activity_badge(job.node.is_reaction),
-        ])
-        .spacing(spacing::SPACE_2)
-        .align_y(Vertical::Center)
-        .into(),
+        Row::with_children(name_row)
+          .spacing(spacing::SPACE_2)
+          .align_y(Vertical::Center)
+          .into(),
         text(merged_feeds_line(data, job))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
@@ -3062,7 +3340,8 @@ mod view {
       .spacing(spacing::UNIT)
       .width(Length::Fill)
       .into(),
-      runs_pill(job.runs, job.node.is_reaction, is_final),
+      assignment_slot(&segments, split),
+      runs_pill(job.runs, is_reaction, is_final),
       text(fmt_duration_coarse(time as i64))
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
@@ -3073,14 +3352,34 @@ mod view {
     .align_y(Vertical::Center)
     .width(Length::Fill);
 
-    container(body)
+    let type_id = job.type_id;
+    let header_area = mouse_area(container(header).width(Length::Fill).padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    }))
+    .on_right_press(Message::OrderJobRightPressed {
+      type_id,
+    });
+
+    let mut rows: Vec<Element<'a, Message>> = vec![header_area.into()];
+    if split {
+      for (i, segment) in segments.iter().enumerate() {
+        rows.push(segment_row(
+          &recipe,
+          type_id,
+          i,
+          segments.len(),
+          segment,
+          job.node.te,
+          is_reaction,
+        ));
+      }
+    }
+
+    container(Column::with_children(rows).width(Length::Fill))
       .width(Length::Fill)
-      .padding(Padding {
-        top: spacing::SPACE_3,
-        bottom: spacing::SPACE_3,
-        left: spacing::SPACE_3,
-        right: spacing::SPACE_3,
-      })
       .style(move |_| container::Style {
         background: is_final.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.07))),
         border: Border {
@@ -3091,6 +3390,210 @@ mod view {
         ..container::Style::default()
       })
       .into()
+  }
+
+  /// The per-job assignment slot in a build-order row. Single-segment jobs get an inert "Assign pilot" stub
+  /// (the pilot/clone picker is wired by a separate task); split jobs show how many pilots are used and defer
+  /// the actual pickers to the per-segment rows below.
+  fn assignment_slot<'a>(segments: &[PlanSegment], split: bool) -> Element<'a, Message> {
+    if split {
+      let pilots: std::collections::BTreeSet<i64> = segments.iter().filter_map(|segment| segment.pilot_id).collect();
+      let lead = if pilots.is_empty() {
+        "unassigned".to_owned()
+      } else {
+        format!("{} pilot{}", pilots.len(), if pilots.len() == 1 { "" } else { "s" })
+      };
+      return Column::with_children(vec![
+        text(lead)
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::secondary()))
+          .into(),
+        text("split below")
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .align_x(Horizontal::Right)
+      .width(Length::Fixed(ASSIGN_SLOT_WIDTH))
+      .into();
+    }
+
+    assign_stub()
+  }
+
+  /// An inert "Assign pilot" affordance, a dashed placeholder for the pilot/clone picker a later task fills.
+  fn assign_stub<'a>() -> Element<'a, Message> {
+    container(
+      text("Assign pilot")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::tertiary())),
+    )
+    .width(Length::Fixed(ASSIGN_SLOT_WIDTH))
+    .height(Length::Fixed(ASSIGN_SLOT_HEIGHT))
+    .align_x(Horizontal::Left)
+    .align_y(Vertical::Center)
+    .padding(Padding {
+      left: spacing::SPACE_2,
+      right: spacing::SPACE_2,
+      ..Padding::ZERO
+    })
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+  }
+
+  /// One per-segment row beneath a split build-order job: a `Split i/n` label, a runs editor (text input +
+  /// clamp), the runs/cycles word, an inert assignment stub, the segment's build time, and a remove button
+  /// that folds its runs back into the survivors.
+  fn segment_row<'a>(
+    recipe: &Recipe,
+    type_id: i64,
+    index: usize,
+    count: usize,
+    segment: &PlanSegment,
+    te: i64,
+    is_reaction: bool,
+  ) -> Element<'a, Message> {
+    let time = node_build_time(recipe, segment.runs, te);
+    let unit = if is_reaction { "cycles" } else { "runs" };
+
+    let body = Row::with_children(vec![
+      text("\u{2514}")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+      text(format!("SPLIT {}/{}", index + 1, count))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+      segment_runs_field(type_id, index, segment.runs),
+      text(unit)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+      assign_stub(),
+      Space::new().width(Length::Fill).into(),
+      text(fmt_duration_coarse(time as i64))
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      segment_remove_button(type_id, index),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
+
+    container(body)
+      .width(Length::Fill)
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        bottom: spacing::SPACE_2,
+        left: SEGMENT_INDENT,
+        right: spacing::SPACE_3,
+      })
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::surface::SUNKEN)),
+        border: Border {
+          color: color::rule(),
+          radius: 0.0.into(),
+          width: 1.0,
+        },
+        ..container::Style::default()
+      })
+      .into()
+  }
+
+  /// The segment runs editor: a narrow text input mirroring the job runs field (digits only, clamped on
+  /// commit by [`set_segment_runs`] so the remainder redistributes and the segments still sum to the total).
+  fn segment_runs_field<'a>(type_id: i64, index: usize, runs: i64) -> Element<'a, Message> {
+    let value = runs.to_string();
+    container(
+      text_input("1", &value)
+        .on_input(move |raw| Message::OrderSegmentRunsChanged {
+          index,
+          type_id,
+          value: raw,
+        })
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .align_x(Horizontal::Center)
+        .padding(Padding {
+          top: 0.0,
+          bottom: 0.0,
+          left: spacing::UNIT,
+          right: spacing::UNIT,
+        })
+        .width(Length::Fixed(SEGMENT_RUNS_FIELD_WIDTH))
+        .style(text_input_inner_style()),
+    )
+    .height(Length::Fixed(RUNS_STEPPER_HEIGHT))
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule_strong(),
+        radius: radius::CONTROL.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    })
+    .into()
+  }
+
+  fn segment_remove_button<'a>(type_id: i64, index: usize) -> Element<'a, Message> {
+    button(
+      container(
+        text("\u{00D7}")
+          .font(typography::mono::REGULAR)
+          .size(typography::size::LG)
+          .style(typography::colored(color::text::tertiary())),
+      )
+      .width(Length::Fixed(SEGMENT_REMOVE_BOX))
+      .height(Length::Fixed(SEGMENT_REMOVE_BOX))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
+    )
+    .padding(Padding::ZERO)
+    .on_press(Message::OrderSegmentRemoved {
+      index,
+      type_id,
+    })
+    .style(|_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(iced::Color::TRANSPARENT)),
+        border: Border {
+          color: if hovered {
+            color::with_alpha(color::status::DANGER, 0.42)
+          } else {
+            color::rule()
+          },
+          radius: radius::SUBTLE.into(),
+          width: 1.0,
+        },
+        text_color: if hovered {
+          color::status::DANGER
+        } else {
+          color::text::tertiary()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
   }
 
   /// The bordered `×N` runs (manufacturing) / cycles (reaction) pill for a build-order row: a large count over
@@ -5085,6 +5588,133 @@ mod tests {
     }
   }
 
+  mod order_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_assigns_a_lone_full_unassigned_segment_by_default() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+
+      let segments = planner.segments_for(HULK);
+
+      assert_eq!(segments.len(), 1);
+      assert_eq!(segments[0].runs, 10);
+    }
+
+    #[test]
+    fn it_counts_assigned_segments_in_the_order_assignment() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+
+      let (assigned, total) = planner.order_assignment();
+
+      assert_eq!(assigned, 0);
+      assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn it_keeps_segment_runs_summing_to_the_job_total_after_an_edit() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+      planner.update(Message::OrderJobSplit {
+        type_id: HULK,
+      });
+
+      planner.update(Message::OrderSegmentRunsChanged {
+        index: 0,
+        type_id: HULK,
+        value: "8".to_owned(),
+      });
+
+      let segments = planner.segments_for(HULK);
+      assert_eq!(segments[0].runs, 8);
+      assert_eq!(segments.iter().map(|segment| segment.runs).sum::<i64>(), 10);
+    }
+
+    #[test]
+    fn it_merges_a_split_job_back_into_one() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+      planner.update(Message::OrderJobSplit {
+        type_id: HULK,
+      });
+
+      planner.update(Message::OrderJobMerged {
+        type_id: HULK,
+      });
+
+      let segments = planner.segments_for(HULK);
+      assert_eq!(segments.len(), 1);
+      assert_eq!(segments[0].runs, 10);
+    }
+
+    #[test]
+    fn it_opens_a_split_aware_order_menu_on_a_right_press() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+      planner.update(Message::CursorMoved(Point::new(40.0, 80.0)));
+
+      planner.update(Message::OrderJobRightPressed {
+        type_id: HULK,
+      });
+
+      let menu = planner.order_menu().unwrap();
+      assert_eq!(menu.type_id, HULK);
+      assert!(!menu.split);
+    }
+
+    #[test]
+    fn it_removes_a_segment_and_folds_its_runs_back() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+      planner.update(Message::OrderJobSplit {
+        type_id: HULK,
+      });
+
+      planner.update(Message::OrderSegmentRemoved {
+        index: 1,
+        type_id: HULK,
+      });
+
+      let segments = planner.segments_for(HULK);
+      assert_eq!(segments.len(), 1);
+      assert_eq!(segments[0].runs, 10);
+    }
+
+    #[test]
+    fn it_round_trips_segments_through_export_and_restore() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+      planner.update(Message::OrderJobSplit {
+        type_id: HULK,
+      });
+      let exported = planner.segments();
+
+      let mut reloaded = super::planner();
+      reloaded.update(Message::RunsChanged(10));
+      reloaded.restore_segments(&exported);
+
+      assert_eq!(reloaded.segments_for(HULK).len(), 2);
+    }
+
+    #[test]
+    fn it_splits_the_root_job_into_two_segments() {
+      let mut planner = planner();
+      planner.update(Message::RunsChanged(10));
+
+      planner.update(Message::OrderJobSplit {
+        type_id: HULK,
+      });
+
+      let segments = planner.segments_for(HULK);
+      assert_eq!(segments.len(), 2);
+      assert_eq!(segments.iter().map(|segment| segment.runs).sum::<i64>(), 10);
+    }
+  }
+
   mod picker_scroll {
     use pretty_assertions::assert_eq;
 
@@ -5334,7 +5964,10 @@ mod tests {
 
       let mut planner = planner();
       planner.update(Message::RightTabSelected(RightTab::Plans));
-      planner.update(Message::PlanRestored(Box::new(tree)));
+      planner.update(Message::PlanRestored {
+        segments: Vec::new(),
+        tree: Box::new(tree),
+      });
 
       assert_eq!(planner.runs(), 4);
       assert_eq!(planner.right_tab(), RightTab::Detail);

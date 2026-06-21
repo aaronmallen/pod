@@ -246,8 +246,6 @@ impl BuildPlan {
 
   /// Total runs the merged build order schedules for `type_id` — the figure segments reconcile against. Sums
   /// the runs of every merged row of that type (divergent ME/TE/facility settings keep separate rows).
-  // Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-  #[allow(dead_code)]
   pub fn total_runs_for(&self, type_id: i64) -> i64 {
     self
       .merged_build_order()
@@ -306,8 +304,6 @@ pub struct NeededBlueprint {
   pub type_id: i64,
 }
 
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PlanSegment {
   /// ESI jump_clone_id, stored opaquely and resolved at render; `None` is the pilot's active clone.
@@ -318,8 +314,6 @@ pub struct PlanSegment {
 }
 
 impl PlanSegment {
-  // Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-  #[allow(dead_code)]
   pub fn unassigned(runs: i64) -> Self {
     PlanSegment {
       clone_id: None,
@@ -430,8 +424,6 @@ fn draw_from_pool(remaining: &mut HashMap<(i64, i64), i64>, selection: &StockSel
 }
 
 /// Folds a split job back into a single segment carrying the first segment's pilot+clone and all the runs.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 pub fn merge_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   let segments = reconcile_segments(stored, total);
   let first = segments[0];
@@ -447,8 +439,6 @@ pub fn merge_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
 /// become one full unassigned segment; a single segment absorbs the total; a total below the segment count
 /// collapses to the first segment's assignment; otherwise an off-balance set is redistributed evenly while
 /// keeping each segment's pilot+clone.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 pub fn reconcile_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   if stored.is_empty() {
     return vec![PlanSegment::unassigned(total)];
@@ -481,8 +471,6 @@ pub fn reconcile_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment
 
 /// Removes the segment at `index`, folding its runs back in by redistributing the total evenly across the
 /// remaining segments. The last remaining segment cannot be removed.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<PlanSegment> {
   let segments = reconcile_segments(stored, total);
   if segments.len() <= 1 || index >= segments.len() {
@@ -503,8 +491,6 @@ pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<P
 
 /// Sets the runs of the segment at `index` (clamped so every other segment keeps at least one run) and spreads
 /// the remainder evenly across the rest. A single-segment job is left unchanged — its runs track the total.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value: i64) -> Vec<PlanSegment> {
   let mut segments = reconcile_segments(stored, total);
   let n = segments.len();
@@ -527,8 +513,6 @@ pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value:
 
 /// Splits the largest segment of a job in two (halving its runs), creating a new unassigned segment. Returns
 /// the segments unchanged when the total is too small to give every resulting segment at least one run.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 pub fn split_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
   let mut segments = reconcile_segments(stored, total);
   if total < segments.len() as i64 + 1 {
@@ -553,8 +537,6 @@ pub fn split_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
 
 /// Splits `total` runs into `k` near-equal buckets, distributing the remainder one extra run to the leading
 /// buckets so the buckets always sum to `total`.
-// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
-#[allow(dead_code)]
 fn distribute_runs(total: i64, k: usize) -> Vec<i64> {
   if k == 0 {
     return Vec::new();

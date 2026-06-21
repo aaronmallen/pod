@@ -510,9 +510,18 @@ async fn list_saved_plans(db: &Database) -> Vec<planner::SavedPlanData> {
 fn load_plan(db: &Database, id: i64) -> Task<Message> {
   let db = db.clone();
   Task::perform(
-    async move { crate::store::repo::industry::load_plan(&db, id).await.ok().flatten() },
-    |tree| match tree {
-      Some(tree) => Message::Planner(planner::Message::PlanRestored(Box::new(tree))),
+    async move {
+      let tree = crate::store::repo::industry::load_plan(&db, id).await.ok().flatten()?;
+      let segments = crate::store::repo::industry::segments_for_plan(&db, id)
+        .await
+        .unwrap_or_default();
+      Some((tree, segments))
+    },
+    |loaded| match loaded {
+      Some((tree, segments)) => Message::Planner(planner::Message::PlanRestored {
+        segments,
+        tree: Box::new(tree),
+      }),
       // Plan missing or unreadable — emit a no-op rather than an error.
       None => Message::Tick,
     },
@@ -534,7 +543,7 @@ fn handle_planner(state: &mut State, db: &Database, message: planner::Message) -
       iced::clipboard::write(state.planner.shopping_list())
     }
     planner::Message::PlanSaveRequested => match (state.planner.snapshot(), state.planner.save_name()) {
-      (Some(tree), Some(name)) => save_plan(db, name, tree),
+      (Some(tree), Some(name)) => save_plan(db, name, tree, state.planner.segments()),
       _ => Task::none(),
     },
     planner::Message::PlanLoadRequested(id) => load_plan(db, id),
@@ -671,11 +680,18 @@ pub async fn resolve_default_facilities(
   .collect()
 }
 
-fn save_plan(db: &Database, name: String, tree: crate::store::repo::industry::PlanTree) -> Task<Message> {
+fn save_plan(
+  db: &Database,
+  name: String,
+  tree: crate::store::repo::industry::PlanTree,
+  segments: Vec<crate::store::repo::industry::PlanSegment>,
+) -> Task<Message> {
   let db = db.clone();
   Task::perform(
     async move {
-      let _ = crate::store::repo::industry::create_plan(&db, &name, &tree).await;
+      if let Ok(plan) = crate::store::repo::industry::create_plan(&db, &name, &tree).await {
+        let _ = crate::store::repo::industry::replace_plan_segments(&db, plan.id(), &segments).await;
+      }
       list_saved_plans(&db).await
     },
     |plans| Message::Planner(planner::Message::PlansListed(plans)),

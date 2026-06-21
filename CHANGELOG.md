@@ -7,6 +7,58 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.5]
+
+### Added
+
+- **Command palette** — press `/` (or click the rail's palette button) to open a searchable overlay that jumps to any
+  screen or sub-tab, runs common commands, and opens any of your characters or corporations.
+- **Keyboard shortcuts** — Ctrl/Cmd+K focuses the current screen's search (Mail, Industry planner, Skills, Roster,
+  Settings, and the Wallet ledger), Ctrl/Cmd+, opens Settings, and Ctrl/Cmd+Q quits, now on every platform.
+- Hovering a rail icon now pops a **flyout** to its sub-tabs so you can jump straight to one; a new User Interface
+  setting switches the rail's sub-navigation between this flyout, a persistent sub-rail column, or none.
+- **Granular feature toggles** — the Features settings tab is now a two-level list where each feature group can be
+  switched on or off as a whole or tuned sub-feature by sub-feature (for example, turn off just Budget or just Location
+  tracking), and the matching tabs, character-card sections, and data syncs follow your choice immediately.
+- Industry build-order jobs can be **split across pilots** — right-click a job to split its runs into segments or merge
+  them back, then assign each segment a pilot and one of their clones, and the assigned pilot's industry skills and
+  clone implants shorten that segment's build time.
+- Budget now keeps each trade's full cost together — assigning a market transaction also files its transaction tax and
+  broker's fee into the same envelope, and a corp-on-behalf trade that lands in both a character and a corporation
+  wallet shows a combined portrait-and-logo avatar and assigns across every copy at once.
+
+### Changed
+
+- The Characters screen is now labeled **Roster** in the navigation.
+- Industry planner install fees now use EVE's real job-cost formula (estimated item value × cost index × structure
+  bonus, plus facility tax and the SCC surcharge), so the planner's profit, margin, and ISK-per-hour figures line up
+  with what the game actually charges.
+- In the Wallets balance tab, each row's share bar now fills relative to that section's subtotal, so the bars read as a
+  composition that adds up to the whole instead of always pinning the largest wallet to full width.
+
+### Fixed
+
+- Ready to Assign no longer swings wildly negative — ISK transfers between your own wallets now cancel out correctly
+  instead of inflating income.
+- The budget "review & assign" count now reflects every uncategorized entry for the month from your full ledger,
+  instead of under-reporting until you scrolled.
+- The Roster no longer blanks out to "Couldn't load characters" on a brief database hiccup — transient timeouts retry,
+  and a failed refresh keeps showing your last-good roster.
+- Hard-to-price, infrequently-traded items now value from zKillboard's live price instead of a years-old snapshot that
+  could read far too low.
+- Assigning a batch of ledger rows to an envelope no longer jumps the list back to the top, and a duplicate
+  "View transactions" button was removed from the inspector.
+- Wallets balance cards now draw evenly weighted dividers between rows instead of a darker line between rows than at the
+  card edge.
+- The Rail Side preview in Settings now lays out at a sensible width instead of stretching across half the column.
+
+### Performance
+
+- The app stays responsive during a data sync — character and wallet screens no longer freeze or time out while a large
+  background sync is writing, because reads and writes no longer contend over the database.
+- Syncs put less strain on the app — pages are fetched in bounded batches, cache updates are written in fewer larger
+  operations, and the roster refreshes less frantically during a sync burst.
+
 ## [0.6.4]
 
 ### Added
@@ -699,7 +751,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.4...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.5...HEAD
+[0.6.5]: https://github.com/aaronmallen/pod/compare/0.6.4...0.6.5
 [0.6.4]: https://github.com/aaronmallen/pod/compare/0.6.3...0.6.4
 [0.6.3]: https://github.com/aaronmallen/pod/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/aaronmallen/pod/compare/0.6.1...0.6.2

@@ -254,8 +254,8 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
   }
 
   let retry = match flow.kind {
-    Kind::AddCorporation => Message::StartAddCorporation(flow.features.clone()),
-    Kind::SignIn => Message::Start(flow.features.clone()),
+    Kind::AddCorporation => Message::StartAddCorporation(flow.features),
+    Kind::SignIn => Message::Start(flow.features),
   };
   let mut actions: Vec<Element<'_, Message>> = Vec::new();
   if matches!(flow.status, Status::Failed(_)) {

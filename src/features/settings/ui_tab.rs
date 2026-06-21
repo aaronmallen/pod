@@ -851,7 +851,9 @@ mod tests {
     #[test]
     fn it_renders_with_a_disabled_feature_item_dimmed() {
       let mut settings = settings();
-      settings.features_mut().set_industry(false);
+      settings
+        .features_mut()
+        .set_enabled(crate::config::Feature::Industry, false);
       let state = State::default();
 
       let _el: Element<'_, Message> = view(&state, &settings);

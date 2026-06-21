@@ -145,6 +145,24 @@ impl Feature {
     Feature::AssetTracking,
   ];
 
+  /// The legacy flat TOML key for this group, used to migrate pre-sub-feature configs.
+  pub fn legacy_key(self) -> &'static str {
+    match self {
+      Feature::AssetTracking => "asset_tracking",
+      Feature::Calendar => "calendar",
+      Feature::CloneMonitoring => "clone_monitoring",
+      Feature::CombatLog => "combat_log",
+      Feature::Contacts => "contacts",
+      Feature::EveNotifications => "eve_notifications",
+      Feature::Industry => "industry",
+      Feature::LocationTracking => "location_tracking",
+      Feature::Mail => "mail",
+      Feature::SkillMonitoring => "skill_monitoring",
+      Feature::Standings => "standings",
+      Feature::Wallet => "wallet",
+    }
+  }
+
   pub fn noun(self) -> &'static str {
     match self {
       Feature::AssetTracking => "Asset",
@@ -161,47 +179,165 @@ impl Feature {
       Feature::Wallet => "Wallet",
     }
   }
+
+  pub fn sub_features(self) -> &'static [SubFeature] {
+    match self {
+      Feature::AssetTracking => &[
+        SubFeature::Inventory,
+        SubFeature::Abyssals,
+        SubFeature::Stockpiles,
+        SubFeature::Values,
+        SubFeature::Tracker,
+      ],
+      Feature::Calendar => &[SubFeature::Calendar],
+      Feature::CloneMonitoring => &[SubFeature::CloneMonitoring],
+      Feature::CombatLog => &[SubFeature::KillLog],
+      Feature::Contacts => &[SubFeature::Contacts],
+      Feature::EveNotifications => &[SubFeature::Notifications],
+      Feature::Industry => &[
+        SubFeature::JobMonitoring,
+        SubFeature::Blueprints,
+        SubFeature::Planner,
+        SubFeature::Extractions,
+      ],
+      Feature::LocationTracking => &[SubFeature::LocationTracking],
+      Feature::Mail => &[SubFeature::Mail],
+      Feature::SkillMonitoring => &[SubFeature::SkillQueue],
+      Feature::Standings => &[SubFeature::Standings],
+      Feature::Wallet => &[
+        SubFeature::Wallets,
+        SubFeature::Transactions,
+        SubFeature::Contracts,
+        SubFeature::Journal,
+        SubFeature::Budget,
+      ],
+    }
+  }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
-#[getset(set = "pub")]
+/// One independently-toggleable capability nested under a top-level [`Feature`] group. The granular
+/// level of the two-level feature model; group enablement rolls up as "any child enabled".
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum SubFeature {
+  Abyssals,
+  Blueprints,
+  Budget,
+  Calendar,
+  CloneMonitoring,
+  Contacts,
+  Contracts,
+  Extractions,
+  Inventory,
+  JobMonitoring,
+  Journal,
+  KillLog,
+  LocationTracking,
+  Mail,
+  Notifications,
+  Planner,
+  SkillQueue,
+  Stockpiles,
+  Standings,
+  Tracker,
+  Transactions,
+  Values,
+  Wallets,
+}
+
+impl SubFeature {
+  pub const ALL: [SubFeature; 23] = [
+    SubFeature::Abyssals,
+    SubFeature::Blueprints,
+    SubFeature::Budget,
+    SubFeature::Calendar,
+    SubFeature::CloneMonitoring,
+    SubFeature::Contacts,
+    SubFeature::Contracts,
+    SubFeature::Extractions,
+    SubFeature::Inventory,
+    SubFeature::JobMonitoring,
+    SubFeature::Journal,
+    SubFeature::KillLog,
+    SubFeature::LocationTracking,
+    SubFeature::Mail,
+    SubFeature::Notifications,
+    SubFeature::Planner,
+    SubFeature::SkillQueue,
+    SubFeature::Stockpiles,
+    SubFeature::Standings,
+    SubFeature::Tracker,
+    SubFeature::Transactions,
+    SubFeature::Values,
+    SubFeature::Wallets,
+  ];
+
+  // Sub-feature -> group roll-up consumed by sibling tasks B/C; today only the tests use it.
+  #[allow(dead_code)]
+  pub fn group(self) -> Feature {
+    match self {
+      SubFeature::Abyssals
+      | SubFeature::Inventory
+      | SubFeature::Stockpiles
+      | SubFeature::Tracker
+      | SubFeature::Values => Feature::AssetTracking,
+      SubFeature::Calendar => Feature::Calendar,
+      SubFeature::CloneMonitoring => Feature::CloneMonitoring,
+      SubFeature::KillLog => Feature::CombatLog,
+      SubFeature::Contacts => Feature::Contacts,
+      SubFeature::Notifications => Feature::EveNotifications,
+      SubFeature::Blueprints | SubFeature::Extractions | SubFeature::JobMonitoring | SubFeature::Planner => {
+        Feature::Industry
+      }
+      SubFeature::LocationTracking => Feature::LocationTracking,
+      SubFeature::Mail => Feature::Mail,
+      SubFeature::SkillQueue => Feature::SkillMonitoring,
+      SubFeature::Standings => Feature::Standings,
+      SubFeature::Budget
+      | SubFeature::Contracts
+      | SubFeature::Journal
+      | SubFeature::Transactions
+      | SubFeature::Wallets => Feature::Wallet,
+    }
+  }
+
+  /// The TOML key for this sub-feature within its group's nested table.
+  pub fn key(self) -> &'static str {
+    match self {
+      SubFeature::Abyssals => "abyssals",
+      SubFeature::Blueprints => "blueprints",
+      SubFeature::Budget => "budget",
+      SubFeature::Calendar => "calendar",
+      SubFeature::CloneMonitoring => "clone_monitoring",
+      SubFeature::Contacts => "contacts",
+      SubFeature::Contracts => "contracts",
+      SubFeature::Extractions => "extractions",
+      SubFeature::Inventory => "inventory",
+      SubFeature::JobMonitoring => "job_monitoring",
+      SubFeature::Journal => "journal",
+      SubFeature::KillLog => "kill_log",
+      SubFeature::LocationTracking => "location_tracking",
+      SubFeature::Mail => "mail",
+      SubFeature::Notifications => "notifications",
+      SubFeature::Planner => "planner",
+      SubFeature::SkillQueue => "skill_queue",
+      SubFeature::Stockpiles => "stockpiles",
+      SubFeature::Standings => "standings",
+      SubFeature::Tracker => "tracker",
+      SubFeature::Transactions => "transactions",
+      SubFeature::Values => "values",
+      SubFeature::Wallets => "wallets",
+    }
+  }
+}
+
+/// Per-sub-feature enablement, the persisted form of the two-level feature model.
+///
+/// Loads tolerantly: a legacy flat config (`wallet = false`) cascades the group's value onto every
+/// child, while the new nested config (`[features.wallet] budget = false`) is read per sub-feature.
+/// Any sub-feature absent from the file defaults to enabled. Always re-serializes in the nested form.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FeatureFlags {
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  asset_tracking: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  calendar: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  clone_monitoring: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  combat_log: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  contacts: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  eve_notifications: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  industry: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  location_tracking: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  mail: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  skill_monitoring: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  standings: bool,
-  #[getset(get = "pub")]
-  #[serde(default = "default_true")]
-  wallet: bool,
+  enabled: [bool; SubFeature::ALL.len()],
 }
 
 impl FeatureFlags {
@@ -212,57 +348,124 @@ impl FeatureFlags {
       .collect()
   }
 
+  // Foundation roll-up API for the granular sub-feature epic; the scope/shell/UI consumers land in
+  // sibling tasks B/C/D, so today these are exercised only by this module's tests.
+  #[allow(dead_code)]
+  pub fn enabled_sub_features(&self) -> Vec<SubFeature> {
+    SubFeature::ALL
+      .into_iter()
+      .filter(|&sub| self.is_sub_enabled(sub))
+      .collect()
+  }
+
+  #[allow(dead_code)]
+  pub fn enabled_sub_features_of(&self, feature: Feature) -> Vec<SubFeature> {
+    feature
+      .sub_features()
+      .iter()
+      .copied()
+      .filter(|&sub| self.is_sub_enabled(sub))
+      .collect()
+  }
+
   pub fn is_enabled(&self, feature: Feature) -> bool {
-    match feature {
-      Feature::AssetTracking => self.asset_tracking,
-      Feature::Calendar => self.calendar,
-      Feature::CloneMonitoring => self.clone_monitoring,
-      Feature::CombatLog => self.combat_log,
-      Feature::Contacts => self.contacts,
-      Feature::EveNotifications => self.eve_notifications,
-      Feature::Industry => self.industry,
-      Feature::LocationTracking => self.location_tracking,
-      Feature::Mail => self.mail,
-      Feature::SkillMonitoring => self.skill_monitoring,
-      Feature::Standings => self.standings,
-      Feature::Wallet => self.wallet,
-    }
+    feature.sub_features().iter().any(|&sub| self.is_sub_enabled(sub))
+  }
+
+  pub fn is_sub_enabled(&self, sub: SubFeature) -> bool {
+    self.enabled[Self::index_of(sub)]
   }
 
   pub fn set_enabled(&mut self, feature: Feature, value: bool) {
-    match feature {
-      Feature::AssetTracking => self.asset_tracking = value,
-      Feature::Calendar => self.calendar = value,
-      Feature::CloneMonitoring => self.clone_monitoring = value,
-      Feature::CombatLog => self.combat_log = value,
-      Feature::Contacts => self.contacts = value,
-      Feature::EveNotifications => self.eve_notifications = value,
-      Feature::Industry => self.industry = value,
-      Feature::LocationTracking => self.location_tracking = value,
-      Feature::Mail => self.mail = value,
-      Feature::SkillMonitoring => self.skill_monitoring = value,
-      Feature::Standings => self.standings = value,
-      Feature::Wallet => self.wallet = value,
+    for &sub in feature.sub_features() {
+      self.set_sub_enabled(sub, value);
     }
+  }
+
+  pub fn set_sub_enabled(&mut self, sub: SubFeature, value: bool) {
+    self.enabled[Self::index_of(sub)] = value;
+  }
+
+  fn index_of(sub: SubFeature) -> usize {
+    SubFeature::ALL
+      .iter()
+      .position(|&candidate| candidate == sub)
+      .expect("every SubFeature is listed in SubFeature::ALL")
   }
 }
 
 impl Default for FeatureFlags {
   fn default() -> Self {
     Self {
-      asset_tracking: true,
-      calendar: true,
-      clone_monitoring: true,
-      combat_log: true,
-      contacts: true,
-      eve_notifications: true,
-      industry: true,
-      location_tracking: true,
-      mail: true,
-      skill_monitoring: true,
-      standings: true,
-      wallet: true,
+      enabled: [true; SubFeature::ALL.len()],
     }
+  }
+}
+
+impl<'de> Deserialize<'de> for FeatureFlags {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: serde::Deserializer<'de>,
+  {
+    use std::collections::BTreeMap;
+
+    use serde::de::Error;
+
+    // A value under a group key is either a legacy flat bool (`wallet = false`) or a new nested
+    // table (`[features.wallet] budget = false`). Accept either to migrate transparently.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum GroupEntry {
+      Flat(bool),
+      Nested(BTreeMap<String, bool>),
+    }
+
+    let raw = BTreeMap::<String, GroupEntry>::deserialize(deserializer)?;
+    let mut flags = FeatureFlags::default();
+
+    for feature in Feature::ALL {
+      let Some(entry) = raw.get(feature.legacy_key()) else {
+        continue;
+      };
+      match entry {
+        GroupEntry::Flat(value) => flags.set_enabled(feature, *value),
+        GroupEntry::Nested(children) => {
+          for &sub in feature.sub_features() {
+            if let Some(value) = children.get(sub.key()) {
+              flags.set_sub_enabled(sub, *value);
+            }
+          }
+        }
+      }
+    }
+
+    for entry in raw.keys() {
+      if !Feature::ALL.iter().any(|feature| feature.legacy_key() == entry) {
+        return Err(D::Error::custom(format!("unknown feature group `{entry}`")));
+      }
+    }
+
+    Ok(flags)
+  }
+}
+
+impl Serialize for FeatureFlags {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    use serde::ser::SerializeMap;
+
+    let mut map = serializer.serialize_map(Some(Feature::ALL.len()))?;
+    for feature in Feature::ALL {
+      let children: std::collections::BTreeMap<&'static str, bool> = feature
+        .sub_features()
+        .iter()
+        .map(|&sub| (sub.key(), self.is_sub_enabled(sub)))
+        .collect();
+      map.serialize_entry(feature.legacy_key(), &children)?;
+    }
+    map.end()
   }
 }
 
@@ -711,6 +914,119 @@ mod tests {
         assert!(flags.is_enabled(feature), "{feature:?} should be back on");
       }
     }
+
+    #[test]
+    fn it_defaults_every_sub_feature_to_enabled() {
+      let flags = FeatureFlags::default();
+
+      assert_eq!(flags.enabled_sub_features(), SubFeature::ALL.to_vec());
+    }
+
+    #[test]
+    fn a_group_is_enabled_while_any_child_remains_on() {
+      let mut flags = FeatureFlags::default();
+
+      flags.set_sub_enabled(SubFeature::Budget, false);
+
+      assert!(
+        flags.is_enabled(Feature::Wallet),
+        "other Wallet children keep the group on"
+      );
+
+      for sub in Feature::Wallet.sub_features() {
+        flags.set_sub_enabled(*sub, false);
+      }
+
+      assert!(
+        !flags.is_enabled(Feature::Wallet),
+        "the group is off only when every child is off"
+      );
+    }
+
+    #[test]
+    fn set_enabled_cascades_to_every_child() {
+      let mut flags = FeatureFlags::default();
+
+      flags.set_enabled(Feature::AssetTracking, false);
+
+      assert!(
+        Feature::AssetTracking
+          .sub_features()
+          .iter()
+          .all(|&sub| !flags.is_sub_enabled(sub)),
+        "a group toggle off clears all of its children"
+      );
+    }
+
+    #[test]
+    fn set_sub_enabled_flips_only_the_named_child() {
+      let mut flags = FeatureFlags::default();
+
+      flags.set_sub_enabled(SubFeature::Abyssals, false);
+
+      assert!(!flags.is_sub_enabled(SubFeature::Abyssals));
+      assert!(flags.is_sub_enabled(SubFeature::Inventory), "siblings are untouched");
+    }
+
+    #[test]
+    fn enabled_sub_features_of_lists_only_the_groups_children() {
+      let mut flags = FeatureFlags::default();
+      flags.set_sub_enabled(SubFeature::Journal, false);
+
+      let wallet = flags.enabled_sub_features_of(Feature::Wallet);
+
+      assert!(!wallet.contains(&SubFeature::Journal));
+      assert!(wallet.contains(&SubFeature::Budget));
+      assert!(
+        wallet.iter().all(|sub| sub.group() == Feature::Wallet),
+        "only Wallet children are returned"
+      );
+    }
+  }
+
+  mod sub_feature {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn every_sub_feature_rolls_up_to_a_group_that_owns_it() {
+      for sub in SubFeature::ALL {
+        assert!(
+          sub.group().sub_features().contains(&sub),
+          "{sub:?} must be listed under its group {:?}",
+          sub.group()
+        );
+      }
+    }
+
+    #[test]
+    fn the_groups_partition_every_sub_feature_exactly_once() {
+      let mut seen: HashSet<SubFeature> = HashSet::new();
+
+      for feature in Feature::ALL {
+        for &sub in feature.sub_features() {
+          assert!(seen.insert(sub), "{sub:?} is owned by more than one group");
+        }
+      }
+
+      assert_eq!(seen.len(), SubFeature::ALL.len(), "every sub-feature has a group");
+    }
+
+    #[test]
+    fn sub_feature_keys_are_unique_within_a_group() {
+      for feature in Feature::ALL {
+        let mut keys: HashSet<&str> = HashSet::new();
+        for &sub in feature.sub_features() {
+          assert!(
+            keys.insert(sub.key()),
+            "{:?} has a duplicate child key {}",
+            feature,
+            sub.key()
+          );
+        }
+      }
+    }
   }
 
   mod load_from {
@@ -785,12 +1101,130 @@ mod tests {
 
       let features = load_from(&path).unwrap().features().to_owned();
 
-      assert!(!features.wallet());
-      assert!(!features.mail());
-      assert!(features.clone_monitoring());
-      assert!(features.is_enabled(Feature::Contacts));
       assert!(!features.is_enabled(Feature::Wallet));
+      assert!(!features.is_enabled(Feature::Mail));
+      assert!(features.is_enabled(Feature::CloneMonitoring));
+      assert!(features.is_enabled(Feature::Contacts));
       assert!(!features.enabled().contains(&Feature::Wallet));
+    }
+
+    #[test]
+    fn it_migrates_a_legacy_all_true_flat_config_to_every_sub_feature_on() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(
+        &path,
+        "[features]\nwallet = true\nindustry = true\nasset_tracking = true\n",
+      )
+      .unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      assert_eq!(
+        features,
+        FeatureFlags::default(),
+        "an all-true legacy file is the all-on default"
+      );
+      assert_eq!(features.enabled_sub_features(), SubFeature::ALL.to_vec());
+    }
+
+    #[test]
+    fn it_cascades_a_legacy_group_false_onto_every_child() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[features]\nwallet = false\n").unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      for sub in Feature::Wallet.sub_features() {
+        assert!(
+          !features.is_sub_enabled(*sub),
+          "{sub:?} must be off under a legacy `wallet = false`"
+        );
+      }
+      assert!(
+        features.is_enabled(Feature::AssetTracking),
+        "untouched groups stay fully on"
+      );
+    }
+
+    #[test]
+    fn it_reads_a_new_nested_partial_config() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[features.wallet]\nbudget = false\n").unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      assert!(!features.is_sub_enabled(SubFeature::Budget));
+      assert!(
+        features.is_sub_enabled(SubFeature::Journal),
+        "unlisted Wallet children stay on"
+      );
+      assert!(
+        features.is_enabled(Feature::Wallet),
+        "the group is still on via its other children"
+      );
+    }
+
+    #[test]
+    fn it_loads_a_mixed_flat_and_nested_config() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(
+        &path,
+        "[features]\nmail = false\n\n[features.industry]\nplanner = false\n",
+      )
+      .unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      assert!(
+        !features.is_enabled(Feature::Mail),
+        "the flat key cascades the group off"
+      );
+      assert!(
+        !features.is_sub_enabled(SubFeature::Planner),
+        "the nested key flips one child"
+      );
+      assert!(
+        features.is_sub_enabled(SubFeature::Blueprints),
+        "unlisted Industry children stay on"
+      );
+    }
+
+    #[test]
+    fn it_defaults_a_brand_new_sub_feature_on_for_a_legacy_config_that_never_mentioned_it() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[features]\nwallet = true\n").unwrap();
+
+      let features = load_from(&path).unwrap().features().to_owned();
+
+      assert!(
+        features.is_sub_enabled(SubFeature::Budget),
+        "a sub-feature absent from the legacy file defaults to enabled"
+      );
+    }
+
+    #[test]
+    fn a_new_nested_config_round_trips_through_save_and_load() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      let mut settings = Settings::default();
+      settings.features_mut().set_sub_enabled(SubFeature::Budget, false);
+      settings.features_mut().set_sub_enabled(SubFeature::Abyssals, false);
+
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
+
+      assert_eq!(loaded.features(), settings.features());
+      let serialized = std::fs::read_to_string(&path).unwrap();
+      assert!(
+        serialized.contains("[features.wallet]"),
+        "the next save re-serializes in the nested form: {serialized}"
+      );
+      assert!(serialized.contains("budget = false"), "{serialized}");
     }
 
     #[test]
@@ -1068,8 +1502,8 @@ mod tests {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("config.toml");
       let mut settings = Settings::default();
-      settings.features.wallet = false;
-      settings.features.combat_log = false;
+      settings.features_mut().set_enabled(Feature::Wallet, false);
+      settings.features_mut().set_enabled(Feature::CombatLog, false);
       settings.storage.network = true;
       settings.storage.log_dir = Some(PathBuf::from("/tmp/pod-logs"));
 
@@ -1078,7 +1512,7 @@ mod tests {
 
       assert_eq!(loaded.features(), settings.features());
       assert_eq!(loaded.storage(), settings.storage());
-      assert!(!loaded.features().wallet());
+      assert!(!loaded.features().is_enabled(Feature::Wallet));
       assert!(loaded.storage().network());
       assert_eq!(*loaded.storage().log_dir(), Some(PathBuf::from("/tmp/pod-logs")));
     }

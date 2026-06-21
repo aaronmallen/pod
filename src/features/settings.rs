@@ -45,7 +45,7 @@ impl Category {
   /// when the Industry feature is enabled.
   fn list(settings: &Settings) -> Vec<Category> {
     let mut categories = vec![Category::Accessibility, Category::Features];
-    if *settings.features().industry() {
+    if settings.features().is_enabled(config::Feature::Industry) {
       categories.push(Category::Industry);
     }
     categories.push(Category::Storage);
@@ -150,7 +150,7 @@ impl State {
 
 pub fn load(state: &State) -> Task<Message> {
   let tags = tags_tab::load(&state.db).map(Message::Tags);
-  if !*state.settings.features().industry() {
+  if !state.settings.features().is_enabled(config::Feature::Industry) {
     return tags;
   }
 
@@ -232,7 +232,7 @@ fn reset_active(state: &mut State) {
   match state.active {
     Category::Accessibility => *state.settings.accessibility_mut() = *defaults.accessibility(),
     Category::Features => *state.settings.features_mut() = *defaults.features(),
-    Category::Industry if *state.settings.features().industry() => {
+    Category::Industry if state.settings.features().is_enabled(config::Feature::Industry) => {
       *state.settings.industry_mut() = *defaults.industry();
       state.industry = industry_tab::State::from_settings(&state.settings);
     }
@@ -470,7 +470,8 @@ fn badge_for(state: &State, category: Category) -> String {
 fn active_panel(state: &State) -> Element<'_, Message> {
   // A disabled Industry feature must never render its panel, even if it was the active category when
   // the feature was switched off; fall back to the default category in that case.
-  let active = if state.active == Category::Industry && !*state.settings.features().industry() {
+  let industry_off = !state.settings.features().is_enabled(config::Feature::Industry);
+  let active = if state.active == Category::Industry && industry_off {
     Category::default()
   } else {
     state.active
@@ -503,7 +504,10 @@ mod tests {
   #[tokio::test]
   async fn a_disabled_industry_panel_falls_back_to_the_default_category() {
     let mut state = state().await;
-    state.settings.features_mut().set_industry(false);
+    state
+      .settings
+      .features_mut()
+      .set_enabled(config::Feature::Industry, false);
     state.active = Category::Industry;
 
     let _el: Element<'_, Message> = view(&state);
@@ -564,7 +568,10 @@ mod tests {
   #[tokio::test]
   async fn reset_on_industry_is_a_no_op_when_the_feature_is_disabled() {
     let mut state = state().await;
-    state.settings.features_mut().set_industry(false);
+    state
+      .settings
+      .features_mut()
+      .set_enabled(config::Feature::Industry, false);
     state.settings.industry_mut().set_manufacturing(Some(60_003_760));
     state.active = Category::Industry;
 
@@ -581,7 +588,10 @@ mod tests {
   #[tokio::test]
   async fn reset_on_industry_restores_defaults_when_the_feature_is_enabled() {
     let mut state = state().await;
-    state.settings.features_mut().set_industry(true);
+    state
+      .settings
+      .features_mut()
+      .set_enabled(config::Feature::Industry, true);
     state.settings.industry_mut().set_manufacturing(Some(60_003_760));
     state.active = Category::Industry;
 
@@ -631,13 +641,16 @@ mod tests {
   #[tokio::test]
   async fn reset_to_defaults_restores_the_active_category() {
     let mut state = state().await;
-    state.settings.features_mut().set_wallet(false);
-    assert!(!state.settings.features().wallet());
+    state
+      .settings
+      .features_mut()
+      .set_enabled(crate::config::Feature::Wallet, false);
+    assert!(!state.settings.features().is_enabled(crate::config::Feature::Wallet));
 
     let _task = update(&mut state, Message::ResetToDefaults);
 
     assert!(
-      state.settings.features().wallet(),
+      state.settings.features().is_enabled(crate::config::Feature::Wallet),
       "Features reset should re-enable wallet"
     );
   }
@@ -654,7 +667,7 @@ mod tests {
   #[tokio::test]
   async fn the_industry_category_appears_when_the_feature_is_enabled() {
     let mut settings = Settings::default();
-    settings.features_mut().set_industry(true);
+    settings.features_mut().set_enabled(config::Feature::Industry, true);
 
     assert!(Category::list(&settings).contains(&Category::Industry));
   }
@@ -662,7 +675,7 @@ mod tests {
   #[tokio::test]
   async fn the_industry_category_is_hidden_when_the_feature_is_disabled() {
     let mut settings = Settings::default();
-    settings.features_mut().set_industry(false);
+    settings.features_mut().set_enabled(config::Feature::Industry, false);
 
     assert!(!Category::list(&settings).contains(&Category::Industry));
   }
@@ -675,7 +688,10 @@ mod tests {
 
     for category in categories {
       let mut state = state().await;
-      state.settings.features_mut().set_industry(true);
+      state
+        .settings
+        .features_mut()
+        .set_enabled(config::Feature::Industry, true);
       state.active = category;
       let _el: Element<'_, Message> = view(&state);
     }

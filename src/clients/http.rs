@@ -5,6 +5,7 @@ use std::{
 };
 
 use chrono::Utc;
+use futures_util::{StreamExt, stream};
 use reqwest::header::HeaderMap;
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -18,20 +19,40 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const ESI_ERROR_LIMIT_RESET_HEADER: &str = "X-ESI-Error-Limit-Reset";
 const ESI_PAGES_HEADER: &str = "X-Pages";
 const HTTP_TARGET: &str = "pod::http";
+// Cap on simultaneous in-flight requests for the page-2..N fan-out of a paginated endpoint. The old
+// unbounded JoinSet opened one connection per page at once, so a single large list (assets, journal)
+// could spike dozens of concurrent requests — and, via their cache upserts, dozens of writes — at
+// the single SQLite writer. Bounding the fan-out caps that burst while still overlapping enough page
+// fetches to stay fast.
+const MAX_CONCURRENT_PAGES: usize = 6;
+// Soft size threshold for the write-behind HTTP cache buffer. When buffered (unflushed) cache
+// entries reach this many, an upsert eagerly flushes the batch so a long-running job can't grow the
+// buffer without bound. A per-job flush in the sync engine bounds it on the time axis.
+const CACHE_FLUSH_THRESHOLD: usize = 32;
 const RATELIMIT_GROUP_HEADER: &str = "X-Ratelimit-Group";
 const RATELIMIT_LIMIT_HEADER: &str = "X-Ratelimit-Limit";
 const RATELIMIT_REMAINING_HEADER: &str = "X-Ratelimit-Remaining";
 const RATELIMIT_USED_HEADER: &str = "X-Ratelimit-Used";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// HTTP response cache backed by the `http_cache` table, fronted by a write-behind buffer.
+///
+/// Every ESI call reads the cache before the request and writes it after, so a multi-character sync
+/// used to issue hundreds of one-row write transactions against the single SQLite writer. Instead,
+/// `upsert` records entries in an in-memory buffer keyed by URL and they are flushed to the database
+/// in a single batched transaction — on a size threshold, or explicitly per sync job. Reads consult
+/// the buffer before the database, so a job always sees its own un-flushed writes (read-your-writes),
+/// and cache hit/miss/freshness behavior is identical to writing through every time.
 pub struct Cache {
   db: store::Database,
+  pending: Mutex<HashMap<String, HttpCacheEntry>>,
 }
 
 impl Cache {
   pub fn new(db: store::Database) -> Self {
     Self {
       db,
+      pending: Mutex::new(HashMap::new()),
     }
   }
 
@@ -43,12 +64,70 @@ impl Cache {
   }
 
   async fn get(&self, url: &str) -> Result<Option<HttpCacheEntry>, store::Error> {
+    // Read-your-writes: a buffered (not-yet-flushed) entry shadows the database row for the same URL.
+    if let Some(entry) = self.buffered(url) {
+      return Ok(Some(entry));
+    }
     infra::http_cache_get(&self.db, url).await
   }
 
-  async fn upsert(&self, entry: &HttpCacheEntry) -> Result<(), store::Error> {
-    infra::http_cache_upsert(&self.db, entry).await
+  fn buffered(&self, url: &str) -> Option<HttpCacheEntry> {
+    self
+      .pending
+      .lock()
+      .expect("http cache buffer mutex poisoned")
+      .get(url)
+      .cloned()
   }
+
+  async fn upsert(&self, entry: &HttpCacheEntry) -> Result<(), store::Error> {
+    let pending = {
+      let mut buffer = self.pending.lock().expect("http cache buffer mutex poisoned");
+      buffer.insert(entry.url().clone(), entry.clone());
+      if buffer.len() < CACHE_FLUSH_THRESHOLD {
+        return Ok(());
+      }
+      std::mem::take(&mut *buffer)
+    };
+    write_batch(&self.db, pending).await
+  }
+
+  /// Flush every buffered entry to the database in a single transaction. Anchored per sync job so a
+  /// job's cache writes land as one batched write rather than one transaction per ESI call.
+  async fn flush(&self) -> Result<(), store::Error> {
+    let pending = {
+      let mut buffer = self.pending.lock().expect("http cache buffer mutex poisoned");
+      if buffer.is_empty() {
+        return Ok(());
+      }
+      std::mem::take(&mut *buffer)
+    };
+    write_batch(&self.db, pending).await
+  }
+}
+
+async fn write_batch(db: &store::Database, entries: HashMap<String, HttpCacheEntry>) -> Result<(), store::Error> {
+  // A lone entry is already a single atomic statement, so skip the explicit transaction and reuse the
+  // shared single-row upsert; only a real batch is worth wrapping in one BEGIN/COMMIT.
+  if entries.len() == 1 {
+    if let Some(entry) = entries.values().next() {
+      return infra::http_cache_upsert(db, entry).await;
+    }
+    return Ok(());
+  }
+  let mut tx = db.writer().begin().await?;
+  for entry in entries.values() {
+    sqlx::query("INSERT OR REPLACE INTO http_cache (body, cached_at, etag, expires_at, url) VALUES (?, ?, ?, ?, ?)")
+      .bind(entry.body())
+      .bind(entry.cached_at())
+      .bind(entry.etag().as_deref())
+      .bind(entry.expires_at())
+      .bind(entry.url().as_str())
+      .execute(&mut *tx)
+      .await?;
+  }
+  tx.commit().await?;
+  Ok(())
 }
 
 pub struct Client {
@@ -103,22 +182,22 @@ impl Client {
       return Ok(items);
     }
 
-    let mut set = tokio::task::JoinSet::new();
-    for page in 2..=total_pages {
-      let inner = self.inner.clone();
-      let budgets = Arc::clone(&self.budgets);
-      let url = url.to_owned();
-      let token = token.map(str::to_owned);
-      set.spawn(async move {
-        fetch_page::<T>(&inner, &budgets, &url, page, token.as_deref(), compat_date)
-          .await
-          .map(|(items, _)| items)
-      });
-    }
+    // Fetch the remaining pages with a bounded number of simultaneous requests instead of an
+    // unbounded fan-out, capping the concurrent connection/write burst at the single SQLite writer.
+    let mut pages = stream::iter(2..=total_pages)
+      .map(|page| {
+        let inner = &self.inner;
+        let budgets = &self.budgets;
+        async move {
+          fetch_page::<T>(inner, budgets, url, page, token, compat_date)
+            .await
+            .map(|(items, _)| items)
+        }
+      })
+      .buffer_unordered(MAX_CONCURRENT_PAGES);
 
-    while let Some(joined) = set.join_next().await {
-      let page_items = joined.map_err(|e| Error::Internal(format!("page task panicked: {e}")))??;
-      items.extend(page_items);
+    while let Some(page_items) = pages.next().await {
+      items.extend(page_items?);
     }
 
     Ok(items)
@@ -171,6 +250,13 @@ impl Client {
     }
     let resp = send_logged("PUT", url, req, &self.budgets).await?;
     handle_status(resp).await
+  }
+
+  /// Flush the write-behind HTTP cache buffer to the database. The sync engine calls this once after
+  /// each job so a job's many ESI cache writes are coalesced into a single batched transaction
+  /// instead of one transaction per request, cutting the writer's queue depth during a sync.
+  pub async fn flush_cache(&self) -> Result<(), store::Error> {
+    self.cache.flush().await
   }
 
   // Test-support accessor: the app-level cache-population test reads the cache database through this
@@ -842,6 +928,7 @@ mod tests {
         let client = Client::builder(Cache::new(db.clone())).build();
 
         let _: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
+        client.flush_cache().await.unwrap();
 
         let cached = infra::http_cache_get(&db, &url).await.unwrap().unwrap();
         assert_eq!(cached.etag().as_deref(), Some("\"new-etag\""));
@@ -970,6 +1057,135 @@ mod tests {
           .unwrap();
 
         assert_eq!(result, vec![9]);
+      }
+    }
+
+    mod cache_coalescing {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_serves_a_buffered_upsert_before_it_is_flushed() {
+        let db = store::open_test().await.unwrap();
+        let cache = Cache::new(db.clone());
+        let entry = HttpCacheEntry::new(b"[1,2,3]".to_vec(), 0, "https://esi.example/buffered");
+
+        cache.upsert(&entry).await.unwrap();
+
+        let got = cache.get("https://esi.example/buffered").await.unwrap();
+        assert_eq!(got.as_ref().map(HttpCacheEntry::body), Some(&b"[1,2,3]".to_vec()));
+        assert!(
+          infra::http_cache_get(&db, "https://esi.example/buffered")
+            .await
+            .unwrap()
+            .is_none(),
+          "a single upsert stays buffered in memory and is not yet written through to the database"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_flushes_buffered_entries_to_the_database_in_one_pass() {
+        let db = store::open_test().await.unwrap();
+        let cache = Cache::new(db.clone());
+        cache
+          .upsert(&HttpCacheEntry::new(b"a".to_vec(), 0, "https://esi.example/a"))
+          .await
+          .unwrap();
+        cache
+          .upsert(&HttpCacheEntry::new(b"b".to_vec(), 0, "https://esi.example/b"))
+          .await
+          .unwrap();
+
+        cache.flush().await.unwrap();
+
+        assert!(
+          infra::http_cache_get(&db, "https://esi.example/a")
+            .await
+            .unwrap()
+            .is_some()
+        );
+        assert!(
+          infra::http_cache_get(&db, "https://esi.example/b")
+            .await
+            .unwrap()
+            .is_some()
+        );
+      }
+
+      #[tokio::test]
+      async fn it_serves_the_latest_buffered_upsert_for_a_url() {
+        let db = store::open_test().await.unwrap();
+        let cache = Cache::new(db);
+        cache
+          .upsert(&HttpCacheEntry::new(b"old".to_vec(), 0, "https://esi.example/dup"))
+          .await
+          .unwrap();
+        cache
+          .upsert(&HttpCacheEntry::new(b"new".to_vec(), 1, "https://esi.example/dup"))
+          .await
+          .unwrap();
+
+        let got = cache.get("https://esi.example/dup").await.unwrap().unwrap();
+
+        assert_eq!(
+          got.body(),
+          b"new",
+          "a re-upsert of the same url replaces the buffered entry"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_auto_flushes_once_the_buffer_reaches_the_threshold() {
+        let db = store::open_test().await.unwrap();
+        let cache = Cache::new(db.clone());
+        for i in 0..CACHE_FLUSH_THRESHOLD {
+          cache
+            .upsert(&HttpCacheEntry::new(
+              vec![0],
+              0,
+              format!("https://esi.example/auto/{i}"),
+            ))
+            .await
+            .unwrap();
+        }
+
+        assert!(
+          infra::http_cache_get(&db, "https://esi.example/auto/0")
+            .await
+            .unwrap()
+            .is_some(),
+          "reaching the size threshold flushes the whole buffer to the database without an explicit flush"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_persists_a_response_through_flush_cache_so_a_later_revalidation_sends_if_none_match() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .respond_with(
+            ResponseTemplate::new(200)
+              .insert_header("ETag", "\"flushed-etag\"")
+              .set_body_raw(b"[7]".to_vec(), "application/json"),
+          )
+          .mount(&server)
+          .await;
+        let db = store::open_test().await.unwrap();
+        let url = format!("{}/resource", server.uri());
+        let client = Client::builder(Cache::new(db.clone())).build();
+
+        let _: Vec<i32> = client.get_json(&url, None, None).await.unwrap();
+        assert!(
+          infra::http_cache_get(&db, &url).await.unwrap().is_none(),
+          "the freshly fetched response is buffered, not yet written through"
+        );
+
+        client.flush_cache().await.unwrap();
+
+        let cached = infra::http_cache_get(&db, &url).await.unwrap().unwrap();
+        assert_eq!(cached.etag().as_deref(), Some("\"flushed-etag\""));
+        assert_eq!(cached.body(), b"[7]");
       }
     }
 

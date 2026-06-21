@@ -796,7 +796,16 @@ async fn run_job(
     // other job has already had its grant resolved above, so it gets None.
     sso: matches!(key.kind, JobKind::TokenAudit).then_some(sso.as_ref()),
   };
-  job::run(&ctx).await
+  let outcome = job::run(&ctx).await;
+  // Coalesce this job's HTTP-cache writes into one batched transaction. Each ESI call buffers its
+  // cache upsert in memory (reads still see their own writes); flushing once per job collapses the
+  // hundreds of one-row write transactions a sync used to issue into a few batched ones, dropping the
+  // single SQLite writer's queue depth. Best-effort: a flush failure must not fail an otherwise-good
+  // job — the entries simply remain buffered for the next flush.
+  if let Err(error) = esi.http().flush_cache().await {
+    tracing::warn!(?key, %error, "failed to flush HTTP cache buffer after job");
+  }
+  outcome
 }
 
 async fn is_flagged_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerType) -> bool {

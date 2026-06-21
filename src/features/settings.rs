@@ -40,6 +40,19 @@ pub enum Category {
 }
 
 impl Category {
+  pub fn from_id(id: &str) -> Option<Category> {
+    match id {
+      "about" => Some(Category::About),
+      "accessibility" => Some(Category::Accessibility),
+      "features" => Some(Category::Features),
+      "industry" => Some(Category::Industry),
+      "storage" => Some(Category::Storage),
+      "tags" => Some(Category::Tags),
+      "ui" => Some(Category::Ui),
+      _ => None,
+    }
+  }
+
   /// The categories that appear in the normal top-of-rail list, in order. `About` is excluded here
   /// because it is pinned to the bottom of the rail, separated from the rest. `Industry` only appears
   /// when the Industry feature is enabled.
@@ -132,6 +145,20 @@ impl State {
       storage,
       tags,
       ui,
+    }
+  }
+
+  pub fn active_category(&self) -> Category {
+    self.active
+  }
+
+  pub fn select_category_by_id(&mut self, id: &str) -> bool {
+    match Category::from_id(id) {
+      Some(category) => {
+        self.active = category;
+        true
+      }
+      None => false,
     }
   }
 

@@ -44,6 +44,17 @@ pub enum View {
 impl View {
   pub const ALL: [View; 5] = [View::Agenda, View::Day, View::Week, View::Month, View::Year];
 
+  pub fn from_id(id: &str) -> Option<View> {
+    match id {
+      "agenda" => Some(View::Agenda),
+      "day" => Some(View::Day),
+      "month" => Some(View::Month),
+      "week" => Some(View::Week),
+      "year" => Some(View::Year),
+      _ => None,
+    }
+  }
+
   pub fn label(self) -> &'static str {
     match self {
       View::Agenda => "Agenda",
@@ -124,6 +135,20 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn active_view(&self) -> View {
+    self.view
+  }
+
+  pub fn select_view_by_id(&mut self, id: &str) -> bool {
+    match View::from_id(id) {
+      Some(view) => {
+        self.view = view;
+        true
+      }
+      None => false,
+    }
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {

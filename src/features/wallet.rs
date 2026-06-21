@@ -680,6 +680,20 @@ impl State {
     self.active
   }
 
+  pub fn active_tab(&self) -> Tab {
+    self.tab
+  }
+
+  pub fn select_tab_by_id(&mut self, id: &str) -> bool {
+    match Tab::from_id(id) {
+      Some(tab) => {
+        self.tab = tab;
+        true
+      }
+      None => false,
+    }
+  }
+
   pub fn drain_dirty(&mut self, db: &Database) -> Option<Task<Message>> {
     if !self.dirty {
       return None;
@@ -1126,6 +1140,17 @@ pub enum Tab {
 
 impl Tab {
   const ORDER: [Tab; 5] = [Tab::Wallets, Tab::Journal, Tab::Market, Tab::Contracts, Tab::Budget];
+
+  pub fn from_id(id: &str) -> Option<Tab> {
+    match id {
+      "budget" => Some(Tab::Budget),
+      "contracts" => Some(Tab::Contracts),
+      "journal" => Some(Tab::Journal),
+      "market" => Some(Tab::Market),
+      "wallets" => Some(Tab::Wallets),
+      _ => None,
+    }
+  }
 
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
     crate::features::registry::sub_descriptor(self.sub_feature())

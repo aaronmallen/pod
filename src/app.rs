@@ -230,6 +230,7 @@ enum Message {
   Mail(mail::Message),
   MailUnreadCounted(i64),
   Nav(rail::Destination),
+  NavTo(rail::Destination, Option<&'static str>),
   PeriodicPull,
   PeriodicPush,
   Pulled(bool),
@@ -305,6 +306,7 @@ impl Message {
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::Nav(_) => "Nav",
+      Message::NavTo(..) => "NavTo",
       Message::Settings(_) => "Settings",
       Message::SkillPlanEditor(_) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
@@ -2602,6 +2604,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::Nav(destination) => handle_nav(app, destination),
+    Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
     Message::Settings(msg) => handle_settings(app, msg),
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
     Message::Skills(msg) => handle_skills(app, msg),
@@ -3858,6 +3861,82 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
       navigate(app, Route::from(other));
       Task::none()
     }
+  }
+}
+
+fn handle_nav_to(app: &mut App, destination: rail::Destination, sub_section: Option<&'static str>) -> Task<Message> {
+  let nav = handle_nav(app, destination);
+  let Some(id) = sub_section else {
+    return nav;
+  };
+  // A disabled feature lands on Characters instead; honor that fallback and skip the sub-section.
+  if app.route.destination() != destination {
+    return nav;
+  }
+  Task::batch([nav, select_sub_section(app, destination, id)])
+}
+
+// Sets the freshly-navigated feature's inner tab from a catalog sub-section id, then reuses that
+// feature's own tab-selection handler to load the tab's data. The id is applied directly to state so
+// the tab is correct even before a runtime exists; the load handler is a no-op until one does.
+fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -> Task<Message> {
+  match destination {
+    rail::Destination::Assets => match assets::Tab::from_id(id) {
+      Some(tab) if app.assets.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+        update(app, Message::Assets(assets::Message::TabSelected(tab)))
+      }
+      _ => Task::none(),
+    },
+    rail::Destination::Calendar => match calendar::View::from_id(id) {
+      Some(view) if app.calendar.as_mut().is_some_and(|state| state.select_view_by_id(id)) => {
+        update(app, Message::Calendar(calendar::Message::ViewSelected(view)))
+      }
+      _ => Task::none(),
+    },
+    rail::Destination::Characters => match character_manager::Pane::from_id(id) {
+      Some(pane)
+        if app
+          .character_manager
+          .as_mut()
+          .is_some_and(|state| state.select_pane_by_id(id)) =>
+      {
+        update(
+          app,
+          Message::CharacterManager(character_manager::Message::TabSelected(pane)),
+        )
+      }
+      _ => Task::none(),
+    },
+    rail::Destination::Industry => match industry::Tab::from_id(id) {
+      Some(tab) if app.industry.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+        update(app, Message::Industry(industry::Message::TabSelected(tab)))
+      }
+      _ => Task::none(),
+    },
+    rail::Destination::Settings => match settings::Category::from_id(id) {
+      Some(category)
+        if app
+          .settings
+          .as_mut()
+          .is_some_and(|state| state.select_category_by_id(id)) =>
+      {
+        update(app, Message::Settings(settings::Message::CategorySelected(category)))
+      }
+      _ => Task::none(),
+    },
+    rail::Destination::Wallet => match wallet::Tab::from_id(id) {
+      Some(tab) if app.wallet.as_mut().is_some_and(|state| state.select_tab_by_id(id)) => {
+        update(app, Message::Wallet(wallet::Message::TabSelected(tab)))
+      }
+      _ => Task::none(),
+    },
+    // Skills' "queue" surface is the default landing view, so nav alone shows it; "compare" is a
+    // separate window the Skills view opens via OpenCompare, so reuse that handler here.
+    rail::Destination::Skills => match id {
+      "compare" => handle_skills(app, skills::Message::OpenCompare),
+      _ => Task::none(),
+    },
+    rail::Destination::Mail => Task::none(),
   }
 }
 
@@ -7815,6 +7894,120 @@ mod tests {
       assert_eq!(app.route, Route::Wallet);
       assert!(app.wallet.is_some());
       assert_eq!(app.route.destination(), rail::Destination::Wallet);
+    }
+
+    #[test]
+    fn it_deep_navigates_to_a_specific_wallet_tab() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Wallet, Some("budget")));
+
+      assert_eq!(app.route, Route::Wallet);
+      assert_eq!(
+        app.wallet.as_ref().map(wallet::State::active_tab),
+        Some(wallet::Tab::Budget)
+      );
+    }
+
+    #[test]
+    fn it_deep_navigates_to_a_specific_assets_tab() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Assets, Some("values")));
+
+      assert_eq!(app.route, Route::Assets);
+      assert_eq!(
+        app.assets.as_ref().map(assets::State::active_tab),
+        Some(assets::Tab::Values)
+      );
+    }
+
+    #[test]
+    fn it_deep_navigates_to_a_specific_industry_tab() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Industry, Some("planner")));
+
+      assert_eq!(app.route, Route::Industry);
+      assert_eq!(
+        app.industry.as_ref().map(industry::State::active_tab),
+        Some(industry::Tab::Planner)
+      );
+    }
+
+    #[test]
+    fn it_deep_navigates_to_a_specific_calendar_view() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Calendar, Some("week")));
+
+      assert_eq!(app.route, Route::Calendar);
+      assert_eq!(
+        app.calendar.as_ref().map(calendar::State::active_view),
+        Some(calendar::View::Week)
+      );
+    }
+
+    #[test]
+    fn it_deep_navigates_to_a_specific_characters_pane() {
+      let mut app = test_app();
+      app.character_manager = Some(character_manager::State::new());
+
+      let _ = update(
+        &mut app,
+        Message::NavTo(rail::Destination::Characters, Some("corporations")),
+      );
+
+      assert_eq!(app.route, Route::Characters);
+      assert_eq!(
+        app
+          .character_manager
+          .as_ref()
+          .map(character_manager::State::active_pane),
+        Some(character_manager::Pane::Corporations)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_deep_navigates_to_a_specific_settings_category() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Settings, Some("storage")));
+
+      assert_eq!(app.route, Route::Settings);
+      assert_eq!(
+        app.settings.as_ref().map(settings::State::active_category),
+        Some(settings::Category::Storage)
+      );
+    }
+
+    #[test]
+    fn it_deep_navigates_without_a_sub_section_keeping_the_default_tab() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Wallet, None));
+
+      assert_eq!(app.route, Route::Wallet);
+      assert_eq!(
+        app.wallet.as_ref().map(wallet::State::active_tab),
+        Some(wallet::Tab::default())
+      );
+    }
+
+    #[test]
+    fn it_ignores_an_unknown_sub_section_id_keeping_the_default_tab() {
+      let mut app = test_app();
+
+      let _ = update(&mut app, Message::NavTo(rail::Destination::Wallet, Some("nonexistent")));
+
+      assert_eq!(app.route, Route::Wallet);
+      assert_eq!(
+        app.wallet.as_ref().map(wallet::State::active_tab),
+        Some(wallet::Tab::default())
+      );
     }
 
     #[test]

@@ -492,6 +492,20 @@ impl State {
     self.active
   }
 
+  pub fn active_tab(&self) -> Tab {
+    self.tab
+  }
+
+  pub fn select_tab_by_id(&mut self, id: &str) -> bool {
+    match Tab::from_id(id) {
+      Some(tab) => {
+        self.tab = tab;
+        true
+      }
+      None => false,
+    }
+  }
+
   pub fn drain_dirty(&mut self, db: &Database) -> Option<Task<Message>> {
     if !self.dirty {
       return None;
@@ -863,6 +877,17 @@ impl Tab {
     Tab::Values,
     Tab::Tracker,
   ];
+
+  pub fn from_id(id: &str) -> Option<Tab> {
+    match id {
+      "abyssals" => Some(Tab::Abyssals),
+      "inventory" => Some(Tab::Inventory),
+      "stockpiles" => Some(Tab::Stockpiles),
+      "tracker" => Some(Tab::Tracker),
+      "values" => Some(Tab::Values),
+      _ => None,
+    }
+  }
 
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
     crate::features::registry::sub_descriptor(self.sub_feature())

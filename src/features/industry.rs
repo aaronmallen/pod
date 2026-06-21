@@ -91,6 +91,16 @@ pub enum Tab {
 impl Tab {
   pub const ALL: [Tab; 4] = [Tab::Jobs, Tab::Blueprints, Tab::Planner, Tab::Extractions];
 
+  pub fn from_id(id: &str) -> Option<Tab> {
+    match id {
+      "blueprints" => Some(Tab::Blueprints),
+      "extractions" => Some(Tab::Extractions),
+      "jobs" => Some(Tab::Jobs),
+      "planner" => Some(Tab::Planner),
+      _ => None,
+    }
+  }
+
   pub fn label(self) -> &'static str {
     match self {
       Tab::Blueprints => "Blueprints",
@@ -276,6 +286,20 @@ impl State {
 
   pub fn active(&self) -> Scope {
     self.active
+  }
+
+  pub fn active_tab(&self) -> Tab {
+    self.tab
+  }
+
+  pub fn select_tab_by_id(&mut self, id: &str) -> bool {
+    match Tab::from_id(id) {
+      Some(tab) => {
+        self.tab = tab;
+        true
+      }
+      None => false,
+    }
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {

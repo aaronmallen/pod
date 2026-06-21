@@ -233,6 +233,16 @@ pub enum Pane {
   Corporations,
 }
 
+impl Pane {
+  pub fn from_id(id: &str) -> Option<Pane> {
+    match id {
+      "characters" => Some(Pane::Characters),
+      "corporations" => Some(Pane::Corporations),
+      _ => None,
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoveConfirm {
   pub character_id: i64,
@@ -343,6 +353,20 @@ pub struct State {
 impl State {
   pub fn new() -> Self {
     Self::default()
+  }
+
+  pub fn active_pane(&self) -> Pane {
+    self.active_pane
+  }
+
+  pub fn select_pane_by_id(&mut self, id: &str) -> bool {
+    match Pane::from_id(id) {
+      Some(pane) => {
+        self.active_pane = pane;
+        true
+      }
+      None => false,
+    }
   }
 
   pub fn corp_filtered(&self) -> Option<&CorpFiltered> {

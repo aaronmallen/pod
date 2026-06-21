@@ -7,6 +7,41 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.4]
+
+### Added
+
+- Budget envelopes can now have **automation rules** — set up search-based rules from a category's new Automation tab,
+  or manage them all in one place with the global rules manager, and matching ledger entries file themselves into the
+  right envelope automatically.
+- Automation rules (and manual overrides) match both spending and income — money a rule files into an envelope is held
+  out of Ready to Assign so it's never counted twice.
+- **Move money** between budget envelopes — from a category's Available pill or its inspector, move any amount to
+  another category or back to Ready to Assign, the YNAB way.
+- New **Wallets** tab in the Wallet feature — a read-only, sortable balance overview that opens by default, listing
+  every pilot's wallet and each corporation wallet broken out by division.
+- You can now select multiple Journal or Transactions rows — plain, Ctrl/Cmd, or Shift click — and assign them all to a
+  budget envelope at once from the right-click menu.
+- The All-Wallets Journal and Transactions tabs now show corporation rows alongside character rows, so corp money is
+  visible and assignable instead of counting toward the budget while staying hidden.
+- Budget category **groups** can now be dragged to reorder them, not just the categories inside them.
+
+### Changed
+
+- Goal-by-date targets now pace toward their due date — the monthly amount needed shrinks as the goal funds and grows
+  as the deadline nears, instead of always showing the full remaining amount.
+
+### Fixed
+
+- Ready to Assign is now a single running balance across all months, so ISK assigned in a future month can no longer be
+  assigned twice, and spending in any earlier month now carries forward correctly.
+- A budget category scoped to All Wallets no longer over-reports spending — a single market trade mirrored across a
+  character and corporation wallet is now counted exactly once.
+- Dragging budget categories to reorder them works again, and the per-row budget category picker no longer comes up
+  empty under a character or corporation filter and now flips open upward when near the bottom of the screen.
+- Adding, deleting, renaming, or reordering a budget category now updates the ledger's envelope picker immediately
+  instead of leaving it stale until you revisit the tab.
+
 ## [0.6.3]
 
 ### Added
@@ -664,7 +699,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.3...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.4...HEAD
+[0.6.4]: https://github.com/aaronmallen/pod/compare/0.6.3...0.6.4
 [0.6.3]: https://github.com/aaronmallen/pod/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/aaronmallen/pod/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/aaronmallen/pod/compare/0.6.0...0.6.1

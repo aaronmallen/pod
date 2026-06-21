@@ -18,10 +18,35 @@ use crate::{
   ui::components::facility_combobox::FacilityRef,
 };
 
+/// EVE dogma attribute id for a hardwiring implant's manufacturing-time reduction (Zainou 'Beancounter' BX
+/// series). The stored value is a negative percent (BX-804 = -4.0), taken as a positive reduction.
+pub const ATTR_MANUFACTURING_TIME_BONUS: i64 = 440;
+/// EVE dogma attribute id for a hardwiring implant's reaction-time reduction. Stored as a negative percent.
+pub const ATTR_REACTION_TIME_BONUS: i64 = 2660;
+/// SDE type ids for the manufacturing-time hardwiring implants, mapped to their percent reduction. Used only as
+/// a fallback when an implant's dogma-attribute lookup comes back empty (an unsynced SDE), so the BX series
+/// still reduces build time. Mirrors the SDE values for [`ATTR_MANUFACTURING_TIME_BONUS`].
+pub const CURATED_MANUFACTURING_IMPLANTS: [(i64, f64); 6] = [
+  (27_170, 1.0), // Zainou 'Beancounter' Industry BX-801
+  (27_167, 2.0), // Zainou 'Beancounter' Industry BX-802
+  (27_171, 4.0), // Zainou 'Beancounter' Industry BX-804
+  (59_797, 8.0), // Serenity Zainou 'Beancounter' Manufacturing RP-108
+  (59_799, 8.0), // Serenity Zainou 'Beancounter' Manufacturing RP-308
+  (59_801, 8.0), // Serenity Zainou 'Beancounter' Manufacturing RP-708
+];
+/// SDE type ids for the reaction-time hardwiring implants, mapped to their percent reduction. Fallback for
+/// [`ATTR_REACTION_TIME_BONUS`] when the dogma-attribute lookup is empty.
+pub const CURATED_REACTION_IMPLANTS: [(i64, f64); 1] = [
+  (45_746, 4.0), // 'Beancounter' Reactions hardwiring
+];
 /// NPC-station facility tax, the fixed 0.25% of EIV CCP levies on jobs installed at an NPC station. Player
 /// structures set their own rate (capped at 10%); the planner has no per-structure tax data, so every job
 /// falls back to this NPC default rather than guessing a structure's configured rate.
 pub const FACILITY_TAX_RATE: f64 = 0.0025;
+/// EVE skill type id for Advanced Industry: -3% to ALL manufacturing and reaction time per level.
+pub const SKILL_ADVANCED_INDUSTRY: i64 = 3388;
+/// EVE skill type id for Industry: -4% to manufacturing time per level (does not affect reactions).
+pub const SKILL_INDUSTRY: i64 = 3380;
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 /// SCC (Secure Commerce Commission) surcharge, the flat 4% of EIV CCP adds to every industry job
 /// regardless of facility. Single-sourced here so the install-fee model carries no magic numbers.
@@ -107,6 +132,12 @@ impl Category {
   }
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ImplantTimeBonuses {
+  pub manufacturing: HashMap<i64, f64>,
+  pub reaction: HashMap<i64, f64>,
+}
+
 // See BlueprintRecipe: tested planner data scaffolding awaiting UI wiring.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,15 +166,30 @@ pub struct OwnedSummary {
 /// One installable clone of a pilot: an implant set the build-time math reads. `id` is the ESI `jump_clone_id`;
 /// `None` marks the pilot's active clone. `location` is shown as context only — it never constrains the build
 /// facility (EVE installs jobs remotely).
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanClone {
   pub id: Option<i64>,
   pub implant_names: Vec<String>,
   pub location: Option<String>,
+  /// The best manufacturing-time implant reduction in this clone, as a positive percent (BX-804 = 4.0). Zero
+  /// when no time-bonus implant is plugged in. Only the strongest implant counts — bonuses do not stack.
+  pub manufacturing_time_bonus: f64,
   pub name: String,
+  /// The best reaction-time implant reduction in this clone, as a positive percent. Zero when none.
+  pub reaction_time_bonus: f64,
 }
 
 impl PlanClone {
+  /// The clone's time-bonus implant reduction (positive percent) for the given activity: the reaction-time
+  /// implant for reactions, the manufacturing-time implant otherwise.
+  pub fn time_bonus(&self, is_reaction: bool) -> f64 {
+    if is_reaction {
+      self.reaction_time_bonus
+    } else {
+      self.manufacturing_time_bonus
+    }
+  }
+
   /// A short "3 implants \u{00B7} <first implant>" summary; the full list is surfaced on expand. Empty clones
   /// read "no implants".
   pub fn implant_summary(&self) -> String {
@@ -161,8 +207,12 @@ impl PlanClone {
 /// sets the time math consumes. Built only when both Skills and Clone-Monitoring are enabled.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanPilot {
+  /// Trained Advanced Industry level (0-5): -3% manufacturing AND reaction time per level.
+  pub advanced_industry: i64,
   pub clones: Vec<PlanClone>,
   pub id: i64,
+  /// Trained Industry level (0-5): -4% manufacturing time per level; does not affect reactions.
+  pub industry: i64,
   pub name: String,
   pub portrait: Option<std::path::PathBuf>,
 }
@@ -170,6 +220,18 @@ pub struct PlanPilot {
 impl PlanPilot {
   pub fn clone_named(&self, clone_id: Option<i64>) -> Option<&PlanClone> {
     self.clones.iter().find(|clone| clone.id == clone_id)
+  }
+
+  /// The pilot's combined skill time-reduction multiplier for the given activity, stacking Advanced Industry
+  /// (and, for manufacturing only, Industry) multiplicatively. Reactions get only Advanced Industry — never
+  /// Industry. Returns a factor in `(0, 1]` to multiply against base build time.
+  pub fn skill_time_multiplier(&self, is_reaction: bool) -> f64 {
+    let advanced = 1.0 - self.advanced_industry as f64 * 0.03;
+    if is_reaction {
+      advanced
+    } else {
+      advanced * (1.0 - self.industry as f64 * 0.04)
+    }
   }
 }
 
@@ -386,15 +448,26 @@ pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: 
 /// with no synced clones still appears, just without an active clone. Built only when the caller has confirmed
 /// both Skills and Clone-Monitoring are enabled — the features that gate this data.
 pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::path::PathBuf>)]) -> Vec<PlanPilot> {
+  let bonuses = implant_time_bonuses(db).await;
   let mut pilots = Vec::with_capacity(identities.len());
   for (id, name, portrait) in identities {
     let clones = match character::clones(db, *id).await {
-      Ok(Some(clones)) => plan_clones(&clones),
+      Ok(Some(clones)) => plan_clones(&clones, &bonuses),
       _ => Vec::new(),
     };
+    let skills = character::skills(db, *id).await.unwrap_or_default();
+    let level = |skill_id: i64| {
+      skills
+        .iter()
+        .find(|skill| skill.skill_id() == skill_id)
+        .map(|skill| skill.trained_skill_level())
+        .unwrap_or(0)
+    };
     pilots.push(PlanPilot {
+      advanced_industry: level(SKILL_ADVANCED_INDUSTRY),
       clones,
       id: *id,
+      industry: level(SKILL_INDUSTRY),
       name: name.clone(),
       portrait: portrait.clone(),
     });
@@ -402,14 +475,41 @@ pub async fn plan_pilots(db: &Database, identities: &[(i64, String, Option<std::
   pilots
 }
 
+/// Resolves every time-bonus implant's manufacturing/reaction reduction from the SDE dogma attributes
+/// ([`ATTR_MANUFACTURING_TIME_BONUS`] / [`ATTR_REACTION_TIME_BONUS`]), keyed by implant type id and stored as a
+/// positive percent (the SDE values are negative). Seeded from the curated fallback lists so the BX series still
+/// reduces time when the SDE is unsynced; a present dogma value overrides the fallback.
+pub async fn implant_time_bonuses(db: &Database) -> ImplantTimeBonuses {
+  let mut bonuses = ImplantTimeBonuses::default();
+  for (type_id, percent) in CURATED_MANUFACTURING_IMPLANTS {
+    bonuses.manufacturing.insert(type_id, percent);
+  }
+  for (type_id, percent) in CURATED_REACTION_IMPLANTS {
+    bonuses.reaction.insert(type_id, percent);
+  }
+  let attributes = [ATTR_MANUFACTURING_TIME_BONUS, ATTR_REACTION_TIME_BONUS];
+  for row in sde::implant_time_bonuses(db, &attributes).await.unwrap_or_default() {
+    let target = if row.attribute_id == ATTR_REACTION_TIME_BONUS {
+      &mut bonuses.reaction
+    } else {
+      &mut bonuses.manufacturing
+    };
+    target.insert(row.type_id, row.value.abs());
+  }
+  bonuses
+}
+
 /// Projects a [`CharacterClones`] into the planner's [`PlanClone`] list: the active clone first (`id` = `None`),
-/// then each jump clone keyed by its `jump_clone_id`.
-fn plan_clones(clones: &CharacterClones) -> Vec<PlanClone> {
+/// then each jump clone keyed by its `jump_clone_id`. Each clone's best manufacturing/reaction time-bonus implant
+/// is resolved from `bonuses`.
+fn plan_clones(clones: &CharacterClones, bonuses: &ImplantTimeBonuses) -> Vec<PlanClone> {
   let mut out = vec![PlanClone {
     id: None,
     implant_names: implant_names(&clones.active),
     location: clones.active.clone.home_location_name().clone(),
+    manufacturing_time_bonus: best_bonus(&clones.active, &bonuses.manufacturing),
     name: "Active clone".to_owned(),
+    reaction_time_bonus: best_bonus(&clones.active, &bonuses.reaction),
   }];
   for jump in &clones.jump_clones {
     let label = jump
@@ -423,10 +523,22 @@ fn plan_clones(clones: &CharacterClones) -> Vec<PlanClone> {
       id: Some(jump.clone.jump_clone_id()),
       implant_names: implant_names(jump),
       location: jump.clone.location_name().clone(),
+      manufacturing_time_bonus: best_bonus(jump, &bonuses.manufacturing),
       name: label,
+      reaction_time_bonus: best_bonus(jump, &bonuses.reaction),
     });
   }
   out
+}
+
+/// The strongest time-bonus among a clone's implants for one activity; implant bonuses do not stack, so only
+/// the largest reduction counts. Zero when no implant in the clone carries that bonus.
+fn best_bonus<C>(clone: &CloneWithImplants<C>, table: &HashMap<i64, f64>) -> f64 {
+  clone
+    .implants
+    .iter()
+    .filter_map(|implant| table.get(&implant.type_id()).copied())
+    .fold(0.0, f64::max)
 }
 
 fn implant_names<C>(clone: &CloneWithImplants<C>) -> Vec<String> {
@@ -1148,8 +1260,75 @@ mod tests {
     }
   }
 
+  mod implant_time_bonuses {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_implant(db: &Database, type_id: i64, name: &str, dogma: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (20, 'Implant', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (300, 20, 'Cyber', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+        VALUES (?, 300, '', ?, 1, ?)",
+      )
+      .bind(type_id)
+      .bind(name)
+      .bind(dogma)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_reads_the_manufacturing_and_reaction_bonus_from_dogma_attributes() {
+      let db = store::open_test().await.unwrap();
+      seed_implant(&db, 99_001, "Custom BX", r#"[{"attribute_id":440,"value":-6.0}]"#).await;
+      seed_implant(&db, 99_002, "Custom RF", r#"[{"attribute_id":2660,"value":-3.0}]"#).await;
+
+      let bonuses = super::implant_time_bonuses(&db).await;
+
+      assert_eq!(bonuses.manufacturing.get(&99_001), Some(&6.0));
+      assert_eq!(bonuses.reaction.get(&99_002), Some(&3.0));
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_curated_fallback_when_the_sde_has_no_dogma_row() {
+      let db = store::open_test().await.unwrap();
+
+      let bonuses = super::implant_time_bonuses(&db).await;
+
+      assert_eq!(bonuses.manufacturing.get(&27_171), Some(&4.0));
+      assert_eq!(bonuses.reaction.get(&45_746), Some(&4.0));
+    }
+  }
+
   mod plan_clone {
     use super::*;
+
+    mod time_bonus {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_returns_the_reaction_bonus_for_a_reaction_and_the_manufacturing_bonus_otherwise() {
+        let clone = PlanClone {
+          manufacturing_time_bonus: 4.0,
+          reaction_time_bonus: 2.0,
+          ..PlanClone::default()
+        };
+
+        assert_eq!(clone.time_bonus(false), 4.0);
+        assert_eq!(clone.time_bonus(true), 2.0);
+      }
+    }
 
     mod implant_summary {
       use pretty_assertions::assert_eq;
@@ -1233,7 +1412,7 @@ mod tests {
 
     #[test]
     fn it_puts_the_active_clone_first_with_a_null_id() {
-      let projected = super::plan_clones(&clones());
+      let projected = super::plan_clones(&clones(), &ImplantTimeBonuses::default());
 
       assert_eq!(projected[0].id, None);
       assert_eq!(projected[0].name, "Active clone");
@@ -1243,10 +1422,115 @@ mod tests {
 
     #[test]
     fn it_keys_jump_clones_by_their_jump_clone_id() {
-      let projected = super::plan_clones(&clones());
+      let projected = super::plan_clones(&clones(), &ImplantTimeBonuses::default());
 
       assert_eq!(projected[1].id, Some(7));
       assert_eq!(projected[1].name, "Industry clone");
+    }
+
+    #[test]
+    fn it_resolves_the_best_time_bonus_implant_into_the_clone() {
+      let mut bonuses = ImplantTimeBonuses::default();
+      // The active clone's implant (type 9899) carries a 5% manufacturing bonus.
+      bonuses.manufacturing.insert(9899, 5.0);
+
+      let projected = super::plan_clones(&clones(), &bonuses);
+
+      assert_eq!(projected[0].manufacturing_time_bonus, 5.0);
+      assert_eq!(projected[0].reaction_time_bonus, 0.0);
+      assert_eq!(projected[1].manufacturing_time_bonus, 0.0);
+    }
+  }
+
+  mod plan_pilot {
+    use super::*;
+
+    mod skill_time_multiplier {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_stacks_industry_and_advanced_industry_for_manufacturing() {
+        let pilot = PlanPilot {
+          advanced_industry: 5,
+          industry: 5,
+          ..PlanPilot::default()
+        };
+
+        // (1 - 5x0.04) x (1 - 5x0.03) = 0.80 x 0.85 = 0.68.
+        assert!((pilot.skill_time_multiplier(false) - 0.68).abs() < 1e-9);
+      }
+
+      #[test]
+      fn it_applies_only_advanced_industry_to_reactions() {
+        let pilot = PlanPilot {
+          advanced_industry: 4,
+          industry: 5,
+          ..PlanPilot::default()
+        };
+
+        // Industry is ignored for reactions: only (1 - 4x0.03) = 0.88.
+        assert!((pilot.skill_time_multiplier(true) - 0.88).abs() < 1e-9);
+      }
+
+      #[test]
+      fn it_is_neutral_with_no_skills() {
+        let pilot = PlanPilot::default();
+
+        assert_eq!(pilot.skill_time_multiplier(false), 1.0);
+        assert_eq!(pilot.skill_time_multiplier(true), 1.0);
+      }
+    }
+  }
+
+  mod best_bonus {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{CharacterCloneImplant, CharacterJumpClone, character_clone_view::CloneWithImplants};
+
+    fn implant(type_id: i64) -> CharacterCloneImplant {
+      CharacterCloneImplant {
+        character_id: 42,
+        clone_id: None,
+        icon: None,
+        name: format!("Implant {type_id}"),
+        resolved_icon: IconResolution::Missing,
+        type_id,
+      }
+    }
+
+    fn clone_with(type_ids: &[i64]) -> CloneWithImplants<CharacterJumpClone> {
+      CloneWithImplants {
+        clone: CharacterJumpClone {
+          character_id: 42,
+          jump_clone_id: 1,
+          location_id: 0,
+          location_name: None,
+          location_type: "station".to_owned(),
+          name: None,
+        },
+        implants: type_ids.iter().copied().map(implant).collect(),
+      }
+    }
+
+    #[test]
+    fn it_keeps_the_strongest_bonus_since_implants_do_not_stack() {
+      let mut table = HashMap::new();
+      table.insert(10, 2.0);
+      table.insert(20, 4.0);
+      let clone = clone_with(&[10, 20]);
+
+      assert_eq!(super::best_bonus(&clone, &table), 4.0);
+    }
+
+    #[test]
+    fn it_is_zero_when_no_implant_carries_the_bonus() {
+      let table: HashMap<i64, f64> = HashMap::new();
+      let clone = clone_with(&[10, 20]);
+
+      assert_eq!(super::best_bonus(&clone, &table), 0.0);
     }
   }
 

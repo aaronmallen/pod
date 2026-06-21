@@ -4,7 +4,7 @@ use iced::Point;
 
 use super::{
   Scope,
-  planner_loaders::{self, Category, PlanPilot, PlannerData, PlannerFacility, Recipe},
+  planner_loaders::{self, Category, PlanClone, PlanPilot, PlannerData, PlannerFacility, Recipe},
   planner_model::{
     BuildNode, BuildPlan, MergedBuildJob, PlanSegment, RawTotal, StockAllocation, StockSelection, allocate_stock,
     merge_segments, reconcile_segments, remove_segment, set_segment_assignment, set_segment_runs, split_segments,
@@ -474,6 +474,18 @@ impl Planner {
   /// component is built in-house it equals buying that component's constituent parts plus its sub-job fee.
   /// Net profit and margin derive from this true cost so they match the bill of materials. Called from
   /// [`recompute`], which reuses the plan it already assembled.
+  /// Total build time for `type_id`'s job in seconds, summed across its build-order segments so each segment
+  /// reflects its own assigned pilot+clone. An unassigned (or unsplit) job collapses to the blueprint-TE-only
+  /// time. Drives both the economics readout and the per-job time column.
+  fn product_build_time(&self, type_id: i64, recipe: &Recipe) -> f64 {
+    let te = self.settings_for(type_id).te;
+    self
+      .segments_for(type_id)
+      .iter()
+      .map(|segment| segment_build_time(recipe, segment.runs, te, self.segment_assignment(segment)))
+      .sum()
+  }
+
   fn compute_economics(&self, plan: &BuildPlan) -> Option<Economics> {
     let product = self.product?;
     let recipe = self.data.recipe(product)?;
@@ -491,7 +503,7 @@ impl Planner {
     } else {
       0.0
     };
-    let build_time_secs = node_build_time(recipe, self.runs, self.settings_for(product).te);
+    let build_time_secs = self.product_build_time(product, recipe);
 
     Some(Economics {
       build_time_secs,
@@ -589,6 +601,18 @@ impl Planner {
   /// The pilot in the pool with `id`, if any — used to resolve an assignment back to a name+clone for display.
   pub fn pilot(&self, id: i64) -> Option<&PlanPilot> {
     self.pilots.iter().find(|pilot| pilot.id == id)
+  }
+
+  /// Resolves a segment's stored assignment into the live `(pilot, clone)` whose skills + implant the build-time
+  /// math consumes. `None` when assignment is off, the segment is unassigned, or the pilot is no longer in the
+  /// pool — every case where the segment falls back to blueprint-TE-only time. A `None` clone marks the active
+  /// clone (its bonuses still apply).
+  pub fn segment_assignment(&self, segment: &PlanSegment) -> Option<(&PlanPilot, Option<&PlanClone>)> {
+    if !self.assign_pilots {
+      return None;
+    }
+    let pilot = self.pilot(segment.pilot_id?)?;
+    Some((pilot, pilot.clone_named(segment.clone_id)))
   }
 
   /// Whether the pilot picker for `(type_id, index)` is currently open.
@@ -1796,6 +1820,27 @@ pub fn node_build_time(recipe: &Recipe, runs: i64, te: i64) -> f64 {
   }
 }
 
+/// Effective build time for a segment in seconds: the blueprint-TE-only [`node_build_time`] further reduced by
+/// the assigned pilot's industry skills and the selected clone's time-bonus implant, all stacking
+/// multiplicatively (the canonical EVE model). An unassigned segment (`assignment` is `None`) returns the
+/// blueprint-TE-only time unchanged. Affects TIME only — never ISK cost or the install fee.
+pub fn segment_build_time(
+  recipe: &Recipe,
+  runs: i64,
+  te: i64,
+  assignment: Option<(&PlanPilot, Option<&PlanClone>)>,
+) -> f64 {
+  let base = node_build_time(recipe, runs, te);
+  match assignment {
+    None => base,
+    Some((pilot, clone)) => {
+      let skill = pilot.skill_time_multiplier(recipe.is_reaction);
+      let implant = 1.0 - clone.map(|clone| clone.time_bonus(recipe.is_reaction)).unwrap_or(0.0) / 100.0;
+      base * skill * implant
+    }
+  }
+}
+
 pub fn load(
   db: crate::store::Database,
   scope: Scope,
@@ -1913,7 +1958,9 @@ mod view {
     widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, slider, text, text_input},
   };
 
-  use super::{Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time};
+  use super::{
+    Economics, MATERIAL_PLAN_SCROLL_ID, Message, Planner, RightTab, SavedPlan, node_build_time, segment_build_time,
+  };
   use crate::{
     features::industry::{
       planner_loaders::{Category, OwnedSummary, PlanClone, PlanPilot, PlannerData, PlannerFacility, Recipe},
@@ -3435,7 +3482,10 @@ mod view {
     let is_reaction = job.node.is_reaction;
     let segments = planner.segments_for(job.type_id);
     let split = segments.len() > 1;
-    let time = node_build_time(&recipe, job.runs, job.node.te);
+    let time: f64 = segments
+      .iter()
+      .map(|segment| segment_build_time(&recipe, segment.runs, job.node.te, planner.segment_assignment(segment)))
+      .sum();
 
     let mut name_row: Vec<Element<'a, Message>> = vec![
       text(data.name(job.type_id))
@@ -3606,11 +3656,7 @@ mod view {
     index: usize,
     segment: Option<&PlanSegment>,
   ) -> Element<'a, Message> {
-    let assigned = segment.and_then(|segment| {
-      let pilot_id = segment.pilot_id?;
-      let pilot = planner.pilot(pilot_id)?;
-      Some((pilot, pilot.clone_named(segment.clone_id)))
-    });
+    let assigned = segment.and_then(|segment| planner.segment_assignment(segment));
 
     let trigger = pilot_trigger(type_id, index, assigned);
     let open = planner
@@ -3941,7 +3987,7 @@ mod view {
       te,
       type_id,
     } = *ctx;
-    let time = node_build_time(recipe, segment.runs, te);
+    let time = segment_build_time(recipe, segment.runs, te, planner.segment_assignment(segment));
     let unit = if is_reaction { "cycles" } else { "runs" };
 
     let body = Row::with_children(vec![
@@ -5579,6 +5625,78 @@ mod tests {
     }
   }
 
+  mod segment_build_time {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::features::industry::planner_loaders::{PlanClone, PlanPilot};
+
+    fn pilot(industry: i64, advanced_industry: i64) -> PlanPilot {
+      PlanPilot {
+        advanced_industry,
+        industry,
+        ..PlanPilot::default()
+      }
+    }
+
+    fn clone_with(manufacturing: f64, reaction: f64) -> PlanClone {
+      PlanClone {
+        manufacturing_time_bonus: manufacturing,
+        reaction_time_bonus: reaction,
+        ..PlanClone::default()
+      }
+    }
+
+    #[test]
+    fn it_stacks_te_skills_and_implant_multiplicatively_for_manufacturing() {
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
+      let pilot = pilot(5, 5);
+      let clone = clone_with(4.0, 0.0);
+
+      // base 100s x 1 run x (1 - 18/100 TE) x (1 - 5x0.04 Industry) x (1 - 5x0.03 Adv) x (1 - 4/100 implant)
+      // = 100 x 0.82 x 0.80 x 0.85 x 0.96 = 53.5296s.
+      let time = super::super::segment_build_time(&recipe, 1, 18, Some((&pilot, Some(&clone))));
+
+      assert!((time - 53.5296).abs() < 1e-9, "got {time}");
+    }
+
+    #[test]
+    fn it_applies_advanced_industry_and_the_reaction_implant_but_not_industry_for_reactions() {
+      let recipe = recipe(COMPONENT + 1, 1, true, vec![Material::new(TRITANIUM, 1)]);
+      // High Industry must NOT reduce a reaction; only Advanced Industry (+ reaction implant) applies.
+      let pilot = pilot(5, 4);
+      let clone = clone_with(8.0, 4.0);
+
+      // base 100s (reactions ignore TE) x (1 - 4x0.03 Adv) x (1 - 4/100 reaction implant)
+      // = 100 x 0.88 x 0.96 = 84.48s. The manufacturing implant (8%) is also ignored.
+      let time = super::super::segment_build_time(&recipe, 1, 20, Some((&pilot, Some(&clone))));
+
+      assert!((time - 84.48).abs() < 1e-9, "got {time}");
+    }
+
+    #[test]
+    fn it_falls_back_to_blueprint_te_only_when_unassigned() {
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
+
+      let assigned = super::super::segment_build_time(&recipe, 2, 20, None);
+      let baseline = super::super::node_build_time(&recipe, 2, 20);
+
+      assert_eq!(assigned, baseline);
+      assert_eq!(assigned, 160.0);
+    }
+
+    #[test]
+    fn it_applies_skills_with_the_active_clone_and_no_implant() {
+      let recipe = recipe(HULK + 1, 1, false, vec![Material::new(TRITANIUM, 1)]);
+      let pilot = pilot(0, 5);
+
+      // No clone (active, no time implant): base 100 x (1 - 0 TE) x (1 - 0 Industry) x (1 - 5x0.03 Adv) = 85s.
+      let time = super::super::segment_build_time(&recipe, 1, 0, Some((&pilot, None)));
+
+      assert!((time - 85.0).abs() < 1e-9, "got {time}");
+    }
+  }
+
   mod estimated_item_value {
     use pretty_assertions::assert_eq;
 
@@ -6206,17 +6324,20 @@ mod tests {
             implant_names: vec!["Zainou 'Beancounter'".to_owned()],
             location: Some("Jita IV - Moon 4".to_owned()),
             name: "Active clone".to_owned(),
+            ..PlanClone::default()
           },
           PlanClone {
             id: Some(7),
             implant_names: Vec::new(),
             location: Some("Amarr VIII".to_owned()),
             name: "Industry clone".to_owned(),
+            ..PlanClone::default()
           },
         ],
         id,
         name: name.to_owned(),
         portrait: None,
+        ..PlanPilot::default()
       }
     }
 

@@ -27,6 +27,15 @@ pub struct CatalogType {
   pub volume: Option<f64>,
 }
 
+/// One `(type_id, attribute_id, value)` time-bonus row extracted from an item's `dogma_attributes` JSON blob,
+/// where `value` is the raw SDE percent (negative for a reduction).
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub struct ImplantTimeBonus {
+  pub attribute_id: i64,
+  pub type_id: i64,
+  pub value: f64,
+}
+
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(
     "SELECT charisma, corporation_id, description, id, intelligence, memory, name, \
@@ -175,6 +184,31 @@ pub async fn get_dogma_attributes(db: &Database, attribute_ids: &[i64]) -> Resul
   separated.push_unseparated(")");
 
   let rows = builder.build_query_as::<DogmaAttribute>().fetch_all(&db.0).await?;
+  Ok(rows)
+}
+
+/// Extracts every item carrying one of `attribute_ids` from its `dogma_attributes` JSON, returning one row per
+/// `(type_id, attribute_id, value)`. Used to resolve hardwiring implant manufacturing/reaction time bonuses
+/// without materializing a separate dogma-values table; `json_each` unpacks the blob inline.
+pub async fn implant_time_bonuses(db: &Database, attribute_ids: &[i64]) -> Result<Vec<ImplantTimeBonus>, Error> {
+  if attribute_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+
+  let mut builder = QueryBuilder::<Sqlite>::new(
+    "SELECT it.id AS type_id, \
+      CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) AS attribute_id, \
+      CAST(json_extract(attr.value, '$.value') AS REAL) AS value \
+    FROM item_types it, json_each(it.dogma_attributes) attr \
+    WHERE CAST(json_extract(attr.value, '$.attribute_id') AS INTEGER) IN (",
+  );
+  let mut separated = builder.separated(", ");
+  for id in attribute_ids {
+    separated.push_bind(*id);
+  }
+  separated.push_unseparated(")");
+
+  let rows = builder.build_query_as::<ImplantTimeBonus>().fetch_all(&db.0).await?;
   Ok(rows)
 }
 
@@ -1441,6 +1475,63 @@ mod dogma_tests {
       assert_eq!(rows.len(), 2);
       assert_eq!(rows[0].attribute_id(), 50);
       assert_eq!(rows[1].attribute_id(), 52);
+    }
+  }
+
+  mod implant_time_bonuses {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_type(db: &Database, id: i64, dogma: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (20, 'Implant', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (300, 20, 'Cyber', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, dogma_attributes) \
+        VALUES (?, 300, '', 'Implant', 1, ?)",
+      )
+      .bind(id)
+      .bind(dogma)
+      .execute(&db.0)
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+
+      let rows = super::implant_time_bonuses(&db, &[]).await.unwrap();
+
+      assert_eq!(rows.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_extracts_only_the_requested_time_bonus_attributes() {
+      let db = store::open_test().await.unwrap();
+      seed_type(
+        &db,
+        7001,
+        r#"[{"attribute_id":440,"value":-4.0},{"attribute_id":9,"value":100.0}]"#,
+      )
+      .await;
+      seed_type(&db, 7002, r#"[{"attribute_id":2660,"value":-3.0}]"#).await;
+
+      let mut rows = super::implant_time_bonuses(&db, &[440, 2660]).await.unwrap();
+      rows.sort_by_key(|row| row.type_id);
+
+      assert_eq!(rows.len(), 2);
+      assert_eq!(rows[0].type_id, 7001);
+      assert_eq!(rows[0].attribute_id, 440);
+      assert_eq!(rows[0].value, -4.0);
+      assert_eq!(rows[1].type_id, 7002);
+      assert_eq!(rows[1].attribute_id, 2660);
     }
   }
 

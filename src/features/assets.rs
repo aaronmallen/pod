@@ -2289,6 +2289,29 @@ mod tests {
     }
   }
 
+  mod tab {
+    use super::*;
+
+    mod id {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_every_tab_through_its_catalog_id() {
+        assert_eq!(Tab::Abyssals.id(), "abyssals");
+        assert_eq!(Tab::Inventory.id(), "inventory");
+        assert_eq!(Tab::Stockpiles.id(), "stockpiles");
+        assert_eq!(Tab::Tracker.id(), "tracker");
+        assert_eq!(Tab::Values.id(), "values");
+
+        for tab in Tab::ORDER {
+          assert_eq!(Tab::from_id(tab.id()), Some(tab));
+        }
+      }
+    }
+  }
+
   mod sync_features {
     use pretty_assertions::assert_eq;
 

@@ -436,6 +436,21 @@ fn respond_to(
 mod tests {
   use super::*;
 
+  #[test]
+  fn it_round_trips_every_view_through_its_catalog_id() {
+    use pretty_assertions::assert_eq;
+
+    assert_eq!(View::Agenda.id(), "agenda");
+    assert_eq!(View::Day.id(), "day");
+    assert_eq!(View::Month.id(), "month");
+    assert_eq!(View::Week.id(), "week");
+    assert_eq!(View::Year.id(), "year");
+
+    for view in View::ALL {
+      assert_eq!(View::from_id(view.id()), Some(view));
+    }
+  }
+
   fn now() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339("2026-06-12T14:22:00Z")
       .unwrap()

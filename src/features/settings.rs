@@ -566,6 +566,31 @@ mod tests {
     assert_eq!(state().await.active, Category::Features);
   }
 
+  #[test]
+  fn it_round_trips_every_category_through_its_catalog_id() {
+    let categories = [
+      Category::About,
+      Category::Accessibility,
+      Category::Features,
+      Category::Industry,
+      Category::Storage,
+      Category::Tags,
+      Category::Ui,
+    ];
+
+    assert_eq!(Category::About.id(), "about");
+    assert_eq!(Category::Accessibility.id(), "accessibility");
+    assert_eq!(Category::Features.id(), "features");
+    assert_eq!(Category::Industry.id(), "industry");
+    assert_eq!(Category::Storage.id(), "storage");
+    assert_eq!(Category::Tags.id(), "tags");
+    assert_eq!(Category::Ui.id(), "ui");
+
+    for category in categories {
+      assert_eq!(Category::from_id(category.id()), Some(category));
+    }
+  }
+
   #[tokio::test]
   async fn reset_on_accessibility_clears_high_contrast() {
     let mut state = state().await;

@@ -153,13 +153,22 @@ fn latest_price(history: &PriceHistory) -> Option<f64> {
   let PriceHistory::Dated(map) = history else {
     return None;
   };
+  // zKill exposes a live `currentPrice` alongside a daily dated series. The dated series can stall
+  // for years on illiquid types, so prefer `currentPrice` when present and only fall back to the
+  // most recent dated snapshot.
   map
-    .iter()
-    .filter(|(key, _)| !key.eq_ignore_ascii_case("typeid"))
-    .filter(|(key, _)| key.starts_with(|c: char| c.is_ascii_digit()))
-    .max_by(|(left, _), (right, _)| left.cmp(right))
-    .and_then(|(_, value)| value.as_f64())
+    .get("currentPrice")
+    .and_then(serde_json::Value::as_f64)
     .filter(|price| *price > 0.0)
+    .or_else(|| {
+      map
+        .iter()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("typeid"))
+        .filter(|(key, _)| key.starts_with(|c: char| c.is_ascii_digit()))
+        .max_by(|(left, _), (right, _)| left.cmp(right))
+        .and_then(|(_, value)| value.as_f64())
+        .filter(|price| *price > 0.0)
+    })
 }
 
 fn is_transient(error: &clients::Error) -> bool {
@@ -291,6 +300,30 @@ mod tests {
       let value = client.prices(670).await.unwrap();
 
       assert_eq!(value, Some(250.5));
+    }
+
+    #[tokio::test]
+    async fn it_prefers_current_price_over_the_latest_dated_value() {
+      let server = MockServer::start().await;
+      let body = r#"{"typeID": 11567, "currentPrice": 144097123973.08, "2023-06-13": 64840457150.95}"#;
+      mount(&server, 11567, body).await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(11567).await.unwrap();
+
+      assert_eq!(value, Some(144_097_123_973.08));
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_the_latest_dated_value_when_current_price_is_zero() {
+      let server = MockServer::start().await;
+      let body = r#"{"typeID": 11567, "currentPrice": 0.0, "2023-06-13": 64840457150.95}"#;
+      mount(&server, 11567, body).await;
+      let client = Client::with_base_url(make_http().await, server.uri());
+
+      let value = client.prices(11567).await.unwrap();
+
+      assert_eq!(value, Some(64_840_457_150.95));
     }
 
     #[tokio::test]

@@ -47,6 +47,11 @@ const HEADER_SIDE_PADDING: f32 = 28.0;
 
 const HISTORY_MONTHS: usize = 6;
 
+/// Journal `ref_type`s EVE attaches to a market trade alongside its principal
+/// twin — the Transaction Tax and Broker's Fee. Each carries
+/// `context_id = transaction_id`, so they cascade onto the trade's envelope.
+const MARKET_FEE_REF_TYPES: &[&str] = &["brokers_fee", "transaction_tax"];
+
 pub const PAGE_SIZE: usize = 50;
 
 const RECENT_ACTIVITY_LIMIT: usize = 8;
@@ -2262,14 +2267,15 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
     return Task::none();
   };
   let scope = state.budget_scope();
-  // A market trade and its journal twin are one event: assigning either one
-  // cascades to the other so both rows stay in sync and the trade is counted
-  // against the chosen envelope exactly once. The twin shares the row's owner.
-  let counterpart = budget_cascade_target(state, owner, kind, entry_id);
+  // A market trade, its journal twin, and its tax/fee rows are one event:
+  // assigning any one cascades to the rest so the trade's full cost lands in the
+  // chosen envelope (and the trade is counted against it exactly once). Every
+  // cascaded row shares the row's owner; a manually-overridden fee is preserved.
+  let counterparts = budget_cascade_targets(state, owner, kind, entry_id);
   let db = db.clone();
   Task::perform(
     async move {
-      for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterpart) {
+      for (kind, entry_id) in std::iter::once((kind, entry_id)).chain(counterparts) {
         match choice {
           Some(category_id) => {
             let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
@@ -2508,12 +2514,12 @@ fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Tas
   let order = ledger_order(state, kind);
   let selected = ledger_selection(state, kind).ordered(&order);
 
-  // Expand each selected row to itself plus its market/journal cascade twin so a
-  // bulk assign mirrors the per-row chip exactly.
+  // Expand each selected row to itself plus its cascade targets (journal twin
+  // and tax/fee rows) so a bulk assign mirrors the per-row chip exactly.
   let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
   for (owner, entry_id) in selected {
     targets.push((owner, kind, entry_id));
-    if let Some((twin_kind, twin_id)) = budget_cascade_target(state, owner, kind, entry_id) {
+    for (twin_kind, twin_id) in budget_cascade_targets(state, owner, kind, entry_id) {
       targets.push((owner, twin_kind, twin_id));
     }
   }
@@ -3311,40 +3317,72 @@ fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool 
   true
 }
 
-/// The matched counterpart of a budget assignment, so an assignment cascades
-/// across a market trade's two records. A transaction links to its journal twin
-/// via `journal_ref_id`; a `market_transaction` journal entry links to its
-/// transaction via `context_id`. The lookup is scoped to the row's `owner` so a
-/// corp-mirrored trade (the same EVE id in a character and a corp wallet) never
-/// cascades onto the other owner's twin. Returns `None` when the entry has no
-/// 100% match.
-fn budget_cascade_target(
+/// Every other record a budget assignment cascades onto, so a market trade's
+/// principal twin, Transaction Tax, and Broker's Fee all land in one envelope.
+/// A transaction links to its journal twin via `journal_ref_id`; the twin and
+/// the fee rows link back to the transaction via `context_id`. Every lookup is
+/// scoped to the row's `owner` so a corp-mirrored trade (the same EVE id in a
+/// character and a corp wallet) never cascades onto the other owner's rows.
+///
+/// A fee row that already carries a manual override is skipped: an explicit
+/// per-entry assignment is the escape hatch and is never clobbered. The
+/// originally-assigned entry is the caller's responsibility and is not included.
+fn budget_cascade_targets(
   state: &State,
   owner: BudgetOwner,
   kind: BudgetEntryKind,
   entry_id: i64,
-) -> Option<(BudgetEntryKind, i64)> {
-  match kind {
+) -> Vec<(BudgetEntryKind, i64)> {
+  let mut targets = Vec::new();
+  let transaction_id = match kind {
     BudgetEntryKind::Market => {
-      let transaction = state
+      let Some(transaction) = state
         .market
         .iter()
-        .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)?;
-      (transaction.journal_ref_id != 0).then_some((BudgetEntryKind::Journal, transaction.journal_ref_id))
+        .find(|entry| entry.owner == owner && entry.transaction_id == entry_id)
+      else {
+        return targets;
+      };
+      if transaction.journal_ref_id != 0 {
+        targets.push((BudgetEntryKind::Journal, transaction.journal_ref_id));
+      }
+      entry_id
     }
     BudgetEntryKind::Journal => {
-      let entry = state
+      let Some(entry) = state
         .journal
         .iter()
-        .find(|entry| entry.owner == owner && entry.id == entry_id)?;
+        .find(|entry| entry.owner == owner && entry.id == entry_id)
+      else {
+        return targets;
+      };
       if entry.ref_type != "market_transaction" {
-        return None;
+        return targets;
       }
-      entry
-        .context_id
-        .map(|transaction_id| (BudgetEntryKind::Market, transaction_id))
+      let Some(transaction_id) = entry.context_id else {
+        return targets;
+      };
+      targets.push((BudgetEntryKind::Market, transaction_id));
+      transaction_id
+    }
+  };
+
+  for fee in state.journal.iter().filter(|entry| {
+    entry.owner == owner
+      && entry.context_id == Some(transaction_id)
+      && MARKET_FEE_REF_TYPES.contains(&entry.ref_type.as_str())
+  }) {
+    let overridden = state
+      .budget_chips()
+      .resolution
+      .override_for(owner, BudgetEntryKind::Journal, fee.id)
+      .is_some();
+    if !overridden {
+      targets.push((BudgetEntryKind::Journal, fee.id));
     }
   }
+
+  targets
 }
 
 /// Whether a journal entry satisfies an active Budget filter: in the filter's
@@ -3880,8 +3918,8 @@ mod tests {
       state.market = vec![transaction];
 
       assert_eq!(
-        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
-        Some((BudgetEntryKind::Journal, 10))
+        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
+        vec![(BudgetEntryKind::Journal, 10)]
       );
     }
 
@@ -3898,13 +3936,13 @@ mod tests {
       state.market = vec![character, corp];
 
       assert_eq!(
-        budget_cascade_target(
+        budget_cascade_targets(
           &state,
           BudgetOwner::Corporation(98_000_001),
           BudgetEntryKind::Market,
           500
         ),
-        Some((BudgetEntryKind::Journal, 20))
+        vec![(BudgetEntryKind::Journal, 20)]
       );
     }
 
@@ -3917,8 +3955,8 @@ mod tests {
       state.journal = vec![twin];
 
       assert_eq!(
-        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
-        Some((BudgetEntryKind::Market, 500))
+        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10),
+        vec![(BudgetEntryKind::Market, 500)]
       );
     }
 
@@ -3931,8 +3969,83 @@ mod tests {
       state.journal = vec![fee];
 
       assert_eq!(
-        budget_cascade_target(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 11),
-        None
+        budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 11),
+        Vec::new()
+      );
+    }
+
+    #[test]
+    fn it_co_assigns_the_tax_and_broker_fee_when_a_transaction_is_assigned() {
+      let mut state = State::new();
+      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
+      transaction.transaction_id = 500;
+      transaction.journal_ref_id = 10;
+      state.market = vec![transaction];
+      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
+      tax.id = 12;
+      tax.context_id = Some(500);
+      let mut fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
+      fee.id = 13;
+      fee.context_id = Some(500);
+      // A fee for a different trade must not be swept in.
+      let mut other_fee = journal_entry(1, Some(-9.0), "brokers_fee", "Fee");
+      other_fee.id = 14;
+      other_fee.context_id = Some(999);
+      state.journal = vec![tax, fee, other_fee];
+
+      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
+
+      assert_eq!(
+        targets,
+        vec![
+          (BudgetEntryKind::Journal, 10),
+          (BudgetEntryKind::Journal, 12),
+          (BudgetEntryKind::Journal, 13),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_co_assigns_the_tax_and_fee_when_the_journal_twin_is_assigned() {
+      let mut state = State::new();
+      let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
+      twin.id = 10;
+      twin.context_id = Some(500);
+      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
+      tax.id = 12;
+      tax.context_id = Some(500);
+      state.journal = vec![twin, tax];
+
+      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 10);
+
+      assert_eq!(
+        targets,
+        vec![(BudgetEntryKind::Market, 500), (BudgetEntryKind::Journal, 12)]
+      );
+    }
+
+    #[test]
+    fn it_preserves_a_fee_rows_pre_existing_manual_override() {
+      let mut state = State::new();
+      let mut transaction = market_entry(1, true, "Tritanium", "Jita");
+      transaction.transaction_id = 500;
+      transaction.journal_ref_id = 10;
+      state.market = vec![transaction];
+      let mut tax = journal_entry(1, Some(-5.0), "transaction_tax", "Tax");
+      tax.id = 12;
+      tax.context_id = Some(500);
+      let mut fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
+      fee.id = 13;
+      fee.context_id = Some(500);
+      state.journal = vec![tax, fee];
+      // The broker fee carries a manual override, so the cascade must skip it.
+      state.budget_chips = chips(&[(13, 77)], &[]);
+
+      let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
+
+      assert_eq!(
+        targets,
+        vec![(BudgetEntryKind::Journal, 10), (BudgetEntryKind::Journal, 12)]
       );
     }
 

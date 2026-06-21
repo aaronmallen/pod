@@ -2,15 +2,15 @@
 title: The Interface
 section: Guide
 order: 2
-description: Learn your way around Pod's main window — the navigation rail, the working area, the status bar, the sync popover, and the update banner — so you can read it at a glance.
+description: Learn your way around Pod's main window. The navigation rail, the working area, the status bar, the keyboard shortcuts, the command palette, the sync popover, and the update banner.
 ---
 
 # The Interface
 
 Pod's main window has three persistent pieces: the navigation rail down one side,
 the working area in the middle, and the status bar across the bottom. This page
-explains each rail item, each status-bar indicator, the sync popover, and the
-update banner, so you can read the window at a glance.
+explains each rail item, each status-bar indicator, the keyboard shortcuts, the
+command palette, the sync popover, and the update banner.
 
 ## The navigation rail
 
@@ -49,6 +49,26 @@ is no longer reachable from the rail. Characters and Settings are not tied to an
 feature, so they are always present. Turning a feature back on restores its button
 in its previous position in the order.
 
+Disabling an individual sub-feature no longer removes the whole rail button. It
+hides just that one sub-tab inside the screen. A feature button leaves the rail
+only when the entire feature is off; turn off a single sub-feature and the button
+stays, minus the sub-tab you switched off.
+
+### Rail flyout and sub-rail
+
+Many feature screens have their own inner sub-sections, and the rail can surface
+those sub-sections without making you open the screen first.
+
+Hover a rail icon and a flyout cascade floats out beside it: a small side panel
+that lists that feature's sub-sections. Click one to jump straight to that inner
+sub-tab. Move the pointer away and the flyout folds back, leaving the rail at its
+narrow width.
+
+You can also keep the sub-sections on screen all the time. Persistent sub-rail
+mode adds a second rail strip next to the main one, showing the current feature's
+sub-sections as a standing column you click between. The flyout cascade and the
+persistent sub-rail are configured in Settings.
+
 ### Characters and Settings
 
 The Characters button opens the roster, where you add accounts, manage characters,
@@ -57,6 +77,50 @@ which pilot you are looking at. The Settings button at the bottom of the rail op
 the settings window. Settings groups its own options into categories, and the About
 page, which shows the version and credits, lives at the bottom of the Settings
 category list rather than as a separate rail button.
+
+## Keyboard shortcuts
+
+Pod has a small set of global keyboard shortcuts. They work from anywhere in the
+main window. On macOS they use Cmd; on Windows and Linux they use Ctrl.
+
+- Ctrl/Cmd+Q quits Pod. This now works on every platform.
+- Ctrl/Cmd+, opens Settings.
+- Ctrl/Cmd+K focuses the primary search box of the screen you are on. On a screen
+  with no search box it does nothing.
+- "/" opens the command palette. The slash key only opens the palette when no
+  text input is focused, so typing a slash inside a search or compose field types
+  the character instead of popping the palette.
+
+While the command palette is open, four more keys drive it.
+
+- Up and Down move the selection through the result list.
+- Enter activates the selected result.
+- Esc closes the palette.
+
+These shortcuts are a fixed set. They are not user-rebindable.
+
+## Command palette
+
+The command palette is a fast way to jump anywhere or run a common action without
+reaching for the rail. Press "/" with no text input focused to open it, type to
+filter, and the palette folds the whole app into one searchable list.
+
+![Command palette](/docs/img/interface/command-palette.png)
+
+The list is a unified fuzzy search across three kinds of result.
+
+- Commands. Common actions you can run on the spot, such as "Sync now", "Open
+  Settings", "Add character", and "Toggle high contrast".
+- Navigation. Any feature section, or a specific inner sub-tab reached by
+  deep-nav. Picking a section opens that screen; picking a sub-tab jumps you
+  straight to that inner view.
+- Entities. Your characters and corporations by name. Picking one routes to its
+  detail view.
+
+Each result carries a kind tag on the right that names what it is. The tags are
+Character, Command, Corporation, Section, and Tab. Use the
+Up and Down keys to move, Enter to act on the highlighted result, and Esc to
+close without choosing.
 
 ## The status bar
 

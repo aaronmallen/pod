@@ -62,26 +62,46 @@ function pageDescription(page: DocPage): string {
   return firstParagraph(page.html);
 }
 
-function firstParagraph(html: string): string {
+export function firstParagraph(html: string): string {
   const match = html.match(/<p>([\s\S]*?)<\/p>/i);
   if (!match) {
     return '';
   }
-  const text = match[1]
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  const text = stripMarkup(decodeEntities(match[1]))
     .replace(/\s+/g, ' ')
     .trim();
   return text.length > 200 ? `${text.slice(0, 197).trimEnd()}...` : text;
 }
 
+// Decode the HTML entities MarkdownIt emits, unescaping the escape character
+// (&amp;) LAST so an already-escaped entity such as &amp;lt; decodes to the
+// literal &lt; rather than collapsing into a bare <.
+function decodeEntities(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+// Remove every angle-bracketed tag and then any residual < or > so decoded
+// markup (e.g. &lt;script&gt; -> <script>) cannot reappear in the plain-text
+// output. Run this AFTER decodeEntities so nothing can re-form an element.
+function stripMarkup(value: string): string {
+  return value.replace(/<[^>]*>/g, '').replace(/[<>]/g, '');
+}
+
+// JSON.stringify does not escape <, >, or the </script> sequence, so embedding
+// its output directly in a <script> block lets a </script> substring break out.
+// Re-escape both angle brackets as their unicode escapes to seal the block.
+export function escapeJsonLd(json: string): string {
+  return json.replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+}
+
 // Emit TechArticle + BreadcrumbList JSON-LD so crawlers see the page as a
 // documentation article located at Home -> Docs -> <page>.
-function structuredData(
+export function structuredData(
   page: DocPage,
   canonical: string,
   title: string,
@@ -121,10 +141,14 @@ function structuredData(
     })),
   };
 
-  // JSON.stringify escapes the only character (<) that could break out of the
-  // script context, so each block can be embedded directly.
+  // JSON.stringify leaves <, >, and </script> unescaped, so each block's angle
+  // brackets are re-escaped (escapeJsonLd) to keep a field value from breaking
+  // out of the surrounding <script type="application/ld+json"> context.
   return [article, breadcrumbList]
-    .map((data) => `<script type="application/ld+json">\n${JSON.stringify(data, null, 2)}\n</script>`)
+    .map(
+      (data) =>
+        `<script type="application/ld+json">\n${escapeJsonLd(JSON.stringify(data, null, 2))}\n</script>`,
+    )
     .join('\n');
 }
 

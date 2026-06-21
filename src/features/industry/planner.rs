@@ -2118,6 +2118,7 @@ mod view {
     };
 
     let search = TextInput::new(planner.search_placeholder(), planner.search(), Message::SearchChanged)
+      .input_id(crate::features::focus_search::industry_search_id())
       .leading_icon(Icon::search().color(glyph_color))
       .background(color::surface::SUNKEN)
       .width(Length::Fill)

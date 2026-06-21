@@ -88,7 +88,6 @@ impl<'a, M: Clone + 'static> TextInput<'a, M> {
     self
   }
 
-  #[expect(dead_code)]
   pub fn input_id(mut self, id: Id) -> Self {
     self.input_id = Some(id);
     self

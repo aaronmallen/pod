@@ -380,6 +380,7 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
 
 fn search_well(state: &State) -> Element<'_, Message> {
   let input = TextInput::new("Filter features\u{2026}", &state.query, Message::SearchChanged)
+    .input_id(crate::features::focus_search::settings_search_id())
     .leading_icon(Icon::search())
     .background(color::surface::SUNKEN)
     .font_size(typography::size::MD)

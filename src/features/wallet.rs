@@ -807,27 +807,21 @@ impl State {
     self.budget_month.as_str() < budget::current_month().as_str()
   }
 
-  /// Maps an outflow's index in [`Self::budget_outflows`] to its manually-pinned
+  /// Maps a target's index in [`Self::budget_match_targets`] to its manually-pinned
   /// category, so the rule editor's preview keeps hand-assigned rows out of a
-  /// rule's reach. The iteration order MUST match `budget_outflows` (journal then
-  /// market, outflows only).
+  /// rule's reach. The iteration order MUST match `budget_match_targets` (journal
+  /// then market, every row).
   pub(super) fn budget_manual_index(&self) -> std::collections::HashMap<usize, i64> {
     let resolution = &self.budget_chips.resolution;
     let mut map = std::collections::HashMap::new();
     let mut index = 0;
     for entry in &self.journal {
-      if !entry.match_target().is_outflow {
-        continue;
-      }
       if let Some(category) = resolution.journal_overrides.get(&(entry.owner, entry.id)) {
         map.insert(index, *category);
       }
       index += 1;
     }
     for entry in &self.market {
-      if !entry.match_target().is_outflow {
-        continue;
-      }
       if let Some(category) = resolution.market_overrides.get(&(entry.owner, entry.transaction_id)) {
         map.insert(index, *category);
       }
@@ -848,17 +842,17 @@ impl State {
     self.budget_move.as_ref()
   }
 
-  /// Every loaded outflow flattened into a rule match target, for the rule editor's
-  /// live preview and per-rule match counts. Drawn from the in-memory journal +
-  /// market ledger (the loaded-and-paginated rows), mirroring the scope of the
-  /// uncategorized-count surface.
-  pub(super) fn budget_outflows(&self) -> Vec<crate::features::budget::MatchTarget> {
+  /// Every loaded ledger row flattened into a rule match target, for the rule
+  /// editor's live preview and per-rule match counts. Includes both spending
+  /// (outflows) and income (inflows), since rules match either. Drawn from the
+  /// in-memory journal + market ledger (the loaded-and-paginated rows), mirroring
+  /// the scope of the uncategorized-count surface.
+  pub(super) fn budget_match_targets(&self) -> Vec<crate::features::budget::MatchTarget> {
     self
       .journal
       .iter()
       .map(loaders::JournalEntry::match_target)
       .chain(self.market.iter().map(loaders::MarketEntry::match_target))
-      .filter(|target| target.is_outflow)
       .collect()
   }
 

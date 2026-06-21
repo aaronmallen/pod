@@ -817,6 +817,9 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
   let activity = activity_by_month.get(month).unwrap_or(&empty_month);
   let pool = math::budgetable_pool(db, scope).await;
   let assigned_total = budget::scope_assigned_total(db, scope).await.unwrap_or(0.0);
+  // Income a rule/override has filed into an envelope is reserved out of the pool
+  // so it does not also show as assignable (see `pool_summary`).
+  let categorized_inflows = math::categorized_inflow_total(&activity_by_month);
   let prev_month = shift_month(month, -1);
   let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
 
@@ -845,7 +848,7 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
     });
   }
 
-  let summary = math::pool_summary(pool, assigned_total, availables);
+  let summary = math::pool_summary(pool, assigned_total, categorized_inflows, availables);
   BudgetView {
     groups,
     month: month.to_owned(),

@@ -2004,7 +2004,16 @@ fn inspector_header<'a>(
     available_row.into(),
   ];
   if !state.budget_edit_mode() {
-    body.push(inspector_move_button(state, category));
+    // Move money + Transactions sit side by side, each taking half the width
+    // (mirrors the design's `gap: 8` action row under the available figure).
+    body.push(
+      Row::with_children(vec![
+        inspector_move_button(state, category),
+        inspector_transactions_button(category.id),
+      ])
+      .spacing(spacing::SPACE_2)
+      .into(),
+    );
   }
 
   Column::with_children(body)
@@ -2070,6 +2079,50 @@ fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Elemen
     .on_dismiss(Message::BudgetMoveClosed)
     .popover_width(MOVE_POPOVER_WIDTH)
     .into()
+}
+
+/// Outline button beside Move money that filters the ledger to this category for
+/// the selected month — the design's "Transactions" action. Plasma on hover.
+fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
+  button(
+    Row::with_children(vec![
+      Icon::journal().size(14.0).color(color::text::PRIMARY).render(),
+      text("Transactions")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+    ])
+    .spacing(7.0)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: 9.0,
+    right: 10.0,
+    bottom: 9.0,
+    left: 10.0,
+  })
+  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
+  .style(|_, status| {
+    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let accent = if active { color::accent::PLASMA } else { color::rule() };
+    button::Style {
+      background: Some(Background::Color(Color::TRANSPARENT)),
+      border: Border {
+        color: accent,
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      text_color: if active {
+        color::accent::PLASMA
+      } else {
+        color::text::PRIMARY
+      },
+      ..button::Style::default()
+    }
+  })
+  .into()
 }
 
 fn editor_toggle_button<'a>(active: bool) -> Element<'a, Message> {
@@ -2587,7 +2640,7 @@ fn editor_commit_button<'a>() -> Element<'a, Message> {
 }
 
 fn automation_tab<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
-  let outflows = state.budget_outflows();
+  let outflows = state.budget_match_targets();
   let mine: Vec<&Rule> = state
     .budget_rules()
     .iter()
@@ -3084,7 +3137,7 @@ const GLOBAL_RULES_MODAL_WIDTH: f32 = 760.0;
 /// Renders nothing unless `budget_global_rules_open` is set.
 pub(super) fn global_rules_modal(state: &State) -> Element<'_, Message> {
   let rules = state.budget_rules();
-  let outflows = state.budget_outflows();
+  let outflows = state.budget_match_targets();
   let enabled_count = rules.iter().filter(|rule| rule.enabled()).count();
 
   let mut sections: Vec<Element<'_, Message>> =
@@ -3985,7 +4038,7 @@ fn rule_preview<'a>(
   draft: &'a budget::RuleDraft,
   category: Option<&'a Category>,
 ) -> Element<'a, Message> {
-  let outflows = state.budget_outflows();
+  let outflows = state.budget_match_targets();
   let rule = draft_to_rule(draft);
   let other_rules = other_rules(state, draft);
   let manual = state.budget_manual_index();
@@ -4478,7 +4531,7 @@ fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
 /// sorted by label.
 fn rule_type_options(state: &State) -> Vec<(String, String)> {
   let mut seen = std::collections::BTreeMap::new();
-  for target in state.budget_outflows() {
+  for target in state.budget_match_targets() {
     seen
       .entry(target.type_token.clone())
       .or_insert_with(|| engine::humanize_ref_type(&target.type_token));

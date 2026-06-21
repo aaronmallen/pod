@@ -372,9 +372,8 @@ impl ResolutionContext {
   /// The effective budget category for an already-normalized ledger entry under
   /// the live resolution order: a manual per-entry override wins; else the first
   /// enabled rule (priority order) whose conditions match; else `None`
-  /// (Ready-to-Assign). Rules only ever touch outflows. Type defaults stay off,
-  /// so the v1 manual-only behavior is recovered exactly when no rule matches.
-  #[allow(dead_code)]
+  /// (Ready-to-Assign). Rules match both outflows and inflows. Type defaults stay
+  /// off, so the manual-only behavior is recovered exactly when no rule matches.
   pub fn resolve_target(&self, entry_kind: BudgetEntryKind, entry_id: i64, target: &MatchTarget) -> Option<i64> {
     let owner = target.owner?;
     if let Some(id) = self.override_for(owner, entry_kind, entry_id) {
@@ -855,13 +854,11 @@ fn condition_text(
 }
 
 /// A rule's effective category for a single ledger entry: the first enabled rule
-/// in priority order whose conditions match. Rules only touch outflows, so an
-/// inflow (or empty rule set) yields `None`. Pure over a loaded rule list.
-#[allow(dead_code)]
+/// in priority order whose conditions match. Rules match both spending (outflows)
+/// and income (inflows) — a rule that files an inflow into a category returns it
+/// to that envelope and the derivation reserves it out of Ready-to-Assign. An
+/// empty rule set (or no match) yields `None`. Pure over a loaded rule list.
 fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
-  if !target.is_outflow {
-    return None;
-  }
   rules
     .iter()
     .find(|rule| rule.enabled() && target.matches_rule(rule))
@@ -914,16 +911,21 @@ pub fn aggregate_activity<'a>(
 }
 
 /// Ready-to-Assign and overspending for a scope. Ready-to-Assign is the global
-/// running pool `ready_to_assign = pool − assigned_total`, where `assigned_total`
-/// is the sum of every assignment across all categories and all months — so ISK
-/// assigned in a future month draws down the same pool the current month sees and
-/// can never be assigned twice. `overspent = Σ min(0, available)` over the
-/// displayed month's `availables` only (it drives Cover-overspending for that
-/// month).
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
-#[allow(dead_code)]
-pub fn pool_summary(pool: f64, assigned_total: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
+/// running pool `ready_to_assign = pool − assigned_total − categorized_inflows`,
+/// where `assigned_total` is the sum of every assignment across all categories and
+/// all months — so ISK assigned in a future month draws down the same pool the
+/// current month sees and can never be assigned twice — and `categorized_inflows`
+/// is income a rule (or manual override) has filed into an envelope: that ISK has
+/// already been returned to a category's `available`, so reserving it out of the
+/// pool keeps it from also showing as assignable (it would otherwise be counted
+/// twice). `overspent = Σ min(0, available)` over the displayed month's
+/// `availables` only (it drives Cover-overspending for that month).
+pub fn pool_summary(
+  pool: f64,
+  assigned_total: f64,
+  categorized_inflows: f64,
+  availables: impl IntoIterator<Item = f64>,
+) -> PoolSummary {
   let mut overspent = 0.0;
   for available in availables {
     if available < 0.0 {
@@ -933,8 +935,24 @@ pub fn pool_summary(pool: f64, assigned_total: f64, availables: impl IntoIterato
   PoolSummary {
     overspent,
     pool,
-    ready_to_assign: pool - assigned_total,
+    ready_to_assign: pool - assigned_total - categorized_inflows,
   }
+}
+
+/// The total income a scope has filed into envelopes: the sum over categories of
+/// each category's net positive activity across all months. Spending envelopes
+/// (net-negative activity) contribute nothing; only categories that a rule or
+/// override has pushed net-positive — a windfall returned to a "Gifts" envelope,
+/// say — reserve that surplus out of Ready-to-Assign. Net (not gross) per category
+/// so income later spent back out of the same envelope un-reserves correctly.
+pub fn categorized_inflow_total(activity_by_month: &HashMap<String, HashMap<i64, f64>>) -> f64 {
+  let mut net_by_category: HashMap<i64, f64> = HashMap::new();
+  for month in activity_by_month.values() {
+    for (category_id, amount) in month {
+      *net_by_category.entry(*category_id).or_insert(0.0) += amount;
+    }
+  }
+  net_by_category.values().filter(|net| **net > 0.0).sum()
 }
 
 /// The character ids whose journals/balances a scope covers.
@@ -1763,8 +1781,24 @@ mod tests {
     }
 
     #[test]
-    fn it_never_resolves_an_inflow() {
+    fn it_resolves_an_inflow_a_rule_matches() {
+      // Income files into an envelope too — e.g. an inheritance returned to a
+      // "Windfall" category. The derivation reserves it out of Ready-to-Assign.
+      let inflow = MatchTarget::journal(BudgetOwner::Character(1), "inheritance", Some(10.0), "Inheritance");
+      let rules = vec![rule(
+        10,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "inheritance")],
+      )];
+
+      assert_eq!(rule_category_for(&inflow, &rules), Some(10));
+    }
+
+    #[test]
+    fn it_matches_an_inflow_by_direction() {
       let inflow = MatchTarget::journal(BudgetOwner::Character(1), "bounty", Some(10.0), "Bounty");
+      let outflow = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
       let rules = vec![rule(
         10,
         true,
@@ -1772,7 +1806,8 @@ mod tests {
         vec![condition(RuleField::Direction, RuleOp::Is, "in")],
       )];
 
-      assert_eq!(rule_category_for(&inflow, &rules), None);
+      assert_eq!(rule_category_for(&inflow, &rules), Some(10));
+      assert_eq!(rule_category_for(&outflow, &rules), None);
     }
   }
 
@@ -2314,7 +2349,7 @@ mod tests {
     fn it_derives_ready_to_assign_as_pool_minus_global_assigned() {
       // Global RTA draws down by every assignment across all months, not the
       // displayed month's availables. 600 assigned somewhere on the timeline.
-      let summary = pool_summary(1_000.0, 600.0, [300.0, 200.0, 100.0]);
+      let summary = pool_summary(1_000.0, 600.0, 0.0, [300.0, 200.0, 100.0]);
 
       assert_eq!(summary.pool, 1_000.0);
       assert_eq!(summary.ready_to_assign, 400.0);
@@ -2323,7 +2358,7 @@ mod tests {
 
     #[test]
     fn it_sums_only_negative_availables_into_overspent() {
-      let summary = pool_summary(500.0, 100.0, [300.0, -150.0, -50.0]);
+      let summary = pool_summary(500.0, 100.0, 0.0, [300.0, -150.0, -50.0]);
 
       assert_eq!(summary.overspent, -200.0);
       // ready = 500 − 100 assigned = 400, independent of the availables.
@@ -2333,9 +2368,45 @@ mod tests {
     #[test]
     fn it_can_report_a_negative_ready_to_assign_when_over_assigned() {
       // Assigning the same ISK across two months over-draws the global pool.
-      let summary = pool_summary(100.0, 160.0, [80.0, 80.0]);
+      let summary = pool_summary(100.0, 160.0, 0.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
+    }
+
+    #[test]
+    fn it_reserves_categorized_inflows_out_of_ready_to_assign() {
+      // A 1,000 windfall filed into an envelope is already in `pool`; reserving it
+      // keeps it from also showing as assignable. Nothing assigned yet.
+      let summary = pool_summary(1_000.0, 0.0, 1_000.0, [1_000.0]);
+
+      assert_eq!(summary.ready_to_assign, 0.0);
+    }
+  }
+
+  mod categorized_inflow_total {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_sums_net_positive_activity_per_category() {
+      // cat 1: +1000 income then −200 spent back out → net +800 reserved.
+      // cat 2: a normal spending envelope, net −500 → reserves nothing.
+      let activity = HashMap::from([
+        ("2026-05".to_owned(), HashMap::from([(1, 1_000.0), (2, -300.0)])),
+        ("2026-06".to_owned(), HashMap::from([(1, -200.0), (2, -200.0)])),
+      ]);
+
+      assert_eq!(categorized_inflow_total(&activity), 800.0);
+    }
+
+    #[test]
+    fn it_reserves_nothing_when_no_income_is_categorized() {
+      let activity = HashMap::from([("2026-06".to_owned(), HashMap::from([(1, -500.0)]))]);
+
+      assert_eq!(categorized_inflow_total(&activity), 0.0);
     }
   }
 
@@ -3484,7 +3555,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_disabled_rules_and_inflows() {
+    async fn it_ignores_disabled_rules_but_files_inflows() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
@@ -3498,9 +3569,9 @@ mod tests {
       )
       .await
       .unwrap();
-      // A disabled fee rule (ignored) plus an enabled inflow-only rule. Rules
-      // never touch inflows, so the bounty stays in Ready-to-Assign and the
-      // disabled rule leaves the fee unassigned.
+      // A disabled fee rule (ignored) plus an enabled inflow-only rule. The
+      // disabled rule leaves the fee in Ready-to-Assign; the enabled rule files
+      // the bounty inflow into the income envelope.
       text_rule(
         &db,
         BudgetScope::Character(1),
@@ -3541,7 +3612,9 @@ mod tests {
 
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
-      assert!(activity.is_empty());
+      // The bounty inflow lands in income; the fee stays unassigned (disabled rule).
+      assert_eq!(activity.get(&slug_to_id["income"]).copied(), Some(1_000.0));
+      assert!(!activity.contains_key(&slug_to_id["fees"]));
     }
 
     #[tokio::test]

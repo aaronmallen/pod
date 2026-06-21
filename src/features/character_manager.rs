@@ -1115,7 +1115,16 @@ fn update_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<
       Task::none()
     }
     Message::CharactersLoaded(Err(error)) => {
-      state.load_error = Some(error);
+      // A failed refresh must never blank a roster the user is already looking at: retries with
+      // bounded backoff (see `load_roster`) absorb transient pool timeouts, and if one slips
+      // through here we keep the last-good groups/unassigned/corps on screen rather than replacing
+      // them with "Couldn't load characters." The error surfaces only on a cold load, when there is
+      // no prior data to retain.
+      if has_roster_data(state) {
+        tracing::warn!(error, "roster refresh failed; retaining last-good roster");
+      } else {
+        state.load_error = Some(error);
+      }
       Task::none()
     }
     Message::RemoveCharacterConfirmed(character_id) => {
@@ -1592,6 +1601,13 @@ pub fn load_error(state: &State) -> Option<&str> {
   state.load_error.as_deref()
 }
 
+/// Whether the roster currently holds displayable data — squads, unassigned pilots, or corporations.
+/// A failed refresh keeps this data on screen instead of blanking to an error (see the
+/// `CharactersLoaded(Err(_))` handler); the error only surfaces on a cold load when this is false.
+fn has_roster_data(state: &State) -> bool {
+  !state.groups.is_empty() || !state.unassigned.is_empty() || !state.corps.is_empty()
+}
+
 pub fn dragging_card(state: &State) -> Option<i64> {
   match state.dragging {
     Some(Drag::Card(character_id)) => Some(character_id),
@@ -1667,10 +1683,58 @@ pub fn corp_failure(sync: &SyncStatus, corporation_id: i64) -> Option<Phase> {
     .find(|phase| matches!(phase, Phase::Failed | Phase::BackingOff))
 }
 
+/// Bounded backoff schedule for retrying a roster load that hit a transient pool/acquire timeout.
+/// The length of the array is the retry budget (the initial attempt plus one retry per entry); the
+/// values grow so a brief write-storm has time to drain before each successive attempt. Genuine
+/// errors are never retried — only transient timeouts (see [`is_transient_timeout`]).
+const ROSTER_RETRY_BACKOFFS: [Duration; 3] = [
+  Duration::from_millis(50),
+  Duration::from_millis(150),
+  Duration::from_millis(400),
+];
+
+/// A transient pool/acquire timeout is the single failure mode this layer recovers from: under the
+/// one-writer/many-readers model a brief write-storm can starve the reader pool just long enough for
+/// one of the roster load's ~13 queries to exceed `acquire_timeout`, even though the data is fine and
+/// the very next attempt would succeed. Everything else (a real SQL error, a constraint violation, a
+/// migration failure) is a genuine error that must surface unchanged.
+fn is_transient_timeout(error: &crate::store::Error) -> bool {
+  matches!(error, crate::store::Error::Sqlx(sqlx::Error::PoolTimedOut))
+}
+
 async fn load_roster(db: Database, features: FeatureFlags) -> Result<Roster, String> {
-  load_roster_at(&db, Utc::now(), features)
-    .await
-    .map_err(|err| err.to_string())
+  retry_transient(ROSTER_RETRY_BACKOFFS, is_transient_timeout, || {
+    load_roster_at(&db, Utc::now(), features)
+  })
+  .await
+  .map_err(|err| err.to_string())
+}
+
+/// Runs `attempt`, retrying with the given bounded backoff only while the error is classified
+/// transient by `is_transient`. The first non-transient error (or the last transient error once the
+/// backoff budget is spent) is returned as-is, so genuine errors still surface. `backoffs` is the
+/// retry budget: `attempt` runs `1 + backoffs.len()` times in the worst transient case, sleeping the
+/// matching backoff between tries.
+async fn retry_transient<T, E, F, Fut>(
+  backoffs: impl IntoIterator<Item = Duration>,
+  is_transient: impl Fn(&E) -> bool,
+  mut attempt: F,
+) -> Result<T, E>
+where
+  F: FnMut() -> Fut,
+  Fut: std::future::Future<Output = Result<T, E>>,
+{
+  let mut backoffs = backoffs.into_iter();
+  loop {
+    match attempt().await {
+      Ok(value) => return Ok(value),
+      Err(error) if is_transient(&error) => match backoffs.next() {
+        Some(delay) => tokio::time::sleep(delay).await,
+        None => return Err(error),
+      },
+      Err(error) => return Err(error),
+    }
+  }
 }
 
 async fn load_roster_at(
@@ -3245,6 +3309,135 @@ mod tests {
         unassigned.iter().map(|card| card.character_id).collect::<Vec<_>>(),
         vec![20, 30, 10]
       );
+    }
+  }
+
+  mod resilience {
+    use std::cell::Cell;
+
+    use chrono::TimeZone;
+    use pretty_assertions::assert_eq;
+
+    use super::{load_roster::seed_character, *};
+    use crate::store;
+
+    fn now() -> DateTime<Utc> {
+      Utc.with_ymd_and_hms(2026, 5, 15, 0, 0, 0).unwrap()
+    }
+
+    /// A single transient pool timeout mid-load is the failure the retry layer must absorb so the UI
+    /// never shows "Couldn't load characters." This simulates a load that times out twice before
+    /// succeeding and asserts the wrapper retries through it to the success.
+    #[tokio::test]
+    async fn it_retries_through_a_transient_pool_timeout_to_a_successful_load() {
+      let attempts = Cell::new(0_u32);
+
+      let result: Result<&str, crate::store::Error> =
+        retry_transient(ROSTER_RETRY_BACKOFFS, is_transient_timeout, || {
+          let attempt = attempts.get() + 1;
+          attempts.set(attempt);
+          async move {
+            if attempt < 3 {
+              Err(crate::store::Error::Sqlx(sqlx::Error::PoolTimedOut))
+            } else {
+              Ok("loaded")
+            }
+          }
+        })
+        .await;
+
+      assert_eq!(result.unwrap(), "loaded");
+      assert_eq!(attempts.get(), 3, "should have retried the two transient timeouts");
+    }
+
+    /// A genuine (non-transient) error must surface immediately, never retried — only pool timeouts
+    /// are recoverable. Here a row-not-found error is returned on the first try and is not retried.
+    #[tokio::test]
+    async fn it_surfaces_a_genuine_error_without_retrying() {
+      let attempts = Cell::new(0_u32);
+
+      let result: Result<&str, crate::store::Error> =
+        retry_transient(ROSTER_RETRY_BACKOFFS, is_transient_timeout, || {
+          attempts.set(attempts.get() + 1);
+          async move { Err(crate::store::Error::Sqlx(sqlx::Error::RowNotFound)) }
+        })
+        .await;
+
+      assert!(matches!(
+        result,
+        Err(crate::store::Error::Sqlx(sqlx::Error::RowNotFound))
+      ));
+      assert_eq!(attempts.get(), 1, "a genuine error must not be retried");
+    }
+
+    /// A pool timeout that never clears within the retry budget surfaces as an error after the
+    /// budget is spent (initial attempt plus one try per backoff entry).
+    #[tokio::test]
+    async fn it_gives_up_after_the_backoff_budget_on_a_persistent_timeout() {
+      let attempts = Cell::new(0_u32);
+
+      let result: Result<&str, crate::store::Error> =
+        retry_transient(ROSTER_RETRY_BACKOFFS, is_transient_timeout, || {
+          attempts.set(attempts.get() + 1);
+          async move { Err(crate::store::Error::Sqlx(sqlx::Error::PoolTimedOut)) }
+        })
+        .await;
+
+      assert!(matches!(
+        result,
+        Err(crate::store::Error::Sqlx(sqlx::Error::PoolTimedOut))
+      ));
+      assert_eq!(
+        attempts.get(),
+        1 + ROSTER_RETRY_BACKOFFS.len() as u32,
+        "should attempt once plus one retry per backoff entry"
+      );
+    }
+
+    #[test]
+    fn it_classifies_only_a_pool_timeout_as_transient() {
+      assert!(is_transient_timeout(&crate::store::Error::Sqlx(
+        sqlx::Error::PoolTimedOut
+      )));
+      assert!(!is_transient_timeout(&crate::store::Error::Sqlx(
+        sqlx::Error::RowNotFound
+      )));
+      assert!(!is_transient_timeout(&crate::store::Error::ReservedSquad));
+    }
+
+    /// A failed refresh while a roster is already on screen must keep that roster rather than blank
+    /// it to "Couldn't load characters." This loads a real roster, then feeds a failed
+    /// `CharactersLoaded` and asserts the cards survive and no load error is set.
+    #[tokio::test]
+    async fn a_failed_refresh_retains_the_already_displayed_roster() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Resilient Pilot").await;
+      let mut state = State::new();
+      let roster = load_roster_at(&db, now(), FeatureFlags::default()).await.unwrap();
+      let _ = update(&mut state, Message::CharactersLoaded(Ok(roster)), &db);
+      assert!(has_roster_data(&state), "precondition: roster is populated");
+
+      let _ = update(
+        &mut state,
+        Message::CharactersLoaded(Err("pool timed out".to_owned())),
+        &db,
+      );
+
+      assert_eq!(load_error(&state), None, "a failed refresh must not blank the roster");
+      assert_eq!(state.unassigned.len(), 1, "last-good roster must be retained");
+    }
+
+    /// On a cold load (nothing displayed yet) a genuine load failure still surfaces, so the user is
+    /// told something is wrong instead of staring at a silent empty view.
+    #[tokio::test]
+    async fn a_failed_cold_load_still_surfaces_the_error() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+      assert!(!has_roster_data(&state), "precondition: nothing displayed yet");
+
+      let _ = update(&mut state, Message::CharactersLoaded(Err("boom".to_owned())), &db);
+
+      assert_eq!(load_error(&state), Some("boom"));
     }
   }
 

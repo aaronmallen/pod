@@ -6842,6 +6842,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_preserves_the_scroll_offset_across_a_bulk_assign() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      state.tab_scroll_offset = 4_200.0;
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+      state.ledger_cursor = Some(iced::Point::new(0.0, 0.0));
+      let _ = update(
+        &mut state,
+        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+      let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
+      let _ = update(&mut state, Message::LedgerBulkAssignChosen(7), &db);
+
+      assert_eq!(
+        state.tab_scroll_offset(),
+        4_200.0,
+        "bulk assign must hold the ledger scroll position, not snap it to the top"
+      );
+    }
+
+    #[tokio::test]
     async fn it_dismisses_the_menu() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = journal_state();

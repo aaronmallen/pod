@@ -540,9 +540,17 @@ where
 {
   let offset = state.tab_scroll_offset();
   virtual_list::responsive_window(move |viewport_height| {
+    // Clamp the persisted offset to what the current row set can scroll to. When a
+    // reload re-windows the list shorter (rows leaving an active filter after a
+    // bulk assign), the stale larger offset would otherwise render past the end and
+    // snap the view to the top; clamping holds position so the remaining rows shift
+    // up into view, matching the offset the bare scrollable clamps itself to.
+    let max_offset = VirtualListConfig::new(entries.len(), ESTIMATED_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .max_scroll_offset();
     let config = VirtualListConfig::new(entries.len(), ESTIMATED_ROW_HEIGHT)
       .viewport_height(viewport_height)
-      .scroll_offset(offset);
+      .scroll_offset(offset.min(max_offset));
     let list = VirtualList::new(config, |index| render(entries[index])).view();
 
     scrollable(list)

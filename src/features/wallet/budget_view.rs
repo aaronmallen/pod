@@ -1779,7 +1779,6 @@ fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Me
       }
     }
     budget::InspectorTab::Detail => {
-      children.push(view_transactions_button(category.id));
       children.push(target_block(&status));
       children.push(this_month_block(category, &status));
       children.push(quick_assign_block(category, state.budget_month()));
@@ -1928,52 +1927,6 @@ fn count_badge<'a>(count: usize, active: bool) -> Element<'a, Message> {
     ..container::Style::default()
   })
   .into()
-}
-
-/// The inspector's full-width "View transactions →" button: filters the ledger
-/// to this category for the selected month and jumps to it.
-fn view_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
-  let label = button(
-    text("View transactions \u{2192}")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::PRIMARY)),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: spacing::SPACE_2_5,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2_5,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Category(category_id)))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(Color::TRANSPARENT)),
-      border: Border {
-        color: if active { color::accent::PLASMA } else { color::rule() },
-        width: 1.0,
-        radius: 7.0.into(),
-      },
-      text_color: if active {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      },
-      ..button::Style::default()
-    }
-  });
-
-  container(label)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: 0.0,
-      right: 20.0,
-      bottom: spacing::SPACE_3,
-      left: 20.0,
-    })
-    .into()
 }
 
 fn inspector_header<'a>(

@@ -159,6 +159,19 @@ impl VirtualListConfig {
     self
   }
 
+  pub fn content_height(&self) -> f32 {
+    self.total_rows() as f32 * self.estimated_row_height
+  }
+
+  /// The largest scroll offset the content can hold for the current viewport.
+  ///
+  /// Clamping a stored offset to this keeps a windowed list from rendering past
+  /// its end when the row set shrinks under it (e.g. rows leave an active
+  /// filter), which would otherwise snap the view to the top.
+  pub fn max_scroll_offset(&self) -> f32 {
+    (self.content_height() - self.viewport_height).max(0.0)
+  }
+
   pub fn window(&self) -> WindowRange {
     let total_rows = self.total_rows();
     if total_rows == 0 {
@@ -256,6 +269,34 @@ where
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod max_scroll_offset {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_the_content_height_minus_the_viewport() {
+      let config = VirtualListConfig::new(100, 40.0).viewport_height(400.0);
+
+      assert_eq!(config.max_scroll_offset(), 100.0 * 40.0 - 400.0);
+    }
+
+    #[test]
+    fn it_is_zero_when_the_content_fits_in_the_viewport() {
+      let config = VirtualListConfig::new(3, 40.0).viewport_height(400.0);
+
+      assert_eq!(config.max_scroll_offset(), 0.0);
+    }
+
+    #[test]
+    fn it_clamps_a_stale_offset_so_a_shrunk_list_holds_position() {
+      let stale = 4_200.0_f32;
+      let shrunk = VirtualListConfig::new(3, 40.0).viewport_height(400.0);
+
+      assert_eq!(stale.min(shrunk.max_scroll_offset()), 0.0);
+    }
+  }
 
   mod view {
     use super::*;

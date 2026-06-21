@@ -99,6 +99,35 @@ impl Tab {
       Tab::Planner => "Planner",
     }
   }
+
+  pub(super) fn read_scopes(self) -> Vec<&'static str> {
+    crate::features::registry::sub_descriptor(self.sub_feature())
+      .scopes
+      .iter()
+      .copied()
+      .filter(|scope| !crate::clients::esi::scopes::is_write_scope(scope))
+      .collect()
+  }
+
+  pub(super) fn sub_feature(self) -> crate::config::SubFeature {
+    match self {
+      Tab::Blueprints => crate::config::SubFeature::Blueprints,
+      Tab::Extractions => crate::config::SubFeature::Extractions,
+      Tab::Jobs => crate::config::SubFeature::JobMonitoring,
+      Tab::Planner => crate::config::SubFeature::Planner,
+    }
+  }
+}
+
+pub(super) fn enabled_tabs(flags: &crate::config::FeatureFlags) -> Vec<Tab> {
+  Tab::ALL
+    .into_iter()
+    .filter(|tab| flags.is_sub_enabled(tab.sub_feature()))
+    .collect()
+}
+
+pub(super) fn resolve_first_tab(enabled: &[Tab]) -> Tab {
+  enabled.first().copied().unwrap_or_default()
 }
 
 /// The All / Originals / Copies segmented filter on the Blueprints tab.
@@ -128,6 +157,7 @@ pub enum Message {
   },
   BlueprintSearchChanged(String),
   BlueprintSortSelected(BlueprintSort),
+  FeaturesChanged(crate::config::FeatureFlags),
   FilterSelected(Filter),
   GroupBySelected(GroupBy),
   JobsScrolled {
@@ -174,7 +204,9 @@ pub struct State {
   blueprint_search: String,
   blueprint_sort: BlueprintSort,
   blueprints: Vec<Blueprint>,
+  enabled_tabs: Vec<Tab>,
   extractions: Vec<Extraction>,
+  features: crate::config::FeatureFlags,
   filter: Filter,
   group_by: GroupBy,
   job_view: jobs::JobView,
@@ -197,6 +229,7 @@ impl State {
   pub fn new(
     active: i64,
     required_scopes: Vec<&'static str>,
+    features: crate::config::FeatureFlags,
     facility_defaults: FacilityDefaults,
     planner_catalog: Option<StaticCatalog>,
     assign_pilots: bool,
@@ -204,6 +237,7 @@ impl State {
     let mut planner = Planner::new();
     planner.set_facility_defaults(facility_defaults);
     planner.set_assign_pilots(assign_pilots);
+    let enabled_tabs = enabled_tabs(&features);
     State {
       active: if active == EMPTY_INDUSTRY_SELECTION {
         Scope::All
@@ -216,7 +250,9 @@ impl State {
       blueprint_search: String::new(),
       blueprint_sort: BlueprintSort::default(),
       blueprints: Vec::new(),
+      enabled_tabs: enabled_tabs.clone(),
       extractions: Vec::new(),
+      features,
       filter: Filter::default(),
       group_by: GroupBy::default(),
       job_view: jobs::JobView::default(),
@@ -234,7 +270,7 @@ impl State {
       .right_anchored(true),
       required_scopes,
       roster: Vec::new(),
-      tab: Tab::default(),
+      tab: resolve_first_tab(&enabled_tabs),
     }
   }
 
@@ -406,9 +442,21 @@ impl State {
     &self.roster
   }
 
-  /// The (id, name, missing-scopes) gate for a per-character "Mine" view whose pilot lacks the
-  /// required scopes; `None` for the combined view or an authorized pilot.
-  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+  pub(super) fn enabled_tabs(&self) -> &[Tab] {
+    &self.enabled_tabs
+  }
+
+  pub(super) fn sync_features(&mut self, features: crate::config::FeatureFlags) {
+    self.features = features;
+    self.enabled_tabs = enabled_tabs(&features);
+    if !self.enabled_tabs.contains(&self.tab) {
+      self.tab = resolve_first_tab(&self.enabled_tabs);
+    }
+  }
+
+  /// The per-tab `(id, name, missing-scopes)` forbidden gate for a per-character "Mine" view whose
+  /// pilot lacks the active tab's read scopes; `None` for the combined view or an authorized pilot.
+  pub(super) fn tab_scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Char(id) = self.active else {
       return None;
     };
@@ -417,7 +465,7 @@ impl State {
       .iter()
       .find(|owner| owner.id == id && !owner.is_corporation)?;
     let missing =
-      crate::ui::components::forbidden::missing_scopes(owner.granted_scopes.as_deref(), &self.required_scopes);
+      crate::ui::components::forbidden::missing_scopes(owner.granted_scopes.as_deref(), &self.tab.read_scopes());
     if missing.is_empty() {
       return None;
     }
@@ -807,6 +855,14 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.blueprint_scroll_offset = 0.0;
       Task::none()
     }
+    Message::FeaturesChanged(features) => {
+      let prev = state.tab;
+      state.sync_features(features);
+      if state.tab != prev {
+        return update(state, Message::TabSelected(state.tab), db, now);
+      }
+      Task::none()
+    }
     Message::FilterSelected(filter) => {
       state.filter = filter;
       state.jobs_scroll_offset = 0.0;
@@ -1025,6 +1081,7 @@ mod tests {
     let mut state = State::new(
       EMPTY_INDUSTRY_SELECTION,
       required(),
+      crate::config::FeatureFlags::default(),
       FacilityDefaults::default(),
       None,
       false,
@@ -1723,7 +1780,67 @@ mod tests {
     }
   }
 
-  mod scope_gate {
+  mod enabled_tabs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn only(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      for candidate in crate::config::SubFeature::ALL {
+        flags.set_sub_enabled(candidate, candidate == sub);
+      }
+      flags
+    }
+
+    #[test]
+    fn it_keeps_strip_order_with_every_sub_feature_enabled() {
+      let tabs = enabled_tabs(&crate::config::FeatureFlags::default());
+
+      assert_eq!(tabs, vec![Tab::Jobs, Tab::Blueprints, Tab::Planner, Tab::Extractions]);
+    }
+
+    #[test]
+    fn it_drops_a_disabled_sub_feature_from_the_strip() {
+      let tabs = enabled_tabs(&only(crate::config::SubFeature::Planner));
+
+      assert_eq!(tabs, vec![Tab::Planner]);
+    }
+  }
+
+  mod sync_features {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn without(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(sub, false);
+      flags
+    }
+
+    #[test]
+    fn it_redirects_off_a_disabled_active_tab_to_the_first_enabled_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.seed_tab(Tab::Jobs);
+
+      state.sync_features(without(crate::config::SubFeature::JobMonitoring));
+
+      assert_eq!(state.tab(), Tab::Blueprints);
+    }
+
+    #[test]
+    fn it_keeps_a_still_enabled_active_tab() {
+      let mut state = state_with(Scope::All, Vec::new(), Vec::new());
+      state.seed_tab(Tab::Planner);
+
+      state.sync_features(without(crate::config::SubFeature::JobMonitoring));
+
+      assert_eq!(state.tab(), Tab::Planner);
+    }
+  }
+
+  mod tab_scope_gate {
     use super::*;
 
     #[test]
@@ -1731,21 +1848,21 @@ mod tests {
       let granted = granted();
       let state = state_with(Scope::Char(1), vec![character_owner(1, Some(&granted))], Vec::new());
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
 
     #[test]
-    fn it_gates_a_char_scope_missing_the_required_scope() {
+    fn it_gates_a_char_scope_missing_the_active_tab_scope() {
       let state = state_with(Scope::Char(1), vec![character_owner(1, None)], Vec::new());
 
-      assert!(state.scope_gate().is_some());
+      assert!(state.tab_scope_gate().is_some());
     }
 
     #[test]
     fn it_never_gates_the_combined_scope() {
       let state = state_with(Scope::All, vec![character_owner(1, None)], Vec::new());
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
   }
 

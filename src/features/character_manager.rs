@@ -363,6 +363,16 @@ impl State {
     self.filtered.as_ref()
   }
 
+  pub(super) fn location_card_enabled(&self) -> bool {
+    self
+      .features
+      .is_sub_enabled(crate::config::SubFeature::LocationTracking)
+  }
+
+  pub(super) fn training_card_enabled(&self) -> bool {
+    self.features.is_sub_enabled(crate::config::SubFeature::SkillQueue)
+  }
+
   pub fn is_corp_filtered(&self) -> bool {
     self.corp_filtered.is_some()
   }

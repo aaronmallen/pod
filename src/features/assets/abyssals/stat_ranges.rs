@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn it_renders_sliders_for_the_selected_type_templates() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
       state.set_abyssal_stat_templates_for_test(vec![template(50, 28.0, 56.0)]);
 
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_placeholder_when_every_template_is_degenerate() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(vec![], vec![], selected_filters(), false);
       state.set_abyssal_stat_templates_for_test(vec![template(50, 33.0, 33.0)]);
 
@@ -509,7 +509,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_placeholder_when_no_type_is_selected() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = panel(&state);
     }

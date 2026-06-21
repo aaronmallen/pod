@@ -1095,7 +1095,7 @@ mod tests {
     }
 
     fn filtered_paged_state() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_for_test(
         Scope::Character(7),
         vec![pilot(7, "Vex")],
@@ -1117,7 +1117,7 @@ mod tests {
 
     #[test]
     fn it_renders_an_expanded_container_with_its_lazy_loaded_children() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_for_test(
         Scope::Character(7),
         vec![pilot(7, "Vex")],
@@ -1141,7 +1141,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_states() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
       let _el: Element<'_, Message> = body(&state);
     }
 

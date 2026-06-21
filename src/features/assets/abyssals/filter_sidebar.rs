@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_rail_prompting_a_type_selection() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(vec![], vec![], Filters::default(), false);
 
       let _el: Element<'_, Message> = rail(&state);
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_rail_with_a_selected_type_and_reset() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let filters = Filters {
         source_type_id: Some(47785),
         ..Filters::default()

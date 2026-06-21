@@ -1331,7 +1331,7 @@ fn navigate_to_skills(app: &mut App, target: Option<i64>, owned: Vec<i64>) -> Ta
 
 fn navigate_to_wallet(app: &mut App) -> Task<Message> {
   navigate(app, Route::Wallet);
-  app.wallet = Some(wallet::State::new().with_restored_panes(&app.ui_state));
+  app.wallet = Some(wallet::State::new(feature_flags(app)).with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => wallet::load(&runtime.db).map(Message::Wallet),
     None => Task::none(),
@@ -1416,6 +1416,7 @@ fn navigate_to_industry(app: &mut App, target: Option<i64>) -> Task<Message> {
     industry::State::new(
       selection,
       required.clone(),
+      feature_flags(app),
       facility_defaults,
       app.industry_catalog.clone(),
       assign_pilots,
@@ -1529,7 +1530,7 @@ fn rail_mail_unread(live: i64, screen: Option<i64>) -> i64 {
 
 fn navigate_to_assets(app: &mut App) -> Task<Message> {
   navigate(app, Route::Assets);
-  app.assets = Some(assets::State::new().with_restored_panes(&app.ui_state));
+  app.assets = Some(assets::State::new(feature_flags(app)).with_restored_panes(&app.ui_state));
   match app.runtime.as_ref() {
     Some(runtime) => assets::load(&runtime.db).map(Message::Assets),
     None => Task::none(),
@@ -2938,6 +2939,18 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
     tasks.push(Task::done(Message::CharacterDetail(
       character_detail::Message::FeaturesChanged(enabled.clone()),
     )));
+  }
+
+  if app.wallet.is_some() {
+    tasks.push(Task::done(Message::Wallet(wallet::Message::FeaturesChanged(flags))));
+  }
+
+  if app.assets.is_some() {
+    tasks.push(Task::done(Message::Assets(assets::Message::FeaturesChanged(flags))));
+  }
+
+  if app.industry.is_some() {
+    tasks.push(Task::done(Message::Industry(industry::Message::FeaturesChanged(flags))));
   }
 
   // A feature disabled while its screen is open leaves the route stranded with its rail icon gone;
@@ -4558,13 +4571,13 @@ mod tests {
 
   fn featured_app() -> App {
     let mut app = test_app();
-    app.assets = Some(assets::State::new());
+    app.assets = Some(assets::State::new(config::FeatureFlags::default()));
     app.calendar = Some(calendar::State::new(42, app.now, config::FeatureFlags::default()));
     app.character_detail = Some(character_detail::State::new(1, &[]));
     app.character_manager = Some(character_manager::State::new());
     app.mail = Some(mail::State::new(42));
     app.skills = Some(skills::State::new(1));
-    app.wallet = Some(wallet::State::new());
+    app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
     app
   }
 
@@ -5310,6 +5323,7 @@ mod tests {
       industry::State::new(
         industry::EMPTY_INDUSTRY_SELECTION,
         Vec::new(),
+        config::FeatureFlags::default(),
         industry::FacilityDefaults::default(),
         None,
         false,
@@ -6264,7 +6278,7 @@ mod tests {
     #[tokio::test]
     async fn it_dispatches_each_stockpile_branch_through_the_runtime() {
       let mut app = test_app();
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
       app.runtime = Some(test_runtime().await);
 
       let _location = handle_assets(
@@ -6910,7 +6924,7 @@ mod tests {
     fn it_marks_assets_dirty_on_route_for_an_asset_sync() {
       let mut app = test_app();
       app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
 
       mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
 
@@ -6921,7 +6935,7 @@ mod tests {
     fn it_skips_the_assets_reload_for_an_unrelated_kind() {
       let mut app = test_app();
       app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
 
       mark_assets_dirty(&mut app, finished(JobKind::CharacterWallet));
 
@@ -6932,7 +6946,7 @@ mod tests {
     fn it_skips_the_assets_reload_off_route() {
       let mut app = test_app();
       app.route = Route::Wallet;
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
 
       mark_assets_dirty(&mut app, finished(JobKind::AssetSync));
 
@@ -6981,7 +6995,7 @@ mod tests {
     fn it_marks_the_wallet_dirty_on_route_for_a_ledger_kind() {
       let mut app = test_app();
       app.route = Route::Wallet;
-      app.wallet = Some(wallet::State::new());
+      app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
 
       mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
 
@@ -6992,7 +7006,7 @@ mod tests {
     fn it_skips_the_wallet_reload_for_an_unrelated_kind() {
       let mut app = test_app();
       app.route = Route::Wallet;
-      app.wallet = Some(wallet::State::new());
+      app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
 
       mark_wallet_dirty(&mut app, finished(JobKind::AssetSync));
 
@@ -7003,7 +7017,7 @@ mod tests {
     fn it_skips_the_wallet_reload_off_route() {
       let mut app = test_app();
       app.route = Route::Assets;
-      app.wallet = Some(wallet::State::new());
+      app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
 
       mark_wallet_dirty(&mut app, finished(JobKind::CharacterWallet));
 
@@ -7590,7 +7604,7 @@ mod tests {
       let mut app = test_app();
       app.runtime = Some(test_runtime().await);
       app.route = Route::Assets;
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
 
       for character_id in 0..6 {
         let _ = update(&mut app, Message::Sync(asset_sync_event(character_id)));
@@ -7632,7 +7646,7 @@ mod tests {
     fn it_does_not_mark_assets_dirty_while_off_the_assets_route() {
       let mut app = test_app();
       app.route = Route::Wallet;
-      app.assets = Some(assets::State::new());
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
 
       let _ = update(&mut app, Message::Sync(asset_sync_event(1)));
 
@@ -8101,8 +8115,8 @@ mod tests {
       app.character_detail = Some(character_detail::State::new(1, &[]));
       app.skills = Some(skills::State::new(1));
       app.mail = Some(mail::State::new(42));
-      app.wallet = Some(wallet::State::new());
-      app.assets = Some(assets::State::new());
+      app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
+      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
       app
     }
 
@@ -8126,6 +8140,7 @@ mod tests {
       app.industry = Some(industry::State::new(
         1,
         industry_required_scopes(),
+        config::FeatureFlags::default(),
         industry::FacilityDefaults::default(),
         None,
         false,

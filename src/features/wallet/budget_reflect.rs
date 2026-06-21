@@ -924,7 +924,7 @@ mod tests {
   }
 
   fn state_with_history(history: Vec<MonthFlow>) -> State {
-    let mut state = State::new();
+    let mut state = State::new(crate::config::FeatureFlags::default());
     state.tab = Tab::Budget;
     state.budget_mode = budget::Mode::Reflect;
     state.budget = Some(budget::BudgetView::default());
@@ -959,7 +959,7 @@ mod tests {
 
     #[test]
     fn it_renders_loading_without_a_view() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
       state.budget_mode = budget::Mode::Reflect;
 

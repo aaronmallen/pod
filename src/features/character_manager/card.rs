@@ -56,6 +56,13 @@ pub struct TagChip {
   pub name: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Sections {
+  pub detail_enabled: bool,
+  pub location_enabled: bool,
+  pub training_enabled: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Training {
   pub level: i64,
@@ -68,23 +75,25 @@ pub(super) fn card<'a>(
   model: &'a CardModel,
   failure: Option<Phase>,
   dragging: bool,
-  detail_enabled: bool,
+  sections: Sections,
 ) -> Element<'a, Message> {
-  let mut sections: Vec<Element<'a, Message>> = vec![
+  let mut children: Vec<Element<'a, Message>> = vec![
     portrait(model),
-    identity(model, detail_enabled),
+    identity(model, sections.detail_enabled),
     tag_row(model),
-    rule::horizontal(),
-    training_section(model),
-    rule::horizontal(),
-    stats_row(model),
   ];
+  if sections.training_enabled {
+    children.push(rule::horizontal());
+    children.push(training_section(model));
+  }
+  children.push(rule::horizontal());
+  children.push(stats_row(model, sections.location_enabled));
 
   if let Some(indicator) = sync_indicator(failure) {
-    sections.push(indicator);
+    children.push(indicator);
   }
 
-  let body = container(Column::with_children(sections))
+  let body = container(Column::with_children(children))
     .width(Length::Fill)
     .height(Length::Fixed(spacing::layout::CARD_HEIGHT))
     .style(card_surface(model.accent.is_some(), dragging));
@@ -119,18 +128,16 @@ pub(super) fn card<'a>(
     .into()
 }
 
-pub(super) fn ghost(model: &CardModel) -> Element<'_, Message> {
-  let sections: Vec<Element<'_, Message>> = vec![
-    portrait(model),
-    ghost_identity(model),
-    ghost_tag_row(model),
-    rule::horizontal(),
-    training_section(model),
-    rule::horizontal(),
-    stats_row(model),
-  ];
+pub(super) fn ghost(model: &CardModel, sections: Sections) -> Element<'_, Message> {
+  let mut children: Vec<Element<'_, Message>> = vec![portrait(model), ghost_identity(model), ghost_tag_row(model)];
+  if sections.training_enabled {
+    children.push(rule::horizontal());
+    children.push(training_section(model));
+  }
+  children.push(rule::horizontal());
+  children.push(stats_row(model, sections.location_enabled));
 
-  let body = container(Column::with_children(sections))
+  let body = container(Column::with_children(children))
     .width(Length::Fill)
     .style(ghost_surface(model.accent.is_some()));
 
@@ -433,10 +440,16 @@ fn idle_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn stats_row(model: &CardModel) -> Element<'_, Message> {
-  let location = model.location.clone().unwrap_or_else(|| PLACEHOLDER.to_owned());
+fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> {
   let isk = format_isk(model.wallet_balance);
 
+  if !location_enabled {
+    return container(stat("ISK", isk, typography::mono::SEMIBOLD))
+      .width(Length::Fill)
+      .into();
+  }
+
+  let location = model.location.clone().unwrap_or_else(|| PLACEHOLDER.to_owned());
   let columns = Row::with_children(vec![
     stat("Location", location, typography::body::REGULAR),
     Space::new().width(Length::Fixed(HAIRLINE)).into(),
@@ -609,6 +622,14 @@ mod tests {
     }
   }
 
+  fn all_sections() -> Sections {
+    Sections {
+      detail_enabled: true,
+      location_enabled: true,
+      training_enabled: true,
+    }
+  }
+
   mod render {
     use super::*;
 
@@ -616,7 +637,7 @@ mod tests {
     fn it_renders_a_card_being_dragged() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, true, true);
+      let _el: Element<'_, Message> = card(&model, None, true, all_sections());
     }
 
     #[test]
@@ -624,7 +645,7 @@ mod tests {
       let model = base_model();
 
       for failure in [Phase::Failed, Phase::BackingOff] {
-        let _el: Element<'_, Message> = card(&model, Some(failure), false, true);
+        let _el: Element<'_, Message> = card(&model, Some(failure), false, all_sections());
       }
     }
 
@@ -635,8 +656,8 @@ mod tests {
       let mut model = base_model();
       model.needs_reauth = true;
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
-      let _with_failure: Element<'_, Message> = card(&model, Some(Phase::Failed), false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+      let _with_failure: Element<'_, Message> = card(&model, Some(Phase::Failed), false, all_sections());
     }
 
     #[test]
@@ -644,20 +665,20 @@ mod tests {
       let mut model = base_model();
       model.accent = Some(color::accent::PLASMA);
 
-      let _accented: Element<'_, Message> = ghost(&model);
+      let _accented: Element<'_, Message> = ghost(&model, all_sections());
 
       let mut plain = base_model();
       plain.accent = None;
       plain.training = None;
       plain.tags = Vec::new();
-      let _plain: Element<'_, Message> = ghost(&plain);
+      let _plain: Element<'_, Message> = ghost(&plain, all_sections());
     }
 
     #[test]
     fn it_renders_a_training_card() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
     }
 
     #[test]
@@ -665,7 +686,7 @@ mod tests {
       let mut model = base_model();
       model.accent = Some(color::accent::PLASMA);
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
     }
 
     #[test]
@@ -673,7 +694,7 @@ mod tests {
       let mut model = base_model();
       model.training = None;
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
     }
 
     #[test]
@@ -682,7 +703,7 @@ mod tests {
         let mut model = base_model();
         model.docked = docked;
 
-        let _el: Element<'_, Message> = card(&model, None, false, true);
+        let _el: Element<'_, Message> = card(&model, None, false, all_sections());
       }
     }
 
@@ -692,15 +713,37 @@ mod tests {
       let mut absent = base_model();
       absent.wallet_balance = None;
 
-      let _present: Element<'_, Message> = card(&present, None, false, true);
-      let _absent: Element<'_, Message> = card(&absent, None, false, true);
+      let _present: Element<'_, Message> = card(&present, None, false, all_sections());
+      let _absent: Element<'_, Message> = card(&absent, None, false, all_sections());
     }
 
     #[test]
     fn it_renders_the_tag_row_with_the_add_affordance_and_no_inline_picker() {
       let model = base_model();
 
-      let _el: Element<'_, Message> = card(&model, None, false, true);
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+    }
+
+    #[test]
+    fn it_renders_with_the_location_section_hidden() {
+      let model = base_model();
+      let sections = Sections {
+        location_enabled: false,
+        ..all_sections()
+      };
+
+      let _el: Element<'_, Message> = card(&model, None, false, sections);
+    }
+
+    #[test]
+    fn it_renders_with_the_training_section_hidden() {
+      let model = base_model();
+      let sections = Sections {
+        training_enabled: false,
+        ..all_sections()
+      };
+
+      let _el: Element<'_, Message> = card(&model, None, false, sections);
     }
   }
 
@@ -724,7 +767,7 @@ mod tests {
     use super::*;
 
     fn declared_height(model: &CardModel) -> Length {
-      let element = card(model, None, false, true);
+      let element = card(model, None, false, all_sections());
       Widget::<Message, _, _>::size(element.as_widget()).height
     }
 

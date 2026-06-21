@@ -179,7 +179,7 @@ mod tests {
         Scope::Corporation(98),
         Scope::Character(404),
       ] {
-        let mut state = State::new();
+        let mut state = State::new(crate::config::FeatureFlags::default());
         state.set_picker_for_test(scope, vec![pilot(7)], vec![corporation(98)]);
         let _el: Element<'_, Message> = header(&state);
       }
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn it_renders_all_three_groups_when_characters_and_corporations_are_owned() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::Character(7), vec![pilot(7), pilot(9)], vec![corporation(98)]);
 
       let _el: Element<'_, Message> = picker_dropdown(&state);
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn it_renders_only_the_all_assets_group_with_an_empty_roster() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = picker_dropdown(&state);
     }

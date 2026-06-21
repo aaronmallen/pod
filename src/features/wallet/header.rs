@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn it_renders_with_a_closed_picker() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1), pilot(2)];
 
       let _el: Element<'_, Message> = header(&state, now());
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn it_builds_all_three_groups_when_corps_and_chars_exist() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.corporations = vec![corp(98_000_001)];
 
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn it_builds_with_only_the_all_wallets_row_when_empty() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = picker_dropdown(&state);
     }

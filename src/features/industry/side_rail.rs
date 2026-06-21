@@ -351,6 +351,7 @@ mod tests {
     let mut state = State::new(
       super::super::EMPTY_INDUSTRY_SELECTION,
       Vec::new(),
+      crate::config::FeatureFlags::default(),
       super::super::FacilityDefaults::default(),
       None,
       false,

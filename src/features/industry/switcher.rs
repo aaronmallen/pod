@@ -182,6 +182,7 @@ mod tests {
     let mut state = State::new(
       0,
       vec![crate::clients::esi::scopes::CHARACTER_INDUSTRY_JOBS],
+      crate::config::FeatureFlags::default(),
       super::super::FacilityDefaults::default(),
       None,
       false,

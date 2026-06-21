@@ -11,7 +11,6 @@ use super::{
   State, Tab, fmt_isk, header, side_filter::side_filter,
 };
 use crate::{
-  config::Feature,
   features::contract_detail,
   store::{
     images::IconResolution,
@@ -134,8 +133,14 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  if let Some((id, name, missing)) = state.scope_gate() {
-    return forbidden::forbidden(Feature::Wallet.noun(), name, &missing, Message::ReauthRequested(id));
+  if let Some((id, name, missing)) = state.tab_scope_gate() {
+    return Column::with_children(vec![
+      tabs(state),
+      forbidden::forbidden(tab_noun(state.tab), name, &missing, Message::ReauthRequested(id)),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
   }
 
   if state.tab == Tab::Budget {
@@ -268,16 +273,20 @@ fn tabs(state: &State) -> Element<'_, Message> {
   let journal_count = state.journal_total;
   let market_count = state.market_total;
   let contract_count = state.contract_total;
-  let items = [
-    (Tab::Wallets, "Wallets", None),
-    (Tab::Journal, "Journal", Some(journal_count)),
-    (Tab::Market, "Transactions", Some(market_count)),
-    (Tab::Contracts, "Contracts", Some(contract_count)),
-    (Tab::Budget, "Budget", None),
-  ];
 
-  let tabs = items
-    .into_iter()
+  let tabs = state
+    .enabled_tabs()
+    .iter()
+    .map(|&tab| {
+      let (label, count) = match tab {
+        Tab::Wallets => ("Wallets", None),
+        Tab::Journal => ("Journal", Some(journal_count)),
+        Tab::Market => ("Transactions", Some(market_count)),
+        Tab::Contracts => ("Contracts", Some(contract_count)),
+        Tab::Budget => ("Budget", None),
+      };
+      (tab, label, count)
+    })
     .map(|(tab, label, count)| {
       let selected = state.tab == tab;
       tab_select::Tab {
@@ -310,6 +319,16 @@ fn tab_icon(tab: Tab) -> Icon {
     Tab::Journal => Icon::journal(),
     Tab::Market => Icon::market(),
     Tab::Wallets => Icon::wallet(),
+  }
+}
+
+fn tab_noun(tab: Tab) -> &'static str {
+  match tab {
+    Tab::Budget => "Budget",
+    Tab::Contracts => "Contracts",
+    Tab::Journal => "Wallet journal",
+    Tab::Market => "Transactions",
+    Tab::Wallets => "Wallet balances",
   }
 }
 
@@ -1818,7 +1837,7 @@ mod tests {
     }
 
     fn state_on_contracts() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Contracts;
       state
     }
@@ -1888,7 +1907,7 @@ mod tests {
     }
 
     fn state_on_journal() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Journal;
       state
     }
@@ -1964,7 +1983,7 @@ mod tests {
     }
 
     fn state_on_market() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Market;
       state
     }
@@ -2002,7 +2021,7 @@ mod tests {
 
     #[test]
     fn it_pins_a_header_for_market_and_contracts_but_not_journal() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       state.tab = Tab::Market;
       assert!(super::super::pinned_header(&state).is_some());
@@ -2020,7 +2039,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_all_wallets_body() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = shell(&state, now());
     }
@@ -2028,7 +2047,7 @@ mod tests {
     #[tokio::test]
     async fn it_renders_with_the_picker_open() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = crate::features::wallet::update(&mut state, Message::PickerToggled, &db);
       let _el: Element<'_, Message> = shell(&state, now());
     }
@@ -2048,14 +2067,14 @@ mod tests {
 
     #[test]
     fn it_renders_nothing_without_an_active_filter() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert!(super::super::budget_filter_badge(&state).is_none());
     }
 
     #[test]
     fn it_renders_a_named_envelope_for_a_category_filter() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_chips.meta.insert(7, envelope(7, "Bills"));
       state.budget_filter = Some(BudgetFilter {
         kind: BudgetFilterKind::Category(7),
@@ -2067,7 +2086,7 @@ mod tests {
 
     #[test]
     fn it_renders_nothing_when_a_category_filter_has_no_envelope_meta() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_filter = Some(BudgetFilter {
         kind: BudgetFilterKind::Category(7),
         month: "2026-06".to_owned(),
@@ -2078,7 +2097,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_uncategorized_pill() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_filter = Some(BudgetFilter {
         kind: BudgetFilterKind::Uncategorized,
         month: "2026-06".to_owned(),
@@ -2113,7 +2132,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_assign_affordance_when_unassigned() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> =
         super::super::budget_chip(&state, BudgetOwner::Character(1), BudgetEntryKind::Journal, 1);
@@ -2121,7 +2140,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_settled_chip_when_assigned() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_chips.meta.insert(7, envelope(7, "Bills"));
       state
         .budget_chips
@@ -2135,7 +2154,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_open_popover() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_chips.meta.insert(7, envelope(7, "Bills"));
       state.budget_chips.envelopes = vec![crate::features::wallet::loaders::EnvelopeGroup {
         categories: vec![envelope(7, "Bills")],
@@ -2186,7 +2205,7 @@ mod tests {
 
     #[test]
     fn it_names_a_character_from_the_roster() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, "Pilot One")];
 
       assert_eq!(
@@ -2197,7 +2216,7 @@ mod tests {
 
     #[test]
     fn it_names_a_corporation_from_the_roster() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.corporations = vec![corp(98, "Test Corp")];
 
       assert_eq!(
@@ -2208,7 +2227,7 @@ mod tests {
 
     #[test]
     fn it_falls_back_to_the_id_for_unknown_owners() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert_eq!(
         super::super::owner_display_name(&state, BudgetOwner::Character(5)),

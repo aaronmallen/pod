@@ -8,20 +8,17 @@ use super::{
   HEADER_SIDE_PADDING, Message, Pane, Scope, State, Tab, abyssals, fmt_count, header, inventory, stockpiles, tracker,
   tree, values,
 };
-use crate::{
-  config::Feature,
-  ui::{
-    components::{
-      backdrop, forbidden,
-      icon::Icon,
-      modal_overlay::modal_overlay,
-      positioned_dropdown::positioned_dropdown,
-      resizable_pane::pane_handle,
-      rule,
-      tab_select::{self, TabLayout},
-    },
-    style::{color, control, spacing},
+use crate::ui::{
+  components::{
+    backdrop, forbidden,
+    icon::Icon,
+    modal_overlay::modal_overlay,
+    positioned_dropdown::positioned_dropdown,
+    resizable_pane::pane_handle,
+    rule,
+    tab_select::{self, TabLayout},
   },
+  style::{color, control, spacing},
 };
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
@@ -132,13 +129,14 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  if let Some((id, name, missing)) = state.scope_gate() {
-    return forbidden::forbidden(
-      Feature::AssetTracking.noun(),
-      name,
-      &missing,
-      Message::ReauthRequested(id),
-    );
+  if let Some((id, name, missing)) = state.tab_scope_gate() {
+    return Column::with_children(vec![
+      tab_strip(state),
+      forbidden::forbidden(tab_noun(state.tab()), name, &missing, Message::ReauthRequested(id)),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into();
   }
 
   Column::with_children(vec![tab_strip(state), tab_body(state, now)])
@@ -156,18 +154,20 @@ fn location_tree(state: &State) -> Element<'_, Message> {
 }
 
 fn tab_strip(state: &State) -> Element<'_, Message> {
-  let tabs = vec![
-    tab(state, Tab::Inventory, "Inventory", fmt_count(state.inventory_total())),
-    tab(state, Tab::Abyssals, "Abyssals", fmt_count(state.abyssal_total())),
-    tab(
-      state,
-      Tab::Stockpiles,
-      "Stockpiles",
-      tab_count(state.stockpiles().len()),
-    ),
-    tab(state, Tab::Values, "Values", values_count(state)),
-    tab(state, Tab::Tracker, "Tracker", String::new()),
-  ];
+  let tabs = state
+    .enabled_tabs()
+    .iter()
+    .map(|&t| {
+      let (label, count) = match t {
+        Tab::Inventory => ("Inventory", fmt_count(state.inventory_total())),
+        Tab::Abyssals => ("Abyssals", fmt_count(state.abyssal_total())),
+        Tab::Stockpiles => ("Stockpiles", tab_count(state.stockpiles().len())),
+        Tab::Values => ("Values", values_count(state)),
+        Tab::Tracker => ("Tracker", String::new()),
+      };
+      tab(state, t, label, count)
+    })
+    .collect::<Vec<_>>();
 
   let strip = container(tab_select::tab_select_with(tabs, TabLayout::Start))
     .width(Length::Fill)
@@ -202,6 +202,16 @@ fn tab_icon(tab: Tab) -> Icon {
     Tab::Stockpiles => Icon::stockpiles(),
     Tab::Tracker => Icon::tracker(),
     Tab::Values => Icon::values(),
+  }
+}
+
+fn tab_noun(tab: Tab) -> &'static str {
+  match tab {
+    Tab::Abyssals => "Abyssals",
+    Tab::Inventory => "Inventory",
+    Tab::Stockpiles => "Stockpiles",
+    Tab::Tracker => "Tracker",
+    Tab::Values => "Values",
   }
 }
 

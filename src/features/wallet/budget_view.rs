@@ -4601,7 +4601,7 @@ mod tests {
   }
 
   fn state_with_budget() -> State {
-    let mut state = State::new();
+    let mut state = State::new(crate::config::FeatureFlags::default());
     state.tab = super::super::Tab::Budget;
     state.budget = Some(view());
     state.budget_selected = Some(1);

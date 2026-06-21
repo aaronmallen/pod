@@ -193,6 +193,7 @@ pub enum Message {
   CategorySelected(Category),
   ContainerChildrenLoaded(i64, Vec<InventoryRow>),
   ContainerToggled(i64),
+  FeaturesChanged(crate::config::FeatureFlags),
   FilterExamplePicked(&'static str),
   GeoNodeSelected(GeoSelection),
   GeoNodeToggled(GeoNodeKey),
@@ -351,7 +352,9 @@ pub struct State {
   chart_hover: Option<f32>,
   corporations: Vec<RosterCorp>,
   dirty: bool,
+  enabled_tabs: Vec<Tab>,
   expanded_containers: HashSet<i64>,
+  features: crate::config::FeatureFlags,
   geo_expanded: HashSet<GeoNodeKey>,
   geo_selected: GeoSelection,
   geo_tree: GeoTree,
@@ -394,7 +397,8 @@ pub struct State {
 }
 
 impl State {
-  pub fn new() -> Self {
+  pub fn new(features: crate::config::FeatureFlags) -> Self {
+    let enabled_tabs = enabled_tabs(&features);
     State {
       abyssals_filter: PaneDrag::new(
         ABYSSALS_FILTER_DEFAULT_WIDTH,
@@ -405,6 +409,8 @@ impl State {
       chart_hover: None,
       corporations: Vec::new(),
       dirty: false,
+      enabled_tabs: enabled_tabs.clone(),
+      features,
       expanded_containers: HashSet::new(),
       geo_expanded: HashSet::new(),
       geo_selected: GeoSelection::default(),
@@ -432,7 +438,7 @@ impl State {
       ),
       sort: SortColumn::Value,
       sort_dir: SortDirection::Descending,
-      tab: Tab::default(),
+      tab: resolve_first_tab(&enabled_tabs),
       totals: InventoryTotals::default(),
       window_height: None,
       values: values::ValueSummary::default(),
@@ -505,13 +511,27 @@ impl State {
     }
   }
 
-  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+  pub(super) fn enabled_tabs(&self) -> &[Tab] {
+    &self.enabled_tabs
+  }
+
+  pub(super) fn sync_features(&mut self, features: crate::config::FeatureFlags) {
+    self.features = features;
+    self.enabled_tabs = enabled_tabs(&features);
+    if !self.enabled_tabs.contains(&self.tab) {
+      self.tab = resolve_first_tab(&self.enabled_tabs);
+    }
+  }
+
+  /// The per-tab `(id, name, missing-scopes)` forbidden gate for a per-character view whose pilot
+  /// lacks the active tab's read scopes; `None` for the combined view or an authorized pilot.
+  pub(super) fn tab_scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Character(id) = self.active else {
       return None;
     };
     let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
-    let required = crate::features::registry::descriptor(crate::config::Feature::AssetTracking).scopes;
-    let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
+    let missing =
+      crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), &self.tab.read_scopes());
     if missing.is_empty() {
       return None;
     }
@@ -833,6 +853,46 @@ pub enum Tab {
   Stockpiles,
   Tracker,
   Values,
+}
+
+impl Tab {
+  const ORDER: [Tab; 5] = [
+    Tab::Inventory,
+    Tab::Abyssals,
+    Tab::Stockpiles,
+    Tab::Values,
+    Tab::Tracker,
+  ];
+
+  pub(super) fn read_scopes(self) -> Vec<&'static str> {
+    crate::features::registry::sub_descriptor(self.sub_feature())
+      .scopes
+      .iter()
+      .copied()
+      .filter(|scope| !crate::clients::esi::scopes::is_write_scope(scope))
+      .collect()
+  }
+
+  pub(super) fn sub_feature(self) -> crate::config::SubFeature {
+    match self {
+      Tab::Abyssals => crate::config::SubFeature::Abyssals,
+      Tab::Inventory => crate::config::SubFeature::Inventory,
+      Tab::Stockpiles => crate::config::SubFeature::Stockpiles,
+      Tab::Tracker => crate::config::SubFeature::Tracker,
+      Tab::Values => crate::config::SubFeature::Values,
+    }
+  }
+}
+
+pub(super) fn enabled_tabs(flags: &crate::config::FeatureFlags) -> Vec<Tab> {
+  Tab::ORDER
+    .into_iter()
+    .filter(|tab| flags.is_sub_enabled(tab.sub_feature()))
+    .collect()
+}
+
+pub(super) fn resolve_first_tab(enabled: &[Tab]) -> Tab {
+  enabled.first().copied().unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -1161,6 +1221,16 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 
     Message::PaneDrag(_) | Message::PaneDragEnd | Message::PaneDragStart(_) | Message::PaneSettled(..) => {
       update_pane(state, message)
+    }
+
+    Message::FeaturesChanged(features) => {
+      let prev = state.tab;
+      state.sync_features(features);
+      if state.tab != prev {
+        state.chart_hover = None;
+        return reload_filtered(state, db);
+      }
+      Task::none()
     }
 
     Message::ReauthRequested(_) => Task::none(),
@@ -2147,6 +2217,75 @@ pub(super) fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &
 mod tests {
   use super::*;
 
+  mod enabled_tabs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn only(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      for candidate in crate::config::SubFeature::ALL {
+        flags.set_sub_enabled(candidate, candidate == sub);
+      }
+      flags
+    }
+
+    #[test]
+    fn it_keeps_strip_order_with_every_sub_feature_enabled() {
+      let tabs = enabled_tabs(&crate::config::FeatureFlags::default());
+
+      assert_eq!(
+        tabs,
+        vec![
+          Tab::Inventory,
+          Tab::Abyssals,
+          Tab::Stockpiles,
+          Tab::Values,
+          Tab::Tracker
+        ]
+      );
+    }
+
+    #[test]
+    fn it_drops_a_disabled_sub_feature_from_the_strip() {
+      let tabs = enabled_tabs(&only(crate::config::SubFeature::Values));
+
+      assert_eq!(tabs, vec![Tab::Values]);
+    }
+  }
+
+  mod sync_features {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn without(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(sub, false);
+      flags
+    }
+
+    #[test]
+    fn it_redirects_off_a_disabled_active_tab_to_the_first_enabled_tab() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Inventory;
+
+      state.sync_features(without(crate::config::SubFeature::Inventory));
+
+      assert_eq!(state.tab, Tab::Abyssals);
+    }
+
+    #[test]
+    fn it_keeps_a_still_enabled_active_tab() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Tracker;
+
+      state.sync_features(without(crate::config::SubFeature::Inventory));
+
+      assert_eq!(state.tab, Tab::Tracker);
+    }
+  }
+
   fn pilot(id: i64) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
@@ -2253,7 +2392,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_a_geo_selection() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_geo_tree_for_test(geo_tree());
 
       let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
@@ -2264,7 +2403,7 @@ mod tests {
     #[tokio::test]
     async fn it_resets_the_geo_selection_and_collapse_state_when_the_scope_changes() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.geo_selected = GeoSelection::System(30);
       state.geo_expanded.insert(GeoNodeKey::Region(10));
 
@@ -2311,7 +2450,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_a_group_expanded_then_collapsed_from_a_collapsed_default() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let key = GeoNodeKey::Region(10);
       assert!(state.geo_is_collapsed(key), "groups render collapsed by default");
 
@@ -2342,7 +2481,7 @@ mod tests {
 
     #[test]
     fn it_ignores_an_unrelated_kind() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       state.mark_dirty(JobKind::CharacterWallet);
 
@@ -2351,7 +2490,7 @@ mod tests {
 
     #[test]
     fn it_marks_the_assets_dirty_for_an_asset_sync() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       state.mark_dirty(JobKind::AssetSync);
 
@@ -2391,7 +2530,7 @@ mod tests {
     #[tokio::test]
     async fn it_appends_a_loaded_page_and_clears_has_more_for_a_short_page() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
       state.inventory_loading = true;
@@ -2420,7 +2559,7 @@ mod tests {
     #[tokio::test]
     async fn it_drops_an_inventory_page_captured_before_the_list_was_replaced() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
       state.inventory_loading = true;
@@ -2450,7 +2589,7 @@ mod tests {
     #[tokio::test]
     async fn it_drops_expansions_for_items_absent_from_fresh_sync_data() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
       let generation = state.search_generation;
 
@@ -2476,7 +2615,7 @@ mod tests {
     #[tokio::test]
     async fn it_expands_a_container_loads_children_then_collapse_drops_them() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Character(7);
 
       let _ = update(&mut state, Message::ContainerToggled(100), &db);
@@ -2500,7 +2639,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_stale_sync_reload_after_the_search_advanced() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let stale_generation = state.search_generation;
       state.search_generation = state.search_generation.wrapping_add(1);
       state.totals.items = 3;
@@ -2528,7 +2667,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_scroll_below_the_threshold() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
 
@@ -2547,7 +2686,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_scroll_when_there_are_no_more_pages() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = false;
 
@@ -2578,7 +2717,7 @@ mod tests {
     #[tokio::test]
     async fn it_preserves_interaction_state_on_a_sync_triggered_reload() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.search = "name:Rifter".to_owned();
       state.abyssal_picker_open = true;
       state.set_inventory_children_for_test(200, vec![inv_row(201, false)]);
@@ -2615,7 +2754,7 @@ mod tests {
     #[tokio::test]
     async fn it_resets_pagination_and_expansion_on_reload() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_inventory_children_for_test(100, vec![inv_row(101, false)]);
 
       let _ = update(
@@ -2639,7 +2778,7 @@ mod tests {
     #[tokio::test]
     async fn it_starts_a_load_when_scrolling_past_the_threshold_with_more_pages() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Character(7);
       state.inventory = vec![inv_row(100, false)];
       state.inventory_has_more = true;
@@ -2662,7 +2801,7 @@ mod tests {
     #[tokio::test]
     async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.inventory = vec![inv_row(100, false)];
 
       let _ = update(
@@ -2700,7 +2839,7 @@ mod tests {
 
     #[test]
     fn it_defaults_both_pane_widths_when_the_store_is_empty() {
-      let state = State::new().with_restored_panes(&UiState::default());
+      let state = State::new(crate::config::FeatureFlags::default()).with_restored_panes(&UiState::default());
 
       assert_eq!(state.pane(Pane::Sidebar).width(), SIDEBAR_DEFAULT_WIDTH);
       assert_eq!(state.pane(Pane::AbyssalsFilter).width(), ABYSSALS_FILTER_DEFAULT_WIDTH);
@@ -2708,14 +2847,14 @@ mod tests {
 
     #[test]
     fn it_does_not_listen_for_drag_events_while_no_pane_is_active() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _sub: iced::Subscription<Message> = subscription(&state);
     }
 
     #[test]
     fn it_listens_for_drag_events_while_the_abyssals_filter_pane_is_active() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.abyssals_filter.start();
 
       let _sub: iced::Subscription<Message> = subscription(&state);
@@ -2723,14 +2862,14 @@ mod tests {
 
     #[test]
     fn it_persists_the_settled_width_under_the_matching_pane_key() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       assert_eq!(state.pane_mut(Pane::Sidebar).1, SIDEBAR_PANE_KEY);
       assert_eq!(state.pane_mut(Pane::AbyssalsFilter).1, ABYSSALS_FILTER_PANE_KEY);
     }
 
     #[test]
     fn it_reports_the_active_drag_pane_only_while_dragging() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       assert!(state.active_drag().is_none());
 
       state.sidebar.start();
@@ -2744,7 +2883,7 @@ mod tests {
     #[tokio::test]
     async fn it_resizes_the_sidebar_during_a_drag_and_settles_its_width() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::PaneDragStart(Pane::Sidebar), &db);
       let _ = update(&mut state, Message::PaneDrag(500.0), &db);
@@ -2763,7 +2902,7 @@ mod tests {
       ui.panes.insert(SIDEBAR_PANE_KEY.to_owned(), 360.0);
       ui.panes.insert(ABYSSALS_FILTER_PANE_KEY.to_owned(), 200.0);
 
-      let state = State::new().with_restored_panes(&ui);
+      let state = State::new(crate::config::FeatureFlags::default()).with_restored_panes(&ui);
 
       assert_eq!(state.pane(Pane::Sidebar).width(), 360.0);
       assert_eq!(state.pane(Pane::AbyssalsFilter).width(), 200.0);
@@ -2772,7 +2911,7 @@ mod tests {
     #[tokio::test]
     async fn it_routes_a_drag_solely_to_the_active_abyssals_filter_pane() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::PaneDragStart(Pane::AbyssalsFilter), &db);
       let _ = update(&mut state, Message::PaneDrag(400.0), &db);
@@ -2854,7 +2993,7 @@ mod tests {
     #[tokio::test]
     async fn a_created_filter_is_recorded_selected_and_clears_the_geo_selection() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.geo_selected = GeoSelection::System(30);
 
       let _ = update(
@@ -2871,7 +3010,7 @@ mod tests {
     #[tokio::test]
     async fn a_reloaded_list_replaces_the_saved_filters() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filters = vec![filter(1, "Old", "", None)];
 
       let _ = update(
@@ -2886,7 +3025,7 @@ mod tests {
 
     #[tokio::test]
     async fn can_save_is_gated_on_a_query_or_a_non_all_category() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       assert!(!state.can_save_filter());
 
       state.search = "tritanium".to_owned();
@@ -2900,7 +3039,7 @@ mod tests {
     #[tokio::test]
     async fn confirming_closes_the_modal() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filter_modal_open = true;
       state.saved_filter_draft_name = "Ships".to_owned();
       state.category = Category::Ship;
@@ -2914,7 +3053,7 @@ mod tests {
     #[tokio::test]
     async fn confirming_with_an_empty_name_keeps_the_modal_open() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filter_modal_open = true;
       state.saved_filter_draft_name = "   ".to_owned();
       state.search = "tritanium".to_owned();
@@ -2927,7 +3066,7 @@ mod tests {
     #[tokio::test]
     async fn deleting_the_active_filter_clears_the_selection() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
       state.saved_filter_active = Some(5);
 
@@ -2939,7 +3078,7 @@ mod tests {
     #[tokio::test]
     async fn it_cancels_the_modal() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filter_modal_open = true;
       state.saved_filter_draft_name = "Jita".to_owned();
 
@@ -2952,7 +3091,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_and_clears_the_modal() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filter_draft_name = "stale".to_owned();
 
       let _ = update(&mut state, Message::SaveFilterOpened, &db);
@@ -2964,7 +3103,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_draft_name() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -2978,7 +3117,7 @@ mod tests {
     #[tokio::test]
     async fn re_selecting_the_active_filter_clears_it() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
       state.saved_filter_active = Some(5);
       state.search = "name:Rifter".to_owned();
@@ -2994,7 +3133,7 @@ mod tests {
     #[tokio::test]
     async fn right_pressing_a_filter_opens_its_context_menu_at_the_cursor() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filters = vec![filter(5, "Ships", "category:ship", Some("ship"))];
       state.sidebar_cursor = Some(iced::Point::new(12.0, 34.0));
 
@@ -3008,7 +3147,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_a_filter_restores_its_query_and_category_and_clears_the_location() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filters = vec![filter(5, "Modules", "name:Rifter", Some("module"))];
       state.geo_selected = GeoSelection::System(30);
 
@@ -3023,7 +3162,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_a_location_clears_the_active_saved_filter() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.saved_filter_active = Some(5);
 
       let _ = update(&mut state, Message::GeoNodeSelected(GeoSelection::System(30)), &db);
@@ -3033,7 +3172,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_capture_preview_prefers_the_query_then_falls_back_to_the_category() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.search = "  name:Rifter  ".to_owned();
       assert_eq!(state.save_filter_capture(), "name:Rifter");
 
@@ -3046,7 +3185,7 @@ mod tests {
     }
   }
 
-  mod scope_gate {
+  mod tab_scope_gate {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -3058,30 +3197,30 @@ mod tests {
         .join(" ");
       let mut granted_pilot = pilot(1);
       granted_pilot.granted_scopes = Some(granted);
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::Character(1), vec![granted_pilot], Vec::new());
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
 
     #[test]
     fn it_does_not_gate_the_all_or_corporation_scopes() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::All, vec![pilot(1)], Vec::new());
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
 
       state.set_picker_for_test(Scope::Corporation(99), vec![pilot(1)], Vec::new());
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
 
     #[test]
     fn it_gates_a_character_scope_missing_the_asset_scopes() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::Character(1), vec![pilot(1)], Vec::new());
 
-      let gate = state.scope_gate().expect("missing scope should gate");
+      let gate = state.tab_scope_gate().expect("missing scope should gate");
 
       assert_eq!(gate.0, 1);
       assert!(!gate.2.is_empty());
@@ -3105,7 +3244,7 @@ mod tests {
 
     #[test]
     fn it_collects_stale_portraits_logos_and_abyssal_cards() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::All, vec![pilot(7), fresh_pilot(9)], vec![corp(98)]);
       state.set_abyssals_for_test(
         vec![abyssals::AbyssalCard {
@@ -3142,7 +3281,7 @@ mod tests {
 
     #[test]
     fn it_is_empty_when_every_model_is_fresh() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_picker_for_test(Scope::All, vec![fresh_pilot(7)], Vec::new());
 
       assert_eq!(state.stale_images(), Vec::new());
@@ -3172,7 +3311,7 @@ mod tests {
     #[tokio::test]
     async fn deleting_spawns_a_reload_and_reloaded_cards_replace_state() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.stockpiles = vec![card(1, "Old")];
 
       let _task = update(&mut state, Message::StockpileDeleted(1), &db);
@@ -3184,7 +3323,7 @@ mod tests {
     #[tokio::test]
     async fn it_accepts_location_results_for_the_current_generation() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(
         &mut state,
@@ -3218,7 +3357,7 @@ mod tests {
       use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
 
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileImportOpened, &db);
       let _ = update(
         &mut state,
@@ -3243,7 +3382,7 @@ mod tests {
     #[tokio::test]
     async fn it_edits_the_draft_name_and_item_rows() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _ = update(
@@ -3277,7 +3416,7 @@ mod tests {
     #[tokio::test]
     async fn it_clears_a_picked_location() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(
         &mut state,
@@ -3300,7 +3439,7 @@ mod tests {
     #[tokio::test]
     async fn it_drops_location_results_from_a_superseded_generation() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(
         &mut state,
@@ -3335,7 +3474,7 @@ mod tests {
     #[tokio::test]
     async fn it_dismisses_open_popovers() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
       let _ = update(
@@ -3354,7 +3493,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_multibuy_copy_for_an_unknown_card() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileMultibuyExportCopied(404), &db);
 
@@ -3364,7 +3503,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_right_press_without_a_cursor_anchor() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.stockpiles = vec![card(7, "Ammo")];
 
       let _ = update(&mut state, Message::StockpileCardRightPressed(7), &db);
@@ -3375,7 +3514,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_editor_edits_when_no_editor_is_open() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileEditorNameChanged("x".to_owned()), &db);
       let _ = update(
@@ -3395,7 +3534,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_a_blank_editor_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileNew, &db);
       assert!(state.stockpile_editor.is_some());
@@ -3407,7 +3546,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_a_context_menu_at_the_cursor_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.stockpiles = vec![card(7, "Ammo")];
 
       let _ = update(
@@ -3425,7 +3564,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_an_editor_prefilled_from_an_existing_card() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.stockpiles = vec![card(7, "Ammo")];
 
       let _ = update(&mut state, Message::StockpileEditStarted(7), &db);
@@ -3438,7 +3577,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_changes_and_closes_the_multibuy_export() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.stockpiles = vec![card(7, "Ammo")];
 
       let _ = update(&mut state, Message::StockpileMultibuyExportOpened(7), &db);
@@ -3462,7 +3601,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_the_import_panel_records_its_text_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileImportOpened, &db);
       assert!(state.stockpile_import.is_some());
@@ -3483,7 +3622,7 @@ mod tests {
     #[tokio::test]
     async fn it_picks_a_location_and_closes_the_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
 
@@ -3507,7 +3646,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_a_resolved_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _ = update(
@@ -3527,7 +3666,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_item_search_query() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _ = update(
@@ -3544,7 +3683,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_scope_query() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _ = update(
@@ -3559,7 +3698,7 @@ mod tests {
     #[tokio::test]
     async fn it_replaces_an_open_editor_with_a_blank_draft() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(
         &mut state,
@@ -3575,7 +3714,7 @@ mod tests {
     #[tokio::test]
     async fn it_sets_item_suggestions_excluding_added_types() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
       let _ = update(
         &mut state,
@@ -3596,7 +3735,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_a_card_expanded_then_collapsed() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
       assert!(state.stockpile_expanded.contains(&7));
@@ -3608,7 +3747,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_the_location_picker_open_and_closed() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
@@ -3621,7 +3760,7 @@ mod tests {
     #[tokio::test]
     async fn saving_an_open_editor_clears_it_and_spawns_a_reload() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let _ = update(&mut state, Message::StockpileNew, &db);
 
       let _task = update(&mut state, Message::StockpileEditorSaved, &db);
@@ -3631,7 +3770,7 @@ mod tests {
     #[tokio::test]
     async fn saving_with_no_open_editor_is_a_noop() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::StockpileEditorSaved, &db);
       assert!(state.stockpile_editor.is_none());
@@ -3688,7 +3827,7 @@ mod tests {
     #[tokio::test]
     async fn a_clamped_abyssal_stat_range_is_recorded_against_its_attribute() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
         attribute_id: 50,
         base_value: 40.0,
@@ -3711,7 +3850,7 @@ mod tests {
     #[tokio::test]
     async fn a_loaded_page_is_appended_and_clears_has_more_for_a_short_page() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, true);
 
@@ -3734,7 +3873,7 @@ mod tests {
     #[tokio::test]
     async fn a_scroll_append_does_not_clobber_the_abyssal_total() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, true);
       let _ = update(
@@ -3767,7 +3906,7 @@ mod tests {
     #[tokio::test]
     async fn a_stale_abyssal_page_is_dropped_after_the_set_is_reloaded() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, true);
 
@@ -3802,7 +3941,7 @@ mod tests {
     #[tokio::test]
     async fn an_abyssal_stat_range_change_without_loaded_templates_is_a_noop() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.abyssal_filters.source_type_id = Some(2410);
 
       let _ = update(
@@ -3817,7 +3956,7 @@ mod tests {
     #[tokio::test]
     async fn committing_a_slider_value_edit_applies_the_typed_bound() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssal_stat_templates_for_test(vec![StatTemplate {
         attribute_id: 50,
         base_value: 40.0,
@@ -3850,7 +3989,7 @@ mod tests {
     #[tokio::test]
     async fn it_applies_search_results_for_the_current_generation() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.search_generation = 7;
       state.totals.items = 99;
 
@@ -3869,7 +4008,7 @@ mod tests {
     #[tokio::test]
     async fn it_bumps_the_search_generation_on_each_keystroke() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::SearchChanged("r".to_owned()), &db);
       let _ = update(&mut state, Message::SearchChanged("ri".to_owned()), &db);
@@ -3880,7 +4019,7 @@ mod tests {
     #[tokio::test]
     async fn it_covers_the_remaining_inventory_message_branches() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::AssetChartHovered(Some(0.5)), &db);
       assert_eq!(state.chart_hover, Some(0.5));
@@ -3908,7 +4047,7 @@ mod tests {
     #[tokio::test]
     async fn it_drops_search_results_from_a_superseded_generation() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.search_generation = 8;
       state.totals.items = 99;
 
@@ -3927,7 +4066,7 @@ mod tests {
     #[tokio::test]
     async fn it_invalidates_in_flight_searches_when_a_discrete_reload_runs() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::SearchChanged("rifter".to_owned()), &db);
       let stale_generation = state.search_generation;
@@ -3942,7 +4081,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_loaded_roster_and_totals() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -3974,7 +4113,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_search_string() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
       assert_eq!(state.search, "tritanium");
@@ -3983,7 +4122,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_selected_inventory_category() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::CategorySelected(Category::Ship), &db);
       assert_eq!(state.category, Category::Ship);
@@ -3992,7 +4131,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_selected_scope_and_closes_the_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.picker_open = true;
 
       let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
@@ -4004,7 +4143,7 @@ mod tests {
     #[tokio::test]
     async fn it_switches_the_active_tab() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::TabSelected(Tab::Values), &db);
       assert_eq!(state.tab, Tab::Values);
@@ -4013,7 +4152,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_the_abyssal_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::AbyssalPickerToggled, &db);
       assert!(state.abyssal_picker_open);
@@ -4024,7 +4163,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_the_picker_open_and_closed() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::PickerToggled, &db);
       assert!(state.picker_open);
@@ -4036,7 +4175,7 @@ mod tests {
     #[tokio::test]
     async fn reloading_cards_replaces_the_set_and_resets_pagination() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, true);
       let _ = update(
@@ -4072,7 +4211,7 @@ mod tests {
     #[tokio::test]
     async fn resetting_the_abyssal_filters_clears_type_and_ranges() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.abyssal_filters.source_type_id = Some(2410);
       state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
 
@@ -4084,7 +4223,7 @@ mod tests {
     #[tokio::test]
     async fn scrolling_below_the_threshold_only_tracks_the_offset() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, false);
 
@@ -4104,7 +4243,7 @@ mod tests {
     #[tokio::test]
     async fn scrolling_does_not_load_when_already_loading_or_exhausted() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
 
       // No more pages: a threshold scroll must not start a load.
@@ -4135,7 +4274,7 @@ mod tests {
     #[tokio::test]
     async fn scrolling_past_the_threshold_starts_loading_the_next_page() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_abyssals_for_test(abyssal_cards(60), Vec::new(), abyssals::Filters::default(), false);
       state.set_abyssal_pagination_for_test(true, false);
 
@@ -4159,7 +4298,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_an_abyssal_source_type_records_it_and_closes_the_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.abyssal_picker_open = true;
       state.abyssal_filters.stat_ranges.insert(50, (1.0, 2.0));
 
@@ -4176,7 +4315,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_loaded_state() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.active = Scope::Character(1);
       state.totals = InventoryTotals {
@@ -4191,7 +4330,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_abyssal_picker_modal_overlay() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.tab = Tab::Abyssals;
       state.abyssal_picker_open = true;
@@ -4201,7 +4340,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_abyssals_tab_with_its_resizable_filter_rail() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.tab = Tab::Abyssals;
 
@@ -4210,14 +4349,14 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_state_before_any_load() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
     }
 
     #[test]
     fn it_renders_the_inventory_help_overlay() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.tab = Tab::Inventory;
       state.inventory_help_open = true;
@@ -4227,7 +4366,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_scope_picker_overlay() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.picker_open = true;
 
@@ -4236,7 +4375,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_stockpile_context_menu_overlay() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1)];
       state.tab = Tab::Stockpiles;
       state.stockpile_context_menu = Some(StockpileContextMenu {

@@ -91,8 +91,10 @@ struct DragContext {
   detail_enabled: bool,
   dragging: Option<i64>,
   hovered: Option<DropTarget>,
+  location_enabled: bool,
   squad: Option<i64>,
   squad_insert: Option<usize>,
+  training_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -123,8 +125,10 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
     detail_enabled: state.detail_navigable(),
     dragging: dragging_card(state),
     hovered: drop_target(state),
+    location_enabled: state.location_card_enabled(),
     squad: dragging_squad(state),
     squad_insert: squad_drop_target(state),
+    training_enabled: state.training_card_enabled(),
   };
 
   let mut sections: Vec<Element<'a, Message>> = Vec::new();
@@ -164,7 +168,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   };
 
   match (cursor(state), find_card(state, dragged_id)) {
-    (Some(point), Some(model)) => Stack::with_children(vec![tracked.into(), ghost_layer(model, point)])
+    (Some(point), Some(model)) => Stack::with_children(vec![tracked.into(), ghost_layer(model, point, drag)])
       .width(Length::Fill)
       .height(Length::Fill)
       .into(),
@@ -180,11 +184,16 @@ fn find_card(state: &State, character_id: i64) -> Option<&CardModel> {
     .find(|card| card.character_id == character_id)
 }
 
-fn ghost_layer(model: &CardModel, cursor: Point) -> Element<'_, Message> {
+fn ghost_layer(model: &CardModel, cursor: Point, drag: DragContext) -> Element<'_, Message> {
   let top = (cursor.y - GHOST_CARD_HEIGHT * GHOST_GRAB_FRACTION).max(0.0);
   let left = (cursor.x - GHOST_CARD_WIDTH / 2.0).max(0.0);
 
-  container(container(card::ghost(model)).width(Length::Fixed(GHOST_CARD_WIDTH)))
+  let sections = card::Sections {
+    detail_enabled: drag.detail_enabled,
+    location_enabled: drag.location_enabled,
+    training_enabled: drag.training_enabled,
+  };
+  container(container(card::ghost(model, sections)).width(Length::Fixed(GHOST_CARD_WIDTH)))
     .width(Length::Fill)
     .height(Length::Fill)
     .padding(Padding {
@@ -621,7 +630,11 @@ fn grid<'a>(cards: &'a [CardModel], squad_id: i64, sync: &SyncStatus, drag: Drag
           model,
           card_failure(sync, model.character_id),
           drag.dragging == Some(model.character_id),
-          drag.detail_enabled,
+          card::Sections {
+            detail_enabled: drag.detail_enabled,
+            location_enabled: drag.location_enabled,
+            training_enabled: drag.training_enabled,
+          },
         ),
         None if drag.dragging.is_some() => empty_cell(drag.hovered == Some(target)),
         None => empty_spacer(),
@@ -669,7 +682,12 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
   match state.filtered() {
     Some(Filtered::Loaded(cards)) if cards.is_empty() => no_matches(),
     Some(Filtered::Loaded(cards)) => {
-      let capped = container(filtered_grid(cards, sync, state.detail_navigable()))
+      let sections = card::Sections {
+        detail_enabled: state.detail_navigable(),
+        location_enabled: state.location_card_enabled(),
+        training_enabled: state.training_card_enabled(),
+      };
+      let capped = container(filtered_grid(cards, sync, sections))
         .width(Length::Fill)
         .max_width(spacing::layout::GRID_MAX_WIDTH)
         .padding(spacing::SPACE_6);
@@ -685,7 +703,7 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
   }
 }
 
-fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus, detail_enabled: bool) -> Element<'a, Message> {
+fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus, sections: card::Sections) -> Element<'a, Message> {
   let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(cards.len() / COLUMNS + 1);
   for chunk in cards.chunks(COLUMNS) {
     let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(COLUMNS);
@@ -694,7 +712,7 @@ fn filtered_grid<'a>(cards: &'a [CardModel], sync: &SyncStatus, detail_enabled: 
         model,
         card_failure(sync, model.character_id),
         false,
-        detail_enabled,
+        sections,
       ));
     }
     while cells.len() < COLUMNS {
@@ -829,8 +847,10 @@ mod tests {
       detail_enabled: true,
       dragging: None,
       hovered: None,
+      location_enabled: true,
       squad: None,
       squad_insert: None,
+      training_enabled: true,
     }
   }
 
@@ -940,8 +960,10 @@ mod tests {
         detail_enabled: true,
         dragging: Some(1),
         hovered: None,
+        location_enabled: true,
         squad: None,
         squad_insert: None,
+        training_enabled: true,
       };
 
       let _grid: Element<'_, Message> = grid(&cards, 99, &SyncStatus::new(), drag);
@@ -984,8 +1006,10 @@ mod tests {
             position: 2,
             squad_id: 3,
           }),
+          location_enabled: true,
           squad: None,
           squad_insert: None,
+          training_enabled: true,
         },
       );
 
@@ -997,8 +1021,10 @@ mod tests {
           detail_enabled: true,
           dragging: None,
           hovered: None,
+          location_enabled: true,
           squad: Some(3),
           squad_insert: None,
+          training_enabled: true,
         },
       );
     }

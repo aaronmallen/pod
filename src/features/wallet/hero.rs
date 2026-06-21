@@ -422,7 +422,7 @@ mod tests {
     use super::*;
 
     fn state_with_hover(hover: Option<f32>) -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.chart_hover = hover;
       state
     }

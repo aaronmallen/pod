@@ -287,6 +287,7 @@ pub enum Message {
   ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
   ContractSelected(i64),
   DivisionSelected(i64),
+  FeaturesChanged(crate::config::FeatureFlags),
   FiltersCleared,
   LedgerBulkAssignChosen(i64),
   LedgerBulkAssignOpened,
@@ -547,6 +548,8 @@ pub struct State {
   corporations: Vec<RosterCorp>,
   derived: Derived,
   dirty: bool,
+  enabled_tabs: Vec<Tab>,
+  features: crate::config::FeatureFlags,
   financials: Vec<CharacterFinancials>,
   journal: Vec<JournalEntry>,
   journal_selection: selection::RowSelection,
@@ -576,7 +579,8 @@ pub struct State {
 }
 
 impl State {
-  pub fn new() -> Self {
+  pub fn new(features: crate::config::FeatureFlags) -> Self {
+    let enabled_tabs = enabled_tabs(&features);
     State {
       active: Scope::default(),
       active_division: DEFAULT_DIVISION,
@@ -618,6 +622,8 @@ impl State {
       corporations: Vec::new(),
       derived: Derived::default(),
       dirty: false,
+      enabled_tabs: enabled_tabs.clone(),
+      features,
       financials: Vec::new(),
       journal: Vec::new(),
       journal_selection: selection::RowSelection::default(),
@@ -642,7 +648,7 @@ impl State {
       selected_contract: None,
       side_filter: Side::default(),
       sign_filter: SignFilter::default(),
-      tab: Tab::default(),
+      tab: resolve_first_tab(&enabled_tabs),
       tab_exhausted: false,
       tab_scroll_offset: 0.0,
       timeframe: Timeframe::default(),
@@ -693,13 +699,27 @@ impl State {
     }
   }
 
-  pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
+  pub(super) fn enabled_tabs(&self) -> &[Tab] {
+    &self.enabled_tabs
+  }
+
+  pub(super) fn sync_features(&mut self, features: crate::config::FeatureFlags) {
+    self.features = features;
+    self.enabled_tabs = enabled_tabs(&features);
+    if !self.enabled_tabs.contains(&self.tab) {
+      self.tab = resolve_first_tab(&self.enabled_tabs);
+    }
+  }
+
+  /// The per-tab `(id, name, missing-scopes)` forbidden gate for a per-character view whose pilot
+  /// lacks the active tab's read scopes; `None` for the combined view or an authorized pilot.
+  pub(super) fn tab_scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Character(id) = self.active else {
       return None;
     };
     let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
-    let required = crate::features::registry::descriptor(crate::config::Feature::Wallet).scopes;
-    let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
+    let missing =
+      crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), &self.tab.read_scopes());
     if missing.is_empty() {
       return None;
     }
@@ -1098,6 +1118,40 @@ pub enum Tab {
   Market,
   #[default]
   Wallets,
+}
+
+impl Tab {
+  const ORDER: [Tab; 5] = [Tab::Wallets, Tab::Journal, Tab::Market, Tab::Contracts, Tab::Budget];
+
+  pub(super) fn read_scopes(self) -> Vec<&'static str> {
+    crate::features::registry::sub_descriptor(self.sub_feature())
+      .scopes
+      .iter()
+      .copied()
+      .filter(|scope| !crate::clients::esi::scopes::is_write_scope(scope))
+      .collect()
+  }
+
+  pub(super) fn sub_feature(self) -> crate::config::SubFeature {
+    match self {
+      Tab::Budget => crate::config::SubFeature::Budget,
+      Tab::Contracts => crate::config::SubFeature::Contracts,
+      Tab::Journal => crate::config::SubFeature::Journal,
+      Tab::Market => crate::config::SubFeature::Transactions,
+      Tab::Wallets => crate::config::SubFeature::Wallets,
+    }
+  }
+}
+
+pub(super) fn enabled_tabs(flags: &crate::config::FeatureFlags) -> Vec<Tab> {
+  Tab::ORDER
+    .into_iter()
+    .filter(|tab| flags.is_sub_enabled(tab.sub_feature()))
+    .collect()
+}
+
+pub(super) fn resolve_first_tab(enabled: &[Tab]) -> Tab {
+  enabled.first().copied().unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2634,6 +2688,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     Message::ContractDetailLoaded(detail) => handle_contract_detail_loaded(state, *detail),
     Message::ContractSelected(contract_id) => handle_contract_selected(state, db, contract_id),
     Message::DivisionSelected(division) => handle_division_selected(state, db, division),
+    Message::FeaturesChanged(features) => {
+      let prev = state.tab;
+      state.sync_features(features);
+      if state.tab != prev {
+        return handle_tab_selected(state, db, state.tab);
+      }
+      Task::none()
+    }
     msg @ (Message::LedgerBulkAssignChosen(_)
     | Message::LedgerBulkAssignOpened
     | Message::LedgerCursorMoved(_)
@@ -3628,6 +3690,69 @@ fn market_matches(entry: &MarketEntry, sign: SignFilter, side: Side, query: &str
 mod tests {
   use super::*;
 
+  mod enabled_tabs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn only(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      for candidate in crate::config::SubFeature::ALL {
+        flags.set_sub_enabled(candidate, candidate == sub);
+      }
+      flags
+    }
+
+    #[test]
+    fn it_keeps_strip_order_with_every_sub_feature_enabled() {
+      let tabs = enabled_tabs(&crate::config::FeatureFlags::default());
+
+      assert_eq!(
+        tabs,
+        vec![Tab::Wallets, Tab::Journal, Tab::Market, Tab::Contracts, Tab::Budget]
+      );
+    }
+
+    #[test]
+    fn it_drops_a_disabled_sub_feature_from_the_strip() {
+      let tabs = enabled_tabs(&only(crate::config::SubFeature::Contracts));
+
+      assert_eq!(tabs, vec![Tab::Contracts]);
+    }
+  }
+
+  mod sync_features {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn without(sub: crate::config::SubFeature) -> crate::config::FeatureFlags {
+      let mut flags = crate::config::FeatureFlags::default();
+      flags.set_sub_enabled(sub, false);
+      flags
+    }
+
+    #[test]
+    fn it_redirects_off_a_disabled_active_tab_to_the_first_enabled_tab() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Wallets;
+
+      state.sync_features(without(crate::config::SubFeature::Wallets));
+
+      assert_eq!(state.tab, Tab::Journal);
+    }
+
+    #[test]
+    fn it_keeps_a_still_enabled_active_tab() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Budget;
+
+      state.sync_features(without(crate::config::SubFeature::Wallets));
+
+      assert_eq!(state.tab, Tab::Budget);
+    }
+  }
+
   fn pilot(id: i64, liquid: Option<f64>) -> RosterPilot {
     RosterPilot {
       corp: "TST".to_owned(),
@@ -3831,7 +3956,7 @@ mod tests {
     #[tokio::test]
     async fn it_selects_a_category_and_clears_the_editor() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::BudgetCategorySelected(7), &db);
 
@@ -3842,7 +3967,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_a_group_collapsed_then_expanded() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::BudgetGroupToggled(3), &db);
       assert!(state.budget_collapsed.contains(&3));
@@ -3854,7 +3979,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_and_dismisses_the_chip_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_chips.envelopes = vec![loaders::EnvelopeGroup {
         categories: Vec::new(),
         name: "Group".to_owned(),
@@ -3877,7 +4002,7 @@ mod tests {
     #[tokio::test]
     async fn it_applies_a_reloaded_chip_set() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_filter = Some(BudgetFilter {
         kind: BudgetFilterKind::Uncategorized,
         month: "2026-06".to_owned(),
@@ -3901,7 +4026,7 @@ mod tests {
     #[tokio::test]
     async fn it_assigns_the_open_chip_to_a_category() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Journal, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
@@ -3912,7 +4037,7 @@ mod tests {
     #[tokio::test]
     async fn it_clears_the_open_chip_when_assigned_to_nothing() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_picker = Some((BudgetOwner::Character(1), BudgetEntryKind::Market, 9));
 
       let _ = update(&mut state, Message::BudgetChipAssigned(None), &db);
@@ -3923,7 +4048,7 @@ mod tests {
     #[tokio::test]
     async fn it_no_ops_assigning_when_no_chip_is_open() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::BudgetChipAssigned(Some(7)), &db);
 
@@ -3933,7 +4058,7 @@ mod tests {
     #[tokio::test]
     async fn it_applies_a_loaded_view_for_the_active_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -3953,7 +4078,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_loaded_view_for_a_stale_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::All;
 
       let _ = update(
@@ -3973,7 +4098,7 @@ mod tests {
     #[tokio::test]
     async fn it_sets_the_mode_and_range() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::BudgetModeSelected(budget::Mode::Reflect), &db);
       assert_eq!(state.budget_mode, budget::Mode::Reflect);
@@ -3988,7 +4113,7 @@ mod tests {
     #[tokio::test]
     async fn it_cancels_an_assign_edit() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_editing = Some(budget::EditingCell {
         category_id: 1,
         draft: "100".to_owned(),
@@ -4029,7 +4154,7 @@ mod tests {
 
     #[test]
     fn it_cascades_a_transaction_assignment_to_its_journal_twin() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut transaction = market_entry(1, true, "Tritanium", "Jita");
       transaction.transaction_id = 500;
       transaction.journal_ref_id = 10;
@@ -4043,7 +4168,7 @@ mod tests {
 
     #[test]
     fn it_cascades_to_another_owners_copy_sharing_the_transaction_id() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut character = market_entry(1, true, "Tritanium", "Jita");
       character.transaction_id = 500;
       character.journal_ref_id = 10;
@@ -4065,7 +4190,7 @@ mod tests {
 
     #[test]
     fn it_cascades_a_journal_twin_assignment_to_its_transaction() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
       twin.id = 10;
       twin.context_id = Some(500);
@@ -4079,7 +4204,7 @@ mod tests {
 
     #[test]
     fn it_does_not_cascade_a_plain_journal_entry() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut fee = journal_entry(1, Some(-50.0), "brokers_fee", "Fee");
       fee.id = 11;
       fee.context_id = Some(500);
@@ -4093,7 +4218,7 @@ mod tests {
 
     #[test]
     fn it_co_assigns_the_tax_and_broker_fee_when_a_transaction_is_assigned() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut transaction = market_entry(1, true, "Tritanium", "Jita");
       transaction.transaction_id = 500;
       transaction.journal_ref_id = 10;
@@ -4124,7 +4249,7 @@ mod tests {
 
     #[test]
     fn it_co_assigns_the_tax_and_fee_when_the_journal_twin_is_assigned() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut twin = journal_entry(1, Some(-100.0), "market_transaction", "Buy");
       twin.id = 10;
       twin.context_id = Some(500);
@@ -4146,7 +4271,7 @@ mod tests {
 
     #[test]
     fn it_preserves_a_fee_rows_pre_existing_manual_override() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut transaction = market_entry(1, true, "Tritanium", "Jita");
       transaction.transaction_id = 500;
       transaction.journal_ref_id = 10;
@@ -4174,7 +4299,7 @@ mod tests {
 
     #[test]
     fn it_co_assigns_a_corp_on_behalf_trades_copy_and_its_twins_under_both_owners() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut character = market_entry(1, true, "Tritanium", "Jita");
       character.transaction_id = 500;
       character.journal_ref_id = 10;
@@ -4208,7 +4333,7 @@ mod tests {
 
     #[test]
     fn it_preserves_a_cross_owner_copys_manual_override() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut character = market_entry(1, true, "Tritanium", "Jita");
       character.transaction_id = 500;
       character.journal_ref_id = 10;
@@ -4246,7 +4371,7 @@ mod tests {
 
     #[test]
     fn it_does_not_cross_owners_for_a_purely_personal_trade() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut transaction = market_entry(1, true, "Tritanium", "Jita");
       transaction.transaction_id = 500;
       transaction.journal_ref_id = 10;
@@ -4260,7 +4385,7 @@ mod tests {
 
     #[test]
     fn it_pairs_the_owners_of_a_genuine_dual_wallet_trade() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut character = market_entry(7, true, "Tritanium", "Jita");
       character.transaction_id = 500;
       let mut corp = market_entry(7, true, "Tritanium", "Jita");
@@ -4273,7 +4398,7 @@ mod tests {
 
     #[test]
     fn it_does_not_pair_owners_for_a_purely_personal_trade() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut transaction = market_entry(7, true, "Tritanium", "Jita");
       transaction.transaction_id = 500;
       state.market = vec![transaction];
@@ -4283,7 +4408,7 @@ mod tests {
 
     #[test]
     fn it_does_not_pair_owners_for_a_corp_only_trade() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut corp = market_entry(7, true, "Tritanium", "Jita");
       corp.transaction_id = 500;
       corp.owner = BudgetOwner::Corporation(98_000_001);
@@ -4355,7 +4480,7 @@ mod tests {
 
     #[test]
     fn it_filters_the_journal_to_an_assigned_category_for_the_month() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let mut assigned = journal_entry(1, Some(-100.0), "manufacturing", "In");
       assigned.id = 1;
       assigned.date = "2026-06-05T00:00:00Z".to_owned();
@@ -4378,7 +4503,7 @@ mod tests {
 
     #[test]
     fn it_reports_the_db_sourced_review_total() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_review_total = 7;
 
       assert_eq!(state.budget_review_total(), 7);
@@ -4387,7 +4512,7 @@ mod tests {
     #[tokio::test]
     async fn it_stores_the_counted_review_total_from_the_message() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::BudgetReviewCounted(4), &db);
 
@@ -4479,7 +4604,7 @@ mod tests {
 
     #[test]
     fn it_drops_characters_with_no_synced_net_worth() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.financials = vec![financials_nw(1, Some(100.0)), financials_nw(2, None)];
       state.active = Scope::All;
@@ -4492,7 +4617,7 @@ mod tests {
 
     #[test]
     fn it_is_empty_outside_all_wallets_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.financials = vec![financials_nw(1, Some(100.0))];
       state.active = Scope::Character(1);
@@ -4502,7 +4627,7 @@ mod tests {
 
     #[test]
     fn it_orders_characters_by_net_worth_descending() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None), pilot(3, None)];
       state.financials = vec![
         financials_nw(1, Some(100.0)),
@@ -4524,14 +4649,14 @@ mod tests {
 
     #[test]
     fn it_is_none_when_no_row_matches() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert_eq!(super::contract_loader_target(&state, 999), None);
     }
 
     #[test]
     fn it_targets_the_active_corporation_under_a_corp_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Corporation(98_000_001);
 
       assert_eq!(
@@ -4542,7 +4667,7 @@ mod tests {
 
     #[test]
     fn it_targets_the_owning_character_under_an_all_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
 
       assert_eq!(
@@ -4596,7 +4721,7 @@ mod tests {
 
     #[test]
     fn it_is_none_when_no_division_has_a_balance() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Corporation(98_000_001);
       state.corp_divisions = vec![corp_division(1, Some("Master"), None)];
 
@@ -4605,7 +4730,7 @@ mod tests {
 
     #[test]
     fn it_sums_the_synced_division_balances() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Corporation(98_000_001);
       state.corp_divisions = vec![
         corp_division(1, Some("Master"), Some(1_000.0)),
@@ -4640,7 +4765,7 @@ mod tests {
 
     #[test]
     fn it_cold_opens_on_the_wallets_tab() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert_eq!(state.tab, Tab::Wallets);
     }
@@ -4648,7 +4773,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_the_section_sort_order() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::WalletsSortSelected(WalletSort::Ascending), &db);
 
@@ -4658,7 +4783,7 @@ mod tests {
     #[tokio::test]
     async fn it_keeps_the_wallets_tab_off_pagination() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(10.0))];
       state.active = Scope::All;
       state.tab = Tab::Wallets;
@@ -4702,7 +4827,7 @@ mod tests {
 
     #[test]
     fn it_applies_the_active_side_filter() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.contracts = vec![
         contract_entry(1, true, "outstanding", "courier"),
         contract_entry(1, false, "finished", "item_exchange"),
@@ -4725,7 +4850,7 @@ mod tests {
 
     #[test]
     fn it_is_empty_when_no_contracts_are_synced() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert!(super::filtered_contracts(&state).is_empty());
       assert!(!state.has_contracts());
@@ -4738,7 +4863,7 @@ mod tests {
     #[tokio::test]
     async fn it_drives_every_pane_off_db_only() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -4783,7 +4908,7 @@ mod tests {
 
     #[test]
     fn it_renders_across_every_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
       state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
       state.corporations = vec![corp(98_000_001, "Test Corp")];
@@ -4949,7 +5074,7 @@ mod tests {
     use super::*;
 
     async fn ready_state(tab: Tab) -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.active = Scope::All;
       state.tab = tab;
@@ -4981,7 +5106,7 @@ mod tests {
     #[tokio::test]
     async fn it_no_ops_when_no_characters_are_in_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::All;
       state.tab = Tab::Journal;
 
@@ -5213,7 +5338,7 @@ mod tests {
 
     #[test]
     fn it_ignores_a_kind_the_wallet_does_not_render() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       state.mark_dirty(JobKind::AssetSync);
 
@@ -5222,7 +5347,7 @@ mod tests {
 
     #[test]
     fn it_marks_the_wallet_dirty_for_a_ledger_kind() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       state.mark_dirty(JobKind::CharacterWallet);
 
@@ -5274,7 +5399,7 @@ mod tests {
 
     #[test]
     fn it_is_zero_when_no_in_scope_character_has_period_rows() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.periods = vec![period(9, 100.0, 40.0)];
       state.active = Scope::All;
@@ -5286,7 +5411,7 @@ mod tests {
 
     #[test]
     fn it_reflects_only_the_selected_character_in_single_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.periods = vec![period(1, 100.0, 40.0), period(2, 200.0, 80.0)];
       state.active = Scope::Character(1);
@@ -5300,7 +5425,7 @@ mod tests {
 
     #[test]
     fn it_sums_income_and_spend_across_the_in_scope_characters() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.periods = vec![period(1, 100.0, 40.0), period(1, 50.0, 10.0), period(2, 200.0, 80.0)];
       state.active = Scope::All;
@@ -5376,7 +5501,7 @@ mod tests {
 
     #[test]
     fn it_is_none_per_figure_when_no_in_scope_character_has_it() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.financials = vec![financials(1, None)];
       state.active = Scope::All;
@@ -5390,7 +5515,7 @@ mod tests {
 
     #[test]
     fn it_sums_each_figure_across_the_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.financials = vec![
         financials_full(1, 100.0, 50.0, 10.0),
@@ -5406,7 +5531,7 @@ mod tests {
     }
   }
 
-  mod scope_gate {
+  mod tab_scope_gate {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -5418,33 +5543,33 @@ mod tests {
         .join(" ");
       let mut granted_pilot = pilot(1, None);
       granted_pilot.granted_scopes = Some(granted);
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![granted_pilot];
       state.active = Scope::Character(1);
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
 
     #[test]
     fn it_does_not_gate_the_all_or_corporation_scopes() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.active = Scope::All;
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
 
       state.active = Scope::Corporation(99);
 
-      assert!(state.scope_gate().is_none());
+      assert!(state.tab_scope_gate().is_none());
     }
 
     #[test]
     fn it_gates_a_character_scope_missing_the_wallet_scopes() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.active = Scope::Character(1);
 
-      let gate = state.scope_gate().expect("missing scope should gate");
+      let gate = state.tab_scope_gate().expect("missing scope should gate");
 
       assert_eq!(gate.0, 1);
       assert!(!gate.2.is_empty());
@@ -5458,7 +5583,7 @@ mod tests {
 
     #[test]
     fn it_returns_every_pilot_for_all_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.active = Scope::All;
 
@@ -5467,7 +5592,7 @@ mod tests {
 
     #[test]
     fn it_returns_no_character_ids_for_a_corp_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.active = Scope::Corporation(98_000_001);
 
@@ -5476,7 +5601,7 @@ mod tests {
 
     #[test]
     fn it_returns_the_single_id_for_a_character_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(2, None)];
       state.active = Scope::Character(2);
 
@@ -5491,7 +5616,7 @@ mod tests {
 
     #[test]
     fn it_adds_owned_corporation_balances_under_the_all_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0))];
       state.financials = vec![financials(1, Some(100.0))];
       state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
@@ -5502,7 +5627,7 @@ mod tests {
 
     #[test]
     fn it_excludes_corporation_balances_under_a_character_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0))];
       state.financials = vec![financials(1, Some(100.0))];
       state.corporations = vec![corp_with_liquid(98_000_001, Some(700.0))];
@@ -5513,7 +5638,7 @@ mod tests {
 
     #[test]
     fn it_excludes_out_of_scope_characters() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
       state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
       state.active = Scope::Character(1);
@@ -5523,7 +5648,7 @@ mod tests {
 
     #[test]
     fn it_includes_corporation_balances_even_when_no_character_has_liquid() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.financials = vec![financials(1, None)];
       state.corporations = vec![corp_with_liquid(98_000_001, Some(250.0))];
@@ -5534,7 +5659,7 @@ mod tests {
 
     #[test]
     fn it_returns_none_when_no_in_scope_character_has_a_synced_balance() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.financials = vec![financials(1, None)];
       state.active = Scope::All;
@@ -5544,7 +5669,7 @@ mod tests {
 
     #[test]
     fn it_sums_liquid_across_the_in_scope_characters() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
       state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
       state.active = Scope::All;
@@ -5554,7 +5679,7 @@ mod tests {
 
     #[test]
     fn it_uses_summed_division_balances_for_a_corp_scope() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0))];
       state.financials = vec![financials(1, Some(100.0))];
       state.active = Scope::Corporation(98_000_001);
@@ -5605,7 +5730,7 @@ mod tests {
 
     #[test]
     fn it_does_not_widen_the_window_when_points_are_sparse() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.net_worth_series = vec![
         nw_point("2026-01-01", 1.0),
         nw_point("2026-05-30", 2.0),
@@ -5621,7 +5746,7 @@ mod tests {
 
     #[test]
     fn it_keeps_only_points_within_the_timeframe_window() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.net_worth_series = (1..=20)
         .map(|d| nw_point(&format!("2026-06-{d:02}"), d as f64))
         .collect();
@@ -5636,7 +5761,7 @@ mod tests {
 
     #[test]
     fn it_returns_the_whole_series_when_it_fits_inside_the_window() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.net_worth_series = vec![nw_point("2026-06-01", 1.0), nw_point("2026-06-02", 2.0)];
       state.timeframe = Timeframe::Year;
 
@@ -5655,7 +5780,7 @@ mod tests {
 
     #[test]
     fn it_collects_the_stale_portrait_and_logo_keys() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.corporations = vec![corp(98_000_001, "Corp")];
 
@@ -5667,7 +5792,7 @@ mod tests {
 
     #[test]
     fn it_deduplicates_repeated_keys() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None), pilot(1, None)];
 
       assert_eq!(state.stale_images(), vec![(images::ImageKind::CharacterPortrait, 1)]);
@@ -5675,7 +5800,7 @@ mod tests {
 
     #[test]
     fn it_is_empty_when_every_model_image_is_fresh() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![RosterPilot {
         corp: "TST".to_owned(),
         granted_scopes: None,
@@ -5704,7 +5829,7 @@ mod tests {
     #[tokio::test]
     async fn it_appends_a_more_page_matching_the_active_scope_and_tab() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.loading_more = true;
       let (tab, scope) = (state.tab, state.active);
 
@@ -5728,7 +5853,7 @@ mod tests {
     #[tokio::test]
     async fn it_does_not_load_a_page_for_a_shallow_scroll() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.active = Scope::All;
 
@@ -5747,7 +5872,7 @@ mod tests {
     #[tokio::test]
     async fn it_drops_a_more_page_for_a_stale_scope_or_tab() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.loading_more = true;
       let tab = state.tab;
 
@@ -5770,7 +5895,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_division_selection_outside_corp_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::All;
 
       let _ = update(&mut state, Message::DivisionSelected(3), &db);
@@ -5781,7 +5906,7 @@ mod tests {
     #[tokio::test]
     async fn it_loads_the_next_page_when_scrolled_near_the_bottom() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, None)];
       state.active = Scope::All;
       state.tab = Tab::Journal;
@@ -5801,7 +5926,7 @@ mod tests {
     #[tokio::test]
     async fn it_marks_the_tab_exhausted_when_a_more_page_is_empty() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.loading_more = true;
       let (tab, scope) = (state.tab, state.active);
 
@@ -5823,7 +5948,7 @@ mod tests {
     #[tokio::test]
     async fn it_no_ops_on_a_settled_pane() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 320.0), &db);
 
@@ -5833,7 +5958,7 @@ mod tests {
     #[tokio::test]
     async fn it_no_ops_when_the_selected_scope_is_already_active() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.picker_open = true;
       let active = state.active;
 
@@ -5846,7 +5971,7 @@ mod tests {
     #[tokio::test]
     async fn it_opens_and_closes_the_contract_detail_modal() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -5862,7 +5987,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_chart_hover_fraction() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::ChartHovered(Some(0.25)), &db);
 
@@ -5872,7 +5997,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_loaded_roster_and_ledgers() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -5903,7 +6028,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_search_and_sign_filter() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::SearchChanged("tritanium".to_owned()), &db);
       assert_eq!(state.search, "tritanium");
@@ -5915,7 +6040,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_selected_division_in_corp_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Corporation(98_000_001);
 
       let _ = update(&mut state, Message::DivisionSelected(3), &db);
@@ -5926,7 +6051,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_selected_scope_and_closes_the_picker() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.picker_open = true;
 
       let _ = update(&mut state, Message::ScopeSelected(Scope::Character(42)), &db);
@@ -5938,7 +6063,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_the_side_filter() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::SideFilterChanged(Side::Buy), &db);
 
@@ -5949,7 +6074,7 @@ mod tests {
     #[tokio::test]
     async fn it_resets_the_scroll_offset_when_the_tab_changes() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab_scroll_offset = 4_200.0;
 
       let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
@@ -5959,7 +6084,7 @@ mod tests {
     #[tokio::test]
     async fn it_resizes_the_right_rail_through_a_drag() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let start = state.right_rail.width();
 
       let _ = update(&mut state, Message::RailDragStart, &db);
@@ -5973,7 +6098,7 @@ mod tests {
     #[tokio::test]
     async fn it_resizes_the_budget_inspector_through_a_drag() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let start = state.budget_inspector_width();
 
       let _ = update(&mut state, Message::BudgetInspectorDragStart, &db);
@@ -5987,7 +6112,7 @@ mod tests {
     #[tokio::test]
     async fn it_selects_a_timeframe_and_clears_the_chart_hover() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.chart_hover = Some(0.5);
 
       let _ = update(&mut state, Message::TimeframeSelected(Timeframe::Year), &db);
@@ -5999,7 +6124,7 @@ mod tests {
     #[tokio::test]
     async fn it_switches_the_active_tab() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
       assert_eq!(state.tab, Tab::Journal);
@@ -6008,7 +6133,7 @@ mod tests {
     #[tokio::test]
     async fn it_toggles_the_picker_open_and_closed() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::PickerToggled, &db);
       assert!(state.picker_open);
@@ -6020,7 +6145,7 @@ mod tests {
     #[tokio::test]
     async fn it_tracks_the_absolute_scroll_offset_for_windowing() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(
         &mut state,
@@ -6041,7 +6166,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
 
       let _ = update(&mut state, Message::ContractSelected(12_345), &db);
@@ -6052,7 +6177,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_a_corp_scope_resets_the_active_division_to_the_master() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.active = Scope::Corporation(1);
       state.active_division = 5;
       state.corp_divisions = vec![corp_division(5, None, Some(1.0))];
@@ -6067,7 +6192,7 @@ mod tests {
     #[tokio::test]
     async fn selecting_an_unknown_contract_row_is_a_no_op() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
 
       let _ = update(&mut state, Message::ContractSelected(999), &db);
 
@@ -6102,7 +6227,7 @@ mod tests {
     }
 
     fn state_with_view() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
       state.budget = Some(budget::BudgetView {
         groups: vec![budget::Group {
@@ -6269,7 +6394,7 @@ mod tests {
     #[tokio::test]
     async fn it_records_a_loaded_view_for_the_active_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
       let load = BudgetLoad {
         history: Vec::new(),
@@ -6287,7 +6412,7 @@ mod tests {
     #[tokio::test]
     async fn it_ignores_a_loaded_view_for_a_stale_scope() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let load = BudgetLoad {
         history: Vec::new(),
         scope: Scope::Character(999),
@@ -6924,7 +7049,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_corp_scope_with_divisions() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.corporations = vec![corp(98_000_001, "Test Corp")];
       state.active = Scope::Corporation(98_000_001);
       state.corp_divisions = vec![
@@ -6937,7 +7062,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_corp_scope_with_no_divisions_synced() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.corporations = vec![corp(98_000_001, "Test Corp")];
       state.active = Scope::Corporation(98_000_001);
 
@@ -6946,7 +7071,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_loaded_state() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0))];
       state.financials = vec![financials(1, Some(100.0))];
 
@@ -6955,14 +7080,14 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_state_before_any_load() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
     }
 
     #[test]
     fn it_renders_the_hero_graph_with_a_net_worth_series() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))];
       state.financials = vec![financials(1, Some(100.0)), financials(2, Some(50.0))];
       state.net_worth_series = (0..40).map(|i| nw_point("2026-06-01", 100.0 + i as f64)).collect();
@@ -7020,14 +7145,14 @@ mod tests {
 
     #[test]
     fn it_batches_no_listeners_for_an_idle_state() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _sub: iced::Subscription<Message> = super::super::subscription(&state);
     }
 
     #[test]
     fn it_registers_the_modal_dismiss_listeners() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_editing = Some(budget::EditingCell {
         category_id: 1,
         draft: String::new(),
@@ -7042,7 +7167,7 @@ mod tests {
     use super::*;
 
     fn journal_state() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Journal;
       let mut first = journal_entry(1, Some(10.0), "bounty_prizes", "first");
       first.id = 1;
@@ -7185,7 +7310,7 @@ mod tests {
 
     #[test]
     fn it_resolves_a_character_name_from_the_roster() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.roster = vec![pilot(42, Some(1.0))];
 
       assert_eq!(budget_character_name(&state, "42"), Some("Pilot 42".to_owned()));
@@ -7193,7 +7318,7 @@ mod tests {
 
     #[test]
     fn it_falls_back_to_the_corporation_roster_for_a_name() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.corporations = vec![corp(98, "Test Corp")];
 
       assert_eq!(budget_character_name(&state, " 98 "), Some("Test Corp".to_owned()));
@@ -7201,7 +7326,7 @@ mod tests {
 
     #[test]
     fn it_returns_none_for_an_unknown_or_unparsable_key() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       assert_eq!(budget_character_name(&state, "not-an-id"), None);
       assert_eq!(budget_character_name(&state, "404"), None);
@@ -7209,7 +7334,7 @@ mod tests {
 
     #[test]
     fn it_uses_the_users_name_when_edited() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
       let mut draft = budget::RuleDraft::new(1);
       draft.name = "My rule".to_owned();
       draft.name_edited = true;
@@ -7219,7 +7344,7 @@ mod tests {
 
     #[test]
     fn it_falls_back_to_untitled_when_nothing_resolves() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
       let draft = budget::RuleDraft::new(1);
 
       assert_eq!(budget_effective_rule_name(&state, &draft), "Untitled rule");
@@ -7268,7 +7393,7 @@ mod tests {
     }
 
     fn rules_state() -> State {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.budget_chips.resolution.rules = vec![rule(1), rule(2), rule(3)];
       state
     }

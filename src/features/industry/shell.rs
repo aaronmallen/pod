@@ -138,8 +138,8 @@ fn auth_banner<'a>(state: &'a State) -> Option<Element<'a, Message>> {
 }
 
 fn content<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
-  if let Some((id, name, missing)) = state.scope_gate() {
-    return forbidden::forbidden("Industry", name, &missing, Message::ReauthRequested(id));
+  if let Some((id, name, missing)) = state.tab_scope_gate() {
+    return forbidden::forbidden(tab_noun(state.tab()), name, &missing, Message::ReauthRequested(id));
   }
 
   let mut children: Vec<Element<'a, Message>> = Vec::new();
@@ -292,9 +292,10 @@ fn stat<'a>(label: &str, value: String, accent: Option<Element<'a, Message>>, su
 }
 
 fn tab_strip(state: &State) -> Element<'_, Message> {
-  let tabs = Tab::ALL
-    .into_iter()
-    .map(|tab| {
+  let tabs = state
+    .enabled_tabs()
+    .iter()
+    .map(|&tab| {
       let selected = state.tab() == tab;
       tab_select::Tab {
         count: tab_count(state, tab),
@@ -338,6 +339,15 @@ fn tab_icon(tab: Tab) -> Icon {
     Tab::Extractions => Icon::moon(),
     Tab::Jobs => Icon::industry(),
     Tab::Planner => Icon::flask(),
+  }
+}
+
+fn tab_noun(tab: Tab) -> &'static str {
+  match tab {
+    Tab::Blueprints => "Blueprints",
+    Tab::Extractions => "Extractions",
+    Tab::Jobs => "Industry jobs",
+    Tab::Planner => "Planner",
   }
 }
 

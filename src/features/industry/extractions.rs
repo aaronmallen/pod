@@ -379,6 +379,7 @@ mod tests {
     let mut state = State::new(
       EMPTY_INDUSTRY_SELECTION,
       required(),
+      crate::config::FeatureFlags::default(),
       FacilityDefaults::default(),
       None,
       false,

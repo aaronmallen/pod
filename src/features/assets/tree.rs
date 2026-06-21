@@ -1145,7 +1145,7 @@ mod tests {
 
     #[test]
     fn it_renders_an_empty_geo_tree_pane() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = pane(&state);
     }
@@ -1158,7 +1158,7 @@ mod tests {
     #[tokio::test]
     async fn it_renders_an_expanded_region_with_its_descendants() {
       let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_geo_tree_for_test(GeoTree {
         orphans: Vec::new(),
         regions: vec![region("The Forge")],
@@ -1177,7 +1177,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_geo_tree_pane_with_regions_and_orphans() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       state.set_geo_tree_for_test(GeoTree {
         orphans: vec![orphan()],
         regions: vec![region("The Forge")],

@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_catalog_with_a_family_variant_selected() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let filters = Filters {
         source_type_id: Some(47785),
         ..Filters::default()
@@ -975,7 +975,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_catalog_with_a_single_row_selected() {
-      let mut state = State::new();
+      let mut state = State::new(crate::config::FeatureFlags::default());
       let filters = Filters {
         source_type_id: Some(47702),
         ..Filters::default()
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_catalog_without_a_selection() {
-      let state = State::new();
+      let state = State::new(crate::config::FeatureFlags::default());
 
       let _el: Element<'_, Message> = modal(&state);
     }

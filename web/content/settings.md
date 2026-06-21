@@ -2,7 +2,7 @@
 title: Settings
 section: Reference
 order: 1
-description: Configure Pod from the Settings window — Accessibility, Features, Storage, Tags, User Interface, and Industry — with per-category resets and an About tab covering version and license.
+description: Configure Pod from the Settings window. Covers Accessibility, Features, Storage, Tags, User Interface, and Industry, with per-category resets and an About tab covering version and license.
 ---
 
 # Settings
@@ -44,33 +44,72 @@ this is configurable; the tab exists to display the notice.
 
 ## Features
 
-The Features tab lists every Pod capability you can turn on or off. The panel
-blurb states that changes apply live across every window and your linked
-characters, with no restart needed. The category badge reads enabled over
-total, for example "12/12" when all twelve features are enabled.
+The Features tab lists every Pod capability you can turn on or off. Pod groups
+its capabilities into two levels: twelve top-level Features that together hold
+twenty-three sub-features. The Features tab works at the sub-feature level, so
+you can keep a Feature on while switching off just the parts of it you do not
+use. The panel blurb states that changes apply live across every window and
+your linked characters, with no restart needed. The category badge reads
+enabled sub-features over the total, so it shows "23/23" when every sub-feature
+is on and drops as you switch sub-features off.
+
+![The Features tab with four master groups and their sub-feature toggles](/docs/img/settings/features.png)
 
 A "Filter features…" field at the top narrows the list. It matches
-case-insensitively against both the feature title and its description, so
-typing "skill" or "training" both surface the skill feature. With the field
-empty, every feature shows. If nothing matches, the panel shows "No features
-match this search." with your query underneath.
+case-insensitively against both the sub-feature title and its description, so
+typing "wallet" or "budget" surfaces the matching rows. With the field empty,
+every sub-feature shows. If nothing matches, the panel shows "No features match
+this search." with your query underneath.
 
-Features are grouped into two sections. The Character section covers Clone
-Monitoring (jump clones and the implants in each), Contacts (your personal
-contact list and their standings), Combat Log (combat activity for
-after-action review), EVE Notifications (in-game notifications), and Standings
-(your standings toward characters, corporations, and alliances). The World
-section covers Location Tracking (each character's current solar system,
-station, and ship), Skill Monitoring (trained skills and the active training
-queue), Industry (running manufacturing, research, and reaction jobs), Mail
-(EVE mail headers and message bodies), Calendar (calendar events and invitation
-responses), Wallet (wallet balances and the transaction journal), and Asset
-Tracking (assets across stations, structures, and hangars).
+### Groups and master toggles
 
-Each feature has its own toggle and the short description quoted above. Turning
-a feature off hides its rail icon and stops syncing that data. Turning Industry
-off also removes the Industry category from the Settings pane. Toggles take
-effect immediately across every open window.
+The list is organized into four display groups, each with a master toggle
+header: Characters, Industry, Wallet, and Assets. The header carries a master
+toggle that cascades over every sub-feature in the group, switching them all on
+or off at once. Below each header sits a roll-up status that reads "On" when
+every sub-feature in the group is enabled, "Off" when none are, and "Some on"
+when only some are.
+
+The Characters group covers Location Tracking (each character's current solar
+system, station, and ship), Skill Queue (trained skills and the active training
+queue), Clone Monitoring (jump clones and the implants installed in each),
+Contacts (your personal contact list and their standings), Kill Log (combat
+activity for after-action review), EVE Notifications (in-game notifications from
+EVE Online), Standings (your standings toward characters, corporations, and
+alliances), Mail (EVE mail headers and message bodies), and Calendar (calendar
+events and invitation responses).
+
+The Industry group covers Job Monitoring (running manufacturing, research, and
+reaction jobs), Blueprints (owned blueprints with their material and time
+efficiency), Build Planner (recursive build orders with materials, costs, and
+facilities), and Moon Extractions (corporation moon-extraction timers).
+
+The Wallet group covers Wallets (character and corporation wallet balances),
+Market Transactions (market orders and traded items), Contracts (outstanding
+and historical contracts), Journal (the wallet transaction journal), and Budget
+(a zero-based budget over your wallet activity).
+
+The Assets group covers Inventory (assets across stations, structures, and
+hangars), Abyssals (abyssal modules appraised against MutaMarket pricing),
+Stockpiles (curated stockpiles watched against target quantities), Values
+(owned assets valued at market pricing), and Net Worth Tracker (net worth
+charted over time across every owner).
+
+### Sub-tab gating and the Budget coupling
+
+Each sub-feature has its own toggle and the short description quoted above.
+Toggles take effect immediately across every open window. Turning a sub-feature
+off hides its sub-tab within its view rather than the whole rail icon, so the
+view stays reachable and only the part you switched off disappears. The rail
+icon goes away only when every sub-feature in a group is off.
+
+Budget is the one sub-feature with an enforced dependency. It has no data of its
+own and derives entirely from your wallet activity, so it cannot be enabled
+while both Journal and Market Transactions are off. When both are off, the
+Budget toggle is locked and its row reads "Enable Journal or Market
+Transactions to use Budget." Enabling either one unlocks it. Turning a whole
+group on with its master toggle leaves Budget on, because Journal is enabled
+before it.
 
 ## Accessibility
 
@@ -96,7 +135,7 @@ side, plus the surface-edge alpha values before and after. High contrast also
 applies live.
 
 The ISK monospace setting draws ISK figures in a monospace font so digits line
-up in columns and balances are easier to compare at a glance.
+up in columns and balances are easier to compare.
 
 The category badge summarizes the current state. It shows the scale percentage,
 appends " · custom" when the scale sits off a preset, and appends " · HC" when
@@ -201,7 +240,7 @@ field validates the hex and flags an invalid value rather than applying it. A
 the colors are yours to choose rather than a fixed palette.
 
 Sort the list with the header buttons: "Manual" keeps your own drag order and is
-the default, "A–Z" sorts alphabetically, and "Color" groups by color with
+the default, "A-Z" sorts alphabetically, and "Color" groups by color with
 uncolored tags last. A filter field narrows the list by name. You can drag a tag
 row to reorder it, but only in Manual sort with no filter active; otherwise the
 tab shows "Reorder disabled in sorted view" or "Reorder disabled while
@@ -217,6 +256,12 @@ its icons. Both settings apply live across every Pod view.
 The "Rail side" control docks the rail to the "Left" or the "Right" edge of the
 workspace. The default is Left. The current side is marked on the chosen card,
 and the category badge reads "Left" or "Right" to match.
+
+The "Rail cascade" control sets how a view's sub-sections surface from the rail.
+It offers three modes shown as cards: "Flyout", the default, pops the
+sub-sections out when you hover the rail icon; "Sub-rail" pins them as a second
+column beside the rail; and "Off" keeps a plain rail with no cascade. The chosen
+card is outlined in plasma, and the change applies live across every view.
 
 The "Icon order" control reorders the rail. Each row shows a two-digit position
 and a drag handle. Drag a row by its handle to a new spot, or use the up and

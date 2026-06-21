@@ -10,6 +10,7 @@ pub mod entity_search;
 pub mod industry;
 pub mod killmail_detail;
 pub mod mail;
+pub mod nav_catalog;
 pub mod registry;
 pub mod settings;
 pub mod skill_plan_editor;

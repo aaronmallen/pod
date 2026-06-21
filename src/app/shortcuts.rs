@@ -6,6 +6,7 @@ use iced::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Chord {
+  FocusSearch,
   OpenSettings,
   Quit,
 }
@@ -31,6 +32,7 @@ impl Chord {
 
     match key {
       keyboard::Key::Character(c) if c.as_str() == "," => Some(Chord::OpenSettings),
+      keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("k") => Some(Chord::FocusSearch),
       keyboard::Key::Character(c) if c.as_str().eq_ignore_ascii_case("q") => Some(Chord::Quit),
       _ => None,
     }
@@ -94,6 +96,21 @@ mod tests {
       }
 
       #[test]
+      fn it_maps_command_k_to_focus_search() {
+        assert_eq!(Chord::for_key(&character("k"), true), Some(Chord::FocusSearch));
+      }
+
+      #[test]
+      fn it_maps_uppercase_k_to_focus_search() {
+        assert_eq!(Chord::for_key(&character("K"), true), Some(Chord::FocusSearch));
+      }
+
+      #[test]
+      fn it_ignores_k_without_the_command_modifier() {
+        assert_eq!(Chord::for_key(&character("k"), false), None);
+      }
+
+      #[test]
       fn it_ignores_q_without_the_command_modifier() {
         assert_eq!(Chord::for_key(&character("q"), false), None);
       }
@@ -146,6 +163,13 @@ mod tests {
         let event = key_pressed(",", keyboard::Modifiers::COMMAND);
 
         assert_eq!(Chord::for_event(&event), Some(Chord::OpenSettings));
+      }
+
+      #[test]
+      fn it_dispatches_the_platform_focus_search_chord() {
+        let event = key_pressed("k", keyboard::Modifiers::COMMAND);
+
+        assert_eq!(Chord::for_event(&event), Some(Chord::FocusSearch));
       }
 
       #[test]

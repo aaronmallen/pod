@@ -27,7 +27,7 @@ use crate::{
   config,
   features::{
     assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, corporation_detail,
-    industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
+    focus_search, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
   },
   services::{images, updater},
   store,
@@ -2677,11 +2677,19 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
 
 fn handle_shortcut(app: &mut App, chord: Chord) -> Task<Message> {
   let action = match chord {
+    Chord::FocusSearch => focus_route_search(app),
     Chord::OpenSettings => handle_nav(app, rail::Destination::Settings),
     Chord::Quit => Task::done(Message::Quit),
   };
   app.keyboard_focus.set_focused(None);
   Task::batch([action, shortcuts::probe_focus(Message::TextInputFocused)])
+}
+
+fn focus_route_search(app: &App) -> Task<Message> {
+  match focus_search::search_id(app.route.destination()) {
+    Some(id) => iced::widget::operation::focus(id),
+    None => Task::none(),
+  }
 }
 
 fn handle_text_input_focused(app: &mut App, id: iced::widget::Id) -> Task<Message> {

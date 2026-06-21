@@ -196,6 +196,7 @@ fn search_field(state: &State) -> Element<'_, Message> {
     state.search(),
     Message::SearchChanged,
   )
+  .input_id(crate::features::focus_search::assets_search_id())
   .leading_icon(Icon::search())
   .on_submit(Message::SearchSubmitted)
   .trailing(trailing.into())

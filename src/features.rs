@@ -7,6 +7,7 @@ pub mod character_manager;
 pub mod contract_detail;
 pub mod corporation_detail;
 pub mod entity_search;
+pub mod focus_search;
 pub mod industry;
 pub mod killmail_detail;
 pub mod mail;

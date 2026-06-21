@@ -72,7 +72,7 @@ pub async fn certificate_upsert_many(
   certificates: &[Certificate],
   skills: &[CertificateSkill],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for certificate in certificates {
     sqlx::query(
@@ -137,7 +137,7 @@ pub async fn for_ship(db: &Database, ship_type_id: i64) -> Result<Vec<ShipMaster
 }
 
 pub async fn mastery_upsert_many(db: &Database, masteries: &[ShipMastery]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for mastery in masteries {
     sqlx::query(
@@ -179,7 +179,7 @@ pub async fn upsert_skill_metadata(db: &Database, metadata: &SkillMetadata) -> R
   .bind(metadata.rank())
   .bind(metadata.secondary_attribute())
   .bind(metadata.skill_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -391,7 +391,7 @@ pub async fn create(db: &Database, character_id: i64, name: &str) -> Result<Skil
 pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM skill_plans WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -425,7 +425,7 @@ pub async fn update(db: &Database, id: i64, name: &str, sort_mode: &str, implant
     .bind(implant_set)
     .bind(&now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -471,7 +471,7 @@ pub async fn remove_entry(db: &Database, id: i64) -> Result<(), Error> {
 
   reanchor_remap_points(db, plan_id, id).await?;
 
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM skill_plan_entries WHERE id = ?")
     .bind(id)
     .execute(&mut *tx)
@@ -482,7 +482,7 @@ pub async fn remove_entry(db: &Database, id: i64) -> Result<(), Error> {
 }
 
 pub async fn reorder_entries(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {
     sqlx::query("UPDATE skill_plan_entries SET position = ? WHERE id = ?")
       .bind(position as i64)
@@ -499,7 +499,7 @@ pub async fn replace_entries(
   plan_id: i64,
   entries: &[(i64, i64, &str, &str, i64)],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM skill_plan_entries WHERE plan_id = ?")
     .bind(plan_id)
     .execute(&mut *tx)
@@ -563,7 +563,7 @@ pub async fn upsert_remap_point(
   base_intelligence: i64,
   base_charisma: i64,
 ) -> Result<SkillPlanRemapPoint, Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   delete_slot(&mut tx, plan_id, after_entry_id).await?;
   let remap = sqlx::query_as::<_, SkillPlanRemapPoint>(
     "INSERT INTO skill_plan_remap_points \
@@ -590,7 +590,7 @@ pub async fn upsert_remap_point(
 pub async fn remove_remap_point(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM skill_plan_remap_points WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -618,7 +618,7 @@ pub async fn reanchor_remap_points(db: &Database, plan_id: i64, entry_id: i64) -
   .fetch_optional(&db.0)
   .await?;
 
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   let occupied = slot_is_occupied(&mut tx, plan_id, predecessor).await?;
   for remap_id in dependents {
     if occupied {
@@ -672,7 +672,7 @@ pub async fn ship_masteries(db: &Database, plan_id: i64) -> Result<Vec<SkillPlan
 }
 
 pub async fn replace_ship_masteries(db: &Database, plan_id: i64, masteries: &[(i64, i64)]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM skill_plan_ship_masteries WHERE plan_id = ?")
     .bind(plan_id)
     .execute(&mut *tx)
@@ -704,7 +704,7 @@ pub async fn replace_cert_proficiencies(
   plan_id: i64,
   proficiencies: &[(i64, i64)],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM skill_plan_cert_proficiencies WHERE plan_id = ?")
     .bind(plan_id)
     .execute(&mut *tx)

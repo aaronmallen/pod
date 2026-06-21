@@ -1708,7 +1708,7 @@ mod tests {
       .bind("2024-01-01T00:00:00Z")
       .bind(60_003_760_i64)
       .bind(60_003_761_i64)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -1722,7 +1722,7 @@ mod tests {
       .bind(34_i64)
       .bind(1_000_000_i64)
       .bind(5_000_000.0_f64)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 
@@ -1764,7 +1764,7 @@ mod tests {
       .bind(90_000_001_i64)
       .bind(10_000_000.0_f64)
       .bind("2024-01-01T00:00:00Z")
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 

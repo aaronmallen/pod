@@ -116,7 +116,7 @@ mod tests {
       .bind("test")
       .bind(1.0)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -129,7 +129,7 @@ mod tests {
     .bind(division)
     .bind("Master")
     .bind(balance)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -143,7 +143,7 @@ mod tests {
       .bind("test")
       .bind(amount)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -157,7 +157,7 @@ mod tests {
       .bind("test")
       .bind(1.0)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -182,7 +182,7 @@ mod tests {
     .bind(90)
     .bind("2026-01-01T00:00:00Z")
     .bind("open")
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }

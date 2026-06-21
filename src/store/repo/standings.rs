@@ -1223,7 +1223,7 @@ mod tests {
     const SOE_CORP: i64 = 1_000_003;
 
     async fn exec(db: &store::Database, sql: &'static str) {
-      sqlx::query(sql).execute(&db.0).await.unwrap();
+      sqlx::query(sql).execute(db.writer()).await.unwrap();
     }
 
     // Seeds a small but coherent standings universe: two factions (one empire, one pirate), three
@@ -1681,7 +1681,7 @@ mod tests {
     const CORPORATION: i64 = 98_000_001;
 
     async fn exec(db: &store::Database, sql: &'static str) {
-      sqlx::query(sql).execute(&db.0).await.unwrap();
+      sqlx::query(sql).execute(db.writer()).await.unwrap();
     }
 
     async fn seed(db: &store::Database) {

@@ -678,13 +678,19 @@ mod tests {
       corp.set_member_count(1);
       corp.set_tax_rate(0.0);
       org::upsert_corporation(db, &corp).await.unwrap();
-      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
-      sqlx::query("DELETE FROM alliances WHERE id = ?")
-        .bind(STALE_ALLIANCE_ID)
-        .execute(&db.0)
+      sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(db.writer())
         .await
         .unwrap();
-      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
+      sqlx::query("DELETE FROM alliances WHERE id = ?")
+        .bind(STALE_ALLIANCE_ID)
+        .execute(db.writer())
+        .await
+        .unwrap();
+      sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(db.writer())
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

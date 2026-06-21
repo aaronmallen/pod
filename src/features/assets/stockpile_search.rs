@@ -550,14 +550,14 @@ mod tests {
 
     async fn seed_geography(db: &Database) {
       sqlx::query("INSERT INTO regions (id, name) VALUES (10000002, 'The Forge')")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
         "INSERT INTO constellations (id, name, position_x, position_y, position_z, region_id) \
         VALUES (20000020, 'Kimotoro', 0, 0, 0, 10000002)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -565,7 +565,7 @@ mod tests {
           (id, constellation_id, name, position_x, position_y, position_z, security_status) \
         VALUES (30000142, 20000020, 'Jita', 0, 0, 0, 0.9)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

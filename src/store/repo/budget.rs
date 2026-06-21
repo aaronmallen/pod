@@ -161,7 +161,7 @@ pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
 pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_categories WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -186,7 +186,7 @@ pub async fn delete_entry_assignment(
   .bind(owner.owner_id())
   .bind(entry_kind.as_str())
   .bind(entry_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -197,7 +197,7 @@ pub async fn delete_entry_assignment(
 pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_category_groups WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -207,7 +207,7 @@ pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
 pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_rules WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -218,7 +218,7 @@ pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
 pub async fn delete_target(db: &Database, category_id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_targets WHERE category_id = ?")
     .bind(category_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -272,7 +272,7 @@ pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), 
   .bind(scope.scope_kind())
   .bind(scope.scope_id())
   .bind(&now)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -430,7 +430,7 @@ pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Erro
     .bind(name)
     .bind(&now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -440,7 +440,7 @@ pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Erro
 #[allow(dead_code)]
 pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {
     sqlx::query("UPDATE budget_rules SET position = ?, updated_at = ? WHERE id = ?")
       .bind(position as i64)
@@ -456,7 +456,7 @@ pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Err
 // Budget automation rule storage (child A): replace a rule's full condition set in one transaction,
 // re-numbering positions from slice order so the engine reads them in the builder's order.
 pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[RuleCondition]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM budget_rule_conditions WHERE rule_id = ?")
     .bind(rule_id)
     .execute(&mut *tx)
@@ -495,7 +495,7 @@ pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result
   .bind(category.position())
   .bind(&now)
   .bind(category.id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -510,7 +510,7 @@ pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<
     .bind(group.position())
     .bind(&now)
     .bind(group.id())
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -528,7 +528,7 @@ pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
   .bind(rule.match_mode().as_str())
   .bind(&now)
   .bind(rule.id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }

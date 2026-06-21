@@ -73,7 +73,7 @@ pub async fn delete_stale(db: &Database, character_id: i64, keep_ids: &[i64]) ->
   if keep_ids.is_empty() {
     sqlx::query("DELETE FROM abyssal_items WHERE character_id = ?")
       .bind(character_id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await?;
     return Ok(());
   }
@@ -86,7 +86,7 @@ pub async fn delete_stale(db: &Database, character_id: i64, keep_ids: &[i64]) ->
     separated.push_bind(*id);
   }
   separated.push_unseparated(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -368,7 +368,7 @@ pub async fn update_price(db: &Database, item_id: i64, price_isk: Option<f64>, s
     .bind(price_isk)
     .bind(synced_at)
     .bind(item_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -398,7 +398,7 @@ pub async fn upsert(db: &Database, item: &AbyssalItem) -> Result<(), Error> {
   .bind(item.synced_at())
   .bind(item.muta_price_isk())
   .bind(item.muta_price_synced())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -407,7 +407,7 @@ pub async fn delete_stale_corporation(db: &Database, corporation_id: i64, keep_i
   if keep_ids.is_empty() {
     sqlx::query("DELETE FROM corporation_abyssal_items WHERE corporation_id = ?")
       .bind(corporation_id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await?;
     return Ok(());
   }
@@ -420,7 +420,7 @@ pub async fn delete_stale_corporation(db: &Database, corporation_id: i64, keep_i
     separated.push_bind(*id);
   }
   separated.push_unseparated(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -445,7 +445,7 @@ pub async fn update_price_corporation(
     .bind(price_isk)
     .bind(synced_at)
     .bind(item_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -475,13 +475,13 @@ pub async fn upsert_corporation(db: &Database, item: &CorporationAbyssalItem) ->
   .bind(item.synced_at())
   .bind(item.muta_price_isk())
   .bind(item.muta_price_synced())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
 
 pub async fn upsert_module_stats(db: &Database, stats: &[AbyssalModuleStat]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for stat in stats {
     sqlx::query(
@@ -544,7 +544,7 @@ async fn replace_for_character_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in assets.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for asset in chunk {
       insert_character_asset(&mut tx, asset).await?;
     }
@@ -581,7 +581,7 @@ async fn replace_for_corporation_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in assets.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for asset in chunk {
       insert_corporation_asset(&mut tx, asset).await?;
     }
@@ -607,7 +607,7 @@ async fn delete_character_assets(db: &Database, character_id: i64, item_ids: &[i
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -623,14 +623,14 @@ async fn delete_corporation_assets(db: &Database, corporation_id: i64, item_ids:
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn upsert_character_asset(db: &Database, asset: &CharacterAsset) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM character_assets WHERE item_id = ?")
     .bind(asset.item_id())
     .execute(&mut *tx)
@@ -643,7 +643,7 @@ pub async fn upsert_character_asset(db: &Database, asset: &CharacterAsset) -> Re
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn upsert_corporation_asset(db: &Database, asset: &CorporationAsset) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM corporation_assets WHERE item_id = ?")
     .bind(asset.item_id())
     .execute(&mut *tx)
@@ -2411,7 +2411,7 @@ pub async fn create(
   location_id: Option<i64>,
   items: &[(i64, i64)],
 ) -> Result<StockpileWithItems, Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   let stockpile = sqlx::query_as::<_, Stockpile>(
     "INSERT INTO stockpiles (name, character_scope, location_id) VALUES (?, ?, ?) \
     RETURNING character_scope, id, location_id, name",
@@ -2437,7 +2437,7 @@ pub async fn update(
   location_id: Option<i64>,
   items: &[(i64, i64)],
 ) -> Result<StockpileWithItems, Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   let stockpile = sqlx::query_as::<_, Stockpile>(
     "UPDATE stockpiles SET name = ?, character_scope = ?, location_id = ? WHERE id = ? \
     RETURNING character_scope, id, location_id, name",
@@ -2463,7 +2463,7 @@ pub async fn update(
 pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM stockpiles WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -2708,7 +2708,7 @@ pub async fn create_saved_filter(
 pub async fn delete_saved_filter(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM saved_asset_filters WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -3080,7 +3080,10 @@ mod abyssal_tests {
     use super::*;
 
     async fn disable_foreign_keys(db: &Database) {
-      sqlx::query("PRAGMA foreign_keys = OFF").execute(&db.0).await.unwrap();
+      sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(db.writer())
+        .await
+        .unwrap();
     }
 
     async fn insert_station(db: &Database, id: i64, name: &str) {
@@ -3092,7 +3095,7 @@ mod abyssal_tests {
       )
       .bind(id)
       .bind(name)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -3106,7 +3109,7 @@ mod abyssal_tests {
       .bind(item_id)
       .bind(location_id)
       .bind(location_type)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -3877,7 +3880,7 @@ mod asset_tests {
     .bind("Test item")
     .bind(name)
     .bind(type_id + 1000)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3939,7 +3942,7 @@ mod asset_tests {
     sqlx::query("INSERT INTO market_prices (type_id, adjusted_price, average_price) VALUES (?, ?, NULL)")
       .bind(type_id)
       .bind(adjusted)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -3952,7 +3955,7 @@ mod asset_tests {
       .bind(close)
       .bind(close)
       .bind(close)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -4512,10 +4515,13 @@ mod asset_tests {
         .await
         .unwrap();
 
-      sqlx::query("PRAGMA foreign_keys = ON").execute(&db.0).await.unwrap();
+      sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(db.writer())
+        .await
+        .unwrap();
       sqlx::query("DELETE FROM characters WHERE id = ?")
         .bind(42_i64)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -7255,7 +7261,7 @@ mod stockpile_tests {
     .bind(type_id)
     .bind(location_id)
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -7377,7 +7383,7 @@ mod stockpile_tests {
       .bind(container_id)
       .bind(quantity)
       .bind(container_id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -7400,7 +7406,7 @@ mod stockpile_tests {
       .bind(type_id)
       .bind(location_id)
       .bind(quantity)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -7523,7 +7529,7 @@ mod stockpile_tests {
       .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_types (id, group_id, description, name, published) VALUES (?, 15, 'Station', 'Station', 1)")
         .bind(STATION_TYPE)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
     }

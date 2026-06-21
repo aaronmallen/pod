@@ -86,7 +86,7 @@ mod tests {
     .bind("Hangar")
     .bind(1_i64)
     .bind(is_blueprint_copy)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }

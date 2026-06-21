@@ -85,7 +85,7 @@ pub async fn upsert(
   .bind(&now)
   .bind(success_at)
   .bind(next_eligible_at)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }

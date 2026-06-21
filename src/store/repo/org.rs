@@ -138,7 +138,7 @@ pub async fn insert_corporation_with_org(
   creator_char: &Character,
   home_station: Option<&Station>,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
@@ -414,7 +414,7 @@ pub async fn upsert_corporation(db: &Database, corp: &Corporation) -> Result<(),
   .bind(corp.ticker())
   .bind(corp.url())
   .bind(corp.war_eligible())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -427,7 +427,7 @@ pub async fn corporation_names(db: &Database) -> Result<HashMap<i64, String>, Er
 }
 
 pub async fn upsert_many_seed_corporations(db: &Database, corporations: &[SeedCorporation]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
   for corporation in corporations {
@@ -487,7 +487,7 @@ pub async fn insert_alliance_with_org(
   executor_corp: Option<&Corporation>,
   faction: Option<&Faction>,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
@@ -627,7 +627,7 @@ pub async fn upsert_alliance(db: &Database, alliance: &Alliance) -> Result<(), E
   .bind(alliance.faction_id())
   .bind(alliance.name())
   .bind(alliance.ticker())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -648,7 +648,7 @@ pub async fn replace_for_corporation(
   corporation_id: i64,
   roles: &[CorporationMemberRole],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM corporation_member_roles WHERE corporation_id = ?")
     .bind(corporation_id)
     .execute(&mut *tx)
@@ -673,7 +673,7 @@ pub async fn replace_contacts_for_corporation(
   corporation_id: i64,
   contacts: &[CorporationContact],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_contacts WHERE corporation_id = ?")
     .bind(corporation_id)
@@ -707,7 +707,7 @@ pub async fn replace_labels_for_corporation(
   corporation_id: i64,
   labels: &[CorporationContactLabel],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_contact_labels WHERE corporation_id = ?")
     .bind(corporation_id)
@@ -820,7 +820,7 @@ pub async fn replace_standings_for_corporation(
   corporation_id: i64,
   standings: &[CorporationStanding],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_standings WHERE corporation_id = ?")
     .bind(corporation_id)
@@ -877,7 +877,7 @@ pub async fn replace_extractions_for_corporation(
   corporation_id: i64,
   extractions: &[CorporationMiningExtraction],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_mining_extractions WHERE corporation_id = ?")
     .bind(corporation_id)
@@ -941,7 +941,7 @@ pub async fn upsert_corporation_killmail(db: &Database, killmail: &CorporationKi
   .bind(killmail.final_blow())
   .bind(killmail.kill_time())
   .bind(killmail.synced_at())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -961,7 +961,7 @@ pub async fn upsert_corporation_killmail_detail(
   attackers: &[CorporationKillmailAttacker],
   items: &[CorporationKillmailItem],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_killmail_attackers WHERE corporation_id = ? AND killmail_id = ?")
     .bind(corporation_id)

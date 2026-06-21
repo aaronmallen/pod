@@ -104,7 +104,7 @@ pub async fn upsert_complete(
   body: &CharacterMailBody,
   recipients: &[CharacterMailRecipient],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query(
     "INSERT INTO character_mail \
@@ -167,7 +167,7 @@ pub async fn set_read(db: &Database, character_id: i64, mail_id: i64, is_read: b
     .bind(is_read)
     .bind(character_id)
     .bind(mail_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -256,7 +256,7 @@ pub async fn replace_labels_for_character(
   character_id: i64,
   labels: &[CharacterMailLabel],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   // label_id < 0 are optimistic rows for pending create-label outbox ops; preserve them across server replaces.
   sqlx::query("DELETE FROM character_mail_labels WHERE character_id = ? AND label_id >= 0")
@@ -293,7 +293,7 @@ pub async fn replace_membership_for_character(
   character_id: i64,
   membership: &[CharacterMailLabelMembership],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   // label_id < 0 are optimistic rows for pending create-label outbox ops; preserve them across server replaces.
   sqlx::query("DELETE FROM character_mail_label_membership WHERE character_id = ? AND label_id >= 0")
@@ -331,7 +331,7 @@ pub async fn insert_label(db: &Database, label: &CharacterMailLabel) -> Result<(
     .bind(label.label_id())
     .bind(label.name())
     .bind(label.color())
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -342,7 +342,7 @@ pub async fn remap_label_id(
   from_label_id: i64,
   to_label_id: i64,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   // Move the label PK before the membership FK so the membership rows can follow it without
   // tripping the (character_id, label_id) foreign key mid-transaction.
@@ -373,7 +373,7 @@ pub async fn add_membership(db: &Database, character_id: i64, mail_id: i64, labe
   .bind(character_id)
   .bind(mail_id)
   .bind(label_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -383,7 +383,7 @@ pub async fn remove_membership(db: &Database, character_id: i64, mail_id: i64, l
     .bind(character_id)
     .bind(mail_id)
     .bind(label_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -392,7 +392,7 @@ pub async fn delete_label(db: &Database, character_id: i64, label_id: i64) -> Re
   sqlx::query("DELETE FROM character_mail_labels WHERE character_id = ? AND label_id = ?")
     .bind(character_id)
     .bind(label_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -506,7 +506,7 @@ pub async fn set_triage(db: &Database, character_id: i64, mail_id: i64, star: bo
   .bind(character_id)
   .bind(mail_id)
   .bind(star)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -515,7 +515,7 @@ pub async fn clear_triage(db: &Database, character_id: i64, mail_id: i64) -> Res
   sqlx::query("DELETE FROM mail_triage WHERE character_id = ? AND mail_id = ?")
     .bind(character_id)
     .bind(mail_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -556,7 +556,7 @@ pub async fn upsert_snoozed_mail(
   .bind(character_id)
   .bind(mail_id)
   .bind(snooze_until)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -565,7 +565,7 @@ pub async fn delete_snoozed_mail(db: &Database, character_id: i64, mail_id: i64)
   sqlx::query("DELETE FROM mail_snooze WHERE character_id = ? AND mail_id = ?")
     .bind(character_id)
     .bind(mail_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -612,7 +612,7 @@ pub async fn assign_folder(
   .bind(remap_label_id)
   .bind(soft_delete_intent)
   .bind(assigned_at)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -621,7 +621,7 @@ pub async fn clear_folder(db: &Database, character_id: i64, mail_id: i64) -> Res
   sqlx::query("DELETE FROM mail_folder_assignment WHERE character_id = ? AND mail_id = ?")
     .bind(character_id)
     .bind(mail_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -693,7 +693,7 @@ pub async fn upsert_draft(db: &Database, id: Option<i64>, input: &DraftInput) ->
       .bind(&input.quote)
       .bind(&now)
       .bind(id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await?;
       id
     }
@@ -752,7 +752,7 @@ pub async fn count_drafts_for_character(db: &Database, character_id: i64) -> Res
 pub async fn delete_draft(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM mail_drafts WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -839,7 +839,7 @@ pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Re
 /// Permanently removes every local row a mail owns across all dependent tables in one transaction,
 /// leaving no orphans.
 pub async fn purge_mail(db: &Database, character_id: i64, mail_id: i64) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for statement in [
     "DELETE FROM character_mail_label_membership WHERE character_id = ? AND mail_id = ?",
@@ -883,7 +883,7 @@ pub async fn purge_synthetic_sent(db: &Database, character_id: i64) -> Result<()
 /// Re-inserts every row captured by [`snapshot_mail`], reversing a [`purge_mail`] in one
 /// transaction. Used to compensate a permanently failed ESI delete.
 pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query(
     "INSERT INTO character_mail \
@@ -1786,7 +1786,7 @@ mod core_tests {
         "INSERT INTO character_mail (character_id, mail_id, from_id, from_name, subject, timestamp, is_read) \
           VALUES (42, 5, 95000001, 'X', 'No body', '2026-06-01T10:00:00Z', 0)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       assert!(super::mail(&db, 42, 5).await.unwrap().is_none());
@@ -1869,7 +1869,7 @@ mod core_tests {
         "INSERT INTO character_mail (character_id, mail_id, from_id, from_name, subject, timestamp, is_read) \
           VALUES (42, 9, 95000001, 'X', 'No body', '2026-06-01T10:00:00Z', 0)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 
@@ -2923,7 +2923,7 @@ mod overlay_tests {
       super::set_triage(&db, 42, 1, true).await.unwrap();
 
       sqlx::query("DELETE FROM characters WHERE id = 42")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 

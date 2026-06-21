@@ -901,9 +901,9 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   // network) share in Sync mode plus lease file IO. Run it on a blocking thread so a stalled or slow
   // mount can't wedge the async boot worker — the first window renders independent of this finishing.
   let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
-  // The interactive, sync-worker, and housekeeping pools each open against the same database file;
-  // see store::open_pools for why the engine gets its own pools rather than sharing the interactive
-  // one.
+  // One-writer/many-readers over a single database file: open_pools returns interactive, sync, and
+  // housekeeping handles that all clone the same reader pool + single writer connection, so a sync
+  // write-storm can never starve the interactive roster read. See store::open_pools.
   let pools = store::open_pools(&prepared.database_path).await.map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
@@ -929,11 +929,16 @@ fn run_take_over(ready: StoreReady, session: store::sync_session::SyncSession, f
   Task::future(async move {
     let lease = ready.lease.clone();
     let settings = ready.settings.clone();
-    // Release every handle on the working-copy file before the swap: `Pool::close` closes the shared
-    // pool, so the http client's interactive-pool clone is released along with the named pool.
-    ready.db.0.close().await;
-    ready.sync_db.0.close().await;
-    ready.sync_housekeeping_db.0.close().await;
+    // Release every handle on the working-copy file before the swap. Under the one-writer/many-readers
+    // model all three handles clone the same reader pool and writer connection, so closing both pools
+    // once releases every clone (the http client's interactive-pool clone included). `Pool::close` is
+    // idempotent, so the repeated calls below are harmless and keep the close path explicit.
+    ready.db.reader().close().await;
+    ready.db.writer().close().await;
+    ready.sync_db.reader().close().await;
+    ready.sync_db.writer().close().await;
+    ready.sync_housekeeping_db.reader().close().await;
+    ready.sync_housekeeping_db.writer().close().await;
     let outcome = claim_lease(&session, force);
     match reopen_after_take_over_inner(&session, lease, settings).await {
       Ok(ready) => Message::TakeOverResolved(outcome, Box::new(ready)),
@@ -7645,7 +7650,7 @@ mod tests {
         .unwrap();
       // Fold the WAL into the main .db so the published copy is self-contained.
       sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(&pools.interactive.0)
+        .execute(pools.interactive.writer())
         .await
         .unwrap();
     }
@@ -7661,9 +7666,12 @@ mod tests {
     ) -> (TakeOverOutcome, StoreReady) {
       let lease = ready.lease.clone();
       let settings = ready.settings.clone();
-      ready.db.0.close().await;
-      ready.sync_db.0.close().await;
-      ready.sync_housekeeping_db.0.close().await;
+      ready.db.reader().close().await;
+      ready.db.writer().close().await;
+      ready.sync_db.reader().close().await;
+      ready.sync_db.writer().close().await;
+      ready.sync_housekeeping_db.reader().close().await;
+      ready.sync_housekeeping_db.writer().close().await;
       let outcome = claim_lease(session, force);
       let reopened = reopen_after_take_over_inner(session, lease, settings).await.unwrap();
       (outcome, reopened)

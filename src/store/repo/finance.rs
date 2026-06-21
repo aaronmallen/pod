@@ -29,7 +29,7 @@ pub async fn replace_for_character(
   character_id: i64,
   contracts: &[CharacterContract],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_contracts WHERE character_id = ?")
     .bind(character_id)
@@ -84,7 +84,7 @@ pub async fn replace_for_corporation(
   corporation_id: i64,
   contracts: &[CorporationContract],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_contracts WHERE corporation_id = ?")
     .bind(corporation_id)
@@ -140,7 +140,7 @@ pub async fn replace_contract_bids_for_character(
   contract_id: i64,
   bids: &[CharacterContractBid],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_contract_bids WHERE character_id = ? AND contract_id = ?")
     .bind(character_id)
@@ -173,7 +173,7 @@ pub async fn replace_contract_bids_for_corporation(
   contract_id: i64,
   bids: &[CorporationContractBid],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_contract_bids WHERE corporation_id = ? AND contract_id = ?")
     .bind(corporation_id)
@@ -206,7 +206,7 @@ pub async fn replace_contract_items_for_character(
   contract_id: i64,
   items: &[CharacterContractItem],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_contract_items WHERE character_id = ? AND contract_id = ?")
     .bind(character_id)
@@ -243,7 +243,7 @@ pub async fn replace_contract_items_for_corporation(
   contract_id: i64,
   items: &[CorporationContractItem],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM corporation_contract_items WHERE corporation_id = ? AND contract_id = ?")
     .bind(corporation_id)
@@ -540,7 +540,7 @@ pub async fn corporation_backfill_liquid_from_journal(db: &Database, corporation
       net_worth = excluded.net_worth",
   )
   .bind(corporation_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -576,13 +576,13 @@ pub async fn record_today(db: &Database, corporation_id: i64, date: &str) -> Res
   .bind(corporation_id)
   .bind(date)
   .bind(corporation_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
 
 pub async fn upsert_divisions(db: &Database, divisions: &[CorporationWalletDivision]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for division in divisions {
     sqlx::query(
@@ -637,7 +637,7 @@ pub async fn append_corporation_wallet_journal(
   db: &Database,
   entries: &[CorporationWalletJournal],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in entries.chunks(SQLITE_MAX_BIND_PARAMS / 15) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -692,7 +692,7 @@ pub async fn append_corporation_wallet_transaction(
   db: &Database,
   transactions: &[CorporationWalletTransaction],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in transactions.chunks(SQLITE_MAX_BIND_PARAMS / 11) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -832,7 +832,7 @@ pub async fn open_escrow(db: &Database, character_id: i64) -> Result<f64, Error>
 }
 
 pub async fn replace(db: &Database, character_id: i64, orders: &[MarketOrder]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM market_orders WHERE character_id = ?")
     .bind(character_id)
@@ -879,7 +879,7 @@ pub async fn market_prices_all(db: &Database) -> Result<Vec<MarketPrice>, Error>
 }
 
 pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in prices.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -948,7 +948,7 @@ pub async fn backfill_liquid_from_journal(db: &Database, character_id: i64) -> R
       net_worth = excluded.liquid + COALESCE(asset_value, 0) + COALESCE(escrow, 0)",
   )
   .bind(character_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1073,7 +1073,7 @@ pub async fn upsert(
   .bind(asset_value)
   .bind(escrow)
   .bind(net_worth)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1105,7 +1105,7 @@ pub async fn close_as_of(db: &Database, type_id: i64, date: &str) -> Result<Opti
 }
 
 pub async fn price_history_upsert_many(db: &Database, histories: &[TypePriceHistory]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in histories.chunks(SQLITE_MAX_BIND_PARAMS / 6) {
     let mut builder =
@@ -1135,13 +1135,13 @@ pub async fn price_history_upsert_many(db: &Database, histories: &[TypePriceHist
 pub async fn prune_before(db: &Database, cutoff: &str) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM type_price_histories WHERE date < ?")
     .bind(cutoff)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(result.rows_affected())
 }
 
 pub async fn append_wallet_journal(db: &Database, entries: &[CharacterWalletJournal]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in entries.chunks(SQLITE_MAX_BIND_PARAMS / 14) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -1214,7 +1214,7 @@ pub async fn append_wallet_transaction(
   db: &Database,
   transactions: &[CharacterWalletTransaction],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for chunk in transactions.chunks(SQLITE_MAX_BIND_PARAMS / 11) {
     let mut builder = QueryBuilder::<Sqlite>::new(
@@ -1354,7 +1354,7 @@ mod contract_tests {
     .bind(price)
     .bind(collateral)
     .bind(date_issued)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -1646,7 +1646,7 @@ mod corporation_net_worth_tests {
     .bind("test")
     .bind(1.0)
     .bind(balance)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -1659,7 +1659,7 @@ mod corporation_net_worth_tests {
     .bind(division)
     .bind("Master")
     .bind(balance)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -2078,7 +2078,7 @@ mod financials_tests {
       .bind("test")
       .bind(amount)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -2095,7 +2095,7 @@ mod financials_tests {
     .bind("station")
     .bind("Hangar")
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -2105,7 +2105,7 @@ mod financials_tests {
       .bind(type_id)
       .bind(adjusted)
       .bind(average)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -2130,7 +2130,7 @@ mod financials_tests {
     .bind(90)
     .bind("2026-01-01T00:00:00Z")
     .bind(state)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -2148,7 +2148,7 @@ mod financials_tests {
     .bind(character_id)
     .bind(collateral)
     .bind("2026-01-01T00:00:00Z")
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -2755,7 +2755,7 @@ mod market_tests {
       .bind("Hangar")
       .bind(1_i64)
       .bind(is_blueprint_copy)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -2774,7 +2774,7 @@ mod market_tests {
       .bind("Hangar")
       .bind(1_i64)
       .bind(is_blueprint_copy)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -2852,7 +2852,7 @@ mod net_worth_tests {
     .bind("test")
     .bind(1.0)
     .bind(balance)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3566,7 +3566,7 @@ mod wallet_tests {
       .bind("test")
       .bind(amount)
       .bind(0.0)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }

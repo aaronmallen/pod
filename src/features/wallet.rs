@@ -5275,7 +5275,7 @@ mod tests {
       .bind(&today)
       .bind(1_250.0)
       .bind(1_250.0)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 
@@ -5336,7 +5336,7 @@ mod tests {
       .bind(&today)
       .bind(1_250.0)
       .bind(1_250.0)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 

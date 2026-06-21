@@ -95,7 +95,7 @@ pub async fn upsert_bloodline(db: &Database, bloodline: &Bloodline) -> Result<()
   .bind(bloodline.race_id())
   .bind(bloodline.ship_type_id())
   .bind(bloodline.willpower())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -127,7 +127,7 @@ pub async fn upsert_faction(db: &Database, faction: &Faction) -> Result<(), Erro
   .bind(faction.solar_system_id())
   .bind(faction.station_count())
   .bind(faction.station_system_count())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -144,7 +144,7 @@ pub async fn upsert_race(db: &Database, race: &Race) -> Result<(), Error> {
   .bind(race.alliance_id())
   .bind(race.description())
   .bind(race.name())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -213,7 +213,7 @@ pub async fn implant_time_bonuses(db: &Database, attribute_ids: &[i64]) -> Resul
 }
 
 pub async fn upsert_many_dogma_attributes(db: &Database, attributes: &[DogmaAttribute]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for attribute in attributes {
     sqlx::query(
@@ -386,7 +386,7 @@ pub async fn insert_item_type_with_hierarchy(
   item_group: &ItemGroup,
   item_category: &ItemCategory,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (?, ?, ?)")
     .bind(item_category.id())
@@ -438,7 +438,7 @@ pub async fn upsert_item_category(db: &Database, category: &ItemCategory) -> Res
   .bind(category.id())
   .bind(category.name())
   .bind(category.published())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -457,7 +457,7 @@ pub async fn upsert_item_group(db: &Database, group: &ItemGroup) -> Result<(), E
   .bind(group.category_id())
   .bind(group.name())
   .bind(group.published())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -495,7 +495,7 @@ pub async fn upsert_item_type(db: &Database, item_type: &ItemType) -> Result<(),
   .bind(item_type.portion_size())
   .bind(item_type.radius())
   .bind(item_type.volume())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -512,13 +512,13 @@ pub async fn upsert_market_group(db: &Database, group: &MarketGroup) -> Result<(
   .bind(group.description())
   .bind(group.name())
   .bind(group.parent_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
 
 pub async fn upsert_many_item_categories(db: &Database, categories: &[ItemCategory]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for category in categories {
     sqlx::query(
@@ -537,7 +537,7 @@ pub async fn upsert_many_item_categories(db: &Database, categories: &[ItemCatego
 }
 
 pub async fn upsert_many_item_groups(db: &Database, groups: &[ItemGroup]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for group in groups {
     sqlx::query(
@@ -560,7 +560,7 @@ pub async fn upsert_many_item_groups(db: &Database, groups: &[ItemGroup]) -> Res
 }
 
 pub async fn upsert_many_market_groups(db: &Database, groups: &[MarketGroup]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
@@ -585,7 +585,7 @@ pub async fn upsert_many_market_groups(db: &Database, groups: &[MarketGroup]) ->
 }
 
 pub async fn upsert_many_item_types(db: &Database, item_types: &[ItemType]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for item_type in item_types {
     sqlx::query(
@@ -809,7 +809,7 @@ pub async fn insert_station_with_geography(
   constellation: &Constellation,
   region: &Region,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("INSERT OR IGNORE INTO regions (id, description, name) VALUES (?, ?, ?)")
     .bind(region.id())
@@ -913,7 +913,7 @@ pub async fn mark_inaccessible_structure(
   .bind(owner_type)
   .bind(id)
   .bind(marked_at)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -955,7 +955,7 @@ pub async fn pin_structure(
   .bind(pinned_at)
   .bind(solar_system_id)
   .bind(type_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1015,7 +1015,7 @@ pub async fn upsert_constellation(db: &Database, constellation: &Constellation) 
   .bind(constellation.position_y())
   .bind(constellation.position_z())
   .bind(constellation.region_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1028,7 +1028,7 @@ pub async fn upsert_region(db: &Database, region: &Region) -> Result<(), Error> 
   .bind(region.id())
   .bind(region.description())
   .bind(region.name())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1058,7 +1058,7 @@ pub async fn upsert_solar_system(db: &Database, system: &SolarSystem) -> Result<
   .bind(system.security_class())
   .bind(system.security_status())
   .bind(system.star_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1101,7 +1101,7 @@ pub async fn upsert_station(db: &Database, station: &Station) -> Result<(), Erro
   .bind(station.services())
   .bind(station.system_id())
   .bind(station.type_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1114,7 +1114,7 @@ pub async fn solar_system_names(db: &Database) -> Result<std::collections::HashM
 }
 
 pub async fn upsert_many_agent_types(db: &Database, agent_types: &[AgentType]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for agent_type in agent_types {
     sqlx::query(
@@ -1132,7 +1132,7 @@ pub async fn upsert_many_agent_types(db: &Database, agent_types: &[AgentType]) -
 }
 
 pub async fn upsert_many_constellations(db: &Database, constellations: &[Constellation]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for constellation in constellations {
     sqlx::query(
@@ -1164,7 +1164,7 @@ pub async fn upsert_many_npc_corporation_divisions(
   db: &Database,
   divisions: &[NpcCorporationDivision],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for division in divisions {
     sqlx::query(
@@ -1182,7 +1182,7 @@ pub async fn upsert_many_npc_corporation_divisions(
 }
 
 pub async fn upsert_many_moons(db: &Database, moons: &[Moon]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for moon in moons {
     sqlx::query(
@@ -1220,7 +1220,7 @@ pub async fn upsert_many_moons(db: &Database, moons: &[Moon]) -> Result<(), Erro
 }
 
 pub async fn upsert_many_regions(db: &Database, regions: &[Region]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for region in regions {
     sqlx::query(
@@ -1239,7 +1239,7 @@ pub async fn upsert_many_regions(db: &Database, regions: &[Region]) -> Result<()
 }
 
 pub async fn upsert_many_solar_systems(db: &Database, systems: &[SolarSystem]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   for system in systems {
     sqlx::query(
@@ -1275,7 +1275,7 @@ pub async fn upsert_many_solar_systems(db: &Database, systems: &[SolarSystem]) -
 }
 
 pub async fn seed_many_stations(db: &Database, stations: &[Station]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
   for station in stations {
@@ -1319,7 +1319,7 @@ pub async fn seed_many_stations(db: &Database, stations: &[Station]) -> Result<(
 }
 
 pub async fn seed_many_npc_agents(db: &Database, agents: &[NpcAgent], skills: &[NpcAgentSkill]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
   for agent in agents {
@@ -1382,7 +1382,7 @@ pub async fn upsert_structure(db: &Database, structure: &Structure) -> Result<()
   .bind(structure.position_z())
   .bind(structure.solar_system_id())
   .bind(structure.type_id())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1485,11 +1485,11 @@ mod dogma_tests {
 
     async fn seed_type(db: &Database, id: i64, dogma: &str) {
       sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (20, 'Implant', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (300, 20, 'Cyber', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -1498,7 +1498,7 @@ mod dogma_tests {
       )
       .bind(id)
       .bind(dogma)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -2748,7 +2748,7 @@ mod universe_tests {
         "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
         VALUES (98000001, 1, 1, 1, 'Owner Corp', 0.0, 'OWN')",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       let structure = Structure {

@@ -205,7 +205,7 @@ async fn mark_failed_if_inflight(db: &Database, id: i64, error: &str) -> Result<
   .bind(error)
   .bind(&now)
   .bind(id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await
   .map_err(crate::store::Error::from)?
   .rows_affected();

@@ -446,7 +446,7 @@ mod tests {
         .await
         .unwrap();
       sqlx::query("DELETE FROM abyssal_module_stats")
-        .execute(&harness.db.0)
+        .execute(harness.db.writer())
         .await
         .unwrap();
       let ctx = harness.ctx(42);

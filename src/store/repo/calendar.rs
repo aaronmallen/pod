@@ -8,7 +8,7 @@ pub async fn upsert_complete(
   event: &CharacterCalendarEvent,
   attendees: &[CharacterCalendarAttendee],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query(
     "INSERT INTO character_calendar \
@@ -64,7 +64,7 @@ pub async fn set_response(db: &Database, character_id: i64, event_id: i64, respo
     .bind(response)
     .bind(character_id)
     .bind(event_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -359,7 +359,7 @@ mod tests {
       .unwrap();
 
       sqlx::query("DELETE FROM characters WHERE id = 42")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 

@@ -1233,7 +1233,7 @@ async fn insert_blueprint_rows(
     return Ok(());
   }
 
-  let mut tx = db.0.begin().await.map_err(|e| e.to_string())?;
+  let mut tx = db.writer().begin().await.map_err(|e| e.to_string())?;
 
   for chunk in rows.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
     let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
@@ -1260,7 +1260,7 @@ async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMeta
     return Ok(());
   }
 
-  let mut tx = db.0.begin().await.map_err(|e| e.to_string())?;
+  let mut tx = db.writer().begin().await.map_err(|e| e.to_string())?;
 
   for chunk in rows.chunks(SQLITE_MAX_BIND_PARAMS / 4) {
     let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
@@ -2604,18 +2604,18 @@ mod tests {
 
     async fn seed_item_type(db: &Database, id: i64) {
       sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (16, 'Skill', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (255, 16, 'G', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
         "INSERT OR IGNORE INTO item_types (id, group_id, description, name, published) VALUES (?, 255, '', 'Skill', 1)",
       )
       .bind(id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -2765,11 +2765,11 @@ mod tests {
       seed_item_type(&db, 3300).await;
       seed_item_type(&db, 3301).await;
       sqlx::query("INSERT INTO agent_types (id, name) VALUES (2, 'BasicAgent')")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT INTO npc_corporation_divisions (id, name) VALUES (22, 'Distribution')")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -2809,7 +2809,7 @@ mod tests {
         "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
         VALUES (1000035, 42, 7, 99, 'Stale', 0.1, 'OLD')",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 

@@ -1829,7 +1829,7 @@ mod tests {
     .bind(30_000_142)
     .bind(station_id)
     .bind(1_700_000_000_i64)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -2368,7 +2368,7 @@ mod tests {
       .bind(contact_id)
       .bind(kind)
       .bind(name)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -2377,7 +2377,7 @@ mod tests {
       sqlx::query("INSERT INTO character_contact_labels (character_id, label_id, label_name) VALUES (42, ?, ?)")
         .bind(label_id)
         .bind(name)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
     }
@@ -2736,7 +2736,7 @@ mod tests {
         "INSERT INTO factions (id, corporation_id, description, is_unique, name, size_factor, station_count, \
         station_system_count) VALUES (500001, 1000099, '', 1, 'Caldari State', 1.0, 0, 0)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

@@ -974,7 +974,7 @@ mod tests {
       .bind(GROUP_ID)
       .bind(name)
       .bind(type_id + 1000)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

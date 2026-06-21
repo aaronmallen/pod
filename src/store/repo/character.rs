@@ -323,7 +323,7 @@ fn push_token_predicate(builder: &mut QueryBuilder<Sqlite>, token: &FilterToken,
 }
 
 pub async fn delete(db: &Database, id: i64) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM credentials WHERE owner_id = ? AND owner_type = ?")
     .bind(id)
     .bind(OwnerType::Character)
@@ -380,7 +380,7 @@ pub async fn insert_with_org(
   alliance: Option<&Alliance>,
   faction: Option<&Faction>,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
@@ -535,7 +535,7 @@ pub async fn upsert(db: &Database, char: &Character) -> Result<(), Error> {
   .bind(char.race_id())
   .bind(char.security_status())
   .bind(char.title())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -549,7 +549,7 @@ pub async fn upsert_with_org(
   alliance: Option<&Alliance>,
   faction: Option<&Faction>,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("PRAGMA defer_foreign_keys = ON").execute(&mut *tx).await?;
 
@@ -745,7 +745,7 @@ pub async fn upsert_attributes(db: &Database, attributes: &CharacterAttributes) 
   .bind(attributes.perception())
   .bind(attributes.unallocated_sp())
   .bind(attributes.willpower())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -762,7 +762,7 @@ pub async fn implants(db: &Database, character_id: i64) -> Result<Vec<CharacterI
 }
 
 pub async fn replace_implants(db: &Database, character_id: i64, implants: &[CharacterImplant]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_implants WHERE character_id = ?")
     .bind(character_id)
@@ -797,7 +797,7 @@ pub async fn skills(db: &Database, character_id: i64) -> Result<Vec<CharacterSki
 }
 
 pub async fn replace_skills(db: &Database, character_id: i64, skills: &[CharacterSkill]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_skills WHERE character_id = ?")
     .bind(character_id)
@@ -861,7 +861,7 @@ pub async fn replace_skillqueue(
   character_id: i64,
   entries: &[CharacterSkillqueue],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_skillqueue WHERE character_id = ?")
     .bind(character_id)
@@ -946,7 +946,7 @@ pub async fn upsert_telemetry(db: &Database, telemetry: &CharacterTelemetry) -> 
   .bind(telemetry.station_id())
   .bind(telemetry.structure_id())
   .bind(telemetry.synced_at())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -958,7 +958,7 @@ pub async fn replace_clones_for_character(
   jump_clones: &[CharacterJumpClone],
   implants: &[CharacterCloneImplant],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_clone_implants WHERE character_id = ?")
     .bind(character_id)
@@ -1119,7 +1119,7 @@ pub async fn replace_contacts_for_character(
   contacts: &[CharacterContact],
   protected: &HashSet<i64>,
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   // `protected` ids carry an unacknowledged add/edit/remove outbox write; leaving their optimistic local row
   // untouched stops a full-replace sync inside the drain window from clobbering a just-made change.
@@ -1181,7 +1181,7 @@ pub async fn upsert_contact(db: &Database, contact: &CharacterContact) -> Result
   .bind(contact.is_blocked())
   .bind(contact.label_ids())
   .bind(contact.contact_name())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1190,7 +1190,7 @@ pub async fn delete_contact(db: &Database, character_id: i64, contact_id: i64) -
   sqlx::query("DELETE FROM character_contacts WHERE character_id = ? AND contact_id = ?")
     .bind(character_id)
     .bind(contact_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -1200,7 +1200,7 @@ pub async fn replace_labels_for_character(
   character_id: i64,
   labels: &[CharacterContactLabel],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_contact_labels WHERE character_id = ?")
     .bind(character_id)
@@ -1368,7 +1368,7 @@ pub async fn upsert_killmail(db: &Database, killmail: &CharacterKillEntry) -> Re
   .bind(killmail.final_blow())
   .bind(killmail.kill_time())
   .bind(killmail.synced_at())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1437,7 +1437,7 @@ pub async fn killmail_record_absent_recheck(
   .bind(finalize)
   .bind(character_id)
   .bind(killmail_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1455,7 +1455,7 @@ pub async fn killmail_upgrade_to_zkill(
   .bind(value_isk)
   .bind(character_id)
   .bind(killmail_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1510,7 +1510,7 @@ pub async fn upsert_killmail_detail(
   attackers: &[KillmailAttacker],
   items: &[KillmailItem],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM killmail_attackers WHERE character_id = ? AND killmail_id = ?")
     .bind(character_id)
@@ -1611,7 +1611,7 @@ pub async fn upsert_notification(db: &Database, notification: &CharacterNotifica
   .bind(notification.is_read())
   .bind(notification.text())
   .bind(notification.synced_at())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -1620,7 +1620,7 @@ pub async fn mark_read(db: &Database, character_id: i64, notification_id: i64) -
   sqlx::query("UPDATE character_notifications SET is_read = 1 WHERE character_id = ? AND notification_id = ?")
     .bind(character_id)
     .bind(notification_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -1667,7 +1667,7 @@ pub async fn assign(db: &Database, character_id: i64, squad_id: i64, position: i
   .fetch_all(&db.0)
   .await?;
 
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (id, slot) in cascade_positions(&occupants, character_id, position) {
     sqlx::query(
       "INSERT INTO character_squads (character_id, position, squad_id) VALUES (?, ?, ?) \
@@ -1694,7 +1694,7 @@ pub async fn delete_squad(db: &Database, id: i64) -> Result<(), Error> {
   let rows = sqlx::query("DELETE FROM squads WHERE id = ? AND name != ?")
     .bind(id)
     .bind(RESERVED_UNASSIGNED_NAME)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?
     .rows_affected();
   if rows == 0 && is_reserved_id(db, id).await? {
@@ -1756,7 +1756,7 @@ pub async fn normalize(db: &Database, squad_id: i64) -> Result<(), Error> {
     return Ok(());
   }
 
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (index, (character_id, _)) in rows.iter().enumerate() {
     sqlx::query("UPDATE character_squads SET position = ? WHERE character_id = ?")
       .bind(index as i64)
@@ -1770,7 +1770,7 @@ pub async fn normalize(db: &Database, squad_id: i64) -> Result<(), Error> {
 
 pub async fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let now = Utc::now().timestamp();
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {
     sqlx::query("UPDATE squads SET position = ?, updated_at = ? WHERE id = ? AND name != ?")
       .bind(position as i64)
@@ -1813,7 +1813,7 @@ pub async fn update(
     .bind(name)
     .bind(now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -1865,7 +1865,7 @@ pub async fn replace_standings_for_character(
   character_id: i64,
   standings: &[CharacterStanding],
 ) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   sqlx::query("DELETE FROM character_standings WHERE character_id = ?")
     .bind(character_id)
@@ -2156,7 +2156,7 @@ mod tests {
       .bind(5_i64)
       .bind(1_000_000_i64)
       .bind(5_i64)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
 
@@ -3285,7 +3285,7 @@ mod state_tests {
       .bind(0)
       .bind(sp)
       .bind(0)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -3299,7 +3299,7 @@ mod state_tests {
       .bind("test")
       .bind(amount)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -3312,7 +3312,7 @@ mod state_tests {
     .bind(online)
     .bind(30_000_142)
     .bind(synced_at)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3557,7 +3557,7 @@ mod clone_tests {
     )
     .bind(character_id)
     .bind(60_003_760_i64)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3570,7 +3570,7 @@ mod clone_tests {
     .bind(character_id)
     .bind(jump_clone_id)
     .bind(location_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3584,7 +3584,7 @@ mod clone_tests {
     .bind(type_id)
     .bind(name)
     .bind(format!("type_{type_id}_64.png"))
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3812,7 +3812,7 @@ mod contact_tests {
     .bind(is_watched)
     .bind(label_ids)
     .bind(name)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -3822,7 +3822,7 @@ mod contact_tests {
       .bind(character_id)
       .bind(label_id)
       .bind(label_name)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
   }
@@ -4919,7 +4919,7 @@ mod squad_tests {
         .bind(character_id)
         .bind(position)
         .bind(squad_id)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
     }
@@ -5179,7 +5179,7 @@ mod standing_tests {
     .bind(from_type)
     .bind(standing)
     .bind(name)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }

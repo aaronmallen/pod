@@ -19,7 +19,7 @@ pub async fn delete(db: &Database, owner_id: i64, owner_type: OwnerType) -> Resu
   sqlx::query("DELETE FROM credentials WHERE owner_id = ? AND owner_type = ?")
     .bind(owner_id)
     .bind(owner_type)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -72,7 +72,7 @@ pub async fn upsert(
   .bind(scopes)
   .bind(now)
   .bind(now)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -83,7 +83,7 @@ pub async fn mark_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerTy
     .bind(now)
     .bind(owner_id)
     .bind(owner_type)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -94,7 +94,7 @@ pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerT
     .bind(now)
     .bind(owner_id)
     .bind(owner_type)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -104,7 +104,7 @@ pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerT
 pub async fn http_cache_delete(db: &Database, url: &str) -> Result<(), Error> {
   sqlx::query("DELETE FROM http_cache WHERE url = ?")
     .bind(url)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -123,7 +123,7 @@ pub async fn http_cache_get(db: &Database, url: &str) -> Result<Option<HttpCache
 pub async fn purge_expired(db: &Database) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM http_cache WHERE expires_at IS NOT NULL AND expires_at < ?")
     .bind(Utc::now().timestamp())
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
 
   Ok(result.rows_affected())
@@ -139,7 +139,7 @@ pub async fn http_cache_upsert(db: &Database, entry: &HttpCacheEntry) -> Result<
   .bind(entry.etag().as_deref())
   .bind(entry.expires_at())
   .bind(entry.url().as_str())
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -178,7 +178,7 @@ pub async fn append(
 }
 
 pub async fn claim_due(db: &Database, now: &str, limit: i64) -> Result<Vec<Outbox>, Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   let ids = sqlx::query_scalar::<_, i64>(
     "SELECT id FROM outbox \
     WHERE status IN ('pending', 'inflight') AND next_attempt_at <= ? \
@@ -211,7 +211,7 @@ pub async fn mark_done(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("UPDATE outbox SET status = 'done', last_error = NULL, updated_at = ? WHERE id = ?")
     .bind(&now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -224,7 +224,7 @@ pub async fn mark_failed(db: &Database, id: i64, error: &str) -> Result<(), Erro
     .bind(error)
     .bind(&now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -239,7 +239,7 @@ pub async fn reschedule(db: &Database, id: i64, next_attempt_at: &str, last_erro
   .bind(last_error)
   .bind(&now)
   .bind(id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -247,7 +247,7 @@ pub async fn reschedule(db: &Database, id: i64, next_attempt_at: &str, last_erro
 pub async fn prune_done(db: &Database, before: &str) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM outbox WHERE status = 'done' AND updated_at < ?")
     .bind(before)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(result.rows_affected())
 }
@@ -319,7 +319,7 @@ pub async fn assign(db: &Database, entity_type: &str, entity_id: i64, tag_id: i6
   .bind(tag_id)
   .bind(entity_type)
   .bind(entity_id)
-  .execute(&db.0)
+  .execute(db.writer())
   .await?;
   Ok(())
 }
@@ -344,7 +344,7 @@ pub async fn create(db: &Database, name: &str, description: Option<&str>, color:
 pub async fn tag_delete(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM tags WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -386,7 +386,7 @@ pub async fn memberships(db: &Database, entity_type: &str) -> Result<Vec<EntityT
 
 pub async fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let now = Utc::now().timestamp();
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   for (position, id) in ordered_ids.iter().enumerate() {
     sqlx::query("UPDATE tags SET position = ?, updated_at = ? WHERE id = ?")
       .bind(position as i64)
@@ -404,7 +404,7 @@ pub async fn unassign(db: &Database, entity_type: &str, entity_id: i64, tag_id: 
     .bind(tag_id)
     .bind(entity_type)
     .bind(entity_id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -423,7 +423,7 @@ pub async fn update(
     .bind(name)
     .bind(now)
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -933,7 +933,7 @@ mod migration_cascade_tests {
     .bind(23_i64)
     .bind(24_i64)
     .bind(2_i64)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
 
@@ -942,7 +942,7 @@ mod migration_cascade_tests {
         .bind(id)
         .bind(attribute_id)
         .bind(3_i64)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
     }
@@ -1003,7 +1003,7 @@ mod migration_cascade_tests {
     .bind(21_i64)
     .bind(19_i64)
     .bind(17_i64)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
 

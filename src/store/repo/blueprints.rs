@@ -254,7 +254,7 @@ async fn delete_character_blueprints(db: &Database, character_id: i64, item_ids:
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -270,7 +270,7 @@ async fn delete_corporation_blueprints(db: &Database, corporation_id: i64, item_
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -363,7 +363,7 @@ async fn replace_for_character_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in blueprints.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for blueprint in chunk {
       insert_character_blueprint(&mut tx, blueprint).await?;
     }
@@ -392,7 +392,7 @@ async fn replace_for_corporation_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in blueprints.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for blueprint in chunk {
       insert_corporation_blueprint(&mut tx, blueprint).await?;
     }
@@ -507,7 +507,7 @@ mod tests {
     .bind(activity_id)
     .bind(material_type_id)
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -527,7 +527,7 @@ mod tests {
     .bind(activity_id)
     .bind(product_type_id)
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -546,7 +546,7 @@ mod tests {
       .bind(activity_id)
       .bind(time)
       .bind(max)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -586,7 +586,7 @@ mod tests {
       .bind(activity_id)
       .bind(time)
       .bind(max)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -923,7 +923,7 @@ mod tests {
 
       sqlx::query("DELETE FROM characters WHERE id = ?")
         .bind(CHARACTER_ID)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 

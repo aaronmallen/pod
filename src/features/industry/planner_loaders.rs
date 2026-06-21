@@ -992,7 +992,7 @@ mod tests {
     .bind(activity_id)
     .bind(product_type_id)
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -1012,7 +1012,7 @@ mod tests {
     .bind(activity_id)
     .bind(material_type_id)
     .bind(quantity)
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
@@ -1165,11 +1165,11 @@ mod tests {
       insert_product(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
       insert_material(&db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
       sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (463, 6, 'Mining Barge', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -1177,7 +1177,7 @@ mod tests {
         (?, 463, 'A Hulk.', 'Hulk', 1, 3750.0)",
       )
       .bind(HULK)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       blueprints::replace_for_character(
@@ -1213,11 +1213,11 @@ mod tests {
       insert_product(db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, HULK, 1).await;
       insert_material(db, HULK_BLUEPRINT, MANUFACTURING_ACTIVITY_ID, TRITANIUM, 100).await;
       sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (463, 6, 'Mining Barge', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -1225,7 +1225,7 @@ mod tests {
         (?, 463, 'A Hulk.', 'Hulk', 1, 3750.0)",
       )
       .bind(HULK)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -1267,11 +1267,11 @@ mod tests {
 
     async fn seed_implant(db: &Database, type_id: i64, name: &str, dogma: &str) {
       sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (20, 'Implant', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (300, 20, 'Cyber', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -1281,7 +1281,7 @@ mod tests {
       .bind(type_id)
       .bind(name)
       .bind(dogma)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -1726,14 +1726,14 @@ mod tests {
 
     async fn seed_station(db: &Database, id: i64, solar_system_id: i64, name: &str) {
       sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (10000001, 'Region')")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
         "INSERT OR IGNORE INTO constellations (id, name, position_x, position_y, position_z, region_id) \
         VALUES (20000001, 'Constellation', 0, 0, 0, 10000001)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -1742,15 +1742,15 @@ mod tests {
         VALUES (?, 20000001, 'System', 0, 0, 0, 1.0)",
       )
       .bind(solar_system_id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (3, 'Station', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (15, 3, 'Station', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -1758,7 +1758,7 @@ mod tests {
         VALUES (?, 15, 'Station', '', 1)",
       )
       .bind(STATION_TYPE_ID)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -1771,7 +1771,7 @@ mod tests {
       .bind(solar_system_id)
       .bind(STATION_TYPE_ID)
       .bind(name)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

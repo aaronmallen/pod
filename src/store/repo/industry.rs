@@ -174,7 +174,7 @@ pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) 
     return Ok(());
   }
 
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM industry_cost_indices")
     .execute(&mut *tx)
     .await?;
@@ -204,7 +204,7 @@ pub async fn replace_cost_indices(db: &Database, indices: &[IndustryCostIndex]) 
 
 pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<IndustryPlan, Error> {
   let saved_at = chrono::Utc::now().to_rfc3339();
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
 
   let plan = sqlx::query_as::<_, IndustryPlan>(
     "INSERT INTO industry_plans (name, product_type_id, runs, root_facility_system, saved_at) \
@@ -246,7 +246,7 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
 /// in one transaction. Pass an empty slice to clear a plan's segments (every type then loads as one implicit
 /// full unassigned segment).
 pub async fn replace_plan_segments(db: &Database, plan_id: i64, segments: &[PlanSegment]) -> Result<(), Error> {
-  let mut tx = db.0.begin().await?;
+  let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM industry_plan_segments WHERE plan_id = ?")
     .bind(plan_id)
     .execute(&mut *tx)
@@ -284,7 +284,7 @@ pub async fn segments_for_plan(db: &Database, plan_id: i64) -> Result<Vec<PlanSe
 pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM industry_plans WHERE id = ?")
     .bind(id)
-    .execute(&db.0)
+    .execute(db.writer())
     .await?;
   Ok(())
 }
@@ -369,7 +369,7 @@ async fn delete_character_jobs(db: &Database, character_id: i64, job_ids: &[i64]
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -385,7 +385,7 @@ async fn delete_corporation_jobs(db: &Database, corporation_id: i64, job_ids: &[
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(&db.0).await?;
+  builder.build().execute(db.writer()).await?;
   Ok(())
 }
 
@@ -538,7 +538,7 @@ async fn replace_for_character_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in jobs.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for job in chunk {
       insert_character_job(&mut tx, job).await?;
     }
@@ -567,7 +567,7 @@ async fn replace_for_corporation_batched(
 
   let batch_size = batch_size.max(1);
   for chunk in jobs.chunks(batch_size) {
-    let mut tx = db.0.begin().await?;
+    let mut tx = db.writer().begin().await?;
     for job in chunk {
       insert_corporation_job(&mut tx, job).await?;
     }
@@ -721,7 +721,7 @@ mod tests {
     async fn seed_solar_system(db: &Database, id: i64) {
       sqlx::query("INSERT OR IGNORE INTO regions (id, name) VALUES (?, 'Test Region')")
         .bind(REGION_ID)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -730,7 +730,7 @@ mod tests {
       )
       .bind(CONSTELLATION_ID)
       .bind(REGION_ID)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -740,7 +740,7 @@ mod tests {
       )
       .bind(id)
       .bind(CONSTELLATION_ID)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -748,11 +748,11 @@ mod tests {
     async fn seed_station(db: &Database, id: i64, solar_system_id: i64, name: &str) {
       seed_solar_system(db, solar_system_id).await;
       sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (3, 'Station', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (15, 3, 'Station', 1)")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
@@ -760,7 +760,7 @@ mod tests {
         VALUES (?, 15, 'Station', '', 1)",
       )
       .bind(STATION_TYPE_ID)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -773,7 +773,7 @@ mod tests {
       .bind(solar_system_id)
       .bind(STATION_TYPE_ID)
       .bind(name)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -785,7 +785,7 @@ mod tests {
         .bind(name)
         .bind(owner_id)
         .bind(solar_system_id)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
     }
@@ -799,7 +799,7 @@ mod tests {
       .bind(id)
       .bind(name)
       .bind(solar_system_id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -811,7 +811,7 @@ mod tests {
       )
       .bind(owner_id)
       .bind(id)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }
@@ -1449,7 +1449,7 @@ mod tests {
 
       sqlx::query("DELETE FROM characters WHERE id = ?")
         .bind(CHARACTER_ID)
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -1565,14 +1565,14 @@ mod tests {
 
     async fn seed_system(db: &Database) {
       sqlx::query("INSERT INTO regions (id, name) VALUES (10000002, 'The Forge')")
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query(
         "INSERT INTO constellations (id, name, position_x, position_y, position_z, region_id) \
         VALUES (20000002, 'Kimotoro', 0, 0, 0, 10000002)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
       sqlx::query(
@@ -1580,7 +1580,7 @@ mod tests {
           (id, constellation_id, name, position_x, position_y, position_z, security_status) \
         VALUES (30000142, 20000002, 'Jita', 0, 0, 0, 0.9)",
       )
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

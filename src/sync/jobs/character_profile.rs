@@ -128,17 +128,17 @@ mod tests {
 
   async fn seed_ship_type(db: &store::Database) {
     sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     sqlx::query(
       "INSERT INTO item_types (id, group_id, description, name, published) VALUES (601, 25, 'Merlin', 'Merlin', 1)",
     )
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }

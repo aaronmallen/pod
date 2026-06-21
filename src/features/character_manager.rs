@@ -3037,7 +3037,7 @@ mod tests {
           .bind(0_i64)
           .bind(sp)
           .bind(0_i64)
-          .execute(&db.0)
+          .execute(db.writer())
           .await
           .unwrap();
       }

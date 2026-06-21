@@ -1000,23 +1000,23 @@ mod tests {
 
   async fn seed_ship_type(db: &Database) {
     sqlx::query("INSERT INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     sqlx::query("INSERT INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     sqlx::query(
       "INSERT INTO item_types (id, group_id, description, name, published) VALUES (601, 25, 'Merlin', 'Merlin', 1)",
     )
-    .execute(&db.0)
+    .execute(db.writer())
     .await
     .unwrap();
   }
 
   async fn seed_character(db: &Database, id: i64) {
-    let mut tx = db.0.begin().await.unwrap();
+    let mut tx = db.writer().begin().await.unwrap();
     sqlx::query("PRAGMA defer_foreign_keys = ON")
       .execute(&mut *tx)
       .await
@@ -1402,7 +1402,7 @@ mod tests {
       sqlx::query("UPDATE outbox SET status = 'done', updated_at = ? WHERE id = ?")
         .bind(Utc::now().to_rfc3339())
         .bind(row.id())
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -1527,13 +1527,13 @@ mod tests {
       sqlx::query("UPDATE outbox SET status = 'done', updated_at = ? WHERE id = ?")
         .bind(&long_ago)
         .bind(stale.id())
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
       sqlx::query("UPDATE outbox SET status = 'done', updated_at = ? WHERE id = ?")
         .bind(&now)
         .bind(fresh.id())
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -1574,7 +1574,7 @@ mod tests {
         .bind(Utc::now().to_rfc3339())
         .bind(Utc::now().to_rfc3339())
         .bind(row.id())
-        .execute(&db.0)
+        .execute(db.writer())
         .await
         .unwrap();
 
@@ -1694,7 +1694,7 @@ mod tests {
       .bind("test")
       .bind(balance)
       .bind(balance)
-      .execute(&db.0)
+      .execute(db.writer())
       .await
       .unwrap();
     }

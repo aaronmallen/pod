@@ -1,4 +1,5 @@
 mod graphics;
+mod shortcuts;
 mod snooze_scheduler;
 mod trash_purge_scheduler;
 mod windows;
@@ -18,6 +19,7 @@ use iced::{
   widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
   window,
 };
+use shortcuts::{Chord, FocusTracker};
 use windows::{Window, Windows};
 
 use crate::{
@@ -126,6 +128,7 @@ struct App {
   /// runs at most once per app session. The cheap per-entry data (prices, owned blueprints) is always refreshed.
   industry_catalog: Option<industry::StaticCatalog>,
   init_error: Option<String>,
+  keyboard_focus: FocusTracker,
   last_push: Option<SystemTime>,
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
@@ -231,7 +234,6 @@ enum Message {
   PeriodicPush,
   Pulled(bool),
   Pushed(Option<SystemTime>),
-  #[cfg(target_os = "macos")]
   Quit,
   ReacquireLease,
   Ready(Runtime),
@@ -239,6 +241,7 @@ enum Message {
   RestartSync,
   SeedProgress(splash::seed::Progress),
   Settings(settings::Message),
+  Shortcut(Chord),
   SkillPlanEditor(skill_plan_editor::Message),
   Skills(skills::Message),
   SnoozesWoken(Vec<(i64, i64)>),
@@ -250,6 +253,7 @@ enum Message {
   SyncPulse,
   TakeOver,
   TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
+  TextInputFocused(iced::widget::Id),
   ToggleSyncPopover,
   TrashPurged(Vec<(i64, i64)>),
   UpdaterAction(updater_banner::Action),
@@ -325,15 +329,16 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
-      #[cfg(target_os = "macos")]
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
       Message::ReauthCharacter(_) => "ReauthCharacter",
       Message::SeedProgress(_) => "SeedProgress",
+      Message::Shortcut(_) => "Shortcut",
       Message::SnoozesWoken(_) => "SnoozesWoken",
       Message::Splash(_) => "Splash",
       Message::StorageMigrated => "StorageMigrated",
       Message::StoreOpened(_) => "StoreOpened",
+      Message::TextInputFocused(_) => "TextInputFocused",
       Message::TrashPurged(_) => "TrashPurged",
       Message::WindowOpened(_) => "WindowOpened",
       _ => return None,
@@ -784,6 +789,7 @@ fn boot() -> (App, Task<Message>) {
     industry: None,
     industry_catalog: None,
     init_error: None,
+    keyboard_focus: FocusTracker::default(),
     last_push: None,
     last_synced: None,
     mail: None,
@@ -2336,8 +2342,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   }
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
-  #[cfg(target_os = "macos")]
-  subs.push(quit_shortcut_subscription());
+  subs.push(shortcuts::subscription(Message::Shortcut));
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
@@ -2372,19 +2377,6 @@ fn subscription(app: &App) -> Subscription<Message> {
     subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
   }
   Subscription::batch(subs)
-}
-
-/// Restores the Cmd-Q quit accelerator that the now-removed native macOS menu used to provide.
-#[cfg(target_os = "macos")]
-fn quit_shortcut_subscription() -> Subscription<Message> {
-  iced::event::listen_with(|event, _status, _id| match event {
-    iced::Event::Keyboard(keyboard::Event::KeyPressed {
-      key: keyboard::Key::Character(c),
-      modifiers,
-      ..
-    }) if modifiers.command() && c.as_str().eq_ignore_ascii_case("q") => Some(Message::Quit),
-    _ => None,
-  })
 }
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
@@ -2667,8 +2659,9 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    #[cfg(target_os = "macos")]
     Message::Quit => shutdown(app),
+    Message::Shortcut(chord) => handle_shortcut(app, chord),
+    Message::TextInputFocused(id) => handle_text_input_focused(app, id),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
     Message::UpdaterDismissToast => handle_updater_dismiss_toast(app),
@@ -2677,6 +2670,20 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::WindowOpened(id) => on_window_opened(app, id),
     _ => Task::none(),
   }
+}
+
+fn handle_shortcut(app: &mut App, chord: Chord) -> Task<Message> {
+  let action = match chord {
+    Chord::OpenSettings => handle_nav(app, rail::Destination::Settings),
+    Chord::Quit => Task::done(Message::Quit),
+  };
+  app.keyboard_focus.set_focused(None);
+  Task::batch([action, shortcuts::probe_focus(Message::TextInputFocused)])
+}
+
+fn handle_text_input_focused(app: &mut App, id: iced::widget::Id) -> Task<Message> {
+  app.keyboard_focus.set_focused(Some(id));
+  Task::none()
 }
 
 fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
@@ -4479,6 +4486,7 @@ mod tests {
       industry: None,
       industry_catalog: None,
       init_error: None,
+      keyboard_focus: FocusTracker::default(),
       last_push: None,
       last_synced: None,
       mail: None,
@@ -4950,12 +4958,14 @@ mod tests {
         Message::Pushed(None),
         Message::ReauthCharacter(1),
         Message::SeedProgress(splash::seed::Progress::Step("seeding".to_owned())),
+        Message::Shortcut(Chord::OpenSettings),
         Message::SnoozesWoken(Vec::new()),
         Message::Splash(splash::Message::Tick),
         Message::StorageMigrated,
         Message::SyncPulse,
         Message::TakeOver,
         Message::TakeOverResolved(TakeOverOutcome::Failed, Box::new(reopened)),
+        Message::TextInputFocused(iced::widget::Id::from("search")),
         Message::ToggleSyncPopover,
         Message::UpdaterAction(updater_banner::Action::Apply),
         Message::UpdaterDismissToast,
@@ -5293,6 +5303,47 @@ mod tests {
           y: 60.0,
         }
       );
+    }
+  }
+
+  mod handle_shortcut {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_routes_the_open_settings_chord_to_the_settings_view() {
+      let mut app = featured_app();
+
+      let _ = super::super::handle_shortcut(&mut app, Chord::OpenSettings);
+
+      assert_eq!(app.route, Route::Settings);
+    }
+
+    #[test]
+    fn it_opens_settings_from_any_starting_route() {
+      let mut app = featured_app();
+      app.route = Route::Wallet;
+
+      let _ = super::super::handle_shortcut(&mut app, Chord::OpenSettings);
+
+      assert_eq!(app.route, Route::Settings);
+    }
+  }
+
+  mod handle_text_input_focused {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_records_the_focused_input_on_the_tracker() {
+      let mut app = test_app();
+
+      let _ = super::super::handle_text_input_focused(&mut app, iced::widget::Id::from("search"));
+
+      assert_eq!(app.keyboard_focus.is_text_input_focused(), true);
+      assert_eq!(app.keyboard_focus.focused_id(), Some(&iced::widget::Id::from("search")));
     }
   }
 

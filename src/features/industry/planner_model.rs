@@ -243,6 +243,19 @@ impl BuildPlan {
       })
       .collect()
   }
+
+  /// Total runs the merged build order schedules for `type_id` — the figure segments reconcile against. Sums
+  /// the runs of every merged row of that type (divergent ME/TE/facility settings keep separate rows).
+  // Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+  #[allow(dead_code)]
+  pub fn total_runs_for(&self, type_id: i64) -> i64 {
+    self
+      .merged_build_order()
+      .iter()
+      .filter(|row| row.type_id == type_id)
+      .map(|row| row.runs)
+      .sum()
+  }
 }
 
 /// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
@@ -291,6 +304,29 @@ pub struct NeededBlueprint {
   pub jobs: i64,
   pub runs: i64,
   pub type_id: i64,
+}
+
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlanSegment {
+  /// ESI jump_clone_id, stored opaquely and resolved at render; `None` is the pilot's active clone.
+  pub clone_id: Option<i64>,
+  /// Authenticated character id this slice of runs is assigned to; `None` is unassigned.
+  pub pilot_id: Option<i64>,
+  pub runs: i64,
+}
+
+impl PlanSegment {
+  // Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+  #[allow(dead_code)]
+  pub fn unassigned(runs: i64) -> Self {
+    PlanSegment {
+      clone_id: None,
+      pilot_id: None,
+      runs,
+    }
+  }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -391,6 +427,143 @@ fn draw_from_pool(remaining: &mut HashMap<(i64, i64), i64>, selection: &StockSel
     site: selection.site,
     type_id: selection.type_id,
   }
+}
+
+/// Folds a split job back into a single segment carrying the first segment's pilot+clone and all the runs.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub fn merge_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
+  let segments = reconcile_segments(stored, total);
+  let first = segments[0];
+
+  vec![PlanSegment {
+    clone_id: first.clone_id,
+    pilot_id: first.pilot_id,
+    runs: total,
+  }]
+}
+
+/// Reconciles stored segments to a job's current total runs so `Sum(runs) == total` always holds: absent rows
+/// become one full unassigned segment; a single segment absorbs the total; a total below the segment count
+/// collapses to the first segment's assignment; otherwise an off-balance set is redistributed evenly while
+/// keeping each segment's pilot+clone.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub fn reconcile_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
+  if stored.is_empty() {
+    return vec![PlanSegment::unassigned(total)];
+  }
+
+  let mut segments = stored.to_vec();
+  let n = segments.len();
+  if n == 1 {
+    segments[0].runs = total;
+    return segments;
+  }
+  if total < n as i64 {
+    let first = segments[0];
+    return vec![PlanSegment {
+      clone_id: first.clone_id,
+      pilot_id: first.pilot_id,
+      runs: total,
+    }];
+  }
+
+  let sum: i64 = segments.iter().map(|segment| segment.runs).sum();
+  if sum != total {
+    let distribution = distribute_runs(total, n);
+    for (segment, runs) in segments.iter_mut().zip(distribution) {
+      segment.runs = runs;
+    }
+  }
+  segments
+}
+
+/// Removes the segment at `index`, folding its runs back in by redistributing the total evenly across the
+/// remaining segments. The last remaining segment cannot be removed.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub fn remove_segment(stored: &[PlanSegment], total: i64, index: usize) -> Vec<PlanSegment> {
+  let segments = reconcile_segments(stored, total);
+  if segments.len() <= 1 || index >= segments.len() {
+    return segments;
+  }
+
+  let mut next: Vec<PlanSegment> = segments
+    .into_iter()
+    .enumerate()
+    .filter_map(|(i, segment)| (i != index).then_some(segment))
+    .collect();
+  let distribution = distribute_runs(total, next.len());
+  for (segment, runs) in next.iter_mut().zip(distribution) {
+    segment.runs = runs;
+  }
+  next
+}
+
+/// Sets the runs of the segment at `index` (clamped so every other segment keeps at least one run) and spreads
+/// the remainder evenly across the rest. A single-segment job is left unchanged — its runs track the total.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub fn set_segment_runs(stored: &[PlanSegment], total: i64, index: usize, value: i64) -> Vec<PlanSegment> {
+  let mut segments = reconcile_segments(stored, total);
+  let n = segments.len();
+  if n == 1 || index >= n {
+    return segments;
+  }
+
+  let clamped = value.clamp(1, total - (n as i64 - 1));
+  let distribution = distribute_runs(total - clamped, n - 1);
+  let mut others = distribution.into_iter();
+  for (i, segment) in segments.iter_mut().enumerate() {
+    segment.runs = if i == index {
+      clamped
+    } else {
+      others.next().unwrap_or(1)
+    };
+  }
+  segments
+}
+
+/// Splits the largest segment of a job in two (halving its runs), creating a new unassigned segment. Returns
+/// the segments unchanged when the total is too small to give every resulting segment at least one run.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub fn split_segments(stored: &[PlanSegment], total: i64) -> Vec<PlanSegment> {
+  let mut segments = reconcile_segments(stored, total);
+  if total < segments.len() as i64 + 1 {
+    return segments;
+  }
+
+  let mut largest = 0;
+  for (i, segment) in segments.iter().enumerate() {
+    if segment.runs > segments[largest].runs {
+      largest = i;
+    }
+  }
+  let head = (segments[largest].runs + 1) / 2;
+  let tail = segments[largest].runs - head;
+  if tail < 1 {
+    return segments;
+  }
+  segments[largest].runs = head;
+  segments.insert(largest + 1, PlanSegment::unassigned(tail));
+  segments
+}
+
+/// Splits `total` runs into `k` near-equal buckets, distributing the remainder one extra run to the leading
+/// buckets so the buckets always sum to `total`.
+// Build-order segment scaffolding exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+fn distribute_runs(total: i64, k: usize) -> Vec<i64> {
+  if k == 0 {
+    return Vec::new();
+  }
+
+  let k = k as i64;
+  let base = total / k;
+  let remainder = total - base * k;
+  (0..k).map(|i| base + i64::from(i < remainder)).collect()
 }
 
 /// Effective material need: `ceil(base * (1 - me/100))` floored at 1 per run, then scaled by runs. Reactions
@@ -962,6 +1135,73 @@ mod tests {
         );
       }
     }
+
+    mod total_runs_for {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_returns_zero_for_a_type_not_in_the_order() {
+        let plan = hulk_plan();
+
+        assert_eq!(plan.total_runs_for(999), 0);
+      }
+
+      #[test]
+      fn it_sums_runs_across_merged_rows_of_a_type() {
+        // WIDGET and GADGET each need 3 COGs at output_per_run 1 -> 6 COG runs total, merged into one row.
+        const WIDGET: i64 = 900;
+        const GADGET: i64 = 901;
+        const COG: i64 = 902;
+        let cog = BuildNode::new(COG, 1, false, vec![]);
+        let mut widget = BuildNode::new(WIDGET, 1, false, vec![Material::new(COG, 3)]);
+        let mut gadget = BuildNode::new(GADGET, 1, false, vec![Material::new(COG, 3)]);
+        widget.children.insert(COG, cog.clone());
+        gadget.children.insert(COG, cog);
+        let mut root = BuildNode::new(HULK, 1, false, vec![Material::new(WIDGET, 1), Material::new(GADGET, 1)]);
+        root.children.insert(WIDGET, widget);
+        root.children.insert(GADGET, gadget);
+
+        let plan = BuildPlan::new(root, 1);
+
+        assert_eq!(plan.total_runs_for(COG), 6);
+      }
+    }
+  }
+
+  mod distribute_runs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_always_sums_to_the_total() {
+      let distribution = distribute_runs(17, 5);
+
+      assert_eq!(distribution.iter().sum::<i64>(), 17);
+    }
+
+    #[test]
+    fn it_front_loads_the_remainder() {
+      let distribution = distribute_runs(17, 5);
+
+      assert_eq!(distribution, vec![4, 4, 3, 3, 3]);
+    }
+
+    #[test]
+    fn it_returns_empty_for_zero_buckets() {
+      let distribution = distribute_runs(10, 0);
+
+      assert!(distribution.is_empty());
+    }
+
+    #[test]
+    fn it_splits_evenly_when_divisible() {
+      let distribution = distribute_runs(12, 4);
+
+      assert_eq!(distribution, vec![3, 3, 3, 3]);
+    }
   }
 
   mod eff_qty {
@@ -1112,6 +1352,161 @@ mod tests {
     }
   }
 
+  mod merge_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collapses_to_one_segment_with_the_full_total() {
+      let stored = vec![
+        PlanSegment {
+          clone_id: Some(7),
+          pilot_id: Some(1),
+          runs: 4,
+        },
+        PlanSegment::unassigned(6),
+      ];
+
+      let merged = merge_segments(&stored, 10);
+
+      assert_eq!(merged.len(), 1);
+      assert_eq!(merged[0].runs, 10);
+    }
+
+    #[test]
+    fn it_keeps_the_first_segments_assignment() {
+      let stored = vec![
+        PlanSegment {
+          clone_id: Some(7),
+          pilot_id: Some(1),
+          runs: 4,
+        },
+        PlanSegment {
+          clone_id: Some(9),
+          pilot_id: Some(2),
+          runs: 6,
+        },
+      ];
+
+      let merged = merge_segments(&stored, 10);
+
+      assert_eq!(merged[0].pilot_id, Some(1));
+      assert_eq!(merged[0].clone_id, Some(7));
+    }
+  }
+
+  mod reconcile_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collapses_to_one_segment_when_the_total_drops_below_the_count() {
+      let stored = vec![
+        PlanSegment {
+          clone_id: Some(7),
+          pilot_id: Some(1),
+          runs: 2,
+        },
+        PlanSegment::unassigned(2),
+        PlanSegment::unassigned(2),
+      ];
+
+      let reconciled = reconcile_segments(&stored, 1);
+
+      assert_eq!(reconciled.len(), 1);
+      assert_eq!(reconciled[0].runs, 1);
+      assert_eq!(reconciled[0].pilot_id, Some(1));
+    }
+
+    #[test]
+    fn it_keeps_assignments_while_rebalancing_runs() {
+      let stored = vec![
+        PlanSegment {
+          clone_id: Some(7),
+          pilot_id: Some(1),
+          runs: 5,
+        },
+        PlanSegment {
+          clone_id: Some(9),
+          pilot_id: Some(2),
+          runs: 5,
+        },
+      ];
+
+      let reconciled = reconcile_segments(&stored, 7);
+
+      assert_eq!(reconciled.iter().map(|s| s.runs).collect::<Vec<_>>(), vec![4, 3]);
+      assert_eq!(reconciled[0].pilot_id, Some(1));
+      assert_eq!(reconciled[1].pilot_id, Some(2));
+    }
+
+    #[test]
+    fn it_returns_one_full_unassigned_segment_when_absent() {
+      let reconciled = reconcile_segments(&[], 12);
+
+      assert_eq!(reconciled, vec![PlanSegment::unassigned(12)]);
+    }
+
+    #[test]
+    fn it_sums_to_the_total_after_any_change() {
+      let stored = vec![
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(3),
+      ];
+
+      let reconciled = reconcile_segments(&stored, 100);
+
+      assert_eq!(reconciled.iter().map(|s| s.runs).sum::<i64>(), 100);
+    }
+
+    #[test]
+    fn it_tracks_the_total_for_a_single_segment() {
+      let stored = vec![PlanSegment {
+        clone_id: Some(7),
+        pilot_id: Some(1),
+        runs: 3,
+      }];
+
+      let reconciled = reconcile_segments(&stored, 25);
+
+      assert_eq!(reconciled.len(), 1);
+      assert_eq!(reconciled[0].runs, 25);
+      assert_eq!(reconciled[0].pilot_id, Some(1));
+    }
+  }
+
+  mod remove_segment {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_folds_runs_back_into_the_survivors() {
+      let stored = vec![
+        PlanSegment::unassigned(4),
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(3),
+      ];
+
+      let next = remove_segment(&stored, 10, 2);
+
+      assert_eq!(next.len(), 2);
+      assert_eq!(next.iter().map(|s| s.runs).sum::<i64>(), 10);
+    }
+
+    #[test]
+    fn it_keeps_the_last_segment() {
+      let stored = vec![PlanSegment::unassigned(10)];
+
+      let next = remove_segment(&stored, 10, 0);
+
+      assert_eq!(next.len(), 1);
+    }
+  }
+
   mod runs_for {
     use pretty_assertions::assert_eq;
 
@@ -1129,6 +1524,83 @@ mod tests {
       let result = runs_for(11, 4);
 
       assert_eq!(result, 3);
+    }
+  }
+
+  mod set_segment_runs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clamps_so_every_other_segment_keeps_a_run() {
+      let stored = vec![
+        PlanSegment::unassigned(5),
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(2),
+      ];
+
+      let next = set_segment_runs(&stored, 10, 0, 100);
+
+      assert_eq!(next[0].runs, 8);
+      assert_eq!(next.iter().map(|s| s.runs).sum::<i64>(), 10);
+    }
+
+    #[test]
+    fn it_leaves_a_single_segment_unchanged() {
+      let stored = vec![PlanSegment::unassigned(10)];
+
+      let next = set_segment_runs(&stored, 10, 0, 3);
+
+      assert_eq!(next[0].runs, 10);
+    }
+
+    #[test]
+    fn it_sets_the_target_and_spreads_the_remainder() {
+      let stored = vec![
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(3),
+        PlanSegment::unassigned(4),
+      ];
+
+      let next = set_segment_runs(&stored, 10, 1, 6);
+
+      assert_eq!(next[1].runs, 6);
+      assert_eq!(next.iter().map(|s| s.runs).sum::<i64>(), 10);
+    }
+  }
+
+  mod split_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_halves_the_largest_segment() {
+      let stored = vec![PlanSegment::unassigned(10)];
+
+      let next = split_segments(&stored, 10);
+
+      assert_eq!(next.len(), 2);
+      assert_eq!(next.iter().map(|s| s.runs).collect::<Vec<_>>(), vec![5, 5]);
+    }
+
+    #[test]
+    fn it_keeps_the_total_after_splitting() {
+      let stored = vec![PlanSegment::unassigned(7)];
+
+      let next = split_segments(&stored, 7);
+
+      assert_eq!(next.iter().map(|s| s.runs).sum::<i64>(), 7);
+    }
+
+    #[test]
+    fn it_refuses_to_split_when_runs_are_too_few() {
+      let stored = vec![PlanSegment::unassigned(1), PlanSegment::unassigned(1)];
+
+      let next = split_segments(&stored, 2);
+
+      assert_eq!(next.len(), 2);
     }
   }
 }

@@ -28,6 +28,17 @@ pub struct PlanTree {
   pub types: Vec<PlanType>,
 }
 
+// Build-order segment persistence exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanSegment {
+  pub clone_id: Option<i64>,
+  pub pilot_id: Option<i64>,
+  pub runs: i64,
+  pub segment_index: i64,
+  pub type_id: i64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanType {
   pub built: bool,
@@ -233,6 +244,49 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   Ok(plan)
 }
 
+/// Wholesale replaces the segment rows for a saved plan: drops every existing segment, then inserts `segments`
+/// in one transaction. Pass an empty slice to clear a plan's segments (every type then loads as one implicit
+/// full unassigned segment).
+// Build-order segment persistence exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub async fn replace_plan_segments(db: &Database, plan_id: i64, segments: &[PlanSegment]) -> Result<(), Error> {
+  let mut tx = db.0.begin().await?;
+  sqlx::query("DELETE FROM industry_plan_segments WHERE plan_id = ?")
+    .bind(plan_id)
+    .execute(&mut *tx)
+    .await?;
+  insert_segments(&mut tx, plan_id, segments).await?;
+
+  tx.commit().await?;
+  Ok(())
+}
+
+/// Loads a plan's persisted segments ordered by `(type_id, segment_index)`. A type with no rows is absent here
+/// and is treated by the caller as one implicit full unassigned segment.
+// Build-order segment persistence exercised by tests; awaiting planner UI wiring.
+#[allow(dead_code)]
+pub async fn segments_for_plan(db: &Database, plan_id: i64) -> Result<Vec<PlanSegment>, Error> {
+  let rows = sqlx::query_as::<_, (Option<i64>, Option<i64>, i64, i64, i64)>(
+    "SELECT clone_id, pilot_id, runs, segment_index, type_id \
+    FROM industry_plan_segments WHERE plan_id = ? ORDER BY type_id, segment_index",
+  )
+  .bind(plan_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(
+    rows
+      .into_iter()
+      .map(|(clone_id, pilot_id, runs, segment_index, type_id)| PlanSegment {
+        clone_id,
+        pilot_id,
+        runs,
+        segment_index,
+        type_id,
+      })
+      .collect(),
+  )
+}
+
 pub async fn delete_plan(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM industry_plans WHERE id = ?")
     .bind(id)
@@ -338,6 +392,30 @@ async fn delete_corporation_jobs(db: &Database, corporation_id: i64, job_ids: &[
   }
   builder.push(")");
   builder.build().execute(&db.0).await?;
+  Ok(())
+}
+
+async fn insert_segments(
+  tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+  plan_id: i64,
+  segments: &[PlanSegment],
+) -> Result<(), Error> {
+  for chunk in segments.chunks(SQLITE_MAX_BIND_PARAMS / 6) {
+    let mut builder = QueryBuilder::<Sqlite>::new(
+      "INSERT INTO industry_plan_segments \
+        (plan_id, type_id, segment_index, runs, pilot_id, clone_id) ",
+    );
+    builder.push_values(chunk, |mut row, segment| {
+      row
+        .push_bind(plan_id)
+        .push_bind(segment.type_id)
+        .push_bind(segment.segment_index)
+        .push_bind(segment.runs)
+        .push_bind(segment.pilot_id)
+        .push_bind(segment.clone_id);
+    });
+    builder.build().execute(&mut **tx).await?;
+  }
   Ok(())
 }
 
@@ -1112,6 +1190,25 @@ mod tests {
       }
     }
 
+    fn sample_segments() -> Vec<PlanSegment> {
+      vec![
+        PlanSegment {
+          clone_id: Some(1001),
+          pilot_id: Some(95_465_499),
+          runs: 4,
+          segment_index: 0,
+          type_id: 22_544,
+        },
+        PlanSegment {
+          clone_id: None,
+          pilot_id: Some(90_000_001),
+          runs: 3,
+          segment_index: 1,
+          type_id: 22_544,
+        },
+      ]
+    }
+
     fn sorted_by_type(mut tree: PlanTree) -> PlanTree {
       tree.types.sort_by_key(|kind| kind.type_id);
       tree
@@ -1203,6 +1300,53 @@ mod tests {
       assert_eq!(root.facility_structure, Some(60_003_760));
       assert_eq!(component.facility_structure, Some(1_021_000_000_001));
       assert_eq!(unset.facility_structure, None);
+    }
+
+    #[tokio::test]
+    async fn it_cascades_segments_when_a_plan_is_deleted() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      replace_plan_segments(&db, plan.id(), &sample_segments()).await.unwrap();
+
+      delete_plan(&db, plan.id()).await.unwrap();
+
+      let segment_count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM industry_plan_segments WHERE plan_id = ?")
+        .bind(plan.id())
+        .fetch_one(&db.0)
+        .await
+        .unwrap();
+      assert_eq!(segment_count, 0);
+    }
+
+    #[tokio::test]
+    async fn it_loads_no_segments_for_a_plan_saved_without_any() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      let segments = segments_for_plan(&db, plan.id()).await.unwrap();
+
+      assert!(segments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_replaces_segments_wholesale() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+      replace_plan_segments(&db, plan.id(), &sample_segments()).await.unwrap();
+
+      replace_plan_segments(&db, plan.id(), &[]).await.unwrap();
+
+      assert!(segments_for_plan(&db, plan.id()).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_a_plans_segments() {
+      let db = store::open_test().await.unwrap();
+      let plan = create_plan(&db, "Hulk run", &sample_tree()).await.unwrap();
+
+      replace_plan_segments(&db, plan.id(), &sample_segments()).await.unwrap();
+
+      assert_eq!(segments_for_plan(&db, plan.id()).await.unwrap(), sample_segments());
     }
 
     #[tokio::test]

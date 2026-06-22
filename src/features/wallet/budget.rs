@@ -829,10 +829,6 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
   let empty_month = std::collections::HashMap::new();
   let activity = activity_by_month.get(month).unwrap_or(&empty_month);
   let pool = math::budgetable_pool(db, scope).await;
-  let assigned_total = budget::scope_assigned_total(db, scope).await.unwrap_or(0.0);
-  // Income a rule/override has filed into an envelope is reserved out of the pool
-  // so it does not also show as assignable (see `pool_summary`).
-  let categorized_inflows = math::categorized_inflow_total(&activity_by_month);
   let prev_month = shift_month(month, -1);
   let prev_activity = activity_by_month.get(&prev_month).unwrap_or(&empty_month);
 
@@ -861,7 +857,7 @@ pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView 
     });
   }
 
-  let summary = math::pool_summary(pool, assigned_total, categorized_inflows, availables);
+  let summary = math::pool_summary(pool, availables);
   BudgetView {
     groups,
     month: month.to_owned(),
@@ -1837,21 +1833,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_draws_down_ready_to_assign_for_a_future_month_assignment() {
+    async fn it_only_holds_the_displayed_months_available_against_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_pilot(&db, 1, 10_000.0).await;
       let view = load(&db, BudgetScope::Character(1), "2026-06").await;
       let category_id = view.first_category_id().unwrap();
 
-      // Assign the same ISK in the current month and a future one. Global RTA is
-      // a single pool, so both draws count and the displayed month sees them.
+      // Assign ISK in the displayed month and in a future one. Ready-to-Assign is
+      // money-conserving and anchored to the displayed month's held availables, so
+      // a future-month envelope is not yet held against the current pool.
       persist_assignment(&db, category_id, "2026-06", 8_000.0).await;
       persist_assignment(&db, category_id, "2026-08", 8_000.0).await;
       let after = load(&db, BudgetScope::Character(1), "2026-06").await;
 
-      // 10_000 pool − 16_000 assigned across months = −6_000: the same ISK
-      // cannot be assigned twice without RTA going negative.
-      assert_eq!(after.ready_to_assign, -6_000.0);
+      // 10_000 pool − 8_000 held in June = 2_000 free to assign.
+      assert_eq!(after.ready_to_assign, 2_000.0);
     }
   }
 

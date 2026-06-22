@@ -293,8 +293,8 @@ pub struct PoolSummary {
   pub overspent: f64,
   /// Σ liquid balances of the scope's character + corp-division wallets.
   pub pool: f64,
-  /// pool − Σ assigned across every category and every month (the global
-  /// running pool). A single timeline-wide value, not the displayed month.
+  /// pool − Σ max(0, available) across the scope's categories: the liquid ISK
+  /// not held in any envelope, conserving `pool = ready_to_assign + Σ held`.
   pub ready_to_assign: f64,
 }
 
@@ -1045,49 +1045,33 @@ pub fn aggregate_activity<'a>(
   by_category
 }
 
-/// Ready-to-Assign and overspending for a scope. Ready-to-Assign is the global
-/// running pool `ready_to_assign = pool − assigned_total − categorized_inflows`,
-/// where `assigned_total` is the sum of every assignment across all categories and
-/// all months — so ISK assigned in a future month draws down the same pool the
-/// current month sees and can never be assigned twice — and `categorized_inflows`
-/// is income a rule (or manual override) has filed into an envelope: that ISK has
-/// already been returned to a category's `available`, so reserving it out of the
-/// pool keeps it from also showing as assignable (it would otherwise be counted
-/// twice). `overspent = Σ min(0, available)` over the displayed month's
-/// `availables` only (it drives Cover-overspending for that month).
-pub fn pool_summary(
-  pool: f64,
-  assigned_total: f64,
-  categorized_inflows: f64,
-  availables: impl IntoIterator<Item = f64>,
-) -> PoolSummary {
+/// Ready-to-Assign and overspending for a scope, money-conserving by
+/// construction. Ready-to-Assign is `pool − Σ max(0, available)` over the
+/// passed per-category availables, so the liquid pool always splits exactly as
+/// `pool = ready_to_assign + Σ max(0, available)`. Each `available = carry +
+/// assigned + signed_activity` with `carry` rolling every prior month, so the
+/// sum is the global ISK held in envelopes and the remainder is what is free to
+/// assign. Only positive availables hold ISK: an overspent envelope (negative
+/// available) shows red and is reported in `overspent = Σ min(0, available)`,
+/// but it never inflates Ready-to-Assign. Genuine income carries no override or
+/// rule, so it never lands in an envelope and stays counted in `pool` as
+/// Ready-to-Assign; only an explicit override or a refund files an inflow into a
+/// category.
+pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> PoolSummary {
+  let mut held = 0.0;
   let mut overspent = 0.0;
   for available in availables {
     if available < 0.0 {
       overspent += available;
+    } else {
+      held += available;
     }
   }
   PoolSummary {
     overspent,
     pool,
-    ready_to_assign: pool - assigned_total - categorized_inflows,
+    ready_to_assign: pool - held,
   }
-}
-
-/// The total income a scope has filed into envelopes: the sum over categories of
-/// each category's net positive activity across all months. Spending envelopes
-/// (net-negative activity) contribute nothing; only categories that a rule or
-/// override has pushed net-positive — a windfall returned to a "Gifts" envelope,
-/// say — reserve that surplus out of Ready-to-Assign. Net (not gross) per category
-/// so income later spent back out of the same envelope un-reserves correctly.
-pub fn categorized_inflow_total(activity_by_month: &HashMap<String, HashMap<i64, f64>>) -> f64 {
-  let mut net_by_category: HashMap<i64, f64> = HashMap::new();
-  for month in activity_by_month.values() {
-    for (category_id, amount) in month {
-      *net_by_category.entry(*category_id).or_insert(0.0) += amount;
-    }
-  }
-  net_by_category.values().filter(|net| **net > 0.0).sum()
 }
 
 /// The character ids whose journals/balances a scope covers.
@@ -1367,45 +1351,6 @@ fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
   ids
 }
 
-/// The shared category every leg of each internal transfer must resolve to, so
-/// the legs cancel.
-///
-/// An internal transfer (ISK moved between two of the user's own wallets) is one
-/// EVE journal event mirrored into both wallets under the same journal `id`, once
-/// positive and once negative. Both legs are real activity and both are kept, but
-/// they only net to zero in `categorized_inflow_total` when they land in the same
-/// category. The owner-aware [`internal_transfer_ids`] detector identifies which
-/// journal ids are genuine transfers (correct under char/corp id collisions and
-/// 3+/same-wallet pile-ups); for each such id this pins all of its legs to the
-/// lowest category id any leg already resolves to (via an assignment or rule).
-/// When no leg resolves the id is left unpinned: both legs stay in
-/// Ready-to-Assign, where the pool already nets them, so no phantom inflow leaks
-/// in. A manual per-entry assignment is never overridden — `context.resolve_target`
-/// already honors it, and pinning only ever points legs at a resolved category.
-fn internal_transfer_categories(rows: &[JournalActivity], context: &ResolutionContext) -> HashMap<i64, i64> {
-  let transfer_ids = internal_transfer_ids(rows);
-
-  let mut legs_by_id: HashMap<i64, Vec<&JournalActivity>> = HashMap::new();
-  for row in rows {
-    if transfer_ids.contains(&row.id) {
-      legs_by_id.entry(row.id).or_default().push(row);
-    }
-  }
-
-  let mut shared: HashMap<i64, i64> = HashMap::new();
-  for (journal_id, legs) in legs_by_id {
-    let resolved = legs.iter().filter_map(|leg| {
-      let amount = leg.amount?;
-      let target = MatchTarget::journal(leg.owner, &leg.ref_type, Some(amount), &leg.text);
-      context.resolve_target(BudgetEntryKind::Journal, leg.id, &target)
-    });
-    if let Some(category_id) = resolved.min() {
-      shared.insert(journal_id, category_id);
-    }
-  }
-  shared
-}
-
 /// Aggregates a scope's signed activity by category for a single UTC calendar
 /// `month` (`YYYY-MM`), unioning every in-scope character and covered
 /// corp-division journal with the matching wallet transactions. v1 is fully
@@ -1456,11 +1401,10 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
   // id resolve to their own categories rather than aliasing onto one.
   //
   // An internal transfer is one EVE journal event mirrored into two owned wallets
-  // under the same journal id with opposite signs. Both legs are kept, but they
-  // are pinned to one shared category so they net to zero there rather than
-  // leaking a phantom inflow into Ready-to-Assign when filed into different
-  // categories (or only one leg is assigned).
-  let transfer_categories = internal_transfer_categories(&journal_rows, &context);
+  // under the same journal id with opposite signs. It moves no ISK in or out of
+  // the user's holdings, so both legs are excluded from category activity entirely
+  // and never reach Ready-to-Assign or the needs-review count.
+  let transfer_ids = internal_transfer_ids(&journal_rows);
 
   let mut by_month: HashMap<String, HashMap<i64, f64>> = HashMap::new();
   let empty = HashSet::new();
@@ -1472,12 +1416,12 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     if is_market_twin(row, ingested) {
       continue;
     }
+    if classify_journal(row, &transfer_ids) == BudgetFlow::InternalTransfer {
+      continue;
+    }
     let Some(amount) = row.amount else { continue };
-    let category = transfer_categories.get(&row.id).copied().or_else(|| {
-      let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-      context.resolve_target(BudgetEntryKind::Journal, row.id, &target)
-    });
-    if let Some(category_id) = category {
+    let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
+    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Journal, row.id, &target) {
       *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
   }
@@ -2791,10 +2735,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_derives_ready_to_assign_as_pool_minus_global_assigned() {
-      // Global RTA draws down by every assignment across all months, not the
-      // displayed month's availables. 600 assigned somewhere on the timeline.
-      let summary = pool_summary(1_000.0, 600.0, 0.0, [300.0, 200.0, 100.0]);
+    fn it_derives_ready_to_assign_as_pool_minus_held_availables() {
+      // 600 held across three envelopes; the rest of the 1,000 liquid is free.
+      let summary = pool_summary(1_000.0, [300.0, 200.0, 100.0]);
 
       assert_eq!(summary.pool, 1_000.0);
       assert_eq!(summary.ready_to_assign, 400.0);
@@ -2802,29 +2745,50 @@ mod tests {
     }
 
     #[test]
-    fn it_sums_only_negative_availables_into_overspent() {
-      let summary = pool_summary(500.0, 100.0, 0.0, [300.0, -150.0, -50.0]);
+    fn it_conserves_liquid_across_ready_to_assign_and_held() {
+      // The invariant: pool = ready_to_assign + Σ max(0, available).
+      let availables = [300.0, 250.0, 50.0];
+      let summary = pool_summary(1_000.0, availables);
 
-      assert_eq!(summary.overspent, -200.0);
-      // ready = 500 − 100 assigned = 400, independent of the availables.
-      assert_eq!(summary.ready_to_assign, 400.0);
+      let held: f64 = availables.iter().filter(|a| **a > 0.0).sum();
+      assert_eq!(summary.ready_to_assign + held, summary.pool);
     }
 
     #[test]
-    fn it_can_report_a_negative_ready_to_assign_when_over_assigned() {
-      // Assigning the same ISK across two months over-draws the global pool.
-      let summary = pool_summary(100.0, 160.0, 0.0, [80.0, 80.0]);
+    fn it_excludes_overspent_envelopes_from_held_and_reports_them() {
+      // A negative available is overspend: it shows red and never inflates RTA.
+      let summary = pool_summary(500.0, [300.0, -150.0, -50.0]);
+
+      assert_eq!(summary.overspent, -200.0);
+      // ready = 500 − 300 held; the −200 overspend does not credit back into RTA.
+      assert_eq!(summary.ready_to_assign, 200.0);
+    }
+
+    #[test]
+    fn it_can_report_a_negative_ready_to_assign_when_over_held() {
+      // Holding more in envelopes than the liquid pool over-draws RTA.
+      let summary = pool_summary(100.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
     }
 
     #[test]
-    fn it_reserves_categorized_inflows_out_of_ready_to_assign() {
-      // A 1,000 windfall filed into an envelope is already in `pool`; reserving it
-      // keeps it from also showing as assignable. Nothing assigned yet.
-      let summary = pool_summary(1_000.0, 0.0, 1_000.0, [1_000.0]);
+    fn it_conserves_money_across_assign_spend_and_overspend() {
+      // Three envelopes after a month of activity (a transfer contributes no
+      // available, having been excluded upstream):
+      //   assigned-and-untouched: carry 0 + assigned 200 + activity 0   = 200
+      //   spent-down:             carry 0 + assigned 200 + activity −150 =  50
+      //   overspent:              carry 0 + assigned 100 + activity −180 = −80
+      let availables = [200.0, 50.0, -80.0];
+      let summary = pool_summary(1_000.0, availables);
 
-      assert_eq!(summary.ready_to_assign, 0.0);
+      // RTA reflects only the ISK still held (200 + 50); overspend is reported
+      // separately and never credits back into RTA.
+      assert_eq!(summary.ready_to_assign, 750.0);
+      assert_eq!(summary.overspent, -80.0);
+
+      let held: f64 = availables.iter().filter(|a| **a > 0.0).sum();
+      assert_eq!(summary.ready_to_assign + held, summary.pool);
     }
   }
 
@@ -2880,33 +2844,6 @@ mod tests {
       fn it_classifies_a_zero_amount_as_income() {
         assert_eq!(BudgetFlow::from_ref_type("bounty_prizes", 0.0), BudgetFlow::Income);
       }
-    }
-  }
-
-  mod categorized_inflow_total {
-    use std::collections::HashMap;
-
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_sums_net_positive_activity_per_category() {
-      // cat 1: +1000 income then −200 spent back out → net +800 reserved.
-      // cat 2: a normal spending envelope, net −500 → reserves nothing.
-      let activity = HashMap::from([
-        ("2026-05".to_owned(), HashMap::from([(1, 1_000.0), (2, -300.0)])),
-        ("2026-06".to_owned(), HashMap::from([(1, -200.0), (2, -200.0)])),
-      ]);
-
-      assert_eq!(categorized_inflow_total(&activity), 800.0);
-    }
-
-    #[test]
-    fn it_reserves_nothing_when_no_income_is_categorized() {
-      let activity = HashMap::from([("2026-06".to_owned(), HashMap::from([(1, -500.0)]))]);
-
-      assert_eq!(categorized_inflow_total(&activity), 0.0);
     }
   }
 
@@ -4257,7 +4194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_cancels_internal_transfer_legs_sharing_a_journal_id() {
+    async fn it_excludes_internal_transfer_legs_sharing_a_journal_id() {
       use crate::store::{model::OwnerType, repo::infra};
 
       let db = store::open_test().await.unwrap();
@@ -4325,9 +4262,10 @@ mod tests {
       )
       .await
       .unwrap();
-      // Only the inflow leg is filed into an envelope — exactly the bug shape that
-      // drives Ready-to-Assign negative. The matching outflow leg must be pinned to
-      // the same category so the two cancel rather than reserving a phantom inflow.
+      // Even when the inflow leg is filed into an envelope — exactly the bug shape
+      // that drove Ready-to-Assign negative — an internal transfer moves no ISK in
+      // or out of the user's holdings, so both legs are excluded from category
+      // activity entirely rather than reserved as a phantom inflow.
       assign_entry(
         &db,
         BudgetScope::All,
@@ -4342,8 +4280,8 @@ mod tests {
       let by_month = activity_by_month(&db, BudgetScope::All).await;
       let activity = by_month.get("2026-06").cloned().unwrap_or_default();
 
-      assert_eq!(activity.get(&slug_to_id["income"]), Some(&0.0));
-      assert_eq!(categorized_inflow_total(&by_month), 0.0);
+      assert_eq!(activity.get(&slug_to_id["income"]), None);
+      assert!(activity.is_empty());
     }
 
     #[tokio::test]

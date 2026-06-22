@@ -284,8 +284,6 @@ pub enum Message {
   BudgetRuleSelectToggled(Option<budget::RuleSelectKey>),
   BudgetRuleToggled(i64, bool),
   ChartHovered(Option<f32>),
-  CloseContractDetail,
-  ContractDetailLoaded(Box<Option<contract_detail::ContractDetail>>),
   ContractSelected(i64),
   DivisionSelected(i64),
   FeaturesChanged(crate::config::FeatureFlags),
@@ -335,7 +333,7 @@ impl Message {
   pub fn loads_data(&self) -> bool {
     matches!(
       self,
-      Message::BudgetDrillLoaded(_) | Message::ContractDetailLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
+      Message::BudgetDrillLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
     )
   }
 
@@ -593,7 +591,6 @@ pub struct State {
   right_rail: PaneDrag,
   roster: Vec<RosterPilot>,
   search: String,
-  selected_contract: Option<contract_detail::ContractDetail>,
   side_filter: Side,
   sign_filter: SignFilter,
   tab: Tab,
@@ -674,7 +671,6 @@ impl State {
       .right_anchored(true),
       roster: Vec::new(),
       search: String::new(),
-      selected_contract: None,
       side_filter: Side::default(),
       sign_filter: SignFilter::default(),
       tab: resolve_first_tab(&enabled_tabs),
@@ -1045,8 +1041,19 @@ impl State {
       .collect()
   }
 
-  pub(super) fn selected_contract(&self) -> Option<&contract_detail::ContractDetail> {
-    self.selected_contract.as_ref()
+  /// Resolves the per-window contract loader source for `contract_id`: the active corporation scope
+  /// loads from the corporation, otherwise the row's owning character. Mirrors the old in-place
+  /// loader target now that contract detail opens in a detached window.
+  pub fn contract_source(&self, contract_id: i64) -> Option<contract_detail::Source> {
+    match contract_loader_target(self, contract_id) {
+      Some(ContractLoad::Character(character_id)) => Some(contract_detail::Source::Character {
+        character_id,
+      }),
+      Some(ContractLoad::Corporation(corporation_id)) => Some(contract_detail::Source::Corporation {
+        corporation_id,
+      }),
+      None => None,
+    }
   }
 
   pub fn side_filter(&self) -> Side {
@@ -1067,9 +1074,6 @@ impl State {
       keys.extend(contract.acceptor_image.stale.iter().copied());
       keys.extend(contract.assignee_image.stale.iter().copied());
       keys.extend(contract.issuer_image.stale.iter().copied());
-    }
-    if let Some(detail) = &self.selected_contract {
-      keys.extend(detail.stale_images());
     }
     let mut seen = std::collections::HashSet::new();
     keys.retain(|key| seen.insert(*key));
@@ -2164,36 +2168,6 @@ fn handle_rail(state: &mut State, message: Message) -> Task<Message> {
   }
 }
 
-fn handle_close_contract_detail(state: &mut State) -> Task<Message> {
-  state.selected_contract = None;
-  Task::none()
-}
-
-fn handle_contract_detail_loaded(state: &mut State, detail: Option<contract_detail::ContractDetail>) -> Task<Message> {
-  state.selected_contract = detail;
-  Task::none()
-}
-
-fn handle_contract_selected(state: &State, db: &Database, contract_id: i64) -> Task<Message> {
-  match contract_loader_target(state, contract_id) {
-    Some(ContractLoad::Character(character_id)) => {
-      let db = db.clone();
-      Task::perform(
-        async move { contract_detail::load_for_character(&db, character_id, contract_id).await },
-        |detail| Message::ContractDetailLoaded(Box::new(detail)),
-      )
-    }
-    Some(ContractLoad::Corporation(corporation_id)) => {
-      let db = db.clone();
-      Task::perform(
-        async move { contract_detail::load_for_corporation(&db, corporation_id, contract_id).await },
-        |detail| Message::ContractDetailLoaded(Box::new(detail)),
-      )
-    }
-    None => Task::none(),
-  }
-}
-
 /// Handles the `Message::Budget*` family. Split out of [`update`] so the wallet
 /// dispatcher does not absorb the budget surface's branching. Editor-field
 /// setters route through [`mutate_editor`] to keep this a flat dispatch.
@@ -2860,9 +2834,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.chart_hover = fraction;
       Task::none()
     }
-    Message::CloseContractDetail => handle_close_contract_detail(state),
-    Message::ContractDetailLoaded(detail) => handle_contract_detail_loaded(state, *detail),
-    Message::ContractSelected(contract_id) => handle_contract_selected(state, db, contract_id),
+    // Intercepted by the app layer to open a detached contract window; never reaches here.
+    Message::ContractSelected(_) => Task::none(),
     Message::DivisionSelected(division) => handle_division_selected(state, db, division),
     Message::FeaturesChanged(features) => {
       let prev = state.tab;
@@ -3012,11 +2985,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let base = shell::shell(state, now);
-  match state.selected_contract() {
-    Some(detail) => contract_detail::overlay(base, detail, Message::CloseContractDetail),
-    None => base,
-  }
+  shell::shell(state, now)
 }
 
 /// True when `event` is an Escape key press, used by the modal-dismiss
@@ -3065,11 +3034,6 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
 /// bounded.
 fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
-  if state.selected_contract.is_some() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      is_escape_pressed(&event).then_some(Message::CloseContractDetail)
-    }));
-  }
   if state.budget_editing.is_some() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       is_escape_pressed(&event).then_some(Message::BudgetAssignCancelled)
@@ -4132,40 +4096,6 @@ mod tests {
       status: status.to_owned(),
       value: Some(200.0),
       r#type: contract_type.to_owned(),
-    }
-  }
-
-  fn contract_detail_fixture() -> contract_detail::ContractDetail {
-    contract_detail::ContractDetail {
-      acceptor: None,
-      availability: "Public".to_owned(),
-      bids: Vec::new(),
-      buyout: None,
-      collateral: None,
-      contract_id: 12_345,
-      days_to_complete: Some(0),
-      expiry: contract_detail::ExpiryView {
-        future: true,
-        label: "Open".to_owned(),
-        title: "Expires",
-      },
-      headline: 200.0,
-      headline_label: "Price",
-      issued_time: "2026-05-30T12:00:00Z".to_owned(),
-      issuer: contract_detail::PartyView {
-        name: "Issuer Pilot".to_owned(),
-        portrait: images::ImageState::Fresh("/tmp/p.jpg".into()),
-        role: "Issuer",
-        sub: None,
-      },
-      items: Vec::new(),
-      items_value: 0.0,
-      kind: contract_detail::ContractKind::ItemExchange,
-      location_name: "Jita IV - Moon 4".to_owned(),
-      route: None,
-      status: "outstanding".to_owned(),
-      title: "Test Contract".to_owned(),
-      volume: 0.0,
     }
   }
 
@@ -6320,22 +6250,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_opens_and_closes_the_contract_detail_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-
-      let _ = update(
-        &mut state,
-        Message::ContractDetailLoaded(Box::new(Some(contract_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_contract.is_some());
-
-      let _ = update(&mut state, Message::CloseContractDetail, &db);
-      assert!(state.selected_contract.is_none());
-    }
-
-    #[tokio::test]
     async fn it_records_the_chart_hover_fraction() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
@@ -6736,14 +6650,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selecting_a_contract_row_leaves_the_modal_closed_until_the_load_resolves() {
-      let db = crate::store::open_test().await.unwrap();
+    async fn selecting_a_contract_row_resolves_the_owning_character_window_source() {
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.contracts = vec![contract_entry(7, false, "finished", "item_exchange")];
 
-      let _ = update(&mut state, Message::ContractSelected(12_345), &db);
-
-      assert!(state.selected_contract.is_none());
+      assert_eq!(
+        state.contract_source(12_345),
+        Some(contract_detail::Source::Character {
+          character_id: 7,
+        })
+      );
     }
 
     #[tokio::test]
@@ -6762,13 +6678,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn selecting_an_unknown_contract_row_is_a_no_op() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
+    async fn selecting_an_unknown_contract_row_resolves_no_window_source() {
+      let state = State::new(crate::config::FeatureFlags::default());
 
-      let _ = update(&mut state, Message::ContractSelected(999), &db);
-
-      assert!(state.selected_contract.is_none());
+      assert_eq!(state.contract_source(999), None);
     }
   }
 

@@ -43,39 +43,24 @@ use crate::{
   },
 };
 
+pub const EDITOR_WINDOW_HEIGHT: f32 = 700.0;
+
+pub const EDITOR_WINDOW_WIDTH: f32 = 620.0;
+
 pub const SEARCH_MIN_CHARS: usize = 3;
 
 const MAX_SUGGESTIONS: usize = 20;
 const SUGGESTIONS_MAX_HEIGHT: f32 = 240.0;
 const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 22.0;
-const EDITOR_MODAL_WIDTH: f32 = 620.0;
 const EXPORT_MODAL_WIDTH: f32 = 500.0;
 const IMPORT_PANEL_WIDTH: f32 = 560.0;
 const IMPORT_FIELD_HEIGHT: f32 = 168.0;
-/// Fallback editor content max-height when no live window height is known.
-const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
-/// Fraction of the live window height the editor content area is allowed to fill.
-const MODAL_CONTENT_HEIGHT_RATIO: f32 = 0.5;
-/// Floor/ceiling for the derived content max-height so tiny/huge windows stay sane.
-const MODAL_CONTENT_MIN_HEIGHT: f32 = 360.0;
-const MODAL_CONTENT_CEIL_HEIGHT: f32 = 760.0;
 const MODAL_PAD_X: f32 = 20.0;
 const MODAL_PAD_Y: f32 = 16.0;
 const MULTIBUY_EXPORT_BODY_HEIGHT: f32 = 240.0;
 const SCOPE_PILOT_AVATAR: f32 = 24.0;
 const SCOPE_PREVIEW_MAX_HEIGHT: f32 = 168.0;
-
-/// Derives the editor content max-height as ~50% of the live window height, clamped to a sane band.
-/// Falls back to a fixed height when the window height is unknown.
-fn modal_content_max_height(window_height: Option<f32>) -> f32 {
-  match window_height {
-    Some(height) if height > 0.0 => {
-      (height * MODAL_CONTENT_HEIGHT_RATIO).clamp(MODAL_CONTENT_MIN_HEIGHT, MODAL_CONTENT_CEIL_HEIGHT)
-    }
-    _ => MODAL_CONTENT_MAX_HEIGHT,
-  }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct StockpileItemLine {
@@ -245,6 +230,28 @@ impl ImportPanel {
   }
 }
 
+/// What the detached editor window needs the app layer to do after a message is applied. State-only
+/// edits return [`EditorEffect::None`]; the search/save/close cases carry the data the runtime-owning
+/// app dispatcher needs (it holds the ESI clients and the window lifetime).
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditorEffect {
+  Close,
+  ItemSearch(String),
+  LocationSearch { generation: u64, query: String },
+  None,
+  Save,
+  ScopeResolve(String),
+}
+
+/// How a freshly-opened editor window is seeded: a blank New pile, an Edit cloned from a card, or a
+/// prefill from an imported multibuy.
+#[derive(Clone, Debug)]
+pub enum EditorSeed {
+  Blank,
+  FromCard(Box<StockpileCard>),
+  Prefill(Vec<MultibuyMatch>),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Editor {
   editing_id: Option<i64>,
@@ -295,6 +302,18 @@ impl Editor {
       scope_corps: 0,
       scope_pilots: Vec::new(),
       scope_query: card.character_scope.clone().unwrap_or_default(),
+    }
+  }
+
+  pub fn from_seed(seed: EditorSeed) -> Self {
+    match seed {
+      EditorSeed::Blank => Self::blank(),
+      EditorSeed::FromCard(card) => Self::from_card(&card),
+      EditorSeed::Prefill(matched) => {
+        let mut editor = Self::blank();
+        editor.prefill_items(&matched);
+        editor
+      }
     }
   }
 
@@ -359,7 +378,7 @@ impl Editor {
     self.location_search.searching()
   }
 
-  pub(super) fn name(&self) -> &str {
+  pub fn name(&self) -> &str {
     &self.name
   }
 
@@ -400,7 +419,7 @@ impl Editor {
     &self.scope_pilots
   }
 
-  pub(super) fn scope_query(&self) -> &str {
+  pub fn scope_query(&self) -> &str {
     &self.scope_query
   }
 
@@ -454,7 +473,7 @@ impl Editor {
     self.scope_query = value;
   }
 
-  pub(super) fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
     self
       .scope_pilots
       .iter()
@@ -604,6 +623,46 @@ pub(super) async fn delete(db: &Database, id: i64) {
   let _ = assets::delete(db, id).await;
 }
 
+/// Applies an editor sub-message to a single detached editor window's [`Editor`] and reports the
+/// follow-up the app dispatcher must run. Mirrors the former single-instance `apply_stockpile_editor`,
+/// minus the holder bookkeeping now owned per-window by the app.
+pub fn apply_editor(editor: &mut Editor, message: Message) -> EditorEffect {
+  match message {
+    Message::StockpileEditorNameChanged(name) => editor.set_name(name),
+    Message::StockpileEditorLocationToggled => editor.toggle_location(),
+    Message::StockpileEditorLocationSearchChanged(value) => {
+      return match editor.set_location_query(value.clone()) {
+        Some(_) => EditorEffect::LocationSearch {
+          generation: editor.location_generation(),
+          query: value,
+        },
+        None => EditorEffect::None,
+      };
+    }
+    Message::StockpileEditorLocationResults(generation, results) => editor.accept_location_results(generation, results),
+    Message::StockpileEditorLocationPicked(location) => editor.pick_location(location),
+    Message::StockpileEditorLocationCleared => editor.clear_location(),
+    Message::StockpileEditorScopeChanged(value) => {
+      editor.set_scope_query(value.clone());
+      return EditorEffect::ScopeResolve(value);
+    }
+    Message::StockpileEditorScopeResolved(pilots) => editor.set_scope_pilots(pilots),
+    Message::StockpileEditorItemSearchChanged(value) => {
+      editor.set_item_query(value.clone());
+      return EditorEffect::ItemSearch(value);
+    }
+    Message::StockpileEditorItemResults(results) => editor.set_item_suggestions(results),
+    Message::StockpileEditorItemPicked(id, name) => editor.pick_item(id, name),
+    Message::StockpileEditorItemTargetChanged(index, value) => editor.set_item_target(index, value),
+    Message::StockpileEditorItemRemoved(index) => editor.remove_item(index),
+    Message::StockpileEditorPopoversClosed => editor.close_popovers(),
+    Message::StockpileEditorSaved => return EditorEffect::Save,
+    Message::StockpileEditorClosed => return EditorEffect::Close,
+    _ => {}
+  }
+  EditorEffect::None
+}
+
 pub async fn resolve_scope_pilots(db: Database, query: String) -> Vec<ScopePilot> {
   let now = chrono::Utc::now().to_rfc3339();
   let parsed = crate::store::search::parse_with_keys(&query, crate::store::search::AVAILABLE_KEYS);
@@ -631,10 +690,8 @@ async fn type_name_of(db: &Database, type_id: i64) -> String {
 
 pub(super) fn body<'a>(
   cards: &'a [StockpileCard],
-  editor: Option<&'a Editor>,
   import: Option<&'a ImportPanel>,
   expanded: &HashSet<i64>,
-  window_height: Option<f32>,
 ) -> Element<'a, Message> {
   let list = container(
     scrollable(card_grid::view(cards, expanded))
@@ -646,13 +703,6 @@ pub(super) fn body<'a>(
   .height(Length::Fill);
 
   let mut layers: Vec<Element<'a, Message>> = vec![list.into()];
-  if let Some(editor) = editor {
-    layers.push(backdrop::backdrop(Message::StockpileEditorClosed));
-    // The location picker and item search are AnchoredDropdown widgets: their popovers float in the
-    // overlay layer directly below their triggers (width-matched) so opening one never resizes the
-    // modal panel. No separate overlay layer / cursor anchoring is needed.
-    layers.push(editor_form(editor, window_height));
-  }
   if let Some(panel) = import {
     layers.push(backdrop::backdrop(Message::StockpileImportClosed));
     layers.push(import_overlay(panel));
@@ -840,7 +890,21 @@ fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
   .into()
 }
 
-fn editor_form(editor: &Editor, window_height: Option<f32>) -> Element<'_, Message> {
+/// The window title for a detached editor: distinguishes New from Edit so two open editors are
+/// tellable apart in the OS window list and the custom title bar.
+pub fn window_title(editor: &Editor) -> &'static str {
+  if editor.is_editing() {
+    "Edit stockpile"
+  } else {
+    "New stockpile"
+  }
+}
+
+/// Renders the editor as the body of a detached window. Unlike the retired modal form there is no
+/// backdrop, fixed-width panel, or scrim-dismiss: the window chrome (added by the app layer) owns the
+/// title bar, close button, and resize. Emits the same `assets::Message` family, routed per-window by
+/// the app's `StockpileEditor(id, _)` channel.
+pub fn view(editor: &Editor) -> Element<'_, Message> {
   let (title, subtitle, save_label) = if editor.is_editing() {
     ("Edit stockpile", "Adjust this target pile", "Save changes")
   } else {
@@ -903,7 +967,6 @@ fn editor_form(editor: &Editor, window_height: Option<f32>) -> Element<'_, Messa
   for (index, item) in editor.items().iter().enumerate() {
     item_children.push(editor_item_row(index, item));
   }
-  // The shared search-to-add field sits below the item list; picking a result appends a resolved row.
   item_children.push(item_search_field(editor));
   let items_section = Column::with_children(item_children)
     .spacing(spacing::SPACE_2)
@@ -914,8 +977,8 @@ fn editor_form(editor: &Editor, window_height: Option<f32>) -> Element<'_, Messa
     .width(Length::Fill);
 
   let content = container(scrollable(content_body).style(crate::ui::style::control::scrollbar))
-    .max_height(modal_content_max_height(window_height))
     .width(Length::Fill)
+    .height(Length::Fill)
     .padding(Padding {
       top: MODAL_PAD_Y,
       bottom: MODAL_PAD_Y,
@@ -939,16 +1002,38 @@ fn editor_form(editor: &Editor, window_height: Option<f32>) -> Element<'_, Messa
     ],
   );
 
-  modal_overlay(modal_panel(
-    EDITOR_MODAL_WIDTH,
-    vec![
-      modal_header(title, subtitle, Message::StockpileEditorClosed),
+  let header = modal_section(
+    Column::with_children(vec![
+      text(title)
+        .font(typography::body::MEDIUM)
+        .size(typography::size::LG)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      eyebrow(subtitle, Some(color::text::secondary())),
+    ])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill)
+    .into(),
+  );
+
+  container(
+    Column::with_children(vec![
+      header,
       rule::horizontal(),
       content.into(),
       rule::horizontal(),
       footer,
-    ],
-  ))
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
@@ -1784,29 +1869,63 @@ mod tests {
     }
   }
 
-  mod modal_content_max_height {
+  mod apply_editor {
     use pretty_assertions::assert_eq;
 
     use super::*;
 
     #[test]
-    fn it_derives_about_half_the_window_height() {
-      assert_eq!(modal_content_max_height(Some(1000.0)), 500.0);
+    fn it_appends_a_picked_item_with_no_follow_up() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(
+        &mut editor,
+        Message::StockpileEditorItemPicked(34, "Tritanium".to_owned()),
+      );
+
+      assert_eq!(effect, EditorEffect::None);
+      assert_eq!(editor.items().len(), 1);
     }
 
     #[test]
-    fn it_clamps_to_a_floor_for_tiny_windows() {
-      assert_eq!(modal_content_max_height(Some(400.0)), MODAL_CONTENT_MIN_HEIGHT);
+    fn it_requests_an_item_search_when_the_query_changes() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(
+        &mut editor,
+        Message::StockpileEditorItemSearchChanged("Trit".to_owned()),
+      );
+
+      assert_eq!(effect, EditorEffect::ItemSearch("Trit".to_owned()));
     }
 
     #[test]
-    fn it_clamps_to_a_ceiling_for_huge_windows() {
-      assert_eq!(modal_content_max_height(Some(4000.0)), MODAL_CONTENT_CEIL_HEIGHT);
+    fn it_requests_a_scope_resolve_when_the_scope_query_changes() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(&mut editor, Message::StockpileEditorScopeChanged("tag:pvp".to_owned()));
+
+      assert_eq!(effect, EditorEffect::ScopeResolve("tag:pvp".to_owned()));
     }
 
     #[test]
-    fn it_falls_back_to_a_fixed_height_without_a_window_height() {
-      assert_eq!(modal_content_max_height(None), MODAL_CONTENT_MAX_HEIGHT);
+    fn it_signals_close_on_cancel() {
+      let mut editor = Editor::blank();
+
+      assert_eq!(
+        apply_editor(&mut editor, Message::StockpileEditorClosed),
+        EditorEffect::Close
+      );
+    }
+
+    #[test]
+    fn it_signals_save_on_save() {
+      let mut editor = Editor::blank();
+
+      assert_eq!(
+        apply_editor(&mut editor, Message::StockpileEditorSaved),
+        EditorEffect::Save
+      );
     }
   }
 
@@ -2293,7 +2412,7 @@ mod tests {
     #[test]
     fn it_renders_the_card_grid_and_fill_status() {
       let cards = vec![card_model()];
-      let _el: Element<'_, Message> = body(&cards, None, None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = body(&cards, None, &HashSet::new());
     }
 
     #[test]
@@ -2319,7 +2438,7 @@ mod tests {
         },
       }]);
 
-      let _el: Element<'_, Message> = body(&[], Some(&editor), None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = view(&editor);
     }
 
     #[test]
@@ -2331,7 +2450,7 @@ mod tests {
 
       assert!(editor.location_open());
 
-      let _el: Element<'_, Message> = body(&[], Some(&editor), None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = view(&editor);
     }
 
     #[test]
@@ -2343,7 +2462,7 @@ mod tests {
       assert!(editor.item_search().open);
 
       // The dropdown floats via AnchoredDropdown inside the editor; rendering must not panic.
-      let _el: Element<'_, Message> = body(&[], Some(&editor), None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = view(&editor);
     }
 
     #[test]
@@ -2353,7 +2472,7 @@ mod tests {
       assert!(!editor.item_search().open);
       assert!(!editor.location_open());
 
-      let _el: Element<'_, Message> = body(&[], Some(&editor), None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = view(&editor);
     }
 
     #[test]
@@ -2387,7 +2506,7 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(&[], None, None, &HashSet::new(), None);
+      let _el: Element<'_, Message> = body(&[], None, &HashSet::new());
     }
 
     #[test]
@@ -2395,7 +2514,7 @@ mod tests {
       let mut panel = ImportPanel::blank();
       panel.set_text("Tritanium 1000".to_owned());
 
-      let _el: Element<'_, Message> = body(&[], None, Some(&panel), &HashSet::new(), None);
+      let _el: Element<'_, Message> = body(&[], Some(&panel), &HashSet::new());
     }
 
     #[test]
@@ -2410,7 +2529,7 @@ mod tests {
         unmatched: vec!["Notathing".to_owned()],
       });
 
-      let _el: Element<'_, Message> = body(&[], None, Some(&panel), &HashSet::new(), None);
+      let _el: Element<'_, Message> = body(&[], Some(&panel), &HashSet::new());
     }
 
     #[test]

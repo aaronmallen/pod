@@ -20,9 +20,14 @@ use iced::{Element, Task, widget::text_editor};
 pub use self::{
   stockpile_multibuy::parse as parse_multibuy,
   stockpile_search::{
-    LocationRef, LocationTier, MultibuyResolution, resolve_multibuy, search_item_types, search_locations_enriched,
+    LocationRef, LocationTier, MultibuyMatch, MultibuyResolution, resolve_multibuy, search_item_types,
+    search_locations_enriched,
   },
-  stockpiles::{Editor, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, resolve_scope_pilots, save_stockpile},
+  stockpiles::{
+    EDITOR_WINDOW_HEIGHT as STOCKPILE_EDITOR_WINDOW_HEIGHT, EDITOR_WINDOW_WIDTH as STOCKPILE_EDITOR_WINDOW_WIDTH,
+    Editor, EditorEffect, EditorSeed, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, apply_editor,
+    resolve_scope_pilots, save_stockpile, view as stockpile_editor_view, window_title as stockpile_editor_window_title,
+  },
 };
 pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};
 use crate::{
@@ -381,7 +386,6 @@ pub struct State {
   sort_dir: SortDirection,
   stockpile_context_menu: Option<StockpileContextMenu>,
   stockpile_cursor: Option<iced::Point>,
-  stockpile_editor: Option<stockpiles::Editor>,
   stockpile_expanded: HashSet<i64>,
   stockpile_import: Option<stockpiles::ImportPanel>,
   stockpile_multibuy_copied: bool,
@@ -390,9 +394,6 @@ pub struct State {
   stockpiles: Vec<stockpiles::StockpileCard>,
   tab: Tab,
   totals: InventoryTotals,
-  /// Live main-window height, fed from `window::Event::Resized`. Used to size the editor modal at
-  /// ~50% of the window height. `None` until the first resize event arrives.
-  window_height: Option<f32>,
   values: values::ValueSummary,
 }
 
@@ -440,11 +441,9 @@ impl State {
       sort_dir: SortDirection::Descending,
       tab: resolve_first_tab(&enabled_tabs),
       totals: InventoryTotals::default(),
-      window_height: None,
       values: values::ValueSummary::default(),
       nav: tracker::NavSeries::default(),
       stockpiles: Vec::new(),
-      stockpile_editor: None,
       stockpile_import: None,
       stockpile_context_menu: None,
       stockpile_cursor: None,
@@ -478,14 +477,6 @@ impl State {
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.sidebar.set_host_width(host_width);
     self.abyssals_filter.set_host_width(host_width);
-  }
-
-  pub fn set_window_height(&mut self, height: f32) {
-    self.window_height = Some(height);
-  }
-
-  pub(super) fn window_height(&self) -> Option<f32> {
-    self.window_height
   }
 
   pub fn active(&self) -> Scope {
@@ -559,7 +550,6 @@ impl State {
       .filter_map(|pilot| pilot.portrait.stale_key())
       .chain(self.corporations.iter().filter_map(|corp| corp.logo.stale_key()))
       .chain(self.abyssals.iter().filter_map(|card| card.portrait.stale_key()))
-      .chain(self.stockpile_editor.iter().flat_map(|editor| editor.stale_images()))
       .collect()
   }
 
@@ -672,30 +662,31 @@ impl State {
     &self.stockpiles
   }
 
-  pub(super) fn stockpile_editor(&self) -> Option<&stockpiles::Editor> {
-    self.stockpile_editor.as_ref()
+  /// The card matching `id`, so the app layer can clone it to seed an Edit window. Returns `None` for
+  /// a stale id (the card list may have reloaded out from under a pending context-menu action).
+  pub fn stockpile_card(&self, id: i64) -> Option<&stockpiles::StockpileCard> {
+    self.stockpiles.iter().find(|card| card.id == id)
   }
 
-  pub fn take_stockpile_editor(&mut self) -> Option<stockpiles::Editor> {
-    self.stockpile_editor.take()
+  /// Closes the open stockpile context menu, used by the app layer when opening an editor window from
+  /// the menu's Edit action so the menu doesn't linger over the main view.
+  pub fn dismiss_stockpile_context_menu(&mut self) {
+    self.stockpile_context_menu = None;
   }
 
-  /// The open editor's current character-scope query (an empty string previews every pilot), or
-  /// `None` when no editor is open, so the dispatcher can seed the live preview on open.
-  pub fn stockpile_editor_scope(&self) -> Option<String> {
+  /// Clears the open import panel, used by the app layer when an import is confirmed into a fresh
+  /// editor window.
+  pub fn close_stockpile_import(&mut self) {
+    self.stockpile_import = None;
+  }
+
+  /// The matched items from the open import panel, consumed when confirming an import into a fresh
+  /// editor window.
+  pub fn stockpile_import_matched(&self) -> Vec<MultibuyMatch> {
     self
-      .stockpile_editor
+      .stockpile_import
       .as_ref()
-      .map(|editor| editor.scope_query().to_owned())
-  }
-
-  /// The current location-search generation, so the dispatcher can tag the async request and discard
-  /// stale responses.
-  pub fn stockpile_location_generation(&self) -> u64 {
-    self
-      .stockpile_editor
-      .as_ref()
-      .map(stockpiles::Editor::location_generation)
+      .map(|panel| panel.matched().to_vec())
       .unwrap_or_default()
   }
 
@@ -1603,48 +1594,10 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
 }
 
 fn update_stockpile(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  let message = match apply_stockpile_editor(state, message) {
-    Ok(task) => return task,
-    Err(message) => message,
-  };
   match apply_stockpile_import(state, message) {
     Ok(task) => task,
     Err(message) => update_stockpile_lifecycle(state, message, db),
   }
-}
-
-fn apply_stockpile_editor(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
-  let Some(editor) = state.stockpile_editor.as_mut() else {
-    return match message {
-      Message::StockpileNew => {
-        state.stockpile_editor = Some(stockpiles::Editor::blank());
-        Ok(Task::none())
-      }
-      other => Err(other),
-    };
-  };
-  match message {
-    Message::StockpileNew => state.stockpile_editor = Some(stockpiles::Editor::blank()),
-    Message::StockpileEditorNameChanged(name) => editor.set_name(name),
-    Message::StockpileEditorLocationToggled => editor.toggle_location(),
-    Message::StockpileEditorLocationSearchChanged(value) => {
-      editor.set_location_query(value);
-    }
-    Message::StockpileEditorLocationResults(generation, results) => editor.accept_location_results(generation, results),
-    Message::StockpileEditorLocationPicked(location) => editor.pick_location(location),
-    Message::StockpileEditorLocationCleared => editor.clear_location(),
-    Message::StockpileEditorScopeChanged(value) => editor.set_scope_query(value),
-    Message::StockpileEditorScopeResolved(pilots) => editor.set_scope_pilots(pilots),
-    Message::StockpileEditorItemSearchChanged(value) => editor.set_item_query(value),
-    Message::StockpileEditorItemResults(results) => editor.set_item_suggestions(results),
-    Message::StockpileEditorItemPicked(id, name) => editor.pick_item(id, name),
-    Message::StockpileEditorItemTargetChanged(index, value) => editor.set_item_target(index, value),
-    Message::StockpileEditorItemRemoved(index) => editor.remove_item(index),
-    Message::StockpileEditorPopoversClosed => editor.close_popovers(),
-    Message::StockpileEditorClosed => state.stockpile_editor = None,
-    other => return Err(other),
-  }
-  Ok(Task::none())
 }
 
 fn apply_stockpile_import(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
@@ -1661,16 +1614,6 @@ fn apply_stockpile_import(state: &mut State, message: Message) -> Result<Task<Me
         panel.set_resolution(resolution);
       }
     }
-    Message::StockpileImportConfirmed => {
-      let matched = state
-        .stockpile_import
-        .as_ref()
-        .map(|panel| panel.matched().to_vec())
-        .unwrap_or_default();
-      state.stockpile_import = None;
-      let editor = state.stockpile_editor.get_or_insert_with(stockpiles::Editor::blank);
-      editor.prefill_items(&matched);
-    }
     other => return Err(other),
   }
   Ok(Task::none())
@@ -1678,28 +1621,6 @@ fn apply_stockpile_import(state: &mut State, message: Message) -> Result<Task<Me
 
 fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::StockpileEditStarted(id) => {
-      state.stockpile_context_menu = None;
-      state.stockpile_editor = state
-        .stockpiles
-        .iter()
-        .find(|card| card.id == id)
-        .map(stockpiles::Editor::from_card);
-      Task::none()
-    }
-    Message::StockpileEditorSaved => {
-      let Some(editor) = state.stockpile_editor.take() else {
-        return Task::none();
-      };
-      let db = db.clone();
-      Task::perform(
-        async move {
-          stockpiles::save(&db, &editor).await;
-          stockpiles::load_cards(&db).await
-        },
-        Message::StockpilesReloaded,
-      )
-    }
     Message::StockpileDeleted(id) => {
       state.stockpile_context_menu = None;
       let db = db.clone();
@@ -3379,173 +3300,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_accepts_location_results_for_the_current_generation() {
-      let db = crate::store::open_test().await.unwrap();
+    async fn it_exposes_a_card_by_id_for_seeding_an_edit_window() {
       let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
-        &db,
-      );
-      let generation = state.stockpile_editor.as_ref().unwrap().location_generation();
+      state.stockpiles = vec![card(7, "Ammo")];
 
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationResults(
-          generation,
-          vec![LocationRef {
-            context: None,
-            id: 60_003_760,
-            name: "Jita IV - Moon 4".to_owned(),
-            security_status: None,
-            tier: LocationTier::from_id(60_003_760),
-          }],
-        ),
-        &db,
-      );
-
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.location_results().len(), 1);
-      assert_eq!(editor.location_results()[0].id, 60_003_760);
-    }
-
-    #[tokio::test]
-    async fn it_confirms_an_import_by_prefilling_the_editor_and_closing_the_panel() {
-      use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
-
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileImportOpened, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileImportResolved(MultibuyResolution {
-          matched: vec![MultibuyMatch {
-            name: "Tritanium".to_owned(),
-            quantity: 100,
-            type_id: 34,
-          }],
-          unmatched: Vec::new(),
-        }),
-        &db,
-      );
-
-      let _ = update(&mut state, Message::StockpileImportConfirmed, &db);
-
-      assert!(state.stockpile_import.is_none());
-      let editor = state.stockpile_editor.as_ref().expect("confirm seeds an editor");
-      assert!(editor.items().iter().any(|item| item.type_id == 34));
-    }
-
-    #[tokio::test]
-    async fn it_edits_the_draft_name_and_item_rows() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorNameChanged("Cap boosters".to_owned()),
-        &db,
-      );
-      assert_eq!(state.stockpile_editor.as_ref().map(|e| e.name()), Some("Cap boosters"));
-
-      // Picking a search result immediately appends a resolved row (no add-blank-row step).
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemPicked(34, "Tritanium".to_owned()),
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemTargetChanged(0, "100".to_owned()),
-        &db,
-      );
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.items().len(), 1);
-      assert_eq!(editor.items()[0].type_id, 34);
-      assert_eq!(editor.items()[0].type_name, "Tritanium");
-      assert_eq!(editor.items()[0].target, "100");
-
-      let _ = update(&mut state, Message::StockpileEditorItemRemoved(0), &db);
-      assert!(state.stockpile_editor.as_ref().unwrap().items().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_clears_a_picked_location() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationPicked(LocationRef {
-          context: None,
-          id: 60_003_760,
-          name: "Jita IV - Moon 4".to_owned(),
-          security_status: None,
-          tier: LocationTier::from_id(60_003_760),
-        }),
-        &db,
-      );
-      assert!(state.stockpile_editor.as_ref().unwrap().location().is_some());
-
-      let _ = update(&mut state, Message::StockpileEditorLocationCleared, &db);
-
-      assert!(state.stockpile_editor.as_ref().unwrap().location().is_none());
-    }
-
-    #[tokio::test]
-    async fn it_drops_location_results_from_a_superseded_generation() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
-        &db,
-      );
-      let stale = state.stockpile_editor.as_ref().unwrap().location_generation();
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationSearchChanged("Jital".to_owned()),
-        &db,
-      );
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorLocationResults(
-          stale,
-          vec![LocationRef {
-            context: None,
-            id: 60_003_760,
-            name: "Jita IV - Moon 4".to_owned(),
-            security_status: None,
-            tier: LocationTier::from_id(60_003_760),
-          }],
-        ),
-        &db,
-      );
-
-      assert!(state.stockpile_editor.as_ref().unwrap().location_results().is_empty());
-    }
-
-    #[tokio::test]
-    async fn it_dismisses_open_popovers() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemSearchChanged("Tri".to_owned()),
-        &db,
-      );
-
-      let _ = update(&mut state, Message::StockpileEditorPopoversClosed, &db);
-
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert!(!editor.location_open());
-      assert!(!editor.item_search().open);
+      assert_eq!(state.stockpile_card(7).map(|card| card.name.as_str()), Some("Ammo"));
+      assert!(state.stockpile_card(404).is_none());
     }
 
     #[tokio::test]
@@ -3570,38 +3330,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_editor_edits_when_no_editor_is_open() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-
-      let _ = update(&mut state, Message::StockpileEditorNameChanged("x".to_owned()), &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemPicked(1, "Something".to_owned()),
-        &db,
-      );
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemTargetChanged(0, "1".to_owned()),
-        &db,
-      );
-      let _ = update(&mut state, Message::StockpileEditorItemRemoved(0), &db);
-      assert!(state.stockpile_editor.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_opens_a_blank_editor_then_closes_it() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      assert!(state.stockpile_editor.is_some());
-
-      let _ = update(&mut state, Message::StockpileEditorClosed, &db);
-      assert!(state.stockpile_editor.is_none());
-    }
-
-    #[tokio::test]
     async fn it_opens_a_context_menu_at_the_cursor_then_closes_it() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
@@ -3617,19 +3345,6 @@ mod tests {
 
       let _ = update(&mut state, Message::StockpileContextMenuClosed, &db);
       assert!(state.stockpile_context_menu.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_opens_an_editor_prefilled_from_an_existing_card() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      state.stockpiles = vec![card(7, "Ammo")];
-
-      let _ = update(&mut state, Message::StockpileEditStarted(7), &db);
-      assert_eq!(state.stockpile_editor.as_ref().map(|e| e.name()), Some("Ammo"));
-
-      let _ = update(&mut state, Message::StockpileEditStarted(404), &db);
-      assert!(state.stockpile_editor.is_none());
     }
 
     #[tokio::test]
@@ -3678,116 +3393,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_picks_a_location_and_closes_the_picker() {
+    async fn it_confirms_an_import_into_matched_items_then_closes_the_panel() {
+      use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
+
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
-
+      let _ = update(&mut state, Message::StockpileImportOpened, &db);
       let _ = update(
         &mut state,
-        Message::StockpileEditorLocationPicked(LocationRef {
-          context: None,
-          id: 60_003_760,
-          name: "Jita IV - Moon 4".to_owned(),
-          security_status: None,
-          tier: LocationTier::from_id(60_003_760),
+        Message::StockpileImportResolved(MultibuyResolution {
+          matched: vec![MultibuyMatch {
+            name: "Tritanium".to_owned(),
+            quantity: 100,
+            type_id: 34,
+          }],
+          unmatched: Vec::new(),
         }),
         &db,
       );
 
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.location().map(|location| location.id), Some(60_003_760));
-      assert!(!editor.location_open());
-    }
+      let matched = state.stockpile_import_matched();
+      state.close_stockpile_import();
 
-    #[tokio::test]
-    async fn it_records_a_resolved_scope() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorScopeResolved(vec![stockpiles::ScopePilot {
-          corp: "TST".to_owned(),
-          id: 1,
-          name: "Pilot".to_owned(),
-          portrait: images::ImageState::Fresh(std::path::PathBuf::from("/cache/1.jpg")),
-        }]),
-        &db,
-      );
-
-      assert_eq!(state.stockpile_editor.as_ref().unwrap().scope_pilots().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_item_search_query() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemSearchChanged("Tritanium".to_owned()),
-        &db,
-      );
-
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.item_search().query, "Tritanium");
-      assert!(editor.item_search().open);
-    }
-
-    #[tokio::test]
-    async fn it_records_the_scope_query() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorScopeChanged("tag:pvp".to_owned()),
-        &db,
-      );
-
-      assert_eq!(state.stockpile_editor.as_ref().unwrap().scope_query(), "tag:pvp");
-    }
-
-    #[tokio::test]
-    async fn it_replaces_an_open_editor_with_a_blank_draft() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorNameChanged("Cap boosters".to_owned()),
-        &db,
-      );
-
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      assert_eq!(state.stockpile_editor.as_ref().map(|editor| editor.name()), Some(""));
-    }
-
-    #[tokio::test]
-    async fn it_sets_item_suggestions_excluding_added_types() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemPicked(34, "Tritanium".to_owned()),
-        &db,
-      );
-
-      let _ = update(
-        &mut state,
-        Message::StockpileEditorItemResults(vec![(34, "Tritanium".to_owned()), (35, "Pyerite".to_owned())]),
-        &db,
-      );
-
-      let editor = state.stockpile_editor.as_ref().unwrap();
-      assert_eq!(editor.item_search().suggestions, vec![(35, "Pyerite".to_owned())]);
+      assert_eq!(matched.iter().map(|m| m.type_id).collect::<Vec<_>>(), vec![34]);
+      assert!(state.stockpile_import.is_none());
     }
 
     #[tokio::test]
@@ -3800,38 +3429,6 @@ mod tests {
 
       let _ = update(&mut state, Message::StockpileItemsToggled(7), &db);
       assert!(!state.stockpile_expanded.contains(&7));
-    }
-
-    #[tokio::test]
-    async fn it_toggles_the_location_picker_open_and_closed() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
-      assert!(state.stockpile_editor.as_ref().unwrap().location_open());
-
-      let _ = update(&mut state, Message::StockpileEditorLocationToggled, &db);
-      assert!(!state.stockpile_editor.as_ref().unwrap().location_open());
-    }
-
-    #[tokio::test]
-    async fn saving_an_open_editor_clears_it_and_spawns_a_reload() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileNew, &db);
-
-      let _task = update(&mut state, Message::StockpileEditorSaved, &db);
-      assert!(state.stockpile_editor.is_none());
-    }
-
-    #[tokio::test]
-    async fn saving_with_no_open_editor_is_a_noop() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-
-      let _ = update(&mut state, Message::StockpileEditorSaved, &db);
-      assert!(state.stockpile_editor.is_none());
     }
   }
 

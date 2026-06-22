@@ -1,4 +1,4 @@
-mod compose;
+pub mod compose;
 mod draft;
 mod folder_pane;
 mod labels;
@@ -102,8 +102,7 @@ pub enum Message {
     results: Vec<EntityRef>,
   },
   ComposeCcShown,
-  ComposeClosed,
-  ComposeExpandToggled,
+  ComposeDiscarded,
   ComposeFromChanged(i64),
   ComposeFromToggled,
   ComposeItalic,
@@ -117,7 +116,6 @@ pub enum Message {
   },
   ComposeLinkToggled,
   ComposeLinkUrlChanged(String),
-  ComposeMinimizeToggled,
   ComposeOpened,
   ComposeSend,
   ComposeSent(Result<(), String>),
@@ -275,7 +273,6 @@ pub enum DropTarget {
 pub struct State {
   active: Scope,
   all_messages: Vec<MessageRow>,
-  compose: Option<compose::Draft>,
   cursor: Option<Point>,
   drafts: Vec<draft::DraftRow>,
   dragging_mail: Option<i64>,
@@ -315,7 +312,6 @@ impl State {
     State {
       active: Scope::Character(active),
       all_messages: Vec::new(),
-      compose: None,
       cursor: None,
       drafts: Vec::new(),
       dragging_mail: None,
@@ -417,31 +413,6 @@ impl State {
     Some((id, pilot.name.as_str(), missing))
   }
 
-  pub fn compose_search_generation(&self, is_to: bool) -> u64 {
-    self
-      .compose
-      .as_ref()
-      .map(|draft| {
-        if is_to {
-          draft.to_search.generation()
-        } else {
-          draft.cc_search.generation()
-        }
-      })
-      .unwrap_or_default()
-  }
-
-  /// The current generation of the link popover's entity search, and the entity-search category for
-  /// the selected kind. `None` when there is no draft, no open popover, or the selected kind is the
-  /// non-searchable `http` kind.
-  pub fn compose_link_search(&self) -> Option<(u64, crate::features::entity_search::EntityCategory)> {
-    let popover = self.compose.as_ref()?.link.as_ref()?;
-    popover
-      .kind
-      .category()
-      .map(|category| (popover.search.generation(), category))
-  }
-
   pub fn unified_unread(&self) -> i64 {
     self.unified_unread
   }
@@ -478,14 +449,23 @@ impl State {
     &self.drafts
   }
 
-  /// The open compose's persist input, paired with its existing row id, when there is a non-empty
-  /// compose worth saving. Drives the auto-save triggers (close, scope/folder switch, quit).
-  pub fn pending_draft_save(&self) -> Option<(Option<i64>, mail::DraftInput)> {
-    let draft = self.compose.as_ref()?;
-    if draft.is_empty() {
+  /// The default sender for a new compose window opened from this mail view (the active character).
+  pub fn default_from(&self) -> Option<i64> {
+    let Scope::Character(id) = self.active;
+    Some(id)
+  }
+
+  /// Builds the seed for a reply/reply-all/forward compose window from the currently-rendered mail.
+  /// `None` when no mail is open or the open render is for a different mail than `mail_id`.
+  pub fn reply_seed(&self, mail_id: i64, kind: compose::Kind) -> Option<compose::Seed> {
+    let render = self.render.as_ref()?;
+    if render.mail.header.mail_id() != mail_id {
       return None;
     }
-    Some((draft.id, draft.persist_input()))
+    Some(compose::Seed::Reply {
+      kind,
+      render: Box::new(render.mail.clone()),
+    })
   }
 
   pub fn list_scroll_offset(&self) -> f32 {
@@ -526,10 +506,6 @@ impl State {
       .and_then(|mail_id| self.overlay_for(mail_id))
       .map(|o| o.is_snoozed())
       .unwrap_or(false)
-  }
-
-  pub fn compose(&self) -> Option<&compose::Draft> {
-    self.compose.as_ref()
   }
 
   pub(super) fn label_modal(&self) -> Option<&LabelDraft> {
@@ -585,11 +561,6 @@ impl State {
   fn overlay_for(&self, mail_id: i64) -> Option<&MailOverlayState> {
     self.overlays.get(&mail_id)
   }
-
-  fn default_from(&self) -> Option<i64> {
-    let Scope::Character(id) = self.active;
-    Some(id)
-  }
 }
 
 impl Default for State {
@@ -616,12 +587,16 @@ fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32
   PaneDrag::from_store_with_min(ui, key, default, min, host_width)
 }
 
-/// Persists an open compose's pending save (built synchronously from state via
-/// [`State::pending_draft_save`]) before the app exits, so a draft in flight at quit is present in
-/// Drafts on next launch. Awaited by the app's shutdown sequence rather than dispatched as a message,
-/// since the UI is tearing down.
+/// Persists a compose window's pending save (built from its [`compose::Draft`]) before the app exits,
+/// so a draft in flight at quit is present in Drafts on next launch. Awaited by the app's shutdown
+/// sequence rather than dispatched as a message, since the UI is tearing down.
 pub async fn persist_pending_draft(db: Database, id: Option<i64>, input: mail::DraftInput) {
   let _ = draft::persist(db, id, input).await;
+}
+
+/// Deletes a persisted draft row by id, used by the app when a compose window sends successfully.
+pub async fn delete_draft(db: Database, id: i64) {
+  draft::delete(db, id).await;
 }
 
 pub fn load(db: &Database, character: i64) -> Task<Message> {
@@ -786,18 +761,6 @@ where
   Task::perform(op(db.clone(), character_id, mail_id), |()| Message::OverlayWritten)
 }
 
-fn open_reply(state: &mut State, mail_id: i64, kind: compose::Kind) -> Task<Message> {
-  let Some(render) = state.render.as_ref() else {
-    return Task::none();
-  };
-  if render.mail.header.mail_id() != mail_id {
-    return Task::none();
-  }
-  state.snooze_menu = SnoozeMenu::Closed;
-  state.compose = Some(compose::Draft::from_mail(kind, &render.mail));
-  Task::none()
-}
-
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::Loaded(loaded) => handle_loaded(state, *loaded, db),
@@ -847,10 +810,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::SnoozeCalendarMinuteDown
     | Message::SnoozeCalendarChip(..) => update_snooze_calendar(state, message),
 
-    Message::Reply(mail_id) => open_reply(state, mail_id, compose::Kind::Reply),
-    Message::ReplyAll(mail_id) => open_reply(state, mail_id, compose::Kind::ReplyAll),
-    Message::Forward(mail_id) => open_reply(state, mail_id, compose::Kind::Forward),
-    Message::ComposeToInput(_)
+    // Compose now lives in detached windows: the app layer intercepts every compose/reply/forward
+    // and per-window compose message before it reaches here, so these arms are unreachable in practice
+    // and kept only to satisfy the match.
+    Message::Reply(_)
+    | Message::ReplyAll(_)
+    | Message::Forward(_)
+    | Message::ComposeOpened
+    | Message::ComposeToInput(_)
     | Message::ComposeCcInput(_)
     | Message::ComposeToSearched {
       ..
@@ -878,19 +845,15 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     | Message::ComposeLinkPicked(_)
     | Message::ComposeLinkInsert
-    | Message::ComposeFromChanged(_) => update_compose_fields(state, message),
-    Message::ComposeOpened
+    | Message::ComposeFromChanged(_)
     | Message::ComposeFromToggled
-    | Message::ComposeExpandToggled
-    | Message::ComposeMinimizeToggled
-    | Message::ComposeClosed
+    | Message::ComposeDiscarded
     | Message::ComposeSend
-    | Message::ComposeSent(_) => update_compose(state, message, db),
-    Message::DraftDeleted(_)
-    | Message::DraftLoaded(_)
-    | Message::DraftOpened(_)
-    | Message::DraftRowsLoaded(_)
-    | Message::DraftSaved(_) => update_drafts(state, message, db),
+    | Message::ComposeSent(_)
+    | Message::DraftLoaded(_) => Task::none(),
+    Message::DraftDeleted(_) | Message::DraftOpened(_) | Message::DraftRowsLoaded(_) | Message::DraftSaved(_) => {
+      update_drafts(state, message, db)
+    }
     Message::DropTargetEntered(_)
     | Message::DropTargetLeft(_)
     | Message::LabelColorPicked(_)
@@ -918,7 +881,8 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ScopeSelected(scope) => {
-      let save = save_open_draft(state, db);
+      // Compose lives in detached windows now, so navigating the main view never disturbs an open
+      // compose and no longer auto-saves a draft mid-edit.
       state.messages_page_epoch.next();
       state.active = scope;
       state.folder = Folder::Unified;
@@ -932,14 +896,13 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
       state.pending_label_delete = None;
       state.dragging_mail = None;
       state.drop_target = None;
-      save
+      Task::none()
     }
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
     }
     Message::FolderSelected(folder) => {
-      let save = save_open_draft(state, db);
       state.messages_page_epoch.next();
       state.folder = folder;
       state.selected = None;
@@ -947,7 +910,7 @@ fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task
       state.snooze_menu = SnoozeMenu::Closed;
       state.snooze_calendar = None;
       state.label_picker = None;
-      Task::batch([save, reload_for(db, state.active, folder)])
+      reload_for(db, state.active, folder)
     }
     Message::SearchChanged(query) => {
       state.search = query;
@@ -1202,31 +1165,9 @@ fn update_snooze_calendar(state: &mut State, message: Message) -> Task<Message> 
   Task::none()
 }
 
-/// Persists the open non-empty compose (if any), threading the row id back via `DraftSaved`. Used by
-/// the close/scope/folder auto-save triggers so a single persisted-id mechanism keeps every save on
-/// one row.
-fn save_open_draft(state: &State, db: &Database) -> Task<Message> {
-  let Some((id, input)) = state.pending_draft_save() else {
-    return Task::none();
-  };
-  Task::perform(draft::persist(db.clone(), id, input), Message::DraftSaved)
-}
-
 fn reload_drafts(state: &State, db: &Database) -> Task<Message> {
   let Scope::Character(character_id) = state.active;
   Task::perform(draft::load_rows(db.clone(), character_id), Message::DraftRowsLoaded)
-}
-
-/// Persists the closing compose (if non-empty), then reloads so the Drafts list and folder badge
-/// reflect the new row. The compose is being discarded, so the row id is not threaded back.
-fn save_on_close(state: &State, db: &Database) -> Task<Message> {
-  let Some((id, input)) = state.pending_draft_save() else {
-    return Task::none();
-  };
-  let reload = reload_for(db, state.active, state.folder);
-  Task::perform(draft::persist(db.clone(), id, input), |_| ())
-    .discard()
-    .chain(reload)
 }
 
 fn update_drafts(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -1238,12 +1179,6 @@ fn update_drafts(state: &mut State, message: Message, db: &Database) -> Task<Mes
         .discard()
         .chain(reload)
     }
-    Message::DraftLoaded(row) => {
-      if let Some(row) = *row {
-        state.compose = Some(compose::Draft::from_persisted(&row));
-      }
-      Task::none()
-    }
     Message::DraftOpened(id) => {
       let db = db.clone();
       Task::perform(async move { mail::draft(&db, id).await.ok().flatten() }, |row| {
@@ -1254,218 +1189,11 @@ fn update_drafts(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.drafts = rows;
       Task::none()
     }
-    Message::DraftSaved(id) => {
-      if let Some(draft) = state.compose.as_mut() {
-        draft.id = id;
-      }
-      reload_drafts(state, db)
-    }
+    // A compose window's save completed; refresh the main-view Drafts list and folder badge. The
+    // persisted row id is threaded back to the originating window by the app, not here.
+    Message::DraftSaved(_) => reload_drafts(state, db),
     _ => Task::none(),
   }
-}
-
-fn update_compose(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  match message {
-    Message::ComposeOpened => {
-      if let Some(from) = state.default_from() {
-        state.compose = Some(compose::Draft::blank(from));
-      }
-      Task::none()
-    }
-    Message::ComposeFromToggled => {
-      if let Some(draft) = state.compose.as_mut() {
-        draft.from_picker_open = !draft.from_picker_open;
-      }
-      Task::none()
-    }
-    Message::ComposeExpandToggled => {
-      if let Some(draft) = state.compose.as_mut() {
-        draft.expanded = !draft.expanded;
-        draft.minimized = false;
-      }
-      Task::none()
-    }
-    Message::ComposeMinimizeToggled => {
-      if let Some(draft) = state.compose.as_mut() {
-        draft.minimized = !draft.minimized;
-      }
-      Task::none()
-    }
-    Message::ComposeClosed => {
-      let save = save_on_close(state, db);
-      state.compose = None;
-      save
-    }
-    Message::ComposeSend => {
-      let Some(draft) = state.compose.as_ref() else {
-        return Task::none();
-      };
-      if !draft.can_send() {
-        return Task::none();
-      }
-      let draft = draft.clone();
-      Task::perform(compose::enqueue_send(db.clone(), draft), Message::ComposeSent)
-    }
-    Message::ComposeSent(result) => match result {
-      Ok(()) => {
-        let sent_draft_id = state.compose.as_ref().and_then(|draft| draft.id);
-        state.compose = None;
-        let reload = reload_for(db, state.active, state.folder);
-        match sent_draft_id {
-          Some(id) => Task::perform(draft::delete(db.clone(), id), |()| ())
-            .discard()
-            .chain(reload),
-          None => reload,
-        }
-      }
-      Err(message) => {
-        if let Some(draft) = state.compose.as_mut() {
-          draft.error = Some(message);
-        }
-        Task::none()
-      }
-    },
-    _ => Task::none(),
-  }
-}
-
-fn update_compose_fields(state: &mut State, message: Message) -> Task<Message> {
-  let Some(draft) = state.compose.as_mut() else {
-    return Task::none();
-  };
-  let message = match update_compose_recipients(draft, message) {
-    Ok(()) => return Task::none(),
-    Err(message) => message,
-  };
-  let message = match update_compose_link(draft, message) {
-    Ok(()) => return Task::none(),
-    Err(message) => message,
-  };
-  match message {
-    Message::ComposeCcShown => draft.show_cc = true,
-    Message::ComposeSubjectChanged(value) => draft.subject = value,
-    Message::ComposeBodyChanged(action) => draft.body.perform(action),
-    Message::ComposeBold => draft.wrap_emphasis(compose::EmphasisKind::Bold),
-    Message::ComposeItalic => draft.wrap_emphasis(compose::EmphasisKind::Italic),
-    Message::ComposeFromChanged(character_id) => {
-      draft.from_character_id = character_id;
-      draft.from_picker_open = false;
-    }
-    _ => {}
-  }
-  Task::none()
-}
-
-fn update_compose_link(draft: &mut compose::Draft, message: Message) -> Result<(), Message> {
-  match message {
-    Message::ComposeLinkToggled => {
-      draft.link = match draft.link {
-        Some(_) => None,
-        None => Some(compose::LinkPopover::default()),
-      };
-    }
-    Message::ComposeLinkKindSelected(kind) => {
-      if let Some(popover) = draft.link.as_mut() {
-        popover.select(kind);
-      }
-    }
-    Message::ComposeLinkUrlChanged(value) => {
-      if let Some(popover) = draft.link.as_mut() {
-        popover.url = value;
-      }
-    }
-    Message::ComposeLinkSearchInput(value) => {
-      if let Some(popover) = draft.link.as_mut() {
-        popover.search.set_query(value);
-      }
-    }
-    Message::ComposeLinkSearched {
-      generation,
-      results,
-    } => {
-      if let Some(popover) = draft.link.as_mut() {
-        popover.search.accept_results(generation, results.clone());
-        popover.results = results;
-      }
-    }
-    Message::ComposeLinkPicked(entity) => {
-      let markup = draft
-        .link
-        .as_ref()
-        .and_then(|popover| popover.kind.link_for(entity.id, entity.name))
-        .map(|link| link.to_markup());
-      if let Some(markup) = markup {
-        draft.insert_text(&markup);
-        draft.link = None;
-      }
-    }
-    Message::ComposeLinkInsert => {
-      let markup = draft
-        .link
-        .as_ref()
-        .and_then(compose::LinkPopover::http_link)
-        .map(|link| link.to_markup());
-      if let Some(markup) = markup {
-        draft.insert_text(&markup);
-        draft.link = None;
-      }
-    }
-    other => return Err(other),
-  }
-  Ok(())
-}
-
-fn update_compose_recipients(draft: &mut compose::Draft, message: Message) -> Result<(), Message> {
-  match message {
-    Message::ComposeToInput(value) => {
-      draft.to_search.set_query(value);
-    }
-    Message::ComposeCcInput(value) => {
-      draft.cc_search.set_query(value);
-    }
-    Message::ComposeToSearched {
-      generation,
-      results,
-    } => {
-      draft.to_search.accept_results(generation, results);
-    }
-    Message::ComposeCcSearched {
-      generation,
-      results,
-    } => {
-      draft.cc_search.accept_results(generation, results);
-    }
-    Message::ComposeToCommitted => {
-      let name = draft.to_search.query().trim().to_owned();
-      if !name.is_empty() {
-        draft.push_to(compose::Recipient::typed(name));
-        draft.to_search.clear();
-      }
-    }
-    Message::ComposeCcCommitted => {
-      let name = draft.cc_search.query().trim().to_owned();
-      if !name.is_empty() {
-        draft.push_cc(compose::Recipient::typed(name));
-        draft.cc_search.clear();
-      }
-    }
-    Message::ComposeToPicked(entity) => {
-      draft.push_to(compose::Recipient::from_entity(entity));
-      draft.to_search.clear();
-    }
-    Message::ComposeCcPicked(entity) => {
-      draft.push_cc(compose::Recipient::from_entity(entity));
-      draft.cc_search.clear();
-    }
-    Message::ComposeToRemoved(index) => {
-      draft.remove_to(index);
-    }
-    Message::ComposeCcRemoved(index) => {
-      draft.remove_cc(index);
-    }
-    other => return Err(other),
-  }
-  Ok(())
 }
 
 fn update_labels(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -1923,17 +1651,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::ui::components::entity_search::EntityKind;
-
-    fn character_entity(id: i64, name: &str) -> EntityRef {
-      EntityRef {
-        id,
-        kind: EntityKind::Character,
-        name: name.to_owned(),
-        portrait: None,
-      }
-    }
-
     fn list_row(mail_id: i64, character_id: i64, is_read: bool) -> message_list::MessageRow {
       message_list::MessageRow {
         bucket: message_list::DayBucket::Today,
@@ -1956,269 +1673,6 @@ mod tests {
         subject: "S".to_owned(),
         time: "10:00".to_owned(),
         timestamp: "2026-06-01T10:00:00Z".to_owned(),
-      }
-    }
-
-    mod compose_fields {
-      use pretty_assertions::assert_eq;
-
-      use super::*;
-
-      fn entity(id: i64, name: &str) -> EntityRef {
-        character_entity(id, name)
-      }
-
-      fn with_compose() -> State {
-        let mut state = State::new(42);
-        state.compose = Some(compose::Draft::blank(42));
-        state
-      }
-
-      #[test]
-      fn it_appends_a_committed_cc_recipient() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeCcInput("Other".to_owned()));
-
-        let _ = update_compose_fields(&mut state, Message::ComposeCcCommitted);
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.cc.len(), 1);
-        assert_eq!(draft.cc_search.query(), "");
-      }
-
-      #[test]
-      fn it_appends_a_committed_to_recipient() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeToInput("Pilot".to_owned()));
-
-        let _ = update_compose_fields(&mut state, Message::ComposeToCommitted);
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.to.len(), 1);
-        assert_eq!(draft.to_search.query(), "");
-      }
-
-      #[test]
-      fn it_appends_a_picked_to_recipient_and_clears_the_search() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeToPicked(entity(95_000_001, "Pilot")));
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.to.len(), 1);
-        assert_eq!(draft.to.first().unwrap().id, Some(95_000_001));
-      }
-
-      #[test]
-      fn it_appends_a_picked_cc_recipient() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeCcPicked(entity(95_000_002, "Pilot")));
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.cc.len(), 1);
-      }
-
-      #[test]
-      fn it_does_not_commit_an_empty_recipient() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeToCommitted);
-
-        assert!(state.compose.as_ref().unwrap().to.is_empty());
-      }
-
-      #[test]
-      fn it_removes_recipients_by_index() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeToPicked(entity(1, "A")));
-        let _ = update_compose_fields(&mut state, Message::ComposeCcPicked(entity(2, "B")));
-
-        let _ = update_compose_fields(&mut state, Message::ComposeToRemoved(0));
-        let _ = update_compose_fields(&mut state, Message::ComposeCcRemoved(0));
-
-        let draft = state.compose.as_ref().unwrap();
-        assert!(draft.to.is_empty());
-        assert!(draft.cc.is_empty());
-      }
-
-      #[test]
-      fn it_accepts_recipient_search_results() {
-        let mut state = with_compose();
-        let to_gen = state.compose.as_mut().unwrap().to_search.set_query("Pilot".to_owned());
-        let cc_gen = state.compose.as_mut().unwrap().cc_search.set_query("Other".to_owned());
-
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeToSearched {
-            generation: to_gen,
-            results: vec![entity(1, "Pilot")],
-          },
-        );
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeCcSearched {
-            generation: cc_gen,
-            results: vec![entity(2, "Other")],
-          },
-        );
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.to_search.results().len(), 1);
-        assert_eq!(draft.cc_search.results().len(), 1);
-      }
-
-      #[test]
-      fn it_shows_the_cc_field() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeCcShown);
-
-        assert!(state.compose.as_ref().unwrap().show_cc);
-      }
-
-      #[test]
-      fn it_sets_the_subject() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeSubjectChanged("Hi".to_owned()));
-
-        assert_eq!(state.compose.as_ref().unwrap().subject, "Hi");
-      }
-
-      #[test]
-      fn it_changes_the_from_character_and_closes_the_picker() {
-        let mut state = with_compose();
-        state.compose.as_mut().unwrap().from_picker_open = true;
-
-        let _ = update_compose_fields(&mut state, Message::ComposeFromChanged(99));
-
-        let draft = state.compose.as_ref().unwrap();
-        assert_eq!(draft.from_character_id, 99);
-        assert!(!draft.from_picker_open);
-      }
-
-      #[test]
-      fn it_wraps_a_bold_emphasis() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeBold);
-
-        assert_eq!(state.compose.as_ref().unwrap().body.text(), "<b></b>");
-      }
-
-      #[test]
-      fn it_wraps_an_italic_emphasis() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeItalic);
-
-        assert_eq!(state.compose.as_ref().unwrap().body.text(), "<i></i>");
-      }
-
-      #[test]
-      fn it_toggles_the_link_popover_open_and_closed() {
-        let mut state = with_compose();
-
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-        assert!(state.compose.as_ref().unwrap().link.is_some());
-
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-        assert!(state.compose.as_ref().unwrap().link.is_none());
-      }
-
-      #[test]
-      fn it_selects_a_link_kind() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
-        );
-
-        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
-        assert_eq!(link.kind, compose::LinkKind::Character);
-      }
-
-      #[test]
-      fn it_changes_the_link_url() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkUrlChanged("example.com".to_owned()));
-
-        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
-        assert_eq!(link.url, "example.com");
-      }
-
-      #[test]
-      fn it_accepts_link_search_input_and_results() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
-        );
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkSearchInput("Pilot".to_owned()));
-        let generation = state
-          .compose
-          .as_ref()
-          .unwrap()
-          .link
-          .as_ref()
-          .unwrap()
-          .search
-          .generation();
-
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeLinkSearched {
-            generation,
-            results: vec![entity(1, "Pilot")],
-          },
-        );
-
-        let link = state.compose.as_ref().unwrap().link.as_ref().unwrap();
-        assert_eq!(link.results.len(), 1);
-      }
-
-      #[test]
-      fn it_inserts_a_picked_link_and_closes_the_popover() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-        let _ = update_compose_fields(
-          &mut state,
-          Message::ComposeLinkKindSelected(compose::LinkKind::Character),
-        );
-
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkPicked(entity(95_000_001, "Pilot")));
-
-        let draft = state.compose.as_ref().unwrap();
-        assert!(draft.link.is_none());
-        assert!(draft.body.text().contains("95000001"));
-      }
-
-      #[test]
-      fn it_inserts_an_http_link_and_closes_the_popover() {
-        let mut state = with_compose();
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkToggled);
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkUrlChanged("example.com".to_owned()));
-
-        let _ = update_compose_fields(&mut state, Message::ComposeLinkInsert);
-
-        let draft = state.compose.as_ref().unwrap();
-        assert!(draft.link.is_none());
-        assert!(draft.body.text().contains("http://example.com"));
-      }
-
-      #[test]
-      fn it_ignores_compose_messages_without_an_open_draft() {
-        let mut state = State::new(42);
-
-        let _ = update_compose_fields(&mut state, Message::ComposeSubjectChanged("Hi".to_owned()));
-
-        assert!(state.compose.is_none());
       }
     }
 
@@ -2330,22 +1784,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_commits_a_typed_recipient_name_without_an_id() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
-
-      let _ = update(&mut state, Message::ComposeToInput("Typed Pilot".to_owned()), &db);
-      let _ = update(&mut state, Message::ComposeToCommitted, &db);
-
-      let draft = state.compose().unwrap();
-      assert_eq!(draft.to.len(), 1);
-      assert_eq!(draft.to[0].id, None);
-      assert_eq!(draft.to[0].name, "Typed Pilot");
-      assert!(draft.to_search.query().is_empty());
-    }
-
-    #[tokio::test]
     async fn it_confirms_a_calendar_snooze_and_unsnoozes() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
@@ -2358,28 +1796,6 @@ mod tests {
 
       let _ = update(&mut state, Message::Unsnooze(7), &db);
       assert!(!state.snooze_presets_open());
-    }
-
-    #[tokio::test]
-    async fn it_discards_recipient_results_from_a_superseded_search() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
-
-      let _ = update(&mut state, Message::ComposeToInput("Vex".to_owned()), &db);
-      let stale = state.compose_search_generation(true);
-      let _ = update(&mut state, Message::ComposeToInput("Vexor".to_owned()), &db);
-
-      let _ = update(
-        &mut state,
-        Message::ComposeToSearched {
-          generation: stale,
-          results: vec![character_entity(1, "Stale")],
-        },
-        &db,
-      );
-
-      assert!(state.compose().unwrap().to_search.results().is_empty());
     }
 
     #[tokio::test]
@@ -2509,17 +1925,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_keeps_a_blocked_send_open_with_an_unsendable_draft() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
-
-      let _ = update(&mut state, Message::ComposeSend, &db);
-
-      assert!(state.compose().is_some());
-    }
-
-    #[tokio::test]
     async fn it_keeps_the_open_mail_when_a_reload_still_lists_it() {
       let mut state = State::new(42);
       let db = crate::store::open_test().await.unwrap();
@@ -2540,73 +1945,6 @@ mod tests {
         Some(7),
         "a reload that still lists the open mail keeps the selection"
       );
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_edits_a_compose_draft() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.roster = vec![RosterPilot {
-        corp: "VEX".to_owned(),
-        granted_scopes: None,
-        id: 42,
-        name: "Vex".to_owned(),
-        portrait: images::ImageState::Stale {
-          id: 42,
-          kind: images::ImageKind::CharacterPortrait,
-        },
-        unread: 0,
-      }];
-
-      let _ = update(&mut state, Message::ComposeOpened, &db);
-      assert!(state.compose().is_some());
-
-      let _ = update(&mut state, Message::ComposeToInput("Vex Voronova".to_owned()), &db);
-      let _ = update(
-        &mut state,
-        Message::ComposeToPicked(character_entity(95_000_001, "Vex Voronova")),
-        &db,
-      );
-      assert_eq!(state.compose().unwrap().to[0].id, Some(95_000_001));
-      assert!(state.compose().unwrap().to_search.query().is_empty());
-      let _ = update(&mut state, Message::ComposeToRemoved(0), &db);
-      let _ = update(&mut state, Message::ComposeToInput("Vex Voronova".to_owned()), &db);
-      let _ = update(&mut state, Message::ComposeToCommitted, &db);
-      let _ = update(&mut state, Message::ComposeCcShown, &db);
-      let _ = update(
-        &mut state,
-        Message::ComposeCcPicked(character_entity(95_000_009, "Alt")),
-        &db,
-      );
-      assert_eq!(state.compose().unwrap().cc[0].id, Some(95_000_009));
-      let _ = update(&mut state, Message::ComposeCcRemoved(0), &db);
-      let _ = update(&mut state, Message::ComposeCcInput("Alt".to_owned()), &db);
-      let _ = update(&mut state, Message::ComposeCcCommitted, &db);
-      let _ = update(&mut state, Message::ComposeSubjectChanged("CTA".to_owned()), &db);
-      let _ = update(
-        &mut state,
-        Message::ComposeBodyChanged(text_editor::Action::Edit(text_editor::Edit::Paste(
-          std::sync::Arc::new("Form up.".to_owned()),
-        ))),
-        &db,
-      );
-      let _ = update(&mut state, Message::ComposeFromChanged(42), &db);
-      let draft = state.compose().unwrap();
-      assert_eq!(draft.to.len(), 1);
-      assert_eq!(draft.cc.len(), 1);
-      assert_eq!(draft.subject, "CTA");
-      assert_eq!(draft.body.text(), "Form up.");
-
-      let _ = update(&mut state, Message::ComposeToRemoved(0), &db);
-      assert!(state.compose().unwrap().to.is_empty());
-
-      let _ = update(&mut state, Message::ComposeExpandToggled, &db);
-      assert!(state.compose().unwrap().expanded);
-      let _ = update(&mut state, Message::ComposeMinimizeToggled, &db);
-      let _ = update(&mut state, Message::ComposeFromToggled, &db);
-
-      let _ = update(&mut state, Message::ComposeClosed, &db);
-      assert!(state.compose().is_none());
     }
 
     #[tokio::test]
@@ -2702,19 +2040,6 @@ mod tests {
       );
 
       assert_eq!(state.render(), Some(&render));
-    }
-
-    #[tokio::test]
-    async fn it_surfaces_a_failed_send_inline_and_closes_on_success() {
-      let mut state = State::new(42);
-      let db = crate::store::open_test().await.unwrap();
-      state.compose = Some(compose::Draft::blank(42));
-
-      let _ = update(&mut state, Message::ComposeSent(Err("boom".to_owned())), &db);
-      assert_eq!(state.compose().unwrap().error.as_deref(), Some("boom"));
-
-      let _ = update(&mut state, Message::ComposeSent(Ok(())), &db);
-      assert!(state.compose().is_none());
     }
 
     #[tokio::test]
@@ -3086,42 +2411,21 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_offers_a_pending_save_for_a_non_empty_compose_and_persists_one_row() {
+      async fn it_persists_one_row_for_a_non_empty_compose_window() {
         let db = store::open_test().await.unwrap();
         seed_character(&db, 42).await;
-        let mut state = State::new(42);
-        state.compose = Some(typed_compose());
 
-        let (id, input) = state.pending_draft_save().expect("a non-empty compose is worth saving");
+        let (id, input) = typed_compose()
+          .pending_save()
+          .expect("a non-empty compose is worth saving");
         draft::persist(db.clone(), id, input).await;
 
-        // Closing clears the live compose; the persist itself is dispatched as an async task.
-        let _ = update(&mut state, Message::ComposeClosed, &db);
-        assert!(state.compose().is_none());
         assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 1);
       }
 
       #[tokio::test]
       async fn it_offers_no_pending_save_for_a_blank_compose() {
-        let mut state = State::new(42);
-        state.compose = Some(compose::Draft::blank(42));
-
-        assert!(state.pending_draft_save().is_none());
-      }
-
-      #[tokio::test]
-      async fn it_threads_the_saved_id_back_onto_the_open_compose() {
-        let db = store::open_test().await.unwrap();
-        seed_character(&db, 42).await;
-        let mut state = State::new(42);
-        state.compose = Some(typed_compose());
-        let id = mail::upsert_draft(&db, None, &state.compose().unwrap().persist_input())
-          .await
-          .unwrap();
-
-        let _ = update(&mut state, Message::DraftSaved(Some(id)), &db);
-
-        assert_eq!(state.compose().unwrap().id, Some(id));
+        assert!(compose::Draft::blank(42).pending_save().is_none());
       }
 
       #[tokio::test]
@@ -3131,13 +2435,11 @@ mod tests {
         let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
           .await
           .unwrap();
-        let mut state = State::new(42);
         let mut compose = typed_compose();
-        compose.id = Some(id);
+        compose.set_id(Some(id));
         compose.subject = "Edited".to_owned();
-        state.compose = Some(compose);
 
-        let (saved_id, input) = state.pending_draft_save().unwrap();
+        let (saved_id, input) = compose.pending_save().unwrap();
         assert_eq!(saved_id, Some(id), "the persisted id is threaded back into the save");
         draft::persist(db.clone(), saved_id, input).await;
 
@@ -3146,39 +2448,29 @@ mod tests {
       }
 
       #[tokio::test]
-      async fn it_clears_the_compose_on_a_successful_send() {
+      async fn it_deletes_the_row_by_id_on_a_successful_send() {
         let db = store::open_test().await.unwrap();
         seed_character(&db, 42).await;
         let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
           .await
           .unwrap();
-        let mut state = State::new(42);
-        let mut compose = typed_compose();
-        compose.id = Some(id);
-        state.compose = Some(compose);
 
-        let _ = update(&mut state, Message::ComposeSent(Ok(())), &db);
-
-        assert!(state.compose().is_none());
-
-        // The row deletion is dispatched as an async task; verify the by-id delete path directly.
-        draft::delete(db.clone(), id).await;
+        // A successful send deletes the persisted draft by id; verify the by-id delete path directly.
+        delete_draft(db.clone(), id).await;
         assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 0);
       }
 
       #[tokio::test]
-      async fn it_fills_the_compose_from_a_loaded_draft_row() {
+      async fn it_fills_a_compose_from_a_loaded_draft_row() {
         let db = store::open_test().await.unwrap();
         seed_character(&db, 42).await;
         let id = mail::upsert_draft(&db, None, &typed_compose().persist_input())
           .await
           .unwrap();
-        let mut state = State::new(42);
-        let row = mail::draft(&db, id).await.unwrap();
+        let row = mail::draft(&db, id).await.unwrap().unwrap();
 
-        let _ = update(&mut state, Message::DraftLoaded(Box::new(row)), &db);
+        let compose = compose::Draft::from_persisted(&row);
 
-        let compose = state.compose().expect("the draft fills the compose");
         assert_eq!(compose.id, Some(id));
         assert_eq!(compose.subject, "CTA");
         assert_eq!(compose.body.text(), "Form up.");
@@ -3566,8 +2858,7 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_compose_panel_overlay() {
-      let mut state = populated_state();
+    fn it_renders_the_detached_compose_window_body() {
       let mut draft = compose::Draft::blank(42);
       draft.to.push(compose::Recipient::typed("Vex Voronova"));
       draft.show_cc = true;
@@ -3576,8 +2867,8 @@ mod tests {
       draft.body = text_editor::Content::with_text("Form up.");
       draft.from_picker_open = true;
       draft.error = Some("enqueue failed".to_owned());
-      state.compose = Some(draft);
-      let _el: Element<'_, Message> = view(&state);
+
+      let _el: Element<'_, Message> = compose::view(&draft, &[]);
     }
 
     #[test]

@@ -26,9 +26,9 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, corporation_detail,
-    focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor, skills, skills_compare,
-    splash, wallet, window_chrome,
+    assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, contract_detail,
+    corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor, skills,
+    skills_compare, splash, wallet, window_chrome,
   },
   mcp,
   services::{images, updater},
@@ -154,10 +154,12 @@ struct App {
   clock_tick: u64,
   coalescer: WriteCoalescer,
   compare: Option<(window::Id, skills_compare::State)>,
+  composes: WindowStates<mail::compose::Draft>,
   /// Whether the data-loss confirmation gate is open. `true` means the first "Take over" click has
   /// been received but the share has not yet been claimed — the forceful claim fires only on the
   /// second explicit confirmation.
   confirm_force_takeover: bool,
+  contracts: WindowStates<contract_detail::State>,
   corporation_detail: Option<corporation_detail::State>,
   editor: Option<(window::Id, skill_plan_editor::State)>,
   engine_state: EngineState,
@@ -202,6 +204,7 @@ struct App {
   splash: Option<splash::State>,
   splash_step: u32,
   status: sync::SyncStatus,
+  stockpile_editors: WindowStates<assets::Editor>,
   store_ready: Option<StoreReady>,
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
@@ -264,7 +267,18 @@ enum Message {
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
+  Compose(window::Id, mail::Message),
+  ComposeWindowReady {
+    id: window::Id,
+    seed: Box<mail::compose::Seed>,
+  },
   ConfirmTakeOver,
+  Contract(window::Id, contract_detail::Message),
+  ContractWindowReady {
+    contract_id: i64,
+    id: window::Id,
+    source: contract_detail::Source,
+  },
   CorporationDetail(corporation_detail::Message),
   EngineStopped {
     reason: Option<String>,
@@ -310,6 +324,11 @@ enum Message {
   Skills(skills::Message),
   SnoozesWoken(Vec<(i64, i64)>),
   Splash(splash::Message),
+  StockpileEditor(window::Id, assets::Message),
+  StockpileEditorWindowReady {
+    id: window::Id,
+    seed: Box<assets::EditorSeed>,
+  },
   StorageMigrated,
   StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
@@ -376,6 +395,8 @@ impl Message {
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
       Message::Compare(_) => "Compare",
+      Message::Compose(..) => "Compose",
+      Message::Contract(..) => "Contract",
       Message::CorporationDetail(_) => "CorporationDetail",
       Message::Industry(_) => "Industry",
       Message::Killmail(..) => "Killmail",
@@ -388,6 +409,7 @@ impl Message {
       Message::Settings(_) => "Settings",
       Message::SkillPlanEditor(_) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
+      Message::StockpileEditor(..) => "StockpileEditor",
       Message::Sync(_) => "Sync",
       Message::Wallet(_) => "Wallet",
       _ => return None,
@@ -404,6 +426,15 @@ impl Message {
   fn boot_variant_name(&self) -> Option<&'static str> {
     Some(match self {
       Message::ClockTick => "ClockTick",
+      Message::ComposeWindowReady {
+        ..
+      } => "ComposeWindowReady",
+      Message::ContractWindowReady {
+        ..
+      } => "ContractWindowReady",
+      Message::StockpileEditorWindowReady {
+        ..
+      } => "StockpileEditorWindowReady",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::ImageReady {
         ..
@@ -866,7 +897,9 @@ fn boot() -> (App, Task<Message>) {
     clock_tick: 0,
     coalescer: WriteCoalescer::new(),
     compare: None,
+    composes: WindowStates::default(),
     confirm_force_takeover: false,
+    contracts: WindowStates::default(),
     corporation_detail: None,
     editor: None,
     engine_state: EngineState::default(),
@@ -900,6 +933,7 @@ fn boot() -> (App, Task<Message>) {
     skills: None,
     splash: Some(splash::State::default()),
     splash_step: 0,
+    stockpile_editors: WindowStates::default(),
     store_ready: None,
     status: sync::SyncStatus::new(),
     sync_popover_open: false,
@@ -1228,8 +1262,11 @@ fn ui_config(app: &App) -> config::UiConfig {
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
     Some(Window::Compare) => close_compare_window(app, id),
+    Some(Window::Contract) => close_contract_window(app, id),
     Some(Window::Killmail) => close_killmail_window(app, id),
+    Some(Window::MailCompose) => close_compose_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
+    Some(Window::StockpileEditor) => close_stockpile_editor_window(app, id),
     _ => {
       app.windows.remove(id);
       window::close(id)
@@ -1244,13 +1281,44 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
   };
   match kind {
     Window::Compare if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) => app.compare = None,
+    Window::Contract => {
+      app.contracts.remove(id);
+    }
     Window::Killmail => {
       app.killmails.remove(id);
     }
+    Window::MailCompose => {
+      // The OS already tore the window down, so save the in-flight draft (if non-empty) without
+      // re-issuing a close, then drop the per-window state.
+      let save = compose_save_on_drop(app, id);
+      app.composes.remove(id);
+      return Task::batch([save, shutdown_if_last_window(app)]);
+    }
     Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
+    Window::StockpileEditor => {
+      app.stockpile_editors.remove(id);
+    }
     _ => {}
   }
   shutdown_if_last_window(app)
+}
+
+/// Persists a compose window's draft (if non-empty) when the OS reports it closed, refreshing the
+/// main-view Drafts list. Used by `on_window_closed`, which must not re-issue a `window::close`.
+fn compose_save_on_drop(app: &App, id: window::Id) -> Task<Message> {
+  match (
+    app.composes.get(id).and_then(mail::compose::Draft::pending_save),
+    app.runtime.as_ref(),
+  ) {
+    (Some((draft_id, input)), Some(runtime)) => {
+      let db = runtime.db.clone();
+      Task::perform(
+        async move { mail::persist_pending_draft(db, draft_id, input).await },
+        |()| Message::Mail(mail::Message::DraftSaved(None)),
+      )
+    }
+    _ => Task::none(),
+  }
 }
 
 fn shutdown_if_last_window(app: &mut App) -> Task<Message> {
@@ -1271,18 +1339,27 @@ fn shutdown(app: &mut App) -> Task<Message> {
     .chain(Task::batch([iced::exit(), exit_process()]))
 }
 
-/// Flushes any open, non-empty mail compose to Drafts before the storage checkpoint, so a draft in
-/// flight at quit survives to the next launch. Runs before the checkpoint so the persisted row is
+/// Flushes every open, non-empty compose window to Drafts before the storage checkpoint, so any draft
+/// in flight at quit survives to the next launch. Runs before the checkpoint so the persisted rows are
 /// included in the pushed working copy.
 fn save_open_compose(app: &App) -> Task<Message> {
-  let (Some(state), Some(runtime)) = (app.mail.as_ref(), app.runtime.as_ref()) else {
+  let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
-  let Some((id, input)) = state.pending_draft_save() else {
-    return Task::none();
-  };
-  let db = runtime.db.clone();
-  Task::future(async move { mail::persist_pending_draft(db, id, input).await }).discard()
+  let saves: Vec<Task<Message>> = app
+    .composes
+    .iter()
+    .filter_map(|(_, draft)| draft.pending_save())
+    .map(|(id, input)| {
+      let db = runtime.db.clone();
+      Task::future(async move { mail::persist_pending_draft(db, id, input).await }).discard()
+    })
+    .collect();
+  if saves.is_empty() {
+    Task::none()
+  } else {
+    Task::batch(saves)
+  }
 }
 
 fn stop_engines(app: &App) {
@@ -1386,16 +1463,6 @@ fn propagate_host_width(app: &mut App, id: window::Id, width: f32) {
       }
     }
     _ => {}
-  }
-}
-
-/// Feeds the live main-window height to the assets state so the stockpile editor modal can size at
-/// ~50% of the window height.
-fn propagate_host_height(app: &mut App, id: window::Id, height: f32) {
-  if let Some(Window::Main) = app.windows.kind(id)
-    && let Some(state) = app.assets.as_mut()
-  {
-    state.set_window_height(height);
   }
 }
 
@@ -1759,8 +1826,14 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
   if let Some((_, compare)) = app.compare.as_ref() {
     keys.extend(compare.stale_images());
   }
+  for (_, contract) in app.contracts.iter() {
+    keys.extend(contract.stale_images());
+  }
   for (_, killmail) in app.killmails.iter() {
     keys.extend(killmail.stale_images());
+  }
+  for (_, editor) in app.stockpile_editors.iter() {
+    keys.extend(editor.stale_images());
   }
   keys
 }
@@ -1844,6 +1917,10 @@ fn image_reload(app: &App) -> Task<Message> {
   }
   if let Some((_, compare)) = app.compare.as_ref() {
     tasks.push(skills_compare::load(&runtime.db, compare.selected_ids().to_vec()).map(Message::Compare));
+  }
+  for (id, contract) in app.contracts.iter() {
+    let load = contract_detail::load(&runtime.db, contract.source(), contract.contract_id());
+    tasks.push(load.map(move |msg| Message::Contract(id, msg)));
   }
   for (id, killmail) in app.killmails.iter() {
     let load = killmail_detail::load(&runtime.db, killmail.source(), killmail.killmail_id());
@@ -2593,7 +2670,9 @@ fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
-    Some(Window::Killmail | Window::Splash) => splash_theme(),
+    Some(Window::Contract | Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => {
+      splash_theme()
+    }
     _ => pod_theme(),
   }
 }
@@ -2878,6 +2957,370 @@ fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
+/// Opens a detached contract window centered on the main window. Like the killmail pilot the id is
+/// unknown until the centered open resolves, so registration, state seeding, and the loader run in
+/// [`handle_contract_window_ready`]. Unlimited instances coexist, duplicates included.
+fn open_contract_window(app: &mut App, source: contract_detail::Source, contract_id: i64) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+  let size = Size::new(
+    contract_detail::CONTRACT_WINDOW_WIDTH,
+    contract_detail::CONTRACT_WINDOW_HEIGHT,
+  );
+  open_centered_window(app, size, move |id| {
+    Task::done(Message::ContractWindowReady {
+      contract_id,
+      id,
+      source,
+    })
+  })
+}
+
+fn handle_contract_window_ready(
+  app: &mut App,
+  id: window::Id,
+  source: contract_detail::Source,
+  contract_id: i64,
+) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  app.windows.register(id, Window::Contract);
+  app
+    .contracts
+    .insert(id, contract_detail::State::new(source, contract_id));
+  contract_detail::load(&db, source, contract_id).map(move |msg| Message::Contract(id, msg))
+}
+
+fn handle_contract(app: &mut App, id: window::Id, msg: contract_detail::Message) -> Task<Message> {
+  let Some(state) = app.contracts.get_mut(id) else {
+    return Task::none();
+  };
+  let contract_detail::Message::Loaded(detail) = msg;
+  state.set_detail(*detail);
+  let keys = state.stale_images();
+  dispatch_image_fetches(app, keys)
+}
+
+fn close_contract_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.contracts.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
+/// Opens a detached stockpile-editor window (New, Edit, or Import-prefill) centered on the main window.
+/// Like the killmail/contract pilots the id is unknown until the centered open resolves, so the seed is
+/// applied in [`handle_stockpile_editor_window_ready`]. Unlimited instances coexist (a New and an Edit
+/// at once), each minting a fresh id.
+fn open_stockpile_editor_window(app: &mut App, seed: assets::EditorSeed) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+  let size = Size::new(
+    assets::STOCKPILE_EDITOR_WINDOW_WIDTH,
+    assets::STOCKPILE_EDITOR_WINDOW_HEIGHT,
+  );
+  open_centered_window(app, size, move |id| {
+    Task::done(Message::StockpileEditorWindowReady {
+      id,
+      seed: Box::new(seed.clone()),
+    })
+  })
+}
+
+fn handle_stockpile_editor_window_ready(app: &mut App, id: window::Id, seed: assets::EditorSeed) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let editor = assets::Editor::from_seed(seed);
+  // Seed the live pilot preview as soon as the window opens, before the user edits the scope, mirroring
+  // the former on-open scope resolve.
+  let scope = editor.scope_query().to_owned();
+  app.windows.register(id, Window::StockpileEditor);
+  app.stockpile_editors.insert(id, editor);
+  stockpile_scope_resolve(runtime, scope).map(move |msg| match msg {
+    Message::Assets(assets) => Message::StockpileEditor(id, assets),
+    other => other,
+  })
+}
+
+/// Routes a per-window editor message to its window's [`Editor`], applies it, and dispatches the
+/// reported follow-up (item/location/scope search, save, or close). Save and Close both close the
+/// window; Save first persists and reloads the main view's stockpile grid.
+fn handle_stockpile_editor(app: &mut App, id: window::Id, msg: assets::Message) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let Some(editor) = app.stockpile_editors.get_mut(id) else {
+    return Task::none();
+  };
+  match assets::apply_editor(editor, msg) {
+    assets::EditorEffect::None => Task::none(),
+    assets::EditorEffect::ItemSearch(query) => {
+      stockpile_item_search(runtime, query).map(move |msg| reroute_to_stockpile_editor(id, msg))
+    }
+    assets::EditorEffect::LocationSearch {
+      generation,
+      query,
+    } => stockpile_location_search(runtime, query, generation).map(move |msg| reroute_to_stockpile_editor(id, msg)),
+    assets::EditorEffect::ScopeResolve(query) => {
+      stockpile_scope_resolve(runtime, query).map(move |msg| reroute_to_stockpile_editor(id, msg))
+    }
+    assets::EditorEffect::Save => {
+      let Some(editor) = app.stockpile_editors.get(id).cloned() else {
+        return Task::none();
+      };
+      let save = stockpile_save_window(runtime, editor);
+      Task::batch([save, close_stockpile_editor_window(app, id)])
+    }
+    assets::EditorEffect::Close => close_stockpile_editor_window(app, id),
+  }
+}
+
+/// Re-tags an `assets::Message` produced by a stockpile editor search helper so the result routes back
+/// to the originating editor window instead of the main assets view.
+fn reroute_to_stockpile_editor(id: window::Id, msg: Message) -> Message {
+  match msg {
+    Message::Assets(assets) => Message::StockpileEditor(id, assets),
+    other => other,
+  }
+}
+
+/// Saves a detached editor and reloads the main view's stockpile grid. Unlike the retired in-place
+/// save, the reload routes to the main assets state (the editor window is closing) via a top-level
+/// `Assets(StockpilesReloaded)`.
+fn stockpile_save_window(runtime: &Runtime, editor: assets::Editor) -> Task<Message> {
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  Task::perform(
+    async move { assets::save_stockpile(db, esi, image, sso, editor).await },
+    |cards| Message::Assets(assets::Message::StockpilesReloaded(cards)),
+  )
+}
+
+fn close_stockpile_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.stockpile_editors.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
+/// Opens a detached compose window (new / reply / forward) centered on the main window. Multiple
+/// composes coexist, each minting a fresh id; the seed is applied in [`handle_compose_window_ready`].
+fn open_compose_window(app: &mut App, seed: mail::compose::Seed) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+  let size = Size::new(
+    mail::compose::COMPOSE_WINDOW_WIDTH,
+    mail::compose::COMPOSE_WINDOW_HEIGHT,
+  );
+  open_centered_window(app, size, move |id| {
+    Task::done(Message::ComposeWindowReady {
+      id,
+      seed: Box::new(seed.clone()),
+    })
+  })
+}
+
+/// Opens a compose window seeded for a persisted draft `draft_id`; the row is loaded into the window
+/// once it exists (routed per-window via `Compose(id, DraftLoaded)`).
+fn open_draft_window(app: &mut App, draft_id: i64) -> Task<Message> {
+  let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) else {
+    return Task::none();
+  };
+  open_compose_window(
+    app,
+    mail::compose::Seed::Draft {
+      draft_id,
+      from_character_id: from,
+    },
+  )
+}
+
+fn handle_compose_window_ready(app: &mut App, id: window::Id, seed: mail::compose::Seed) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let load = match seed.draft_id() {
+    Some(draft_id) => mail::compose::load_draft(&runtime.db, draft_id).map(move |msg| Message::Compose(id, msg)),
+    None => Task::none(),
+  };
+  app.windows.register(id, Window::MailCompose);
+  app.composes.insert(id, mail::compose::Draft::from_seed(seed));
+  load
+}
+
+/// Routes a per-window compose message to its window's [`Draft`], applies it, and dispatches the
+/// reported follow-up (recipient/link search, send, or close). Close auto-saves a non-empty draft
+/// then closes the window; Send enqueues the mail, deletes the draft by id, and closes the window.
+fn handle_compose(app: &mut App, id: window::Id, msg: mail::Message) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  // A persisted-draft load and a save-completed id thread back per window, outside the Effect path.
+  match msg {
+    mail::Message::DraftLoaded(row) => {
+      if let (Some(row), Some(draft)) = (*row, app.composes.get_mut(id)) {
+        *draft = mail::compose::Draft::from_persisted(&row);
+      }
+      return Task::none();
+    }
+    mail::Message::DraftSaved(saved_id) => {
+      if let Some(draft) = app.composes.get_mut(id) {
+        draft.set_id(saved_id);
+      }
+      return Task::none();
+    }
+    mail::Message::ComposeSent(Ok(())) => return compose_send_completed(app, id),
+    _ => {}
+  }
+  let Some(draft) = app.composes.get_mut(id) else {
+    return Task::none();
+  };
+  match mail::compose::update(draft, msg) {
+    mail::compose::Effect::None => Task::none(),
+    mail::compose::Effect::RecipientSearch {
+      is_to,
+      query,
+    } => compose_recipient_search(runtime, draft, is_to, query, id),
+    mail::compose::Effect::LinkSearch(query) => compose_link_search(runtime, draft, query, id),
+    mail::compose::Effect::Send => {
+      let send = mail::compose::send(&runtime.db, draft);
+      send.map(move |msg| Message::Compose(id, msg))
+    }
+    mail::compose::Effect::Discard => discard_compose_window(app, id),
+  }
+}
+
+/// Closes a compose window without saving its draft (the explicit Discard path).
+fn discard_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.composes.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
+/// Completes a successful send: deletes the persisted draft (if any) by id, closes the window, and
+/// refreshes the main-view Drafts/Sent listing.
+fn compose_send_completed(app: &mut App, id: window::Id) -> Task<Message> {
+  let sent_draft_id = app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id);
+  let delete = match (sent_draft_id, app.runtime.as_ref()) {
+    (Some(draft_id), Some(runtime)) => {
+      let db = runtime.db.clone();
+      Task::future(async move { mail::delete_draft(db, draft_id).await }).discard()
+    }
+    _ => Task::none(),
+  };
+  let reload = reload_main_mail(app);
+  Task::batch([delete, close_compose_window(app, id), reload])
+}
+
+/// Saves a compose window's draft (if non-empty) then closes it, refreshing the main-view Drafts list.
+fn close_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
+  let save = match (
+    app.composes.get(id).and_then(mail::compose::Draft::pending_save),
+    app.runtime.as_ref(),
+  ) {
+    (Some((draft_id, input)), Some(runtime)) => {
+      let db = runtime.db.clone();
+      Task::perform(
+        async move { mail::persist_pending_draft(db, draft_id, input).await },
+        |()| Message::Mail(mail::Message::DraftSaved(None)),
+      )
+    }
+    _ => Task::none(),
+  };
+  app.composes.remove(id);
+  app.windows.remove(id);
+  Task::batch([save, window::close(id)])
+}
+
+fn compose_recipient_search(
+  runtime: &Runtime,
+  draft: &mail::compose::Draft,
+  is_to: bool,
+  query: String,
+  id: window::Id,
+) -> Task<Message> {
+  use crate::features::entity_search;
+
+  if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
+    return Task::none();
+  }
+  let generation = draft.recipient_search_generation(is_to);
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let eve_image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  let categories = vec![
+    entity_search::EntityCategory::Character,
+    entity_search::EntityCategory::Corporation,
+  ];
+  Task::perform(
+    async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
+    move |results| {
+      let results = results.into_iter().map(entity_ref_from_result).collect();
+      let msg = if is_to {
+        mail::Message::ComposeToSearched {
+          generation,
+          results,
+        }
+      } else {
+        mail::Message::ComposeCcSearched {
+          generation,
+          results,
+        }
+      };
+      Message::Compose(id, msg)
+    },
+  )
+}
+
+fn compose_link_search(
+  runtime: &Runtime,
+  draft: &mail::compose::Draft,
+  query: String,
+  id: window::Id,
+) -> Task<Message> {
+  use crate::features::entity_search;
+
+  let Some((generation, category)) = draft.link_search() else {
+    return Task::none();
+  };
+  if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
+    return Task::none();
+  }
+  let db = runtime.db.clone();
+  let esi = Arc::clone(&runtime.esi);
+  let eve_image = Arc::clone(&runtime.eve_image);
+  let sso = Arc::clone(&runtime.sso);
+  Task::perform(
+    async move { entity_search::search_entities(db, esi, eve_image, sso, vec![category], query).await },
+    move |results| {
+      let results = results.into_iter().map(entity_ref_from_result).collect();
+      Message::Compose(
+        id,
+        mail::Message::ComposeLinkSearched {
+          generation,
+          results,
+        },
+      )
+    },
+  )
+}
+
+/// Refreshes the main mail view after a compose window saves or sends, so the Drafts/Sent listing and
+/// folder badges reflect the change.
+fn reload_main_mail(app: &App) -> Task<Message> {
+  match (app.mail.as_ref(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => mail::reload(&runtime.db, state.active()).map(Message::Mail),
+    _ => Task::none(),
+  }
+}
+
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
@@ -2907,6 +3350,8 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
+    Message::Compose(id, msg) => handle_compose(app, id, msg),
+    Message::Contract(id, msg) => handle_contract(app, id, msg),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Killmail(id, msg) => handle_killmail(app, id, msg),
@@ -2921,6 +3366,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Settings(msg) => handle_settings(app, msg),
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
     Message::Skills(msg) => handle_skills(app, msg),
+    Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
     Message::Sync(event) => handle_sync(app, event),
     Message::Wallet(msg) => handle_wallet(app, msg),
     other => return Err(Box::new(other)),
@@ -2975,12 +3421,25 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::Chrome(id, event) => handle_chrome_event(app, id, event),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
+    Message::ComposeWindowReady {
+      id,
+      seed,
+    } => handle_compose_window_ready(app, id, *seed),
+    Message::ContractWindowReady {
+      contract_id,
+      id,
+      source,
+    } => handle_contract_window_ready(app, id, source, contract_id),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::KillmailWindowReady {
       id,
       killmail_id,
       source,
     } => handle_killmail_window_ready(app, id, source, killmail_id),
+    Message::StockpileEditorWindowReady {
+      id,
+      seed,
+    } => handle_stockpile_editor_window_ready(app, id, *seed),
     Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),
@@ -3154,6 +3613,32 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
   if let assets::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }
+  // The stockpile editor is a detached window: New/Edit/import-confirm open one instead of mutating an
+  // in-place holder. Edit and import-confirm read from the main assets state first.
+  match msg {
+    assets::Message::StockpileNew => return open_stockpile_editor_window(app, assets::EditorSeed::Blank),
+    assets::Message::StockpileEditStarted(id) => {
+      let Some(card) = app.assets.as_ref().and_then(|state| state.stockpile_card(id).cloned()) else {
+        return Task::none();
+      };
+      if let Some(state) = app.assets.as_mut() {
+        state.dismiss_stockpile_context_menu();
+      }
+      return open_stockpile_editor_window(app, assets::EditorSeed::FromCard(Box::new(card)));
+    }
+    assets::Message::StockpileImportConfirmed => {
+      let matched = app
+        .assets
+        .as_ref()
+        .map(assets::State::stockpile_import_matched)
+        .unwrap_or_default();
+      if let Some(state) = app.assets.as_mut() {
+        state.close_stockpile_import();
+      }
+      return open_stockpile_editor_window(app, assets::EditorSeed::Prefill(matched));
+    }
+    _ => {}
+  }
 
   let (Some(state), Some(runtime)) = (app.assets.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
@@ -3164,53 +3649,12 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
 
 fn dispatch_assets_with_runtime(state: &mut assets::State, runtime: &Runtime, msg: assets::Message) -> Task<Message> {
   match msg {
-    assets::Message::StockpileEditorLocationSearchChanged(ref value) => {
-      let query = value.clone();
-      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      let generation = state.stockpile_location_generation();
-      Task::batch([update, stockpile_location_search(runtime, query, generation)])
-    }
-    assets::Message::StockpileEditorScopeChanged(ref value) => {
-      let query = value.clone();
-      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      Task::batch([update, stockpile_scope_resolve(runtime, query)])
-    }
-    // Seed the live pilot preview as soon as an editor opens, before the user edits the scope.
-    assets::Message::StockpileNew
-    | assets::Message::StockpileEditStarted(_)
-    | assets::Message::StockpileImportConfirmed => {
-      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      match state.stockpile_editor_scope() {
-        Some(query) => Task::batch([update, stockpile_scope_resolve(runtime, query)]),
-        None => update,
-      }
-    }
-    assets::Message::StockpileEditorItemSearchChanged(ref value) => {
-      let query = value.clone();
-      let update = assets::update(state, msg, &runtime.db).map(Message::Assets);
-      Task::batch([update, stockpile_item_search(runtime, query)])
-    }
     assets::Message::StockpileImportResolveRequested => match state.stockpile_import_text() {
       Some(text) => stockpile_import_resolve(runtime, text),
       None => Task::none(),
     },
-    assets::Message::StockpileEditorSaved => match state.take_stockpile_editor() {
-      Some(editor) => stockpile_save(runtime, editor),
-      None => Task::none(),
-    },
     msg => assets::update(state, msg, &runtime.db).map(Message::Assets),
   }
-}
-
-fn stockpile_save(runtime: &Runtime, editor: assets::Editor) -> Task<Message> {
-  let db = runtime.db.clone();
-  let esi = Arc::clone(&runtime.esi);
-  let image = Arc::clone(&runtime.eve_image);
-  let sso = Arc::clone(&runtime.sso);
-  Task::perform(
-    async move { assets::save_stockpile(db, esi, image, sso, editor).await },
-    |cards| Message::Assets(assets::Message::StockpilesReloaded(cards)),
-  )
 }
 
 fn stockpile_import_resolve(runtime: &Runtime, text: String) -> Task<Message> {
@@ -4081,6 +4525,12 @@ fn handle_updater_state_changed(app: &mut App, state: updater::State) -> Task<Me
 }
 
 fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
+  if let wallet::Message::ContractSelected(contract_id) = msg {
+    let Some(source) = app.wallet.as_ref().and_then(|state| state.contract_source(contract_id)) else {
+      return Task::none();
+    };
+    return open_contract_window(app, source, contract_id);
+  }
   match msg {
     wallet::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
@@ -4744,6 +5194,26 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
   if let mail::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }
+  // Compose lives in detached windows: open one for new/reply/forward/draft instead of mutating an
+  // in-place holder. Reply/forward read the open render from the main mail state.
+  match msg {
+    mail::Message::ComposeOpened => {
+      let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) else {
+        return Task::none();
+      };
+      return open_compose_window(
+        app,
+        mail::compose::Seed::Blank {
+          from_character_id: from,
+        },
+      );
+    }
+    mail::Message::Reply(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::Reply),
+    mail::Message::ReplyAll(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::ReplyAll),
+    mail::Message::Forward(mail_id) => return open_reply_window(app, mail_id, mail::compose::Kind::Forward),
+    mail::Message::DraftOpened(draft_id) => return open_draft_window(app, draft_id),
+    _ => {}
+  }
 
   let (Some(state), Some(runtime)) = (app.mail.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
@@ -4754,96 +5224,15 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
       mail::update(state, mail::Message::ScopeSelected(scope), &runtime.db).map(Message::Mail),
       mail::reload(&runtime.db, scope).map(Message::Mail),
     ]),
-    mail::Message::ComposeToInput(_) | mail::Message::ComposeCcInput(_) => handle_compose_input(state, runtime, msg),
-    mail::Message::ComposeLinkSearchInput(_) => handle_compose_link_input(state, runtime, msg),
     msg => mail::update(state, msg, &runtime.db).map(Message::Mail),
   }
 }
 
-fn handle_compose_input(state: &mut mail::State, runtime: &Runtime, msg: mail::Message) -> Task<Message> {
-  let (query, is_to) = match &msg {
-    mail::Message::ComposeToInput(value) => (value.clone(), true),
-    mail::Message::ComposeCcInput(value) => (value.clone(), false),
-    _ => unreachable!("handle_compose_input only receives compose To/Cc inputs"),
-  };
-  let update = mail::update(state, msg, &runtime.db).map(Message::Mail);
-  Task::batch([update, mail_recipient_search(state, runtime, query, is_to)])
-}
-
-fn handle_compose_link_input(state: &mut mail::State, runtime: &Runtime, msg: mail::Message) -> Task<Message> {
-  let query = match &msg {
-    mail::Message::ComposeLinkSearchInput(value) => value.clone(),
-    _ => unreachable!("handle_compose_link_input only receives compose link search input"),
-  };
-  let update = mail::update(state, msg, &runtime.db).map(Message::Mail);
-  Task::batch([update, mail_link_search(state, runtime, query)])
-}
-
-/// Captures the draft's current search generation and stamps it onto the async result so a stale
-/// response arriving after the user has typed again is discarded by the handler.
-///
-/// Mail recipients are characters and corporations, mirroring the design's "Search characters or
-/// corporations…" placeholder.
-fn mail_recipient_search(state: &mail::State, runtime: &Runtime, query: String, is_to: bool) -> Task<Message> {
-  use crate::features::entity_search;
-
-  if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
-    return Task::none();
-  }
-  let generation = state.compose_search_generation(is_to);
-  let db = runtime.db.clone();
-  let esi = Arc::clone(&runtime.esi);
-  let eve_image = Arc::clone(&runtime.eve_image);
-  let sso = Arc::clone(&runtime.sso);
-  let categories = vec![
-    entity_search::EntityCategory::Character,
-    entity_search::EntityCategory::Corporation,
-  ];
-  Task::perform(
-    async move { entity_search::search_entities(db, esi, eve_image, sso, categories, query).await },
-    move |results| {
-      let results = results.into_iter().map(entity_ref_from_result).collect();
-      Message::Mail(if is_to {
-        mail::Message::ComposeToSearched {
-          generation,
-          results,
-        }
-      } else {
-        mail::Message::ComposeCcSearched {
-          generation,
-          results,
-        }
-      })
-    },
-  )
-}
-
-/// Runs the live entity search behind the toolbar link popover, restricted to the category of the
-/// currently selected link kind. No-ops for the non-searchable `http` kind (which has no category)
-/// and below the minimum query length.
-fn mail_link_search(state: &mail::State, runtime: &Runtime, query: String) -> Task<Message> {
-  use crate::features::entity_search;
-
-  let Some((generation, category)) = state.compose_link_search() else {
+fn open_reply_window(app: &mut App, mail_id: i64, kind: mail::compose::Kind) -> Task<Message> {
+  let Some(seed) = app.mail.as_ref().and_then(|state| state.reply_seed(mail_id, kind)) else {
     return Task::none();
   };
-  if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
-    return Task::none();
-  }
-  let db = runtime.db.clone();
-  let esi = Arc::clone(&runtime.esi);
-  let eve_image = Arc::clone(&runtime.eve_image);
-  let sso = Arc::clone(&runtime.sso);
-  Task::perform(
-    async move { entity_search::search_entities(db, esi, eve_image, sso, vec![category], query).await },
-    move |results| {
-      let results = results.into_iter().map(entity_ref_from_result).collect();
-      Message::Mail(mail::Message::ComposeLinkSearched {
-        generation,
-        results,
-      })
-    },
-  )
+  open_compose_window(app, seed)
 }
 
 fn entity_ref_from_result(
@@ -5026,7 +5415,6 @@ fn handle_window(app: &mut App, id: window::Id, event: window::Event) -> Task<Me
       let base = window_key(app, id).and_then(|key| app.ui_state.windows.get(key).copied());
       record_window_geometry(app, id, geometry_after_resize(base, size));
       propagate_host_width(app, id, size.width);
-      propagate_host_height(app, id, size.height);
       Task::none()
     }
     window::Event::Moved(position) => {
@@ -5075,7 +5463,9 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
 
 fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
-    Some(Window::Killmail | Window::Splash) => disable_shadow(id),
+    Some(Window::Contract | Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => {
+      disable_shadow(id)
+    }
     _ => Task::none(),
   }
 }
@@ -5186,8 +5576,22 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
       Some((compare_id, state)) if *compare_id == id => skills_compare::view(state).map(Message::Compare),
       _ => blank(),
     },
+    Some(Window::Contract) => match app.contracts.get(id) {
+      Some(state) => contract_detail::view(state, move |event| Message::Chrome(id, event)),
+      None => blank(),
+    },
     Some(Window::Killmail) => match app.killmails.get(id) {
       Some(state) => killmail_detail::view(state, move |event| Message::Chrome(id, event)),
+      None => blank(),
+    },
+    Some(Window::MailCompose) => match app.composes.get(id) {
+      Some(draft) => {
+        let roster = app.mail.as_ref().map(mail::State::roster).unwrap_or(&[]);
+        let body = mail::compose::view(draft, roster).map(move |msg| Message::Compose(id, msg));
+        window_chrome::shell(&mail::compose::window_title(draft), body, move |event| {
+          Message::Chrome(id, event)
+        })
+      }
       None => blank(),
     },
     Some(Window::SkillPlanEditor) => match app.editor.as_ref() {
@@ -5195,6 +5599,15 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
         skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
       }
       _ => blank(),
+    },
+    Some(Window::StockpileEditor) => match app.stockpile_editors.get(id) {
+      Some(editor) => {
+        let body = assets::stockpile_editor_view(editor).map(move |msg| Message::StockpileEditor(id, msg));
+        window_chrome::shell(assets::stockpile_editor_window_title(editor), body, move |event| {
+          Message::Chrome(id, event)
+        })
+      }
+      None => blank(),
     },
     _ => blank(),
   }
@@ -5235,7 +5648,9 @@ mod tests {
       clock_tick: 0,
       coalescer: WriteCoalescer::new(),
       compare: None,
+      composes: WindowStates::default(),
       confirm_force_takeover: false,
+      contracts: WindowStates::default(),
       corporation_detail: None,
       editor: None,
       engine_state: EngineState::default(),
@@ -5269,6 +5684,7 @@ mod tests {
       skills: None,
       splash: None,
       splash_step: 0,
+      stockpile_editors: WindowStates::default(),
       store_ready: None,
       status: sync::SyncStatus::new(),
       sync_popover_open: false,
@@ -7099,16 +7515,7 @@ mod tests {
       app.assets = Some(assets::State::new(config::FeatureFlags::default()));
       app.runtime = Some(test_runtime().await);
 
-      let _location = handle_assets(
-        &mut app,
-        assets::Message::StockpileEditorLocationSearchChanged("Jit".to_owned()),
-      );
-      let _item = handle_assets(
-        &mut app,
-        assets::Message::StockpileEditorItemSearchChanged("Trit".to_owned()),
-      );
       let _resolve = handle_assets(&mut app, assets::Message::StockpileImportResolveRequested);
-      let _save = handle_assets(&mut app, assets::Message::StockpileEditorSaved);
       let _default = handle_assets(&mut app, assets::Message::SearchChanged("x".to_owned()));
     }
 
@@ -7215,13 +7622,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_pairs_a_compose_input_with_a_recipient_search_when_a_runtime_is_present() {
+    async fn it_pairs_a_compose_window_input_with_a_recipient_search_when_a_runtime_is_present() {
       let mut app = test_app();
       app.mail = Some(mail::State::new(42));
       app.runtime = Some(test_runtime().await);
 
-      let _to = handle_mail(&mut app, mail::Message::ComposeToInput("Vexor".to_owned()));
-      let _cc = handle_mail(&mut app, mail::Message::ComposeCcInput("Alli".to_owned()));
+      let id = window::Id::unique();
+      let _ = handle_compose_window_ready(
+        &mut app,
+        id,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _to = handle_compose(&mut app, id, mail::Message::ComposeToInput("Vexor".to_owned()));
+      let _cc = handle_compose(&mut app, id, mail::Message::ComposeCcInput("Alli".to_owned()));
       let _scope = handle_mail(&mut app, mail::Message::ScopeSelected(mail::Scope::Character(7)));
     }
 
@@ -8360,6 +8776,392 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.killmails.get(id).is_none());
+    }
+  }
+
+  mod contract_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn detail(contract_id: i64) -> contract_detail::ContractDetail {
+      contract_detail::ContractDetail {
+        acceptor: None,
+        availability: "Public".to_owned(),
+        bids: Vec::new(),
+        buyout: None,
+        collateral: None,
+        contract_id,
+        days_to_complete: Some(0),
+        expiry: contract_detail::ExpiryView {
+          future: true,
+          label: "Open".to_owned(),
+          title: "Expires",
+        },
+        headline: 200.0,
+        headline_label: "Price",
+        issued_time: "2024-01-01T00:00:00Z".to_owned(),
+        issuer: contract_detail::PartyView {
+          name: "Issuer Pilot".to_owned(),
+          portrait: store::images::ImageState::Fresh("/tmp/p.jpg".into()),
+          role: "Issuer",
+          sub: None,
+        },
+        items: Vec::new(),
+        items_value: 0.0,
+        kind: contract_detail::ContractKind::ItemExchange,
+        location_name: "Jita IV - Moon 4".to_owned(),
+        route: None,
+        status: "outstanding".to_owned(),
+        title: "Test Contract".to_owned(),
+        volume: 0.0,
+      }
+    }
+
+    fn ready(app: &mut App, source: contract_detail::Source, contract_id: i64) -> window::Id {
+      let id = window::Id::unique();
+      let _ = handle_contract_window_ready(app, id, source, contract_id);
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::Contract));
+      assert_eq!(
+        app.contracts.get(id).map(contract_detail::State::contract_id),
+        Some(100)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_holds_duplicate_contracts_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = contract_detail::Source::Corporation {
+        corporation_id: 7,
+      };
+
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 100);
+
+      assert_ne!(first, second);
+      assert_eq!(app.contracts.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::Contract).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_loaded_detail_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = contract_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = handle_contract(
+        &mut app,
+        first,
+        contract_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert_eq!(
+        app
+          .contracts
+          .get(first)
+          .and_then(contract_detail::State::loaded_contract_id),
+        Some(100)
+      );
+      assert_eq!(
+        app
+          .contracts
+          .get(second)
+          .and_then(contract_detail::State::loaded_contract_id),
+        None
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let source = contract_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = close_contract_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.contracts.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::Contract));
+      assert!(app.contracts.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_contract_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.contracts.get(id).is_none());
+    }
+  }
+
+  mod stockpile_editor_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App, seed: assets::EditorSeed) -> window::Id {
+      let id = window::Id::unique();
+      let _ = handle_stockpile_editor_window_ready(app, id, seed);
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_a_blank_new_editor() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      assert_eq!(app.windows.kind(id), Some(Window::StockpileEditor));
+      assert!(app.stockpile_editors.get(id).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_holds_a_new_and_an_edit_window_at_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let new = ready(&mut app, assets::EditorSeed::Blank);
+      let edit = ready(&mut app, assets::EditorSeed::Blank);
+
+      assert_ne!(new, edit);
+      assert_eq!(app.stockpile_editors.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::StockpileEditor).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_an_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(&mut app, assets::EditorSeed::Blank);
+      let second = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(
+        &mut app,
+        first,
+        assets::Message::StockpileEditorNameChanged("Cap boosters".to_owned()),
+      );
+
+      assert_eq!(
+        app.stockpile_editors.get(first).map(assets::Editor::name),
+        Some("Cap boosters")
+      );
+      assert_eq!(app.stockpile_editors.get(second).map(assets::Editor::name), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_window_on_cancel() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(&mut app, id, assets::Message::StockpileEditorClosed);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_editors.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_saves_and_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app, assets::EditorSeed::Blank);
+      let second = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = handle_stockpile_editor(&mut app, first, assets::Message::StockpileEditorSaved);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.stockpile_editors.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::StockpileEditor));
+      assert!(app.stockpile_editors.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, assets::EditorSeed::Blank);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_editors.get(id).is_none());
+    }
+  }
+
+  mod compose_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App, seed: mail::compose::Seed) -> window::Id {
+      let id = window::Id::unique();
+      let _ = handle_compose_window_ready(app, id, seed);
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_a_blank_compose() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::MailCompose));
+      assert!(app.composes.get(id).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_holds_two_composes_at_once() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 7,
+        },
+      );
+
+      assert_ne!(first, second);
+      assert_eq!(app.composes.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::MailCompose).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_subject_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = handle_compose(&mut app, first, mail::Message::ComposeSubjectChanged("CTA".to_owned()));
+
+      assert_eq!(app.composes.get(first).map(|d| d.subject.as_str()), Some("CTA"));
+      assert_eq!(app.composes.get(second).map(|d| d.subject.as_str()), Some(""));
+    }
+
+    #[tokio::test]
+    async fn it_discards_a_compose_without_saving() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = handle_compose(&mut app, id, mail::Message::ComposeDiscarded);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.composes.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+      let second = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = close_compose_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.composes.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::MailCompose));
+      assert!(app.composes.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_compose_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        mail::compose::Seed::Blank {
+          from_character_id: 42,
+        },
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.composes.get(id).is_none());
     }
   }
 

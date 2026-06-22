@@ -1,5 +1,5 @@
 use iced::{
-  Background, Border, ContentFit, Element, Length, Padding,
+  Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
   border::Radius,
   widget::{Column, Row, Space, container, image, scrollable, text},
@@ -7,16 +7,21 @@ use iced::{
 
 use crate::{
   clients::eve_image::Size,
+  features::window_chrome,
   store::{
     Database, images,
     repo::{character, finance, org, sde},
   },
   ui::{
-    components::{backdrop, clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
+    components::{clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
     format::{fmt_isk, fmt_volume},
     style::{color, radius, spacing, typography},
   },
 };
+
+pub const CONTRACT_WINDOW_HEIGHT: f32 = 680.0;
+
+pub const CONTRACT_WINDOW_WIDTH: f32 = 880.0;
 
 const FIELD_GAP: f32 = 1.0;
 
@@ -30,10 +35,6 @@ const KIND_TINT: iced::Color = iced::Color {
   b: 0.851,
   a: 1.0,
 };
-
-const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
-
-const MODAL_MAX_WIDTH: f32 = 840.0;
 
 const PORTRAIT_BOX: f32 = 34.0;
 
@@ -78,6 +79,66 @@ impl ContractDetail {
       keys.extend(acceptor.portrait.stale_key());
     }
     keys
+  }
+}
+
+#[derive(Clone, Debug)]
+pub enum Message {
+  Loaded(Box<Option<ContractDetail>>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Source {
+  Character { character_id: i64 },
+  Corporation { corporation_id: i64 },
+}
+
+#[derive(Debug)]
+pub struct State {
+  contract_id: i64,
+  detail: Option<ContractDetail>,
+  source: Source,
+}
+
+impl State {
+  pub fn new(source: Source, contract_id: i64) -> Self {
+    State {
+      contract_id,
+      detail: None,
+      source,
+    }
+  }
+
+  pub fn contract_id(&self) -> i64 {
+    self.contract_id
+  }
+
+  #[cfg(test)]
+  pub fn loaded_contract_id(&self) -> Option<i64> {
+    self.detail.as_ref().map(|detail| detail.contract_id)
+  }
+
+  pub fn set_detail(&mut self, detail: Option<ContractDetail>) {
+    self.detail = detail;
+  }
+
+  pub fn source(&self) -> Source {
+    self.source
+  }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    self
+      .detail
+      .as_ref()
+      .map(ContractDetail::stale_images)
+      .unwrap_or_default()
+  }
+
+  fn title(&self) -> String {
+    match &self.detail {
+      Some(detail) => format!("{} \u{2014} #{}", detail.title, detail.contract_id),
+      None => format!("Contract #{}", self.contract_id),
+    }
   }
 }
 
@@ -175,6 +236,23 @@ struct ItemBasis {
   singleton: bool,
   type_id: i64,
   value_isk: f64,
+}
+
+pub fn load(db: &Database, source: Source, contract_id: i64) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      match source {
+        Source::Character {
+          character_id,
+        } => load_for_character(&db, character_id, contract_id).await,
+        Source::Corporation {
+          corporation_id,
+        } => load_for_corporation(&db, corporation_id, contract_id).await,
+      }
+    },
+    |detail| Message::Loaded(Box::new(detail)),
+  )
 }
 
 pub async fn load_for_character(db: &Database, character_id: i64, contract_id: i64) -> Option<ContractDetail> {
@@ -280,20 +358,68 @@ pub fn contract_status_color(status: &str) -> iced::Color {
   }
 }
 
-pub fn overlay<'a, M: Clone + 'a>(base: Element<'a, M>, detail: &'a ContractDetail, on_close: M) -> Element<'a, M> {
-  iced::widget::Stack::with_children(vec![
-    base,
-    backdrop::backdrop(on_close.clone()),
-    container(modal(detail, on_close))
+pub fn view<'a, M: Clone + 'a, F>(state: &'a State, on_event: F) -> Element<'a, M>
+where
+  F: Fn(window_chrome::Event) -> M + Copy + 'a,
+{
+  let title = state.title();
+  window_chrome::shell(&title, window_body(state.detail.as_ref()), on_event)
+}
+
+fn window_body<'a, M: 'a>(detail: Option<&'a ContractDetail>) -> Element<'a, M> {
+  let Some(detail) = detail else {
+    return container(
+      text("Loading contract\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        }),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into();
+  };
+
+  let mut sections: Vec<Element<'a, M>> = vec![
+    Row::with_children(vec![parties_panel(detail), headline_panel(detail)])
+      .spacing(spacing::SPACE_3_5)
+      .align_y(Vertical::Top)
       .width(Length::Fill)
-      .height(Length::Fill)
-      .padding(spacing::SPACE_6)
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center)
       .into(),
-  ])
+    terms_panel(detail),
+  ];
+  if let Some(route) = &detail.route {
+    sections.push(route_panel(detail, route));
+  }
+  sections.push(manifest_row(detail));
+
+  let body = container(
+    scrollable(
+      Column::with_children(sections)
+        .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
+        .padding(spacing::SPACE_3_5 + spacing::UNIT)
+        .width(Length::Fill),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  container(
+    Column::with_children(vec![header(detail), body.into()])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
   .width(Length::Fill)
   .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    ..container::Style::default()
+  })
   .into()
 }
 
@@ -610,52 +736,7 @@ fn parse_iso8601(s: &str) -> Option<i64> {
   Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
 }
 
-fn modal<'a, M: Clone + 'a>(detail: &'a ContractDetail, on_close: M) -> Element<'a, M> {
-  let mut sections: Vec<Element<'a, M>> = vec![
-    Row::with_children(vec![parties_panel(detail), headline_panel(detail)])
-      .spacing(spacing::SPACE_3_5)
-      .align_y(Vertical::Top)
-      .width(Length::Fill)
-      .into(),
-    terms_panel(detail),
-  ];
-  if let Some(route) = &detail.route {
-    sections.push(route_panel(detail, route));
-  }
-  sections.push(manifest_row(detail));
-
-  let body = container(
-    scrollable(
-      Column::with_children(sections)
-        .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
-        .padding(spacing::SPACE_3_5 + spacing::UNIT)
-        .width(Length::Fill),
-    )
-    .style(crate::ui::style::control::scrollbar)
-    .height(Length::Shrink),
-  )
-  .max_height(MODAL_CONTENT_MAX_HEIGHT);
-
-  container(
-    Column::with_children(vec![header(detail, on_close), body.into()])
-      .width(Length::Fill)
-      .height(Length::Shrink),
-  )
-  .max_width(MODAL_MAX_WIDTH)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.16),
-      width: 1.0,
-      radius: radius::PANEL.into(),
-    },
-    ..container::Style::default()
-  })
-  .clip(true)
-  .into()
-}
-
-fn header<'a, M: Clone + 'a>(detail: &'a ContractDetail, on_close: M) -> Element<'a, M> {
+fn header<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
   let accent = contract_status_color(&detail.status);
 
   let title = Row::with_children(vec![
@@ -690,7 +771,6 @@ fn header<'a, M: Clone + 'a>(detail: &'a ContractDetail, on_close: M) -> Element
     info.into(),
     Space::new().width(Length::Fill).into(),
     status_badge(&detail.status),
-    close_button(on_close),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
@@ -1262,30 +1342,6 @@ fn panel_unpadded<'a, M: 'a>(label: &str, right: Option<String>, content: Elemen
     .into()
 }
 
-fn close_button<'a, M: Clone + 'a>(on_close: M) -> Element<'a, M> {
-  iced::widget::button(
-    text("\u{2715}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(spacing::SPACE_2 - 1.0)
-  .on_press(on_close)
-  .style(|_, _| iced::widget::button::Style {
-    background: None,
-    text_color: color::text::secondary(),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.08),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..iced::widget::button::Style::default()
-  })
-  .into()
-}
-
 fn divider<'a, M: 'a>() -> Element<'a, M> {
   container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
     .width(Length::Fill)
@@ -1517,11 +1573,6 @@ fn type_icon<'a, M: 'a>(icon: &images::IconResolution, box_size: f32) -> Element
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  #[derive(Clone, Debug)]
-  enum Msg {
-    Close,
-  }
 
   fn item_trade() -> ContractDetail {
     ContractDetail {
@@ -1778,28 +1829,82 @@ mod tests {
     }
   }
 
-  mod overlay {
+  mod title {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
+    fn it_falls_back_to_the_contract_id_before_the_detail_loads() {
+      let state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        555,
+      );
+
+      assert_eq!(state.title(), "Contract #555");
+    }
+
+    #[test]
+    fn it_names_the_contract_once_the_detail_loads() {
+      let mut state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        12_345,
+      );
+      state.set_detail(Some(item_trade()));
+
+      assert_eq!(state.title(), "Cerberus, faction fit \u{2014} #160000001");
+    }
+  }
+
+  mod view {
+    use super::*;
+
+    fn state_with(detail: ContractDetail) -> State {
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        detail.contract_id,
+      );
+      state.set_detail(Some(detail));
+      state
+    }
+
+    #[test]
     fn it_renders_a_courier_with_a_route() {
-      let detail = courier();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+      let state = state_with(courier());
+
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
 
     #[test]
     fn it_renders_an_auction_with_bids() {
-      let detail = auction();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+      let state = state_with(auction());
+
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
 
     #[test]
     fn it_renders_an_item_trade() {
-      let detail = item_trade();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &detail, Msg::Close);
+      let state = state_with(item_trade());
+
+      let _el: Element<'_, ()> = view(&state, |_| ());
+    }
+
+    #[test]
+    fn it_renders_the_loading_placeholder_before_the_detail_arrives() {
+      let state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        12_345,
+      );
+
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
 
     #[test]
@@ -1807,9 +1912,9 @@ mod tests {
       let mut bare = item_trade();
       bare.acceptor = None;
       bare.items = Vec::new();
+      let state = state_with(bare);
 
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
   }
 

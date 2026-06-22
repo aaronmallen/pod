@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Border, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, container, mouse_area, text, text_editor, text_input},
 };
@@ -29,13 +29,45 @@ use crate::{
   },
 };
 
-const DOCKED_WIDTH: f32 = 540.0;
+pub const COMPOSE_WINDOW_HEIGHT: f32 = 620.0;
 
-const EXPANDED_WIDTH: f32 = 760.0;
+pub const COMPOSE_WINDOW_WIDTH: f32 = 600.0;
 
 const FROM_PORTRAIT_SIZE: f32 = 22.0;
 
 const LINK_POPOVER_WIDTH: f32 = 320.0;
+
+/// What a per-window compose needs the app dispatcher (which owns the runtime + window lifetime) to do
+/// after a message is applied. State-only edits return [`Effect::None`].
+#[derive(Clone, Debug)]
+pub enum Effect {
+  Discard,
+  LinkSearch(String),
+  None,
+  RecipientSearch { is_to: bool, query: String },
+  Send,
+}
+
+/// How a freshly-opened compose window is seeded. `Draft` opens blank and then loads the persisted
+/// row id into the window once it exists.
+#[derive(Clone, Debug)]
+pub enum Seed {
+  Blank { from_character_id: i64 },
+  Draft { draft_id: i64, from_character_id: i64 },
+  Reply { kind: Kind, render: Box<MailRender> },
+}
+
+impl Seed {
+  /// The draft row id to load after the window opens, for a `Draft` seed; `None` for blank/reply.
+  pub fn draft_id(&self) -> Option<i64> {
+    match self {
+      Seed::Draft {
+        draft_id, ..
+      } => Some(*draft_id),
+      _ => None,
+    }
+  }
+}
 
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -44,7 +76,6 @@ pub struct Draft {
   pub cc_chips: Vec<EntityRef>,
   pub cc_search: EntitySearch,
   pub error: Option<String>,
-  pub expanded: bool,
   pub from_character_id: i64,
   pub from_picker_open: bool,
   /// The `mail_drafts` row id once this compose has been persisted; threaded back so every later
@@ -52,7 +83,6 @@ pub struct Draft {
   pub id: Option<i64>,
   pub kind: Kind,
   pub link: Option<LinkPopover>,
-  pub minimized: bool,
   pub quote: Option<String>,
   pub show_cc: bool,
   pub subject: String,
@@ -70,13 +100,11 @@ impl Draft {
       cc_chips: Vec::new(),
       cc_search: EntitySearch::default(),
       error: None,
-      expanded: false,
       from_character_id,
       from_picker_open: false,
       id: None,
       kind: Kind::New,
       link: None,
-      minimized: false,
       quote: None,
       show_cc: false,
       subject: String::new(),
@@ -124,7 +152,7 @@ impl Draft {
     draft
   }
 
-  pub(super) fn from_persisted(row: &MailDraft) -> Self {
+  pub fn from_persisted(row: &MailDraft) -> Self {
     let mut draft = Draft::blank(row.character_id());
     draft.id = Some(row.id());
     draft.kind = Kind::from_storage(row.kind());
@@ -209,6 +237,250 @@ impl Draft {
         text.to_owned(),
       ))));
   }
+
+  pub fn from_seed(seed: Seed) -> Self {
+    match seed {
+      Seed::Blank {
+        from_character_id,
+      }
+      | Seed::Draft {
+        from_character_id, ..
+      } => Draft::blank(from_character_id),
+      Seed::Reply {
+        kind,
+        render,
+      } => Draft::from_mail(kind, &render),
+    }
+  }
+
+  pub fn set_id(&mut self, id: Option<i64>) {
+    self.id = id;
+  }
+
+  /// The sent draft's persisted row id (when it had one), so the app can delete it on a successful
+  /// send.
+  pub fn sent_draft_id(&self) -> Option<i64> {
+    self.id
+  }
+
+  /// The persist input paired with the existing row id, when the compose is non-empty and worth
+  /// saving. `None` for a blank compose, which is discarded rather than saved.
+  pub fn pending_save(&self) -> Option<(Option<i64>, mail::DraftInput)> {
+    if self.is_empty() {
+      return None;
+    }
+    Some((self.id, self.persist_input()))
+  }
+
+  pub fn recipient_search_generation(&self, is_to: bool) -> u64 {
+    if is_to {
+      self.to_search.generation()
+    } else {
+      self.cc_search.generation()
+    }
+  }
+
+  pub fn link_search(&self) -> Option<(u64, crate::features::entity_search::EntityCategory)> {
+    let popover = self.link.as_ref()?;
+    Some((popover.search.generation(), popover.kind.category()?))
+  }
+
+  fn snapshot_clone(&self) -> Draft {
+    self.clone()
+  }
+}
+
+/// The window title for a compose: distinguishes a reply/forward from a new mail by subject so two
+/// open composes are tellable apart.
+pub fn window_title(draft: &Draft) -> String {
+  let subject = draft.subject.trim();
+  if subject.is_empty() {
+    "New message".to_owned()
+  } else {
+    subject.to_owned()
+  }
+}
+
+/// Loads a persisted draft row for an open compose window, routed back as a `DraftLoaded`.
+pub fn load_draft(db: &Database, draft_id: i64) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(async move { mail::draft(&db, draft_id).await.ok().flatten() }, |row| {
+    Message::DraftLoaded(Box::new(row))
+  })
+}
+
+/// Applies a per-window compose message to a single window's [`Draft`] and reports the follow-up the
+/// app dispatcher must run. Mirrors the former single-instance compose handlers, minus the holder
+/// bookkeeping now owned per-window by the app.
+pub fn update(draft: &mut Draft, message: Message) -> Effect {
+  // Recipient + link field edits are pure state mutations; the only ones needing async are the search
+  // inputs, surfaced via the dedicated branches below.
+  match &message {
+    Message::ComposeToInput(value) => {
+      let value = value.clone();
+      draft.to_search.set_query(value.clone());
+      return Effect::RecipientSearch {
+        is_to: true,
+        query: value,
+      };
+    }
+    Message::ComposeCcInput(value) => {
+      let value = value.clone();
+      draft.cc_search.set_query(value.clone());
+      return Effect::RecipientSearch {
+        is_to: false,
+        query: value,
+      };
+    }
+    Message::ComposeLinkSearchInput(value) => {
+      let value = value.clone();
+      if let Some(popover) = draft.link.as_mut() {
+        popover.search.set_query(value.clone());
+      }
+      return Effect::LinkSearch(value);
+    }
+    _ => {}
+  }
+  let message = match apply_recipients(draft, message) {
+    Ok(()) => return Effect::None,
+    Err(message) => message,
+  };
+  let message = match apply_link(draft, message) {
+    Ok(()) => return Effect::None,
+    Err(message) => message,
+  };
+  apply_fields(draft, message)
+}
+
+fn apply_fields(draft: &mut Draft, message: Message) -> Effect {
+  match message {
+    Message::ComposeCcShown => draft.show_cc = true,
+    Message::ComposeSubjectChanged(value) => draft.subject = value,
+    Message::ComposeBodyChanged(action) => draft.body.perform(action),
+    Message::ComposeBold => draft.wrap_emphasis(EmphasisKind::Bold),
+    Message::ComposeItalic => draft.wrap_emphasis(EmphasisKind::Italic),
+    Message::ComposeFromToggled => draft.from_picker_open = !draft.from_picker_open,
+    Message::ComposeFromChanged(character_id) => {
+      draft.from_character_id = character_id;
+      draft.from_picker_open = false;
+    }
+    Message::ComposeDiscarded => return Effect::Discard,
+    Message::ComposeSend if draft.can_send() => {
+      return Effect::Send;
+    }
+    Message::ComposeSent(Err(error)) => draft.error = Some(error),
+    _ => {}
+  }
+  Effect::None
+}
+
+fn apply_link(draft: &mut Draft, message: Message) -> Result<(), Message> {
+  match message {
+    Message::ComposeLinkToggled => {
+      draft.link = match draft.link {
+        Some(_) => None,
+        None => Some(LinkPopover::default()),
+      };
+    }
+    Message::ComposeLinkKindSelected(kind) => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.select(kind);
+      }
+    }
+    Message::ComposeLinkUrlChanged(value) => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.url = value;
+      }
+    }
+    Message::ComposeLinkSearched {
+      generation,
+      results,
+    } => {
+      if let Some(popover) = draft.link.as_mut() {
+        popover.search.accept_results(generation, results.clone());
+        popover.results = results;
+      }
+    }
+    Message::ComposeLinkPicked(entity) => {
+      let markup = draft
+        .link
+        .as_ref()
+        .and_then(|popover| popover.kind.link_for(entity.id, entity.name))
+        .map(|link| link.to_markup());
+      if let Some(markup) = markup {
+        draft.insert_text(&markup);
+        draft.link = None;
+      }
+    }
+    Message::ComposeLinkInsert => {
+      let markup = draft
+        .link
+        .as_ref()
+        .and_then(LinkPopover::http_link)
+        .map(|link| link.to_markup());
+      if let Some(markup) = markup {
+        draft.insert_text(&markup);
+        draft.link = None;
+      }
+    }
+    other => return Err(other),
+  }
+  Ok(())
+}
+
+fn apply_recipients(draft: &mut Draft, message: Message) -> Result<(), Message> {
+  match message {
+    Message::ComposeToSearched {
+      generation,
+      results,
+    } => {
+      draft.to_search.accept_results(generation, results);
+    }
+    Message::ComposeCcSearched {
+      generation,
+      results,
+    } => {
+      draft.cc_search.accept_results(generation, results);
+    }
+    Message::ComposeToCommitted => {
+      let name = draft.to_search.query().trim().to_owned();
+      if !name.is_empty() {
+        draft.push_to(Recipient::typed(name));
+        draft.to_search.clear();
+      }
+    }
+    Message::ComposeCcCommitted => {
+      let name = draft.cc_search.query().trim().to_owned();
+      if !name.is_empty() {
+        draft.push_cc(Recipient::typed(name));
+        draft.cc_search.clear();
+      }
+    }
+    Message::ComposeToPicked(entity) => {
+      draft.push_to(Recipient::from_entity(entity));
+      draft.to_search.clear();
+    }
+    Message::ComposeCcPicked(entity) => {
+      draft.push_cc(Recipient::from_entity(entity));
+      draft.cc_search.clear();
+    }
+    Message::ComposeToRemoved(index) => draft.remove_to(index),
+    Message::ComposeCcRemoved(index) => draft.remove_cc(index),
+    other => return Err(other),
+  }
+  Ok(())
+}
+
+/// Clones the draft for the async send (the editor content must outlive the borrow).
+pub fn send(db: &Database, draft: &Draft) -> Task<Message> {
+  let db = db.clone();
+  let draft = draft.snapshot_clone();
+  Task::perform(enqueue_send(db, draft), Message::ComposeSent)
+}
+
+/// Renders the compose as the body of a detached window. The app layer wraps this in window chrome.
+pub fn view<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
+  window_body(draft, roster)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -347,15 +619,6 @@ impl Kind {
       "Reply" => Kind::Reply,
       "ReplyAll" => Kind::ReplyAll,
       _ => Kind::New,
-    }
-  }
-
-  pub(super) fn header(self) -> &'static str {
-    match self {
-      Kind::New => "New message",
-      Kind::Reply => "Reply",
-      Kind::ReplyAll => "Reply all",
-      Kind::Forward => "Forward",
     }
   }
 }
@@ -525,104 +788,26 @@ async fn write_optimistic_sent(db: &Database, payload: &SendPayload, mail_id: i6
   let _ = mail::upsert_complete(db, &header, &body, &recipients).await;
 }
 
-pub(super) fn panel<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
-  let body: Element<'a, Message> = if draft.minimized {
-    header_bar(draft)
-  } else {
-    Column::with_children(vec![
-      header_bar(draft),
-      to_field(draft),
-      cc_field(draft),
-      subject_field(draft),
-      body_field(draft),
-      error_line(draft),
-      footer(draft, roster),
-    ])
+fn window_body<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
+  let body = Column::with_children(vec![
+    to_field(draft),
+    cc_field(draft),
+    subject_field(draft),
+    body_field(draft),
+    error_line(draft),
+    footer(draft, roster),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  container(body)
     .width(Length::Fill)
     .height(Length::Fill)
-    .into()
-  };
-
-  let width = if draft.expanded { EXPANDED_WIDTH } else { DOCKED_WIDTH };
-
-  let card = container(body)
-    .width(Length::Fixed(width))
-    .height(if draft.minimized {
-      Length::Shrink
-    } else {
-      Length::Fixed(560.0)
-    })
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.16),
-        radius: radius::PANEL.into(),
-        width: 1.0,
-      },
       ..container::Style::default()
-    });
-
-  let alignment = if draft.expanded {
-    (Horizontal::Center, Vertical::Center)
-  } else {
-    (Horizontal::Right, Vertical::Bottom)
-  };
-
-  container(card)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(alignment.0)
-    .align_y(alignment.1)
-    .padding(Padding {
-      top: 0.0,
-      bottom: spacing::layout::STATUS_BAR_HEIGHT + spacing::SPACE_3_5,
-      left: spacing::SPACE_6,
-      right: spacing::SPACE_6,
     })
     .into()
-}
-
-fn header_bar(draft: &Draft) -> Element<'_, Message> {
-  let row = Row::with_children(vec![
-    eyebrow_text(draft.kind.header(), None).width(Length::Fill).into(),
-    header_button("\u{2013}", Message::ComposeMinimizeToggled),
-    header_button(
-      if draft.expanded { "\u{2921}" } else { "\u{2922}" },
-      Message::ComposeExpandToggled,
-    ),
-    header_button("\u{2715}", Message::ComposeClosed),
-  ])
-  .spacing(spacing::UNIT)
-  .align_y(Vertical::Center);
-
-  let bar = container(row).width(Length::Fill).padding(Padding {
-    top: spacing::SPACE_2 + 2.0,
-    bottom: spacing::SPACE_2 + 2.0,
-    left: spacing::SPACE_3_5,
-    right: spacing::SPACE_2,
-  });
-
-  Column::with_children(vec![bar.into(), rule::horizontal()])
-    .width(Length::Fill)
-    .into()
-}
-
-fn header_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
-  mouse_area(
-    container(
-      text(glyph.to_owned())
-        .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::secondary()),
-        }),
-    )
-    .width(Length::Fixed(28.0))
-    .height(Length::Fixed(28.0))
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center),
-  )
-  .on_press(message)
-  .into()
 }
 
 fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
@@ -817,6 +1002,7 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
     toolbar_button(Icon::italic(), false, Message::ComposeItalic),
     toolbar_button(Icon::link(), draft.link.is_some(), Message::ComposeLinkToggled),
     Space::new().width(Length::Fill).into(),
+    discard_button(),
     from_trigger.into(),
     send,
   ])
@@ -1101,6 +1287,35 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
     .into()
 }
 
+/// The "Discard" footer affordance: closes the window without saving a draft. The window-chrome close
+/// button auto-saves a non-empty draft; this is the explicit throw-away path.
+fn discard_button<'a>() -> Element<'a, Message> {
+  let button = container(
+    text("Discard")
+      .size(typography::size::MD)
+      .font(typography::body::MEDIUM)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::SPACE_2,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+    right: spacing::SPACE_3,
+  })
+  .style(|_| container::Style {
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.12),
+      radius: radius::CONTROL.into(),
+      width: 1.0,
+    },
+    ..container::Style::default()
+  });
+
+  mouse_area(button).on_press(Message::ComposeDiscarded).into()
+}
+
 fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
   let (fg, bg) = if enabled {
     (color::surface::BASE, color::accent::PLASMA)
@@ -1220,6 +1435,124 @@ mod tests {
     },
     repo::character,
   };
+
+  fn entity(id: i64, name: &str) -> EntityRef {
+    EntityRef {
+      id,
+      kind: EntityKind::Character,
+      name: name.to_owned(),
+      portrait: None,
+    }
+  }
+
+  mod update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_appends_a_picked_to_recipient_and_clears_the_query() {
+      let mut draft = Draft::blank(42);
+      update(&mut draft, Message::ComposeToInput("Vex".to_owned()));
+
+      update(&mut draft, Message::ComposeToPicked(entity(95_000_001, "Vex Voronova")));
+
+      assert_eq!(draft.to.len(), 1);
+      assert_eq!(draft.to[0].id, Some(95_000_001));
+      assert!(draft.to_search.query().is_empty());
+    }
+
+    #[test]
+    fn it_commits_a_typed_recipient_without_an_id() {
+      let mut draft = Draft::blank(42);
+      update(&mut draft, Message::ComposeToInput("Typed Pilot".to_owned()));
+
+      update(&mut draft, Message::ComposeToCommitted);
+
+      assert_eq!(draft.to.len(), 1);
+      assert_eq!(draft.to[0].id, None);
+      assert_eq!(draft.to[0].name, "Typed Pilot");
+    }
+
+    #[test]
+    fn it_discards_recipient_results_from_a_superseded_search() {
+      let mut draft = Draft::blank(42);
+      update(&mut draft, Message::ComposeToInput("Vex".to_owned()));
+      let stale = draft.recipient_search_generation(true);
+      update(&mut draft, Message::ComposeToInput("Vexor".to_owned()));
+
+      update(
+        &mut draft,
+        Message::ComposeToSearched {
+          generation: stale,
+          results: vec![entity(1, "Stale")],
+        },
+      );
+
+      assert!(draft.to_search.results().is_empty());
+    }
+
+    #[test]
+    fn it_reports_a_recipient_search_effect_for_a_to_input() {
+      let mut draft = Draft::blank(42);
+
+      let effect = update(&mut draft, Message::ComposeToInput("Vex".to_owned()));
+
+      assert!(matches!(
+        effect,
+        Effect::RecipientSearch {
+          is_to: true,
+          ..
+        }
+      ));
+    }
+
+    #[test]
+    fn it_wraps_a_bold_tag_into_the_body() {
+      let mut draft = Draft::blank(42);
+
+      update(&mut draft, Message::ComposeBold);
+
+      assert_eq!(draft.body.text(), "<b></b>");
+    }
+
+    #[test]
+    fn it_signals_discard_on_the_discard_message() {
+      let mut draft = Draft::blank(42);
+
+      assert!(matches!(update(&mut draft, Message::ComposeDiscarded), Effect::Discard));
+    }
+
+    #[test]
+    fn it_signals_send_only_for_a_sendable_draft() {
+      let mut draft = Draft::blank(42);
+      assert!(matches!(update(&mut draft, Message::ComposeSend), Effect::None));
+
+      draft.push_to(Recipient::typed("Vex"));
+      draft.subject = "CTA".to_owned();
+      assert!(matches!(update(&mut draft, Message::ComposeSend), Effect::Send));
+    }
+
+    #[test]
+    fn it_records_a_failed_send_error_inline() {
+      let mut draft = Draft::blank(42);
+
+      update(&mut draft, Message::ComposeSent(Err("boom".to_owned())));
+
+      assert_eq!(draft.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn it_toggles_the_link_popover() {
+      let mut draft = Draft::blank(42);
+
+      update(&mut draft, Message::ComposeLinkToggled);
+      assert!(draft.link.is_some());
+
+      update(&mut draft, Message::ComposeLinkToggled);
+      assert!(draft.link.is_none());
+    }
+  }
 
   fn render() -> MailRender {
     MailRender {

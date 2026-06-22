@@ -5,8 +5,8 @@ use iced::{
 };
 
 use super::{
-  Folder, Message, StandardFolder, State, compose, folder_pane, labels, message_list, outbox_indicator, reading_pane,
-  snooze, switcher,
+  Folder, Message, StandardFolder, State, folder_pane, labels, message_list, outbox_indicator, reading_pane, snooze,
+  switcher,
 };
 use crate::{
   config::Feature,
@@ -119,10 +119,6 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into();
-  }
-
-  if let Some(draft) = state.compose() {
-    return modal_overlay(base.into(), None, compose::panel(draft, state.roster()));
   }
 
   base.into()

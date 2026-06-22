@@ -5,13 +5,13 @@ use iced::window;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
   Compare,
-  // Registered by the Killmail pilot window, which is a separate not-yet-built task; the routing,
-  // theme, and shadow-disable arms for it already exist here.
-  #[allow(dead_code)]
+  Contract,
   Killmail,
+  MailCompose,
   Main,
   SkillPlanEditor,
   Splash,
+  StockpileEditor,
 }
 
 impl Window {
@@ -20,7 +20,7 @@ impl Window {
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
-      Self::Killmail | Self::Splash => None,
+      Self::Contract | Self::Killmail | Self::MailCompose | Self::Splash | Self::StockpileEditor => None,
     }
   }
 }
@@ -197,6 +197,13 @@ mod tests {
     #[test]
     fn it_never_persists_killmail() {
       assert_eq!(Window::Killmail.state_key(), None);
+    }
+
+    #[test]
+    fn it_never_persists_the_detached_child_windows() {
+      assert_eq!(Window::Contract.state_key(), None);
+      assert_eq!(Window::MailCompose.state_key(), None);
+      assert_eq!(Window::StockpileEditor.state_key(), None);
     }
 
     #[test]

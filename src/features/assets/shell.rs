@@ -235,10 +235,8 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     Tab::Stockpiles => iced::widget::mouse_area(
       container(stockpiles::body(
         state.stockpiles(),
-        state.stockpile_editor(),
         state.stockpile_import(),
         state.stockpile_expanded(),
-        state.window_height(),
       ))
       .width(Length::Fill)
       .height(Length::Fill),

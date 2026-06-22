@@ -487,6 +487,33 @@ impl ResolutionContext {
     }
   }
 
+  /// The category an entry contributes its activity to, applying the first-run
+  /// disposition for the money-conserving income→Ready-to-Assign model.
+  ///
+  /// [`resolve_target`](Self::resolve_target) answers which category an entry
+  /// resolves to (a manual per-entry override, else a matching rule). For *income*
+  /// inflows that resolution is reinterpreted on first run: a rule/auto-derived
+  /// inflow assignment defaults to Ready-to-Assign (returns `None`, leaving the
+  /// ISK in the pool) rather than being filed into the envelope, because under the
+  /// new model genuine income belongs to the pool. An explicit per-entry *manual*
+  /// override is always honored, so a user who deliberately filed an inflow into a
+  /// category keeps it. Outflows, refunds, and internal transfers are unaffected:
+  /// they file wherever they resolve. See [`dispose_inflow_assignment`].
+  pub fn resolve_for_activity(
+    &self,
+    entry_kind: BudgetEntryKind,
+    entry_id: i64,
+    flow: BudgetFlow,
+    target: &MatchTarget,
+  ) -> Option<i64> {
+    let Some(owner) = target.owner else {
+      return None;
+    };
+    let manual = self.override_for(owner, entry_kind, entry_id);
+    let resolved = self.resolve_target(entry_kind, entry_id, target);
+    dispose_inflow_assignment(flow, manual, resolved)
+  }
+
   // Dormant auto-categorization path. The v1 derivation and chip are manual-only
   // (they use `override_for`); this full-precedence resolver is retained, and
   // exercised by unit tests, for a future opt-in auto-assign mode.
@@ -516,6 +543,42 @@ impl ResolutionContext {
       }
     }
   }
+}
+
+/// First-run disposition of an inflow's resolved budget category under the
+/// money-conserving income→Ready-to-Assign model.
+///
+/// Pre-existing rule/auto-derived assignments that filed income into an envelope
+/// must be reinterpreted so genuine income lands in Ready-to-Assign rather than
+/// being held in a category (which, under the new RTA formula, would draw the
+/// pool down by that inflow's positive available). This is code-level
+/// interpretation applied every derivation, not a one-time DB rewrite — the
+/// owner-identity repair migration handles persisted cleanup separately and this
+/// logic never fights it: it only declines to *file* a non-manual inflow, leaving
+/// the stored assignment untouched.
+///
+/// The rule, given the entry's `flow`, the category an explicit per-entry
+/// `manual` override pins it to (if any), and the category it otherwise
+/// `resolved` to (manual override or matching rule):
+///
+/// - A *manual* override is always honored — the user's explicit choice wins for
+///   every flow, income included.
+/// - A non-manual [`BudgetFlow::Income`] inflow defaults to Ready-to-Assign
+///   (`None`): a rule that filed income into an envelope is reinterpreted to leave
+///   that ISK in the pool.
+/// - Every other flow ([`BudgetFlow::Expense`], [`BudgetFlow::Refund`],
+///   [`BudgetFlow::InternalTransfer`]) files wherever it resolved, unchanged.
+// First-run income→RTA disposition (child rowluuus); consumed by the activity derivation. Exercised
+// by unit tests.
+#[allow(dead_code)]
+pub fn dispose_inflow_assignment(flow: BudgetFlow, manual: Option<i64>, resolved: Option<i64>) -> Option<i64> {
+  if manual.is_some() {
+    return resolved;
+  }
+  if flow == BudgetFlow::Income {
+    return None;
+  }
+  resolved
 }
 
 /// How a matched outflow is classified in a rule editor's live preview, relative
@@ -1416,12 +1479,15 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     if is_market_twin(row, ingested) {
       continue;
     }
-    if classify_journal(row, &transfer_ids) == BudgetFlow::InternalTransfer {
+    let flow = classify_journal(row, &transfer_ids);
+    if flow == BudgetFlow::InternalTransfer {
       continue;
     }
     let Some(amount) = row.amount else { continue };
     let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Journal, row.id, &target) {
+    // First-run income→RTA disposition: a non-manual inflow defaults to
+    // Ready-to-Assign rather than being held in the rule-resolved envelope.
+    if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Journal, row.id, flow, &target) {
       *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
   }
@@ -1443,7 +1509,10 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
       continue;
     }
     let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
-    if let Some(category_id) = context.resolve_target(BudgetEntryKind::Market, tx.transaction_id, &target) {
+    let flow = BudgetFlow::from_market(tx.is_buy);
+    // First-run income→RTA disposition: a non-manual sell (inflow) defaults to
+    // Ready-to-Assign rather than being held in the rule-resolved envelope.
+    if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Market, tx.transaction_id, flow, &target) {
       *by_month
         .entry(month.clone())
         .or_default()
@@ -2159,6 +2228,70 @@ mod tests {
 
       assert_eq!(rule_category_for(&inflow, &rules), Some(10));
       assert_eq!(rule_category_for(&outflow, &rules), None);
+    }
+  }
+
+  mod inflow_disposition {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_clears_a_non_manual_inflow_to_ready_to_assign() {
+      // A rule filed this income into category 10; under the money-conserving
+      // model it defaults back to Ready-to-Assign (None) so the pool is not
+      // drawn down by the inflow.
+      assert_eq!(dispose_inflow_assignment(BudgetFlow::Income, None, Some(10)), None);
+    }
+
+    #[test]
+    fn it_retains_a_manual_inflow_assignment() {
+      // The user explicitly pinned this income to category 7; their choice wins.
+      assert_eq!(dispose_inflow_assignment(BudgetFlow::Income, Some(7), Some(7)), Some(7));
+    }
+
+    #[test]
+    fn it_leaves_non_income_flows_filing_where_they_resolve() {
+      // Expenses, refunds, and transfers are unaffected by the inflow disposition.
+      assert_eq!(dispose_inflow_assignment(BudgetFlow::Expense, None, Some(5)), Some(5));
+      assert_eq!(dispose_inflow_assignment(BudgetFlow::Refund, None, Some(5)), Some(5));
+      assert_eq!(
+        dispose_inflow_assignment(BudgetFlow::InternalTransfer, None, Some(5)),
+        Some(5)
+      );
+    }
+
+    #[test]
+    fn it_disposes_through_the_resolution_context() {
+      // Two identical inflows: one carries a manual per-entry override, the other
+      // is only matched by a rule. The manual one is retained; the rule-derived
+      // one is cleared to Ready-to-Assign.
+      let owner = BudgetOwner::Character(1);
+      let rules = vec![rule(
+        10,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Direction, RuleOp::Is, "in")],
+      )];
+      let mut journal_overrides = HashMap::new();
+      journal_overrides.insert((owner, 100_i64), 10_i64);
+      let context = ResolutionContext {
+        journal_overrides,
+        rules,
+        ..Default::default()
+      };
+
+      let target = MatchTarget::journal(owner, "bounty", Some(10.0), "Bounty");
+      // Manual override on entry 100 is honored.
+      assert_eq!(
+        context.resolve_for_activity(BudgetEntryKind::Journal, 100, BudgetFlow::Income, &target),
+        Some(10)
+      );
+      // Entry 200 is only rule-matched (non-manual inflow) → Ready-to-Assign.
+      assert_eq!(
+        context.resolve_for_activity(BudgetEntryKind::Journal, 200, BudgetFlow::Income, &target),
+        None
+      );
     }
   }
 

@@ -506,9 +506,7 @@ impl ResolutionContext {
     flow: BudgetFlow,
     target: &MatchTarget,
   ) -> Option<i64> {
-    let Some(owner) = target.owner else {
-      return None;
-    };
+    let owner = target.owner?;
     let manual = self.override_for(owner, entry_kind, entry_id);
     let resolved = self.resolve_target(entry_kind, entry_id, target);
     dispose_inflow_assignment(flow, manual, resolved)
@@ -4583,7 +4581,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_disabled_rules_but_files_inflows() {
+    async fn it_ignores_disabled_rules_and_routes_ruled_income_to_ready_to_assign() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
@@ -4598,8 +4596,9 @@ mod tests {
       .await
       .unwrap();
       // A disabled fee rule (ignored) plus an enabled inflow-only rule. The
-      // disabled rule leaves the fee in Ready-to-Assign; the enabled rule files
-      // the bounty inflow into the income envelope.
+      // disabled rule leaves the fee in Ready-to-Assign; the enabled rule
+      // resolves the bounty to the income category, but the income→RTA
+      // disposition reinterprets that non-manual inflow back to Ready-to-Assign.
       text_rule(
         &db,
         BudgetScope::Character(1),
@@ -4640,8 +4639,9 @@ mod tests {
 
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
-      // The bounty inflow lands in income; the fee stays unassigned (disabled rule).
-      assert_eq!(activity.get(&slug_to_id["income"]).copied(), Some(1_000.0));
+      // Genuine income routes to Ready-to-Assign despite the matching rule, and
+      // the fee stays unassigned (disabled rule): neither files into an envelope.
+      assert!(!activity.contains_key(&slug_to_id["income"]));
       assert!(!activity.contains_key(&slug_to_id["fees"]));
     }
 

@@ -191,6 +191,38 @@ pub async fn delete_entry_assignment(
   Ok(())
 }
 
+/// Forward GC for per-entry overrides whose entry has since been pruned from
+/// every live ledger. The one-time migration heals the historical backlog; this
+/// keeps it clean going forward by dropping any assignment whose `entry_id` no
+/// longer resolves to a wallet row for its own `(owner_kind, owner_id)` — a
+/// journal id for Journal rows, a transaction id for Market rows. It is
+/// owner-keyed so a corp and a character sharing an EVE id are never confused,
+/// and set-based so a single call cleans the whole table. Returns the number of
+/// overrides removed.
+// Per-entry budget assignment GC (data-repair follow-up); consumed by the Budget data path. Exercised
+// by unit tests until wired into a maintenance trigger.
+#[allow(dead_code)]
+pub async fn prune_orphan_entry_assignments(db: &Database) -> Result<u64, Error> {
+  let result = sqlx::query(
+    "DELETE FROM budget_entry_assignments \
+    WHERE (entry_kind = 'journal' AND owner_kind = 'character' AND NOT EXISTS ( \
+        SELECT 1 FROM character_wallet_journal cwj \
+        WHERE cwj.id = budget_entry_assignments.entry_id AND cwj.character_id = budget_entry_assignments.owner_id)) \
+      OR (entry_kind = 'journal' AND owner_kind = 'corporation' AND NOT EXISTS ( \
+        SELECT 1 FROM corporation_wallet_journal cwj \
+        WHERE cwj.id = budget_entry_assignments.entry_id AND cwj.corporation_id = budget_entry_assignments.owner_id)) \
+      OR (entry_kind = 'market' AND owner_kind = 'character' AND NOT EXISTS ( \
+        SELECT 1 FROM character_wallet_transaction cwt \
+        WHERE cwt.transaction_id = budget_entry_assignments.entry_id AND cwt.character_id = budget_entry_assignments.owner_id)) \
+      OR (entry_kind = 'market' AND owner_kind = 'corporation' AND NOT EXISTS ( \
+        SELECT 1 FROM corporation_wallet_transaction cwt \
+        WHERE cwt.transaction_id = budget_entry_assignments.entry_id AND cwt.corporation_id = budget_entry_assignments.owner_id))",
+  )
+  .execute(db.writer())
+  .await?;
+  Ok(result.rows_affected())
+}
+
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
 #[allow(dead_code)]

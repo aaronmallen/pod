@@ -366,6 +366,53 @@ async fn fetch_party_image(store: &images::Store, eve_image: &eve_image::Client,
   }
 }
 
+pub async fn load_all_journal(db: &Database, scope: &[i64], corp_scope: &[i64]) -> Vec<JournalEntry> {
+  let mut entries = Vec::new();
+  for &character_id in scope {
+    let rows = finance::wallet_journal(db, character_id).await.unwrap_or_default();
+    entries.extend(rows.iter().map(map_journal_row));
+  }
+  for &corporation_id in corp_scope {
+    for division in finance::divisions(db, corporation_id).await.unwrap_or_default() {
+      let rows = finance::corporation_wallet_journal(db, corporation_id, division.division())
+        .await
+        .unwrap_or_default();
+      entries.extend(rows.iter().map(map_corp_journal_row));
+    }
+  }
+  entries.sort_by_key(|entry| std::cmp::Reverse(entry.id));
+  entries
+}
+
+pub async fn load_all_market(db: &Database, scope: &[i64], corp_scope: &[i64]) -> Vec<MarketEntry> {
+  let type_names = crate::features::budget::type_names(db).await;
+  let location_names = crate::features::budget::location_names(db).await;
+
+  let mut entries = Vec::new();
+  for &character_id in scope {
+    let rows = finance::wallet_transactions(db, character_id).await.unwrap_or_default();
+    entries.extend(
+      rows
+        .iter()
+        .filter_map(|row| map_txn_row(row, &type_names, &location_names)),
+    );
+  }
+  for &corporation_id in corp_scope {
+    for division in finance::divisions(db, corporation_id).await.unwrap_or_default() {
+      let rows = finance::corporation_wallet_transactions(db, corporation_id, division.division())
+        .await
+        .unwrap_or_default();
+      entries.extend(
+        rows
+          .iter()
+          .filter_map(|row| map_corp_txn_row(row, &type_names, &location_names)),
+      );
+    }
+  }
+  entries.sort_by_key(|entry| std::cmp::Reverse(entry.transaction_id));
+  entries
+}
+
 pub async fn load_corp_journal(db: &Database, corporation_id: i64, division: i64) -> Vec<JournalEntry> {
   finance::corporation_wallet_journal(db, corporation_id, division)
     .await
@@ -953,6 +1000,23 @@ mod tests {
       assert_eq!(entries.iter().map(|e| e.id).collect::<Vec<_>>(), [2, 1]);
       assert_eq!(entries[0].owner, BudgetOwner::Corporation(corp_id));
       assert_eq!(entries[1].owner, BudgetOwner::Character(1));
+    }
+
+    #[tokio::test]
+    async fn it_loads_every_journal_row_unbounded_by_a_page_size() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      for id in 1..=5 {
+        append(&db, id, 1, "2026-01-01T00:00:00Z").await;
+      }
+
+      let entries = load_all_journal(&db, &[1], &[]).await;
+
+      assert_eq!(
+        entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+        [5, 4, 3, 2, 1],
+        "the drill source returns the whole ledger newest-id-first, not a single page"
+      );
     }
   }
 

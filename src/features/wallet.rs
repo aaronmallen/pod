@@ -225,6 +225,7 @@ pub enum Message {
   BudgetChipsReloaded(Box<loaders::BudgetChips>),
   BudgetCoverOverspending,
   BudgetDragStarted(i64),
+  BudgetDrillLoaded(Box<BudgetDrill>),
   BudgetDropReleased,
   BudgetDropTargetEntered(BudgetDropTarget),
   BudgetDropTargetLeft,
@@ -334,7 +335,7 @@ impl Message {
   pub fn loads_data(&self) -> bool {
     matches!(
       self,
-      Message::ContractDetailLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
+      Message::BudgetDrillLoaded(_) | Message::ContractDetailLoaded(_) | Message::Loaded(_) | Message::MoreLoaded(_)
     )
   }
 
@@ -478,6 +479,22 @@ pub struct RosterPilot {
   pub portrait: images::ImageState,
 }
 
+/// The DB-backed result of a category drill: every journal and market row that
+/// belongs to the drilled category+month, resolved server-side via the same
+/// override/rule/ref_type precedence the envelope math uses.
+///
+/// It is its own owned view, not a window into the paged `journal`/`market`
+/// vectors, so it stays complete for a past month never scrolled into the ledger
+/// and survives tab switches, scope changes, and syncs that repaginate the
+/// ledger from page 1. The `filter` it was loaded for guards against a stale
+/// result rendering after the active filter has changed.
+#[derive(Clone, Debug)]
+pub struct BudgetDrill {
+  pub filter: BudgetFilter,
+  pub journal: Vec<JournalEntry>,
+  pub market: Vec<MarketEntry>,
+}
+
 /// A ledger filter driven from the Budget tab: show only the entries of a given
 /// scope-keyed envelope (or the uncategorized ones) for a single month. Applies
 /// to both the Journal and Transactions tables.
@@ -526,6 +543,7 @@ pub struct State {
   budget_chips: loaders::BudgetChips,
   budget_collapsed: std::collections::HashSet<i64>,
   budget_dragging: Option<i64>,
+  budget_drill: Option<BudgetDrill>,
   budget_drop_target: Option<BudgetDropTarget>,
   budget_edit_mode: bool,
   budget_editing: Option<budget::EditingCell>,
@@ -598,6 +616,7 @@ impl State {
       budget_chips: loaders::BudgetChips::default(),
       budget_collapsed: std::collections::HashSet::new(),
       budget_dragging: None,
+      budget_drill: None,
       budget_drop_target: None,
       budget_edit_mode: false,
       budget_editing: None,
@@ -772,6 +791,16 @@ impl State {
 
   pub fn active_division(&self) -> i64 {
     self.active_division
+  }
+
+  /// The drill result to render, but only while it still matches the active
+  /// budget filter. A drill loaded for a now-changed (or cleared) filter is
+  /// stale and ignored, so the paged ledger takes over instead of showing the
+  /// prior category's rows.
+  fn active_drill(&self) -> Option<&BudgetDrill> {
+    let filter = self.budget_filter.as_ref()?;
+    let drill = self.budget_drill.as_ref()?;
+    (drill.filter == *filter).then_some(drill)
   }
 
   pub(super) fn budget(&self) -> Option<&budget::BudgetView> {
@@ -1149,8 +1178,7 @@ impl State {
   // carries the composite avatar's portrait base) and drop the corporation copy.
   // A purely personal trade has no corp pair and is never hidden.
   fn is_redundant_dual_wallet_copy(&self, entry: &MarketEntry) -> bool {
-    matches!(entry.owner, BudgetOwner::Corporation(_))
-      && market_dual_wallet_owners(self, entry.transaction_id).is_some()
+    is_redundant_dual_wallet_copy(&self.market, entry)
   }
 }
 
@@ -1327,6 +1355,41 @@ fn reload_budget_chips(state: &State, db: &Database) -> Task<Message> {
   })
 }
 
+/// Loads the category drill straight from the store, independent of the ledger's
+/// paging cursor: every journal and market row in the filter's category+month,
+/// resolved through the same chips (override + rule + ref_type precedence) the
+/// envelope math uses, so the drilled set matches the math and is complete for a
+/// month never scrolled into the paged ledger.
+fn load_budget_drill(state: &State, db: &Database, filter: BudgetFilter) -> Task<Message> {
+  let scope = state.budget_scope();
+  let db = db.clone();
+  Task::perform(
+    async move {
+      let scope_ids = crate::features::budget::scope_character_ids(&db, scope).await;
+      let corp_scope_ids = crate::features::budget::scope_corporation_ids(&db, scope).await;
+      let chips = loaders::load_budget_chips(&db, scope).await;
+      let journal: Vec<JournalEntry> = loaders::load_all_journal(&db, &scope_ids, &corp_scope_ids)
+        .await
+        .into_iter()
+        .filter(|entry| journal_budget_match(entry, &filter, &chips))
+        .collect();
+      let market_all = loaders::load_all_market(&db, &scope_ids, &corp_scope_ids).await;
+      let market: Vec<MarketEntry> = market_all
+        .iter()
+        .filter(|entry| !is_redundant_dual_wallet_copy(&market_all, entry))
+        .filter(|entry| market_budget_match(entry, &filter, &chips))
+        .cloned()
+        .collect();
+      BudgetDrill {
+        filter,
+        journal,
+        market,
+      }
+    },
+    |drill| Message::BudgetDrillLoaded(Box::new(drill)),
+  )
+}
+
 fn reload_budget_review(state: &State, db: &Database) -> Task<Message> {
   let scope = state.budget_scope();
   let month = state.budget_month.clone();
@@ -1346,6 +1409,13 @@ fn reload_kind(kind: JobKind) -> bool {
 
 fn load_more(state: &mut State, db: &Database) -> Task<Message> {
   if state.loading_more || state.tab_exhausted {
+    return Task::none();
+  }
+
+  // The category drill is a complete DB-backed view, not the paged ledger, so
+  // scrolling it must not advance the ledger cursor (which would fetch rows the
+  // drill view never renders).
+  if state.active_drill().is_some() {
     return Task::none();
   }
 
@@ -2039,9 +2109,13 @@ where
 
 fn handle_filter(state: &mut State, message: Message) -> Task<Message> {
   match message {
-    Message::BudgetFilterCleared => state.budget_filter = None,
+    Message::BudgetFilterCleared => {
+      state.budget_filter = None;
+      state.budget_drill = None;
+    }
     Message::FiltersCleared => {
       state.budget_filter = None;
+      state.budget_drill = None;
       state.search.clear();
       state.sign_filter = SignFilter::All;
       state.side_filter = Side::All;
@@ -2553,6 +2627,7 @@ fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task
   // scope's banner does not flash while the new scope's recount round-trips.
   state.budget_review_total = 0;
   state.budget_filter = None;
+  state.budget_drill = None;
   state.budget_picker = None;
   state.budget_selected = None;
   state.budget_editing = None;
@@ -2883,21 +2958,37 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       Task::none()
     }
     Message::BudgetFilterApplied(kind) => {
-      state.budget_filter = Some(BudgetFilter {
+      let filter = BudgetFilter {
         kind,
         month: state.budget_month.clone(),
-      });
-      state.tab_scroll_offset = 0.0;
-      state.recompute_derived();
-      // Route the drill to where the matches live: a category whose activity is
-      // entirely market trades has an empty Journal, so land on Market instead of
-      // hardcoding Tab::Journal (which would drill into an empty tab).
-      state.tab = if state.derived.journal_indices.is_empty() && !state.derived.market_indices.is_empty() {
-        Tab::Market
-      } else {
-        Tab::Journal
       };
+      state.budget_filter = Some(filter.clone());
+      // Drop any prior drill so the ledger does not flash the previous
+      // category's rows while the new DB-backed drill round-trips.
+      state.budget_drill = None;
+      state.tab_scroll_offset = 0.0;
+      // Land on the Journal provisionally so the drill opens immediately;
+      // `BudgetDrillLoaded` re-routes to Market once the DB-backed set shows the
+      // category's matches are entirely market trades.
+      state.tab = Tab::Journal;
+      state.recompute_derived();
       prune_ledger_selections(state);
+      load_budget_drill(state, db, filter)
+    }
+    Message::BudgetDrillLoaded(drill) => {
+      // A drill that finished after its filter changed (or was cleared) is stale;
+      // store it anyway, but only route the tab when it is still the active one.
+      let is_active = state.budget_filter.as_ref() == Some(&drill.filter);
+      let route = budget_drill_tab(&drill);
+      state.budget_drill = Some(*drill);
+      if is_active {
+        // Route the drill to where the matches live: a category whose activity is
+        // entirely market trades has an empty Journal, so land on Market instead of
+        // hardcoding Tab::Journal (which would drill into an empty tab).
+        state.tab = route;
+        state.tab_scroll_offset = 0.0;
+        prune_ledger_selections(state);
+      }
       Task::none()
     }
     Message::TabScrolled {
@@ -3444,6 +3535,9 @@ fn sum_option(values: impl Iterator<Item = Option<f64>>) -> Option<f64> {
 }
 
 pub fn filtered_journal(state: &State) -> Vec<&JournalEntry> {
+  if let Some(drill) = state.active_drill() {
+    return drill.journal.iter().collect();
+  }
   state
     .derived
     .journal_indices
@@ -3453,6 +3547,9 @@ pub fn filtered_journal(state: &State) -> Vec<&JournalEntry> {
 }
 
 pub fn filtered_market(state: &State) -> Vec<&MarketEntry> {
+  if let Some(drill) = state.active_drill() {
+    return drill.market.iter().collect();
+  }
   state
     .derived
     .market_indices
@@ -3686,6 +3783,33 @@ pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> O
     _ => None,
   })?;
   Some((character_id, corporation_id))
+}
+
+/// Whether a market entry is the redundant corporation copy of a dual-wallet
+/// trade within `market` and should be hidden so the trade renders only once.
+/// See [`State::is_redundant_dual_wallet_copy`] for the full rationale.
+fn is_redundant_dual_wallet_copy(market: &[MarketEntry], entry: &MarketEntry) -> bool {
+  if !matches!(entry.owner, BudgetOwner::Corporation(_)) {
+    return false;
+  }
+  let has_character_copy = market
+    .iter()
+    .any(|other| matches!(other.owner, BudgetOwner::Character(_)) && other.transaction_id == entry.transaction_id);
+  let has_corporation_copy = market
+    .iter()
+    .any(|other| matches!(other.owner, BudgetOwner::Corporation(_)) && other.transaction_id == entry.transaction_id);
+  has_character_copy && has_corporation_copy
+}
+
+/// The tab a category drill should land on: Market when the matches are entirely
+/// market trades (an empty Journal would otherwise drill into a blank tab), else
+/// Journal.
+fn budget_drill_tab(drill: &BudgetDrill) -> Tab {
+  if drill.journal.is_empty() && !drill.market.is_empty() {
+    Tab::Market
+  } else {
+    Tab::Journal
+  }
 }
 
 /// Whether a journal entry satisfies an active Budget filter: in the filter's
@@ -4671,6 +4795,79 @@ mod tests {
         0,
         "the prior scope's count must not flash while the recount round-trips"
       );
+    }
+  }
+
+  mod budget_drill_tab {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn drill(journal: Vec<JournalEntry>, market: Vec<MarketEntry>) -> BudgetDrill {
+      BudgetDrill {
+        filter: BudgetFilter {
+          kind: BudgetFilterKind::Uncategorized,
+          month: "2026-05".to_owned(),
+        },
+        journal,
+        market,
+      }
+    }
+
+    #[test]
+    fn it_routes_to_the_journal_when_journal_matches_exist() {
+      let result = super::super::budget_drill_tab(&drill(
+        vec![journal_entry(1, Some(-50.0), "contract_price", "out")],
+        vec![market_entry(1, true, "Tritanium", "Jita")],
+      ));
+
+      assert_eq!(result, Tab::Journal);
+    }
+
+    #[test]
+    fn it_routes_to_the_journal_when_the_drill_is_empty() {
+      let result = super::super::budget_drill_tab(&drill(Vec::new(), Vec::new()));
+
+      assert_eq!(result, Tab::Journal);
+    }
+
+    #[test]
+    fn it_routes_to_the_market_when_only_market_matches_exist() {
+      let result = super::super::budget_drill_tab(&drill(Vec::new(), vec![market_entry(1, true, "Tritanium", "Jita")]));
+
+      assert_eq!(result, Tab::Market);
+    }
+  }
+
+  mod is_redundant_dual_wallet_copy {
+    use super::*;
+
+    #[test]
+    fn it_flags_the_corporation_copy_of_a_dual_wallet_trade() {
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      let market = vec![character, corp.clone()];
+
+      assert!(super::super::is_redundant_dual_wallet_copy(&market, &corp));
+    }
+
+    #[test]
+    fn it_keeps_a_character_copy_and_a_corp_only_trade() {
+      let mut character = market_entry(7, true, "Tritanium", "Jita");
+      character.transaction_id = 500;
+      let mut corp = market_entry(7, true, "Tritanium", "Jita");
+      corp.transaction_id = 500;
+      corp.owner = BudgetOwner::Corporation(98_000_001);
+      let mut corp_only = market_entry(7, true, "Pyerite", "Jita");
+      corp_only.transaction_id = 501;
+      corp_only.owner = BudgetOwner::Corporation(98_000_001);
+      let market = vec![character.clone(), corp, corp_only.clone()];
+
+      assert!(!super::super::is_redundant_dual_wallet_copy(&market, &character));
+      assert!(!super::super::is_redundant_dual_wallet_copy(&market, &corp_only));
     }
   }
 
@@ -6346,12 +6543,19 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
-      state.budget_month = "2026-05".to_owned();
-      state.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+      let filter = BudgetFilter {
+        kind: BudgetFilterKind::Uncategorized,
+        month: "2026-05".to_owned(),
+      };
+      state.budget_filter = Some(filter.clone());
 
       let _ = update(
         &mut state,
-        Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized),
+        Message::BudgetDrillLoaded(Box::new(BudgetDrill {
+          filter,
+          journal: Vec::new(),
+          market: vec![market_entry(1, true, "Tritanium", "Jita")],
+        })),
         &db,
       );
 
@@ -6367,17 +6571,98 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
       state.tab = Tab::Budget;
-      state.budget_month = "2026-05".to_owned();
-      state.journal = vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")];
-      state.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+      let filter = BudgetFilter {
+        kind: BudgetFilterKind::Uncategorized,
+        month: "2026-05".to_owned(),
+      };
+      state.budget_filter = Some(filter.clone());
 
       let _ = update(
         &mut state,
-        Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized),
+        Message::BudgetDrillLoaded(Box::new(BudgetDrill {
+          filter,
+          journal: vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")],
+          market: vec![market_entry(1, true, "Tritanium", "Jita")],
+        })),
         &db,
       );
 
       assert_eq!(state.tab, Tab::Journal);
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_drill_view_independent_of_the_paged_ledger() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      // The paged ledger is empty (a past month never scrolled in), but the
+      // DB-backed drill still carries the category's rows.
+      let filter = BudgetFilter {
+        kind: BudgetFilterKind::Category(7),
+        month: "2026-05".to_owned(),
+      };
+      state.budget_filter = Some(filter.clone());
+
+      let _ = update(
+        &mut state,
+        Message::BudgetDrillLoaded(Box::new(BudgetDrill {
+          filter,
+          journal: vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")],
+          market: vec![market_entry(1, true, "Tritanium", "Jita")],
+        })),
+        &db,
+      );
+
+      assert_eq!(filtered_journal(&state).len(), 1);
+      assert_eq!(filtered_market(&state).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_drill_whose_filter_no_longer_matches() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.budget_filter = Some(BudgetFilter {
+        kind: BudgetFilterKind::Category(7),
+        month: "2026-05".to_owned(),
+      });
+
+      let _ = update(
+        &mut state,
+        Message::BudgetDrillLoaded(Box::new(BudgetDrill {
+          filter: BudgetFilter {
+            kind: BudgetFilterKind::Category(99),
+            month: "2026-05".to_owned(),
+          },
+          journal: vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")],
+          market: Vec::new(),
+        })),
+        &db,
+      );
+
+      assert!(
+        filtered_journal(&state).is_empty(),
+        "a stale drill from a now-changed filter must not render"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_clears_the_drill_when_the_budget_filter_is_cleared() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      let filter = BudgetFilter {
+        kind: BudgetFilterKind::Category(7),
+        month: "2026-05".to_owned(),
+      };
+      state.budget_filter = Some(filter.clone());
+      state.budget_drill = Some(BudgetDrill {
+        filter,
+        journal: vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")],
+        market: Vec::new(),
+      });
+
+      let _ = update(&mut state, Message::BudgetFilterCleared, &db);
+
+      assert!(state.budget_drill.is_none());
+      assert!(state.budget_filter.is_none());
     }
 
     #[tokio::test]

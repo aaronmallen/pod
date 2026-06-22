@@ -3,6 +3,7 @@ pub mod accessibility_tab;
 pub mod features_tab;
 pub mod industry_tab;
 pub mod log_export;
+pub mod mcp_tab;
 pub mod storage_tab;
 pub mod tags_tab;
 pub mod ui_tab;
@@ -34,6 +35,7 @@ pub enum Category {
   #[default]
   Features,
   Industry,
+  Mcp,
   Storage,
   Tags,
   Ui,
@@ -46,6 +48,7 @@ impl Category {
       "accessibility" => Some(Category::Accessibility),
       "features" => Some(Category::Features),
       "industry" => Some(Category::Industry),
+      "mcp" => Some(Category::Mcp),
       "storage" => Some(Category::Storage),
       "tags" => Some(Category::Tags),
       "ui" => Some(Category::Ui),
@@ -61,6 +64,7 @@ impl Category {
     if settings.features().is_enabled(config::Feature::Industry) {
       categories.push(Category::Industry);
     }
+    categories.push(Category::Mcp);
     categories.push(Category::Storage);
     categories.push(Category::Tags);
     categories.push(Category::Ui);
@@ -73,6 +77,7 @@ impl Category {
       Category::Accessibility => "accessibility",
       Category::Features => "features",
       Category::Industry => "industry",
+      Category::Mcp => "mcp",
       Category::Storage => "storage",
       Category::Tags => "tags",
       Category::Ui => "ui",
@@ -85,6 +90,7 @@ impl Category {
       Category::Accessibility => "Accessibility",
       Category::Features => "Features",
       Category::Industry => "Industry",
+      Category::Mcp => "MCP",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
       Category::Ui => "User Interface",
@@ -99,6 +105,7 @@ pub enum Message {
   CategorySelected(Category),
   Features(features_tab::Message),
   Industry(industry_tab::Message),
+  Mcp(mcp_tab::Message),
   ResetToDefaults,
   Storage(storage_tab::Message),
   Tags(tags_tab::Message),
@@ -118,6 +125,7 @@ pub enum Outcome {
     generation: u64,
     query: String,
   },
+  McpChanged,
   None,
   Persist,
   ReleaseLock,
@@ -133,6 +141,7 @@ pub struct State {
   db: Database,
   features: features_tab::State,
   industry: industry_tab::State,
+  mcp: mcp_tab::State,
   settings: Settings,
   storage: storage_tab::State,
   tags: tags_tab::State,
@@ -144,6 +153,7 @@ impl State {
     let accessibility = accessibility_tab::State::from_settings(&settings);
     let features = features_tab::State::from_settings(&settings);
     let industry = industry_tab::State::from_settings(&settings);
+    let mcp = mcp_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
     let ui = ui_tab::State::from_settings(&settings);
@@ -153,6 +163,7 @@ impl State {
       db,
       features,
       industry,
+      mcp,
       settings,
       storage,
       tags,
@@ -230,6 +241,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       industry_tab::update(&mut state.industry, msg, &mut state.settings),
       Task::none(),
     ),
+    Message::Mcp(msg) => {
+      let (outcome, task) = mcp_tab::update(&mut state.mcp, msg, &mut state.settings);
+      (outcome, task.map(Message::Mcp))
+    }
     Message::Storage(msg) => (
       storage_tab::update(&mut state.storage, msg, &mut state.settings),
       Task::none(),
@@ -247,6 +262,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       // re-docks and reorders the rail live the same way via UiChanged.
       let outcome = match active {
         Category::Accessibility => Outcome::AccessibilityChanged,
+        Category::Mcp => Outcome::McpChanged,
         Category::Ui => Outcome::UiChanged,
         _ => Outcome::Persist,
       };
@@ -257,6 +273,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     outcome,
     Outcome::AccessibilityChanged
       | Outcome::IndustryPin(_)
+      | Outcome::McpChanged
       | Outcome::Persist
       | Outcome::SetLogLevel(_)
       | Outcome::UiChanged
@@ -276,6 +293,11 @@ fn reset_active(state: &mut State) {
       state.industry = industry_tab::State::from_settings(&state.settings);
     }
     Category::Industry => {}
+    Category::Mcp => {
+      *state.settings.mcp_mut() = defaults.mcp().clone();
+      state.settings.mcp_mut().token_or_generate();
+      state.mcp = mcp_tab::State::from_settings(&state.settings);
+    }
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
     Category::Ui => *state.settings.ui_mut() = defaults.ui().clone(),
     Category::Tags | Category::About => {}
@@ -500,6 +522,7 @@ fn badge_for(state: &State, category: Category) -> String {
     Category::Accessibility => accessibility_tab::badge(&state.settings),
     Category::Features => features_tab::badge(&state.settings),
     Category::Industry => industry_tab::badge(&state.settings),
+    Category::Mcp => mcp_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
     Category::Ui => ui_tab::badge(&state.settings),
@@ -523,6 +546,7 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     }
     Category::Features => features_tab::view(&state.features, &state.settings).map(Message::Features),
     Category::Industry => industry_tab::view(&state.industry, &state.settings).map(Message::Industry),
+    Category::Mcp => mcp_tab::view(&state.mcp, &state.settings).map(Message::Mcp),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
     Category::Ui => ui_tab::view(&state.ui, &state.settings).map(Message::Ui),
@@ -573,6 +597,7 @@ mod tests {
       Category::Accessibility,
       Category::Features,
       Category::Industry,
+      Category::Mcp,
       Category::Storage,
       Category::Tags,
       Category::Ui,
@@ -582,6 +607,7 @@ mod tests {
     assert_eq!(Category::Accessibility.id(), "accessibility");
     assert_eq!(Category::Features.id(), "features");
     assert_eq!(Category::Industry.id(), "industry");
+    assert_eq!(Category::Mcp.id(), "mcp");
     assert_eq!(Category::Storage.id(), "storage");
     assert_eq!(Category::Tags.id(), "tags");
     assert_eq!(Category::Ui.id(), "ui");

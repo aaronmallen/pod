@@ -15,6 +15,7 @@ static INDUSTRY_ICON: &[u8] = include_bytes!("../../assets/images/icons/industry
 static INVENTORY_ICON: &[u8] = include_bytes!("../../assets/images/icons/inventory.svg");
 static JOURNAL_ICON: &[u8] = include_bytes!("../../assets/images/icons/journal.svg");
 static LAYOUT_ICON: &[u8] = include_bytes!("../../assets/images/icons/layout.svg");
+static LINK_ICON: &[u8] = include_bytes!("../../assets/images/icons/link.svg");
 static MARKET_ICON: &[u8] = include_bytes!("../../assets/images/icons/market.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../assets/images/icons/moon.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../assets/images/icons/settings.svg");
@@ -236,6 +237,12 @@ static SECTIONS: &[Section] = &[
         icon: INDUSTRY_ICON,
         id: "industry",
         label: "Industry",
+        route: None,
+      },
+      SubSection {
+        icon: LINK_ICON,
+        id: "mcp",
+        label: "MCP",
         route: None,
       },
       SubSection {
@@ -553,6 +560,7 @@ mod tests {
           settings::Category::Accessibility => Some("accessibility"),
           settings::Category::Features => Some("features"),
           settings::Category::Industry => Some("industry"),
+          settings::Category::Mcp => Some("mcp"),
           settings::Category::Storage => Some("storage"),
           settings::Category::Tags => Some("tags"),
           settings::Category::Ui => Some("ui"),
@@ -563,6 +571,7 @@ mod tests {
         settings::Category::Accessibility,
         settings::Category::Features,
         settings::Category::Industry,
+        settings::Category::Mcp,
         settings::Category::Storage,
         settings::Category::Tags,
         settings::Category::Ui,

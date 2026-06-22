@@ -1,8 +1,10 @@
+use std::f32::consts::PI;
+
 use chrono::{DateTime, NaiveDate, Utc};
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding, Radians, Rotation,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, canvas, container, text},
+  widget::{Column, Row, Space, canvas, container, mouse_area, svg, text},
 };
 
 use super::{Composition, Message, NetWorthPoint, Scope, State, Timeframe, fmt_isk};
@@ -16,11 +18,22 @@ use crate::ui::{
   style::{color, radius, spacing, typography},
 };
 
-const GRAPH_HEIGHT: f32 = 220.0;
 const BAR_HEIGHT: f32 = 6.0;
+const COLLAPSED_DOT_SIZE: f32 = 6.0;
 const COMPOSITION_CHIP_WIDTH: f32 = 130.0;
+const GRAPH_HEIGHT: f32 = 220.0;
+const HERO_COLLAPSED_FLAG: &str = "wallet.hero_collapsed";
+const TOGGLE_GLYPH_SIZE: f32 = 16.0;
+const TOGGLE_SIZE: f32 = 30.0;
+
+static CHEVRON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/chevron.svg");
 
 pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  let collapsed = state.ui_flag(HERO_COLLAPSED_FLAG, false);
+  if collapsed {
+    return collapsed_hero(state, now);
+  }
+
   let today = now.date_naive();
   let window = super::timeframe_window(state.timeframe, today);
   let sliced = super::sliced_series(state, today);
@@ -35,6 +48,7 @@ pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     Space::new().width(Length::Fill).into(),
     composition_chips(composition),
     timeframe_selector(state),
+    hero_toggle(collapsed),
   ])
   .spacing(spacing::SPACE_6)
   .align_y(Vertical::Top);
@@ -56,16 +70,17 @@ pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     bottom: spacing::SPACE_3_5,
     left: super::HEADER_SIDE_PADDING,
   })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.1),
-      width: 1.0,
-      radius: 0.0.into(),
-    },
-    ..container::Style::default()
-  })
+  .style(hero_container_style)
   .into()
+}
+
+fn change_pct(sliced: &[NetWorthPoint]) -> f64 {
+  match (sliced.first(), sliced.last()) {
+    (Some(first), Some(last)) if sliced.len() >= 2 && first.net_worth > 0.0 => {
+      (last.net_worth - first.net_worth) / first.net_worth * 100.0
+    }
+    _ => 0.0,
+  }
 }
 
 fn chart_points(sliced: &[NetWorthPoint]) -> Vec<ChartPoint> {
@@ -79,17 +94,186 @@ fn chart_points(sliced: &[NetWorthPoint]) -> Vec<ChartPoint> {
     .collect()
 }
 
+fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
+  let today = now.date_naive();
+  let sliced = super::sliced_series(state, today);
+  let current = super::series_current(sliced);
+  let pct = change_pct(sliced);
+  let composition = super::scope_composition(state);
+
+  let up = pct >= 0.0;
+  let change_color = if up {
+    color::status::ONLINE
+  } else {
+    color::status::DANGER
+  };
+  let arrow = if up { "\u{25b2}" } else { "\u{25bc}" };
+
+  let label = Row::with_children(vec![
+    eyebrow_text("Net worth", None).into(),
+    eyebrow_text(scope_suffix(state), Some(color::text::tertiary())).into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let value = Row::with_children(vec![
+    text(fmt_isk(current))
+      .font(typography::body::MEDIUM)
+      .size(22.0)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+    text("ISK")
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Bottom);
+
+  let change_chip = container(
+    Row::with_children(vec![
+      text(format!("{arrow} {:+.1}%", pct))
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::SM)
+        .style(move |_| text::Style {
+          color: Some(change_color),
+        })
+        .into(),
+      text(state.timeframe.label())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        })
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .padding(Padding {
+    top: spacing::UNIT,
+    right: spacing::SPACE_2_5,
+    bottom: spacing::UNIT,
+    left: spacing::SPACE_2_5,
+  })
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(change_color, 0.1))),
+    border: Border {
+      radius: radius::SUBTLE.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  });
+
+  let splits = Row::with_children(vec![
+    collapsed_split("Liquid", composition.liquid, color::accent::PLASMA),
+    collapsed_split("Assets", composition.asset_value, color::text::secondary()),
+    collapsed_split("Escrow", composition.escrow, color::status::DANGER),
+  ])
+  .spacing(spacing::SPACE_4_5)
+  .align_y(Vertical::Center);
+
+  let bar = Row::with_children(vec![
+    label.into(),
+    value.into(),
+    change_chip.into(),
+    Space::new().width(Length::Fill).into(),
+    splits.into(),
+    hero_toggle(true),
+  ])
+  .spacing(spacing::SPACE_4_5)
+  .align_y(Vertical::Center);
+
+  container(bar)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: super::HEADER_SIDE_PADDING,
+      bottom: spacing::SPACE_3_5,
+      left: super::HEADER_SIDE_PADDING,
+    })
+    .style(hero_container_style)
+    .into()
+}
+
+fn collapsed_split<'a>(label: &str, value: Option<f64>, dot: Color) -> Element<'a, Message> {
+  Row::with_children(vec![
+    status::dot_sized(dot, COLLAPSED_DOT_SIZE),
+    eyebrow_text(label, None).into(),
+    text(fmt_isk(value))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn hero_container_style(_: &iced::Theme) -> container::Style {
+  container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: 1.0,
+      radius: 0.0.into(),
+    },
+    ..container::Style::default()
+  }
+}
+
+fn hero_toggle<'a>(collapsed: bool) -> Element<'a, Message> {
+  let rotation = if collapsed { 0.0 } else { PI };
+  let glyph = svg(svg::Handle::from_memory(CHEVRON_ICON))
+    .width(Length::Fixed(TOGGLE_GLYPH_SIZE))
+    .height(Length::Fixed(TOGGLE_GLYPH_SIZE))
+    .rotation(Rotation::Floating(Radians(rotation)))
+    .style(|_, _| svg::Style {
+      color: Some(color::text::secondary()),
+    });
+
+  mouse_area(
+    container(glyph)
+      .width(Length::Fixed(TOGGLE_SIZE))
+      .height(Length::Fixed(TOGGLE_SIZE))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center)
+      .style(|_| container::Style {
+        border: Border {
+          color: color::with_alpha(color::text::PRIMARY, 0.1),
+          width: 1.0,
+          radius: radius::SUBTLE.into(),
+        },
+        ..container::Style::default()
+      }),
+  )
+  .on_press(Message::UiFlagSet(HERO_COLLAPSED_FLAG.to_owned(), !collapsed))
+  .into()
+}
+
 fn hovered_value(state: &State, sliced: &[NetWorthPoint], window: (NaiveDate, NaiveDate)) -> Option<f64> {
   let fraction = state.chart_hover?;
   let points = chart_points(sliced);
   line_chart::nearest_index(&points, window, fraction).map(|idx| sliced[idx].net_worth)
 }
 
+fn scope_suffix(state: &State) -> &'static str {
+  match state.active {
+    Scope::All => "\u{00b7} all characters",
+    _ => "\u{00b7} est.",
+  }
+}
+
 fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<'a, Message> {
-  let scope_label = match state.active {
-    Scope::All => "Net worth \u{00b7} all characters".to_owned(),
-    _ => "Net worth \u{00b7} est.".to_owned(),
-  };
+  let scope_label = format!("Net worth {}", scope_suffix(state));
 
   let up = change >= 0.0;
   let change_color = if up {
@@ -394,6 +578,38 @@ mod tests {
     }
   }
 
+  mod change_pct {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_is_zero_with_fewer_than_two_points() {
+      assert_eq!(super::change_pct(&[dated("2026-06-01", 100.0)]), 0.0);
+    }
+
+    #[test]
+    fn it_is_zero_when_the_first_point_is_not_positive() {
+      let sliced = [dated("2026-06-01", 0.0), dated("2026-06-05", 50.0)];
+
+      assert_eq!(super::change_pct(&sliced), 0.0);
+    }
+
+    #[test]
+    fn it_computes_the_percent_change_from_the_first_point() {
+      let sliced = [dated("2026-06-01", 200.0), dated("2026-06-05", 250.0)];
+
+      assert_eq!(super::change_pct(&sliced), 25.0);
+    }
+
+    #[test]
+    fn it_is_negative_when_value_falls() {
+      let sliced = [dated("2026-06-01", 200.0), dated("2026-06-05", 150.0)];
+
+      assert_eq!(super::change_pct(&sliced), -25.0);
+    }
+  }
+
   mod chart_points {
     use pretty_assertions::assert_eq;
 
@@ -445,6 +661,44 @@ mod tests {
       assert_eq!(
         super::hovered_value(&state_with_hover(Some(1.0)), &sliced, window()),
         Some(3.0)
+      );
+    }
+  }
+
+  mod hero_toggle {
+    use super::*;
+
+    #[test]
+    fn it_builds_for_both_states() {
+      let _expanded: Element<'_, Message> = super::hero_toggle(false);
+      let _collapsed: Element<'_, Message> = super::hero_toggle(true);
+    }
+  }
+
+  mod scope_suffix {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn state_with_scope(scope: Scope) -> State {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.active = scope;
+      state
+    }
+
+    #[test]
+    fn it_names_all_characters_for_the_all_scope() {
+      assert_eq!(
+        super::scope_suffix(&state_with_scope(Scope::All)),
+        "\u{00b7} all characters"
+      );
+    }
+
+    #[test]
+    fn it_marks_a_scoped_view_as_an_estimate() {
+      assert_eq!(
+        super::scope_suffix(&state_with_scope(Scope::Character(1))),
+        "\u{00b7} est."
       );
     }
   }

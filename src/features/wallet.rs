@@ -2166,6 +2166,9 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.budget_month = budget::shift_month(&state.budget_month, delta);
       state.budget_editing = None;
       state.budget_move = None;
+      // Zero the needs-review count synchronously so the prior month's banner
+      // does not flash while the scoped recount round-trips back.
+      state.budget_review_total = 0;
       reload_budget(state, db)
     }
     Message::BudgetMoveAmountChanged(draft) => {
@@ -2337,10 +2340,11 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
     }
     Message::BudgetChipOpened(owner, kind, id) => {
       state.budget_picker = Some((owner, kind, id));
-      if state.budget_chips.envelopes.is_empty() {
-        return reload_budget_chips(state, db);
-      }
-      Task::none()
+      // Always reload the chips on open (a cheap scoped load) rather than only
+      // when the list is empty: an envelope renamed or deleted in the Budget tab
+      // since the last load would otherwise linger in the picker until an
+      // unrelated reload. This keeps the picker from ever offering a stale name.
+      reload_budget_chips(state, db)
     }
     Message::BudgetChipsReloaded(chips) => {
       state.budget_chips = *chips;
@@ -2545,6 +2549,9 @@ fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task
   state.corp_divisions = Vec::new();
   state.tab_scroll_offset = 0.0;
   state.budget = None;
+  // Mirror the `budget = None` reset for the needs-review count so the prior
+  // scope's banner does not flash while the new scope's recount round-trips.
+  state.budget_review_total = 0;
   state.budget_filter = None;
   state.budget_picker = None;
   state.budget_selected = None;
@@ -2606,11 +2613,10 @@ fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Mes
       if let Some(menu) = state.ledger_menu.as_mut() {
         menu.picking = true;
       }
-      // The picker reuses the envelope chip set; load it if it has not been yet.
-      if state.budget_chips.envelopes.is_empty() {
-        return reload_budget_chips(state, db);
-      }
-      Task::none()
+      // The bulk picker reuses the per-row envelope chip set, so reload it on
+      // open (cheap scoped load) rather than only when empty: a renamed or
+      // deleted envelope would otherwise linger here too.
+      reload_budget_chips(state, db)
     }
     Message::LedgerBulkAssignChosen(category_id) => budget_bulk_assign(state, db, category_id),
     _ => Task::none(),
@@ -2837,7 +2843,19 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.tab_exhausted = false;
       state.recompute_derived();
       prune_ledger_selections(state);
-      Task::none()
+      // The wallet load refreshes only `budget_chips` (and at the wallet's
+      // hardcoded Scope::All/DEFAULT_DIVISION), so after a background sync the
+      // Budget tab's RTA, per-category Available and needs-review banner would
+      // stay frozen until the user left and re-entered the tab. While viewing
+      // Budget, chain a budget-scoped `reload_budget`: it re-derives
+      // RTA/availables, and its `BudgetLoaded` -> chips -> review chain
+      // refreshes the picker chips and the needs-review count from the budget
+      // scope (not the wallet load's Scope::All).
+      if state.tab == Tab::Budget {
+        reload_budget(state, db)
+      } else {
+        Task::none()
+      }
     }
     Message::MoreLoaded(page) => handle_more_loaded(state, *page),
     Message::PaneSettled(..) | Message::UiFlagPersisted(..) | Message::UiListPersisted(..) => Task::none(),
@@ -4622,6 +4640,37 @@ mod tests {
       let _ = update(&mut state, Message::BudgetReviewCounted(4), &db);
 
       assert_eq!(state.budget_review_total(), 4);
+    }
+
+    #[tokio::test]
+    async fn it_zeroes_the_review_total_synchronously_on_a_month_step() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.budget_review_total = 9;
+
+      let _ = update(&mut state, Message::BudgetMonthStepped(-1), &db);
+
+      assert_eq!(
+        state.budget_review_total(),
+        0,
+        "the prior month's count must not flash while the recount round-trips"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_zeroes_the_review_total_synchronously_on_a_scope_change() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.active = Scope::All;
+      state.budget_review_total = 9;
+
+      let _ = update(&mut state, Message::ScopeSelected(Scope::Character(1)), &db);
+
+      assert_eq!(
+        state.budget_review_total(),
+        0,
+        "the prior scope's count must not flash while the recount round-trips"
+      );
     }
   }
 

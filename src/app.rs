@@ -3387,6 +3387,14 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       }
       return Task::batch(vec![task, refresh_all_windows(app)]);
     }
+    settings::Outcome::McpChanged => {
+      let mcp = state.settings().mcp().clone();
+      if let Some(runtime) = app.runtime.as_mut() {
+        *runtime.settings.mcp_mut() = mcp;
+      }
+      sync_mcp_server(app);
+      return task;
+    }
     settings::Outcome::SyncNow => return Task::batch(vec![task, sync_now(app)]),
     settings::Outcome::ReleaseLock => return Task::batch(vec![task, release_lock(app)]),
     settings::Outcome::ExportLogs {

@@ -25,6 +25,8 @@ pub mod line_chart;
 pub mod location_combobox;
 pub mod meter;
 pub mod modal_overlay;
+pub mod notification_row;
+pub mod notification_toaster;
 pub mod panel_header;
 pub mod picker;
 pub mod positioned_dropdown;

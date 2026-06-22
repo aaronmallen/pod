@@ -16,7 +16,7 @@ use iced::{
   alignment::{Horizontal, Vertical},
   futures::SinkExt as _,
   keyboard,
-  widget::{Column, Row, Space, Stack, button, container, mouse_area, text},
+  widget::{Column, Row, Space, Stack, button, container, mouse_area, scrollable, text},
   window,
 };
 use shortcuts::{Chord, FocusTracker};
@@ -30,10 +30,10 @@ use crate::{
     corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor, skills,
     skills_compare, splash, wallet, window_chrome,
   },
-  mcp,
+  mcp, notifications,
   services::{images, updater},
   store,
-  sync::{self, JobKey},
+  sync::{self, JobKey, JobKind},
   ui::{
     components::{
       backdrop,
@@ -43,12 +43,14 @@ use crate::{
       },
       esi_status::esi_status,
       eve_time::eve_time,
+      notification_row::notification_row,
+      notification_toaster::{ToastView, toaster},
       rail::{self, rail},
       status, sync_chip,
       sync_popover::{self, JobStats, Model},
       updater_banner,
     },
-    style::{color, control, spacing, typography},
+    style::{color, control, radius, shadow, spacing, typography},
   },
   window_state::{self, UiState, WindowGeometry, coalesce::WriteCoalescer, validity},
 };
@@ -131,6 +133,21 @@ const TICK_CALENDAR_RELOAD: u64 = 2;
 
 const TICK_INDUSTRY_RELOAD: u64 = 5;
 
+/// Cadence (in 1-second ticks) for the idle notification detector sweep. The pulse already runs the
+/// detectors after every relevant sync; this slower standing sweep catches the time-threshold events
+/// (skill / industry / extraction-cracked) that mature on the wall clock with no fresh sync.
+const TICK_NOTIFICATIONS: u64 = 10;
+
+/// How many toasts may be visible at once. Surfacing more drops the oldest (it still lands in the
+/// center), matching the design's "cap visible, newest kept".
+const TOAST_CAP: usize = 3;
+
+/// A toast's lifetime before it auto-dismisses, unless a hover pauses the countdown.
+const TOAST_MS: Duration = Duration::from_secs(15);
+
+/// How often the toast tick subscription ages the live toasts while any are visible.
+const TOAST_TICK: Duration = Duration::from_millis(100);
+
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
   height: 0.0,
   width: 0.0,
@@ -186,6 +203,13 @@ struct App {
   /// `None` arms the purge for the very next clock tick (fires once shortly after launch); `Some`
   /// holds the earliest instant it may run again.
   next_trash_purge: Option<Instant>,
+  /// Cached surfaced notifications (newest-first) backing the center panel, refreshed by the sync
+  /// pulse and on panel open. `notification_names` resolves each owner to its display "who" line.
+  notifications: Vec<store::model::Notification>,
+  notification_names: std::collections::HashMap<store::model::NotificationOwner, String>,
+  notifications_dirty: bool,
+  notifications_panel_open: bool,
+  notifications_unread: i64,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
   palette: Option<command_palette::State>,
@@ -209,6 +233,9 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
+  /// Live bottom-right toasts (newest-surfaced notifications), capped at [`TOAST_CAP`]. Each entry
+  /// tracks its own remaining lifetime and hover-pause state; the toast tick subscription ages them.
+  toasts: Vec<ToastEntry>,
   ui_state: UiState,
   updater: Option<updater::Handle>,
   updater_state: updater::State,
@@ -254,6 +281,16 @@ struct HolderInfo {
   machine_id: String,
 }
 
+/// A live bottom-right toast. `remaining` counts down from [`TOAST_MS`] each toast tick while not
+/// `paused`; the toast is dismissed when it reaches zero. `paused` is set while the cursor hovers it.
+#[derive(Clone, Debug)]
+struct ToastEntry {
+  notification: store::model::Notification,
+  paused: bool,
+  remaining: Duration,
+  who: String,
+}
+
 #[derive(Clone, Debug)]
 enum Message {
   Assets(assets::Message),
@@ -279,6 +316,8 @@ enum Message {
     id: window::Id,
     source: contract_detail::Source,
   },
+  ClearNotifications,
+  CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
   EngineStopped {
     reason: Option<String>,
@@ -301,10 +340,13 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
+  MarkAllNotificationsRead,
   Mcp(mcp::McpRequest),
   McpDataChanged,
   Nav(rail::Destination),
   NavTo(rail::Destination, Option<&'static str>),
+  NotificationActivated(i64),
+  NotificationsRefreshed(Box<notifications::Snapshot>),
   Palette(PaletteMessage),
   PeriodicPull,
   PeriodicPush,
@@ -337,6 +379,10 @@ enum Message {
   TakeOver,
   TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
   TextInputFocused(iced::widget::Id),
+  ToastDismissed(i64),
+  ToastHover(i64, bool),
+  ToastTick,
+  ToggleNotificationsPanel,
   ToggleSyncPopover,
   TrashPurged(Vec<(i64, i64)>),
   UpdaterAction(updater_banner::Action),
@@ -402,15 +448,24 @@ impl Message {
       Message::Killmail(..) => "Killmail",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
+      Message::MarkAllNotificationsRead => "MarkAllNotificationsRead",
       Message::Mcp(_) => "Mcp",
       Message::McpDataChanged => "McpDataChanged",
       Message::Nav(_) => "Nav",
       Message::NavTo(..) => "NavTo",
+      Message::NotificationActivated(_) => "NotificationActivated",
+      Message::NotificationsRefreshed(_) => "NotificationsRefreshed",
+      Message::ClearNotifications => "ClearNotifications",
+      Message::CloseNotificationsPanel => "CloseNotificationsPanel",
       Message::Settings(_) => "Settings",
       Message::SkillPlanEditor(_) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
       Message::StockpileEditor(..) => "StockpileEditor",
       Message::Sync(_) => "Sync",
+      Message::ToastDismissed(_) => "ToastDismissed",
+      Message::ToastHover(..) => "ToastHover",
+      Message::ToastTick => "ToastTick",
+      Message::ToggleNotificationsPanel => "ToggleNotificationsPanel",
       Message::Wallet(_) => "Wallet",
       _ => return None,
     })
@@ -916,6 +971,11 @@ fn boot() -> (App, Task<Message>) {
     mcp_server: None,
     next_roster_reload: None,
     next_trash_purge: None,
+    notification_names: std::collections::HashMap::new(),
+    notifications: Vec::new(),
+    notifications_dirty: false,
+    notifications_panel_open: false,
+    notifications_unread: 0,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
     palette: None,
@@ -939,6 +999,7 @@ fn boot() -> (App, Task<Message>) {
     sync_popover_open: false,
     sync_session: None,
     sync_tick: false,
+    toasts: Vec::new(),
     ui_state: window_state::load(),
     updater: updater.clone(),
     updater_state: updater::State::default(),
@@ -1959,6 +2020,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     hovered: app.rail_hover,
     mail_unread,
     nav_location,
+    notifications_unread: app.notifications_unread,
     rail_order: ui.rail_order(),
   };
   let cascade_mode = *ui.cascade_mode();
@@ -1967,6 +2029,7 @@ fn main_view(app: &App) -> Element<'_, Message> {
     Message::Nav,
     Message::RailHover,
     |dest, id| Message::NavTo(dest, Some(id)),
+    Message::ToggleNotificationsPanel,
     Message::Palette(PaletteMessage::Open),
   );
   // In sub-rail mode a persistent sub-section column sits inboard of the edge rail (between the rail
@@ -2045,6 +2108,13 @@ fn main_view(app: &App) -> Element<'_, Message> {
     layers.push(backdrop::click_catcher(Message::CloseSyncPopover));
     layers.push(card.into());
   }
+  if app.notifications_panel_open {
+    layers.push(backdrop::click_catcher(Message::CloseNotificationsPanel));
+    layers.push(notifications_panel(app, nav_location));
+  }
+  if let Some(toaster) = notifications_toaster(app) {
+    layers.push(toaster);
+  }
   if let Some(toast) = toast {
     layers.push(toast);
   }
@@ -2057,6 +2127,190 @@ fn main_view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+const NOTIFICATIONS_PANEL_WIDTH: f32 = 384.0;
+
+const NOTIFICATIONS_PANEL_MAX_HEIGHT: f32 = 560.0;
+
+/// The notification center panel: a card flying out beside the rail, bottom-aligned to the bell. It
+/// lists the cached notifications newest-first (the repo already orders them), with a header count +
+/// "Mark all read" and a footer "Clear all" + total. Each row marks itself read and deep-links on
+/// click; opening the panel never auto-reads.
+fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<'_, Message> {
+  let unread = app.notifications_unread;
+  let header = Row::with_children(vec![
+    text("Notifications")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    Space::new().width(Length::Fill).into(),
+    notifications_text_button(format!("{unread} new"), unread > 0, Message::MarkAllNotificationsRead).into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2);
+
+  let body: Element<'_, Message> = if app.notifications.is_empty() {
+    container(
+      text("You\u{2019}re all caught up")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::secondary())),
+    )
+    .width(Length::Fill)
+    .padding(spacing::SPACE_4_5)
+    .align_x(Horizontal::Center)
+    .into()
+  } else {
+    let rows: Vec<Element<'_, Message>> = app
+      .notifications
+      .iter()
+      .map(|notification| {
+        let who = app
+          .notification_names
+          .get(&notification.owner())
+          .map(String::as_str)
+          .unwrap_or("");
+        let when = relative_time(notification.created_at(), app.now);
+        notification_row(
+          notification,
+          who,
+          &when,
+          true,
+          Message::NotificationActivated(notification.id()),
+        )
+      })
+      .collect();
+    scrollable(
+      Column::with_children(rows)
+        .spacing(spacing::UNIT / 2.0)
+        .width(Length::Fill),
+    )
+    .height(Length::Shrink)
+    .into()
+  };
+
+  let mut children: Vec<Element<'_, Message>> = vec![header.into(), rule_line(), body];
+  if !app.notifications.is_empty() {
+    children.push(rule_line());
+    children.push(
+      Row::with_children(vec![
+        notifications_text_button("Clear all".to_owned(), true, Message::ClearNotifications).into(),
+        Space::new().width(Length::Fill).into(),
+        text(format!("{} total", app.notifications.len()))
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(typography::colored(color::text::tertiary()))
+          .into(),
+      ])
+      .align_y(Vertical::Center)
+      .into(),
+    );
+  }
+
+  let card = container(
+    Column::with_children(children)
+      .spacing(spacing::SPACE_2_5)
+      .width(Length::Fixed(NOTIFICATIONS_PANEL_WIDTH)),
+  )
+  .width(Length::Fixed(NOTIFICATIONS_PANEL_WIDTH))
+  .max_height(NOTIFICATIONS_PANEL_MAX_HEIGHT)
+  .padding(spacing::SPACE_3_5)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: iced::Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: radius::PANEL.into(),
+    },
+    shadow: shadow::CARD,
+    ..container::Style::default()
+  });
+
+  let align_x = match nav_location {
+    config::NavLocation::Left => Horizontal::Left,
+    config::NavLocation::Right => Horizontal::Right,
+  };
+  container(card)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(align_x)
+    .align_y(Vertical::Bottom)
+    .padding(Padding {
+      top: 0.0,
+      right: POPOVER_LEFT,
+      bottom: POPOVER_BOTTOM_OFFSET,
+      left: POPOVER_LEFT,
+    })
+    .into()
+}
+
+fn notifications_text_button(label: String, enabled: bool, message: Message) -> button::Button<'static, Message> {
+  let color = if enabled {
+    color::text::secondary()
+  } else {
+    color::text::tertiary()
+  };
+  let button = button(
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(move |_| text::Style {
+        color: Some(color),
+      }),
+  )
+  .padding(spacing::UNIT)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(iced::Color::TRANSPARENT)),
+    ..button::Style::default()
+  });
+  if enabled { button.on_press(message) } else { button }
+}
+
+fn notifications_toaster(app: &App) -> Option<Element<'_, Message>> {
+  let views: Vec<ToastView<'_>> = app
+    .toasts
+    .iter()
+    .map(|toast| ToastView {
+      notification: &toast.notification,
+      progress: toast.remaining.as_secs_f32() / TOAST_MS.as_secs_f32(),
+      who: toast.who.as_str(),
+    })
+    .collect();
+  toaster(
+    &views,
+    Message::NotificationActivated,
+    Message::ToastDismissed,
+    Message::ToastHover,
+  )
+}
+
+fn rule_line<'a>() -> Element<'a, Message> {
+  container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+/// A compact relative timestamp ("now", "5m", "3h", "2d") from a stored RFC3339 `created_at`.
+fn relative_time(created_at: &str, now: DateTime<Utc>) -> String {
+  let Ok(when) = DateTime::parse_from_rfc3339(created_at) else {
+    return String::new();
+  };
+  let secs = (now - when.with_timezone(&Utc)).num_seconds().max(0);
+  if secs < 45 {
+    "now".to_owned()
+  } else if secs < 3_600 {
+    format!("{}m", secs / 60)
+  } else if secs < 86_400 {
+    format!("{}h", secs / 3_600)
+  } else {
+    format!("{}d", secs / 86_400)
+  }
 }
 
 fn palette_overlay(state: &command_palette::State, entries: Vec<command_palette::Entry>) -> Element<'_, Message> {
@@ -2597,6 +2851,21 @@ fn subscription(app: &App) -> Subscription<Message> {
       )
       .then_some(Message::CloseSyncPopover)
     }));
+  }
+  if app.notifications_panel_open {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      matches!(
+        event,
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+          key: keyboard::Key::Named(keyboard::key::Named::Escape),
+          ..
+        })
+      )
+      .then_some(Message::CloseNotificationsPanel)
+    }));
+  }
+  if !app.toasts.is_empty() {
+    subs.push(iced::time::every(TOAST_TICK).map(|_| Message::ToastTick));
   }
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
@@ -3352,15 +3621,20 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Compare(msg) => handle_compare(app, msg),
     Message::Compose(id, msg) => handle_compose(app, id, msg),
     Message::Contract(id, msg) => handle_contract(app, id, msg),
+    Message::ClearNotifications => handle_clear_notifications(app),
+    Message::CloseNotificationsPanel => handle_close_notifications_panel(app),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
+    Message::MarkAllNotificationsRead => handle_mark_all_notifications_read(app),
     Message::Mcp(request) => handle_mcp(app, request),
     Message::McpDataChanged => handle_mcp_data_changed(app),
     Message::Nav(destination) => handle_nav(app, destination),
     Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
+    Message::NotificationActivated(id) => handle_notification_activated(app, id),
+    Message::NotificationsRefreshed(snapshot) => handle_notifications_refreshed(app, *snapshot),
     Message::RailHover(destination) => handle_rail_hover(app, destination),
     Message::RailHoverExpire(generation) => handle_rail_hover_expire(app, generation),
     Message::Settings(msg) => handle_settings(app, msg),
@@ -3368,6 +3642,10 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Skills(msg) => handle_skills(app, msg),
     Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
     Message::Sync(event) => handle_sync(app, event),
+    Message::ToastDismissed(id) => handle_toast_dismissed(app, id),
+    Message::ToastHover(id, hovered) => handle_toast_hover(app, id, hovered),
+    Message::ToastTick => handle_toast_tick(app),
+    Message::ToggleNotificationsPanel => handle_toggle_notifications_panel(app),
     Message::Wallet(msg) => handle_wallet(app, msg),
     other => return Err(Box::new(other)),
   })
@@ -4290,7 +4568,229 @@ fn handle_sync_pulse(app: &mut App) -> Task<Message> {
   if let Some(reload) = drain_detail_dirty(app) {
     tasks.push(reload);
   }
+  if let Some(detect) = drain_notifications_dirty(app) {
+    tasks.push(detect);
+  }
   Task::batch(tasks)
+}
+
+/// Runs the notification detector sweep when a relevant sync (or the idle cadence) has marked the
+/// notifications dirty, refreshing the cached list/unread and surfacing toasts. A pure-UI refresh
+/// (panel open, mark-read) takes the same path with `run_detectors = false`.
+fn drain_notifications_dirty(app: &mut App) -> Option<Task<Message>> {
+  if !app.notifications_dirty {
+    return None;
+  }
+  app.notifications_dirty = false;
+  Some(refresh_notifications(app, true))
+}
+
+fn refresh_notifications(app: &App, run_detectors: bool) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  let now = app.now;
+  let features = feature_flags(app);
+  let characters = owned_character_ids(app);
+  let corporations = owned_corporation_ids(app);
+  Task::perform(
+    async move { Box::new(notifications::refresh(&db, now, &characters, &corporations, &features, run_detectors).await) },
+    Message::NotificationsRefreshed,
+  )
+}
+
+fn owned_character_ids(app: &App) -> Vec<i64> {
+  app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_roster)
+    .unwrap_or_default()
+    .iter()
+    .map(|pilot| pilot.id)
+    .collect()
+}
+
+fn owned_corporation_ids(app: &App) -> Vec<i64> {
+  app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_corporations)
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(id, _)| id)
+    .collect()
+}
+
+/// Whether a finished sync job feeds one of the seven notification detectors, gating the dirty flag
+/// so the detector sweep only runs after sync activity that could surface a new event.
+fn is_notification_source(kind: JobKind) -> bool {
+  matches!(
+    kind,
+    JobKind::CharacterCalendar
+      | JobKind::CharacterIndustryJobs
+      | JobKind::CharacterKillmails
+      | JobKind::CharacterMail
+      | JobKind::CharacterSkills
+      | JobKind::CorporationIndustryJobs
+      | JobKind::CorporationKillmails
+      | JobKind::CorporationMiningExtractions
+  )
+}
+
+fn handle_notifications_refreshed(app: &mut App, snapshot: notifications::Snapshot) -> Task<Message> {
+  let notifications::Snapshot {
+    list,
+    surfaced,
+    unread,
+    who,
+  } = snapshot;
+  app.notifications = list;
+  app.notification_names = who;
+  app.notifications_unread = unread;
+  for notification in surfaced {
+    enqueue_toast(app, notification);
+  }
+  Task::none()
+}
+
+fn enqueue_toast(app: &mut App, notification: store::model::Notification) {
+  let who = app
+    .notification_names
+    .get(&notification.owner())
+    .cloned()
+    .unwrap_or_default();
+  app.toasts.push(ToastEntry {
+    notification,
+    paused: false,
+    remaining: TOAST_MS,
+    who,
+  });
+  // Cap visible toasts at the newest few; the dropped ones still live in the center.
+  let overflow = app.toasts.len().saturating_sub(TOAST_CAP);
+  if overflow > 0 {
+    app.toasts.drain(0..overflow);
+  }
+}
+
+fn handle_toggle_notifications_panel(app: &mut App) -> Task<Message> {
+  app.notifications_panel_open = !app.notifications_panel_open;
+  if app.notifications_panel_open {
+    // Opening reads the latest surfaced rows without re-scanning sources, and never auto-marks read.
+    refresh_notifications(app, false)
+  } else {
+    Task::none()
+  }
+}
+
+fn handle_close_notifications_panel(app: &mut App) -> Task<Message> {
+  app.notifications_panel_open = false;
+  Task::none()
+}
+
+fn handle_clear_notifications(app: &mut App) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  app.notifications.clear();
+  app.notifications_unread = 0;
+  let db = runtime.db.clone();
+  Task::perform(
+    async move { store::repo::notifications::clear_all(&db).await.is_ok() },
+    |_| Message::CloseNotificationsPanel,
+  )
+}
+
+fn handle_mark_all_notifications_read(app: &mut App) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  app.notifications_unread = 0;
+  let db = runtime.db.clone();
+  Task::perform(
+    async move {
+      let _ = store::repo::notifications::mark_all_read(&db).await;
+    },
+    |()| Message::ToastTick,
+  )
+}
+
+fn handle_notification_activated(app: &mut App, id: i64) -> Task<Message> {
+  let target = app
+    .notifications
+    .iter()
+    .find(|notification| notification.id() == id)
+    .map(|notification| notification.target().clone());
+  app.notifications_panel_open = false;
+  app.toasts.retain(|toast| toast.notification.id() != id);
+  let read = mark_notification_read(app, id);
+  match target {
+    Some(target) => Task::batch([read, navigate_to_notification_target(app, &target)]),
+    None => read,
+  }
+}
+
+fn mark_notification_read(app: &mut App, id: i64) -> Task<Message> {
+  if let Some(notification) = app.notifications.iter_mut().find(|n| n.id() == id)
+    && notification.read_at().is_none()
+  {
+    notification.read_at = Some(app.now.to_rfc3339());
+    app.notifications_unread = app.notifications_unread.saturating_sub(1);
+  }
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  Task::perform(
+    async move {
+      let _ = store::repo::notifications::mark_read(&db, id).await;
+    },
+    |()| Message::ToastTick,
+  )
+}
+
+fn navigate_to_notification_target(app: &mut App, target: &store::model::NotificationTarget) -> Task<Message> {
+  use store::model::NotificationDestination;
+  match target.destination {
+    NotificationDestination::Assets => navigate_to_assets(app),
+    NotificationDestination::Calendar => navigate_to_calendar(app, target.character),
+    // No corp-detail nav destination exists, so a character-less killmail lands on the roster.
+    NotificationDestination::CharacterDetail => match target.character {
+      Some(id) => navigate_to_character_detail(app, id),
+      None => handle_nav(app, rail::Destination::Characters),
+    },
+    NotificationDestination::Industry => navigate_to_industry(app, target.character),
+    NotificationDestination::Mail => navigate_to_mail(app, target.character),
+    NotificationDestination::Skills => {
+      let owned = owned_character_ids(app);
+      navigate_to_skills(app, target.character, owned)
+    }
+    NotificationDestination::Wallet => navigate_to_wallet(app),
+  }
+}
+
+fn handle_toast_tick(app: &mut App) -> Task<Message> {
+  app.toasts.retain_mut(|toast| {
+    if toast.paused {
+      return true;
+    }
+    toast.remaining = toast.remaining.saturating_sub(TOAST_TICK);
+    !toast.remaining.is_zero()
+  });
+  Task::none()
+}
+
+fn handle_toast_dismissed(app: &mut App, id: i64) -> Task<Message> {
+  // The X dismisses without marking read: the row stays unread in the center.
+  app.toasts.retain(|toast| toast.notification.id() != id);
+  Task::none()
+}
+
+fn handle_toast_hover(app: &mut App, id: i64, hovered: bool) -> Task<Message> {
+  if let Some(toast) = app.toasts.iter_mut().find(|toast| toast.notification.id() == id) {
+    toast.paused = hovered;
+  }
+  Task::none()
 }
 
 fn holding_lease(app: &App) -> bool {
@@ -4802,6 +5302,7 @@ struct ClockChecks {
   industry_reload: bool,
   mail_reload: bool,
   mail_unread: bool,
+  notifications: bool,
   snooze_wake: bool,
 }
 
@@ -4813,6 +5314,7 @@ impl ClockChecks {
       industry_reload: tick % TICK_INDUSTRY_RELOAD == 2,
       mail_reload: tick.is_multiple_of(TICK_MAIL_RELOAD),
       mail_unread: tick % TICK_MAIL_UNREAD == 1,
+      notifications: tick % TICK_NOTIFICATIONS == 3,
       snooze_wake: tick.is_multiple_of(TICK_SNOOZE_WAKE),
     }
   }
@@ -4845,6 +5347,11 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
   }
   if due.industry_reload {
     tasks.push(industry_clock_reload(app));
+  }
+  // The standing sweep catches time-threshold events (skill / industry / extraction-cracked) that
+  // mature on the wall clock with no fresh sync; the pulse drains the flag and runs the detectors.
+  if due.notifications {
+    app.notifications_dirty = true;
   }
   Task::batch(tasks)
 }
@@ -5381,6 +5888,9 @@ fn handle_sync(app: &mut App, event: sync::Event) -> Task<Message> {
   // Defer every screen reload to the next SyncPulse so a burst of Finished events coalesces into one
   // reload apiece instead of starving the interactive DB pool with one reload each.
   app.roster_dirty = true;
+  if is_notification_source(key.kind) {
+    app.notifications_dirty = true;
+  }
   mark_detail_dirty(app, key);
   mark_wallet_dirty(app, key);
   mark_assets_dirty(app, key);
@@ -5667,6 +6177,11 @@ mod tests {
       mcp_server: None,
       next_roster_reload: None,
       next_trash_purge: None,
+      notification_names: std::collections::HashMap::new(),
+      notifications: Vec::new(),
+      notifications_dirty: false,
+      notifications_panel_open: false,
+      notifications_unread: 0,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
       palette: None,
@@ -5690,6 +6205,7 @@ mod tests {
       sync_popover_open: false,
       sync_session: None,
       sync_tick: false,
+      toasts: Vec::new(),
       ui_state: UiState::default(),
       updater: None,
       updater_state: updater::State::default(),
@@ -8274,6 +8790,128 @@ mod tests {
       assert_eq!(Route::Wallet.name(), "Wallet");
       assert_eq!(Route::Assets.name(), "Assets");
       assert_eq!(Route::Settings.name(), "Settings");
+    }
+  }
+
+  mod notifications {
+    use super::*;
+    use crate::store::model::{
+      Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
+    };
+
+    fn notification(id: i64) -> Notification {
+      Notification {
+        body: "body".to_owned(),
+        created_at: "2026-06-22T00:00:00+00:00".to_owned(),
+        dedup_key: format!("skill:{id}"),
+        id,
+        kind: NotificationKind::Skill,
+        owner: NotificationOwner::Character(42),
+        read_at: None,
+        target: NotificationTarget {
+          character: Some(42),
+          destination: NotificationDestination::Skills,
+          sub: None,
+        },
+        title: "title".to_owned(),
+      }
+    }
+
+    mod enqueue_toast {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_caps_visible_toasts_and_keeps_the_newest() {
+        let mut app = test_app();
+
+        for id in 1..=(TOAST_CAP as i64 + 2) {
+          enqueue_toast(&mut app, notification(id));
+        }
+
+        assert_eq!(app.toasts.len(), TOAST_CAP);
+        let ids: Vec<i64> = app.toasts.iter().map(|toast| toast.notification.id()).collect();
+        assert_eq!(ids, vec![3, 4, 5], "the oldest are dropped, the newest are kept");
+      }
+    }
+
+    mod handle_toast_tick {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_dismisses_a_toast_once_its_lifetime_elapses() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.toasts[0].remaining = TOAST_TICK;
+
+        let _ = handle_toast_tick(&mut app);
+
+        assert!(app.toasts.is_empty(), "a fully aged toast is removed");
+      }
+
+      #[test]
+      fn it_leaves_a_paused_toast_untouched() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.toasts[0].paused = true;
+        app.toasts[0].remaining = TOAST_TICK;
+
+        let _ = handle_toast_tick(&mut app);
+
+        assert_eq!(app.toasts.len(), 1, "hover pauses the countdown");
+        assert_eq!(app.toasts[0].remaining, TOAST_TICK);
+      }
+    }
+
+    mod handle_toast_hover {
+      use super::*;
+
+      #[test]
+      fn it_pauses_and_resumes_the_hovered_toast() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+
+        let _ = handle_toast_hover(&mut app, 1, true);
+        assert!(app.toasts[0].paused);
+
+        let _ = handle_toast_hover(&mut app, 1, false);
+        assert!(!app.toasts[0].paused);
+      }
+    }
+
+    mod handle_toast_dismissed {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_removes_the_toast_without_marking_it_read() {
+        let mut app = test_app();
+        enqueue_toast(&mut app, notification(1));
+        app.notifications = vec![notification(1)];
+        app.notifications_unread = 1;
+
+        let _ = handle_toast_dismissed(&mut app, 1);
+
+        assert!(app.toasts.is_empty());
+        assert_eq!(app.notifications_unread, 1, "the X leaves the row unread in the center");
+      }
+    }
+
+    mod is_notification_source {
+      use super::*;
+
+      #[test]
+      fn it_gates_to_the_seven_event_sources() {
+        assert!(is_notification_source(JobKind::CharacterMail));
+        assert!(is_notification_source(JobKind::CharacterSkills));
+        assert!(is_notification_source(JobKind::CorporationMiningExtractions));
+        assert!(!is_notification_source(JobKind::CharacterWallet));
+        assert!(!is_notification_source(JobKind::MarketPrices));
+      }
     }
   }
 

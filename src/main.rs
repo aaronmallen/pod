@@ -5,6 +5,7 @@ mod clients;
 mod config;
 mod features;
 mod mcp;
+mod notifications;
 mod services;
 mod store;
 mod sync;

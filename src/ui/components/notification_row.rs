@@ -1,0 +1,255 @@
+use iced::{
+  Background, Border, Element, Length,
+  alignment::Vertical,
+  widget::{Column, Row, Space, button, container, svg, text},
+};
+
+use crate::{
+  store::model::{Notification, NotificationKind},
+  ui::style::{color, radius, spacing, typography},
+};
+
+const TILE_ICON_SIZE: f32 = 20.0;
+const TILE_SIZE: f32 = 36.0;
+
+static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
+static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
+static KILLMAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif-combat.svg");
+static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
+static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
+static SKILL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
+
+pub fn accent(kind: NotificationKind) -> iced::Color {
+  match kind {
+    NotificationKind::Calendar | NotificationKind::ExtractionScheduled => color::accent::PLASMA,
+    NotificationKind::ExtractionCracked | NotificationKind::Industry => color::status::WARNING,
+    NotificationKind::Killmail => color::status::DANGER,
+    NotificationKind::Mail | NotificationKind::Skill => color::accent::PLASMA,
+  }
+}
+
+pub fn kind_label(kind: NotificationKind) -> &'static str {
+  match kind {
+    NotificationKind::Calendar => "Calendar event",
+    NotificationKind::ExtractionCracked => "Moon pop",
+    NotificationKind::ExtractionScheduled => "Moon extraction",
+    NotificationKind::Industry => "Industry job",
+    NotificationKind::Killmail => "Killmail",
+    NotificationKind::Mail => "New mail",
+    NotificationKind::Skill => "Skill complete",
+  }
+}
+
+/// A single notification row: a per-kind colored icon tile beside the kind label, title, body, the
+/// resolved "who" (character/corporation name), and a relative timestamp. Shared by the notification
+/// center panel and the toast host so both render identically. `unread_dot` draws the right-edge
+/// unread marker the center uses; the toast passes `false`.
+pub fn notification_row<'a, M>(
+  notification: &Notification,
+  who: &str,
+  relative_time: &str,
+  unread_dot: bool,
+  on_press: M,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let kind = notification.kind();
+  let tint = accent(kind);
+  let is_unread = notification.read_at().is_none();
+
+  let tile = container(
+    svg(svg::Handle::from_memory(icon_for(kind)))
+      .width(Length::Fixed(TILE_ICON_SIZE))
+      .height(Length::Fixed(TILE_ICON_SIZE))
+      .style(move |_, _| svg::Style {
+        color: Some(tint),
+      }),
+  )
+  .width(Length::Fixed(TILE_SIZE))
+  .height(Length::Fixed(TILE_SIZE))
+  .align_x(iced::alignment::Horizontal::Center)
+  .align_y(Vertical::Center)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.13))),
+    border: Border {
+      color: color::with_alpha(tint, 0.4),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  });
+
+  let label_row = Row::with_children(vec![
+    text(kind_label(kind).to_owned())
+      .font(typography::mono::SEMIBOLD)
+      .size(typography::size::XS)
+      .style(move |_| text::Style {
+        color: Some(tint),
+      })
+      .into(),
+    Space::new().width(Length::Fill).into(),
+    text(relative_time.to_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .align_y(Vertical::Center);
+
+  let mut lines: Vec<Element<'a, M>> = vec![
+    label_row.into(),
+    text(notification.title().clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ];
+  if !notification.body().is_empty() {
+    lines.push(
+      text(notification.body().clone())
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+    );
+  }
+  if !who.is_empty() {
+    lines.push(
+      text(who.to_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+  }
+
+  let body = Column::with_children(lines)
+    .spacing(spacing::UNIT / 2.0)
+    .width(Length::Fill);
+
+  let mut row_children: Vec<Element<'a, M>> = vec![tile.into(), body.into()];
+  if unread_dot && is_unread {
+    row_children.push(unread_marker());
+  }
+
+  let row = Row::with_children(row_children)
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Top);
+
+  button(row)
+    .width(Length::Fill)
+    .padding(spacing::SPACE_2_5)
+    .on_press(on_press)
+    .style(move |_, status| {
+      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      let background = if hovered {
+        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
+      } else if is_unread {
+        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.05)))
+      } else {
+        None
+      };
+      button::Style {
+        background,
+        border: Border {
+          radius: radius::CONTROL.into(),
+          ..Border::default()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
+}
+
+fn icon_for(kind: NotificationKind) -> &'static [u8] {
+  match kind {
+    NotificationKind::Calendar => CALENDAR_ICON,
+    NotificationKind::ExtractionCracked | NotificationKind::ExtractionScheduled => MOON_ICON,
+    NotificationKind::Industry => INDUSTRY_ICON,
+    NotificationKind::Killmail => KILLMAIL_ICON,
+    NotificationKind::Mail => MAIL_ICON,
+    NotificationKind::Skill => SKILL_ICON,
+  }
+}
+
+fn unread_marker<'a, M>() -> Element<'a, M>
+where
+  M: 'a,
+{
+  const DOT: f32 = 7.0;
+  container(
+    container(Space::new())
+      .width(Length::Fixed(DOT))
+      .height(Length::Fixed(DOT))
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::PLASMA)),
+        border: Border {
+          radius: (DOT / 2.0).into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      }),
+  )
+  .width(Length::Fixed(DOT))
+  .height(Length::Fixed(DOT))
+  .into()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::store::model::{NotificationDestination, NotificationOwner, NotificationTarget};
+
+  fn sample(kind: NotificationKind, read: bool) -> Notification {
+    Notification {
+      body: "body text".to_owned(),
+      created_at: "2026-06-22T00:00:00+00:00".to_owned(),
+      dedup_key: "k".to_owned(),
+      id: 1,
+      kind,
+      owner: NotificationOwner::Character(42),
+      read_at: read.then(|| "2026-06-22T01:00:00+00:00".to_owned()),
+      target: NotificationTarget {
+        character: Some(42),
+        destination: NotificationDestination::Skills,
+        sub: None,
+      },
+      title: "title text".to_owned(),
+    }
+  }
+
+  mod accent {
+    use super::*;
+
+    #[test]
+    fn it_maps_every_kind_to_a_color() {
+      for kind in [
+        NotificationKind::Calendar,
+        NotificationKind::ExtractionCracked,
+        NotificationKind::ExtractionScheduled,
+        NotificationKind::Industry,
+        NotificationKind::Killmail,
+        NotificationKind::Mail,
+        NotificationKind::Skill,
+      ] {
+        let _ = accent(kind);
+        let _ = icon_for(kind);
+        let _ = kind_label(kind);
+      }
+    }
+  }
+
+  mod notification_row {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_read_and_unread_row() {
+      let _read: Element<'_, ()> =
+        notification_row(&sample(NotificationKind::Skill, true), "Pilot", "2m ago", true, ());
+      let _unread: Element<'_, ()> =
+        notification_row(&sample(NotificationKind::Killmail, false), "Corp", "now", true, ());
+      let _no_dot: Element<'_, ()> = notification_row(&sample(NotificationKind::Mail, false), "", "1h ago", false, ());
+    }
+  }
+}

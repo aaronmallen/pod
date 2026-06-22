@@ -41,6 +41,7 @@ const SUB_RAIL_ROW_ICON_SIZE: f32 = 17.0;
 const SUB_RAIL_WIDTH: f32 = 206.0;
 
 static ASSETS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/assets.svg");
+static BELL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/bell.svg");
 static CALENDAR_ICON: &[u8] = include_bytes!("../../../assets/images/icons/calendar.svg");
 static CHARACTERS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/characters.svg");
 static INDUSTRY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/industry.svg");
@@ -104,6 +105,7 @@ pub struct RailProps<'a> {
   pub hovered: Option<Destination>,
   pub mail_unread: i64,
   pub nav_location: NavLocation,
+  pub notifications_unread: i64,
   pub rail_order: &'a [Destination],
 }
 
@@ -112,6 +114,7 @@ pub fn rail<'a, M>(
   on_nav: impl Fn(Destination) -> M + 'a,
   on_hover: impl Fn(Option<Destination>) -> M + Clone + 'a,
   on_sub_nav: impl Fn(Destination, &'static str) -> M + Clone + 'a,
+  on_notifications: M,
   on_palette: M,
 ) -> Element<'a, M>
 where
@@ -126,6 +129,7 @@ where
     hovered,
     mail_unread,
     nav_location,
+    notifications_unread,
     rail_order,
   } = props;
 
@@ -225,6 +229,12 @@ where
   });
 
   column_children.push(Space::new().width(Length::Fill).height(Length::Fill).into());
+  column_children.push(nav_item_count_badged(
+    BELL_ICON,
+    false,
+    notifications_unread,
+    on_notifications,
+  ));
   column_children.push(nav_item(PALETTE_ICON, false, on_palette));
   column_children.push(settings.into());
 
@@ -798,6 +808,84 @@ where
     .into()
 }
 
+/// A rail icon carrying an unread-count pill in its top-right corner (displaying `9+` past 9), used by
+/// the notification bell. A zero count renders the bare icon.
+fn nav_item_count_badged<'a, M>(icon: &'static [u8], active: bool, count: i64, message: M) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  if count <= 0 {
+    return nav_item(icon, active, message);
+  }
+
+  let icon_color = if active {
+    color::text::PRIMARY
+  } else {
+    color::text::secondary()
+  };
+  let cell = container(
+    svg(svg::Handle::from_memory(icon))
+      .width(Length::Fixed(ICON_SIZE))
+      .height(Length::Fixed(ICON_SIZE))
+      .style(move |_, _| svg::Style {
+        color: Some(icon_color),
+      }),
+  )
+  .width(Length::Fixed(NAV_ITEM_SIZE))
+  .height(Length::Fixed(NAV_ITEM_SIZE))
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center);
+
+  let label = if count > 9 { "9+".to_owned() } else { count.to_string() };
+  let pill = container(
+    container(
+      text(label)
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS)
+        .style(|_| text::Style {
+          color: Some(color::surface::NAVIGATION),
+        }),
+    )
+    .padding(Padding {
+      top: 0.0,
+      right: 4.0,
+      bottom: 0.0,
+      left: 4.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::accent::PLASMA)),
+      border: Border {
+        radius: 999.0.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    }),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .align_x(Horizontal::Right)
+  .align_y(Vertical::Top)
+  .padding(Padding {
+    top: 4.0,
+    right: 4.0,
+    bottom: 0.0,
+    left: 0.0,
+  });
+
+  let inner = stack(vec![cell.into(), pill.into()])
+    .width(Length::Fixed(NAV_ITEM_SIZE))
+    .height(Length::Fixed(NAV_ITEM_SIZE));
+
+  button(inner)
+    .padding(0)
+    .on_press(message)
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
 /// The flyout's keep-open predicate: the popover must stay open while the cursor rests anywhere over
 /// the panel (its full layout bounds, including the transparent icon→panel gutter). When this is
 /// true the overlay captures the event so the rail icon's `on_exit` close never fires; when it is
@@ -1073,6 +1161,7 @@ mod tests {
       hovered: None,
       mail_unread: 0,
       nav_location: NavLocation::Left,
+      notifications_unread: 0,
       rail_order: order,
     }
   }
@@ -1083,6 +1172,7 @@ mod tests {
       |d| d,
       |_| Destination::Characters,
       |d, _| d,
+      Destination::Characters,
       Destination::Characters,
     )
   }
@@ -1098,6 +1188,24 @@ mod tests {
   fn nav_item_renders_active_and_inactive() {
     let _active: Element<'_, ()> = nav_item(CHARACTERS_ICON, true, ());
     let _inactive: Element<'_, ()> = nav_item(CHARACTERS_ICON, false, ());
+  }
+
+  #[test]
+  fn nav_item_count_badged_renders_with_and_without_a_count() {
+    // A zero count collapses to the bare icon; a count past 9 renders the "9+" pill.
+    let _none: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 0, ());
+    let _some: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 3, ());
+    let _overflow: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 42, ());
+  }
+
+  #[test]
+  fn rail_renders_the_notification_bell_with_an_unread_badge() {
+    let all_features = Feature::ALL;
+    let order = Destination::REORDERABLE;
+    let mut props = props(Destination::Characters, &all_features, &order);
+    props.notifications_unread = 12;
+
+    let _el: Element<'_, Destination> = render(props);
   }
 
   #[test]

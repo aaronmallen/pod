@@ -4021,9 +4021,9 @@ fn rule_preview<'a>(
 ) -> Element<'a, Message> {
   let outflows = state.budget_match_targets();
   let rule = draft_to_rule(draft);
-  let other_rules = other_rules(state, draft);
+  let live_rules = live_rules(state);
   let manual = state.budget_manual_index();
-  let rows = engine::preview_entries(&rule, &other_rules, &manual, draft.category_id, &outflows);
+  let rows = engine::preview_entries(&rule, &live_rules, &manual, draft.category_id, &outflows);
   let active_conditions = draft.conditions.iter().any(engine::is_active_condition);
   let will_assign = rows
     .iter()
@@ -4549,14 +4549,10 @@ fn draft_to_rule(draft: &budget::RuleDraft) -> Rule {
   }
 }
 
-/// The live enabled rules excluding the one being edited, for preempt detection.
-fn other_rules(state: &State, draft: &budget::RuleDraft) -> Vec<Rule> {
-  state
-    .budget_rules()
-    .iter()
-    .filter(|rule| Some(rule.id()) != draft.rule_id)
-    .cloned()
-    .collect()
+/// The live rules in priority order, including the slot of the rule being
+/// edited; the preview splices the draft into its real position from here.
+fn live_rules(state: &State) -> Vec<Rule> {
+  state.budget_rules().to_vec()
 }
 
 #[cfg(test)]

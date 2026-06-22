@@ -694,23 +694,40 @@ pub fn match_count(rule: &Rule, outflows: &[MatchTarget]) -> usize {
   outflows.iter().filter(|target| target.matches_rule(rule)).count()
 }
 
-/// Classifies every outflow a `draft` rule matches against the rest of the rule
-/// set and the manual override map, so an editor can preview what will actually
-/// change. `manual` maps an outflow's index in `outflows` to its manually pinned
-/// category. `other_rules` are the live enabled rules in priority order (the
-/// draft excluded). `category_id` is the draft's target envelope.
+/// Classifies every outflow a `draft` rule matches, predicting the verdict the
+/// engine reaches on save. `live_rules` are the live rules in priority order
+/// (including the slot of the rule being edited); the draft is spliced at its
+/// real position — substituted for its matching id, or appended when new — and
+/// the result is evaluated with the engine's first-enabled-match logic, so the
+/// preview agrees with [`rule_category_for`]. `manual` maps an outflow's index
+/// in `outflows` to its manually pinned category. `category_id` is the draft's
+/// target envelope.
 ///
 /// - `Manual`: a manual override pins the entry.
-/// - `Preempted`: a higher-priority other rule claims it for a different category.
-/// - `Already`: no other rule claims it and it already targets this category.
-/// - `Assign`: this rule wins and moves it into the category.
+/// - `Preempted`: a higher-priority rule wins it for a different category.
+/// - `Already`: the draft wins, but the entry already targets this category.
+/// - `Assign`: the draft wins and moves it into the category.
 pub fn preview_entries(
   draft: &Rule,
-  other_rules: &[Rule],
+  live_rules: &[Rule],
   manual: &HashMap<usize, i64>,
   category_id: i64,
   outflows: &[MatchTarget],
 ) -> Vec<(usize, PreviewStatus)> {
+  let mut effective: Vec<&Rule> = Vec::with_capacity(live_rules.len() + 1);
+  let mut spliced = false;
+  for rule in live_rules {
+    if rule.id() == draft.id() {
+      effective.push(draft);
+      spliced = true;
+    } else {
+      effective.push(rule);
+    }
+  }
+  if !spliced {
+    effective.push(draft);
+  }
+
   outflows
     .iter()
     .enumerate()
@@ -718,17 +735,16 @@ pub fn preview_entries(
     .map(|(index, target)| {
       let status = if manual.contains_key(&index) {
         PreviewStatus::Manual
-      } else if let Some(winner) = other_rules
-        .iter()
-        .find(|rule| rule.enabled() && target.matches_rule(rule))
-      {
-        if winner.category_id() == category_id {
-          PreviewStatus::Already
-        } else {
-          PreviewStatus::Preempted
-        }
       } else {
-        PreviewStatus::Assign
+        let winner = effective
+          .iter()
+          .find(|rule| rule.enabled() && target.matches_rule(rule));
+        match winner {
+          Some(rule) if std::ptr::eq(*rule, draft) => PreviewStatus::Assign,
+          Some(rule) if rule.category_id() == category_id => PreviewStatus::Already,
+          Some(_) => PreviewStatus::Preempted,
+          None => PreviewStatus::Assign,
+        }
       };
       (index, status)
     })
@@ -2219,15 +2235,16 @@ mod tests {
         MatchMode::All,
         vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
       );
-      let other = vec![rule(
+      let higher = rule(
         7,
         true,
         MatchMode::All,
         vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
-      )];
+      );
+      let live = vec![higher, draft.clone()];
       let manual = HashMap::from([(0usize, 5i64)]);
 
-      let preview = preview_entries(&draft, &other, &manual, 99, &outflows);
+      let preview = preview_entries(&draft, &live, &manual, 99, &outflows);
 
       assert_eq!(
         preview,
@@ -2240,7 +2257,7 @@ mod tests {
     }
 
     #[test]
-    fn it_classifies_already_when_a_same_category_rule_already_claims_it() {
+    fn it_lets_the_draft_win_over_a_lower_priority_rule() {
       let outflows = fixture();
       let draft = rule(
         99,
@@ -2248,14 +2265,68 @@ mod tests {
         MatchMode::All,
         vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
       );
-      let other = vec![rule(
-        99,
+      let lower = rule(
+        7,
         true,
         MatchMode::All,
         vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
-      )];
+      );
+      let live = vec![draft.clone(), lower];
 
-      let preview = preview_entries(&draft, &other, &HashMap::new(), 99, &outflows);
+      let preview = preview_entries(&draft, &live, &HashMap::new(), 99, &outflows);
+
+      assert_eq!(
+        preview,
+        vec![
+          (0, PreviewStatus::Assign),
+          (1, PreviewStatus::Assign),
+          (2, PreviewStatus::Assign),
+        ]
+      );
+    }
+
+    #[test]
+    fn it_appends_a_new_draft_at_lowest_priority() {
+      let outflows = fixture();
+      let draft = rule(
+        0,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+      );
+      let existing = rule(
+        7,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
+      );
+      let live = vec![existing];
+
+      let preview = preview_entries(&draft, &live, &HashMap::new(), 99, &outflows);
+
+      assert_eq!(preview[2], (2, PreviewStatus::Preempted));
+    }
+
+    #[test]
+    fn it_classifies_already_when_a_higher_priority_same_category_rule_claims_it() {
+      let outflows = fixture();
+      let draft = rule(
+        99,
+        true,
+        MatchMode::All,
+        vec![condition(RuleField::Text, RuleOp::Contains, "sales")],
+      );
+      let same_category = Rule {
+        category_id: 99,
+        conditions: vec![condition(RuleField::Amount, RuleOp::GreaterThan, "25")],
+        enabled: true,
+        id: 7,
+        match_mode: MatchMode::All,
+        name: String::new(),
+      };
+      let live = vec![same_category, draft.clone()];
+
+      let preview = preview_entries(&draft, &live, &HashMap::new(), 99, &outflows);
 
       assert_eq!(preview[2], (2, PreviewStatus::Already));
     }

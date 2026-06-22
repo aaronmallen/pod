@@ -298,6 +298,15 @@ impl Default for Target {
   }
 }
 
+impl Target {
+  /// Whether this is a real, user-set target rather than the zero default a
+  /// category carries before one is configured. A zero-amount target funds
+  /// nothing, so the Reflect health tally must not score it as Met.
+  pub fn is_set(&self) -> bool {
+    self.amount > 0.0
+  }
+}
+
 /// A category's status against its target, mirroring `targetStatus` in
 /// `budget-data.jsx`: a 0.0–1.0 progress `pct`, the `needed` shortfall, the
 /// `state`, a descriptive `label`, and a per-month progress `month_label`.
@@ -532,6 +541,10 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::budget::MonthFlo
         tone: category.tone.clone(),
       });
     }
+    if !category.target.is_set() {
+      continue;
+    }
+
     let status = category.status(&view.month);
     match status.state {
       TargetState::Met => tally.met += 1,
@@ -1025,7 +1038,9 @@ pub async fn move_money(db: &Database, view: &BudgetView, from_id: i64, to: Move
 }
 
 /// Creates an empty category at the end of `group_id`, seeded with a default
-/// name, tone and a zero monthly target, and returns its new id for selection.
+/// name and tone, and returns its new id for selection. No target is seeded: a
+/// zero-value monthly target would score as Met and pollute the Reflect tally,
+/// so the category stays target-less until the user sets a real one.
 pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option<i64> {
   let category = budget::create_category(
     db,
@@ -1039,16 +1054,6 @@ pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option
   )
   .await
   .ok()?;
-  let _ = budget::set_target(
-    db,
-    category.id(),
-    &TargetInput {
-      amount: 0.0,
-      by_date: None,
-      kind: TargetKind::Monthly.to_storage().to_owned(),
-    },
-  )
-  .await;
   Some(category.id())
 }
 
@@ -1392,7 +1397,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_adds_a_category_with_a_default_target() {
+    async fn it_adds_a_category_without_seeding_a_target() {
       let db = store::open_test().await.unwrap();
       let group_id = seed_group(&db, "Bills").await;
 
@@ -1401,7 +1406,7 @@ mod tests {
       let categories = list_categories(&db, group_id).await.unwrap();
       assert_eq!(categories.len(), 1);
       assert_eq!(categories[0].id(), id);
-      assert_eq!(budget::load_target(&db, id).await.unwrap().unwrap().kind(), "monthly");
+      assert_eq!(budget::load_target(&db, id).await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -2380,6 +2385,21 @@ mod tests {
       assert_eq!(reflect.tally.under, 1);
       assert_eq!(reflect.tally.over, 1);
       assert_eq!(reflect.tally.attention.len(), 2);
+    }
+
+    #[test]
+    fn it_excludes_zero_value_targets_from_the_tally() {
+      let view = view_with(vec![
+        cat(1, "Real", 100.0, 0.0, TargetKind::Monthly, 100.0),
+        cat(2, "Unset", 0.0, 0.0, TargetKind::Monthly, 0.0),
+      ]);
+
+      let reflect = reflect(&view, Vec::new());
+
+      assert_eq!(reflect.tally.met, 1);
+      assert_eq!(reflect.tally.under, 0);
+      assert_eq!(reflect.tally.over, 0);
+      assert_eq!(reflect.tally.attention.len(), 0);
     }
 
     #[test]

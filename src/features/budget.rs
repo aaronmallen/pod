@@ -1460,10 +1460,14 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
 /// Review &amp; assign banner's count, sourced from the DB so it reflects every
 /// entry in the month, not only the loaded page.
 ///
-/// A row is uncategorized when [`ResolutionContext::resolve_target`] returns
-/// `None` (no manual override and no matching rule), matching the per-row chip
-/// the UI renders. Journal market-transaction twins are excluded (the trade is
-/// reviewed from the Transactions side) and market trades are de-duplicated by
+/// Only uncategorized *expenses* are reviewable: a row counts when it is an
+/// outflow ([`BudgetFlow::Expense`]) that [`ResolutionContext::resolve_target`]
+/// leaves unresolved (no manual override and no matching rule), matching the
+/// per-row chip the UI renders. Income posts to Ready-to-Assign and internal
+/// transfers move no money, so neither ever appears in the count. Journal
+/// market-transaction twins are excluded only when their trade was ingested from
+/// the Transactions side (mirroring [`is_market_twin`]), so a kept un-twinned
+/// market journal row stays reviewable. Market trades are de-duplicated by
 /// `transaction_id`, so a corp trade mirrored into a personal wallet counts once
 /// — consistent with [`activity_by_month`]'s de-dup.
 pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, month: &str) -> usize {
@@ -1473,12 +1477,22 @@ pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, mo
     transactions,
   } = load_scope_ledger(db, scope).await;
 
+  let ingested: HashSet<i64> = transactions
+    .iter()
+    .filter(|tx| month_key(&tx.date).as_deref() == Some(month))
+    .map(|tx| tx.transaction_id)
+    .collect();
+  let transfer_ids = internal_transfer_ids(&journal_rows);
+
   let mut count = 0;
   for row in &journal_rows {
     if month_key(&row.date).as_deref() != Some(month) {
       continue;
     }
-    if row.ref_type == MARKET_TRANSACTION_REF_TYPE {
+    if is_market_twin(row, &ingested) {
+      continue;
+    }
+    if classify_journal(row, &transfer_ids) != BudgetFlow::Expense {
       continue;
     }
     let Some(amount) = row.amount else { continue };
@@ -1494,6 +1508,9 @@ pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, mo
   let mut seen: HashSet<i64> = HashSet::new();
   for tx in &transactions {
     if month_key(&tx.date).as_deref() != Some(month) {
+      continue;
+    }
+    if BudgetFlow::from_market(tx.is_buy) != BudgetFlow::Expense {
       continue;
     }
     if !seen.insert(tx.transaction_id) {
@@ -4541,17 +4558,19 @@ mod tests {
     use crate::store::{self, repo::finance};
 
     #[tokio::test]
-    async fn it_counts_unresolved_entries_for_the_selected_month_only() {
+    async fn it_counts_only_uncategorized_expenses_for_the_selected_month() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       finance::append_wallet_journal(
         &db,
         &[
+          // Income posts to Ready-to-Assign and is never reviewable.
           journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
+          // An uncategorized outflow: the only reviewable row.
           journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-          // A prior month's entry never counts toward June.
-          journal(3, 1, "bounty_prizes", 500.0, "2026-05-30T00:00:00Z"),
+          // A prior month's outflow never counts toward June.
+          journal(3, 1, "brokers_fee", -500.0, "2026-05-30T00:00:00Z"),
         ],
       )
       .await
@@ -4559,7 +4578,7 @@ mod tests {
 
       let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
 
-      assert_eq!(count, 2);
+      assert_eq!(count, 1);
     }
 
     #[tokio::test]
@@ -4622,14 +4641,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_a_market_transaction_journal_twin() {
+    async fn it_excludes_an_ingested_market_transaction_journal_twin() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      // A sale surfaces as a transaction plus its market_transaction journal twin.
-      // The trade is reviewed from the Transactions side, so the twin is not its
-      // own needs-review row — only the transaction is counted.
-      finance::append_wallet_transaction(&db, &[transaction(500, 1, false, 100.0, 10, "2026-06-05T00:00:00Z")])
+      // A buy surfaces as a transaction (an outflow/expense) plus its ingested
+      // market_transaction journal twin. The trade is reviewed from the
+      // Transactions side, so the twin is suppressed — only the transaction
+      // counts, once.
+      finance::append_wallet_transaction(&db, &[transaction(500, 1, true, 100.0, 10, "2026-06-05T00:00:00Z")])
         .await
         .unwrap();
       finance::append_wallet_journal(
@@ -4638,7 +4658,7 @@ mod tests {
           10,
           1,
           "market_transaction",
-          1_000.0,
+          -1_000.0,
           500,
           "2026-06-05T00:00:00Z",
         )],
@@ -4685,8 +4705,8 @@ mod tests {
       .await
       .unwrap();
       seed_scope(&db, BudgetScope::All).await.unwrap();
-      // One unassigned trade mirrored into both wallets under transaction_id 700.
-      // It is a single event needing one review, not two.
+      // One unassigned buy (an expense) mirrored into both wallets under
+      // transaction_id 700. It is a single event needing one review, not two.
       finance::append_corporation_wallet_transaction(
         &db,
         &[CorporationWalletTransaction {
@@ -4694,7 +4714,7 @@ mod tests {
           corporation_id: corp_id,
           date: "2026-06-09T00:00:00Z".to_owned(),
           division: 1,
-          is_buy: false,
+          is_buy: true,
           journal_ref_id: 0,
           location_id: 60_003_760,
           quantity: 10,
@@ -4705,13 +4725,129 @@ mod tests {
       )
       .await
       .unwrap();
-      finance::append_wallet_transaction(&db, &[transaction(700, 1, false, 100.0, 10, "2026-06-09T00:00:00Z")])
+      finance::append_wallet_transaction(&db, &[transaction(700, 1, true, 100.0, 10, "2026-06-09T00:00:00Z")])
         .await
         .unwrap();
 
       let count = uncategorized_count_for_month(&db, BudgetScope::All, "2026-06").await;
 
       assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_income() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      finance::append_wallet_journal(&db, &[journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
+
+      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn it_counts_an_un_twinned_market_journal_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
+      // A market_transaction journal row whose trade was never ingested as a
+      // transaction is not a twin, so it stays reviewable as its own outflow.
+      finance::append_wallet_journal(
+        &db,
+        &[linked_journal(
+          10,
+          1,
+          "market_transaction",
+          -1_000.0,
+          999,
+          "2026-06-05T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+
+      let count = uncategorized_count_for_month(&db, BudgetScope::Character(1), "2026-06").await;
+
+      assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_an_internal_transfer() {
+      use crate::store::{
+        model::{Corporation, CorporationWalletJournal, OwnerType},
+        repo::infra,
+      };
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_013;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      // One internal transfer: journal id 900 mirrored into the corp wallet (out)
+      // and the character's wallet (in). Neither leg is reviewable.
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[CorporationWalletJournal {
+          amount: Some(-2_000.0),
+          balance: Some(0.0),
+          context_id: None,
+          context_id_type: None,
+          corporation_id: corp_id,
+          date: "2026-06-12T00:00:00Z".to_owned(),
+          description: "Transfer out".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 900,
+          reason: None,
+          ref_type: "corporation_account_withdrawal".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+      finance::append_wallet_journal(
+        &db,
+        &[journal(
+          900,
+          1,
+          "corporation_account_withdrawal",
+          2_000.0,
+          "2026-06-12T00:00:00Z",
+        )],
+      )
+      .await
+      .unwrap();
+
+      let count = uncategorized_count_for_month(&db, BudgetScope::All, "2026-06").await;
+
+      assert_eq!(count, 0);
     }
   }
 

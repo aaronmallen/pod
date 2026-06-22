@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct UiState {
   #[serde(default)]
+  pub flags: BTreeMap<String, bool>,
+  #[serde(default)]
+  pub lists: BTreeMap<String, Vec<String>>,
+  #[serde(default)]
   pub panes: BTreeMap<String, f32>,
   #[serde(default)]
   pub windows: BTreeMap<String, WindowGeometry>,
@@ -232,6 +236,49 @@ mod tests {
 
       assert_eq!(loaded.panes.get("mail.folder"), loaded.panes.get("skills.left"));
       assert_eq!(loaded.panes.get("mail.folder"), Some(&333.0));
+    }
+  }
+
+  mod flags_and_lists {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_the_new_maps_when_an_old_file_omits_them() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(&path, br#"{"panes":{"wallet.right_rail":320.0},"windows":{}}"#).unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(state.panes.get("wallet.right_rail"), Some(&320.0));
+      assert_eq!(state.flags, BTreeMap::new());
+      assert_eq!(state.lists, BTreeMap::new());
+    }
+
+    #[test]
+    fn it_round_trips_flags_and_lists_through_save_then_load() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+
+      let mut state = UiState::default();
+      state.flags.insert("wallet.hero_collapsed".to_owned(), true);
+      state.flags.insert("wallet.pin_balances".to_owned(), false);
+      state.lists.insert(
+        "wallet.group_order".to_owned(),
+        vec!["pilots".to_owned(), "corps".to_owned()],
+      );
+
+      save_to(&path, &state);
+      let loaded = load_from(&path);
+
+      assert_eq!(loaded, state);
+      assert_eq!(loaded.flags.get("wallet.hero_collapsed"), Some(&true));
+      assert_eq!(
+        loaded.lists.get("wallet.group_order"),
+        Some(&vec!["pilots".to_owned(), "corps".to_owned()])
+      );
     }
   }
 

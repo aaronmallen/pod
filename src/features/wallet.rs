@@ -316,6 +316,14 @@ pub enum Message {
   },
   TabSelected(Tab),
   TimeframeSelected(Timeframe),
+  UiFlagPersisted(String, bool),
+  // Emitted by sibling wallet-view tasks to set a persisted UI flag; today only the tests construct it.
+  #[allow(dead_code)]
+  UiFlagSet(String, bool),
+  // Emitted by sibling wallet-view tasks to toggle a persisted UI list item; today only the tests construct it.
+  #[allow(dead_code)]
+  UiListItemToggled(String, String),
+  UiListPersisted(String, Vec<String>),
   WalletsSortSelected(WalletSort),
 }
 
@@ -574,6 +582,8 @@ pub struct State {
   tab_exhausted: bool,
   tab_scroll_offset: f32,
   timeframe: Timeframe,
+  ui_flags: std::collections::BTreeMap<String, bool>,
+  ui_lists: std::collections::BTreeMap<String, Vec<String>>,
   wallet_sections: Vec<CorpWalletSection>,
   wallets_sort: WalletSort,
 }
@@ -652,6 +662,8 @@ impl State {
       tab_exhausted: false,
       tab_scroll_offset: 0.0,
       timeframe: Timeframe::default(),
+      ui_flags: std::collections::BTreeMap::new(),
+      ui_lists: std::collections::BTreeMap::new(),
       wallet_sections: Vec::new(),
       wallets_sort: WalletSort::default(),
     }
@@ -668,6 +680,8 @@ impl State {
       host_width,
     )
     .right_anchored(true);
+    self.ui_flags = ui.flags.clone();
+    self.ui_lists = ui.lists.clone();
     self
   }
 
@@ -682,6 +696,18 @@ impl State {
 
   pub fn active_tab(&self) -> Tab {
     self.tab
+  }
+
+  // Generic UI-flag accessor consumed by sibling wallet-view tasks; today only the tests use it.
+  #[allow(dead_code)]
+  pub fn ui_flag(&self, key: &str, default: bool) -> bool {
+    self.ui_flags.get(key).copied().unwrap_or(default)
+  }
+
+  // Generic UI-list accessor consumed by sibling wallet-view tasks; today only the tests use it.
+  #[allow(dead_code)]
+  pub fn ui_list(&self, key: &str) -> &[String] {
+    self.ui_lists.get(key).map(Vec::as_slice).unwrap_or_default()
   }
 
   pub fn select_tab_by_id(&mut self, id: &str) -> bool {
@@ -2714,6 +2740,23 @@ fn handle_tab_selected(state: &mut State, db: &Database, tab: Tab) -> Task<Messa
   Task::none()
 }
 
+fn handle_ui_flag_set(state: &mut State, key: String, value: bool) -> Task<Message> {
+  state.ui_flags.insert(key.clone(), value);
+  Task::done(Message::UiFlagPersisted(key, value))
+}
+
+fn handle_ui_list_item_toggled(state: &mut State, key: String, value: String) -> Task<Message> {
+  let list = state.ui_lists.entry(key.clone()).or_default();
+  match list.iter().position(|item| *item == value) {
+    Some(index) => {
+      list.remove(index);
+    }
+    None => list.push(value),
+  }
+  let list = list.clone();
+  Task::done(Message::UiListPersisted(key, list))
+}
+
 pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   if message.is_budget() {
     return handle_budget(state, message, db);
@@ -2784,7 +2827,9 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       Task::none()
     }
     Message::MoreLoaded(page) => handle_more_loaded(state, *page),
-    Message::PaneSettled(..) => Task::none(),
+    Message::PaneSettled(..) | Message::UiFlagPersisted(..) | Message::UiListPersisted(..) => Task::none(),
+    Message::UiFlagSet(key, value) => handle_ui_flag_set(state, key, value),
+    Message::UiListItemToggled(key, value) => handle_ui_list_item_toggled(state, key, value),
     Message::PickerToggled => {
       state.picker_open = !state.picker_open;
       Task::none()
@@ -6330,6 +6375,49 @@ mod tests {
       let _ = update(&mut state, Message::ContractSelected(999), &db);
 
       assert!(state.selected_contract.is_none());
+    }
+  }
+
+  mod ui_state_plumbing {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_restores_flags_and_lists_from_ui_state() {
+      let mut ui = window_state::UiState::default();
+      ui.flags.insert("wallet.hero_collapsed".to_owned(), true);
+      ui.lists
+        .insert("wallet.group_order".to_owned(), vec!["pilots".to_owned()]);
+
+      let state = State::new(crate::config::FeatureFlags::default()).with_restored_panes(&ui);
+
+      assert_eq!(state.ui_flag("wallet.hero_collapsed", false), true);
+      assert_eq!(state.ui_flag("wallet.missing", true), true);
+      assert_eq!(state.ui_list("wallet.group_order"), &["pilots".to_owned()]);
+      assert_eq!(state.ui_list("wallet.missing"), &[] as &[String]);
+    }
+
+    #[test]
+    fn it_sets_a_flag_and_emits_a_persist_message() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+
+      let _ = handle_ui_flag_set(&mut state, "wallet.hero_collapsed".to_owned(), true);
+
+      assert_eq!(state.ui_flag("wallet.hero_collapsed", false), true);
+    }
+
+    #[test]
+    fn it_adds_then_removes_a_list_item_on_repeated_toggle() {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+
+      let _ = handle_ui_list_item_toggled(&mut state, "wallet.pins".to_owned(), "balances".to_owned());
+
+      assert_eq!(state.ui_list("wallet.pins"), &["balances".to_owned()]);
+
+      let _ = handle_ui_list_item_toggled(&mut state, "wallet.pins".to_owned(), "balances".to_owned());
+
+      assert_eq!(state.ui_list("wallet.pins"), &[] as &[String]);
     }
   }
 

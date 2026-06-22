@@ -72,7 +72,6 @@ mod tests {
 
   fn geometry(width: f32) -> UiState {
     UiState {
-      panes: BTreeMap::new(),
       windows: BTreeMap::from([(
         "main".to_owned(),
         WindowGeometry {
@@ -82,6 +81,7 @@ mod tests {
           y: 0.0,
         },
       )]),
+      ..UiState::default()
     }
   }
 

@@ -1377,6 +1377,16 @@ fn record_pane_ratio(app: &mut App, key: &str, ratio: f32) {
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
 
+fn record_ui_flag(app: &mut App, key: String, value: bool) {
+  app.ui_state.flags.insert(key, value);
+  app.coalescer.request(app.ui_state.clone(), Instant::now());
+}
+
+fn record_ui_list(app: &mut App, key: String, values: Vec<String>) {
+  app.ui_state.lists.insert(key, values);
+  app.coalescer.request(app.ui_state.clone(), Instant::now());
+}
+
 fn drain_due_save(app: &mut App, now: Instant) {
   if let Some(state) = app.coalescer.take_due(now) {
     window_state::save(&state);
@@ -3876,6 +3886,14 @@ fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
   match msg {
     wallet::Message::PaneSettled(key, ratio) => {
       record_pane_ratio(app, key, ratio);
+      Task::none()
+    }
+    wallet::Message::UiFlagPersisted(key, value) => {
+      record_ui_flag(app, key, value);
+      Task::none()
+    }
+    wallet::Message::UiListPersisted(key, values) => {
+      record_ui_list(app, key, values);
       Task::none()
     }
     wallet::Message::ReauthRequested(id) => update(app, Message::ReauthCharacter(id)),

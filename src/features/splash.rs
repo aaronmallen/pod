@@ -5,14 +5,17 @@ pub mod version;
 
 use chrono::{DateTime, Utc};
 use iced::{
-  Background, Border, Element, Length, Padding, Task,
+  Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
   widget::{Column, Space, button, container, mouse_area, text},
 };
 
-use crate::ui::{
-  components::{eve_time::eve_time, status_bar::status_bar},
-  style::{color, control, radius, spacing, typography},
+use crate::{
+  features::window_chrome,
+  ui::{
+    components::{eve_time::eve_time, status_bar::status_bar},
+    style::{color, control, spacing, typography},
+  },
 };
 
 #[derive(Clone, Debug)]
@@ -126,14 +129,7 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let panel = container(Column::with_children(vec![inner.into(), bar]))
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        radius: radius::PANEL.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
-    });
+    .style(window_chrome::panel_style);
 
   mouse_area(panel).on_press(Message::DragWindow).into()
 }

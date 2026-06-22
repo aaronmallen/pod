@@ -28,6 +28,7 @@ use crate::{
   features::{
     assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, corporation_detail,
     focus_search, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
+    window_chrome,
   },
   services::{images, updater},
   store,
@@ -2563,7 +2564,7 @@ fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
-    Some(Window::Splash) => splash_theme(),
+    Some(Window::Killmail | Window::Splash) => splash_theme(),
     _ => pod_theme(),
   }
 }
@@ -2642,6 +2643,53 @@ fn transition_to_main(app: &mut App) -> Task<Message> {
   app.windows.register(id, Window::Main);
 
   Task::batch([close, open_task.map(Message::WindowOpened)])
+}
+
+fn centered_position(parent_position: Point, parent_size: Size, new_size: Size) -> Point {
+  Point::new(
+    parent_position.x + (parent_size.width - new_size.width) / 2.0,
+    parent_position.y + (parent_size.height - new_size.height) / 2.0,
+  )
+}
+
+// Consumed by the Killmail pilot and the Contract/Stockpile/Mail child windows, none of which exist yet, so
+// the foundation ships these reusable openers ahead of their first caller.
+#[allow(dead_code)]
+fn splash_window_settings(position: window::Position, size: Size) -> window::Settings {
+  window::Settings {
+    size,
+    position,
+    decorations: false,
+    resizable: true,
+    transparent: true,
+    icon: app_icon(),
+    ..window::Settings::default()
+  }
+}
+
+// Opens a detached splash-chrome window centered on the main window (falling back to monitor-centered when
+// its geometry is unavailable) and hands the new window's id to `register` so the caller can record the
+// kind, seed per-window state, and kick its loader. Geometry is never restored: every open uses `size`.
+// Consumed by the not-yet-built detached child windows; see `splash_window_settings`.
+#[allow(dead_code)]
+fn open_centered_window<F>(app: &App, size: Size, register: F) -> Task<Message>
+where
+  F: Fn(window::Id) -> Task<Message> + Send + 'static,
+{
+  let parent = app.windows.id_for(Window::Main);
+  let geometry = match parent {
+    Some(parent) => window::position(parent).then(move |position| window::size(parent).map(move |s| (position, s))),
+    None => Task::done((None, Size::ZERO)),
+  };
+
+  geometry.then(move |(position, parent_size)| {
+    let placement = match position {
+      Some(position) => window::Position::Specific(centered_position(position, parent_size, size)),
+      None => window::Position::Centered,
+    };
+    let (id, open_task) = window::open(splash_window_settings(placement, size));
+    Task::batch([open_task.map(Message::WindowOpened), register(id)])
+  })
 }
 
 fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
@@ -4852,8 +4900,21 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
 
 fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
-    Some(Window::Splash) => disable_shadow(id),
+    Some(Window::Killmail | Window::Splash) => disable_shadow(id),
     _ => Task::none(),
+  }
+}
+
+// Translates a window-chrome interaction on the window `id` into the matching iced window task: the drag
+// bar moves the window, a resize edge begins an edge/corner drag-resize, and the close button routes through
+// the standard close path so lifetime/shutdown bookkeeping stays in one place.
+// Consumed by the not-yet-built detached child windows; see `splash_window_settings`.
+#[allow(dead_code)]
+fn handle_chrome_event(app: &mut App, id: window::Id, event: window_chrome::Event) -> Task<Message> {
+  match event {
+    window_chrome::Event::Close => handle_close_requested(app, id),
+    window_chrome::Event::Drag => window::drag(id),
+    window_chrome::Event::Resize(direction) => window::drag_resize(id, direction),
   }
 }
 
@@ -7925,6 +7986,61 @@ mod tests {
     fn it_yields_none_for_an_empty_roster() {
       assert_eq!(resolve_skills_target(&[], None), None);
       assert_eq!(resolve_skills_target(&[], Some(7)), None);
+    }
+  }
+
+  mod centered_position {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_centers_a_smaller_window_inside_its_parent() {
+      let position = centered_position(
+        Point::new(100.0, 200.0),
+        Size::new(1200.0, 800.0),
+        Size::new(600.0, 400.0),
+      );
+
+      assert_eq!(position, Point::new(400.0, 400.0));
+    }
+
+    #[test]
+    fn it_offsets_negatively_when_the_new_window_is_larger_than_its_parent() {
+      let position = centered_position(Point::new(0.0, 0.0), Size::new(400.0, 300.0), Size::new(600.0, 500.0));
+
+      assert_eq!(position, Point::new(-100.0, -100.0));
+    }
+  }
+
+  mod handle_chrome_event {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_closes_the_window_through_the_standard_close_path() {
+      let mut app = test_app();
+      let main = window::Id::unique();
+      let killmail = window::Id::unique();
+      app.windows.register(main, Window::Main);
+      app.windows.register(killmail, Window::Killmail);
+
+      let _ = handle_chrome_event(&mut app, killmail, window_chrome::Event::Close);
+
+      assert_eq!(app.windows.kind(killmail), None);
+      assert_eq!(app.windows.kind(main), Some(Window::Main));
+    }
+
+    #[test]
+    fn it_leaves_the_registry_untouched_for_a_drag() {
+      let mut app = test_app();
+      let killmail = window::Id::unique();
+      app.windows.register(killmail, Window::Killmail);
+
+      let _ = handle_chrome_event(&mut app, killmail, window_chrome::Event::Drag);
+
+      assert_eq!(app.windows.kind(killmail), Some(Window::Killmail));
     }
   }
 

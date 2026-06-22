@@ -5,6 +5,10 @@ use iced::window;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
   Compare,
+  // Registered by the Killmail pilot window, which is a separate not-yet-built task; the routing,
+  // theme, and shadow-disable arms for it already exist here.
+  #[allow(dead_code)]
+  Killmail,
   Main,
   SkillPlanEditor,
   Splash,
@@ -16,7 +20,56 @@ impl Window {
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
-      Self::Splash => None,
+      Self::Killmail | Self::Splash => None,
+    }
+  }
+}
+
+// The id-keyed per-window state map ships ahead of its first instantiation: the Killmail pilot and the
+// Contract/Stockpile/Mail child windows, none of which exist yet, each hold one `WindowStates<S>` so
+// duplicates of a kind coexist.
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct WindowStates<S> {
+  states: HashMap<window::Id, S>,
+}
+
+#[allow(dead_code)]
+impl<S> WindowStates<S> {
+  pub fn get(&self, id: window::Id) -> Option<&S> {
+    self.states.get(&id)
+  }
+
+  pub fn get_mut(&mut self, id: window::Id) -> Option<&mut S> {
+    self.states.get_mut(&id)
+  }
+
+  pub fn insert(&mut self, id: window::Id, state: S) {
+    self.states.insert(id, state);
+  }
+
+  pub fn is_empty(&self) -> bool {
+    self.states.is_empty()
+  }
+
+  pub fn iter(&self) -> impl Iterator<Item = (window::Id, &S)> + '_ {
+    self.states.iter().map(|(id, state)| (*id, state))
+  }
+
+  pub fn len(&self) -> usize {
+    self.states.len()
+  }
+
+  pub fn remove(&mut self, id: window::Id) -> Option<S> {
+    self.states.remove(&id)
+  }
+}
+
+#[allow(dead_code)]
+impl<S> Default for WindowStates<S> {
+  fn default() -> Self {
+    Self {
+      states: HashMap::new(),
     }
   }
 }
@@ -33,6 +86,16 @@ impl Windows {
 
   pub fn ids(&self) -> impl Iterator<Item = window::Id> + '_ {
     self.ids.keys().copied()
+  }
+
+  // Consumed by the not-yet-built detached child windows to enumerate every open instance of a kind.
+  #[allow(dead_code)]
+  pub fn ids_for(&self, window: Window) -> impl Iterator<Item = window::Id> + '_ {
+    self
+      .ids
+      .iter()
+      .filter(move |(_, kind)| **kind == window)
+      .map(|(id, _)| *id)
   }
 
   pub fn is_empty(&self) -> bool {
@@ -55,6 +118,37 @@ impl Windows {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod ids_for {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_yields_every_window_of_a_kind_that_allows_duplicates() {
+      let mut windows = Windows::default();
+      let first = window::Id::unique();
+      let second = window::Id::unique();
+      windows.register(first, Window::Killmail);
+      windows.register(second, Window::Killmail);
+      windows.register(window::Id::unique(), Window::Main);
+
+      let mut killmails: Vec<window::Id> = windows.ids_for(Window::Killmail).collect();
+      killmails.sort();
+      let mut expected = vec![first, second];
+      expected.sort();
+
+      assert_eq!(killmails, expected);
+    }
+
+    #[test]
+    fn it_yields_nothing_when_no_window_of_the_kind_is_open() {
+      let mut windows = Windows::default();
+      windows.register(window::Id::unique(), Window::Main);
+
+      assert_eq!(windows.ids_for(Window::Killmail).count(), 0);
+    }
+  }
 
   mod is_empty {
     use super::*;
@@ -101,6 +195,11 @@ mod tests {
     }
 
     #[test]
+    fn it_never_persists_killmail() {
+      assert_eq!(Window::Killmail.state_key(), None);
+    }
+
+    #[test]
     fn it_gives_main_and_the_editor_distinct_keys() {
       assert_ne!(Window::Main.state_key(), Window::SkillPlanEditor.state_key());
     }
@@ -123,6 +222,60 @@ mod tests {
     #[test]
     fn it_never_persists_splash() {
       assert_eq!(Window::Splash.state_key(), None);
+    }
+  }
+
+  mod window_states {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_holds_two_states_under_distinct_ids() {
+      let mut states: WindowStates<&str> = WindowStates::default();
+      let first = window::Id::unique();
+      let second = window::Id::unique();
+      states.insert(first, "alpha");
+      states.insert(second, "beta");
+
+      assert_eq!(states.len(), 2);
+      assert_eq!(states.get(first), Some(&"alpha"));
+      assert_eq!(states.get(second), Some(&"beta"));
+    }
+
+    #[test]
+    fn it_is_empty_before_any_state_is_inserted() {
+      let states: WindowStates<u8> = WindowStates::default();
+
+      assert!(states.is_empty());
+    }
+
+    #[test]
+    fn it_mutates_the_state_for_a_given_id() {
+      let mut states: WindowStates<u32> = WindowStates::default();
+      let id = window::Id::unique();
+      states.insert(id, 1);
+
+      if let Some(value) = states.get_mut(id) {
+        *value = 7;
+      }
+
+      assert_eq!(states.get(id), Some(&7));
+    }
+
+    #[test]
+    fn it_removes_one_state_without_disturbing_the_other() {
+      let mut states: WindowStates<&str> = WindowStates::default();
+      let first = window::Id::unique();
+      let second = window::Id::unique();
+      states.insert(first, "alpha");
+      states.insert(second, "beta");
+
+      let removed = states.remove(first);
+
+      assert_eq!(removed, Some("alpha"));
+      assert_eq!(states.len(), 1);
+      assert_eq!(states.get(second), Some(&"beta"));
     }
   }
 }

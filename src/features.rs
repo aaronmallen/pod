@@ -19,3 +19,4 @@ pub mod skills;
 pub mod skills_compare;
 pub mod splash;
 pub mod wallet;
+pub mod window_chrome;

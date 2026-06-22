@@ -1,0 +1,315 @@
+use getset::{CopyGetters, Getters};
+
+const DEST_ASSETS: &str = "assets";
+
+const DEST_CALENDAR: &str = "calendar";
+
+const DEST_CHARACTER_DETAIL: &str = "character_detail";
+
+const DEST_INDUSTRY: &str = "industry";
+
+const DEST_MAIL: &str = "mail";
+
+const DEST_SKILLS: &str = "skills";
+
+const DEST_WALLET: &str = "wallet";
+
+const KIND_CALENDAR: &str = "calendar";
+
+const KIND_EXTRACTION_CRACKED: &str = "extraction_cracked";
+
+const KIND_EXTRACTION_SCHEDULED: &str = "extraction_scheduled";
+
+const KIND_INDUSTRY: &str = "industry";
+
+const KIND_KILLMAIL: &str = "killmail";
+
+const KIND_MAIL: &str = "mail";
+
+const KIND_SKILL: &str = "skill";
+
+const OWNER_CHARACTER: &str = "character";
+
+const OWNER_CORPORATION: &str = "corporation";
+
+// In-app notification storage substrate (epic zyrmyrlk, spec A). Constructed/read by the detectors
+// (spec B) and the center/toast UI (specs C/D); exercised only by unit tests until those land.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewNotification {
+  pub body: String,
+  pub dedup_key: String,
+  pub kind: NotificationKind,
+  pub owner: NotificationOwner,
+  pub target: NotificationTarget,
+  pub title: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, CopyGetters, Debug, Getters, PartialEq)]
+pub struct Notification {
+  #[getset(get = "pub")]
+  pub body: String,
+  #[getset(get = "pub")]
+  pub created_at: String,
+  #[getset(get = "pub")]
+  pub dedup_key: String,
+  #[getset(get_copy = "pub")]
+  pub id: i64,
+  #[getset(get_copy = "pub")]
+  pub kind: NotificationKind,
+  #[getset(get_copy = "pub")]
+  pub owner: NotificationOwner,
+  #[getset(get = "pub")]
+  pub read_at: Option<String>,
+  #[getset(get = "pub")]
+  pub target: NotificationTarget,
+  #[getset(get = "pub")]
+  pub title: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NotificationDestination {
+  Assets,
+  Calendar,
+  CharacterDetail,
+  Industry,
+  Mail,
+  Skills,
+  Wallet,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NotificationKind {
+  Calendar,
+  ExtractionCracked,
+  ExtractionScheduled,
+  Industry,
+  Killmail,
+  Mail,
+  Skill,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum NotificationOwner {
+  Character(i64),
+  Corporation(i64),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct NotificationTarget {
+  pub character: Option<i64>,
+  pub destination: NotificationDestination,
+  pub sub: Option<String>,
+}
+
+#[allow(dead_code)]
+impl NotificationDestination {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      NotificationDestination::Assets => DEST_ASSETS,
+      NotificationDestination::Calendar => DEST_CALENDAR,
+      NotificationDestination::CharacterDetail => DEST_CHARACTER_DETAIL,
+      NotificationDestination::Industry => DEST_INDUSTRY,
+      NotificationDestination::Mail => DEST_MAIL,
+      NotificationDestination::Skills => DEST_SKILLS,
+      NotificationDestination::Wallet => DEST_WALLET,
+    }
+  }
+
+  /// Parses a DB key, returning `Wallet` for any unrecognised value rather than panicking; a stored
+  /// destination should always be one of the known keys, so an unknown one is a corrupted row that
+  /// still routes somewhere sane instead of crashing the notification list.
+  pub fn from_key(key: &str) -> Self {
+    match key {
+      DEST_ASSETS => NotificationDestination::Assets,
+      DEST_CALENDAR => NotificationDestination::Calendar,
+      DEST_CHARACTER_DETAIL => NotificationDestination::CharacterDetail,
+      DEST_INDUSTRY => NotificationDestination::Industry,
+      DEST_MAIL => NotificationDestination::Mail,
+      DEST_SKILLS => NotificationDestination::Skills,
+      _ => NotificationDestination::Wallet,
+    }
+  }
+}
+
+#[allow(dead_code)]
+impl NotificationKind {
+  pub fn as_str(self) -> &'static str {
+    match self {
+      NotificationKind::Calendar => KIND_CALENDAR,
+      NotificationKind::ExtractionCracked => KIND_EXTRACTION_CRACKED,
+      NotificationKind::ExtractionScheduled => KIND_EXTRACTION_SCHEDULED,
+      NotificationKind::Industry => KIND_INDUSTRY,
+      NotificationKind::Killmail => KIND_KILLMAIL,
+      NotificationKind::Mail => KIND_MAIL,
+      NotificationKind::Skill => KIND_SKILL,
+    }
+  }
+
+  /// Parses a DB key, returning `None` for any unrecognised value. A row whose kind no longer maps to
+  /// a known variant is treated as undecodable rather than silently coerced, so the repo can drop it.
+  pub fn from_key(key: &str) -> Option<Self> {
+    match key {
+      KIND_CALENDAR => Some(NotificationKind::Calendar),
+      KIND_EXTRACTION_CRACKED => Some(NotificationKind::ExtractionCracked),
+      KIND_EXTRACTION_SCHEDULED => Some(NotificationKind::ExtractionScheduled),
+      KIND_INDUSTRY => Some(NotificationKind::Industry),
+      KIND_KILLMAIL => Some(NotificationKind::Killmail),
+      KIND_MAIL => Some(NotificationKind::Mail),
+      KIND_SKILL => Some(NotificationKind::Skill),
+      _ => None,
+    }
+  }
+}
+
+#[allow(dead_code)]
+impl NotificationOwner {
+  pub fn from_key(owner_type: &str, owner_id: i64) -> Option<Self> {
+    match owner_type {
+      OWNER_CHARACTER => Some(NotificationOwner::Character(owner_id)),
+      OWNER_CORPORATION => Some(NotificationOwner::Corporation(owner_id)),
+      _ => None,
+    }
+  }
+
+  pub fn owner_id(self) -> i64 {
+    match self {
+      NotificationOwner::Character(id) | NotificationOwner::Corporation(id) => id,
+    }
+  }
+
+  pub fn owner_type(self) -> &'static str {
+    match self {
+      NotificationOwner::Character(_) => OWNER_CHARACTER,
+      NotificationOwner::Corporation(_) => OWNER_CORPORATION,
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  mod notification_destination {
+    use super::*;
+
+    mod from_key {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_defaults_unknown_keys_to_wallet() {
+        assert_eq!(
+          NotificationDestination::from_key("garbage"),
+          NotificationDestination::Wallet
+        );
+      }
+    }
+
+    mod round_trip {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_every_destination() {
+        for destination in [
+          NotificationDestination::Assets,
+          NotificationDestination::Calendar,
+          NotificationDestination::CharacterDetail,
+          NotificationDestination::Industry,
+          NotificationDestination::Mail,
+          NotificationDestination::Skills,
+          NotificationDestination::Wallet,
+        ] {
+          assert_eq!(NotificationDestination::from_key(destination.as_str()), destination);
+        }
+      }
+    }
+  }
+
+  mod notification_kind {
+    use super::*;
+
+    mod from_key {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_rejects_an_unknown_key() {
+        assert_eq!(NotificationKind::from_key("garbage"), None);
+      }
+    }
+
+    mod round_trip {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_every_kind() {
+        for kind in [
+          NotificationKind::Calendar,
+          NotificationKind::ExtractionCracked,
+          NotificationKind::ExtractionScheduled,
+          NotificationKind::Industry,
+          NotificationKind::Killmail,
+          NotificationKind::Mail,
+          NotificationKind::Skill,
+        ] {
+          assert_eq!(NotificationKind::from_key(kind.as_str()), Some(kind));
+        }
+      }
+    }
+  }
+
+  mod notification_owner {
+    use super::*;
+
+    mod from_key {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_maps_the_known_types() {
+        assert_eq!(
+          NotificationOwner::from_key("character", 7),
+          Some(NotificationOwner::Character(7))
+        );
+        assert_eq!(
+          NotificationOwner::from_key("corporation", 9),
+          Some(NotificationOwner::Corporation(9))
+        );
+      }
+
+      #[test]
+      fn it_rejects_an_unknown_type() {
+        assert_eq!(NotificationOwner::from_key("alliance", 1), None);
+      }
+    }
+
+    mod round_trip {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_round_trips_through_the_persisted_type() {
+        for owner in [NotificationOwner::Character(3), NotificationOwner::Corporation(8)] {
+          assert_eq!(
+            NotificationOwner::from_key(owner.owner_type(), owner.owner_id()),
+            Some(owner)
+          );
+        }
+      }
+    }
+  }
+}

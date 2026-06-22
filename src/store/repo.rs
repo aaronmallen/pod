@@ -8,6 +8,7 @@ pub mod finance;
 pub mod industry;
 pub mod infra;
 pub mod mail;
+pub mod notifications;
 pub mod org;
 pub mod sde;
 pub mod skills;

@@ -102,6 +102,7 @@ mod market_group;
 mod market_order;
 mod market_price;
 mod moon;
+mod notification;
 mod npc_agent;
 mod npc_agent_skill;
 mod npc_corporation_division;
@@ -224,6 +225,9 @@ pub use market_group::Model as MarketGroup;
 pub use market_order::Model as MarketOrder;
 pub use market_price::Model as MarketPrice;
 pub use moon::Model as Moon;
+pub use notification::{
+  NewNotification, Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
+};
 pub use npc_agent::Model as NpcAgent;
 pub use npc_agent_skill::Model as NpcAgentSkill;
 pub use npc_corporation_division::Model as NpcCorporationDivision;

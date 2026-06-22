@@ -158,10 +158,92 @@ const MARKET_TRANSACTION_CONTEXT_ID_TYPE: &str = "market_transaction_id";
 /// never suppressed by de-duplication.
 const MARKET_TRANSACTION_REF_TYPE: &str = "market_transaction";
 
+/// Journal `ref_type`s that move ISK between two of the user's *own* wallets and
+/// so are only ever a real internal transfer when an opposite-sign counter-leg
+/// is found in another owned wallet. On their own (no matching counter-leg) they
+/// are ordinary income or expense and classify by sign. EVE mirrors a genuine
+/// internal transfer into both wallets under the same journal `id`, so detection
+/// groups by `(ref_type, id)` and requires exactly two opposite-sign legs in
+/// distinct owners.
+const AMBIGUOUS_TRANSFER_REF_TYPES: &[&str] = &[
+  "contract_price",
+  "corporation_account_withdrawal",
+  "player_donation",
+  "player_trading",
+];
+
+/// Journal `ref_type`s that return ISK previously spent — a refund rather than
+/// fresh income. Classified as [`BudgetFlow::Refund`] so a return can be filed
+/// back into the envelope it was spent from rather than counted as new income.
+const REFUND_REF_TYPES: &[&str] = &[
+  "contract_collateral_refund",
+  "contract_deposit_refund",
+  "contract_reward_refund",
+  "industry_job_refund",
+  "market_escrow_refund",
+  "reaction_refund",
+];
+
 /// The largest residual (in ISK) under which an internal transfer's mirrored
 /// legs are treated as cancelling. Journal amounts are whole-ISK so any genuine
 /// transfer nets to exactly zero; the slack only absorbs float round-off.
 const TRANSFER_NET_EPSILON: f64 = 0.5;
+
+/// How a single wallet flow is treated by the budget.
+///
+/// Income posts to Ready-to-Assign by default; an expense reduces (or wants) an
+/// envelope; a refund returns ISK previously spent into the envelope it came
+/// from; an internal transfer moves ISK between two of the user's own wallets
+/// and is non-budgetable (excluded from RTA activity and needs-review). The flow
+/// is derived from a row's `ref_type` plus its signed amount (or market side),
+/// with internal-transfer status resolved dynamically by counter-leg matching —
+/// see [`internal_transfer_ids`].
+// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
+// follow-on tasks. Exercised by unit tests until then.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BudgetFlow {
+  Expense,
+  Income,
+  InternalTransfer,
+  Refund,
+}
+
+impl BudgetFlow {
+  /// Classifies a market trade by side: a buy spends working capital
+  /// ([`BudgetFlow::Expense`]); a sell brings ISK in ([`BudgetFlow::Income`]).
+  // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
+  #[allow(dead_code)]
+  pub fn from_market(is_buy: bool) -> Self {
+    if is_buy {
+      BudgetFlow::Expense
+    } else {
+      BudgetFlow::Income
+    }
+  }
+
+  /// Classifies a journal `ref_type` and its signed `amount` into a flow,
+  /// treating it as a standalone row (no internal-transfer counter-leg known).
+  ///
+  /// Refund ref_types are [`BudgetFlow::Refund`]; the ambiguous transfer
+  /// ref_types and every other ref_type classify by sign — a positive amount is
+  /// [`BudgetFlow::Income`], a negative amount is [`BudgetFlow::Expense`]. A zero
+  /// amount falls to [`BudgetFlow::Income`] (it contributes nothing either way).
+  /// Internal transfers are never returned here: that status is owner-aware and
+  /// is layered on by [`classify_journal`].
+  // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
+  #[allow(dead_code)]
+  pub fn from_ref_type(ref_type: &str, amount: f64) -> Self {
+    if REFUND_REF_TYPES.contains(&ref_type) {
+      return BudgetFlow::Refund;
+    }
+    if amount < 0.0 {
+      BudgetFlow::Expense
+    } else {
+      BudgetFlow::Income
+    }
+  }
+}
 
 /// A single category's month figures, derived live.
 ///
@@ -1175,6 +1257,68 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
     && row.context_id.is_some_and(|id| ingested.contains(&id))
 }
 
+/// The flow classification of a journal row, owner-aware for internal transfers.
+///
+/// A row whose journal id is in `transfer_ids` (an owner-aware internal transfer,
+/// see [`internal_transfer_ids`]) is [`BudgetFlow::InternalTransfer`] regardless
+/// of its ref_type; every other row classifies statically by ref_type and sign
+/// via [`BudgetFlow::from_ref_type`].
+// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
+// follow-on tasks. Exercised by unit tests until then.
+#[allow(dead_code)]
+fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> BudgetFlow {
+  if transfer_ids.contains(&row.id) {
+    return BudgetFlow::InternalTransfer;
+  }
+  BudgetFlow::from_ref_type(&row.ref_type, row.amount.unwrap_or(0.0))
+}
+
+/// The journal ids that are genuine internal transfers between two of the user's
+/// own wallets, detected owner-aware.
+///
+/// EVE mirrors one internal-transfer event into both wallets under the same
+/// journal `id`, once positive and once negative. Only the ambiguous transfer
+/// ref_types (donation/withdrawal/contract-price/trading) can be a transfer, and
+/// only when a counter-leg actually exists in another owned wallet, so legs are
+/// grouped by `(ref_type, id)` — *not* the bare id, which collides a character
+/// and corp sharing an EVE id — and a group is an internal transfer only when it
+/// holds exactly two legs of opposite sign in two distinct owners. The exactly
+/// two requirement rejects 3+-leg pile-ups, and the distinct-owner requirement
+/// rejects two legs that landed in the same wallet, so neither is mis-paired.
+// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
+// follow-on tasks. Exercised by unit tests until then.
+#[allow(dead_code)]
+fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
+  let mut legs_by_key: HashMap<(&str, i64), Vec<&JournalActivity>> = HashMap::new();
+  for row in rows {
+    if !AMBIGUOUS_TRANSFER_REF_TYPES.contains(&row.ref_type.as_str()) {
+      continue;
+    }
+    legs_by_key
+      .entry((row.ref_type.as_str(), row.id))
+      .or_default()
+      .push(row);
+  }
+
+  let mut ids = HashSet::new();
+  for ((_, journal_id), legs) in legs_by_key {
+    if legs.len() != 2 {
+      continue;
+    }
+    let amounts: Vec<f64> = legs.iter().filter_map(|leg| leg.amount).collect();
+    if amounts.len() != 2 {
+      continue;
+    }
+    let opposite_signs = amounts[0].signum() != amounts[1].signum() && amounts.iter().all(|a| *a != 0.0);
+    let distinct_owners = legs[0].owner != legs[1].owner;
+    let cancels = (amounts[0] + amounts[1]).abs() < TRANSFER_NET_EPSILON;
+    if opposite_signs && distinct_owners && cancels {
+      ids.insert(journal_id);
+    }
+  }
+  ids
+}
+
 /// The shared category every leg of each internal transfer must resolve to, so
 /// the legs cancel.
 ///
@@ -1182,26 +1326,26 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
 /// EVE journal event mirrored into both wallets under the same journal `id`, once
 /// positive and once negative. Both legs are real activity and both are kept, but
 /// they only net to zero in `categorized_inflow_total` when they land in the same
-/// category. So for every `id` carried by two-or-more in-scope legs whose signed
-/// amounts cancel, this pins all of those legs to the lowest category id any leg
-/// already resolves to (via an assignment or rule). When no leg resolves the id
-/// is left unpinned: both legs stay in Ready-to-Assign, where the pool already
-/// nets them, so no phantom inflow leaks in.
+/// category. The owner-aware [`internal_transfer_ids`] detector identifies which
+/// journal ids are genuine transfers (correct under char/corp id collisions and
+/// 3+/same-wallet pile-ups); for each such id this pins all of its legs to the
+/// lowest category id any leg already resolves to (via an assignment or rule).
+/// When no leg resolves the id is left unpinned: both legs stay in
+/// Ready-to-Assign, where the pool already nets them, so no phantom inflow leaks
+/// in. A manual per-entry assignment is never overridden — `context.resolve_target`
+/// already honors it, and pinning only ever points legs at a resolved category.
 fn internal_transfer_categories(rows: &[JournalActivity], context: &ResolutionContext) -> HashMap<i64, i64> {
+  let transfer_ids = internal_transfer_ids(rows);
+
   let mut legs_by_id: HashMap<i64, Vec<&JournalActivity>> = HashMap::new();
   for row in rows {
-    legs_by_id.entry(row.id).or_default().push(row);
+    if transfer_ids.contains(&row.id) {
+      legs_by_id.entry(row.id).or_default().push(row);
+    }
   }
 
   let mut shared: HashMap<i64, i64> = HashMap::new();
   for (journal_id, legs) in legs_by_id {
-    if legs.len() < 2 {
-      continue;
-    }
-    let net: f64 = legs.iter().filter_map(|leg| leg.amount).sum();
-    if net.abs() >= TRANSFER_NET_EPSILON {
-      continue;
-    }
     let resolved = legs.iter().filter_map(|leg| {
       let amount = leg.amount?;
       let target = MatchTarget::journal(leg.owner, &leg.ref_type, Some(amount), &leg.text);
@@ -2516,6 +2660,61 @@ mod tests {
     }
   }
 
+  mod budget_flow {
+    mod from_market {
+      use pretty_assertions::assert_eq;
+
+      use super::super::*;
+
+      #[test]
+      fn it_classifies_a_buy_as_expense_and_a_sell_as_income() {
+        assert_eq!(BudgetFlow::from_market(true), BudgetFlow::Expense);
+        assert_eq!(BudgetFlow::from_market(false), BudgetFlow::Income);
+      }
+    }
+
+    mod from_ref_type {
+      use pretty_assertions::assert_eq;
+
+      use super::super::*;
+
+      #[test]
+      fn it_classifies_a_positive_amount_as_income_and_a_negative_amount_as_expense() {
+        assert_eq!(BudgetFlow::from_ref_type("bounty_prizes", 1_000.0), BudgetFlow::Income);
+        assert_eq!(BudgetFlow::from_ref_type("brokers_fee", -120.0), BudgetFlow::Expense);
+      }
+
+      #[test]
+      fn it_classifies_a_refund_ref_type_as_refund_regardless_of_sign() {
+        assert_eq!(
+          BudgetFlow::from_ref_type("industry_job_refund", 500.0),
+          BudgetFlow::Refund
+        );
+        assert_eq!(
+          BudgetFlow::from_ref_type("contract_reward_refund", 500.0),
+          BudgetFlow::Refund
+        );
+      }
+
+      #[test]
+      fn it_classifies_an_ambiguous_transfer_ref_type_by_sign_without_a_counter_leg() {
+        assert_eq!(
+          BudgetFlow::from_ref_type("player_donation", 1_000.0),
+          BudgetFlow::Income
+        );
+        assert_eq!(
+          BudgetFlow::from_ref_type("player_donation", -1_000.0),
+          BudgetFlow::Expense
+        );
+      }
+
+      #[test]
+      fn it_classifies_a_zero_amount_as_income() {
+        assert_eq!(BudgetFlow::from_ref_type("bounty_prizes", 0.0), BudgetFlow::Income);
+      }
+    }
+  }
+
   mod categorized_inflow_total {
     use std::collections::HashMap;
 
@@ -2540,6 +2739,47 @@ mod tests {
       let activity = HashMap::from([("2026-06".to_owned(), HashMap::from([(1, -500.0)]))]);
 
       assert_eq!(categorized_inflow_total(&activity), 0.0);
+    }
+  }
+
+  mod classify_journal {
+    use std::collections::HashSet;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn row(id: i64, owner: BudgetOwner, ref_type: &str, amount: f64) -> JournalActivity {
+      JournalActivity {
+        amount: Some(amount),
+        context_id: None,
+        context_id_type: None,
+        date: "2026-06-01T00:00:00Z".to_owned(),
+        id,
+        owner,
+        ref_type: ref_type.to_owned(),
+        text: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_classifies_a_detected_transfer_id_as_internal_transfer() {
+      let leg = row(900, BudgetOwner::Character(1), "player_donation", 10.0);
+      let transfer_ids = HashSet::from([900]);
+
+      assert_eq!(classify_journal(&leg, &transfer_ids), BudgetFlow::InternalTransfer);
+    }
+
+    #[test]
+    fn it_classifies_an_undetected_row_statically_by_ref_type_and_sign() {
+      let income = row(1, BudgetOwner::Character(1), "bounty_prizes", 1_000.0);
+      let expense = row(2, BudgetOwner::Character(1), "brokers_fee", -120.0);
+      let refund = row(3, BudgetOwner::Character(1), "industry_job_refund", 500.0);
+      let empty = HashSet::new();
+
+      assert_eq!(classify_journal(&income, &empty), BudgetFlow::Income);
+      assert_eq!(classify_journal(&expense, &empty), BudgetFlow::Expense);
+      assert_eq!(classify_journal(&refund, &empty), BudgetFlow::Refund);
     }
   }
 
@@ -2576,6 +2816,107 @@ mod tests {
           "{ref_type} targets slug {slug} which no seed group defines"
         );
       }
+    }
+  }
+
+  mod internal_transfer_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn row(id: i64, owner: BudgetOwner, ref_type: &str, amount: f64) -> JournalActivity {
+      JournalActivity {
+        amount: Some(amount),
+        context_id: None,
+        context_id_type: None,
+        date: "2026-06-01T00:00:00Z".to_owned(),
+        id,
+        owner,
+        ref_type: ref_type.to_owned(),
+        text: String::new(),
+      }
+    }
+
+    #[test]
+    fn it_detects_a_two_leg_opposite_sign_transfer_across_distinct_owners() {
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "corporation_account_withdrawal", 10.0),
+        row(
+          900,
+          BudgetOwner::Corporation(98),
+          "corporation_account_withdrawal",
+          -10.0,
+        ),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert_eq!(ids, std::collections::HashSet::from([900]));
+    }
+
+    #[test]
+    fn it_does_not_collide_a_character_and_corp_sharing_an_eve_id() {
+      // Two unrelated single legs that happen to share EVE journal id 900: one a
+      // character donation in, one a corp donation out. The bare-id key would have
+      // paired and cancelled them; grouping by (ref_type, id) plus the
+      // distinct-owner pairing must still treat each as one standalone leg.
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
+        row(900, BudgetOwner::Corporation(98), "contract_price", -10.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn it_ignores_a_group_with_three_or_more_legs() {
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
+        row(900, BudgetOwner::Corporation(98), "player_donation", -10.0),
+        row(900, BudgetOwner::Character(2), "player_donation", -10.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn it_ignores_two_legs_in_the_same_wallet() {
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
+        row(900, BudgetOwner::Character(1), "player_donation", -10.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn it_ignores_two_same_sign_legs() {
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "player_donation", 10.0),
+        row(900, BudgetOwner::Corporation(98), "player_donation", 10.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn it_ignores_non_transfer_ref_types() {
+      let rows = vec![
+        row(900, BudgetOwner::Character(1), "bounty_prizes", 10.0),
+        row(900, BudgetOwner::Corporation(98), "bounty_prizes", -10.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
     }
   }
 

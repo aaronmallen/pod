@@ -653,18 +653,39 @@ impl MatchTarget {
   }
 }
 
-/// Whether a condition carries a usable value — an empty row is ignored so a
-/// half-built rule never matches the whole ledger. A `Between` amount needs both
-/// bounds.
+/// Whether a condition carries a usable value, so a half-built rule never
+/// matches the whole ledger. An unparseable amount is treated as inactive
+/// rather than read as 0, which would otherwise match nearly everything.
 pub fn is_active_condition(condition: &RuleCondition) -> bool {
-  if condition.field() == RuleField::Amount && condition.op() == RuleOp::Between {
-    return !condition.value().trim().is_empty()
-      && condition
-        .value2()
-        .as_deref()
-        .is_some_and(|value2| !value2.trim().is_empty());
+  match condition.field() {
+    RuleField::Amount if condition.op() == RuleOp::Between => {
+      isk_value_parses(condition.value()) && condition.value2().as_deref().is_some_and(isk_value_parses)
+    }
+    RuleField::Amount => isk_value_parses(condition.value()),
+    RuleField::Character => condition.value().trim().parse::<i64>().is_ok(),
+    RuleField::Direction => matches!(condition.value().trim(), DIRECTION_IN | DIRECTION_OUT),
+    _ => !condition.value().trim().is_empty(),
   }
-  !condition.value().trim().is_empty()
+}
+
+/// Whether `input` is a well-formed ISK figure (mirrors `parse_isk`'s accept
+/// set), distinguishing a real `0` from garbage that `parse_isk` would also
+/// coerce to `0`.
+fn isk_value_parses(input: &str) -> bool {
+  let stripped: String = input
+    .trim()
+    .to_lowercase()
+    .chars()
+    .filter(|ch| !matches!(ch, ',' | ' ' | '_' | '\u{202f}'))
+    .collect();
+  if stripped.is_empty() || stripped == "-" {
+    return false;
+  }
+  let number = match stripped.chars().last() {
+    Some('t' | 'b' | 'm' | 'k') => &stripped[..stripped.len() - 1],
+    _ => stripped.as_str(),
+  };
+  number.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
 /// The number of supplied outflows a rule would catch. Inflows are never passed
@@ -1527,7 +1548,7 @@ async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
   // touches them, so the lookups are harmless on the manual-only path.
   let (type_names, location_names) = match context.rules.is_empty() {
     true => (HashMap::new(), HashMap::new()),
-    false => (transaction_type_names(db).await, transaction_location_names(db).await),
+    false => (type_names(db).await, location_names(db).await),
   };
 
   let mut journal_rows: Vec<JournalActivity> = Vec::new();
@@ -1742,9 +1763,10 @@ pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, mon
   out
 }
 
-/// Station and structure `id → name` map for resolving a market trade's location
-/// name in rule matching. Loaded once per derivation pass.
-async fn transaction_location_names(db: &Database) -> HashMap<i64, String> {
+/// Station and structure `id → name` map for resolving a row's location name.
+/// Shared by the ledger chip and the envelope math so an Item/Location rule
+/// matches the same rows in both. Loaded once per pass.
+pub(crate) async fn location_names(db: &Database) -> HashMap<i64, String> {
   let mut names = HashMap::new();
   for station in crate::store::repo::sde::all_stations(db).await.unwrap_or_default() {
     names.insert(station.id(), station.name().clone());
@@ -1755,9 +1777,10 @@ async fn transaction_location_names(db: &Database) -> HashMap<i64, String> {
   names
 }
 
-/// Item-type `id → name` map for resolving a market trade's item name in rule
-/// matching. Loaded once per derivation pass.
-async fn transaction_type_names(db: &Database) -> HashMap<i64, String> {
+/// Item-type `id → name` map for resolving a row's item name. Shared by the
+/// ledger chip and the envelope math so an Item/Location rule matches the same
+/// rows in both. Loaded once per pass.
+pub(crate) async fn type_names(db: &Database) -> HashMap<i64, String> {
   crate::store::repo::sde::all_item_types(db)
     .await
     .unwrap_or_default()
@@ -1998,6 +2021,19 @@ mod tests {
 
         assert!(!target.matches_rule(&empty));
       }
+
+      #[test]
+      fn it_never_matches_a_rule_whose_only_condition_is_an_unparseable_amount() {
+        let target = journal_outflow(BudgetOwner::Character(1), "tax", -10.0, "Sales Tax");
+        let garbage_amount = rule(
+          1,
+          true,
+          MatchMode::All,
+          vec![condition(RuleField::Amount, RuleOp::GreaterThan, "garbage")],
+        );
+
+        assert!(!target.matches_rule(&garbage_amount));
+      }
     }
   }
 
@@ -2022,6 +2058,56 @@ mod tests {
         "100m"
       )));
       assert!(is_active_condition(&between("100m", "200m")));
+    }
+
+    #[test]
+    fn it_treats_an_unparseable_amount_as_inactive() {
+      assert!(!is_active_condition(&condition(
+        RuleField::Amount,
+        RuleOp::GreaterThan,
+        "garbage"
+      )));
+      assert!(!is_active_condition(&condition(
+        RuleField::Amount,
+        RuleOp::GreaterThan,
+        "b"
+      )));
+    }
+
+    #[test]
+    fn it_keeps_a_real_zero_amount_active() {
+      assert!(is_active_condition(&condition(
+        RuleField::Amount,
+        RuleOp::GreaterThan,
+        "0"
+      )));
+    }
+
+    #[test]
+    fn it_treats_a_between_with_an_unparseable_bound_as_inactive() {
+      assert!(!is_active_condition(&between("100m", "garbage")));
+      assert!(!is_active_condition(&between("garbage", "200m")));
+    }
+
+    #[test]
+    fn it_treats_an_unparseable_character_id_as_inactive() {
+      assert!(!is_active_condition(&condition(
+        RuleField::Character,
+        RuleOp::Is,
+        "abc"
+      )));
+      assert!(is_active_condition(&condition(RuleField::Character, RuleOp::Is, "42")));
+    }
+
+    #[test]
+    fn it_treats_an_unknown_direction_token_as_inactive() {
+      assert!(!is_active_condition(&condition(
+        RuleField::Direction,
+        RuleOp::Is,
+        "sideways"
+      )));
+      assert!(is_active_condition(&condition(RuleField::Direction, RuleOp::Is, "in")));
+      assert!(is_active_condition(&condition(RuleField::Direction, RuleOp::Is, "out")));
     }
   }
 

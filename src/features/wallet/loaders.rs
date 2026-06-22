@@ -243,8 +243,8 @@ pub async fn load_market_page(
   cursor: Option<i64>,
   limit: i64,
 ) -> Vec<MarketEntry> {
-  let type_names = load_type_names(db).await;
-  let location_names = load_location_names(db).await;
+  let type_names = crate::features::budget::type_names(db).await;
+  let location_names = crate::features::budget::location_names(db).await;
 
   let mut entries = Vec::new();
   for &character_id in scope {
@@ -376,8 +376,8 @@ pub async fn load_corp_journal(db: &Database, corporation_id: i64, division: i64
 }
 
 pub async fn load_corp_market(db: &Database, corporation_id: i64, division: i64) -> Vec<MarketEntry> {
-  let type_names = load_type_names(db).await;
-  let location_names = load_location_names(db).await;
+  let type_names = crate::features::budget::type_names(db).await;
+  let location_names = crate::features::budget::location_names(db).await;
   finance::corporation_wallet_transactions(db, corporation_id, division)
     .await
     .unwrap_or_default()
@@ -464,26 +464,6 @@ fn map_txn_row(
     type_id: row.type_id(),
     unit_price: row.unit_price(),
   })
-}
-
-async fn load_type_names(db: &Database) -> HashMap<i64, String> {
-  crate::store::repo::sde::all_item_types(db)
-    .await
-    .unwrap_or_default()
-    .into_iter()
-    .map(|item| (item.id(), item.name().clone()))
-    .collect()
-}
-
-async fn load_location_names(db: &Database) -> HashMap<i64, String> {
-  let mut names = HashMap::new();
-  for station in crate::store::repo::sde::all_stations(db).await.unwrap_or_default() {
-    names.insert(station.id(), station.name().clone());
-  }
-  for structure in crate::store::repo::sde::all_structures(db).await.unwrap_or_default() {
-    names.insert(structure.id(), structure.name().clone());
-  }
-  names
 }
 
 pub(super) async fn load_budget_chips(db: &Database, scope: BudgetScope) -> BudgetChips {

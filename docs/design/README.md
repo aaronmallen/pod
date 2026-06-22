@@ -41,6 +41,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0029] | Two-Level Feature Model w/ Tolerant Migration   | ![Active][badge-active] | 2026-06-21 |
 | [0030] | Cross-Platform Keyboard Architecture            | ![Active][badge-active] | 2026-06-21 |
 | [0032] | Skill Plans Store Full Set, Project Per-Char    | ![Active][badge-active] | 2026-06-22 |
+| [0033] | Embedded MCP Server for Agent Automation        | ![Active][badge-active] | 2026-06-22 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -76,5 +77,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0029]: 0029-two-level-feature-model.md
 [0030]: 0030-keyboard-architecture.md
 [0032]: 0032-skill-plan-full-storage-projection.md
+[0033]: 0033-embedded-mcp-server.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

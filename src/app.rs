@@ -30,6 +30,7 @@ use crate::{
     focus_search, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
     window_chrome,
   },
+  mcp,
   services::{images, updater},
   store,
   sync::{self, JobKey},
@@ -172,6 +173,9 @@ struct App {
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
+  /// The embedded MCP automation server. `None` until the store is ready; thereafter its lifecycle
+  /// is reconciled against the live [`config::McpConfig`] (off by default) via [`mcp::Server::apply`].
+  mcp_server: Option<mcp::Server>,
   /// Trailing-debounce floor for the heavy roster reload. `None` lets the next dirty pulse reload
   /// immediately; `Some` holds the earliest instant another reload may fire, so a sync burst that
   /// keeps re-marking `roster_dirty` collapses into one reload per [`ROSTER_RELOAD_DEBOUNCE`] window.
@@ -275,6 +279,8 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
+  Mcp(mcp::McpRequest),
+  McpDataChanged,
   Nav(rail::Destination),
   NavTo(rail::Destination, Option<&'static str>),
   Palette(PaletteMessage),
@@ -366,6 +372,8 @@ impl Message {
       Message::Industry(_) => "Industry",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
+      Message::Mcp(_) => "Mcp",
+      Message::McpDataChanged => "McpDataChanged",
       Message::Nav(_) => "Nav",
       Message::NavTo(..) => "NavTo",
       Message::Settings(_) => "Settings",
@@ -859,6 +867,7 @@ fn boot() -> (App, Task<Message>) {
     last_synced: None,
     mail: None,
     mail_unread: 0,
+    mcp_server: None,
     next_roster_reload: None,
     next_trash_purge: None,
     now: Utc::now(),
@@ -2490,6 +2499,8 @@ fn subscription(app: &App) -> Subscription<Message> {
   }
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
+  subs.push(mcp::bridge::subscription().map(Message::Mcp));
+  subs.push(mcp::reload::subscription().map(|_| Message::McpDataChanged));
   subs.push(shortcuts::subscription(Message::Shortcut));
   subs.push(palette_key_subscription(app));
   if let Some(state) = &app.assets {
@@ -2831,6 +2842,8 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
+    Message::Mcp(request) => handle_mcp(app, request),
+    Message::McpDataChanged => handle_mcp_data_changed(app),
     Message::Nav(destination) => handle_nav(app, destination),
     Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
     Message::RailHover(destination) => handle_rail_hover(app, destination),
@@ -3174,6 +3187,59 @@ fn stockpile_scope_resolve(runtime: &Runtime, query: String) -> Task<Message> {
 fn handle_mail_unread_counted(app: &mut App, unread: i64) -> Task<Message> {
   app.mail_unread = unread;
   Task::none()
+}
+
+/// Runs a bridged MCP tool call to completion off the UI thread and replies to the waiting agent
+/// through the request's one-shot. The tool is gated against the live config's permissions, so a
+/// call whose permission is disabled is refused without touching the database.
+fn handle_mcp(app: &mut App, request: mcp::McpRequest) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    request.reply(Err(mcp::tool::ToolError::Internal(
+      "the store is not open yet".to_owned(),
+    )));
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  let config = runtime.settings.mcp().clone();
+  tokio::spawn(mcp::fulfill(request, mcp::registry(), config, db));
+  Task::none()
+}
+
+/// An MCP write tool reported that it changed the database, so reload whatever the open view shows.
+/// Marks the roster dirty and lifts the reload debounce so the refresh fires now, then drives the
+/// same per-view drains a sync pulse runs.
+fn handle_mcp_data_changed(app: &mut App) -> Task<Message> {
+  app.roster_dirty = true;
+  app.next_roster_reload = None;
+  let mut tasks: Vec<Task<Message>> = Vec::new();
+  if let Some(reload) = drain_roster_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_assets_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_wallet_dirty(app) {
+    tasks.push(reload);
+  }
+  if let Some(reload) = drain_detail_dirty(app) {
+    tasks.push(reload);
+  }
+  Task::batch(tasks)
+}
+
+/// Reconciles the embedded MCP listener with the live config, generating and persisting a bearer
+/// token the first time the server is enabled without one. A no-op when the runtime is absent.
+fn sync_mcp_server(app: &mut App) {
+  let Some(runtime) = app.runtime.as_mut() else {
+    return;
+  };
+  if *runtime.settings.mcp().enabled() && runtime.settings.mcp().token().is_empty() {
+    runtime.settings.mcp_mut().token_or_generate();
+    config::save(&runtime.settings);
+  }
+  let config = runtime.settings.mcp().clone();
+  let server = app.mcp_server.get_or_insert_with(mcp::server);
+  server.apply(&config);
 }
 
 fn handle_reauth_character(app: &mut App, character_id: i64) -> Task<Message> {
@@ -4439,6 +4505,7 @@ fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   } else {
     EngineState::Running
   };
+  sync_mcp_server(app);
   refresh_storage_status(app);
   Task::batch([
     load_roster.map(Message::CharacterManager),
@@ -5071,6 +5138,7 @@ mod tests {
       last_synced: None,
       mail: None,
       mail_unread: 0,
+      mcp_server: None,
       next_roster_reload: None,
       next_trash_purge: None,
       now: Utc::now(),

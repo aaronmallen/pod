@@ -533,6 +533,9 @@ pub struct Settings {
   #[serde(default, skip_serializing_if = "IndustryConfig::is_default")]
   industry: IndustryConfig,
   #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default, skip_serializing_if = "McpConfig::is_default")]
+  mcp: McpConfig,
+  #[getset(get = "pub", get_mut = "pub")]
   #[serde(default)]
   storage: StorageConfig,
   #[getset(get = "pub", get_mut = "pub")]
@@ -547,6 +550,7 @@ impl Default for Settings {
       eve_client_id: default_eve_client_id(),
       features: FeatureFlags::default(),
       industry: IndustryConfig::default(),
+      mcp: McpConfig::default(),
       storage: StorageConfig::default(),
       ui: UiConfig::default(),
     }
@@ -575,6 +579,90 @@ impl LogLevel {
 
   fn is_default(&self) -> bool {
     *self == LogLevel::default()
+  }
+}
+
+/// Configuration for the embedded MCP server an external agent connects to over localhost.
+///
+/// Off by default: enabling it opens an authenticated automation surface, so `enabled` must be an
+/// explicit opt-in. The `token` is the bearer secret every request must present; an empty token is
+/// auto-generated on first load by [`McpConfig::token_or_generate`].
+#[derive(Clone, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct McpConfig {
+  #[getset(get = "pub")]
+  #[serde(default)]
+  enabled: bool,
+  #[getset(get = "pub")]
+  #[serde(default)]
+  perms: McpPerms,
+  #[getset(get = "pub")]
+  #[serde(default = "default_mcp_port")]
+  port: u16,
+  #[getset(get = "pub")]
+  #[serde(default)]
+  token: String,
+}
+
+impl McpConfig {
+  fn is_default(&self) -> bool {
+    *self == McpConfig::default()
+  }
+
+  /// Returns the configured bearer token, generating and persisting one in-place when it is empty.
+  ///
+  /// Called on load so a config that has never set a token (or had it cleared) still presents a
+  /// usable secret the moment the server is enabled.
+  pub fn token_or_generate(&mut self) -> String {
+    if self.token.is_empty() {
+      self.token = gen_token();
+    }
+    self.token.clone()
+  }
+}
+
+impl Default for McpConfig {
+  fn default() -> Self {
+    Self {
+      enabled: false,
+      perms: McpPerms::default(),
+      port: default_mcp_port(),
+      token: String::new(),
+    }
+  }
+}
+
+/// The five-flag trust surface gating what an MCP agent may do. Reads and local writes are on by
+/// default; the three mail/label mutations stay off so the riskiest actions are an explicit opt-in.
+#[derive(Clone, Copy, CopyGetters, Debug, Deserialize, Eq, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct McpPerms {
+  #[getset(get_copy = "pub")]
+  #[serde(default)]
+  delete_mail: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  local_write: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default)]
+  manage_labels: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default = "default_true")]
+  read: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default)]
+  send_mail: bool,
+}
+
+impl Default for McpPerms {
+  fn default() -> Self {
+    Self {
+      delete_mail: false,
+      local_write: true,
+      manage_labels: false,
+      read: true,
+      send_mail: false,
+    }
   }
 }
 
@@ -778,6 +866,10 @@ fn default_eve_client_id() -> String {
   EVE_CLIENT_ID.to_owned()
 }
 
+fn default_mcp_port() -> u16 {
+  7373
+}
+
 fn default_rail_order() -> Vec<Destination> {
   Destination::REORDERABLE.to_vec()
 }
@@ -820,6 +912,15 @@ fn default_scale_100() -> u8 {
 
 fn default_true() -> bool {
   true
+}
+
+/// Generates an MCP bearer token of the form `pod_mcp_` followed by 40 lowercase hex characters
+/// (20 random bytes). The `pod_mcp_` prefix makes the secret self-identifying in logs and configs.
+fn gen_token() -> String {
+  let mut bytes = [0u8; 20];
+  rand::rng().fill_bytes(&mut bytes);
+  let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+  format!("pod_mcp_{hex}")
 }
 
 fn generate_machine_id() -> String {
@@ -1435,6 +1536,86 @@ mod tests {
       let loaded = load_from(&path).unwrap();
 
       assert_eq!(*loaded.storage().machine_id(), Some(id));
+    }
+  }
+
+  mod mcp_config {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_off_with_the_canonical_port_and_perms() {
+      let config = McpConfig::default();
+
+      assert!(!config.enabled());
+      assert_eq!(*config.port(), 7373);
+      assert!(config.token().is_empty());
+      assert!(config.perms().read());
+      assert!(config.perms().local_write());
+      assert!(!config.perms().send_mail());
+      assert!(!config.perms().delete_mail());
+      assert!(!config.perms().manage_labels());
+    }
+
+    #[test]
+    fn token_or_generate_mints_a_prefixed_token_once() {
+      let mut config = McpConfig::default();
+
+      let first = config.token_or_generate();
+      let second = config.token_or_generate();
+
+      assert!(first.starts_with("pod_mcp_"), "{first}");
+      assert_eq!(first.len(), "pod_mcp_".len() + 40);
+      assert_eq!(first, second, "a present token is not regenerated");
+    }
+
+    #[test]
+    fn the_table_is_omitted_from_the_file_while_default() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+
+      save_to(&path, &Settings::default()).unwrap();
+      let serialized = std::fs::read_to_string(&path).unwrap();
+
+      assert!(
+        !serialized.contains("[mcp]"),
+        "a default mcp config is skipped: {serialized}"
+      );
+    }
+
+    #[test]
+    fn it_round_trips_a_non_default_config_through_the_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      let mut settings = Settings::default();
+      settings.mcp_mut().set_enabled(true);
+      settings.mcp_mut().set_port(9999);
+      let token = settings.mcp_mut().token_or_generate();
+      let mut perms = *settings.mcp().perms();
+      perms.set_send_mail(true);
+      settings.mcp_mut().set_perms(perms);
+
+      save_to(&path, &settings).unwrap();
+      let loaded = load_from(&path).unwrap();
+
+      assert!(loaded.mcp().enabled());
+      assert_eq!(*loaded.mcp().port(), 9999);
+      assert_eq!(loaded.mcp().token(), &token);
+      assert!(loaded.mcp().perms().send_mail());
+    }
+
+    #[test]
+    fn it_auto_generates_a_token_on_load_when_one_is_enabled_without_a_token() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[mcp]\nenabled = true\n").unwrap();
+
+      let mut loaded = load_from(&path).unwrap();
+      let token = loaded.mcp_mut().token_or_generate();
+
+      assert!(token.starts_with("pod_mcp_"), "{token}");
+      assert!(loaded.mcp().enabled());
     }
   }
 

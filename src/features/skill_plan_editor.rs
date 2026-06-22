@@ -2212,48 +2212,20 @@ fn plan_file(state: &State) -> import_export::PlanFile {
 }
 
 fn apply_import(state: &mut State, payload: import_export::Payload, mode: ImportMode) {
-  match payload {
-    import_export::Payload::Json(plan) => apply_json_import(state, plan, mode),
-    import_export::Payload::Text(lines) => apply_text_import(state, &lines, mode),
-  }
+  let model = match payload {
+    import_export::Payload::Json(plan) => import_export::PlanModel::from_plan_file(plan),
+    import_export::Payload::Text(lines) => {
+      let Some(model) = model_from_text(state, &lines) else {
+        return;
+      };
+      model
+    }
+  };
+
+  persist_plan_model(state, model, mode);
 }
 
-fn apply_json_import(state: &mut State, plan: import_export::PlanFile, mode: ImportMode) {
-  if mode == ImportMode::Replace {
-    state.entries.clear();
-    state.remap_points.clear();
-  }
-
-  let mut anchor_ids: Vec<i64> = Vec::with_capacity(plan.entries.len());
-  for dto in &plan.entries {
-    let id = upsert_imported_entry(
-      state,
-      dto.type_id,
-      dto.to_level,
-      &dto.note,
-      Priority::from_token(&dto.priority),
-    );
-    anchor_ids.push(id);
-  }
-
-  for remap in plan.remaps {
-    let after_entry_id = match remap.after_index {
-      None => None,
-      Some(index) => match anchor_ids.get(index) {
-        Some(&id) => Some(id),
-        None => continue,
-      },
-    };
-    let local_id = state.next_remap_id();
-    state.remap_points.push(EditRemap {
-      base: remap.base.to_attributes(),
-      after_entry_id,
-      local_id,
-    });
-  }
-}
-
-fn apply_text_import(state: &mut State, lines: &[(String, u8)], mode: ImportMode) {
+fn model_from_text(state: &State, lines: &[(String, u8)]) -> Option<import_export::PlanModel> {
   let id_by_name: HashMap<String, i64> = match state.picker.catalog.as_ref() {
     Some(catalog) => catalog
       .groups
@@ -2264,24 +2236,84 @@ fn apply_text_import(state: &mut State, lines: &[(String, u8)], mode: ImportMode
     None => HashMap::new(),
   };
 
-  let resolved: Vec<(i64, u8)> = lines
-    .iter()
-    .filter_map(|(name, level)| id_by_name.get(&name.to_lowercase()).map(|&id| (id, *level)))
-    .collect();
-  if resolved.is_empty() {
-    return;
+  let mut wishes: Vec<Wish> = Vec::new();
+  for (name, level) in lines {
+    let Some(&skill_id) = id_by_name.get(&name.to_lowercase()) else {
+      continue;
+    };
+    match wishes.iter_mut().find(|wish| wish.skill_id == skill_id) {
+      Some(wish) => wish.to_level = wish.to_level.max(*level),
+      None => wishes.push(Wish {
+        skill_id,
+        to_level: *level,
+      }),
+    }
+  }
+  if wishes.is_empty() {
+    return None;
   }
 
+  let expanded = plan_math::expand_wishes_full(&wishes, &state.prereq_catalog());
+
+  Some(import_export::PlanModel {
+    entries: expanded
+      .into_iter()
+      .map(|entry| import_export::PlanModelEntry {
+        is_auto: entry.is_auto,
+        note: String::new(),
+        priority: Priority::Normal.as_token().to_owned(),
+        skill_id: entry.skill_id,
+        to_level: entry.to_level,
+      })
+      .collect(),
+    remaps: Vec::new(),
+  })
+}
+
+fn persist_plan_model(state: &mut State, model: import_export::PlanModel, mode: ImportMode) {
   if mode == ImportMode::Replace {
     state.entries.clear();
     state.remap_points.clear();
   }
-  for (skill_id, level) in resolved {
-    add_skill(state, skill_id, level);
+
+  let mut anchor_ids: Vec<i64> = Vec::with_capacity(model.entries.len());
+  for entry in &model.entries {
+    let id = upsert_imported_entry(
+      state,
+      entry.skill_id,
+      entry.to_level,
+      entry.is_auto,
+      &entry.note,
+      Priority::from_token(&entry.priority),
+    );
+    anchor_ids.push(id);
+  }
+
+  for remap in model.remaps {
+    let after_entry_id = match remap.after_index {
+      None => None,
+      Some(index) => match anchor_ids.get(index) {
+        Some(&id) => Some(id),
+        None => continue,
+      },
+    };
+    let local_id = state.next_remap_id();
+    state.remap_points.push(EditRemap {
+      base: remap.base,
+      after_entry_id,
+      local_id,
+    });
   }
 }
 
-fn upsert_imported_entry(state: &mut State, skill_id: i64, to_level: u8, note: &str, priority: Priority) -> i64 {
+fn upsert_imported_entry(
+  state: &mut State,
+  skill_id: i64,
+  to_level: u8,
+  is_auto: bool,
+  note: &str,
+  priority: Priority,
+) -> i64 {
   if let Some(existing) = state
     .entries
     .iter()
@@ -2311,7 +2343,7 @@ fn upsert_imported_entry(state: &mut State, skill_id: i64, to_level: u8, note: &
 
   state.entries.push(EditEntry {
     id,
-    is_auto: false,
+    is_auto,
     note: note.to_owned(),
     priority,
     skill_id,
@@ -3147,7 +3179,11 @@ mod tests {
       let dto = plan_file(&state);
       let restored = state_with_catalog();
       let mut restored = restored;
-      apply_json_import(&mut restored, dto.clone(), ImportMode::Replace);
+      persist_plan_model(
+        &mut restored,
+        import_export::PlanModel::from_plan_file(dto.clone()),
+        ImportMode::Replace,
+      );
 
       let original: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       let round: Vec<(i64, u8)> = restored.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
@@ -3322,6 +3358,100 @@ mod tests {
       let rows: Vec<(i64, u8)> = state.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
       assert_eq!(rows, vec![(3301, 1), (3301, 2)], "replace clears the old Gunnery rows");
       assert!(state.io_panel.is_none(), "the prompt closes after replace");
+    }
+
+    fn state_with_prereq_catalog() -> State {
+      let mut state = state_with_catalog();
+      let turret = SkillCatalogEntry {
+        prereqs: vec![("Gunnery".to_owned(), 3)],
+        ..catalog_entry(3301, "Small Hybrid Turret")
+      };
+      if let Some(catalog) = state.picker.catalog.as_mut() {
+        catalog.groups[0].skills = vec![catalog_entry(3300, "Gunnery"), turret];
+      }
+      state
+    }
+
+    #[tokio::test]
+    async fn text_import_re_expands_full_prerequisites_for_the_target_character() {
+      let mut donor = state_with_prereq_catalog();
+      add_skill(&mut donor, 3301, 1);
+      donor.refresh_rows();
+      let text = serialize_plan_text(&donor);
+
+      let mut importer = state_with_prereq_catalog();
+      importer.synced_levels = HashMap::from([(3300, 3), (3301, 1)]);
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut importer, Message::ImportClipboardRead(Some(text)), &db);
+      let _ = update(&mut importer, Message::ImportReplace, &db);
+
+      let rows: Vec<(i64, u8, bool)> = importer
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3301, 1, false)],
+        "text import stores the full prereq chain even though the importer already trained it"
+      );
+    }
+
+    #[tokio::test]
+    async fn text_round_trips_the_complete_plan_onto_a_less_trained_character() {
+      let mut donor = state_with_prereq_catalog();
+      donor.synced_levels = HashMap::from([(3300, 3), (3301, 1)]);
+      add_skill(&mut donor, 3301, 1);
+      donor.refresh_rows();
+      let exported = serialize_plan_text(&donor);
+
+      let mut importer = state_with_prereq_catalog();
+      let db = crate::store::open_test().await.unwrap();
+      let _ = update(&mut importer, Message::ImportClipboardRead(Some(exported)), &db);
+      let _ = update(&mut importer, Message::ImportReplace, &db);
+
+      let donor_named: Vec<(i64, u8)> = donor
+        .entries
+        .iter()
+        .filter(|e| !e.is_auto)
+        .map(|e| (e.skill_id, e.to_level))
+        .collect();
+      let importer_named: Vec<(i64, u8)> = importer
+        .entries
+        .iter()
+        .filter(|e| !e.is_auto)
+        .map(|e| (e.skill_id, e.to_level))
+        .collect();
+      assert_eq!(donor_named, importer_named, "named wishes survive the round trip");
+      let rows: Vec<(i64, u8, bool)> = importer
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, e.to_level, e.is_auto))
+        .collect();
+      assert_eq!(
+        rows,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3301, 1, false)],
+        "the never-trained importer lands the complete prereq-expanded plan"
+      );
+    }
+
+    #[test]
+    fn json_import_stores_the_full_set_verbatim() {
+      let mut donor = state_with_prereq_catalog();
+      add_skill(&mut donor, 3301, 1);
+      let dto = plan_file(&donor);
+
+      let mut importer = state_with_prereq_catalog();
+      persist_plan_model(
+        &mut importer,
+        import_export::PlanModel::from_plan_file(dto.clone()),
+        ImportMode::Replace,
+      );
+
+      let original: Vec<(i64, u8)> = donor.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      let restored: Vec<(i64, u8)> = importer.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+      assert_eq!(restored, original, "JSON import reproduces every stored level verbatim");
+      assert_eq!(restored.len(), dto.entries.len(), "no rows are dropped or re-expanded");
     }
   }
 

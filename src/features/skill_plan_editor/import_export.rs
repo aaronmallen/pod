@@ -71,6 +71,53 @@ pub struct PlanFileRemap {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanModel {
+  pub entries: Vec<PlanModelEntry>,
+  pub remaps: Vec<PlanModelRemap>,
+}
+
+impl PlanModel {
+  pub fn from_plan_file(plan: PlanFile) -> Self {
+    PlanModel {
+      entries: plan
+        .entries
+        .into_iter()
+        .map(|entry| PlanModelEntry {
+          is_auto: false,
+          note: entry.note,
+          priority: entry.priority,
+          skill_id: entry.type_id,
+          to_level: entry.to_level,
+        })
+        .collect(),
+      remaps: plan
+        .remaps
+        .into_iter()
+        .map(|remap| PlanModelRemap {
+          after_index: remap.after_index,
+          base: remap.base.to_attributes(),
+        })
+        .collect(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanModelEntry {
+  pub is_auto: bool,
+  pub note: String,
+  pub priority: String,
+  pub skill_id: i64,
+  pub to_level: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanModelRemap {
+  pub after_index: Option<usize>,
+  pub base: Attributes,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Payload {
   Json(PlanFile),
   Text(Vec<(String, u8)>),

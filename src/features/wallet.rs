@@ -1438,6 +1438,15 @@ fn budget_begin_assign(state: &mut State, category_id: i64) -> Task<Message> {
 }
 
 fn budget_commit_assign(state: &mut State, db: &Database) -> Task<Message> {
+  // Mirror the Move Money guard: a past month's Assigned cell is read-only, so a
+  // commit that slipped through (cell opened before the month rolled, or any
+  // path that set `budget_editing` without the begin guard) is dropped rather
+  // than retroactively shifting carry into today's RTA. Guarded before the take
+  // so the no-op leaves no half-consumed editing cell behind.
+  if state.budget_is_past() {
+    state.budget_editing = None;
+    return Task::none();
+  }
   let Some(editing) = state.budget_editing.take() else {
     return Task::none();
   };
@@ -1450,6 +1459,9 @@ fn budget_commit_assign(state: &mut State, db: &Database) -> Task<Message> {
 
 fn budget_quick_assign(state: &mut State, db: &Database, category_id: i64, value: f64) -> Task<Message> {
   state.budget_editing = None;
+  if state.budget_is_past() {
+    return Task::none();
+  }
   budget_persist_then_reload(state, db, move |db, _scope, month| {
     Box::pin(async move { budget::persist_assignment(&db, category_id, &month, value).await })
   })
@@ -2041,6 +2053,7 @@ fn handle_filter(state: &mut State, message: Message) -> Task<Message> {
   }
   state.tab_scroll_offset = 0.0;
   state.recompute_derived();
+  prune_ledger_selections(state);
   Task::none()
 }
 
@@ -2856,9 +2869,17 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         kind,
         month: state.budget_month.clone(),
       });
-      state.tab = Tab::Journal;
       state.tab_scroll_offset = 0.0;
       state.recompute_derived();
+      // Route the drill to where the matches live: a category whose activity is
+      // entirely market trades has an empty Journal, so land on Market instead of
+      // hardcoding Tab::Journal (which would drill into an empty tab).
+      state.tab = if state.derived.journal_indices.is_empty() && !state.derived.market_indices.is_empty() {
+        Tab::Market
+      } else {
+        Tab::Journal
+      };
+      prune_ledger_selections(state);
       Task::none()
     }
     Message::TabScrolled {
@@ -6272,6 +6293,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_routes_a_market_only_drill_to_the_market_tab() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Budget;
+      state.budget_month = "2026-05".to_owned();
+      state.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+
+      let _ = update(
+        &mut state,
+        Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized),
+        &db,
+      );
+
+      assert_eq!(
+        state.tab,
+        Tab::Market,
+        "a category with only market matches must land on the Market tab"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_drill_to_the_journal_when_journal_matches_exist() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Budget;
+      state.budget_month = "2026-05".to_owned();
+      state.journal = vec![journal_entry(1, Some(-50.0), "contract_price", "outflow")];
+      state.market = vec![market_entry(1, true, "Tritanium", "Jita")];
+
+      let _ = update(
+        &mut state,
+        Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized),
+        &db,
+      );
+
+      assert_eq!(state.tab, Tab::Journal);
+    }
+
+    #[tokio::test]
     async fn it_records_the_hovered_budget_category() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
@@ -6522,6 +6582,41 @@ mod tests {
       state.budget_month = budget::shift_month(&budget::current_month(), -2);
 
       let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
+
+      assert!(state.budget_editing().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_drops_an_assigned_commit_for_a_past_month() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      // Simulate an editor opened while the month was current, then the month
+      // rolled into the past before the commit landed.
+      state.budget_editing = Some(budget::EditingCell {
+        category_id: 1,
+        draft: crate::ui::format::fmt_isk(999.0),
+      });
+      state.budget_month = budget::shift_month(&budget::current_month(), -1);
+
+      let _ = update(&mut state, Message::BudgetAssignCommitted, &db);
+
+      assert!(
+        state.budget_editing().is_none(),
+        "the guarded commit drops the editor without persisting"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_drops_a_quick_assign_for_a_past_month() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = state_with_view();
+      state.budget_editing = Some(budget::EditingCell {
+        category_id: 1,
+        draft: crate::ui::format::fmt_isk(999.0),
+      });
+      state.budget_month = budget::shift_month(&budget::current_month(), -1);
+
+      let _ = update(&mut state, Message::BudgetQuickAssign(1, 250.0), &db);
 
       assert!(state.budget_editing().is_none());
     }
@@ -7479,6 +7574,37 @@ mod tests {
 
       assert!(!state.journal_selected(BudgetOwner::Character(1), 1));
       assert!(state.ledger_menu_open().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_prunes_the_selection_when_a_search_hides_selected_rows() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+      let _ = update(
+        &mut state,
+        Message::LedgerModifiersChanged(iced::keyboard::Modifiers::COMMAND),
+        &db,
+      );
+      let _ = update(
+        &mut state,
+        Message::LedgerRowClicked(BudgetEntryKind::Journal, BudgetOwner::Character(1), 3),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::SearchChanged("second".to_owned()), &db);
+
+      assert!(!state.journal_selected(BudgetOwner::Character(1), 1));
+      assert!(!state.journal_selected(BudgetOwner::Character(1), 3));
+      assert_eq!(
+        state.ledger_selection_count(),
+        0,
+        "the selection badge must drop rows the filter hid"
+      );
     }
 
     #[tokio::test]

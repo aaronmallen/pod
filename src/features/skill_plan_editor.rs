@@ -1648,12 +1648,10 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
           meta,
         });
       }
-      entries
+      repair_under_expanded_entries(&db, &catalog, entries).await
     }
-    Seed::FromQueue => entries_from_queue(&db, character_id, &catalog, &trained_levels, None).await,
-    Seed::FromQueueSelection(positions) => {
-      entries_from_queue(&db, character_id, &catalog, &trained_levels, Some(positions)).await
-    }
+    Seed::FromQueue => entries_from_queue(&db, character_id, &catalog, None).await,
+    Seed::FromQueueSelection(positions) => entries_from_queue(&db, character_id, &catalog, Some(positions)).await,
     Seed::New => Vec::new(),
   };
 
@@ -1685,7 +1683,6 @@ async fn entries_from_queue(
   db: &Database,
   character_id: i64,
   catalog: &SkillCatalog,
-  trained_levels: &HashMap<i64, u8>,
   selection: Option<&[i64]>,
 ) -> Vec<EditEntry> {
   let queue = character::skillqueue(db, character_id).await.unwrap_or_default();
@@ -1699,7 +1696,7 @@ async fn entries_from_queue(
     .collect();
 
   let prereqs = prereq_catalog_from(catalog);
-  let expanded = plan_math::expand_wishes(&wishes, &prereqs, trained_levels);
+  let expanded = plan_math::expand_wishes_full(&wishes, &prereqs);
 
   let mut next_id = -1;
   let mut entries = Vec::with_capacity(expanded.len());
@@ -1717,6 +1714,76 @@ async fn entries_from_queue(
     next_id -= 1;
   }
   entries
+}
+
+async fn repair_under_expanded_entries(
+  db: &Database,
+  catalog: &SkillCatalog,
+  stored: Vec<EditEntry>,
+) -> Vec<EditEntry> {
+  let wishes = top_level_wishes(&stored);
+  if wishes.is_empty() {
+    return stored;
+  }
+
+  let prereqs = prereq_catalog_from(catalog);
+  let expanded = plan_math::expand_wishes_full(&wishes, &prereqs);
+
+  let stored_levels: HashSet<(i64, u8)> = stored.iter().map(|e| (e.skill_id, e.to_level)).collect();
+  let under_expanded = expanded
+    .iter()
+    .any(|entry| !stored_levels.contains(&(entry.skill_id, entry.to_level)));
+  if !under_expanded {
+    return stored;
+  }
+
+  let reusable: HashMap<(i64, u8), &EditEntry> = stored
+    .iter()
+    .map(|entry| ((entry.skill_id, entry.to_level), entry))
+    .collect();
+  let mut next_id = stored.iter().map(|entry| entry.id).min().unwrap_or(0).min(0) - 1;
+
+  let mut repaired = Vec::with_capacity(expanded.len());
+  for entry in expanded {
+    match reusable.get(&(entry.skill_id, entry.to_level)) {
+      Some(existing) => {
+        let mut kept = (*existing).clone();
+        kept.is_auto = entry.is_auto;
+        repaired.push(kept);
+      }
+      None => {
+        let meta = resolve_entry_meta(db, catalog, entry.skill_id).await;
+        repaired.push(EditEntry {
+          id: next_id,
+          is_auto: entry.is_auto,
+          note: String::new(),
+          priority: Priority::Normal,
+          skill_id: entry.skill_id,
+          to_level: entry.to_level,
+          meta,
+        });
+        next_id -= 1;
+      }
+    }
+  }
+  repaired
+}
+
+fn top_level_wishes(entries: &[EditEntry]) -> Vec<Wish> {
+  let mut wished: HashMap<i64, u8> = HashMap::new();
+  for entry in entries.iter().filter(|entry| !entry.is_auto) {
+    wished
+      .entry(entry.skill_id)
+      .and_modify(|level| *level = (*level).max(entry.to_level))
+      .or_insert(entry.to_level);
+  }
+  wished
+    .into_iter()
+    .map(|(skill_id, to_level)| Wish {
+      skill_id,
+      to_level,
+    })
+    .collect()
 }
 
 async fn resolve_entry_meta(db: &Database, catalog: &SkillCatalog, skill_id: i64) -> EntryMeta {
@@ -1892,7 +1959,7 @@ fn required_prereq_levels(state: &State) -> HashSet<(i64, u8)> {
     .collect();
 
   let catalog = state.prereq_catalog();
-  let expanded = plan_math::expand_wishes(&wishes, &catalog, &state.picker.trained_levels);
+  let expanded = plan_math::expand_wishes_full(&wishes, &catalog);
 
   expanded
     .into_iter()
@@ -1902,13 +1969,7 @@ fn required_prereq_levels(state: &State) -> HashSet<(i64, u8)> {
 }
 
 fn add_skill(state: &mut State, skill_id: i64, target_level: u8) {
-  let mut trained = state.picker.trained_levels.clone();
-  for (planned_skill, planned_level) in state.planned_levels() {
-    trained
-      .entry(planned_skill)
-      .and_modify(|level| *level = (*level).max(planned_level))
-      .or_insert(planned_level);
-  }
+  let already_planned = state.planned_levels();
 
   let catalog = state.prereq_catalog();
   let expanded = plan_math::expand_wishes(
@@ -1917,7 +1978,7 @@ fn add_skill(state: &mut State, skill_id: i64, target_level: u8) {
       to_level: target_level,
     }],
     &catalog,
-    &trained,
+    &already_planned,
   );
 
   for entry in expanded {
@@ -1931,13 +1992,7 @@ fn add_auto_skills(state: &mut State, skills: &[(i64, u8)]) {
     return;
   }
 
-  let mut trained = state.picker.trained_levels.clone();
-  for (planned_skill, planned_level) in state.planned_levels() {
-    trained
-      .entry(planned_skill)
-      .and_modify(|level| *level = (*level).max(planned_level))
-      .or_insert(planned_level);
-  }
+  let already_planned = state.planned_levels();
 
   let wishes: Vec<Wish> = skills
     .iter()
@@ -1948,7 +2003,7 @@ fn add_auto_skills(state: &mut State, skills: &[(i64, u8)]) {
     .collect();
 
   let catalog = state.prereq_catalog();
-  let expanded = plan_math::expand_wishes(&wishes, &catalog, &trained);
+  let expanded = plan_math::expand_wishes(&wishes, &catalog, &already_planned);
 
   for entry in expanded {
     let edit = edit_entry_from_expanded(state, entry);
@@ -2588,7 +2643,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn from_queue_only_schedules_levels_above_the_trained_level() {
+    async fn from_queue_seeds_the_full_set_including_already_trained_levels() {
       use crate::store::model::CharacterSkill;
 
       let db = store::open_test().await.unwrap();
@@ -2616,8 +2671,8 @@ mod tests {
       let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
       assert_eq!(
         levels,
-        [3, 4, 5],
-        "only levels above the synced trained level are seeded"
+        [1, 2, 3, 4, 5],
+        "the stored plan holds every level, not an author-filtered subset"
       );
     }
 
@@ -2693,6 +2748,112 @@ mod tests {
 
       assert!(loaded.plan.is_none(), "new plan is not persisted until Save");
       assert!(loaded.entries.is_empty());
+    }
+
+    async fn seed_under_expanded_plan(db: &Database) -> i64 {
+      seed_character(db, 42).await;
+      seed_skill(db, 3300, "Gunnery").await;
+      let plan = skills::create(db, 42, "Subset plan").await.unwrap();
+      skills::replace_entries(
+        db,
+        plan.id(),
+        &[
+          (3300, 3, "normal", "", 0),
+          (3300, 4, "normal", "", 0),
+          (3300, 5, "normal", "", 0),
+        ],
+      )
+      .await
+      .unwrap();
+      plan.id()
+    }
+
+    #[tokio::test]
+    async fn loading_an_under_expanded_plan_repairs_it_to_the_full_set() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_under_expanded_plan(&db).await;
+
+      let loaded = async_load(db, 42, Seed::Existing(plan_id), now()).await;
+
+      let levels: Vec<u8> = loaded.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(
+        levels,
+        [1, 2, 3, 4, 5],
+        "the author-filtered subset is repaired to every level on load"
+      );
+    }
+
+    #[tokio::test]
+    async fn repairing_a_plan_twice_is_a_no_op() {
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_under_expanded_plan(&db).await;
+
+      let first = async_load(db.clone(), 42, Seed::Existing(plan_id), now()).await;
+      let first_rows: Vec<(i64, u8)> = first.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+
+      let full_rows: Vec<(i64, i64, &str, &str, i64)> = first
+        .entries
+        .iter()
+        .map(|e| (e.skill_id, i64::from(e.to_level), "normal", "", i64::from(e.is_auto)))
+        .collect();
+      skills::replace_entries(&db, plan_id, &full_rows).await.unwrap();
+
+      let second = async_load(db, 42, Seed::Existing(plan_id), now()).await;
+      let second_rows: Vec<(i64, u8)> = second.entries.iter().map(|e| (e.skill_id, e.to_level)).collect();
+
+      assert_eq!(
+        second_rows, first_rows,
+        "re-loading an already-full plan adds and reorders nothing"
+      );
+      assert!(
+        second.entries.iter().all(|e| e.id > 0),
+        "a full plan keeps its persisted ids; repair coins no fresh negative ids"
+      );
+    }
+
+    #[tokio::test]
+    async fn repair_leaves_the_per_character_projection_unchanged() {
+      use crate::store::model::CharacterSkill;
+
+      let db = store::open_test().await.unwrap();
+      let plan_id = seed_under_expanded_plan(&db).await;
+      character::replace_skills(
+        &db,
+        42,
+        &[CharacterSkill {
+          active_skill_level: 2,
+          character_id: 42,
+          skill_id: 3300,
+          skillpoints_in_skill: 100,
+          trained_skill_level: 2,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let mut state = State::new(42);
+      let _ = update(
+        &mut state,
+        Message::Loaded(Box::new(
+          async_load(db.clone(), 42, Seed::Existing(plan_id), now()).await,
+        )),
+        &db,
+      );
+
+      let trained_steps = state.rows.iter().filter(|row| row.to_level <= 2).count();
+      assert!(
+        state
+          .rows
+          .iter()
+          .take(trained_steps)
+          .all(|row| row.skipped && row.sp == 0),
+        "levels at or below the trained level project as zero-cost skipped rows"
+      );
+      let trainable_sp: u64 = state.rows.iter().filter(|row| !row.skipped).map(|row| row.sp).sum();
+      assert_eq!(
+        state.total_sp, trainable_sp,
+        "the plan total still counts only the levels the character still needs"
+      );
     }
 
     #[tokio::test]
@@ -3566,14 +3727,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn picking_a_trained_level_is_a_no_op() {
+    async fn picking_a_trained_level_still_seeds_the_full_set() {
       let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
       state.picker.trained_levels = HashMap::from([(3300, 5)]);
       let db = crate::store::open_test().await.unwrap();
 
       let _ = update(&mut state, Message::PickerLevelPicked(3300, 4), &db);
 
-      assert!(state.entries.is_empty(), "an already-trained pick schedules nothing");
+      let levels: Vec<u8> = state.entries.iter().map(|e| e.to_level).collect();
+      assert_eq!(
+        levels,
+        [1, 2, 3, 4],
+        "storage is character-agnostic, so trained levels are seeded too"
+      );
     }
 
     #[tokio::test]

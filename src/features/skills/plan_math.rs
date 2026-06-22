@@ -155,7 +155,18 @@ pub fn expand_wishes(
   catalog: &PrereqCatalog,
   trained: &std::collections::HashMap<i64, u8>,
 ) -> Vec<ExpandedEntry> {
-  let mut current = trained.clone();
+  expand_wishes_from(wishes, catalog, trained.clone())
+}
+
+pub fn expand_wishes_full(wishes: &[Wish], catalog: &PrereqCatalog) -> Vec<ExpandedEntry> {
+  expand_wishes_from(wishes, catalog, std::collections::HashMap::new())
+}
+
+fn expand_wishes_from(
+  wishes: &[Wish],
+  catalog: &PrereqCatalog,
+  mut current: std::collections::HashMap<i64, u8>,
+) -> Vec<ExpandedEntry> {
   let mut out: Vec<ExpandedEntry> = Vec::new();
 
   for wish in wishes {
@@ -752,6 +763,38 @@ mod tests {
         three_hundred,
         vec![false, false, false],
         "explicit wish wins over the prereq path"
+      );
+    }
+  }
+
+  mod expand_wishes_full {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn wish(skill_id: i64, to_level: u8) -> Wish {
+      Wish {
+        skill_id,
+        to_level,
+      }
+    }
+
+    #[test]
+    fn it_expands_every_level_regardless_of_what_is_trained() {
+      let out = expand_wishes_full(&[wish(3300, 5)], &PrereqCatalog::new());
+
+      assert_eq!(out.iter().map(|e| e.to_level).collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn it_includes_every_prerequisite_level_without_a_trained_filter() {
+      let catalog = PrereqCatalog::from([(3330, vec![(3300, 3)])]);
+      let out = expand_wishes_full(&[wish(3330, 1)], &catalog);
+
+      let by_skill: Vec<(i64, u8, bool)> = out.iter().map(|e| (e.skill_id, e.to_level, e.is_auto)).collect();
+      assert_eq!(
+        by_skill,
+        vec![(3300, 1, true), (3300, 2, true), (3300, 3, true), (3330, 1, false)]
       );
     }
   }

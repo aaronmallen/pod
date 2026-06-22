@@ -12,7 +12,7 @@ use crate::{
 const ITEM_ICON_SIZE: Size = Size::S64;
 
 /// `viewing_character_id` only flags the matching attacker row as `is_self`; `character_id` scopes every query.
-pub(super) async fn load(
+pub async fn load(
   db: &Database,
   character_id: i64,
   killmail_id: i64,

@@ -11,7 +11,7 @@ use crate::{
 
 const ITEM_ICON_SIZE: Size = Size::S64;
 
-pub(super) async fn load(db: &Database, corporation_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
+pub async fn load(db: &Database, corporation_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
   let rows = org::corporation_killmails(db, corporation_id).await.ok()?;
   let row = rows.into_iter().find(|row| row.killmail_id() == killmail_id)?;
 

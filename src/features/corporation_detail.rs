@@ -1,4 +1,4 @@
-mod killmail_loader;
+pub mod killmail_loader;
 mod tabs;
 
 use std::time::Duration;
@@ -17,7 +17,6 @@ use self::tabs::{
 pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   clients::eve_image::Size,
-  features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
     model::{CorporationContactLabel, character_contacts_view::image_kind},
@@ -116,7 +115,6 @@ pub enum LoadState<T> {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  CloseKillmailDetail,
   ContactFilterChanged(tabs::contacts::ContactFilter),
   ContactSortChanged(tabs::contacts::ContactSort),
   ContactsPageLoaded(Box<ContactsPage>),
@@ -126,7 +124,6 @@ pub enum Message {
   KilllogFilterChanged(KilllogFilter),
   KilllogPageLoaded(Vec<KillLogEntry>),
   KilllogScrolled { absolute: f32, relative: f32 },
-  KillmailDetailLoaded(Box<Option<KillmailDetail>>),
   KillmailSelected(i64),
   Loaded(Box<CorpDetail>),
   StandingsAgentsPageLoaded(Box<StandingsAgentsPage>),
@@ -146,7 +143,6 @@ impl Message {
     matches!(
       self,
       Message::ContactsPageLoaded(_)
-        | Message::KillmailDetailLoaded(_)
         | Message::Loaded(_)
         | Message::StandingsAgentsPageLoaded(_)
         | Message::StandingsResults(_)
@@ -173,7 +169,6 @@ pub struct State {
   killlog_has_more: bool,
   killlog_loading_more: bool,
   killlog_scroll_offset: f32,
-  selected_killmail: Option<KillmailDetail>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
   standings_filter: tabs::standings::StandingsFilter,
@@ -204,7 +199,6 @@ impl State {
       killlog_has_more: false,
       killlog_loading_more: false,
       killlog_scroll_offset: 0.0,
-      selected_killmail: None,
       standings: LoadState::Loading,
       standings_agent_cursor: None,
       standings_filter: tabs::standings::StandingsFilter::All,
@@ -232,9 +226,6 @@ impl State {
     }
     if let LoadState::Loaded(rows) = &self.standings {
       keys.extend(rows.iter().filter_map(|row| row.image.stale_key()));
-    }
-    if let Some(detail) = &self.selected_killmail {
-      keys.extend(detail.stale_images());
     }
     keys
   }
@@ -356,13 +347,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     }
     | Message::ContactsSearchChanged(_)
     | Message::ContactsSearchCleared => update_contacts(state, message, db),
-    Message::CloseKillmailDetail
-    | Message::KilllogFilterChanged(_)
+    Message::KilllogFilterChanged(_)
     | Message::KilllogPageLoaded(_)
     | Message::KilllogScrolled {
       ..
     }
-    | Message::KillmailDetailLoaded(_)
     | Message::KillmailSelected(_) => update_killlog(state, message, db),
     Message::StandingsAgentsPageLoaded(_)
     | Message::StandingsClearSearch
@@ -460,10 +449,6 @@ fn apply_contacts_page(state: &mut State, page: ContactsPage) {
 
 fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
-    Message::CloseKillmailDetail => {
-      state.selected_killmail = None;
-      Task::none()
-    }
     Message::KilllogFilterChanged(filter) => {
       state.killlog_filter = filter;
       Task::none()
@@ -494,15 +479,8 @@ fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Me
         Message::KilllogPageLoaded,
       )
     }
-    Message::KillmailDetailLoaded(detail) => {
-      state.selected_killmail = *detail;
-      Task::none()
-    }
-    Message::KillmailSelected(killmail_id) => {
-      Task::perform(load_killmail_detail(db.clone(), state.active, killmail_id), |detail| {
-        Message::KillmailDetailLoaded(Box::new(detail))
-      })
-    }
+    // The app shell intercepts `KillmailSelected` to open a detached killmail window, so it never reaches here.
+    Message::KillmailSelected(_) => Task::none(),
     _ => Task::none(),
   }
 }
@@ -640,35 +618,14 @@ pub fn view(state: &State) -> Element<'_, Message> {
   .width(Length::Fill)
   .height(Length::Fill);
 
-  let base = container(body)
+  container(body)
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(iced::Background::Color(color::surface::BASE)),
       ..container::Style::default()
-    });
-
-  if let Some(detail) = state.selected_killmail.as_ref() {
-    return killmail_detail::overlay(base.into(), detail, Message::CloseKillmailDetail);
-  }
-
-  base.into()
-}
-
-pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  if state.selected_killmail.is_none() {
-    return iced::Subscription::none();
-  }
-  iced::event::listen_with(|event, _status, _id| {
-    matches!(
-      event,
-      iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-        ..
-      })
-    )
-    .then_some(Message::CloseKillmailDetail)
-  })
+    })
+    .into()
 }
 
 fn trigger_standings_search(state: &mut State, db: &Database) -> Task<Message> {
@@ -901,10 +858,6 @@ async fn load_killlog_page(db: Database, corporation_id: i64, after: Option<(Str
   };
 
   resolve_killlog_entries(&db, rows).await
-}
-
-async fn load_killmail_detail(db: Database, corporation_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
-  killmail_loader::load(&db, corporation_id, killmail_id).await
 }
 
 async fn resolve_killlog_entries(
@@ -1248,31 +1201,6 @@ mod tests {
     }
   }
 
-  fn killmail_detail_fixture() -> KillmailDetail {
-    KillmailDetail {
-      attackers: Vec::new(),
-      damage_taken: 0,
-      dropped_isk: 0.0,
-      is_kill: true,
-      kill_time: "2024-01-01T00:00:00Z".to_owned(),
-      killmail_id: 100,
-      ship_icon: images::IconResolution::Missing,
-      ship_name: "Rifter".to_owned(),
-      slots: Vec::new(),
-      system_name: Some("Jita".to_owned()),
-      system_security: 0.9,
-      value_destroyed_isk: 0.0,
-      value_isk: 1234.5,
-      victim_alliance: None,
-      victim_corp: None,
-      victim_name: "Target".to_owned(),
-      victim_portrait: images::ImageState::Stale {
-        id: 3,
-        kind: images::ImageKind::CharacterPortrait,
-      },
-    }
-  }
-
   fn head() -> CorpHead {
     CorpHead {
       alliance: Some("Iron Helix Pact".to_owned()),
@@ -1493,22 +1421,6 @@ mod tests {
       let _task = update(&mut state, Message::KilllogFilterChanged(KilllogFilter::Kills), &db);
 
       assert_eq!(state.killlog_filter(), KilllogFilter::Kills);
-    }
-
-    #[tokio::test]
-    async fn it_opens_and_closes_the_killmail_detail_modal() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(
-        &mut state,
-        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_killmail.is_some());
-
-      let _task = update(&mut state, Message::CloseKillmailDetail, &db);
-      assert!(state.selected_killmail.is_none());
     }
 
     #[test]
@@ -1788,16 +1700,6 @@ mod tests {
 
       assert_eq!(state.killlog_scroll_offset(), 5.0);
       assert!(!state.killlog_loading_more);
-    }
-
-    #[tokio::test]
-    async fn it_selects_a_killmail_for_detail() {
-      let mut state = State::new(98_000_001);
-      let db = crate::store::open_test().await.unwrap();
-
-      let _task = update(&mut state, Message::KillmailSelected(42), &db);
-
-      assert!(state.selected_killmail.is_none());
     }
   }
 

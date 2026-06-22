@@ -1,5 +1,5 @@
 mod header;
-mod killmail_loader;
+pub mod killmail_loader;
 mod tabs;
 
 use std::{collections::HashSet, time::Duration};
@@ -20,7 +20,6 @@ pub use crate::store::repo::standings::CatalogKind as StandingKind;
 use crate::{
   clients::eve_image::Size,
   config::Feature,
-  features::killmail_detail::{self, KillmailDetail},
   store::{
     Database, images,
     model::{
@@ -185,7 +184,6 @@ pub struct Loaded {
 #[derive(Clone, Debug)]
 pub enum Message {
   CharacterChanged(i64),
-  CloseKillmailDetail,
   ContactAddOpened,
   ContactDeleteCancelled,
   ContactDeleteConfirmed,
@@ -220,7 +218,6 @@ pub enum Message {
     absolute: f32,
     relative: f32,
   },
-  KillmailDetailLoaded(Box<Option<KillmailDetail>>),
   KillmailSelected(i64),
   Loaded(Box<Loaded>),
   NotificationRead(i64),
@@ -253,7 +250,6 @@ impl Message {
         | Message::ContactEditOpened(_)
         | Message::ContactEntityChanged(_)
         | Message::ContactsPageLoaded(_)
-        | Message::KillmailDetailLoaded(_)
         | Message::Loaded(_)
         | Message::Reloaded(_)
         | Message::StandingsAgentsPageLoaded(_)
@@ -354,7 +350,6 @@ pub struct State {
   notifications_filter: NotificationsFilter,
   picker_open: bool,
   roster: Vec<PickerPilot>,
-  selected_killmail: Option<KillmailDetail>,
   standings: LoadState<Vec<StandingsRow>>,
   standings_agent_cursor: Option<(String, i64)>,
   standings_filter: tabs::standings::StandingsFilter,
@@ -399,7 +394,6 @@ impl State {
       notifications_filter: NotificationsFilter::All,
       picker_open: false,
       roster: Vec::new(),
-      selected_killmail: None,
       standings: LoadState::Loading,
       standings_agent_cursor: None,
       standings_filter: tabs::standings::StandingsFilter::All,
@@ -457,9 +451,6 @@ impl State {
     }
     if let LoadState::Loaded(page) = &self.contacts {
       keys.extend(page.rows.iter().filter_map(|row| row.image.stale_key()));
-    }
-    if let Some(detail) = &self.selected_killmail {
-      keys.extend(detail.stale_images());
     }
     if let Some(modal) = &self.contact_modal {
       keys.extend(modal.stale_key());
@@ -666,9 +657,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::StandingsScrolled {
       ..
     } => update_pagination(state, message, db),
-    Message::CloseKillmailDetail
-    | Message::KilllogFilterChanged(_)
-    | Message::KillmailDetailLoaded(_)
+    Message::KilllogFilterChanged(_)
     | Message::KillmailSelected(_)
     | Message::NotificationRead(_)
     | Message::NotificationsFilterChanged(_) => update_killlog(state, message, db),
@@ -742,20 +731,8 @@ fn update_killlog(state: &mut State, message: Message, db: &Database) -> Task<Me
       state.killlog_filter = filter;
       Task::none()
     }
-    Message::KillmailSelected(killmail_id) => {
-      let viewing = state.active;
-      Task::perform(load_killmail_detail(db.clone(), viewing, killmail_id), |detail| {
-        Message::KillmailDetailLoaded(Box::new(detail))
-      })
-    }
-    Message::KillmailDetailLoaded(detail) => {
-      state.selected_killmail = *detail;
-      Task::none()
-    }
-    Message::CloseKillmailDetail => {
-      state.selected_killmail = None;
-      Task::none()
-    }
+    // The app shell intercepts `KillmailSelected` to open a detached killmail window, so it never reaches here.
+    Message::KillmailSelected(_) => Task::none(),
     Message::NotificationsFilterChanged(filter) => {
       state.notifications_filter = filter;
       Task::none()
@@ -1413,10 +1390,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
-  if let Some(detail) = state.selected_killmail.as_ref() {
-    return killmail_detail::overlay(base.into(), detail, Message::CloseKillmailDetail);
-  }
-
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
 
@@ -1470,22 +1443,6 @@ pub fn view(state: &State) -> Element<'_, Message> {
   }
 
   base.into()
-}
-
-pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  if state.selected_killmail.is_none() {
-    return iced::Subscription::none();
-  }
-  iced::event::listen_with(|event, _status, _id| {
-    matches!(
-      event,
-      iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-        ..
-      })
-    )
-    .then_some(Message::CloseKillmailDetail)
-  })
 }
 
 async fn load_detail(db: Database, character_id: i64, owned: Vec<i64>) -> Loaded {
@@ -1603,7 +1560,12 @@ async fn load_contacts_page(
   }
 }
 
-async fn load_killmail_detail(db: Database, character_id: i64, killmail_id: i64) -> Option<KillmailDetail> {
+#[cfg(test)]
+async fn load_killmail_detail(
+  db: Database,
+  character_id: i64,
+  killmail_id: i64,
+) -> Option<crate::features::killmail_detail::KillmailDetail> {
   killmail_loader::load(&db, character_id, killmail_id, character_id).await
 }
 
@@ -1957,31 +1919,6 @@ mod tests {
       total_sp: Some(47_320_400),
     };
     state
-  }
-
-  fn killmail_detail_fixture() -> killmail_detail::KillmailDetail {
-    killmail_detail::KillmailDetail {
-      attackers: Vec::new(),
-      damage_taken: 0,
-      dropped_isk: 0.0,
-      is_kill: true,
-      kill_time: "2024-01-01T00:00:00Z".to_owned(),
-      killmail_id: 100,
-      ship_icon: images::IconResolution::Missing,
-      ship_name: "Rifter".to_owned(),
-      slots: Vec::new(),
-      system_name: Some("Jita".to_owned()),
-      system_security: 0.9,
-      value_destroyed_isk: 0.0,
-      value_isk: 1234.5,
-      victim_alliance: None,
-      victim_corp: None,
-      victim_name: "Target".to_owned(),
-      victim_portrait: images::ImageState::Stale {
-        id: 3,
-        kind: images::ImageKind::CharacterPortrait,
-      },
-    }
   }
 
   mod contacts_modal {
@@ -3636,22 +3573,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-
-    #[tokio::test]
-    async fn it_opens_and_closes_the_killmail_detail_modal() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(42, &Feature::ALL);
-
-      let _ = update(
-        &mut state,
-        Message::KillmailDetailLoaded(Box::new(Some(killmail_detail_fixture()))),
-        &db,
-      );
-      assert!(state.selected_killmail.is_some());
-
-      let _ = update(&mut state, Message::CloseKillmailDetail, &db);
-      assert!(state.selected_killmail.is_none());
-    }
 
     #[tokio::test]
     async fn it_records_the_active_pilot_and_closes_the_picker_on_a_switch() {

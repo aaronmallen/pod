@@ -1,23 +1,28 @@
 use iced::{
-  Background, Border, ContentFit, Element, Length, Padding,
+  Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
   border::Radius,
   widget::{Column, Row, Space, container, image, scrollable, text},
 };
 
 use crate::{
-  store::images,
+  features::{
+    character_detail::killmail_loader as character_killmail,
+    corporation_detail::killmail_loader as corporation_killmail, window_chrome,
+  },
+  store::{Database, images},
   ui::{
-    components::{backdrop, clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
+    components::{clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
     format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
 };
 
+pub const KILLMAIL_WINDOW_HEIGHT: f32 = 680.0;
+pub const KILLMAIL_WINDOW_WIDTH: f32 = 880.0;
+
 const ATTACKER_ICON_BOX: f32 = 30.0;
 const ITEM_ICON_BOX: f32 = 22.0;
-const MODAL_CONTENT_MAX_HEIGHT: f32 = 560.0;
-const MODAL_MAX_WIDTH: f32 = 880.0;
 const PORTRAIT_BOX: f32 = 52.0;
 const SHIP_ICON_BOX: f32 = 46.0;
 
@@ -85,25 +90,147 @@ impl KillmailDetail {
 }
 
 #[derive(Clone, Debug)]
+pub enum Message {
+  Loaded(Box<Option<KillmailDetail>>),
+}
+
+#[derive(Clone, Debug)]
 pub struct SlotGroupView {
   pub items: Vec<ItemView>,
   pub label: &'static str,
 }
 
-pub fn overlay<'a, M: Clone + 'a>(base: Element<'a, M>, detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
-  iced::widget::Stack::with_children(vec![
-    base,
-    backdrop::backdrop(on_close.clone()),
-    container(modal(detail, on_close))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Source {
+  Character { character_id: i64 },
+  Corporation { corporation_id: i64 },
+}
+
+#[derive(Debug)]
+pub struct State {
+  detail: Option<KillmailDetail>,
+  killmail_id: i64,
+  source: Source,
+}
+
+impl State {
+  pub fn new(source: Source, killmail_id: i64) -> Self {
+    State {
+      detail: None,
+      killmail_id,
+      source,
+    }
+  }
+
+  pub fn killmail_id(&self) -> i64 {
+    self.killmail_id
+  }
+
+  #[cfg(test)]
+  pub fn loaded_killmail_id(&self) -> Option<i64> {
+    self.detail.as_ref().map(|detail| detail.killmail_id)
+  }
+
+  pub fn set_detail(&mut self, detail: Option<KillmailDetail>) {
+    self.detail = detail;
+  }
+
+  pub fn source(&self) -> Source {
+    self.source
+  }
+
+  pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
+    self
+      .detail
+      .as_ref()
+      .map(KillmailDetail::stale_images)
+      .unwrap_or_default()
+  }
+
+  fn title(&self) -> String {
+    match &self.detail {
+      Some(detail) => format!("{} \u{2014} #{}", detail.ship_name, detail.killmail_id),
+      None => format!("Killmail #{}", self.killmail_id),
+    }
+  }
+}
+
+pub fn load(db: &Database, source: Source, killmail_id: i64) -> Task<Message> {
+  let db = db.clone();
+  Task::perform(
+    async move {
+      match source {
+        Source::Character {
+          character_id,
+        } => character_killmail::load(&db, character_id, killmail_id, character_id).await,
+        Source::Corporation {
+          corporation_id,
+        } => corporation_killmail::load(&db, corporation_id, killmail_id).await,
+      }
+    },
+    |detail| Message::Loaded(Box::new(detail)),
+  )
+}
+
+pub fn view<'a, M: Clone + 'a, F>(state: &'a State, on_event: F) -> Element<'a, M>
+where
+  F: Fn(window_chrome::Event) -> M + Copy + 'a,
+{
+  let title = state.title();
+  window_chrome::shell(&title, window_body(state.detail.as_ref()), on_event)
+}
+
+fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
+  let Some(detail) = detail else {
+    return container(
+      text("Loading killmail\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(|_| text::Style {
+          color: Some(color::text::secondary()),
+        }),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into();
+  };
+
+  let body = container(
+    scrollable(
+      Column::with_children(vec![
+        Row::with_children(vec![victim_card(detail), value_card(detail)])
+          .spacing(spacing::SPACE_3_5)
+          .width(Length::Fill)
+          .into(),
+        Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
+          .spacing(spacing::SPACE_3_5)
+          .align_y(Vertical::Top)
+          .width(Length::Fill)
+          .into(),
+      ])
+      .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
+      .padding(spacing::SPACE_3_5 + spacing::UNIT)
+      .width(Length::Fill),
+    )
+    .style(crate::ui::style::control::scrollbar)
+    .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  container(
+    Column::with_children(vec![header(detail), body.into()])
       .width(Length::Fill)
-      .height(Length::Fill)
-      .padding(spacing::SPACE_6)
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center)
-      .into(),
-  ])
+      .height(Length::Fill),
+  )
   .width(Length::Fill)
   .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    ..container::Style::default()
+  })
   .into()
 }
 
@@ -154,49 +281,7 @@ fn parse_iso8601(s: &str) -> Option<i64> {
   Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
 }
 
-fn modal<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
-  let body = container(
-    scrollable(
-      Column::with_children(vec![
-        Row::with_children(vec![victim_card(detail), value_card(detail)])
-          .spacing(spacing::SPACE_3_5)
-          .width(Length::Fill)
-          .into(),
-        Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
-          .spacing(spacing::SPACE_3_5)
-          .align_y(Vertical::Top)
-          .width(Length::Fill)
-          .into(),
-      ])
-      .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
-      .padding(spacing::SPACE_3_5 + spacing::UNIT)
-      .width(Length::Fill),
-    )
-    .style(crate::ui::style::control::scrollbar)
-    .height(Length::Shrink),
-  )
-  .max_height(MODAL_CONTENT_MAX_HEIGHT);
-
-  container(
-    Column::with_children(vec![header(detail, on_close), body.into()])
-      .width(Length::Fill)
-      .height(Length::Shrink),
-  )
-  .max_width(MODAL_MAX_WIDTH)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::BASE)),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.16),
-      width: 1.0,
-      radius: radius::PANEL.into(),
-    },
-    ..container::Style::default()
-  })
-  .clip(true)
-  .into()
-}
-
-fn header<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element<'a, M> {
+fn header<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let accent = side_accent(detail.is_kill);
 
   let title = Row::with_children(vec![
@@ -228,7 +313,6 @@ fn header<'a, M: Clone + 'a>(detail: &'a KillmailDetail, on_close: M) -> Element
     type_icon(&detail.ship_icon, SHIP_ICON_BOX),
     info.into(),
     Space::new().width(Length::Fill).into(),
-    close_button(on_close),
   ])
   .spacing(spacing::SPACE_3_5)
   .align_y(Vertical::Center)
@@ -768,30 +852,6 @@ fn panel_unpadded<'a, M: 'a>(label: &str, right: Option<String>, content: Elemen
     .into()
 }
 
-fn close_button<'a, M: Clone + 'a>(on_close: M) -> Element<'a, M> {
-  iced::widget::button(
-    text("\u{2715}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(spacing::SPACE_2 - 1.0)
-  .on_press(on_close)
-  .style(|_, _| iced::widget::button::Style {
-    background: None,
-    text_color: color::text::secondary(),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.08),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..iced::widget::button::Style::default()
-  })
-  .into()
-}
-
 fn dot<'a, M: 'a>() -> Element<'a, M> {
   container(Space::new())
     .width(Length::Fixed(3.0))
@@ -970,11 +1030,6 @@ fn type_icon<'a, M: 'a>(icon: &images::IconResolution, box_size: f32) -> Element
 mod tests {
   use super::*;
 
-  #[derive(Clone, Debug)]
-  enum Msg {
-    Close,
-  }
-
   fn detail() -> KillmailDetail {
     KillmailDetail {
       attackers: vec![
@@ -1040,7 +1095,38 @@ mod tests {
     }
   }
 
-  mod overlay {
+  mod title {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_the_killmail_id_before_the_detail_loads() {
+      let state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        555,
+      );
+
+      assert_eq!(state.title(), "Killmail #555");
+    }
+
+    #[test]
+    fn it_names_the_ship_once_the_detail_loads() {
+      let mut state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+      state.set_detail(Some(detail()));
+
+      assert_eq!(state.title(), "Rifter \u{2014} #100");
+    }
+  }
+
+  mod view {
     use super::*;
 
     #[test]
@@ -1058,21 +1144,50 @@ mod tests {
           .collect(),
         label: "High power",
       }];
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      state.set_detail(Some(heavy));
 
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &heavy, Msg::Close);
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
 
     #[test]
     fn it_renders_a_kill_and_a_loss() {
-      let kill = detail();
-      let base: Element<'_, Msg> = Space::new().into();
-      let _kill: Element<'_, Msg> = overlay(base, &kill, Msg::Close);
+      let mut kill_state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      kill_state.set_detail(Some(detail()));
+      let _kill: Element<'_, ()> = view(&kill_state, |_| ());
 
       let mut loss = detail();
       loss.is_kill = false;
-      let base: Element<'_, Msg> = Space::new().into();
-      let _loss: Element<'_, Msg> = overlay(base, &loss, Msg::Close);
+      let mut loss_state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      loss_state.set_detail(Some(loss));
+      let _loss: Element<'_, ()> = view(&loss_state, |_| ());
+    }
+
+    #[test]
+    fn it_renders_the_loading_placeholder_before_the_detail_arrives() {
+      let state = State::new(
+        Source::Corporation {
+          corporation_id: 7,
+        },
+        100,
+      );
+
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
 
     #[test]
@@ -1082,9 +1197,15 @@ mod tests {
       bare.victim_alliance = None;
       bare.slots = Vec::new();
       bare.attackers = Vec::new();
+      let mut state = State::new(
+        Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+      state.set_detail(Some(bare));
 
-      let base: Element<'_, Msg> = Space::new().into();
-      let _el: Element<'_, Msg> = overlay(base, &bare, Msg::Close);
+      let _el: Element<'_, ()> = view(&state, |_| ());
     }
   }
 

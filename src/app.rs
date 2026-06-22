@@ -20,15 +20,15 @@ use iced::{
   window,
 };
 use shortcuts::{Chord, FocusTracker};
-use windows::{Window, Windows};
+use windows::{Window, WindowStates, Windows};
 
 use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
     assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, corporation_detail,
-    focus_search, industry, mail, registry, settings, skill_plan_editor, skills, skills_compare, splash, wallet,
-    window_chrome,
+    focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor, skills, skills_compare,
+    splash, wallet, window_chrome,
   },
   mcp,
   services::{images, updater},
@@ -169,6 +169,7 @@ struct App {
   industry_catalog: Option<industry::StaticCatalog>,
   init_error: Option<String>,
   keyboard_focus: FocusTracker,
+  killmails: WindowStates<killmail_detail::State>,
   last_push: Option<SystemTime>,
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
@@ -259,6 +260,7 @@ enum Message {
   CancelTakeOver,
   CharacterDetail(character_detail::Message),
   CharacterManager(character_manager::Message),
+  Chrome(window::Id, window_chrome::Event),
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
@@ -275,6 +277,12 @@ enum Message {
   },
   Industry(industry::Message),
   InitFailed(String),
+  Killmail(window::Id, killmail_detail::Message),
+  KillmailWindowReady {
+    id: window::Id,
+    killmail_id: i64,
+    source: killmail_detail::Source,
+  },
   LeaseHeartbeat,
   LockReleased,
   Mail(mail::Message),
@@ -370,6 +378,7 @@ impl Message {
       Message::Compare(_) => "Compare",
       Message::CorporationDetail(_) => "CorporationDetail",
       Message::Industry(_) => "Industry",
+      Message::Killmail(..) => "Killmail",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::Mcp(_) => "Mcp",
@@ -400,6 +409,9 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
+      Message::KillmailWindowReady {
+        ..
+      } => "KillmailWindowReady",
       Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
@@ -863,6 +875,7 @@ fn boot() -> (App, Task<Message>) {
     industry_catalog: None,
     init_error: None,
     keyboard_focus: FocusTracker::default(),
+    killmails: WindowStates::default(),
     last_push: None,
     last_synced: None,
     mail: None,
@@ -1215,6 +1228,7 @@ fn ui_config(app: &App) -> config::UiConfig {
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
     Some(Window::Compare) => close_compare_window(app, id),
+    Some(Window::Killmail) => close_killmail_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     _ => {
       app.windows.remove(id);
@@ -1230,6 +1244,9 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
   };
   match kind {
     Window::Compare if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) => app.compare = None,
+    Window::Killmail => {
+      app.killmails.remove(id);
+    }
     Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
     _ => {}
   }
@@ -1742,6 +1759,9 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
   if let Some((_, compare)) = app.compare.as_ref() {
     keys.extend(compare.stale_images());
   }
+  for (_, killmail) in app.killmails.iter() {
+    keys.extend(killmail.stale_images());
+  }
   keys
 }
 
@@ -1824,6 +1844,10 @@ fn image_reload(app: &App) -> Task<Message> {
   }
   if let Some((_, compare)) = app.compare.as_ref() {
     tasks.push(skills_compare::load(&runtime.db, compare.selected_ids().to_vec()).map(Message::Compare));
+  }
+  for (id, killmail) in app.killmails.iter() {
+    let load = killmail_detail::load(&runtime.db, killmail.source(), killmail.killmail_id());
+    tasks.push(load.map(move |msg| Message::Killmail(id, msg)));
   }
   Task::batch(tasks)
 }
@@ -2506,12 +2530,6 @@ fn subscription(app: &App) -> Subscription<Message> {
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
-  if let Some(state) = &app.character_detail {
-    subs.push(character_detail::subscription(state).map(Message::CharacterDetail));
-  }
-  if let Some(state) = &app.corporation_detail {
-    subs.push(corporation_detail::subscription(state).map(Message::CorporationDetail));
-  }
   if let Some(state) = &app.character_manager {
     subs.push(character_manager::subscription(state).map(Message::CharacterManager));
   }
@@ -2663,9 +2681,8 @@ fn centered_position(parent_position: Point, parent_size: Size, new_size: Size) 
   )
 }
 
-// Consumed by the Killmail pilot and the Contract/Stockpile/Mail child windows, none of which exist yet, so
-// the foundation ships these reusable openers ahead of their first caller.
-#[allow(dead_code)]
+// Used by the Killmail pilot and the not-yet-built Contract/Stockpile/Mail child windows that share this
+// reusable opener.
 fn splash_window_settings(position: window::Position, size: Size) -> window::Settings {
   window::Settings {
     size,
@@ -2681,8 +2698,6 @@ fn splash_window_settings(position: window::Position, size: Size) -> window::Set
 // Opens a detached splash-chrome window centered on the main window (falling back to monitor-centered when
 // its geometry is unavailable) and hands the new window's id to `register` so the caller can record the
 // kind, seed per-window state, and kick its loader. Geometry is never restored: every open uses `size`.
-// Consumed by the not-yet-built detached child windows; see `splash_window_settings`.
-#[allow(dead_code)]
 fn open_centered_window<F>(app: &App, size: Size, register: F) -> Task<Message>
 where
   F: Fn(window::Id) -> Task<Message> + Send + 'static,
@@ -2809,6 +2824,60 @@ fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([window::close(id), reload])
 }
 
+/// Opens a detached killmail window centered on the main window. The id is unknown until the centered
+/// open resolves, so kind registration, state seeding, and the loader kickoff are deferred to
+/// [`handle_killmail_window_ready`] via a `KillmailWindowReady` message keyed by the new id. Unlimited
+/// instances coexist, duplicates included, because every open mints a fresh id.
+fn open_killmail_window(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+  let size = Size::new(
+    killmail_detail::KILLMAIL_WINDOW_WIDTH,
+    killmail_detail::KILLMAIL_WINDOW_HEIGHT,
+  );
+  open_centered_window(app, size, move |id| {
+    Task::done(Message::KillmailWindowReady {
+      id,
+      killmail_id,
+      source,
+    })
+  })
+}
+
+fn handle_killmail_window_ready(
+  app: &mut App,
+  id: window::Id,
+  source: killmail_detail::Source,
+  killmail_id: i64,
+) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  app.windows.register(id, Window::Killmail);
+  app
+    .killmails
+    .insert(id, killmail_detail::State::new(source, killmail_id));
+  killmail_detail::load(&db, source, killmail_id).map(move |msg| Message::Killmail(id, msg))
+}
+
+fn handle_killmail(app: &mut App, id: window::Id, msg: killmail_detail::Message) -> Task<Message> {
+  let Some(state) = app.killmails.get_mut(id) else {
+    return Task::none();
+  };
+  let killmail_detail::Message::Loaded(detail) = msg;
+  state.set_detail(*detail);
+  let keys = state.stale_images();
+  dispatch_image_fetches(app, keys)
+}
+
+fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.killmails.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
@@ -2840,6 +2909,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Compare(msg) => handle_compare(app, msg),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
+    Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::Mcp(request) => handle_mcp(app, request),
@@ -2903,8 +2973,14 @@ fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
 
 fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
+    Message::Chrome(id, event) => handle_chrome_event(app, id, event),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
+    Message::KillmailWindowReady {
+      id,
+      killmail_id,
+      source,
+    } => handle_killmail_window_ready(app, id, source, killmail_id),
     Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),
@@ -4123,6 +4199,18 @@ fn handle_calendar_attention_counted(app: &mut App, count: i64) -> Task<Message>
 }
 
 fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Task<Message> {
+  if let character_detail::Message::KillmailSelected(killmail_id) = msg {
+    let Some(character_id) = app.character_detail.as_ref().map(character_detail::State::active) else {
+      return Task::none();
+    };
+    return open_killmail_window(
+      app,
+      killmail_detail::Source::Character {
+        character_id,
+      },
+      killmail_id,
+    );
+  }
   if let character_detail::Message::CharacterChanged(id) = msg {
     let owned: Vec<i64> = owned_pilot_ids(app);
     navigate(app, Route::CharacterDetail(id));
@@ -4156,6 +4244,18 @@ fn handle_character_detail(app: &mut App, msg: character_detail::Message) -> Tas
 }
 
 fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) -> Task<Message> {
+  if let corporation_detail::Message::KillmailSelected(killmail_id) = msg {
+    let Some(corporation_id) = app.corporation_detail.as_ref().map(corporation_detail::State::active) else {
+      return Task::none();
+    };
+    return open_killmail_window(
+      app,
+      killmail_detail::Source::Corporation {
+        corporation_id,
+      },
+      killmail_id,
+    );
+  }
   match (app.corporation_detail.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => corporation_detail::update(state, msg, &runtime.db).map(Message::CorporationDetail),
     _ => Task::none(),
@@ -4975,8 +5075,6 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
 // Translates a window-chrome interaction on the window `id` into the matching iced window task: the drag
 // bar moves the window, a resize edge begins an edge/corner drag-resize, and the close button routes through
 // the standard close path so lifetime/shutdown bookkeeping stays in one place.
-// Consumed by the not-yet-built detached child windows; see `splash_window_settings`.
-#[allow(dead_code)]
 fn handle_chrome_event(app: &mut App, id: window::Id, event: window_chrome::Event) -> Task<Message> {
   match event {
     window_chrome::Event::Close => handle_close_requested(app, id),
@@ -5080,6 +5178,10 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
       Some((compare_id, state)) if *compare_id == id => skills_compare::view(state).map(Message::Compare),
       _ => blank(),
     },
+    Some(Window::Killmail) => match app.killmails.get(id) {
+      Some(state) => killmail_detail::view(state, move |event| Message::Chrome(id, event)),
+      None => blank(),
+    },
     Some(Window::SkillPlanEditor) => match app.editor.as_ref() {
       Some((editor_id, state)) if *editor_id == id => {
         skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
@@ -5134,6 +5236,7 @@ mod tests {
       industry_catalog: None,
       init_error: None,
       keyboard_focus: FocusTracker::default(),
+      killmails: WindowStates::default(),
       last_push: None,
       last_synced: None,
       mail: None,
@@ -8109,6 +8212,146 @@ mod tests {
       let _ = handle_chrome_event(&mut app, killmail, window_chrome::Event::Drag);
 
       assert_eq!(app.windows.kind(killmail), Some(Window::Killmail));
+    }
+  }
+
+  mod killmail_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn detail(killmail_id: i64) -> killmail_detail::KillmailDetail {
+      killmail_detail::KillmailDetail {
+        attackers: Vec::new(),
+        damage_taken: 0,
+        dropped_isk: 0.0,
+        is_kill: true,
+        kill_time: "2024-01-01T00:00:00Z".to_owned(),
+        killmail_id,
+        ship_icon: store::images::IconResolution::Missing,
+        ship_name: "Rifter".to_owned(),
+        slots: Vec::new(),
+        system_name: None,
+        system_security: 0.0,
+        value_destroyed_isk: 0.0,
+        value_isk: 0.0,
+        victim_alliance: None,
+        victim_corp: None,
+        victim_name: "Target".to_owned(),
+        victim_portrait: store::images::ImageState::Fresh("/tmp/p.jpg".into()),
+      }
+    }
+
+    fn ready(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> window::Id {
+      let id = window::Id::unique();
+      let _ = handle_killmail_window_ready(app, id, source, killmail_id);
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.kind(id), Some(Window::Killmail));
+      assert_eq!(
+        app.killmails.get(id).map(killmail_detail::State::killmail_id),
+        Some(100)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_holds_duplicate_killmails_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = killmail_detail::Source::Corporation {
+        corporation_id: 7,
+      };
+
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 100);
+
+      assert_ne!(first, second);
+      assert_eq!(app.killmails.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::Killmail).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_loaded_detail_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let source = killmail_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = handle_killmail(
+        &mut app,
+        first,
+        killmail_detail::Message::Loaded(Box::new(Some(detail(100)))),
+      );
+
+      assert_eq!(
+        app
+          .killmails
+          .get(first)
+          .and_then(killmail_detail::State::loaded_killmail_id),
+        Some(100)
+      );
+      assert_eq!(
+        app
+          .killmails
+          .get(second)
+          .and_then(killmail_detail::State::loaded_killmail_id),
+        None
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let source = killmail_detail::Source::Character {
+        character_id: 42,
+      };
+      let first = ready(&mut app, source, 100);
+      let second = ready(&mut app, source, 200);
+
+      let _ = close_killmail_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.killmails.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::Killmail));
+      assert!(app.killmails.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_a_killmail_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(
+        &mut app,
+        killmail_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.killmails.get(id).is_none());
     }
   }
 

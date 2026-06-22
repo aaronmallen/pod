@@ -483,6 +483,28 @@ mod tests {
         .expect("per/wil pair present");
       assert_eq!(per_wil.sp, 256_000 - 45_255);
     }
+
+    #[test]
+    fn it_omits_an_already_trained_step_so_it_contributes_zero_to_attribute_math() {
+      let trained_only = vec![entry(3300, 5, 0)];
+      let with_needed = vec![entry(3300, 5, 0), entry(3301, 5, 1)];
+      let meta = HashMap::from([
+        (3300, skill(Attribute::Intelligence, Attribute::Memory, 999_999)),
+        (3301, skill(Attribute::Perception, Attribute::Willpower, 0)),
+      ]);
+
+      let trained_weights = queue_pair_weights(&trained_only, &meta);
+      let needed_weights = queue_pair_weights(&with_needed, &meta);
+
+      assert!(trained_weights.is_empty());
+      assert_eq!(
+        optimize_remap(&trained_weights, base(), implants()),
+        optimize_remap(&needed_weights[..0], base(), implants()),
+        "an already-trained step leaves the optimizer with the same empty weight set"
+      );
+      assert_eq!(needed_weights.len(), 1);
+      assert_eq!(needed_weights[0].primary, Attribute::Perception);
+    }
   }
 
   mod remap_days {

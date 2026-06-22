@@ -945,6 +945,90 @@ mod tests {
     }
   }
 
+  mod needed_only_math {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const CHARACTER_TOTAL_SP: u64 = 10_000_000;
+
+    fn fast_attrs() -> Attributes {
+      attrs(27, 21, 17, 17, 17)
+    }
+
+    fn trained(skill_id: i64, to_level: u8, synced_trained_level: u8) -> PlanEntry {
+      PlanEntry {
+        synced_trained_level,
+        ..entry(skill_id, to_level)
+      }
+    }
+
+    #[test]
+    fn it_charges_zero_injectors_when_every_step_is_already_trained() {
+      let full = [
+        trained(3300, 1, 5),
+        trained(3300, 2, 5),
+        trained(3300, 3, 5),
+        trained(3300, 4, 5),
+        trained(3300, 5, 5),
+      ];
+
+      let plan = compute_plan(&full, fast_attrs(), &PlanOptions::default(), 0.0);
+      let estimate = injectors_for_plan(plan.total_sp, CHARACTER_TOTAL_SP);
+
+      assert_eq!(plan.total_sp, 0);
+      assert_eq!(estimate.large, 0);
+      assert_eq!(estimate.small, 0);
+    }
+
+    #[test]
+    fn it_matches_the_trimmed_plan_for_injector_time_and_sp() {
+      let banked_at_two = sp_cost(1.0, 2);
+      let mut head = trained(3300, 3, 2);
+      head.partial_sp_at_from = banked_at_two;
+      let full = [
+        trained(3300, 1, 2),
+        trained(3300, 2, 2),
+        head,
+        trained(3300, 4, 2),
+        trained(3300, 5, 2),
+      ];
+      let mut needed_head = entry(3300, 3);
+      needed_head.synced_trained_level = 2;
+      needed_head.partial_sp_at_from = banked_at_two;
+      let needed_only = [needed_head, entry(3300, 4), entry(3300, 5)];
+
+      let full_plan = compute_plan(&full, fast_attrs(), &PlanOptions::default(), 0.0);
+      let needed_plan = compute_plan(&needed_only, fast_attrs(), &PlanOptions::default(), 0.0);
+
+      assert_eq!(full_plan.total_sp, needed_plan.total_sp);
+      assert_eq!(full_plan.total_sp, sp_cost(1.0, 5) - sp_cost(1.0, 2));
+      assert!((full_plan.total_sec - needed_plan.total_sec).abs() < 1e-9);
+      assert_eq!(
+        injectors_for_plan(full_plan.total_sp, CHARACTER_TOTAL_SP),
+        injectors_for_plan(needed_plan.total_sp, CHARACTER_TOTAL_SP),
+      );
+    }
+
+    #[test]
+    fn it_excludes_trained_levels_from_the_injector_estimate() {
+      let full = [
+        trained(3300, 1, 4),
+        trained(3300, 2, 4),
+        trained(3300, 3, 4),
+        trained(3300, 4, 4),
+        trained(3300, 5, 4),
+      ];
+
+      let plan = compute_plan(&full, fast_attrs(), &PlanOptions::default(), 0.0);
+      let with_trained = injectors_for_plan(plan.total_sp, CHARACTER_TOTAL_SP);
+      let needed_only = injectors_for_plan(sp_cost(1.0, 5) - sp_cost(1.0, 4), CHARACTER_TOTAL_SP);
+
+      assert_eq!(plan.total_sp, sp_cost(1.0, 5) - sp_cost(1.0, 4));
+      assert_eq!(with_trained, needed_only);
+    }
+  }
+
   mod remap_availability {
     use chrono::TimeZone as _;
     use pretty_assertions::assert_eq;

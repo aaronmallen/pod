@@ -248,4 +248,27 @@ mod tests {
       assert_eq!(fmt_time_short(14.0 * 86_400.0 + 3.0 * 3_600.0), "14d 3h");
     }
   }
+
+  mod summary_injectors {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_charges_zero_injectors_when_no_needed_sp_remains() {
+      let estimate = injectors_for_plan(0, 50_000_000);
+
+      assert_eq!(estimate.large, 0);
+      assert_eq!(estimate.small, 0);
+    }
+
+    #[test]
+    fn it_estimates_injectors_from_the_needed_only_plan_sp() {
+      let trained_only = injectors_for_plan(0, 50_000_000);
+      let needed_only = injectors_for_plan(600_000, 50_000_000);
+
+      assert_eq!(trained_only.large + trained_only.small, 0);
+      assert!(needed_only.large + needed_only.small > 0);
+    }
+  }
 }

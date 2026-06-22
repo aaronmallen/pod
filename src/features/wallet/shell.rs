@@ -61,6 +61,8 @@ const JOURNAL_RIGHT_COL_WIDTH: f32 = 120.0;
 /// the one- vs two-line variance so no visible gap can open.
 const ESTIMATED_ROW_HEIGHT: f32 = 60.0;
 
+const LEDGER_SCROLL_ID: &str = "wallet-ledger-scroll";
+
 pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let body = Column::with_children(vec![header::header(state, now), self::body(state, now)])
     .width(Length::Fill)
@@ -574,6 +576,7 @@ where
     let list = VirtualList::new(config, |index| render(entries[index])).view();
 
     scrollable(list)
+      .id(LEDGER_SCROLL_ID)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)

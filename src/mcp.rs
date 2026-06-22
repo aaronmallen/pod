@@ -15,6 +15,9 @@ pub mod protocol;
 pub mod reload;
 pub mod server;
 pub mod tool;
+pub mod tools_mail;
+pub mod tools_read;
+pub mod tools_write;
 pub mod transport;
 
 use serde_json::{Value, json};
@@ -26,11 +29,21 @@ use crate::{
   store::Database,
 };
 
-/// Builds the tool catalog the server exposes. Today this is the single `ping` smoke tool that
-/// proves the connect -> auth -> dispatch -> reply loop; the read/write/mail specs extend it by
-/// adding their own [`McpTool`]s here (or by composing onto the returned registry).
+/// Builds the tool catalog the server exposes: the `ping` smoke tool plus the read, local-write, and
+/// mail tool families ([`tools_read`], [`tools_write`], [`tools_mail`]). Each tool carries the
+/// [`Permission`] the gate enforces before its handler runs.
 pub fn registry() -> Registry {
-  Registry::default().with(ping_tool())
+  let mut registry = Registry::default().with(ping_tool());
+  for tool in tools_read::tools() {
+    registry.register(tool);
+  }
+  for tool in tools_write::tools() {
+    registry.register(tool);
+  }
+  for tool in tools_mail::tools() {
+    registry.register(tool);
+  }
+  registry
 }
 
 /// Builds the app-held [`Server`] over the tool catalog. The caller drives its lifecycle with
@@ -96,10 +109,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_ships_the_ping_smoke_tool() {
+    fn it_ships_the_ping_smoke_tool_alongside_the_tool_families() {
       let names: Vec<&str> = super::registry().tools().map(McpTool::name).collect();
 
-      assert_eq!(names, vec!["ping"]);
+      assert!(names.contains(&"ping"));
+      assert!(names.contains(&"list_characters"));
+      assert!(names.contains(&"budget_assign_category"));
+      assert!(names.contains(&"send_mail"));
+    }
+
+    #[test]
+    fn its_tool_names_are_unique() {
+      let names: Vec<&str> = super::registry().tools().map(McpTool::name).collect();
+      let mut unique = names.clone();
+      unique.sort_unstable();
+      unique.dedup();
+
+      assert_eq!(names.len(), unique.len());
     }
 
     #[test]

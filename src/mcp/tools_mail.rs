@@ -1,0 +1,524 @@
+use serde_json::{Value, json};
+
+use crate::{
+  clients::esi::scopes,
+  mcp::tool::{McpTool, Permission, ToolError},
+  store::{
+    Database,
+    model::{CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailRecipient, OwnerType},
+    repo::{character, infra, mail},
+  },
+};
+
+pub fn tools() -> Vec<McpTool> {
+  vec![send_mail_tool(), delete_mail_tool(), manage_labels_tool()]
+}
+
+fn send_mail_tool() -> McpTool {
+  McpTool::new(
+    "send_mail",
+    "Queues an EVE mail for delivery through Pod's outbox (optimistic Sent insert, real ESI send by the drainer). \
+     Args: character_id (sender), subject, body, recipients [{id, type?}].",
+    Permission::SendMail,
+    |db, args: Value| async move {
+      let character_id = require_i64(&args, "character_id")?;
+      require_scope(&db, character_id, scopes::CHARACTER_MAIL_SEND, "send_mail").await?;
+      let subject = require_str(&args, "subject")?.to_owned();
+      let body = require_str(&args, "body")?.to_owned();
+      let recipients = parse_recipients(&args)?;
+      if recipients.is_empty() {
+        return Err(ToolError::InvalidArguments(
+          "at least one recipient is required".to_owned(),
+        ));
+      }
+
+      let mail_id = optimistic_mail_id();
+      write_optimistic_sent(&db, character_id, mail_id, &subject, &body, &recipients).await;
+      let payload = json!({
+        "body": body,
+        "from_character_id": character_id,
+        "optimistic_mail_id": mail_id,
+        "recipients": recipients.iter().map(Recipient::to_payload).collect::<Vec<_>>(),
+        "subject": subject,
+      });
+      append(&db, character_id, "mail.send", &payload, None).await?;
+
+      Ok(json!({ "optimistic_mail_id": mail_id, "queued": true }))
+    },
+  )
+}
+
+fn delete_mail_tool() -> McpTool {
+  McpTool::new(
+    "delete_mail",
+    "Permanently deletes a mail from Pod and the EVE mailbox through the outbox (optimistic purge, real ESI delete by \
+     the drainer, restore-on-failure). Args: character_id, mail_id.",
+    Permission::DeleteMail,
+    |db, args: Value| async move {
+      let character_id = require_i64(&args, "character_id")?;
+      let mail_id = require_i64(&args, "mail_id")?;
+      require_scope(&db, character_id, scopes::CHARACTER_MAIL_ORGANIZE, "delete_mail").await?;
+
+      let Some(snapshot) = mail::snapshot_mail(&db, character_id, mail_id)
+        .await
+        .map_err(internal)?
+      else {
+        return Err(ToolError::InvalidArguments(format!(
+          "no mail {mail_id} for character {character_id}"
+        )));
+      };
+      mail::purge_mail(&db, character_id, mail_id).await.map_err(internal)?;
+      let payload = serde_json::to_value(&snapshot).map_err(internal)?;
+      let dedupe = format!("delete_mail:{mail_id}");
+      append(&db, character_id, "mail.delete", &payload, Some(&dedupe)).await?;
+
+      Ok(json!({ "mail_id": mail_id, "queued": true }))
+    },
+  )
+}
+
+fn manage_labels_tool() -> McpTool {
+  McpTool::new(
+    "manage_labels",
+    "Creates or deletes a mail label, or sets a mail's labels, through the outbox. Args: character_id, action \
+     (create_label|delete_label|set_labels), name+color? (create), label_id (delete), mail_id+labels[] (set).",
+    Permission::ManageLabels,
+    |db, args: Value| async move {
+      let character_id = require_i64(&args, "character_id")?;
+      require_scope(&db, character_id, scopes::CHARACTER_MAIL_ORGANIZE, "manage_labels").await?;
+      match require_str(&args, "action")? {
+        "create_label" => create_label(&db, character_id, &args).await,
+        "delete_label" => delete_label(&db, character_id, &args).await,
+        "set_labels" => set_labels(&db, character_id, &args).await,
+        other => Err(ToolError::InvalidArguments(format!(
+          "`action` must be create_label, delete_label, or set_labels, got `{other}`"
+        ))),
+      }
+    },
+  )
+}
+
+async fn create_label(db: &Database, character_id: i64, args: &Value) -> Result<Value, ToolError> {
+  let name = require_str(args, "name")?.trim().to_owned();
+  if name.is_empty() {
+    return Err(ToolError::InvalidArguments("label `name` cannot be empty".to_owned()));
+  }
+  let color = args.get("color").and_then(Value::as_str).map(str::to_owned);
+  let label_id = optimistic_mail_id();
+  let optimistic = CharacterMailLabel {
+    character_id,
+    color: color.clone(),
+    label_id,
+    name: name.clone(),
+  };
+  mail::insert_label(db, &optimistic).await.map_err(internal)?;
+
+  let payload = json!({ "character_id": character_id, "color": color, "label_id": label_id, "name": name });
+  append(db, character_id, "mail.create_label", &payload, None).await?;
+  Ok(json!({ "label_id": label_id, "queued": true }))
+}
+
+async fn delete_label(db: &Database, character_id: i64, args: &Value) -> Result<Value, ToolError> {
+  let label_id = require_i64(args, "label_id")?;
+  mail::delete_label(db, character_id, label_id).await.map_err(internal)?;
+
+  let payload = json!({ "character_id": character_id, "label_id": label_id });
+  let dedupe = format!("delete_label:{label_id}");
+  append(db, character_id, "mail.delete_label", &payload, Some(&dedupe)).await?;
+  Ok(json!({ "label_id": label_id, "queued": true }))
+}
+
+async fn set_labels(db: &Database, character_id: i64, args: &Value) -> Result<Value, ToolError> {
+  let mail_id = require_i64(args, "mail_id")?;
+  let labels = require_i64_array(args, "labels")?;
+  let previous = mail::membership(db, character_id, mail_id).await.map_err(internal)?;
+  apply_membership(db, character_id, mail_id, &previous, &labels).await?;
+
+  let payload = json!({
+    "character_id": character_id,
+    "labels": labels,
+    "mail_id": mail_id,
+    "previous": previous,
+  });
+  let dedupe = format!("set_labels:{mail_id}");
+  append(db, character_id, "mail.set_labels", &payload, Some(&dedupe)).await?;
+  Ok(json!({ "labels": labels, "mail_id": mail_id, "queued": true }))
+}
+
+struct Recipient {
+  id: i64,
+  recipient_type: String,
+}
+
+impl Recipient {
+  fn to_payload(&self) -> Value {
+    json!({ "id": self.id, "name": "", "recipient_type": self.recipient_type })
+  }
+}
+
+/// Mirrors `mail::compose::enqueue_send`: the outbox drainer never runs a handler `apply`, so the
+/// enqueueing layer owns the optimistic Sent row. The synthetic header carries `from_id ==
+/// character_id`, which is what files it into the Sent folder; sync reconciles it away later.
+async fn write_optimistic_sent(
+  db: &Database,
+  character_id: i64,
+  mail_id: i64,
+  subject: &str,
+  body: &str,
+  recipients: &[Recipient],
+) {
+  let from_name = character::get(db, character_id)
+    .await
+    .ok()
+    .flatten()
+    .map(|c| c.name().to_owned())
+    .unwrap_or_default();
+  let header = CharacterMail {
+    character_id,
+    from_corp: false,
+    from_id: character_id,
+    from_name,
+    from_system: false,
+    has_attachment: false,
+    important: false,
+    is_read: true,
+    mail_id,
+    subject: Some(subject.to_owned()),
+    timestamp: chrono::Utc::now().to_rfc3339(),
+  };
+  let body = CharacterMailBody {
+    body: body.to_owned(),
+    character_id,
+    mail_id,
+  };
+  let recipient_rows: Vec<CharacterMailRecipient> = recipients
+    .iter()
+    .map(|recipient| CharacterMailRecipient {
+      character_id,
+      mail_id,
+      recipient_id: recipient.id,
+      recipient_name: String::new(),
+      recipient_type: recipient.recipient_type.clone(),
+    })
+    .collect();
+  let _ = mail::upsert_complete(db, &header, &body, &recipient_rows).await;
+}
+
+async fn apply_membership(
+  db: &Database,
+  character_id: i64,
+  mail_id: i64,
+  previous: &[i64],
+  labels: &[i64],
+) -> Result<(), ToolError> {
+  for label_id in previous {
+    if !labels.contains(label_id) {
+      mail::remove_membership(db, character_id, mail_id, *label_id)
+        .await
+        .map_err(internal)?;
+    }
+  }
+  for label_id in labels {
+    if !previous.contains(label_id) {
+      mail::add_membership(db, character_id, mail_id, *label_id)
+        .await
+        .map_err(internal)?;
+    }
+  }
+  Ok(())
+}
+
+async fn append(
+  db: &Database,
+  character_id: i64,
+  kind: &str,
+  payload: &Value,
+  dedupe: Option<&str>,
+) -> Result<(), ToolError> {
+  let json = serde_json::to_string(payload).map_err(internal)?;
+  infra::append(db, OwnerType::Character, character_id, kind, &json, dedupe)
+    .await
+    .map(|_| ())
+    .map_err(internal)
+}
+
+fn internal(error: impl std::fmt::Display) -> ToolError {
+  ToolError::Internal(error.to_string())
+}
+
+/// A negative, millisecond-epoch-derived optimistic id. The negativity is load-bearing: sync
+/// preserves rows with a negative id and the create/send handlers remap or sweep them.
+fn optimistic_mail_id() -> i64 {
+  let millis = chrono::Utc::now().timestamp_millis();
+  -millis.max(1)
+}
+
+fn parse_recipients(args: &Value) -> Result<Vec<Recipient>, ToolError> {
+  let items = args
+    .get("recipients")
+    .and_then(Value::as_array)
+    .ok_or_else(|| ToolError::InvalidArguments("`recipients` must be an array".to_owned()))?;
+  items
+    .iter()
+    .map(|item| {
+      let id = item
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| ToolError::InvalidArguments("each recipient needs an `id`".to_owned()))?;
+      let recipient_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("character")
+        .to_owned();
+      Ok(Recipient {
+        id,
+        recipient_type,
+      })
+    })
+    .collect()
+}
+
+async fn require_scope(
+  db: &Database,
+  character_id: i64,
+  scope: &str,
+  permission: &'static str,
+) -> Result<(), ToolError> {
+  let credential = infra::get(db, character_id, OwnerType::Character)
+    .await
+    .map_err(internal)?;
+  let granted = credential
+    .and_then(|cred| cred.scopes().clone())
+    .is_some_and(|scopes| scopes.split_whitespace().any(|s| s == scope));
+  if granted {
+    Ok(())
+  } else {
+    Err(ToolError::InvalidArguments(format!(
+      "character {character_id} has not granted the `{scope}` scope required by {permission}; re-authorize in Pod"
+    )))
+  }
+}
+
+fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
+  args
+    .get(key)
+    .and_then(Value::as_i64)
+    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be an integer")))
+}
+
+fn require_i64_array(args: &Value, key: &str) -> Result<Vec<i64>, ToolError> {
+  let items = args
+    .get(key)
+    .and_then(Value::as_array)
+    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must be an array of integers")))?;
+  items
+    .iter()
+    .map(|item| {
+      item
+        .as_i64()
+        .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must contain only integers")))
+    })
+    .collect()
+}
+
+fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
+  args
+    .get(key)
+    .and_then(Value::as_str)
+    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be a string")))
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{config::McpPerms, mcp::tool::Registry, store::repo::character};
+
+  async fn database() -> Database {
+    crate::store::open_test().await.expect("open a migrated test database")
+  }
+
+  async fn seed_character_with_scopes(db: &Database, id: i64, scopes: &str) {
+    use crate::store::model::{Alliance, Bloodline, Character, Corporation, Gender, Race};
+    let corp_id = 90_000_001;
+    let alliance_id = 99_000_001;
+    let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+    let race = Race::new(2, alliance_id, "A race.", "Caldari");
+    let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+    corp.set_ceo_id(id);
+    corp.set_creator_id(id);
+    corp.set_member_count(1);
+    corp.set_tax_rate(0.0);
+    let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+    let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+    character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+      .await
+      .expect("seed character");
+    infra::upsert(
+      db,
+      id,
+      OwnerType::Character,
+      "tok",
+      "rt",
+      9_999_999_999,
+      None,
+      Some(scopes),
+    )
+    .await
+    .expect("seed credential");
+  }
+
+  fn all_mail_perms() -> McpPerms {
+    let mut perms = McpPerms::default();
+    perms.set_send_mail(true);
+    perms.set_delete_mail(true);
+    perms.set_manage_labels(true);
+    perms
+  }
+
+  fn registry() -> Registry {
+    let mut registry = Registry::default();
+    for tool in tools() {
+      registry.register(tool);
+    }
+    registry
+  }
+
+  async fn pending_outbox(db: &Database, kind: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM outbox WHERE kind = ?")
+      .bind(kind)
+      .fetch_one(db.reader())
+      .await
+      .unwrap()
+  }
+
+  mod gates {
+    use super::*;
+
+    #[tokio::test]
+    async fn each_tool_is_denied_under_its_own_permission() {
+      let db = database().await;
+      let registry = registry();
+      let denied = [
+        ("send_mail", Permission::SendMail, "send_mail"),
+        ("delete_mail", Permission::DeleteMail, "delete_mail"),
+        ("manage_labels", Permission::ManageLabels, "manage_labels"),
+      ];
+
+      for (name, permission, label) in denied {
+        let mut perms = all_mail_perms();
+        match permission {
+          Permission::SendMail => perms.set_send_mail(false),
+          Permission::DeleteMail => perms.set_delete_mail(false),
+          Permission::ManageLabels => perms.set_manage_labels(false),
+          _ => unreachable!(),
+        };
+
+        let outcome = registry.dispatch(name, &perms, db.clone(), Value::Null).await;
+
+        assert!(
+          matches!(outcome, Err(ToolError::PermissionDenied(p)) if p == label),
+          "{name} must be gated by {label}: {outcome:?}"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn the_gates_are_independent() {
+      let db = database().await;
+      let registry = registry();
+      let mut only_send = McpPerms::default();
+      only_send.set_send_mail(true);
+
+      let delete = registry
+        .dispatch(
+          "delete_mail",
+          &only_send,
+          db.clone(),
+          json!({ "character_id": 1, "mail_id": 1 }),
+        )
+        .await;
+
+      assert!(matches!(delete, Err(ToolError::PermissionDenied("delete_mail"))));
+    }
+  }
+
+  mod send_mail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_enqueues_a_send_and_writes_the_optimistic_sent_row() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_SEND).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "send_mail",
+          &all_mail_perms(),
+          db.clone(),
+          json!({
+            "character_id": 42,
+            "subject": "hi",
+            "body": "hello",
+            "recipients": [{ "id": 99, "type": "character" }],
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
+      assert_eq!(pending_outbox(&db, "mail.send").await, 1);
+    }
+
+    #[tokio::test]
+    async fn it_refuses_a_character_without_the_send_scope() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "send_mail",
+          &all_mail_perms(),
+          db,
+          json!({
+            "character_id": 42,
+            "subject": "hi",
+            "body": "hello",
+            "recipients": [{ "id": 99 }],
+          }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod manage_labels {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_enqueues_a_create_label() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db.clone(),
+          json!({ "character_id": 42, "action": "create_label", "name": "Ops", "color": "#ffffff" }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
+      assert_eq!(pending_outbox(&db, "mail.create_label").await, 1);
+    }
+  }
+}

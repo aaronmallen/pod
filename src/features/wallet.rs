@@ -1,4 +1,4 @@
-mod budget;
+pub(crate) mod budget;
 mod budget_reflect;
 mod budget_view;
 mod header;

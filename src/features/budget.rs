@@ -385,6 +385,12 @@ pub fn category_for_ref_type(
 /// lazy-seeding the scope's default budget first so an unseeded scope gains real
 /// categories before the assignment lands. Idempotent on `(scope, owner,
 /// entry_kind, entry_id)`: reassigning the same entry replaces its category.
+///
+/// Cross-owner co-assignment cascades a trade's envelope onto every owner whose
+/// wallet mirrors it, so this refuses to write a copy for an `owner` that holds
+/// no wallet row for the entry (e.g. a character-owned copy of a corp-only id).
+/// Such a row could never match the ledger and would sit silently inert, so it
+/// is skipped and `Ok(None)` returned rather than persisting a mis-owned row.
 // Per-entry budget assignment (child A); consumed by the Budget UI in child C. Exercised by unit
 // tests until then.
 #[allow(dead_code)]
@@ -395,9 +401,14 @@ pub async fn assign_entry(
   entry_kind: BudgetEntryKind,
   entry_id: i64,
   category_id: i64,
-) -> Result<BudgetEntryAssignment, Error> {
+) -> Result<Option<BudgetEntryAssignment>, Error> {
+  if !crate::store::repo::budget::owner_holds_entry(db, owner, entry_kind, entry_id).await? {
+    return Ok(None);
+  }
   seed_scope(db, scope).await?;
-  crate::store::repo::budget::upsert_entry_assignment(db, scope, owner, entry_kind, entry_id, category_id).await
+  crate::store::repo::budget::upsert_entry_assignment(db, scope, owner, entry_kind, entry_id, category_id)
+    .await
+    .map(Some)
 }
 
 // Dormant auto-categorization helper: the v1 derivation is manual-only, so this
@@ -3185,8 +3196,14 @@ mod tests {
   mod assign_entry {
     use pretty_assertions::assert_eq;
 
-    use super::*;
-    use crate::store::{self, repo::budget};
+    use super::{
+      monthly_activity::{journal, seed_character},
+      *,
+    };
+    use crate::store::{
+      self,
+      repo::{budget, finance},
+    };
 
     #[tokio::test]
     async fn it_lazy_seeds_an_unseeded_scope_on_first_assignment() {
@@ -3198,6 +3215,10 @@ mod tests {
       let income_id = slug_to_category_id(&probe, BudgetScope::Character(1)).await["income"];
 
       let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
+        .await
+        .unwrap();
       assert!(
         budget::list_groups(&db, BudgetScope::Character(1))
           .await
@@ -3222,7 +3243,7 @@ mod tests {
           .unwrap()
           .is_empty()
       );
-      assert_eq!(saved.category_id(), income_id);
+      assert_eq!(saved.expect("entry held by owner").category_id(), income_id);
       assert_eq!(
         resolve_entry_category(
           &db,
@@ -3235,6 +3256,200 @@ mod tests {
         )
         .await,
         Some(income_id)
+      );
+    }
+
+    #[tokio::test]
+    async fn it_skips_a_copy_for_an_owner_that_does_not_hold_the_entry() {
+      use crate::store::{
+        model::{Corporation, CorporationWalletJournal, OwnerType},
+        repo::infra,
+      };
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_020;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      store::repo::finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
+
+      // Journal id 9 exists only in the corp wallet; no character holds it.
+      finance::append_corporation_wallet_journal(
+        &db,
+        &[CorporationWalletJournal {
+          amount: Some(-2_000.0),
+          balance: Some(0.0),
+          context_id: None,
+          context_id_type: None,
+          corporation_id: corp_id,
+          date: "2026-06-10T00:00:00Z".to_owned(),
+          description: "Tax".to_owned(),
+          division: 1,
+          first_party_id: None,
+          id: 9,
+          reason: None,
+          ref_type: "industry_job_tax".to_owned(),
+          second_party_id: None,
+          tax: None,
+          tax_receiver_id: None,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let mis_owned = assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Journal,
+        9,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      let genuine = assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Corporation(corp_id),
+        BudgetEntryKind::Journal,
+        9,
+        slug_to_id["tithe"],
+      )
+      .await
+      .unwrap();
+
+      assert!(mis_owned.is_none());
+      assert!(genuine.is_some());
+      let assignments = budget::list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(assignments.len(), 1);
+      assert_eq!(assignments[0].owner_kind(), "corporation");
+    }
+
+    #[tokio::test]
+    async fn it_co_assigns_a_trade_present_in_both_wallets() {
+      use crate::store::{
+        model::{Corporation, CorporationWalletTransaction, OwnerType},
+        repo::infra,
+      };
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
+        .await
+        .unwrap();
+      let corp_id = 98_000_021;
+      let mut corp = Corporation::new(corp_id, "Owned Corp", "OWN");
+      corp.set_ceo_id(1);
+      corp.set_creator_id(1);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      store::repo::org::upsert_corporation(&db, &corp).await.unwrap();
+      infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
+        .await
+        .unwrap();
+      store::repo::finance::upsert_divisions(
+        &db,
+        &[store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id: corp_id,
+          division: 1,
+          name: Some("Master".to_owned()),
+        }],
+      )
+      .await
+      .unwrap();
+      seed_scope(&db, BudgetScope::All).await.unwrap();
+      let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
+
+      // The same transaction_id 700 lands in BOTH the character and corp wallet.
+      finance::append_wallet_transaction(
+        &db,
+        &[crate::store::model::CharacterWalletTransaction {
+          character_id: 1,
+          client_id: 1_000_035,
+          date: "2026-06-09T00:00:00Z".to_owned(),
+          is_buy: false,
+          is_personal: false,
+          journal_ref_id: 0,
+          location_id: 60_003_760,
+          quantity: 10,
+          transaction_id: 700,
+          type_id: 34,
+          unit_price: 100.0,
+        }],
+      )
+      .await
+      .unwrap();
+      finance::append_corporation_wallet_transaction(
+        &db,
+        &[CorporationWalletTransaction {
+          client_id: 1_000_035,
+          corporation_id: corp_id,
+          date: "2026-06-09T00:00:00Z".to_owned(),
+          division: 1,
+          is_buy: false,
+          journal_ref_id: 0,
+          location_id: 60_003_760,
+          quantity: 10,
+          transaction_id: 700,
+          type_id: 34,
+          unit_price: 100.0,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let character_copy = assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        700,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+      let corp_copy = assign_entry(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Corporation(corp_id),
+        BudgetEntryKind::Market,
+        700,
+        slug_to_id["income"],
+      )
+      .await
+      .unwrap();
+
+      assert!(character_copy.is_some());
+      assert!(corp_copy.is_some());
+      assert_eq!(
+        budget::list_entry_assignments(&db, BudgetScope::All)
+          .await
+          .unwrap()
+          .len(),
+        2
       );
     }
   }
@@ -3253,7 +3468,9 @@ mod tests {
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
       // `manufacturing` defaults to the industry envelope; override entry 5 to income.
-      assign_entry(
+      // Written through the storage primitive so this resolution test is independent
+      // of `assign_entry`'s wallet-ownership guard.
+      budget::upsert_entry_assignment(
         &db,
         scope,
         BudgetOwner::Character(1),
@@ -3287,7 +3504,9 @@ mod tests {
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
       // Two owners share EVE journal id 5; only the character's entry is overridden.
-      assign_entry(
+      // Written through the storage primitive so this resolution test is independent
+      // of `assign_entry`'s wallet-ownership guard.
+      budget::upsert_entry_assignment(
         &db,
         scope,
         BudgetOwner::Character(1),

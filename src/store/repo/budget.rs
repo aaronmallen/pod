@@ -558,6 +558,40 @@ pub async fn upsert_assignment(
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
 #[allow(dead_code)]
+pub async fn owner_holds_entry(
+  db: &Database,
+  owner: BudgetOwner,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+) -> Result<bool, Error> {
+  // entry_id is the journal `id` for a Journal entry and the `transaction_id` for
+  // a Market entry; each owner kind keys its wallet rows by its own id column, so
+  // a corp-only id has no character row and vice-versa.
+  let query = match (owner, entry_kind) {
+    (BudgetOwner::Character(_), BudgetEntryKind::Journal) => {
+      "SELECT EXISTS(SELECT 1 FROM character_wallet_journal WHERE character_id = ? AND id = ?)"
+    }
+    (BudgetOwner::Character(_), BudgetEntryKind::Market) => {
+      "SELECT EXISTS(SELECT 1 FROM character_wallet_transaction WHERE character_id = ? AND transaction_id = ?)"
+    }
+    (BudgetOwner::Corporation(_), BudgetEntryKind::Journal) => {
+      "SELECT EXISTS(SELECT 1 FROM corporation_wallet_journal WHERE corporation_id = ? AND id = ?)"
+    }
+    (BudgetOwner::Corporation(_), BudgetEntryKind::Market) => {
+      "SELECT EXISTS(SELECT 1 FROM corporation_wallet_transaction WHERE corporation_id = ? AND transaction_id = ?)"
+    }
+  };
+  let exists = sqlx::query_scalar::<_, i64>(query)
+    .bind(owner.owner_id())
+    .bind(entry_id)
+    .fetch_one(&db.0)
+    .await?;
+  Ok(exists != 0)
+}
+
+// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
+// Exercised by unit tests until then.
+#[allow(dead_code)]
 pub async fn upsert_entry_assignment(
   db: &Database,
   scope: BudgetScope,

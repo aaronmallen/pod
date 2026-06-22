@@ -19,12 +19,13 @@ use crate::{
 pub(super) fn entry_row<'a>(
   entry: &'a ComputedRow,
   index: usize,
+  display_number: usize,
   note_open: bool,
   is_dragging: bool,
   is_drop_target: bool,
 ) -> Element<'a, Message> {
   let inner = row(vec![
-    index_col(index),
+    index_col(display_number),
     Space::new().width(spacing::SPACE_2).into(),
     priority_dot(entry.priority, entry.id),
     Space::new().width(spacing::SPACE_2).into(),
@@ -78,9 +79,9 @@ fn drop_bar<'a>(is_drop_target: bool) -> Element<'a, Message> {
   }
 }
 
-fn index_col<'a>(index: usize) -> Element<'a, Message> {
+fn index_col<'a>(display_number: usize) -> Element<'a, Message> {
   container(
-    text(format!("#{}", index + 1))
+    text(format!("#{display_number}"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -146,10 +147,6 @@ fn skill_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
     name_items.push(Space::new().width(spacing::SPACE_2).into());
     name_items.push(badge("prereq", Some(color::status::ONLINE)));
   }
-  if entry.skipped {
-    name_items.push(Space::new().width(spacing::SPACE_2).into());
-    name_items.push(badge("already trained", Some(color::text::tertiary())));
-  }
 
   let name_row = row(name_items).align_y(Vertical::Center);
 
@@ -184,9 +181,6 @@ fn attr_col<'a>(key: AttrKey, primary: bool) -> Element<'a, Message> {
 }
 
 fn sp_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
-  if entry.skipped {
-    return dash_col(SP_COL_WIDTH);
-  }
   container(
     column(vec![
       text(fmt_sp(entry.sp))
@@ -214,9 +208,6 @@ fn sp_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
 }
 
 fn time_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
-  if entry.skipped {
-    return Space::new().width(TIME_COL_WIDTH).into();
-  }
   container(
     column(vec![
       text(fmt_dur_short(entry.sec))
@@ -381,21 +372,6 @@ fn note_editor<'a>(note: &'a str, id: i64) -> Element<'a, Message> {
     right: spacing::SPACE_3,
   })
   .width(Length::Fill)
-  .into()
-}
-
-fn dash_col<'a>(width: f32) -> Element<'a, Message> {
-  container(
-    text("\u{2014}")
-      .font(typography::mono::REGULAR)
-      .size(13.0)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      }),
-  )
-  .width(Length::Fixed(width))
-  .align_x(Horizontal::Right)
-  .align_y(Vertical::Center)
   .into()
 }
 

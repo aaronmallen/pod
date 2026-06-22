@@ -4684,6 +4684,25 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_trained_step_is_excluded_from_the_step_count_and_renders() {
+      let mut state = State::new(42);
+      state.attrs = attrs();
+      state.entries = vec![edit_entry(1, 3300, 5), edit_entry(2, 3301, 5)];
+      state.synced_levels = HashMap::from([(3300, 5)]);
+      state.synced_sp = HashMap::from([(3300, 1_280_000)]);
+      state.refresh_rows();
+
+      assert!(
+        state.rows[0].skipped,
+        "the already-trained entry projects as a skip row"
+      );
+      assert!(!state.rows[1].skipped, "the untrained entry still needs training");
+      assert_eq!(state.summary.steps, 1, "the step count omits the already-trained level");
+
+      let _el: Element<'_, Message> = view(&state, now());
+    }
+
+    #[test]
     fn an_over_trained_plan_renders_terminal_training_time_and_eta_cells() {
       let mut state = state_with_l5_entry();
       state.synced_levels = HashMap::from([(3300, 5)]);

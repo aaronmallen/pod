@@ -35,13 +35,24 @@ pub(super) fn plan_entry_list<'a>(
   hovered_gap: Option<i64>,
   controls: RemapControls<'a>,
 ) -> Element<'a, Message> {
+  let numbers = display_numbers(rows);
+  let visible_steps = numbers.iter().flatten().count();
   let card = container(
     column(vec![
-      stats_strip(rows.len(), total_sp, total_sec, now),
+      stats_strip(visible_steps, total_sp, total_sec, now),
       rule::horizontal(),
       col_header(sort),
       rule::horizontal(),
-      entry_rows(rows, remaps, note_open, dragging, drop_index, hovered_gap, controls),
+      entry_rows(
+        rows,
+        &numbers,
+        remaps,
+        note_open,
+        dragging,
+        drop_index,
+        hovered_gap,
+        controls,
+      ),
     ])
     .width(Length::Fill)
     .height(Length::Fill),
@@ -73,6 +84,7 @@ pub(super) fn plan_entry_list<'a>(
 #[allow(clippy::too_many_arguments)]
 fn entry_rows<'a>(
   rows: &'a [ComputedRow],
+  numbers: &[Option<usize>],
   remaps: &'a [EditRemap],
   note_open: Option<i64>,
   dragging: Option<i64>,
@@ -93,22 +105,43 @@ fn entry_rows<'a>(
     children.push(insertion_slot(None, GAP_START, true, hovered_gap, controls.reason));
   }
 
+  let last_visible_index = numbers.iter().rposition(Option::is_some);
+  let mut last_number = 0;
+
   for (index, entry) in rows.iter().enumerate() {
-    let note_is_open = note_open == Some(entry.id);
-    let is_dragging = dragging == Some(entry.id);
-    let is_drop_target = drop_index == Some(index) && dragging.is_some() && !is_dragging;
-    children.push(entry_row(entry, index, note_is_open, is_dragging, is_drop_target));
-    children.push(rule::horizontal());
+    if let Some(display_number) = numbers[index] {
+      last_number = display_number;
+      let note_is_open = note_open == Some(entry.id);
+      let is_dragging = dragging == Some(entry.id);
+      let is_drop_target = drop_index == Some(index) && dragging.is_some() && !is_dragging;
+      children.push(entry_row(
+        entry,
+        index,
+        display_number,
+        note_is_open,
+        is_dragging,
+        is_drop_target,
+      ));
+      children.push(rule::horizontal());
+    }
 
     let after = remaps_anchored(remaps, Some(entry.id));
     let mut has_remap = false;
     for remap in after {
-      children.push(remap_divider(remap, &format!("After step {}", index + 1)));
+      let label = if last_number == 0 {
+        "Applied at start of plan".to_owned()
+      } else {
+        format!("After step {last_number}")
+      };
+      children.push(remap_divider(remap, &label));
       children.push(rule::horizontal());
       has_remap = true;
     }
 
-    if !has_remap && index < rows.len() - 1 {
+    if numbers[index].is_none() {
+      continue;
+    }
+    if !has_remap && last_visible_index.is_some_and(|last| index < last) {
       children.push(insertion_slot(
         Some(entry.id),
         entry.id,
@@ -124,6 +157,21 @@ fn entry_rows<'a>(
     .height(Length::Fill)
     .width(Length::Fill)
     .into()
+}
+
+fn display_numbers(rows: &[ComputedRow]) -> Vec<Option<usize>> {
+  let mut next = 0;
+  rows
+    .iter()
+    .map(|row| {
+      if row.skipped {
+        None
+      } else {
+        next += 1;
+        Some(next)
+      }
+    })
+    .collect()
 }
 
 fn insertion_slot<'a>(
@@ -254,4 +302,56 @@ fn header_label(label: &str) -> text::Text<'_> {
     .style(|_| text::Style {
       color: Some(color::text::secondary()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::features::skills::browse::AttrKey;
+
+  fn row(id: i64, skipped: bool) -> ComputedRow {
+    ComputedRow {
+      cumulative_sec: 0.0,
+      group_name: String::new(),
+      id,
+      is_auto: false,
+      note: String::new(),
+      primary: AttrKey::Perception,
+      priority: super::super::Priority::Normal,
+      rank: 1,
+      sec: 0.0,
+      secondary: AttrKey::Willpower,
+      skill_name: String::new(),
+      skipped,
+      sp: 0,
+      to_level: 5,
+    }
+  }
+
+  mod display_numbers {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_numbers_every_row_when_none_are_skipped() {
+      let rows = vec![row(1, false), row(2, false), row(3, false)];
+
+      assert_eq!(display_numbers(&rows), vec![Some(1), Some(2), Some(3)]);
+    }
+
+    #[test]
+    fn it_hides_skipped_rows_and_renumbers_the_remainder() {
+      let rows = vec![row(1, true), row(2, false), row(3, true), row(4, false)];
+
+      assert_eq!(display_numbers(&rows), vec![None, Some(1), None, Some(2)]);
+    }
+
+    #[test]
+    fn it_hides_every_row_when_all_are_skipped() {
+      let rows = vec![row(1, true), row(2, true)];
+
+      assert_eq!(display_numbers(&rows), vec![None, None]);
+    }
+  }
 }

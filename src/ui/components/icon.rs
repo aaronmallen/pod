@@ -1,4 +1,4 @@
-use iced::{Color, Element, widget::svg};
+use iced::{Color, Element, Radians, Rotation, widget::svg};
 
 use crate::ui::style::color;
 
@@ -7,6 +7,7 @@ const DEFAULT_SIZE: f32 = 20.0;
 pub struct Icon {
   color: Color,
   handle: svg::Handle,
+  rotation: Radians,
   size: f32,
 }
 
@@ -279,6 +280,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/stockpiles.svg"))
   }
 
+  pub fn tack() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/tack.svg"))
+  }
+
   pub fn tag() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/tag.svg"))
   }
@@ -327,6 +332,7 @@ impl Icon {
     Self {
       color: color::text::secondary(),
       handle: svg::Handle::from_memory(bytes),
+      rotation: Radians(0.0),
       size: DEFAULT_SIZE,
     }
   }
@@ -341,10 +347,16 @@ impl Icon {
     svg(self.handle)
       .width(self.size)
       .height(self.size)
+      .rotation(Rotation::Floating(self.rotation))
       .style(move |_, _| svg::Style {
         color: Some(tint),
       })
       .into()
+  }
+
+  pub fn rotation(mut self, rotation: Radians) -> Self {
+    self.rotation = rotation;
+    self
   }
 
   pub fn size(mut self, size: f32) -> Self {

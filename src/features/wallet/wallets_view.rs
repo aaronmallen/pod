@@ -1,8 +1,10 @@
+use std::f32::consts::FRAC_PI_4;
+
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding, Radians,
   alignment::{Horizontal, Vertical},
   border::Radius,
-  widget::{Column, Row, Space, container, scrollable, text},
+  widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
 use super::{
@@ -16,9 +18,12 @@ use crate::ui::{
 };
 
 const BODY_MAX_WIDTH: f32 = 1180.0;
-const SHARE_BAR_WIDTH: f32 = 150.0;
 const ISK_COLUMN_WIDTH: f32 = 168.0;
+const PERSONAL_SECTION_KEY: &str = "personal";
+const SHARE_BAR_WIDTH: f32 = 150.0;
+const SHOW_FIRST_CORPS_FLAG: &str = "wallet.show_first_corps";
 const SWATCH_SIZE: f32 = 30.0;
+const WALLET_PINS_LIST: &str = "wallet.pins";
 
 struct RowData {
   balance: f64,
@@ -36,6 +41,9 @@ struct RowSwatch {
 
 struct Section {
   caption: Option<String>,
+  key: String,
+  personal: bool,
+  pinnable: bool,
   rows: Vec<RowData>,
   subtotal: f64,
   swatch: SectionSwatch,
@@ -55,6 +63,9 @@ pub(super) fn surface<'a>(state: &State) -> Element<'a, Message> {
   let sections = sections_for(state);
   let context = context_label(state, &sections);
   let sort = state.wallets_sort();
+  let is_all = matches!(state.active(), Scope::All);
+  let show_first_corps = state.ui_flag(SHOW_FIRST_CORPS_FLAG, false);
+  let pins = state.ui_list(WALLET_PINS_LIST);
 
   let mut body: Vec<Element<'a, Message>> = Vec::new();
   if let Scope::Character(id) = state.active()
@@ -64,7 +75,8 @@ pub(super) fn surface<'a>(state: &State) -> Element<'a, Message> {
   }
   let empty = sections.is_empty();
   for section in sections {
-    body.push(section_card(section));
+    let pinned = pins.contains(&section.key);
+    body.push(section_card(section, pinned));
   }
   if empty {
     body.push(empty_state());
@@ -84,7 +96,7 @@ pub(super) fn surface<'a>(state: &State) -> Element<'a, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-  Column::with_children(vec![toolbar(context, sort), scrolled.into()])
+  Column::with_children(vec![toolbar(context, sort, is_all, show_first_corps), scrolled.into()])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -101,7 +113,14 @@ fn sections_for(state: &State) -> Vec<Section> {
           .iter()
           .map(|section| corp_section(section, sort)),
       );
-      sections
+      for section in &mut sections {
+        section.pinnable = true;
+      }
+      order_sections(
+        sections,
+        state.ui_flag(SHOW_FIRST_CORPS_FLAG, false),
+        state.ui_list(WALLET_PINS_LIST),
+      )
     }
     Scope::Character(id) => match state.roster().iter().find(|pilot| pilot.id == id) {
       Some(pilot) => vec![single_pilot_section(pilot)],
@@ -114,6 +133,24 @@ fn sections_for(state: &State) -> Vec<Section> {
       .map(|section| vec![corp_section(section, sort)])
       .unwrap_or_default(),
   }
+}
+
+fn order_sections(sections: Vec<Section>, show_first_corps: bool, pins: &[String]) -> Vec<Section> {
+  let mut grouped: Vec<Section> = if show_first_corps {
+    let (personal, corps): (Vec<Section>, Vec<Section>) = sections.into_iter().partition(|section| section.personal);
+    corps.into_iter().chain(personal).collect()
+  } else {
+    sections
+  };
+
+  let mut ordered: Vec<Section> = Vec::with_capacity(grouped.len());
+  for key in pins.iter().rev() {
+    if let Some(index) = grouped.iter().position(|section| section.key == *key) {
+      ordered.push(grouped.remove(index));
+    }
+  }
+  ordered.extend(grouped);
+  ordered
 }
 
 fn personal_section(state: &State, sort: WalletSort) -> Section {
@@ -137,6 +174,9 @@ fn personal_section(state: &State, sort: WalletSort) -> Section {
 
   Section {
     caption: Some("Liquid ISK across your pilots".to_owned()),
+    key: PERSONAL_SECTION_KEY.to_owned(),
+    personal: true,
+    pinnable: false,
     rows,
     subtotal,
     swatch: SectionSwatch::Personal,
@@ -154,6 +194,9 @@ fn single_pilot_section(pilot: &RosterPilot) -> Section {
 
   Section {
     caption: Some(caption),
+    key: PERSONAL_SECTION_KEY.to_owned(),
+    personal: true,
+    pinnable: false,
     rows: vec![RowData {
       balance,
       indent: false,
@@ -183,6 +226,9 @@ fn corp_section(section: &CorpWalletSection, sort: WalletSort) -> Section {
 
   Section {
     caption: Some(corp_caption(section)),
+    key: section.id.to_string(),
+    personal: false,
+    pinnable: false,
     rows,
     subtotal: section.subtotal(),
     swatch: SectionSwatch::Corp {
@@ -220,7 +266,12 @@ fn sort_rows(rows: &mut [RowData], sort: WalletSort) {
   });
 }
 
-fn toolbar<'a>(context: String, sort: WalletSort) -> Element<'a, Message> {
+fn toolbar<'a>(
+  context: String,
+  sort: WalletSort,
+  show_group_order: bool,
+  show_first_corps: bool,
+) -> Element<'a, Message> {
   let showing = Row::with_children(vec![
     eyebrow_text("Showing", None).into(),
     text(context)
@@ -232,44 +283,34 @@ fn toolbar<'a>(context: String, sort: WalletSort) -> Element<'a, Message> {
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center);
 
-  let toggle = container(
-    Row::with_children(vec![
-      sort_button(
-        "High \u{2192} Low",
-        sort == WalletSort::Descending,
-        WalletSort::Descending,
-      ),
-      sort_divider(),
-      sort_button(
-        "Low \u{2192} High",
-        sort == WalletSort::Ascending,
-        WalletSort::Ascending,
-      ),
-    ])
-    .align_y(Vertical::Center),
-  )
-  .style(|_| container::Style {
-    border: Border {
-      color: color::rule(),
-      width: 1.0,
-      radius: 7.0.into(),
-    },
-    ..container::Style::default()
-  })
-  .clip(true);
+  let sort_toggle = segmented_frame(vec![
+    sort_button(
+      "High \u{2192} Low",
+      sort == WalletSort::Descending,
+      WalletSort::Descending,
+    ),
+    segment_divider(),
+    sort_button(
+      "Low \u{2192} High",
+      sort == WalletSort::Ascending,
+      WalletSort::Ascending,
+    ),
+  ]);
 
-  let sort_group = Row::with_children(vec![eyebrow_text("Sort", None).into(), toggle.into()])
+  let sort_group = Row::with_children(vec![eyebrow_text("Sort", None).into(), sort_toggle])
     .spacing(spacing::SPACE_2_5)
     .align_y(Vertical::Center);
 
+  let mut controls: Vec<Element<'a, Message>> = vec![showing.into(), Space::new().width(Length::Fill).into()];
+  if show_group_order {
+    controls.push(group_order_group(show_first_corps));
+  }
+  controls.push(sort_group.into());
+
   container(
-    Row::with_children(vec![
-      showing.into(),
-      Space::new().width(Length::Fill).into(),
-      sort_group.into(),
-    ])
-    .spacing(spacing::SPACE_3)
-    .align_y(Vertical::Center),
+    Row::with_children(controls)
+      .spacing(spacing::SPACE_3)
+      .align_y(Vertical::Center),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -308,6 +349,58 @@ fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
   if count == 1 { singular } else { plural }
 }
 
+fn group_order_button<'a>(label: &'a str, active: bool, show_first_corps: bool) -> Element<'a, Message> {
+  segment_button(
+    label,
+    active,
+    Padding {
+      top: 7.0,
+      right: 13.0,
+      bottom: 7.0,
+      left: 13.0,
+    },
+    Message::UiFlagSet(SHOW_FIRST_CORPS_FLAG.to_owned(), show_first_corps),
+  )
+}
+
+fn group_order_group<'a>(show_first_corps: bool) -> Element<'a, Message> {
+  let toggle = segmented_frame(vec![
+    group_order_button("Pilots", !show_first_corps, false),
+    segment_divider(),
+    group_order_button("Corps", show_first_corps, true),
+  ]);
+
+  Row::with_children(vec![eyebrow_text("Show first", None).into(), toggle])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn segment_divider<'a>() -> Element<'a, Message> {
+  container(Space::new())
+    .width(Length::Fixed(1.0))
+    .height(Length::Fixed(28.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::rule())),
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn segmented_frame<'a>(segments: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+  container(Row::with_children(segments).align_y(Vertical::Center))
+    .style(|_| container::Style {
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: 7.0.into(),
+      },
+      ..container::Style::default()
+    })
+    .clip(true)
+    .into()
+}
+
 fn sort_button<'a>(label: &'a str, active: bool, sort: WalletSort) -> Element<'a, Message> {
   segment_button(
     label,
@@ -320,17 +413,6 @@ fn sort_button<'a>(label: &'a str, active: bool, sort: WalletSort) -> Element<'a
     },
     Message::WalletsSortSelected(sort),
   )
-}
-
-fn sort_divider<'a>() -> Element<'a, Message> {
-  container(Space::new())
-    .width(Length::Fixed(1.0))
-    .height(Length::Fixed(28.0))
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::rule())),
-      ..container::Style::default()
-    })
-    .into()
 }
 
 fn divider_count(rows: usize) -> usize {
@@ -421,16 +503,20 @@ fn hero_stat<'a>(label: &'a str, value: f64, value_color: Color) -> Element<'a, 
   .into()
 }
 
-fn section_card<'a>(section: Section) -> Element<'a, Message> {
+fn section_card<'a>(section: Section, pinned: bool) -> Element<'a, Message> {
   let Section {
     caption,
+    key,
+    personal: _,
+    pinnable,
     rows,
     subtotal,
     swatch,
     title,
   } = section;
 
-  let mut children: Vec<Element<'a, Message>> = vec![section_head(title, caption, subtotal, swatch, rows.len())];
+  let pin = pinnable.then_some((key, pinned));
+  let mut children: Vec<Element<'a, Message>> = vec![section_head(title, caption, subtotal, swatch, rows.len(), pin)];
   let last = divider_count(rows.len());
   for (index, row) in rows.into_iter().enumerate() {
     children.push(wallet_row(row, subtotal));
@@ -454,12 +540,83 @@ fn section_card<'a>(section: Section) -> Element<'a, Message> {
     .into()
 }
 
+fn pin_button<'a>(key: String, pinned: bool) -> Element<'a, Message> {
+  let tint = if pinned {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let rotation = if pinned { 0.0 } else { FRAC_PI_4 };
+
+  let mut content: Vec<Element<'a, Message>> =
+    vec![Icon::tack().size(15.0).color(tint).rotation(Radians(rotation)).render()];
+  if pinned {
+    content.push(
+      text("Pinned")
+        .font(typography::mono::MEDIUM)
+        .size(typography::size::XS)
+        .style(typography::colored(color::accent::PLASMA))
+        .into(),
+    );
+  }
+
+  let padding = if pinned {
+    Padding {
+      top: 5.0,
+      right: 10.0,
+      bottom: 5.0,
+      left: 8.0,
+    }
+  } else {
+    Padding::from(6.0)
+  };
+
+  button(
+    Row::with_children(content)
+      .spacing(spacing::UNIT + 2.0)
+      .align_y(Vertical::Center),
+  )
+  .padding(padding)
+  .on_press(Message::UiListItemToggled(WALLET_PINS_LIST.to_owned(), key))
+  .style(move |_, status| pin_button_style(pinned, status))
+  .into()
+}
+
+fn pin_button_style(pinned: bool, status: button::Status) -> button::Style {
+  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let (background, border_color) = if pinned {
+    (
+      Some(color::with_alpha(color::accent::PLASMA, 0.12)),
+      color::with_alpha(color::accent::PLASMA, 0.35),
+    )
+  } else if hovered {
+    (
+      Some(color::with_alpha(color::text::PRIMARY, 0.05)),
+      color::rule_strong(),
+    )
+  } else {
+    (None, color::rule())
+  };
+
+  button::Style {
+    background: background.map(Background::Color),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: 7.0.into(),
+    },
+    text_color: color::accent::PLASMA,
+    ..button::Style::default()
+  }
+}
+
 fn section_head<'a>(
   title: String,
   caption: Option<String>,
   subtotal: f64,
   swatch: SectionSwatch,
   count: usize,
+  pin: Option<(String, bool)>,
 ) -> Element<'a, Message> {
   let title_row = Row::with_children(vec![
     text(title)
@@ -494,17 +651,22 @@ fn section_head<'a>(
   .spacing(spacing::UNIT)
   .align_x(Horizontal::Right);
 
+  let mut head_row: Vec<Element<'a, Message>> = vec![
+    section_swatch(swatch, 34.0),
+    Column::with_children(head_text)
+      .spacing(spacing::UNIT)
+      .width(Length::Fill)
+      .into(),
+    subtotal.into(),
+  ];
+  if let Some((key, pinned)) = pin {
+    head_row.push(pin_button(key, pinned));
+  }
+
   container(
-    Row::with_children(vec![
-      section_swatch(swatch, 34.0),
-      Column::with_children(head_text)
-        .spacing(spacing::UNIT)
-        .width(Length::Fill)
-        .into(),
-      subtotal.into(),
-    ])
-    .spacing(spacing::SPACE_3_5)
-    .align_y(Vertical::Center),
+    Row::with_children(head_row)
+      .spacing(spacing::SPACE_3_5)
+      .align_y(Vertical::Center),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -717,6 +879,77 @@ mod tests {
       balance: None,
       division: number,
       name: name.map(str::to_owned),
+    }
+  }
+
+  fn section(key: &str, personal: bool) -> Section {
+    Section {
+      caption: None,
+      key: key.to_owned(),
+      personal,
+      pinnable: true,
+      rows: Vec::new(),
+      subtotal: 0.0,
+      swatch: SectionSwatch::Personal,
+      title: key.to_owned(),
+    }
+  }
+
+  fn keys(sections: &[Section]) -> Vec<String> {
+    sections.iter().map(|section| section.key.clone()).collect()
+  }
+
+  mod order_sections {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_pilots_first_by_default() {
+      let sections = vec![section("personal", true), section("1", false), section("2", false)];
+
+      let ordered = super::order_sections(sections, false, &[]);
+
+      assert_eq!(keys(&ordered), ["personal", "1", "2"]);
+    }
+
+    #[test]
+    fn it_floats_the_corp_block_above_pilots_when_show_first_corps() {
+      let sections = vec![section("personal", true), section("1", false), section("2", false)];
+
+      let ordered = super::order_sections(sections, true, &[]);
+
+      assert_eq!(keys(&ordered), ["1", "2", "personal"]);
+    }
+
+    #[test]
+    fn it_floats_pinned_sections_above_the_group_order_newest_first() {
+      let sections = vec![section("personal", true), section("1", false), section("2", false)];
+      let pins = ["personal".to_owned(), "2".to_owned()];
+
+      let ordered = super::order_sections(sections, false, &pins);
+
+      assert_eq!(keys(&ordered), ["2", "personal", "1"]);
+    }
+
+    #[test]
+    fn it_ranks_pins_over_group_order() {
+      let sections = vec![section("personal", true), section("1", false), section("2", false)];
+      let pins = ["1".to_owned()];
+
+      let ordered = super::order_sections(sections, true, &pins);
+
+      assert_eq!(keys(&ordered), ["1", "2", "personal"]);
+    }
+
+    #[test]
+    fn it_ignores_pins_for_absent_sections() {
+      let sections = vec![section("personal", true), section("1", false)];
+      let pins = ["9".to_owned(), "1".to_owned()];
+
+      let ordered = super::order_sections(sections, false, &pins);
+
+      assert_eq!(keys(&ordered), ["1", "personal"]);
     }
   }
 

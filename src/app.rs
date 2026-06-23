@@ -2232,6 +2232,12 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     config::NavLocation::Left => Horizontal::Left,
     config::NavLocation::Right => Horizontal::Right,
   };
+  // Clear the nav rail so the panel flies out to its side (like the cascade
+  // sub-rail) instead of covering it.
+  let (pad_left, pad_right) = match nav_location {
+    config::NavLocation::Left => (rail::RAIL_WIDTH + POPOVER_LEFT, POPOVER_LEFT),
+    config::NavLocation::Right => (POPOVER_LEFT, rail::RAIL_WIDTH + POPOVER_LEFT),
+  };
   container(card)
     .width(Length::Fill)
     .height(Length::Fill)
@@ -2239,9 +2245,9 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     .align_y(Vertical::Bottom)
     .padding(Padding {
       top: 0.0,
-      right: POPOVER_LEFT,
+      right: pad_right,
       bottom: POPOVER_BOTTOM_OFFSET,
-      left: POPOVER_LEFT,
+      left: pad_left,
     })
     .into()
 }
@@ -2274,7 +2280,6 @@ fn notifications_toaster(app: &App) -> Option<Element<'_, Message>> {
     .iter()
     .map(|toast| ToastView {
       notification: &toast.notification,
-      progress: toast.remaining.as_secs_f32() / TOAST_MS.as_secs_f32(),
       who: toast.who.as_str(),
     })
     .collect();

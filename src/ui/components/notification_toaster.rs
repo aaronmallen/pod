@@ -1,7 +1,7 @@
 use iced::{
-  Background, Border, Element, Length,
+  Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, mouse_area, svg, text},
+  widget::{Column, Row, button, container, mouse_area, svg, text},
 };
 
 use crate::{
@@ -14,18 +14,15 @@ use crate::{
 
 const ACCENT_BAR_WIDTH: f32 = 3.0;
 const DISMISS_SIZE: f32 = 22.0;
-const PROGRESS_HEIGHT: f32 = 2.0;
 const TOAST_MARGIN: f32 = spacing::SPACE_3_5;
 const TOAST_SPACING: f32 = spacing::SPACE_3;
 const TOAST_WIDTH: f32 = 360.0;
 
 static CLOSE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/close.svg");
 
-/// One toast's render inputs: the notification it surfaces, the resolved "who" name, and the fraction
-/// of its lifetime remaining (1.0 = just enqueued, 0.0 = expired) that drives the life-progress bar.
+/// One toast's render inputs: the notification it surfaces and the resolved "who" name.
 pub struct ToastView<'a> {
   pub notification: &'a Notification,
-  pub progress: f32,
   pub who: &'a str,
 }
 
@@ -153,58 +150,42 @@ where
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Top);
 
-  let filled = (toast.progress.clamp(0.0, 1.0) * 100.0).max(0.0);
-  let progress = container(
-    container(Space::new())
-      .width(Length::FillPortion(filled as u16))
-      .height(Length::Fixed(PROGRESS_HEIGHT))
-      .style(move |_| container::Style {
-        background: Some(Background::Color(color::with_alpha(tint, 0.7))),
-        ..container::Style::default()
-      }),
-  )
-  .width(Length::Fill)
-  .height(Length::Fixed(PROGRESS_HEIGHT));
-
-  let inner = Column::with_children(vec![
-    container(content).width(Length::Fill).padding(spacing::SPACE_3).into(),
-    progress.into(),
-  ]);
+  let inner = container(content).width(Length::Fill).padding(spacing::SPACE_3);
 
   let card = container(inner)
     .width(Length::Fixed(TOAST_WIDTH))
     .style(move |_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
       border: Border {
-        color: color::rule_strong(),
-        width: 1.0,
         radius: radius::CARD.into(),
+        ..Border::default()
       },
       shadow: shadow::CARD,
       ..container::Style::default()
     });
 
-  // The accent bar mirrors the design's `borderLeft: 3px solid`.
-  let with_bar = Row::with_children(vec![
-    container(Space::new())
-      .width(Length::Fixed(ACCENT_BAR_WIDTH))
-      .height(Length::Fill)
-      .style(move |_| container::Style {
-        background: Some(Background::Color(tint)),
-        border: Border {
-          radius: radius::SUBTLE.into(),
-          ..Border::default()
-        },
-        ..container::Style::default()
-      })
-      .into(),
-    card.into(),
-  ]);
+  // The accent mirrors the design's `borderLeft: 3px solid`: it is the outer
+  // container's background revealed by left padding, so the toast height follows
+  // the card. A Length::Fill accent bar would balloon to the toast host's full
+  // height (a stray vertical line up the screen).
+  let with_bar = container(card)
+    .width(Length::Fixed(TOAST_WIDTH + ACCENT_BAR_WIDTH))
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: ACCENT_BAR_WIDTH,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(tint)),
+      border: Border {
+        radius: radius::CARD.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
 
-  mouse_area(container(with_bar).width(Length::Fixed(TOAST_WIDTH + ACCENT_BAR_WIDTH)))
-    .on_enter(on_enter)
-    .on_exit(on_exit)
-    .into()
+  mouse_area(with_bar).on_enter(on_enter).on_exit(on_exit).into()
 }
 
 #[cfg(test)]
@@ -245,7 +226,6 @@ mod tests {
       let notification = sample();
       let toasts = vec![ToastView {
         notification: &notification,
-        progress: 0.5,
         who: "Pilot",
       }];
 

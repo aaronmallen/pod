@@ -318,42 +318,35 @@ fn header<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  let bar = container(Space::new().width(Length::Fixed(4.0)).height(Length::Fill))
-    .width(Length::Fixed(4.0))
-    .style(move |_| container::Style {
-      background: Some(Background::Color(accent)),
-      ..container::Style::default()
-    });
-
-  let row = Row::with_children(vec![
-    bar.into(),
-    container(content)
-      .padding(Padding {
-        top: spacing::SPACE_3_5,
-        right: spacing::SPACE_3_5,
-        bottom: spacing::SPACE_3_5,
-        left: spacing::SPACE_3_5,
-      })
-      .width(Length::Fill)
-      .into(),
-  ])
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
-
-  container(row)
+  // The header height follows its content. The accent is a left strip drawn by
+  // the outer container's background showing through 4px of left padding; a
+  // Length::Fill accent bar would make iced balloon the header to fill the whole
+  // window when it sits in a Fill-height column.
+  let inner = container(content)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_3_5,
+    })
     .width(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.06),
-        width: 1.0,
-        radius: Radius {
-          top_left: radius::PANEL,
-          top_right: radius::PANEL,
-          bottom_right: 0.0,
-          bottom_left: 0.0,
-        },
-      },
+      ..container::Style::default()
+    });
+
+  // Square corners and no border: the only colored region is the 4px left strip,
+  // so the accent never wraps the header.
+  container(inner)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: 4.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(accent)),
       ..container::Style::default()
     })
     .into()

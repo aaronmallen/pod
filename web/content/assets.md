@@ -125,8 +125,9 @@ whether the list contains the full target quantities or only the remaining defic
 
 ### The stockpile editor
 
-The editor opens in a modal where you set the name, the scope, the location, and the item
-targets.
+The editor opens in its own detached window, separate from the main Pod window, where you set the
+name, the scope, the location, and the item targets. You can move and resize the window, and you can
+open more than one editor at once.
 
 ![Stockpile editor](/docs/img/assets/stockpile-editor.png)
 

@@ -179,7 +179,35 @@ When the character has no plans, the tab reads "No skill plans yet" with the
 prompt "Create your first plan to start optimizing your skill queue." The footer
 carries a "New plan" button and a "From queue" button that builds a plan from the
 whole current queue. When you have queue rows selected, a "From selected ▸ {count}"
-button appears as well.
+button appears as well. A "Manage plans" button opens the Manage Skill Plans
+window described next.
+
+## Manage Skill Plans
+
+The Plans tab works one character at a time. To see and move plans across your
+whole roster at once, open the Manage Skill Plans window from the "Manage plans"
+button. It opens as its own detached window, separate from the main Pod window,
+so you can move and resize it.
+
+The window is a master/detail layout. A character rail runs down the left, one
+row per pilot with a portrait, name, corp, and a count of how many plans they
+hold. The header sums the totals, for example "12 plans across 4 characters".
+Pick a character on the left and the detail pane on the right lists that pilot's
+plans.
+
+Each plan card shows its name and a "{n} skills · edited {date}" line, with three
+actions: Open opens the plan in the plan editor, Copy to copies the plan to
+another character, and Delete removes it after an inline "Delete?" confirm. New
+plan, in the detail header, starts a fresh plan for the selected character.
+
+### Copying a plan across characters
+
+Copy to is how you reuse a plan on another pilot. Press it on a plan card and a
+"Copy to character" menu lists every other character on your roster, each with a
+portrait, name, and corp. Pick one and Pod copies the plan onto that character.
+The copy is independent: editing it later does not touch the original. A
+character with no plans yet shows the prompt to create one or copy a plan in from
+another character.
 
 ## The plan editor
 

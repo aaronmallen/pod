@@ -171,9 +171,11 @@ its own total count. A side filter lets you narrow to buy or sell contracts.
 
 ## Contract detail
 
-Select any contract row to open the contract detail modal. The header names the
-contract kind, its title or a fallback contract number, the location, when it
-was issued, and the contract ID, with a colored status badge alongside.
+Select any contract row to open the contract viewer, a detached window separate
+from the main Pod window. You can move and resize it, and you can open several
+viewers at once to compare contracts side by side. The header names the contract
+kind, its title or a fallback contract number, the location, when it was issued,
+and the contract ID, with a colored status badge alongside.
 
 A Parties section shows the people involved with their portraits. The issuer
 appears first with their corporation, or "Public contract" when there is no
@@ -199,7 +201,7 @@ where that applies, so you can read the fitting and cargo item by item.
 For auctions, a Bids section lists each bid with the bidder, when it was placed,
 and the amount. The leading bid is highlighted and tagged as the high bid.
 
-![Contract detail modal](/docs/img/wallet/contract-detail.png)
+![Contract viewer window](/docs/img/wallet/contract-detail.png)
 
 ## Budget tab
 

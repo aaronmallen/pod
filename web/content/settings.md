@@ -13,12 +13,12 @@ button in the top right. That button only resets the category you are currently
 viewing, so resetting Features leaves Storage untouched, and resetting
 Accessibility leaves your tags alone.
 
-A left pane lists the categories: Accessibility, Features, Storage, Tags, and
-User Interface. Industry appears in that list only when the Industry feature is
-turned on. About sits by itself at the bottom of the pane, fenced off from the
-working categories. Each category shows a small badge that summarizes its
-current state, so you can read the gist without opening the tab. The active
-category is marked with a plasma indicator bar.
+A left pane lists the categories: Accessibility, Features, MCP, Storage, Tags,
+and User Interface. Industry appears in that list only when the Industry feature
+is turned on, between Features and MCP. About sits by itself at the bottom of the
+pane, fenced off from the working categories. Each category shows a small badge
+that summarizes its current state, so you can read the gist without opening the
+tab. The active category is marked with a plasma indicator bar.
 
 ## About
 
@@ -163,6 +163,15 @@ security status. The cost-index values for each facility appear next to the
 results as read-only information drawn from the facility itself; the tab does
 not let you edit cost indexes, it surfaces them so you can choose a cheaper
 build site.
+
+## MCP
+
+The MCP tab controls the embedded Model Context Protocol server, which lets AI
+agents read and automate Pod over localhost. It is off by default. The tab holds
+the master switch, the port, the bearer token, and the per-tool permissions. The
+category badge reads "Off" while the server is disabled and shows the port, such
+as ":7373", once you turn it on. See [MCP Server](/docs/mcp/) for the full
+feature.
 
 ## Storage
 

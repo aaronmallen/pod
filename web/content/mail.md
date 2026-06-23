@@ -98,9 +98,11 @@ permanently on EVE's side, Pod restores the message from a snapshot it took befo
 
 ## Composing
 
-Start a new message to open the compose pane.
+Start a new message and compose opens in its own detached window, separate from
+the main Pod window. You can move and resize it, and you can have more than one
+compose window open at once, so you can draft several messages in parallel.
 
-![Compose panel](/docs/img/mail/compose.png)
+![Compose window](/docs/img/mail/compose.png)
 
 The **From** field is a character picker. It defaults to your active character, and you can switch the
 sender to any character on your roster. The **To** and **Cc** fields use entity search: start typing a
@@ -130,7 +132,7 @@ permanently on EVE's side, Pod removes the optimistic copy.
 Pod saves compose drafts locally so an unfinished message is not lost. A draft is saved whenever it has
 a subject, a body, or a recipient in the To or Cc field. Empty compose windows are not saved.
 
-Pod saves the current draft when you close the compose pane, switch folders, switch characters, or quit
-the app. Each draft keeps its kind (new, reply, reply-all, or forward), subject, body, quoted text, and
-recipients, so reopening it restores the message as you left it. Saved drafts appear in the Drafts
-folder. When you send a draft, Pod deletes its saved copy.
+Pod saves the current draft when you close the compose window, switch folders, switch characters, or
+quit the app. Each draft keeps its kind (new, reply, reply-all, or forward), subject, body, quoted
+text, and recipients, so reopening it restores the message as you left it. Saved drafts appear in the
+Drafts folder. When you send a draft, Pod deletes its saved copy.

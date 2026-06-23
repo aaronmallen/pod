@@ -40,6 +40,11 @@ shows the dot whenever an event needs your attention, such as a pending response
 The dot is a yes-or-no signal and does not carry a number. It clears once the
 underlying count returns to zero.
 
+A third signal sits near the bottom of the rail: the notification bell. It
+carries an unread count and opens Pod's notification center, the in-app feed of
+skill, industry, mail, and other events, with new ones popping as bottom-right
+toasts. See [Notifications](/docs/notifications/) for the full feature.
+
 ### Which buttons appear
 
 Most rail buttons are tied to a feature you can turn off. Assets, Calendar,
@@ -110,7 +115,8 @@ filter, and the palette folds the whole app into one searchable list.
 The list is a unified fuzzy search across three kinds of result.
 
 - Commands. Common actions you can run on the spot, such as "Sync now", "Open
-  Settings", "Add character", and "Toggle high contrast".
+  Settings", "Add character", "Toggle high contrast", "Compose mail", "Create
+  stockpile", and "Manage skill plans".
 - Navigation. Any feature section, or a specific inner sub-tab reached by
   deep-nav. Picking a section opens that screen; picking a sub-tab jumps you
   straight to that inner view.

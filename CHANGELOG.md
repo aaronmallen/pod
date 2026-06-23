@@ -7,6 +7,41 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.6]
+
+### Added
+
+- **In-app notifications** — a bell on the navigation rail shows your unread count and opens a center listing recent
+  notifications, and new events also pop as toasts in the corner. Pod notifies you once for new mail, killmails,
+  finished skills, completed industry jobs, calendar reminders, and moon extraction events, and clicking one jumps
+  straight to the relevant screen.
+- **Detached windows** — the killmail viewer, contract details, the stockpile editor, and the mail composer now open as
+  separate resizable windows you can move around and keep open side by side, instead of panels inside the main window.
+  You can have several open at once, and an unsent mail is saved to Drafts when you close its window.
+- **Manage Skill Plans** — a new window lists every owned character with their plans in one place, so you can open,
+  create, or delete a plan for any character and copy a plan from one character onto another.
+- **MCP server** — an optional local server (off by default) lets AI agents such as Claude Desktop or Claude Code read
+  your Pod data and take actions for you. You turn it on, set the port, copy a bearer token, and choose which read and
+  write permissions to grant from the new MCP tab in Settings.
+- The command palette now offers **Compose mail**, **Create stockpile**, and **Manage skill plans** commands so you can
+  open those windows from anywhere without first opening the related screen.
+- You can now **pin and reorder the wallet balance sections**, and the net-worth hero on the ledger tabs is collapsible.
+
+### Changed
+
+- **Skill plans now store the complete plan** — a plan keeps every skill and prerequisite and works out what is left to
+  train per character, so the same plan reads correctly for any character and copying or importing it onto a
+  less-trained character reproduces the full plan. The plan view now hides levels a character has already trained
+  instead of dimming them.
+
+### Fixed
+
+- **Budget Ready-to-Assign is accurate again** — transfers between your own wallets are recognized and kept out of the
+  budget, money is conserved when you assign it, assignments only go to the wallet owner that holds the entry, and the
+  figures stay correct as you sync or switch month and scope.
+- Budget needs-review now counts only uncategorized expenses, automation rule previews match what actually gets
+  assigned, and rule names and conditions are checked before a rule is saved.
+
 ## [0.6.5]
 
 ### Added
@@ -751,7 +786,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.5...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.6...HEAD
+[0.6.6]: https://github.com/aaronmallen/pod/compare/0.6.5...0.6.6
 [0.6.5]: https://github.com/aaronmallen/pod/compare/0.6.4...0.6.5
 [0.6.4]: https://github.com/aaronmallen/pod/compare/0.6.3...0.6.4
 [0.6.3]: https://github.com/aaronmallen/pod/compare/0.6.2...0.6.3

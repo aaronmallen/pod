@@ -4046,10 +4046,36 @@ fn palette_activate_action(app: &mut App, action: PaletteAction) -> Task<Message
 fn palette_command(app: &mut App, command: PaletteCommand) -> Task<Message> {
   match command {
     PaletteCommand::AddCharacter => update(app, Message::Auth(auth::Message::Start(feature_flags(app)))),
+    PaletteCommand::ComposeMail => match palette_compose_from(app) {
+      Some(from_character_id) => open_compose_window(
+        app,
+        mail::compose::Seed::Blank {
+          from_character_id,
+        },
+      ),
+      None => Task::none(),
+    },
+    PaletteCommand::CreateStockpile => open_stockpile_editor_window(app, assets::EditorSeed::Blank),
+    PaletteCommand::ManageSkillPlans => open_manage_plans_window(app),
     PaletteCommand::OpenSettings => handle_nav(app, rail::Destination::Settings),
     PaletteCommand::SyncNow => sync_now(app),
     PaletteCommand::ToggleHighContrast => toggle_high_contrast(app),
   }
+}
+
+/// Resolves the from-character for a palette-launched compose: the mail view's default sender when a
+/// mail view is open, otherwise the active / first owned character. `None` only when no character is
+/// owned, in which case the command no-ops.
+fn palette_compose_from(app: &App) -> Option<i64> {
+  if let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) {
+    return Some(from);
+  }
+  let roster = app
+    .character_manager
+    .as_ref()
+    .map(character_manager::owned_roster)
+    .unwrap_or_default();
+  resolve_mail_target(&roster, app.selected_character)
 }
 
 fn toggle_high_contrast(app: &mut App) -> Task<Message> {
@@ -11342,6 +11368,50 @@ mod tests {
       let _ = palette_command(&mut app, command_palette::Command::OpenSettings);
 
       assert_eq!(app.route, Route::Settings);
+    }
+
+    #[test]
+    fn it_closes_the_palette_when_a_window_command_is_activated() {
+      let mut app = test_app();
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
+      let _ = update(
+        &mut app,
+        Message::Palette(PaletteMessage::QueryChanged("stockpile".to_owned())),
+      );
+      let index = palette_entries(&app)
+        .iter()
+        .position(|e| e.action == command_palette::Action::Command(command_palette::Command::CreateStockpile))
+        .expect("a Create stockpile command result");
+
+      // Without a runtime the open helper no-ops, but activating the palette entry must still close it.
+      let _ = update(&mut app, Message::Palette(PaletteMessage::Activate(index)));
+
+      assert!(app.palette.is_none(), "activating a window command closes the palette");
+    }
+
+    #[test]
+    fn it_dispatches_the_window_commands_without_a_runtime() {
+      let mut app = test_app();
+
+      // The open helpers all early-return without a runtime; dispatching must not panic.
+      let _ = palette_command(&mut app, command_palette::Command::ComposeMail);
+      let _ = palette_command(&mut app, command_palette::Command::CreateStockpile);
+      let _ = palette_command(&mut app, command_palette::Command::ManageSkillPlans);
+    }
+
+    #[test]
+    fn it_resolves_the_compose_from_to_the_mail_views_default_sender() {
+      let mut app = test_app();
+      app.mail = Some(mail::State::new(77));
+
+      assert_eq!(palette_compose_from(&app), Some(77));
+    }
+
+    #[test]
+    fn it_resolves_no_compose_from_without_a_mail_view_or_characters() {
+      let app = test_app();
+
+      assert_eq!(palette_compose_from(&app), None);
     }
 
     #[test]

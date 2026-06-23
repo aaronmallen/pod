@@ -23,22 +23,31 @@ const ROW_ICON_SIZE: f32 = 17.0;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Command {
   AddCharacter,
+  ComposeMail,
+  CreateStockpile,
+  ManageSkillPlans,
   OpenSettings,
   SyncNow,
   ToggleHighContrast,
 }
 
 impl Command {
-  pub const ALL: [Command; 4] = [
+  pub const ALL: [Command; 7] = [
     Command::SyncNow,
     Command::OpenSettings,
     Command::AddCharacter,
+    Command::ComposeMail,
+    Command::CreateStockpile,
+    Command::ManageSkillPlans,
     Command::ToggleHighContrast,
   ];
 
   pub fn label(self) -> &'static str {
     match self {
       Command::AddCharacter => "Add character",
+      Command::ComposeMail => "Compose mail",
+      Command::CreateStockpile => "Create stockpile",
+      Command::ManageSkillPlans => "Manage skill plans",
       Command::OpenSettings => "Open Settings",
       Command::SyncNow => "Sync now",
       Command::ToggleHighContrast => "Toggle high contrast",
@@ -482,6 +491,42 @@ mod tests {
     }
 
     #[test]
+    fn it_matches_the_compose_mail_command_by_substring() {
+      let entries = build_entries(&features(), &[], &[], "compose");
+
+      assert!(
+        entries
+          .iter()
+          .any(|e| e.action == Action::Command(Command::ComposeMail)),
+        "the Compose mail command matches a partial query"
+      );
+    }
+
+    #[test]
+    fn it_matches_the_create_stockpile_command_by_substring() {
+      let entries = build_entries(&features(), &[], &[], "stockpile");
+
+      assert!(
+        entries
+          .iter()
+          .any(|e| e.action == Action::Command(Command::CreateStockpile)),
+        "the Create stockpile command matches a partial query"
+      );
+    }
+
+    #[test]
+    fn it_matches_the_manage_skill_plans_command_by_substring() {
+      let entries = build_entries(&features(), &[], &[], "skill plans");
+
+      assert!(
+        entries
+          .iter()
+          .any(|e| e.action == Action::Command(Command::ManageSkillPlans)),
+        "the Manage skill plans command matches a partial query"
+      );
+    }
+
+    #[test]
     fn it_matches_a_character_and_a_corporation() {
       let chars = vec![(42, "Jita Trader".to_owned())];
       let corps = vec![(98_000_001, "Test Corp".to_owned())];
@@ -527,6 +572,26 @@ mod tests {
         !entries.iter().any(|e| e.label == "Wallet"),
         "a gated section stays hidden when its feature is off"
       );
+    }
+  }
+
+  mod command {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_lists_every_command_in_all() {
+      assert!(Command::ALL.contains(&Command::ComposeMail));
+      assert!(Command::ALL.contains(&Command::CreateStockpile));
+      assert!(Command::ALL.contains(&Command::ManageSkillPlans));
+    }
+
+    #[test]
+    fn it_labels_the_detached_window_commands() {
+      assert_eq!(Command::ComposeMail.label(), "Compose mail");
+      assert_eq!(Command::CreateStockpile.label(), "Create stockpile");
+      assert_eq!(Command::ManageSkillPlans.label(), "Manage skill plans");
     }
   }
 

@@ -729,6 +729,59 @@ mod tests {
     }
   }
 
+  mod skill_plan_replace {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_replaces_every_entry_of_a_plan() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let plan = skills_repo::create(&db, 42, "Plan").await.unwrap();
+      skills_repo::insert_entry(&db, plan.id(), 3300, 1).await.unwrap();
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "skill_plan_replace",
+          &McpPerms::default(),
+          db.clone(),
+          json!({
+            "plan_id": plan.id(),
+            "entries": [
+              { "skill_id": 3301, "to_level": 4, "priority": "high", "note": "core" },
+              { "skill_id": 3302, "to_level": 2 },
+            ],
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("entry_count").and_then(Value::as_i64), Some(2));
+      let entries = skills_repo::entries(&db, plan.id()).await.unwrap();
+      assert_eq!(entries.len(), 2);
+      assert_eq!(entries[0].skill_id(), 3301);
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_missing_plan() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "skill_plan_replace",
+          &McpPerms::default(),
+          db,
+          json!({ "plan_id": 9999, "entries": [] }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
   mod planner_create {
     use pretty_assertions::assert_eq;
 

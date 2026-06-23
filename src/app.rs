@@ -2909,6 +2909,14 @@ fn subscription(app: &App) -> Subscription<Message> {
   subs.push(mcp::reload::subscription().map(|_| Message::McpDataChanged));
   subs.push(shortcuts::subscription(Message::Shortcut));
   subs.push(palette_key_subscription(app));
+  subs.extend(data_subscriptions(app));
+  Subscription::batch(subs)
+}
+
+// The per-feature screen subscriptions, armed only for the screens that are currently built. Split
+// out of `subscription` so its open/lease/panel timer wiring stays the readable core.
+fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
+  let mut subs = Vec::new();
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
@@ -2936,7 +2944,7 @@ fn subscription(app: &App) -> Subscription<Message> {
   if let Some((_, editor)) = &app.editor {
     subs.push(skill_plan_editor::subscription(editor).map(Message::SkillPlanEditor));
   }
-  Subscription::batch(subs)
+  subs
 }
 
 fn palette_key_subscription(app: &App) -> Subscription<Message> {
@@ -11632,6 +11640,107 @@ mod tests {
     }
   }
 
+  mod notification_variant_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_names_every_notification_and_panel_message() {
+      let mcp = mcp::McpRequest::new("skill_plan_create".to_owned(), serde_json::Value::Null).0;
+
+      assert_eq!(Message::ClearNotifications.variant_name(), "ClearNotifications");
+      assert_eq!(Message::CloseNotificationsPanel.variant_name(), "CloseNotificationsPanel");
+      assert_eq!(Message::MarkAllNotificationsRead.variant_name(), "MarkAllNotificationsRead");
+      assert_eq!(Message::Mcp(mcp).variant_name(), "Mcp");
+      assert_eq!(Message::McpDataChanged.variant_name(), "McpDataChanged");
+      assert_eq!(Message::Nav(rail::Destination::Wallet).variant_name(), "Nav");
+      assert_eq!(
+        Message::NavTo(rail::Destination::Settings, Some("mcp")).variant_name(),
+        "NavTo"
+      );
+      assert_eq!(Message::NotificationActivated(1).variant_name(), "NotificationActivated");
+      assert_eq!(
+        Message::NotificationsRefreshed(Box::default()).variant_name(),
+        "NotificationsRefreshed"
+      );
+      assert_eq!(Message::ToastDismissed(1).variant_name(), "ToastDismissed");
+      assert_eq!(Message::ToastHover(1, true).variant_name(), "ToastHover");
+      assert_eq!(Message::ToastTick.variant_name(), "ToastTick");
+      assert_eq!(Message::ToggleNotificationsPanel.variant_name(), "ToggleNotificationsPanel");
+    }
+  }
+
+  mod screen_variant_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn finished_event(character_id: i64) -> sync::Event {
+      sync::Event::Finished {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(character_id)),
+        outcome: sync::Outcome::synced(),
+      }
+    }
+
+    #[test]
+    fn it_names_every_per_screen_message() {
+      let id = window::Id::unique();
+
+      assert_eq!(Message::Assets(assets::Message::StockpileNew).variant_name(), "Assets");
+      assert_eq!(Message::Auth(auth::Message::Cancel).variant_name(), "Auth");
+      assert_eq!(
+        Message::Calendar(calendar::Message::PickerToggled).variant_name(),
+        "Calendar"
+      );
+      assert_eq!(
+        Message::CalendarAttentionCounted(2).variant_name(),
+        "CalendarAttentionCounted"
+      );
+      assert_eq!(
+        Message::CharacterDetail(character_detail::Message::PickerToggled).variant_name(),
+        "CharacterDetail"
+      );
+      assert_eq!(
+        Message::CharacterManager(character_manager::Message::AddCharacterRequested).variant_name(),
+        "CharacterManager"
+      );
+      assert_eq!(
+        Message::Compare(skills_compare::Message::CloseRequested).variant_name(),
+        "Compare"
+      );
+      assert_eq!(
+        Message::Compose(id, mail::Message::PickerToggled).variant_name(),
+        "Compose"
+      );
+      assert_eq!(
+        Message::CorporationDetail(corporation_detail::Message::StandingsClearSearch).variant_name(),
+        "CorporationDetail"
+      );
+      assert_eq!(
+        Message::Industry(industry::Message::PickerToggled).variant_name(),
+        "Industry"
+      );
+      assert_eq!(Message::Mail(mail::Message::PickerToggled).variant_name(), "Mail");
+      assert_eq!(Message::MailUnreadCounted(3).variant_name(), "MailUnreadCounted");
+      assert_eq!(
+        Message::ManagePlans(skill_plan_manager::Message::CancelDelete).variant_name(),
+        "ManagePlans"
+      );
+      assert_eq!(
+        Message::Settings(settings::Message::ResetToDefaults).variant_name(),
+        "Settings"
+      );
+      assert_eq!(
+        Message::SkillPlanEditor(skill_plan_editor::Message::CloseRequested).variant_name(),
+        "SkillPlanEditor"
+      );
+      assert_eq!(Message::Skills(skills::Message::PickerToggled).variant_name(), "Skills");
+      assert_eq!(Message::Sync(finished_event(1)).variant_name(), "Sync");
+      assert_eq!(Message::Wallet(wallet::Message::PickerToggled).variant_name(), "Wallet");
+    }
+  }
+
   mod views {
     use super::*;
 
@@ -11960,6 +12069,165 @@ mod tests {
 
       // An unmatched message falls through to a no-op task.
       let _ = dispatch_window_lifecycle(&mut app, Message::ClockTick);
+    }
+
+    #[test]
+    fn it_routes_the_remaining_window_lifecycle_branches() {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+
+      let _ = dispatch_window_lifecycle(&mut app, Message::Chrome(id, window_chrome::Event::Drag));
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::ContractWindowReady {
+          contract_id: 1,
+          id,
+          source: contract_detail::Source::Character {
+            character_id: 1,
+          },
+        },
+      );
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::KillmailWindowReady {
+          id,
+          killmail_id: 1,
+          source: killmail_detail::Source::Character {
+            character_id: 1,
+          },
+        },
+      );
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::StockpileEditorWindowReady {
+          id,
+          seed: Box::new(assets::EditorSeed::Blank),
+        },
+      );
+      let _ = dispatch_window_lifecycle(&mut app, Message::Palette(PaletteMessage::Close));
+      let _ = dispatch_window_lifecycle(&mut app, Message::Shortcut(Chord::FocusSearch));
+      let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::UpdaterStateChanged(updater::State::default()),
+      );
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::Window(id, window::Event::Resized(Size::new(640.0, 480.0))),
+      );
+
+      // Quitting with no windows registered tears the app down; the returned task is dropped here
+      // (never run by the iced runtime), so no real exit happens.
+      let _ = dispatch_window_lifecycle(&mut app, Message::Quit);
+    }
+  }
+
+  mod dispatch_feature_aux {
+    use super::*;
+
+    #[test]
+    fn it_routes_every_notification_and_rail_message_without_a_runtime() {
+      let mut app = ready_app();
+      let mcp = mcp::McpRequest::new("skill_plan_create".to_owned(), serde_json::Value::Null).0;
+
+      assert!(dispatch_feature_aux(&mut app, Message::ClearNotifications).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::CloseNotificationsPanel).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::MarkAllNotificationsRead).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::Mcp(mcp)).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::McpDataChanged).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::Nav(rail::Destination::Wallet)).is_ok());
+      assert!(
+        dispatch_feature_aux(&mut app, Message::NavTo(rail::Destination::Settings, Some("mcp"))).is_ok()
+      );
+      assert!(dispatch_feature_aux(&mut app, Message::NotificationActivated(1)).is_ok());
+      assert!(
+        dispatch_feature_aux(&mut app, Message::NotificationsRefreshed(Box::default())).is_ok()
+      );
+      assert!(
+        dispatch_feature_aux(&mut app, Message::RailHover(Some(rail::Destination::Wallet))).is_ok()
+      );
+      assert!(dispatch_feature_aux(&mut app, Message::RailHoverExpire(0)).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::ToastDismissed(1)).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::ToastHover(1, true)).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::ToastTick).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::ToggleNotificationsPanel).is_ok());
+    }
+
+    #[test]
+    fn it_returns_the_message_for_a_non_feature_message() {
+      let mut app = ready_app();
+
+      let result = dispatch_feature_aux(&mut app, Message::ClockTick);
+
+      assert!(matches!(result, Err(boxed) if matches!(*boxed, Message::ClockTick)));
+    }
+  }
+
+  mod dispatch_feature {
+    use super::*;
+
+    #[test]
+    fn it_routes_every_screen_message_without_a_runtime() {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+
+      assert!(dispatch_feature(&mut app, Message::Assets(assets::Message::PickerToggled)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::Auth(auth::Message::Cancel)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::Calendar(calendar::Message::PickerToggled)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::CalendarAttentionCounted(2)).is_ok());
+      assert!(
+        dispatch_feature(&mut app, Message::CharacterDetail(character_detail::Message::PickerToggled)).is_ok()
+      );
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::CharacterManager(character_manager::Message::AddCharacterRequested),
+        )
+        .is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::Compose(id, mail::Message::PickerToggled)).is_ok());
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::CorporationDetail(corporation_detail::Message::StandingsClearSearch),
+        )
+        .is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::Industry(industry::Message::PickerToggled)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::Mail(mail::Message::PickerToggled)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::MailUnreadCounted(3)).is_ok());
+      assert!(
+        dispatch_feature(&mut app, Message::ManagePlans(skill_plan_manager::Message::CancelDelete)).is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::Settings(settings::Message::ResetToDefaults)).is_ok());
+      assert!(
+        dispatch_feature(
+          &mut app,
+          Message::SkillPlanEditor(skill_plan_editor::Message::CloseRequested),
+        )
+        .is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::Skills(skills::Message::PickerToggled)).is_ok());
+      assert!(
+        dispatch_feature(&mut app, Message::StockpileEditor(id, assets::Message::PickerToggled)).is_ok()
+      );
+      assert!(dispatch_feature(&mut app, Message::Wallet(wallet::Message::PickerToggled)).is_ok());
+    }
+
+    #[test]
+    fn it_delegates_an_aux_message_to_the_aux_dispatcher() {
+      let mut app = ready_app();
+
+      assert!(dispatch_feature(&mut app, Message::ToastTick).is_ok());
+    }
+
+    #[test]
+    fn it_returns_a_lifecycle_message_for_the_caller_to_route() {
+      let mut app = ready_app();
+
+      let result = dispatch_feature(&mut app, Message::ClockTick);
+
+      assert!(matches!(result, Err(boxed) if matches!(*boxed, Message::ClockTick)));
     }
   }
 

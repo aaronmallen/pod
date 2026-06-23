@@ -252,54 +252,71 @@ async fn persist_killmail_detail(
 /// A single bulk `resolve_names` call filters out ids the universe cannot name (NPCs, structures)
 /// before the per-id `ensure_*` resolutions, so unresolvable ids are skipped without a wasted fetch.
 async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Result<(), Error> {
-  let mut alliance_ids = Vec::new();
-  let mut character_ids = Vec::new();
-  let mut corporation_ids = Vec::new();
+  let parties = PartyIds::from_killmail(detail);
+  let nameable = resolve_names(ctx, &parties.all()).await?;
 
-  let mut collect = |character: Option<i64>, corporation: Option<i64>, alliance: Option<i64>| {
-    if let Some(id) = character {
-      character_ids.push(id);
-    }
-    if let Some(id) = corporation {
-      corporation_ids.push(id);
-    }
-    if let Some(id) = alliance {
-      alliance_ids.push(id);
-    }
-  };
-
-  collect(
-    detail.victim.character_id,
-    detail.victim.corporation_id,
-    detail.victim.alliance_id,
-  );
-  for attacker in &detail.attackers {
-    collect(attacker.character_id, attacker.corporation_id, attacker.alliance_id);
-  }
-
-  let mut all_ids = Vec::new();
-  all_ids.extend(&character_ids);
-  all_ids.extend(&corporation_ids);
-  all_ids.extend(&alliance_ids);
-  let nameable = resolve_names(ctx, &all_ids).await?;
-
-  for id in dedupe_ids(corporation_ids) {
+  for id in dedupe_ids(parties.corporation_ids.clone()) {
     if nameable.contains_key(&id) {
       structure_resolution::ensure_corporation_present(ctx, id).await?;
     }
   }
-  for id in dedupe_ids(alliance_ids) {
+  for id in dedupe_ids(parties.alliance_ids.clone()) {
     if nameable.contains_key(&id) {
       structure_resolution::ensure_alliance(ctx, id).await?;
     }
   }
-  for id in dedupe_ids(character_ids) {
+  for id in dedupe_ids(parties.character_ids.clone()) {
     if nameable.contains_key(&id) {
       structure_resolution::ensure_character_present(ctx, id).await?;
     }
   }
 
   Ok(())
+}
+
+struct PartyIds {
+  alliance_ids: Vec<i64>,
+  character_ids: Vec<i64>,
+  corporation_ids: Vec<i64>,
+}
+
+impl PartyIds {
+  fn from_killmail(detail: &Killmail) -> Self {
+    let mut ids = PartyIds {
+      alliance_ids: Vec::new(),
+      character_ids: Vec::new(),
+      corporation_ids: Vec::new(),
+    };
+    ids.push(
+      detail.victim.character_id,
+      detail.victim.corporation_id,
+      detail.victim.alliance_id,
+    );
+    for attacker in &detail.attackers {
+      ids.push(attacker.character_id, attacker.corporation_id, attacker.alliance_id);
+    }
+    ids
+  }
+
+  fn all(&self) -> Vec<i64> {
+    let mut all = Vec::with_capacity(self.character_ids.len() + self.corporation_ids.len() + self.alliance_ids.len());
+    all.extend(&self.character_ids);
+    all.extend(&self.corporation_ids);
+    all.extend(&self.alliance_ids);
+    all
+  }
+
+  fn push(&mut self, character: Option<i64>, corporation: Option<i64>, alliance: Option<i64>) {
+    if let Some(id) = character {
+      self.character_ids.push(id);
+    }
+    if let Some(id) = corporation {
+      self.corporation_ids.push(id);
+    }
+    if let Some(id) = alliance {
+      self.alliance_ids.push(id);
+    }
+  }
 }
 
 fn dedupe_ids(mut ids: Vec<i64>) -> Vec<i64> {
@@ -623,6 +640,110 @@ mod tests {
         "a missing parent row must surface NotReady for a short token-free retry, not a clean Ok"
       );
       assert!(org::corporation_killmails(&db, 2000).await.unwrap().is_empty());
+    }
+  }
+
+  fn killmail_from(value: serde_json::Value) -> Killmail {
+    serde_json::from_value(value).expect("deserialize killmail fixture")
+  }
+
+  mod party_ids {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_collects_victim_and_attacker_ids_per_category() {
+      let detail = killmail_from(serde_json::json!({
+        "killmail_id": 1,
+        "killmail_time": "2024-05-01T00:00:00Z",
+        "solar_system_id": 30000142,
+        "victim": { "character_id": 7, "corporation_id": 700, "alliance_id": 9000, "ship_type_id": 587 },
+        "attackers": [
+          { "character_id": 8, "corporation_id": 800, "alliance_id": 9001, "final_blow": true },
+          { "damage_done": 1, "final_blow": false }
+        ]
+      }));
+
+      let parties = PartyIds::from_killmail(&detail);
+
+      assert_eq!(parties.character_ids, vec![7, 8]);
+      assert_eq!(parties.corporation_ids, vec![700, 800]);
+      assert_eq!(parties.alliance_ids, vec![9000, 9001]);
+      assert_eq!(parties.all(), vec![7, 8, 700, 800, 9000, 9001]);
+    }
+
+    #[test]
+    fn it_skips_missing_ids_and_npc_attackers() {
+      let detail = killmail_from(serde_json::json!({
+        "killmail_id": 2,
+        "killmail_time": "2024-05-01T00:00:00Z",
+        "solar_system_id": 30000142,
+        "victim": { "ship_type_id": 587 },
+        "attackers": [{ "damage_done": 5, "final_blow": true }]
+      }));
+
+      let parties = PartyIds::from_killmail(&detail);
+
+      assert!(parties.character_ids.is_empty());
+      assert!(parties.corporation_ids.is_empty());
+      assert!(parties.alliance_ids.is_empty());
+      assert!(parties.all().is_empty());
+    }
+  }
+
+  mod resolve_third_party_names {
+    use super::*;
+    use crate::store::repo::character;
+
+    // A ctx whose ESI base url is an unroutable loopback port; a fixture that names no third
+    // parties leaves `all_ids` empty so `resolve_names` returns without ever reaching the network.
+    fn offline_ctx<'a>(
+      db: &'a store::Database,
+      esi: &'a esi::Client,
+      image: &'a eve_image::Client,
+      image_store: &'a images::Store,
+    ) -> JobCtx<'a> {
+      JobCtx {
+        db,
+        esi,
+        image,
+        image_store,
+        key: JobKey::new(JobKind::CorporationKillmails, Subject::Corporation(2000)),
+        grant: None,
+        sso: None,
+      }
+    }
+
+    fn offline_esi(db: &store::Database) -> esi::Client {
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      esi::Client::with_base_url(http, "http://127.0.0.1:1/")
+    }
+
+    #[tokio::test]
+    async fn it_resolves_no_one_when_the_killmail_names_no_third_parties() {
+      let db = store::open_test().await.unwrap();
+      let esi = offline_esi(&db);
+      let image = eve_image::Client::with_base_url(
+        http::Client::builder(http::Cache::new(db.clone())).build(),
+        "http://127.0.0.1:1/",
+      );
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = offline_ctx(&db, &esi, &image, &image_store);
+      let detail = killmail_from(serde_json::json!({
+        "killmail_id": 700,
+        "killmail_time": "2024-05-01T00:00:00Z",
+        "solar_system_id": 30000142,
+        "victim": { "ship_type_id": 587 },
+        "attackers": [{ "damage_done": 100, "final_blow": true }]
+      }));
+
+      // No ids are referenced, so `resolve_names` short-circuits without an ESI call and nothing
+      // is persisted.
+      resolve_third_party_names(&ctx, &detail).await.unwrap();
+
+      assert!(character::get(&db, 42).await.unwrap().is_none());
     }
   }
 }

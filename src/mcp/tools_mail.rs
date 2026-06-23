@@ -18,7 +18,7 @@ fn send_mail_tool() -> McpTool {
   McpTool::new(
     "send_mail",
     "Queues an EVE mail for delivery through Pod's outbox (optimistic Sent insert, real ESI send by the drainer). \
-     Args: character_id (sender), subject, body, recipients [{id, type?}].",
+      Args: character_id (sender), subject, body, recipients [{id, type?}].",
     Permission::SendMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -52,7 +52,7 @@ fn delete_mail_tool() -> McpTool {
   McpTool::new(
     "delete_mail",
     "Permanently deletes a mail from Pod and the EVE mailbox through the outbox (optimistic purge, real ESI delete by \
-     the drainer, restore-on-failure). Args: character_id, mail_id.",
+      the drainer, restore-on-failure). Args: character_id, mail_id.",
     Permission::DeleteMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -81,7 +81,7 @@ fn manage_labels_tool() -> McpTool {
   McpTool::new(
     "manage_labels",
     "Creates or deletes a mail label, or sets a mail's labels, through the outbox. Args: character_id, action \
-     (create_label|delete_label|set_labels), name+color? (create), label_id (delete), mail_id+labels[] (set).",
+      (create_label|delete_label|set_labels), name+color? (create), label_id (delete), mail_id+labels[] (set).",
     Permission::ManageLabels,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;

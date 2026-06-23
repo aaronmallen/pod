@@ -201,7 +201,7 @@ fn get_budget_view_tool() -> McpTool {
   McpTool::new(
     "get_budget_view",
     "Returns the global budget envelopes, assignments, and Ready-to-Assign for a month. Args: month (YYYY-MM, \
-     defaults to current).",
+      defaults to current).",
     Permission::Read,
     |db, args: Value| async move {
       let month = args

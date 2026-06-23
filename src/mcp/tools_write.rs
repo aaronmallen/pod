@@ -39,7 +39,7 @@ fn budget_assign_category_tool() -> McpTool {
   McpTool::new(
     "budget_assign_category",
     "Sets a budget category's assignment for a month (the global All scope). Args: category_id, month (YYYY-MM), \
-     value.",
+      value.",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let category_id = require_i64(&args, "category_id")?;
@@ -61,7 +61,7 @@ fn budget_move_money_tool() -> McpTool {
   McpTool::new(
     "budget_move_money",
     "Moves assigned money between budget categories, or to Ready-to-Assign. Args: month (YYYY-MM), from_category_id, \
-     amount, to_category_id (omit to move to Ready-to-Assign).",
+      amount, to_category_id (omit to move to Ready-to-Assign).",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let month = require_month(&args)?;
@@ -90,7 +90,7 @@ fn budget_assign_entry_tool() -> McpTool {
   McpTool::new(
     "budget_assign_entry",
     "Pins a single wallet entry to a budget category. Args: owner_kind (character|corporation), owner_id, entry_kind \
-     (journal|market), entry_id, category_id.",
+      (journal|market), entry_id, category_id.",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let owner = require_owner(&args)?;
@@ -114,7 +114,7 @@ fn budget_set_rule_tool() -> McpTool {
   McpTool::new(
     "budget_set_rule",
     "Creates or updates an automation rule that files matching entries into a category. Args: category_id, name, \
-     match_mode (all|any), conditions [{field, op, value, value2?}], rule_id (omit to create), enabled (default true).",
+      match_mode (all|any), conditions [{field, op, value, value2?}], rule_id (omit to create), enabled (default true).",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let category_id = require_i64(&args, "category_id")?;
@@ -231,7 +231,7 @@ fn skill_plan_replace_tool() -> McpTool {
   McpTool::new(
     "skill_plan_replace",
     "Replaces every entry of a plan in one shot. Args: plan_id, entries [{skill_id, to_level, priority?, note?, \
-     is_auto?}].",
+      is_auto?}].",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -266,7 +266,7 @@ fn planner_create_tool() -> McpTool {
   McpTool::new(
     "planner_create",
     "Creates a saved industry plan. Args: name, product_type_id, runs, root_facility_system (optional), types \
-     [{type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}].",
+      [{type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}].",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let name = require_str(&args, "name")?;
@@ -281,7 +281,7 @@ fn planner_replace_segments_tool() -> McpTool {
   McpTool::new(
     "planner_replace_segments",
     "Replaces a plan's per-type build segments. Args: plan_id, segments [{type_id, runs, segment_index, pilot_id?, \
-     clone_id?}].",
+      clone_id?}].",
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;

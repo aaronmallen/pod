@@ -23,18 +23,17 @@ const RAIL_WIDTH: f32 = 256.0;
 const RAIL_PORTRAIT: f32 = 32.0;
 const DETAIL_PORTRAIT: f32 = 36.0;
 
-// The per-plan action payloads (Copy / Delete / New / Open ids) are emitted by the card affordances today
-// but read only once the sibling action tasks (llnkyyyu open/delete/new, mprnxouv copy) land; until then
-// the app reducer ignores them.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum Message {
+  CancelDelete,
   CharacterSelected(i64),
+  ConfirmDelete(i64),
   CopyPlan { plan_id: i64, target_character_id: i64 },
-  DeletePlan(i64),
   Loaded(Box<Roster>),
   NewPlan(i64),
   OpenPlan { character_id: i64, plan_id: i64 },
+  RequestDelete(i64),
+  ToggleCopyMenu(i64),
 }
 
 impl Message {
@@ -81,6 +80,8 @@ pub struct RosterEntry {
 
 #[derive(Debug)]
 pub struct State {
+  confirm_delete: Option<i64>,
+  copy_menu: Option<i64>,
   roster: Roster,
   selected: Option<i64>,
 }
@@ -88,14 +89,43 @@ pub struct State {
 impl State {
   pub fn new() -> Self {
     State {
+      confirm_delete: None,
+      copy_menu: None,
       roster: Roster::default(),
       selected: None,
     }
   }
 
-  // Exposes the loaded roster for the sibling copy task (mprnxouv), which needs the other characters as
-  // copy-to targets; unused by this shell task.
-  #[allow(dead_code)]
+  pub fn arm_delete(&mut self, plan_id: i64) {
+    self.confirm_delete = Some(plan_id);
+    self.copy_menu = None;
+  }
+
+  pub fn clear_delete(&mut self) {
+    self.confirm_delete = None;
+  }
+
+  pub fn close_copy_menu(&mut self) {
+    self.copy_menu = None;
+  }
+
+  pub fn confirm_delete(&self) -> Option<i64> {
+    self.confirm_delete
+  }
+
+  pub fn copy_menu(&self) -> Option<i64> {
+    self.copy_menu
+  }
+
+  pub fn copy_targets(&self, source_character_id: i64) -> Vec<&RosterEntry> {
+    self
+      .roster
+      .entries
+      .iter()
+      .filter(|entry| entry.character_id != source_character_id)
+      .collect()
+  }
+
   pub fn entries(&self) -> &[RosterEntry] {
     &self.roster.entries
   }
@@ -108,6 +138,8 @@ impl State {
       .any(|entry| entry.character_id == character_id)
     {
       self.selected = Some(character_id);
+      self.confirm_delete = None;
+      self.copy_menu = None;
     }
   }
 
@@ -124,6 +156,27 @@ impl State {
     if !selected_still_present {
       self.selected = self.default_selection();
     }
+    let plan_ids: Vec<i64> = self
+      .roster
+      .entries
+      .iter()
+      .flat_map(|entry| entry.plans.iter().map(|plan| plan.id))
+      .collect();
+    if self.confirm_delete.is_some_and(|id| !plan_ids.contains(&id)) {
+      self.confirm_delete = None;
+    }
+    if self.copy_menu.is_some_and(|id| !plan_ids.contains(&id)) {
+      self.copy_menu = None;
+    }
+  }
+
+  pub fn toggle_copy_menu(&mut self, plan_id: i64) {
+    self.copy_menu = if self.copy_menu == Some(plan_id) {
+      None
+    } else {
+      self.confirm_delete = None;
+      Some(plan_id)
+    };
   }
 
   pub fn stale_images(&self) -> Vec<(images::ImageKind, i64)> {
@@ -387,7 +440,7 @@ fn detail(state: &State) -> Element<'_, Message> {
   };
 
   let body = container(
-    scrollable(detail_plans(entry))
+    scrollable(detail_plans(state, entry))
       .style(crate::ui::style::control::scrollbar)
       .height(Length::Fill),
   )
@@ -454,7 +507,7 @@ fn detail_header(entry: &RosterEntry) -> Element<'_, Message> {
     .into()
 }
 
-fn detail_plans(entry: &RosterEntry) -> Element<'_, Message> {
+fn detail_plans<'a>(state: &'a State, entry: &'a RosterEntry) -> Element<'a, Message> {
   if entry.plans.is_empty() {
     return container(
       Column::with_children(vec![
@@ -484,10 +537,19 @@ fn detail_plans(entry: &RosterEntry) -> Element<'_, Message> {
     .into();
   }
 
-  let cards: Vec<Element<'_, Message>> = entry
+  let targets = state.copy_targets(entry.character_id);
+  let cards: Vec<Element<'a, Message>> = entry
     .plans
     .iter()
-    .map(|plan| plan_card(plan, entry.character_id))
+    .map(|plan| {
+      plan_card(
+        plan,
+        entry.character_id,
+        state.confirm_delete() == Some(plan.id),
+        state.copy_menu() == Some(plan.id),
+        &targets,
+      )
+    })
     .collect();
 
   Column::with_children(cards)
@@ -497,7 +559,13 @@ fn detail_plans(entry: &RosterEntry) -> Element<'_, Message> {
     .into()
 }
 
-fn plan_card(plan: &PlanRow, character_id: i64) -> Element<'_, Message> {
+fn plan_card<'a>(
+  plan: &PlanRow,
+  character_id: i64,
+  confirming_delete: bool,
+  copy_menu_open: bool,
+  targets: &[&RosterEntry],
+) -> Element<'a, Message> {
   let count = plan.entry_count;
   let skill_word = if count == 1 { "skill" } else { "skills" };
   let meta = format!("{count} {skill_word} \u{00b7} edited {}", plan.edited);
@@ -521,28 +589,40 @@ fn plan_card(plan: &PlanRow, character_id: i64) -> Element<'_, Message> {
   .spacing(2.0)
   .width(Length::Fill);
 
-  let actions = Row::with_children(vec![
-    ghost_button(
-      "Open",
-      Message::OpenPlan {
-        character_id,
-        plan_id: plan.id,
-      },
-    ),
-    ghost_button(
-      "Copy to",
-      Message::CopyPlan {
-        plan_id: plan.id,
-        target_character_id: character_id,
-      },
-    ),
-    delete_button(plan.id),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
+  let actions: Element<'a, Message> = if confirming_delete {
+    Row::with_children(vec![
+      text("Delete?")
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS_PLUS)
+        .style(|_| text::Style {
+          color: Some(color::status::DANGER),
+        })
+        .into(),
+      ghost_button("Cancel", Message::CancelDelete),
+      danger_button("Delete", Message::ConfirmDelete(plan.id)),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  } else {
+    Row::with_children(vec![
+      ghost_button(
+        "Open",
+        Message::OpenPlan {
+          character_id,
+          plan_id: plan.id,
+        },
+      ),
+      copy_to_button(plan.id, !targets.is_empty(), copy_menu_open),
+      delete_button(plan.id),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into()
+  };
 
-  container(
-    Row::with_children(vec![info.into(), actions.into()])
+  let row = container(
+    Row::with_children(vec![info.into(), actions])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center)
       .width(Length::Fill),
@@ -557,6 +637,95 @@ fn plan_card(plan: &PlanRow, character_id: i64) -> Element<'_, Message> {
       radius: radius::CONTROL.into(),
     },
     ..container::Style::default()
+  });
+
+  if copy_menu_open && !targets.is_empty() {
+    Column::with_children(vec![row.into(), copy_menu(plan.id, targets)])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill)
+      .into()
+  } else {
+    row.into()
+  }
+}
+
+fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry]) -> Element<'a, Message> {
+  let mut items: Vec<Element<'a, Message>> = vec![
+    container(eyebrow_text("Copy to character", Some(color::text::tertiary())))
+      .padding(Padding {
+        top: spacing::SPACE_2,
+        right: spacing::SPACE_3,
+        bottom: spacing::SPACE_2,
+        left: spacing::SPACE_3,
+      })
+      .into(),
+  ];
+  for target in targets {
+    items.push(copy_menu_item(plan_id, target));
+  }
+
+  container(Column::with_children(items).width(Length::Fill))
+    .width(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn copy_menu_item<'a>(plan_id: i64, target: &RosterEntry) -> Element<'a, Message> {
+  let mut lines: Vec<Element<'a, Message>> = vec![
+    text(target.name.clone())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ];
+  if !target.corp.is_empty() {
+    lines.push(
+      text(target.corp.clone())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(|_| text::Style {
+          color: Some(color::text::tertiary()),
+        })
+        .into(),
+    );
+  }
+
+  let row = Row::with_children(vec![
+    portrait_tile(&target.portrait, &target.name, RAIL_PORTRAIT),
+    Column::with_children(lines).spacing(2.0).width(Length::Fill).into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .width(Length::Fill);
+
+  let target_character_id = target.character_id;
+  button(container(row).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_2,
+    right: spacing::SPACE_3,
+    bottom: spacing::SPACE_2,
+    left: spacing::SPACE_3,
+  }))
+  .padding(0.0)
+  .on_press(Message::CopyPlan {
+    plan_id,
+    target_character_id,
+  })
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hover.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.04))),
+      ..button::Style::default()
+    }
   })
   .into()
 }
@@ -633,6 +802,89 @@ fn ghost_button<'a>(label: &str, message: Message) -> Element<'a, Message> {
   .into()
 }
 
+fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'a, Message> {
+  let label = button(
+    text("Copy to \u{25be}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(move |_| text::Style {
+        color: Some(if enabled {
+          color::accent::PLASMA
+        } else {
+          color::text::tertiary()
+        }),
+      }),
+  )
+  .padding(Padding {
+    top: 6.0,
+    right: spacing::SPACE_2_5,
+    bottom: 6.0,
+    left: spacing::SPACE_2_5,
+  })
+  .style(move |_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    let border_color = if menu_open || (enabled && hover) {
+      color::accent::PLASMA
+    } else if enabled {
+      color::accent::PLASMA_MUTED
+    } else {
+      color::with_alpha(color::text::PRIMARY, 0.1)
+    };
+    button::Style {
+      background: (enabled && hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      text_color: if enabled {
+        color::accent::PLASMA
+      } else {
+        color::text::tertiary()
+      },
+      ..button::Style::default()
+    }
+  });
+
+  if enabled {
+    label.on_press(Message::ToggleCopyMenu(plan_id)).into()
+  } else {
+    label.into()
+  }
+}
+
+fn danger_button<'a>(label: &str, message: Message) -> Element<'a, Message> {
+  button(
+    text(label.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::status::DANGER),
+      }),
+  )
+  .padding(Padding {
+    top: 6.0,
+    right: spacing::SPACE_2_5,
+    bottom: 6.0,
+    left: spacing::SPACE_2_5,
+  })
+  .on_press(message)
+  .style(|_, status| {
+    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+    button::Style {
+      background: hover.then(|| Background::Color(color::with_alpha(color::status::DANGER, 0.12))),
+      border: Border {
+        color: color::status::DANGER,
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      text_color: color::status::DANGER,
+      ..button::Style::default()
+    }
+  })
+  .into()
+}
+
 fn delete_button<'a>(plan_id: i64) -> Element<'a, Message> {
   button(
     text("\u{00d7}")
@@ -648,7 +900,7 @@ fn delete_button<'a>(plan_id: i64) -> Element<'a, Message> {
     bottom: 4.0,
     left: spacing::SPACE_2,
   })
-  .on_press(Message::DeletePlan(plan_id))
+  .on_press(Message::RequestDelete(plan_id))
   .style(|_, status| {
     let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
     button::Style {
@@ -876,6 +1128,90 @@ mod tests {
       state.select(999);
 
       assert_eq!(state.selected(), Some(1));
+    }
+
+    #[test]
+    fn it_clears_armed_affordances_on_select() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(10);
+      state.toggle_copy_menu(11);
+
+      state.select(3);
+
+      assert_eq!(state.confirm_delete(), None);
+      assert_eq!(state.copy_menu(), None);
+    }
+  }
+
+  mod copy_targets {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_excludes_the_source_character() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+
+      let target_ids: Vec<i64> = state.copy_targets(1).iter().map(|e| e.character_id).collect();
+
+      assert_eq!(target_ids, vec![2, 3]);
+    }
+  }
+
+  mod toggle_copy_menu {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_opens_then_closes_the_same_plan_and_disarms_delete() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(10);
+
+      state.toggle_copy_menu(10);
+      assert_eq!(state.copy_menu(), Some(10));
+      assert_eq!(
+        state.confirm_delete(),
+        None,
+        "opening the menu disarms a pending delete"
+      );
+
+      state.toggle_copy_menu(10);
+      assert_eq!(state.copy_menu(), None);
+    }
+  }
+
+  mod arm_delete {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_arms_the_confirm_and_closes_an_open_menu() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.toggle_copy_menu(11);
+
+      state.arm_delete(10);
+
+      assert_eq!(state.confirm_delete(), Some(10));
+      assert_eq!(state.copy_menu(), None);
+    }
+
+    #[test]
+    fn it_drops_a_stale_confirm_when_the_plan_is_gone() {
+      let mut state = State::new();
+      state.set_roster(super::roster());
+      state.arm_delete(10);
+
+      state.set_roster(Roster {
+        entries: vec![entry(3, "Cassi", vec![plan(12, "Logi", 3)])],
+      });
+
+      assert_eq!(state.confirm_delete(), None);
     }
   }
 

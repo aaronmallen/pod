@@ -16,6 +16,7 @@ use std::{
 
 use chrono::{DateTime, Datelike as _, Duration, Timelike as _, Utc};
 use iced::{Element, Length, Task, widget::Column};
+pub use import_export::{deduped_name, persist_onto_character, read_stored_plan};
 use picker::PickerState;
 
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp_compact as fmt_sp};
@@ -30,7 +31,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{CharacterAttributes, SkillPlan, SkillPlanEntry, SkillPlanRemapPoint},
+    model::{CharacterAttributes, SkillPlan, SkillPlanRemapPoint},
     repo::{character, sde, skills},
   },
   ui::{
@@ -421,6 +422,11 @@ impl State {
   pub fn set_pane_host_width(&mut self, host_width: f32) {
     self.picker_pane.set_host_width(host_width);
     self.summary_pane.set_host_width(host_width);
+  }
+
+  #[cfg(test)]
+  pub fn character_id(&self) -> i64 {
+    self.character_id
   }
 
   fn can_place_remap(&self) -> bool {
@@ -1442,11 +1448,6 @@ fn save(state: &State, db: &Database) -> Task<Message> {
     })
     .collect();
 
-  let entry_skill_levels: Vec<(i64, i64)> = state
-    .entries
-    .iter()
-    .map(|e| (e.skill_id, i64::from(e.to_level)))
-    .collect();
   let ship_masteries: Vec<(i64, i64)> = state
     .picker
     .ship_mastery
@@ -1490,7 +1491,6 @@ fn save(state: &State, db: &Database) -> Task<Message> {
         &sort_mode,
         &implant_set,
         &entries,
-        &entry_skill_levels,
         &remaps,
         &ship_masteries,
         &cert_proficiencies,
@@ -1511,55 +1511,42 @@ async fn persist(
   sort_mode: &str,
   implant_set: &str,
   entries: &[(i64, i64, String, String, i64)],
-  entry_skill_levels: &[(i64, i64)],
   remaps: &[RemapSave],
   ship_masteries: &[(i64, i64)],
   cert_proficiencies: &[(i64, i64)],
 ) -> Result<i64, crate::store::Error> {
-  let plan_id = match existing_id {
-    Some(id) => id,
-    None => skills::create(db, character_id, name).await?.id(),
+  let plan = import_export::PlanPersist {
+    cert_proficiencies: cert_proficiencies.to_vec(),
+    entries: entries
+      .iter()
+      .map(
+        |(skill_id, to_level, priority, note, is_auto)| import_export::PlanPersistEntry {
+          is_auto: *is_auto,
+          note: note.clone(),
+          priority: priority.clone(),
+          skill_id: *skill_id,
+          to_level: *to_level,
+        },
+      )
+      .collect(),
+    implant_set: implant_set.to_owned(),
+    name: name.to_owned(),
+    remaps: remaps
+      .iter()
+      .map(|remap| import_export::PlanPersistRemap {
+        anchor_index: remap.anchor_index,
+        base_charisma: remap.base_charisma,
+        base_intelligence: remap.base_intelligence,
+        base_memory: remap.base_memory,
+        base_perception: remap.base_perception,
+        base_willpower: remap.base_willpower,
+      })
+      .collect(),
+    ship_masteries: ship_masteries.to_vec(),
+    sort_mode: sort_mode.to_owned(),
   };
-  skills::update(db, plan_id, name, sort_mode, implant_set).await?;
-  skills::replace_ship_masteries(db, plan_id, ship_masteries).await?;
-  skills::replace_cert_proficiencies(db, plan_id, cert_proficiencies).await?;
 
-  let rows: Vec<(i64, i64, &str, &str, i64)> = entries
-    .iter()
-    .map(|(skill_id, to_level, priority, note, is_auto)| {
-      (*skill_id, *to_level, priority.as_str(), note.as_str(), *is_auto)
-    })
-    .collect();
-  skills::replace_entries(db, plan_id, &rows).await?;
-
-  let new_ids: Vec<i64> = skills::entries(db, plan_id)
-    .await?
-    .iter()
-    .map(SkillPlanEntry::id)
-    .collect();
-  debug_assert_eq!(new_ids.len(), entry_skill_levels.len());
-  for remap in remaps {
-    let after_entry_id = match remap.anchor_index {
-      None => None,
-      Some(index) => match new_ids.get(index) {
-        Some(&id) => Some(id),
-        None => continue,
-      },
-    };
-    skills::upsert_remap_point(
-      db,
-      plan_id,
-      after_entry_id,
-      remap.base_perception,
-      remap.base_memory,
-      remap.base_willpower,
-      remap.base_intelligence,
-      remap.base_charisma,
-    )
-    .await?;
-  }
-
-  Ok(plan_id)
+  import_export::persist_onto_character(db, character_id, existing_id, &plan).await
 }
 
 async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<Utc>) -> Loaded {
@@ -2655,21 +2642,9 @@ mod tests {
       );
       assert_eq!(state.name, "", "a fresh plan opens with an empty name");
 
-      let id = persist(
-        &db,
-        42,
-        None,
-        "Untitled plan",
-        "manual",
-        "current",
-        &[],
-        &[],
-        &[],
-        &[],
-        &[],
-      )
-      .await
-      .unwrap();
+      let id = persist(&db, 42, None, "Untitled plan", "manual", "current", &[], &[], &[], &[])
+        .await
+        .unwrap();
       let plan = skills::get(&db, id).await.unwrap().unwrap();
       assert_eq!(plan.name(), "Untitled plan");
     }
@@ -2914,7 +2889,6 @@ mod tests {
         "current",
         &[],
         &[],
-        &[],
         &[(587, 4)],
         &[(1, 2)],
       )
@@ -2944,7 +2918,6 @@ mod tests {
         "Combat",
         "manual",
         "current",
-        &[],
         &[],
         &[],
         &[(587, 4), (588, 2)],
@@ -4484,7 +4457,6 @@ mod tests {
           (3300, 5, "high".to_owned(), "core".to_owned(), 0),
           (3301, 4, "normal".to_owned(), String::new(), 0),
         ],
-        &[(3300, 5), (3301, 4)],
         &[],
         &[],
         &[],
@@ -4518,7 +4490,6 @@ mod tests {
           (3300, 5, "normal".to_owned(), String::new(), 0),
           (3301, 5, "normal".to_owned(), String::new(), 0),
         ],
-        &[(3300, 5), (3301, 5)],
         &[RemapSave {
           anchor_index: Some(0),
           base_perception: 17,

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{IoPanel, Message};
 use crate::{
   features::skills::optimizer::Attributes,
+  store::{Database, Error, model::SkillPlanEntry, repo::skills},
   ui::style::{color, radius, spacing, typography},
 };
 
@@ -118,6 +119,36 @@ pub struct PlanModelRemap {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanPersist {
+  pub cert_proficiencies: Vec<(i64, i64)>,
+  pub entries: Vec<PlanPersistEntry>,
+  pub implant_set: String,
+  pub name: String,
+  pub remaps: Vec<PlanPersistRemap>,
+  pub ship_masteries: Vec<(i64, i64)>,
+  pub sort_mode: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanPersistEntry {
+  pub is_auto: i64,
+  pub note: String,
+  pub priority: String,
+  pub skill_id: i64,
+  pub to_level: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanPersistRemap {
+  pub anchor_index: Option<usize>,
+  pub base_charisma: i64,
+  pub base_intelligence: i64,
+  pub base_memory: i64,
+  pub base_perception: i64,
+  pub base_willpower: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Payload {
   Json(PlanFile),
   Text(Vec<(String, u8)>),
@@ -167,6 +198,126 @@ pub fn parse_level(token: &str) -> Option<u8> {
 
 pub fn to_json(plan: &PlanFile) -> String {
   serde_json::to_string_pretty(plan).unwrap_or_default()
+}
+
+pub fn deduped_name(name: &str, existing: &[String]) -> String {
+  if !existing.iter().any(|n| n == name) {
+    return name.to_owned();
+  }
+  let mut suffix = 2;
+  loop {
+    let candidate = format!("{name} ({suffix})");
+    if !existing.iter().any(|n| *n == candidate) {
+      return candidate;
+    }
+    suffix += 1;
+  }
+}
+
+pub async fn persist_onto_character(
+  db: &Database,
+  character_id: i64,
+  existing_id: Option<i64>,
+  plan: &PlanPersist,
+) -> Result<i64, Error> {
+  let plan_id = match existing_id {
+    Some(id) => id,
+    None => skills::create(db, character_id, &plan.name).await?.id(),
+  };
+  skills::update(db, plan_id, &plan.name, &plan.sort_mode, &plan.implant_set).await?;
+  skills::replace_ship_masteries(db, plan_id, &plan.ship_masteries).await?;
+  skills::replace_cert_proficiencies(db, plan_id, &plan.cert_proficiencies).await?;
+
+  let rows: Vec<(i64, i64, &str, &str, i64)> = plan
+    .entries
+    .iter()
+    .map(|e| (e.skill_id, e.to_level, e.priority.as_str(), e.note.as_str(), e.is_auto))
+    .collect();
+  skills::replace_entries(db, plan_id, &rows).await?;
+
+  let new_ids: Vec<i64> = skills::entries(db, plan_id)
+    .await?
+    .iter()
+    .map(SkillPlanEntry::id)
+    .collect();
+  for remap in &plan.remaps {
+    let after_entry_id = match remap.anchor_index {
+      None => None,
+      Some(index) => match new_ids.get(index) {
+        Some(&id) => Some(id),
+        None => continue,
+      },
+    };
+    skills::upsert_remap_point(
+      db,
+      plan_id,
+      after_entry_id,
+      remap.base_perception,
+      remap.base_memory,
+      remap.base_willpower,
+      remap.base_intelligence,
+      remap.base_charisma,
+    )
+    .await?;
+  }
+
+  Ok(plan_id)
+}
+
+pub async fn read_stored_plan(db: &Database, plan_id: i64) -> Result<Option<(i64, PlanPersist)>, Error> {
+  let Some(plan) = skills::get(db, plan_id).await? else {
+    return Ok(None);
+  };
+
+  let stored_entries = skills::entries(db, plan_id).await?;
+  let entry_ids: Vec<i64> = stored_entries.iter().map(SkillPlanEntry::id).collect();
+  let entries = stored_entries
+    .iter()
+    .map(|e| PlanPersistEntry {
+      is_auto: e.is_auto(),
+      note: e.note().clone(),
+      priority: e.priority().to_owned(),
+      skill_id: e.skill_id(),
+      to_level: e.to_level(),
+    })
+    .collect();
+
+  let remaps = skills::remap_points(db, plan_id)
+    .await?
+    .iter()
+    .map(|r| PlanPersistRemap {
+      anchor_index: r
+        .after_entry_id()
+        .and_then(|id| entry_ids.iter().position(|&entry_id| entry_id == id)),
+      base_charisma: r.base_charisma(),
+      base_intelligence: r.base_intelligence(),
+      base_memory: r.base_memory(),
+      base_perception: r.base_perception(),
+      base_willpower: r.base_willpower(),
+    })
+    .collect();
+
+  let ship_masteries = skills::ship_masteries(db, plan_id)
+    .await?
+    .iter()
+    .map(|m| (m.ship_type_id(), m.tier()))
+    .collect();
+  let cert_proficiencies = skills::cert_proficiencies(db, plan_id)
+    .await?
+    .iter()
+    .map(|c| (c.cert_id(), c.level()))
+    .collect();
+
+  let persist = PlanPersist {
+    cert_proficiencies,
+    entries,
+    implant_set: plan.implant_set().to_owned(),
+    name: plan.name().to_owned(),
+    remaps,
+    ship_masteries,
+    sort_mode: plan.sort_mode().to_owned(),
+  };
+  Ok(Some((plan.character_id(), persist)))
 }
 
 pub(super) fn overlay<'a>(panel: &IoPanel) -> Element<'a, Message> {
@@ -525,6 +676,133 @@ mod tests {
       assert_eq!(parse_level("iv"), Some(4));
       assert_eq!(parse_level("V"), Some(5));
       assert_eq!(parse_level("vi"), None);
+    }
+  }
+
+  mod deduped_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_keeps_a_unique_name_as_is() {
+      assert_eq!(deduped_name("Combat", &["Industry".to_owned()]), "Combat");
+    }
+
+    #[test]
+    fn it_appends_the_next_free_numeric_suffix() {
+      let existing = vec!["Combat".to_owned(), "Combat (2)".to_owned()];
+
+      assert_eq!(deduped_name("Combat", &existing), "Combat (3)");
+    }
+  }
+
+  mod persist_round_trip {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      self, Database,
+      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      repo::{character, infra, skills},
+    };
+
+    async fn seed_owned(db: &Database, id: i64) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+    }
+
+    fn sample() -> PlanPersist {
+      PlanPersist {
+        cert_proficiencies: vec![(1, 2)],
+        entries: vec![
+          PlanPersistEntry {
+            is_auto: 0,
+            note: "core".to_owned(),
+            priority: "high".to_owned(),
+            skill_id: 3300,
+            to_level: 5,
+          },
+          PlanPersistEntry {
+            is_auto: 1,
+            note: String::new(),
+            priority: "normal".to_owned(),
+            skill_id: 3301,
+            to_level: 4,
+          },
+        ],
+        implant_set: "current".to_owned(),
+        name: "Combat".to_owned(),
+        remaps: vec![PlanPersistRemap {
+          anchor_index: Some(0),
+          base_charisma: 17,
+          base_intelligence: 21,
+          base_memory: 27,
+          base_perception: 17,
+          base_willpower: 17,
+        }],
+        ship_masteries: vec![(587, 4)],
+        sort_mode: "manual".to_owned(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_reads_back_exactly_what_it_persisted() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+
+      let plan_id = persist_onto_character(&db, 42, None, &sample()).await.unwrap();
+      let (owner, read_back) = read_stored_plan(&db, plan_id).await.unwrap().unwrap();
+
+      assert_eq!(owner, 42);
+      assert_eq!(read_back, sample());
+    }
+
+    #[tokio::test]
+    async fn it_anchors_remaps_to_the_new_entry_ids_on_a_fresh_character() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+      seed_owned(&db, 7).await;
+      let source_id = persist_onto_character(&db, 42, None, &sample()).await.unwrap();
+
+      let (_, stored) = read_stored_plan(&db, source_id).await.unwrap().unwrap();
+      let clone_id = persist_onto_character(&db, 7, None, &stored).await.unwrap();
+
+      let entries = skills::entries(&db, clone_id).await.unwrap();
+      let remaps = skills::remap_points(&db, clone_id).await.unwrap();
+      assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300, 3301]);
+      assert_eq!(remaps.len(), 1);
+      assert_eq!(remaps[0].after_entry_id(), Some(entries[0].id()));
+    }
+
+    #[tokio::test]
+    async fn it_reproduces_the_complete_plan_onto_a_less_trained_character() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+      seed_owned(&db, 7).await;
+      let source_id = persist_onto_character(&db, 42, None, &sample()).await.unwrap();
+
+      let (_, source) = read_stored_plan(&db, source_id).await.unwrap().unwrap();
+      let clone_id = persist_onto_character(&db, 7, None, &source).await.unwrap();
+      let (clone_owner, clone) = read_stored_plan(&db, clone_id).await.unwrap().unwrap();
+
+      assert_eq!(clone_owner, 7);
+      assert_eq!(clone, source, "the clone holds the full stored set verbatim");
     }
   }
 }

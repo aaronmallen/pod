@@ -3344,11 +3344,59 @@ fn handle_manage_plans_window_ready(app: &mut App, id: window::Id) -> Task<Messa
 
 fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
   match msg {
+    skill_plan_manager::Message::CancelDelete => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.clear_delete();
+      }
+      Task::none()
+    }
     skill_plan_manager::Message::CharacterSelected(character_id) => {
       if let Some((_, state)) = app.manage_plans.as_mut() {
         state.select(character_id);
       }
       Task::none()
+    }
+    skill_plan_manager::Message::ConfirmDelete(plan_id) => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.clear_delete();
+      }
+      let Some(runtime) = app.runtime.as_ref() else {
+        return Task::none();
+      };
+      let db = runtime.db.clone();
+      Task::perform(
+        async move {
+          if let Err(error) = store::repo::skills::delete(&db, plan_id).await {
+            tracing::error!(plan_id, %error, "failed to delete skill plan");
+          }
+          Box::new(skill_plan_manager::load_roster(&db).await)
+        },
+        skill_plan_manager::Message::Loaded,
+      )
+      .map(Message::ManagePlans)
+    }
+    skill_plan_manager::Message::CopyPlan {
+      plan_id,
+      target_character_id,
+    } => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.close_copy_menu();
+      }
+      let existing_names = manage_plans_target_names(app, target_character_id);
+      let Some(runtime) = app.runtime.as_ref() else {
+        return Task::none();
+      };
+      let db = runtime.db.clone();
+      Task::perform(
+        async move {
+          if let Err(error) = copy_plan_to_character(&db, plan_id, target_character_id, &existing_names).await {
+            tracing::error!(plan_id, target_character_id, %error, "failed to copy skill plan");
+          }
+          Box::new(skill_plan_manager::load_roster(&db).await)
+        },
+        skill_plan_manager::Message::Loaded,
+      )
+      .map(Message::ManagePlans)
     }
     skill_plan_manager::Message::Loaded(roster) => {
       let Some((_, state)) = app.manage_plans.as_mut() else {
@@ -3358,17 +3406,79 @@ fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<
       let keys = state.stale_images();
       dispatch_image_fetches(app, keys)
     }
-    // The per-plan actions (Open / New / Copy / Delete) land in sibling tasks; the affordances render
-    // today but are inert here.
-    skill_plan_manager::Message::CopyPlan {
-      ..
+    skill_plan_manager::Message::NewPlan(character_id) => {
+      open_plan_from_manager(app, character_id, skill_plan_editor::Seed::New)
     }
-    | skill_plan_manager::Message::DeletePlan(_)
-    | skill_plan_manager::Message::NewPlan(_)
-    | skill_plan_manager::Message::OpenPlan {
-      ..
-    } => Task::none(),
+    skill_plan_manager::Message::OpenPlan {
+      character_id,
+      plan_id,
+    } => open_plan_from_manager(app, character_id, skill_plan_editor::Seed::Existing(plan_id)),
+    skill_plan_manager::Message::RequestDelete(plan_id) => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.arm_delete(plan_id);
+      }
+      Task::none()
+    }
+    skill_plan_manager::Message::ToggleCopyMenu(plan_id) => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.toggle_copy_menu(plan_id);
+      }
+      Task::none()
+    }
   }
+}
+
+fn manage_plans_target_names(app: &App, target_character_id: i64) -> Vec<String> {
+  app
+    .manage_plans
+    .as_ref()
+    .map(|(_, state)| {
+      state
+        .entries()
+        .iter()
+        .find(|entry| entry.character_id == target_character_id)
+        .map(|entry| entry.plans.iter().map(|plan| plan.name.clone()).collect())
+        .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
+async fn copy_plan_to_character(
+  db: &store::Database,
+  plan_id: i64,
+  target_character_id: i64,
+  existing_names: &[String],
+) -> Result<i64, store::Error> {
+  let Some((_, mut plan)) = skill_plan_editor::read_stored_plan(db, plan_id).await? else {
+    return Ok(0);
+  };
+  plan.name = skill_plan_editor::deduped_name(&plan.name, existing_names);
+  skill_plan_editor::persist_onto_character(db, target_character_id, None, &plan).await
+}
+
+/// Switches the Skills active character to the plan owner, opens the pinned editor on `seed`, and
+/// closes the Manage Plans window so the editor takes over.
+fn open_plan_from_manager(app: &mut App, character_id: i64, seed: skill_plan_editor::Seed) -> Task<Message> {
+  let close = match app.manage_plans.take() {
+    Some((id, _)) => {
+      app.windows.remove(id);
+      window::close(id)
+    }
+    None => Task::none(),
+  };
+
+  navigate(app, Route::Skills(character_id));
+  app.selected_character = Some(character_id);
+  let owned = owned_pilot_ids(app);
+  let switch = match (app.skills.as_mut(), app.runtime.as_ref()) {
+    (Some(state), Some(runtime)) => Task::batch([
+      skills::update(state, skills::Message::CharacterChanged(character_id), &runtime.db).map(Message::Skills),
+      skills::load(&runtime.db, character_id, owned).map(Message::Skills),
+    ]),
+    _ => Task::none(),
+  };
+
+  Task::batch([close, switch, open_editor_window(app, character_id, seed)])
 }
 
 fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
@@ -9596,6 +9706,124 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.manage_plans.is_none());
+    }
+
+    async fn seed_owned(db: &store::Database, id: i64) {
+      use crate::store::{
+        model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+        repo::{character, infra},
+      };
+
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, id, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(id);
+      corp.set_creator_id(id);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(id, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+      infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9999, None, None)
+        .await
+        .unwrap();
+    }
+
+    async fn ready_with_roster(app: &mut App) -> window::Id {
+      let id = ready(app);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      let roster = skill_plan_manager::load_roster(&db).await;
+      let _ = handle_manage_plans(app, skill_plan_manager::Message::Loaded(Box::new(roster)));
+      id
+    }
+
+    #[tokio::test]
+    async fn open_switches_the_active_character_seeds_the_editor_and_closes_the_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let plan = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      let id = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::OpenPlan {
+          character_id: 42,
+          plan_id: plan.id(),
+        },
+      );
+
+      assert!(app.manage_plans.is_none(), "the manage plans window closes on open");
+      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
+      let (eid, editor) = app.editor.as_ref().expect("editor window opened");
+      assert_eq!(app.windows.kind(*eid), Some(Window::SkillPlanEditor));
+      assert_eq!(editor.character_id(), 42);
+    }
+
+    #[tokio::test]
+    async fn new_seeds_an_editor_for_the_selected_character_and_closes_the_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.skills = Some(skills::State::new(7));
+      app.windows.register(window::Id::unique(), Window::Main);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let id = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewPlan(42));
+
+      assert!(app.manage_plans.is_none());
+      assert_eq!(app.windows.kind(id), None);
+      assert_eq!(app.skills.as_ref().map(skills::State::active), Some(42));
+      let (_, editor) = app.editor.as_ref().expect("editor window opened");
+      assert_eq!(editor.character_id(), 42);
+    }
+
+    #[tokio::test]
+    async fn request_delete_arms_the_confirm_and_confirm_clears_it() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let db = app.runtime.as_ref().unwrap().db.clone();
+      seed_owned(&db, 42).await;
+      let plan = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      let _ = ready_with_roster(&mut app).await;
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::RequestDelete(plan.id()));
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.confirm_delete(), Some(plan.id()));
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ConfirmDelete(plan.id()));
+      assert_eq!(app.manage_plans.as_ref().unwrap().1.confirm_delete(), None);
+    }
+
+    #[tokio::test]
+    async fn copy_clones_the_full_plan_onto_the_target_with_name_de_dup() {
+      let db = store::open_test().await.unwrap();
+      seed_owned(&db, 42).await;
+      seed_owned(&db, 7).await;
+      let source = store::repo::skills::create(&db, 42, "Combat").await.unwrap();
+      store::repo::skills::replace_entries(&db, source.id(), &[(3300, 5, "high", "core", 0)])
+        .await
+        .unwrap();
+      store::repo::skills::create(&db, 7, "Combat").await.unwrap();
+
+      let clone_id = copy_plan_to_character(&db, source.id(), 7, &["Combat".to_owned()])
+        .await
+        .unwrap();
+
+      let clone = store::repo::skills::get(&db, clone_id).await.unwrap().unwrap();
+      assert_eq!(clone.name(), "Combat (2)", "name de-duped against the target");
+      assert_eq!(clone.character_id(), 7);
+      let entries = store::repo::skills::entries(&db, clone_id).await.unwrap();
+      assert_eq!(entries.iter().map(|e| e.skill_id()).collect::<Vec<_>>(), [3300]);
+      assert_eq!(entries[0].to_level(), 5);
     }
   }
 

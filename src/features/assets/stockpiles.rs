@@ -1981,7 +1981,10 @@ mod tests {
     fn it_holds_a_too_short_location_query_without_a_search() {
       let mut editor = Editor::blank();
 
-      let effect = apply_editor(&mut editor, Message::StockpileEditorLocationSearchChanged("Ji".to_owned()));
+      let effect = apply_editor(
+        &mut editor,
+        Message::StockpileEditorLocationSearchChanged("Ji".to_owned()),
+      );
 
       assert_eq!(effect, EditorEffect::None);
     }
@@ -2057,7 +2060,10 @@ mod tests {
       let mut editor = Editor::blank();
       editor.pick_item(34, "Tritanium".to_owned());
 
-      apply_editor(&mut editor, Message::StockpileEditorItemTargetChanged(0, "500".to_owned()));
+      apply_editor(
+        &mut editor,
+        Message::StockpileEditorItemTargetChanged(0, "500".to_owned()),
+      );
       assert_eq!(editor.items()[0].target, "500");
 
       apply_editor(&mut editor, Message::StockpileEditorItemRemoved(0));

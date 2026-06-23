@@ -11650,8 +11650,14 @@ mod tests {
       let mcp = mcp::McpRequest::new("skill_plan_create".to_owned(), serde_json::Value::Null).0;
 
       assert_eq!(Message::ClearNotifications.variant_name(), "ClearNotifications");
-      assert_eq!(Message::CloseNotificationsPanel.variant_name(), "CloseNotificationsPanel");
-      assert_eq!(Message::MarkAllNotificationsRead.variant_name(), "MarkAllNotificationsRead");
+      assert_eq!(
+        Message::CloseNotificationsPanel.variant_name(),
+        "CloseNotificationsPanel"
+      );
+      assert_eq!(
+        Message::MarkAllNotificationsRead.variant_name(),
+        "MarkAllNotificationsRead"
+      );
       assert_eq!(Message::Mcp(mcp).variant_name(), "Mcp");
       assert_eq!(Message::McpDataChanged.variant_name(), "McpDataChanged");
       assert_eq!(Message::Nav(rail::Destination::Wallet).variant_name(), "Nav");
@@ -11659,7 +11665,10 @@ mod tests {
         Message::NavTo(rail::Destination::Settings, Some("mcp")).variant_name(),
         "NavTo"
       );
-      assert_eq!(Message::NotificationActivated(1).variant_name(), "NotificationActivated");
+      assert_eq!(
+        Message::NotificationActivated(1).variant_name(),
+        "NotificationActivated"
+      );
       assert_eq!(
         Message::NotificationsRefreshed(Box::default()).variant_name(),
         "NotificationsRefreshed"
@@ -11667,7 +11676,10 @@ mod tests {
       assert_eq!(Message::ToastDismissed(1).variant_name(), "ToastDismissed");
       assert_eq!(Message::ToastHover(1, true).variant_name(), "ToastHover");
       assert_eq!(Message::ToastTick.variant_name(), "ToastTick");
-      assert_eq!(Message::ToggleNotificationsPanel.variant_name(), "ToggleNotificationsPanel");
+      assert_eq!(
+        Message::ToggleNotificationsPanel.variant_name(),
+        "ToggleNotificationsPanel"
+      );
     }
   }
 
@@ -11940,7 +11952,9 @@ mod tests {
       let _ = notifications_panel(&app, config::NavLocation::Right);
 
       app.notifications_unread = 2;
-      app.notifications.push(test_notification(1, store::model::NotificationDestination::Skills));
+      app
+        .notifications
+        .push(test_notification(1, store::model::NotificationDestination::Skills));
       app
         .notification_names
         .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
@@ -12045,10 +12059,7 @@ mod tests {
       assert!(app.sync_popover_open);
 
       let _ = dispatch_window_lifecycle(&mut app, Message::FocusMainWindow);
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::TextInputFocused(iced::widget::Id::from("search")),
-      );
+      let _ = dispatch_window_lifecycle(&mut app, Message::TextInputFocused(iced::widget::Id::from("search")));
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterDismissToast);
       let _ = dispatch_window_lifecycle(
         &mut app,
@@ -12107,10 +12118,7 @@ mod tests {
       let _ = dispatch_window_lifecycle(&mut app, Message::Palette(PaletteMessage::Close));
       let _ = dispatch_window_lifecycle(&mut app, Message::Shortcut(Chord::FocusSearch));
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::UpdaterStateChanged(updater::State::default()),
-      );
+      let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterStateChanged(updater::State::default()));
       let _ = dispatch_window_lifecycle(
         &mut app,
         Message::Window(id, window::Event::Resized(Size::new(640.0, 480.0))),
@@ -12136,16 +12144,10 @@ mod tests {
       assert!(dispatch_feature_aux(&mut app, Message::Mcp(mcp)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::McpDataChanged).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::Nav(rail::Destination::Wallet)).is_ok());
-      assert!(
-        dispatch_feature_aux(&mut app, Message::NavTo(rail::Destination::Settings, Some("mcp"))).is_ok()
-      );
+      assert!(dispatch_feature_aux(&mut app, Message::NavTo(rail::Destination::Settings, Some("mcp"))).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::NotificationActivated(1)).is_ok());
-      assert!(
-        dispatch_feature_aux(&mut app, Message::NotificationsRefreshed(Box::default())).is_ok()
-      );
-      assert!(
-        dispatch_feature_aux(&mut app, Message::RailHover(Some(rail::Destination::Wallet))).is_ok()
-      );
+      assert!(dispatch_feature_aux(&mut app, Message::NotificationsRefreshed(Box::default())).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::RailHover(Some(rail::Destination::Wallet))).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::RailHoverExpire(0)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::ToastDismissed(1)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::ToastHover(1, true)).is_ok());
@@ -12176,7 +12178,11 @@ mod tests {
       assert!(dispatch_feature(&mut app, Message::Calendar(calendar::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::CalendarAttentionCounted(2)).is_ok());
       assert!(
-        dispatch_feature(&mut app, Message::CharacterDetail(character_detail::Message::PickerToggled)).is_ok()
+        dispatch_feature(
+          &mut app,
+          Message::CharacterDetail(character_detail::Message::PickerToggled)
+        )
+        .is_ok()
       );
       assert!(
         dispatch_feature(
@@ -12197,7 +12203,11 @@ mod tests {
       assert!(dispatch_feature(&mut app, Message::Mail(mail::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::MailUnreadCounted(3)).is_ok());
       assert!(
-        dispatch_feature(&mut app, Message::ManagePlans(skill_plan_manager::Message::CancelDelete)).is_ok()
+        dispatch_feature(
+          &mut app,
+          Message::ManagePlans(skill_plan_manager::Message::CancelDelete)
+        )
+        .is_ok()
       );
       assert!(dispatch_feature(&mut app, Message::Settings(settings::Message::ResetToDefaults)).is_ok());
       assert!(
@@ -12208,9 +12218,7 @@ mod tests {
         .is_ok()
       );
       assert!(dispatch_feature(&mut app, Message::Skills(skills::Message::PickerToggled)).is_ok());
-      assert!(
-        dispatch_feature(&mut app, Message::StockpileEditor(id, assets::Message::PickerToggled)).is_ok()
-      );
+      assert!(dispatch_feature(&mut app, Message::StockpileEditor(id, assets::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::Wallet(wallet::Message::PickerToggled)).is_ok());
     }
 
@@ -12279,10 +12287,7 @@ mod tests {
       let (mut app, _id) = app_with_manage_plans();
       app.runtime = Some(test_runtime().await);
 
-      let _ = handle_manage_plans(
-        &mut app,
-        skill_plan_manager::Message::Loaded(Box::default()),
-      );
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::Loaded(Box::default()));
     }
   }
 
@@ -12315,7 +12320,10 @@ mod tests {
       app.runtime = Some(test_runtime().await);
 
       let _ = handle_compose(&mut app, id, mail::Message::DraftSaved(Some(42)));
-      assert_eq!(app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id), Some(42));
+      assert_eq!(
+        app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id),
+        Some(42)
+      );
 
       let _ = handle_compose(&mut app, id, mail::Message::DraftLoaded(Box::new(None)));
 
@@ -12391,7 +12399,9 @@ mod tests {
       let mut app = ready_app();
       app.notifications_unread = 1;
       app.notifications_panel_open = true;
-      app.notifications.push(test_notification(5, store::model::NotificationDestination::Wallet));
+      app
+        .notifications
+        .push(test_notification(5, store::model::NotificationDestination::Wallet));
       app.toasts.push(ToastEntry {
         notification: test_notification(5, store::model::NotificationDestination::Wallet),
         paused: false,
@@ -12430,12 +12440,16 @@ mod tests {
     #[test]
     fn it_builds_an_open_task_with_and_without_a_main_window() {
       let app = ready_app();
-      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| Task::done(Message::WindowOpened(id)));
+      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| {
+        Task::done(Message::WindowOpened(id))
+      });
 
       let mut app = ready_app();
       let main_id = window::Id::unique();
       app.windows.register(main_id, Window::Main);
-      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| Task::done(Message::WindowOpened(id)));
+      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| {
+        Task::done(Message::WindowOpened(id))
+      });
     }
   }
 

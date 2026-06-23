@@ -1375,7 +1375,10 @@ mod tests {
 
     #[test]
     fn it_uses_the_accent_when_enabled() {
-      assert_eq!(super::super::copy_button_label_style(true).color, Some(color::accent::PLASMA));
+      assert_eq!(
+        super::super::copy_button_label_style(true).color,
+        Some(color::accent::PLASMA)
+      );
     }
 
     #[test]

@@ -1065,6 +1065,8 @@ mod tests {
       .unwrap();
     }
 
+    // Test fixture: one argument per corp wallet transaction column.
+    #[allow(clippy::too_many_arguments)]
     fn corp_txn_row(
       corporation_id: i64,
       division: i64,

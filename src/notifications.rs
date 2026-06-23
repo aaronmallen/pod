@@ -884,4 +884,827 @@ mod tests {
       assert!(notifications::list(&db, 50).await.unwrap().is_empty());
     }
   }
+
+  // The character-scoped detectors (mail/calendar/skill/industry) all FK to characters(id), which in
+  // turn FKs to races/bloodlines/corporations. Seed that minimal graph directly so the source readers
+  // can return real rows.
+  async fn seed_character(db: &Database, character_id: i64) {
+    sqlx::query(
+      "INSERT INTO races (id, alliance_id, description, name) VALUES (1, 1, '', 'Caldari') ON CONFLICT DO NOTHING",
+    )
+    .execute(db.writer())
+    .await
+    .unwrap();
+    let bloodline = "INSERT INTO bloodlines \
+      (id, corporation_id, race_id, charisma, description, intelligence, memory, name, perception, willpower) \
+      VALUES (1, 1, 1, 1, '', 1, 1, 'Civire', 1, 1) ON CONFLICT DO NOTHING";
+    sqlx::query(bloodline).execute(db.writer()).await.unwrap();
+    let corporation = "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+      VALUES (1, 1, 1, 1, 'Test Corp', 0.0, 'TEST') ON CONFLICT DO NOTHING";
+    sqlx::query(corporation).execute(db.writer()).await.unwrap();
+    let character = "INSERT INTO characters (id, bloodline_id, corporation_id, race_id, birthday, gender, name) \
+      VALUES (?, 1, 1, 1, '2020-01-01T00:00:00Z', 'male', 'Test Pilot')";
+    sqlx::query(character)
+      .bind(character_id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+  }
+
+  // The corp-scoped extraction tables FK to corporations(id); seed just that parent row.
+  async fn seed_corporation(db: &Database, corporation_id: i64) {
+    sqlx::query(
+      "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
+      VALUES (?, 1, 1, 1, 'Test Corp', 0.0, 'TEST') ON CONFLICT DO NOTHING",
+    )
+    .bind(corporation_id)
+    .execute(db.writer())
+    .await
+    .unwrap();
+  }
+
+  mod calendar_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{self, model::CharacterCalendarEvent},
+    };
+
+    const CHARACTER: i64 = 7001;
+
+    fn event(event_id: i64) -> CharacterCalendarEvent {
+      CharacterCalendarEvent {
+        character_id: CHARACTER,
+        event_id,
+        owner_name: "Fleet Command".to_owned(),
+        timestamp: "2026-06-20T00:00:00+00:00".to_owned(),
+        title: "Op briefing".to_owned(),
+        ..Default::default()
+      }
+    }
+
+    async fn seed_event(db: &Database, event_id: i64) {
+      calendar::upsert_complete(db, &event(event_id), &[]).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_history_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_event(&db, 1).await;
+
+      let surfaced = calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty(), "pre-existing events are watermarked, not surfaced");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_a_new_event_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_event(&db, 1).await;
+      calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+      seed_event(&db, 2).await;
+
+      let surfaced = calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].dedup_key(), "calendar:7001:2");
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(surfaced[0].title(), "Op briefing");
+      assert_eq!(surfaced[0].body(), "Fleet Command");
+      assert_eq!(
+        surfaced[0].target().destination,
+        crate::store::model::NotificationDestination::Calendar
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_on_a_rerun_over_unchanged_data() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_event(&db, 1).await;
+      calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+      seed_event(&db, 2).await;
+      calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let rerun = calendar_detector(&db, CHARACTER, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(rerun.is_empty());
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_event(&db, 1).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::Calendar, false);
+
+      let surfaced = calendar_detector(&db, CHARACTER, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod extraction_cracked_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{self, model::CorporationMiningExtraction},
+    };
+
+    const CORPORATION: i64 = 98_000_001;
+
+    const NOW: &str = "2026-06-21T00:00:00+00:00";
+
+    fn now() -> DateTime<Utc> {
+      DateTime::parse_from_rfc3339(NOW).unwrap().with_timezone(&Utc)
+    }
+
+    fn extraction(structure_id: i64, moon_id: i64, arrival: &str) -> CorporationMiningExtraction {
+      CorporationMiningExtraction {
+        chunk_arrival_time: Some(arrival.to_owned()),
+        corporation_id: CORPORATION,
+        extraction_start_time: None,
+        moon_id,
+        moon_name: None,
+        natural_decay_time: None,
+        security_status: None,
+        solar_system_id: None,
+        structure_id,
+      }
+    }
+
+    async fn seed(db: &Database, extractions: &[CorporationMiningExtraction]) {
+      seed_corporation(db, CORPORATION).await;
+      org::replace_extractions_for_corporation(db, CORPORATION, extractions)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_already_cracked_chunks_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-06-20T00:00:00+00:00")]).await;
+
+      let surfaced = extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty(), "a past arrival is watermarked, not surfaced");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_future_arrival() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
+      // First scan over no matured rows watermarks nothing.
+      extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let surfaced = extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "a chunk whose arrival is still in the future never cracks"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_when_a_chunk_matures_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
+      extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+      // The same chunk's arrival has now passed relative to a later `now`.
+      let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      let surfaced = extraction_cracked_detector(&db, CORPORATION, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(
+        surfaced[0].dedup_key(),
+        "extraction_cracked:98000001:1001:40000:2026-12-01T00:00:00+00:00"
+      );
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Corporation(CORPORATION));
+      assert_eq!(surfaced[0].title(), "Moon chunk fractured");
+      // No moons row was seeded, so the body falls back to the static label.
+      assert_eq!(surfaced[0].body(), "Ready to mine");
+      assert_eq!(surfaced[0].target().character, None);
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-06-20T00:00:00+00:00")]).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::Industry, false);
+
+      let surfaced = extraction_cracked_detector(&db, CORPORATION, now(), &flags)
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod extraction_scheduled_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{self, model::CorporationMiningExtraction},
+    };
+
+    const CORPORATION: i64 = 98_000_002;
+
+    fn extraction(structure_id: i64, moon_id: i64, arrival: &str) -> CorporationMiningExtraction {
+      CorporationMiningExtraction {
+        chunk_arrival_time: Some(arrival.to_owned()),
+        corporation_id: CORPORATION,
+        extraction_start_time: None,
+        moon_id,
+        moon_name: None,
+        natural_decay_time: None,
+        security_status: None,
+        solar_system_id: None,
+        structure_id,
+      }
+    }
+
+    fn no_arrival(structure_id: i64, moon_id: i64) -> CorporationMiningExtraction {
+      CorporationMiningExtraction {
+        chunk_arrival_time: None,
+        corporation_id: CORPORATION,
+        extraction_start_time: None,
+        moon_id,
+        moon_name: None,
+        natural_decay_time: None,
+        security_status: None,
+        solar_system_id: None,
+        structure_id,
+      }
+    }
+
+    async fn seed(db: &Database, extractions: &[CorporationMiningExtraction]) {
+      seed_corporation(db, CORPORATION).await;
+      org::replace_extractions_for_corporation(db, CORPORATION, extractions)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_schedules_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
+
+      let surfaced = extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "pre-existing schedules are watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_skips_an_extraction_without_an_arrival_time() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[no_arrival(1001, 40_000)]).await;
+      extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
+        .await
+        .unwrap();
+      // Add a second arrival-less row: still nothing to schedule.
+      seed(&db, &[no_arrival(1001, 40_000), no_arrival(1002, 40_001)]).await;
+
+      let surfaced = extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "an extraction with no chunk arrival has nothing to schedule"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_emits_a_new_schedule_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
+      extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
+        .await
+        .unwrap();
+      seed(
+        &db,
+        &[
+          extraction(1001, 40_000, "2026-12-01T00:00:00+00:00"),
+          extraction(1002, 40_001, "2026-12-05T00:00:00+00:00"),
+        ],
+      )
+      .await;
+
+      let surfaced = extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(
+        surfaced[0].dedup_key(),
+        "extraction_scheduled:98000002:1002:40001:2026-12-05T00:00:00+00:00"
+      );
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Corporation(CORPORATION));
+      assert_eq!(surfaced[0].title(), "Extraction scheduled");
+      assert_eq!(
+        surfaced[0].target().destination,
+        crate::store::model::NotificationDestination::Industry
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::Industry, false);
+
+      let surfaced = extraction_scheduled_detector(&db, CORPORATION, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod industry_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{
+        self,
+        model::{CharacterIndustryJob, CorporationIndustryJob, CorporationMemberRole, OwnerType},
+        repo::infra,
+      },
+    };
+
+    const CHARACTER: i64 = 7100;
+
+    const CORPORATION: i64 = 1;
+
+    const DIRECTOR: i64 = 7100;
+
+    fn job(job_id: i64, status: &str) -> CharacterIndustryJob {
+      CharacterIndustryJob {
+        activity_id: 1,
+        blueprint_id: 100,
+        blueprint_location_id: 60_003_760,
+        blueprint_type_id: 12_345,
+        character_id: CHARACTER,
+        completed_character_id: None,
+        completed_date: None,
+        cost: None,
+        duration: 3600,
+        end_date: "2026-06-20T00:00:00+00:00".to_owned(),
+        facility_id: 60_003_760,
+        installer_id: CHARACTER,
+        job_id,
+        licensed_runs: None,
+        output_location_id: 60_003_760,
+        pause_date: None,
+        probability: None,
+        product_type_id: Some(587),
+        runs: 1,
+        start_date: "2026-06-19T00:00:00+00:00".to_owned(),
+        station_id: None,
+        status: status.to_owned(),
+        successful_runs: None,
+      }
+    }
+
+    fn corp_job(job_id: i64, status: &str) -> CorporationIndustryJob {
+      CorporationIndustryJob {
+        activity_id: 1,
+        blueprint_id: 100,
+        blueprint_location_id: 60_003_760,
+        blueprint_type_id: 12_345,
+        completed_character_id: None,
+        completed_date: None,
+        corporation_id: CORPORATION,
+        cost: None,
+        duration: 3600,
+        end_date: "2026-06-20T00:00:00+00:00".to_owned(),
+        facility_id: 60_003_760,
+        installer_id: DIRECTOR,
+        job_id,
+        licensed_runs: None,
+        output_location_id: 60_003_760,
+        pause_date: None,
+        probability: None,
+        product_type_id: Some(587),
+        runs: 1,
+        start_date: "2026-06-19T00:00:00+00:00".to_owned(),
+        station_id: None,
+        status: status.to_owned(),
+        successful_runs: None,
+      }
+    }
+
+    // The corp industry reader gates on `corp_is_authorized`: an owned corp whose Director-roled
+    // credential authorizer is a member holding the Director role. Seed that full chain.
+    async fn authorize_corp(db: &Database) {
+      seed_character(db, DIRECTOR).await;
+      infra::upsert(
+        db,
+        CORPORATION,
+        OwnerType::Corporation,
+        "tok",
+        "rt",
+        9999,
+        Some(DIRECTOR),
+        None,
+      )
+      .await
+      .unwrap();
+      org::replace_for_corporation(
+        db,
+        CORPORATION,
+        &[CorporationMemberRole::from((
+          CORPORATION,
+          DIRECTOR,
+          "Director".to_owned(),
+        ))],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_finished_jobs_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      industry::replace_for_character(&db, CHARACTER, &[job(1, "ready")])
+        .await
+        .unwrap();
+
+      let surfaced = industry_detector(&db, NotificationOwner::Character(CHARACTER), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "pre-existing finished jobs are watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_only_surfaces_done_jobs() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      industry::replace_for_character(&db, CHARACTER, &[job(1, "ready")])
+        .await
+        .unwrap();
+      industry_detector(&db, NotificationOwner::Character(CHARACTER), &FeatureFlags::default())
+        .await
+        .unwrap();
+      // An active job is not done; a newly-delivered one is.
+      industry::replace_for_character(
+        &db,
+        CHARACTER,
+        &[job(1, "ready"), job(2, "active"), job(3, "delivered")],
+      )
+      .await
+      .unwrap();
+
+      let surfaced = industry_detector(&db, NotificationOwner::Character(CHARACTER), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1, "only the newly-delivered job surfaces");
+      assert_eq!(surfaced[0].dedup_key(), "industry:3");
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(surfaced[0].title(), "Industry job complete");
+      assert_eq!(surfaced[0].target().character, Some(CHARACTER));
+    }
+
+    #[tokio::test]
+    async fn it_emits_for_a_corporation_owner() {
+      let db = store::open_test().await.unwrap();
+      authorize_corp(&db).await;
+      industry::replace_for_corporation(&db, CORPORATION, &[corp_job(10, "ready")])
+        .await
+        .unwrap();
+      industry_detector(
+        &db,
+        NotificationOwner::Corporation(CORPORATION),
+        &FeatureFlags::default(),
+      )
+      .await
+      .unwrap();
+      industry::replace_for_corporation(&db, CORPORATION, &[corp_job(10, "ready"), corp_job(11, "delivered")])
+        .await
+        .unwrap();
+
+      let surfaced = industry_detector(
+        &db,
+        NotificationOwner::Corporation(CORPORATION),
+        &FeatureFlags::default(),
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].dedup_key(), "industry:11");
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Corporation(CORPORATION));
+      assert_eq!(
+        surfaced[0].target().character,
+        None,
+        "a corp job carries no character target"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      industry::replace_for_character(&db, CHARACTER, &[job(1, "ready")])
+        .await
+        .unwrap();
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::Industry, false);
+
+      let surfaced = industry_detector(&db, NotificationOwner::Character(CHARACTER), &flags)
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod mail_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{
+        self,
+        model::{CharacterMail, CharacterMailBody, CharacterMailRecipient},
+      },
+    };
+
+    const CHARACTER: i64 = 7200;
+
+    fn header(mail_id: i64, from_id: i64, subject: Option<&str>) -> CharacterMail {
+      CharacterMail {
+        character_id: CHARACTER,
+        from_id,
+        from_name: "Sender".to_owned(),
+        mail_id,
+        subject: subject.map(str::to_owned),
+        timestamp: "2026-06-20T00:00:00+00:00".to_owned(),
+        ..Default::default()
+      }
+    }
+
+    async fn seed_mail(db: &Database, mail_id: i64, from_id: i64, subject: Option<&str>) {
+      let body = CharacterMailBody {
+        body: "<p>hi</p>".to_owned(),
+        character_id: CHARACTER,
+        mail_id,
+      };
+      mail::upsert_complete(
+        db,
+        &header(mail_id, from_id, subject),
+        &body,
+        &[] as &[CharacterMailRecipient],
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_existing_mail_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_mail(&db, 1, 999, Some("Hello")).await;
+
+      let surfaced = mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+
+      assert!(surfaced.is_empty(), "pre-existing mail is watermarked, not surfaced");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_a_new_received_mail_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_mail(&db, 1, 999, Some("Hello")).await;
+      mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+      seed_mail(&db, 2, 888, Some("Re: contract")).await;
+
+      let surfaced = mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].dedup_key(), "mail:7200:2");
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(surfaced[0].title(), "Re: contract");
+      assert_eq!(surfaced[0].body(), "From Sender");
+    }
+
+    #[tokio::test]
+    async fn it_titles_an_empty_subject_mail_with_a_fallback() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_mail(&db, 1, 999, Some("seed")).await;
+      mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+      seed_mail(&db, 2, 888, Some("")).await;
+
+      let surfaced = mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].title(), "New EVE mail");
+    }
+
+    #[tokio::test]
+    async fn it_drops_self_sent_mail() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_mail(&db, 1, 999, Some("seed")).await;
+      mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+      // A mail whose author is the owner is a Sent-box copy and must not notify.
+      seed_mail(&db, 2, CHARACTER, Some("My own message")).await;
+
+      let surfaced = mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
+
+      assert!(surfaced.is_empty(), "mail authored by the owner is filtered out");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_mail(&db, 1, 999, Some("Hello")).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::Mail, false);
+
+      let surfaced = mail_detector(&db, CHARACTER, &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod skill_detector {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+      config::Feature,
+      store::{self, model::CharacterSkillqueue},
+    };
+
+    const CHARACTER: i64 = 7300;
+
+    const NOW: &str = "2026-06-21T00:00:00+00:00";
+
+    fn now() -> DateTime<Utc> {
+      DateTime::parse_from_rfc3339(NOW).unwrap().with_timezone(&Utc)
+    }
+
+    fn entry(skill_id: i64, queue_position: i64, finish: Option<&str>) -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        character_id: CHARACTER,
+        finish_date: finish.map(str::to_owned),
+        finished_level: 5,
+        level_end_sp: None,
+        level_start_sp: None,
+        queue_position,
+        skill_id,
+        start_date: None,
+        training_start_sp: None,
+      }
+    }
+
+    async fn seed_queue(db: &Database, entries: &[CharacterSkillqueue]) {
+      character::replace_skillqueue(db, CHARACTER, entries).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_watermarks_already_matured_skills_on_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-06-20T00:00:00+00:00"))]).await;
+
+      let surfaced = skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(
+        surfaced.is_empty(),
+        "a skill already finished is watermarked, not surfaced"
+      );
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_ignores_a_skill_still_training_and_one_without_a_finish_date() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(
+        &db,
+        &[entry(3300, 0, Some("2026-12-01T00:00:00+00:00")), entry(3301, 1, None)],
+      )
+      .await;
+      // First scan over no matured rows watermarks nothing real.
+      skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      let surfaced = skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert!(surfaced.is_empty(), "future and not-yet-started skills never mature");
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_emits_when_a_skill_matures_after_the_first_scan() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-12-01T00:00:00+00:00"))]).await;
+      skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
+        .await
+        .unwrap();
+      // The skill's finish_date has now passed relative to a later `now`.
+      let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
+        .unwrap()
+        .with_timezone(&Utc);
+
+      let surfaced = skill_detector(&db, CHARACTER, later, &FeatureFlags::default())
+        .await
+        .unwrap();
+
+      assert_eq!(surfaced.len(), 1);
+      assert_eq!(surfaced[0].dedup_key(), "skill:7300:3300:2026-12-01T00:00:00+00:00");
+      assert_eq!(surfaced[0].owner(), NotificationOwner::Character(CHARACTER));
+      assert_eq!(surfaced[0].body(), "Training complete");
+      assert_eq!(surfaced[0].target().character, Some(CHARACTER));
+      assert_eq!(
+        surfaced[0].target().destination,
+        crate::store::model::NotificationDestination::Skills
+      );
+    }
+
+    #[tokio::test]
+    async fn it_does_not_run_for_a_disabled_feature() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, CHARACTER).await;
+      seed_queue(&db, &[entry(3300, 0, Some("2026-06-20T00:00:00+00:00"))]).await;
+      let mut flags = FeatureFlags::default();
+      flags.set_enabled(Feature::SkillMonitoring, false);
+
+      let surfaced = skill_detector(&db, CHARACTER, now(), &flags).await.unwrap();
+
+      assert!(surfaced.is_empty());
+      assert!(notifications::list(&db, 50).await.unwrap().is_empty());
+    }
+  }
 }

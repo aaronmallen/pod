@@ -207,7 +207,7 @@ pub fn deduped_name(name: &str, existing: &[String]) -> String {
   let mut suffix = 2;
   loop {
     let candidate = format!("{name} ({suffix})");
-    if !existing.iter().any(|n| *n == candidate) {
+    if !existing.contains(&candidate) {
       return candidate;
     }
     suffix += 1;

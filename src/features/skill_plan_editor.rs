@@ -1225,6 +1225,11 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
     ..PickerState::default()
   };
   state.entries = entries;
+  // Rebase the synthetic-id counter below every loaded id (repair can mint negatives like -1, -2). The
+  // counter seeds at -1, so without this the next user-added/imported/auto skill would reuse a loaded
+  // repair id and corrupt drag/note/drop/anchor, all of which key on entry id. .min(0) preserves the -1
+  // start for an all-positive plan.
+  state.next_entry_id = state.entries.iter().map(|e| e.id).min().unwrap_or(0).min(0) - 1;
   state.plan = plan;
   state.remap_availability = remap_availability;
   state.remap_reason = remap_reason;
@@ -3451,6 +3456,65 @@ mod tests {
       state.refresh_rows();
 
       let _el: Element<'_, Message> = view(&state, now());
+    }
+  }
+
+  mod apply_loaded {
+    use std::collections::HashSet;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn loaded_with(entries: Vec<EditEntry>) -> Loaded {
+      Loaded {
+        attrs: Attributes::default(),
+        base_attrs: Attributes::default(),
+        catalog: SkillCatalog {
+          groups: Vec::new(),
+        },
+        cert_proficiency: HashMap::new(),
+        character_total_sp: 0,
+        draft_name: None,
+        entries,
+        plan: None,
+        remap_availability: 0,
+        remap_points: Vec::new(),
+        remap_reason: String::new(),
+        ship_mastery: HashMap::new(),
+        sort: Sort::default(),
+        synced_sp: HashMap::new(),
+        trained_levels: HashMap::new(),
+      }
+    }
+
+    #[test]
+    fn it_rebases_the_id_counter_below_a_loaded_repair_entry() {
+      let mut state = State::new(42);
+      // A repaired under-expanded plan: one real positive id plus a synthetic negative repair id.
+      let loaded = loaded_with(vec![edit_entry(7, 100, 5), edit_entry(-1, 200, 1)]);
+
+      apply_loaded(&mut state, loaded);
+      upsert_imported_entry(&mut state, 300, 3, false, "", Priority::Normal);
+
+      let ids: Vec<i64> = state.entries.iter().map(|e| e.id).collect();
+      let unique: HashSet<i64> = ids.iter().copied().collect();
+      assert_eq!(
+        unique.len(),
+        ids.len(),
+        "every entry id stays unique after adding a skill"
+      );
+    }
+
+    #[test]
+    fn it_preserves_the_negative_start_for_an_all_positive_plan() {
+      let mut state = State::new(42);
+      let loaded = loaded_with(vec![edit_entry(3, 100, 5)]);
+
+      apply_loaded(&mut state, loaded);
+      let added = upsert_imported_entry(&mut state, 300, 3, false, "", Priority::Normal);
+
+      assert_eq!(added, -1);
     }
   }
 

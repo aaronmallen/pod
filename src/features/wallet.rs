@@ -748,6 +748,12 @@ impl State {
     self.dirty
   }
 
+  // Unconditional reload flag for the kind-agnostic MCP write signal, which knows an agent wrote
+  // something but not which job kind, so it can't go through the whitelisted mark_dirty path.
+  pub fn force_dirty(&mut self) {
+    self.dirty = true;
+  }
+
   pub fn mark_dirty(&mut self, kind: JobKind) {
     if reload_kind(kind) {
       self.dirty = true;

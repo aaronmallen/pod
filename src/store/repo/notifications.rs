@@ -135,24 +135,62 @@ pub async fn unread_count(db: &Database) -> Result<i64, Error> {
   Ok(count)
 }
 
-// First-run backfill: insert suppressed=1 rows that occupy each dedup_key (so a later emit() with the
-// same key is a no-op) but never surface in list()/unread_count(). INSERT OR IGNORE makes re-running
-// the first-run guard safe. The kind/owner/target columns are intentionally placeholder empties: a
-// watermark row is a pure dedup ledger entry, never rendered.
+// Whether the table already holds any row (surfaced OR suppressed watermark) for this owner+kind. The
+// detectors use this — not the sync ledger — to decide a subject's first scan: the sync engine records
+// the ledger's last_success_at BEFORE the detector pulse, so a ledger-based first-run check would read
+// false on the very first sync and flood the whole history. A row only exists here once a prior scan
+// either surfaced or watermarked this owner+kind, so its presence is the true first-scan signal.
 #[allow(dead_code)]
-pub async fn watermark(db: &Database, dedup_keys: &[String]) -> Result<(), Error> {
-  if dedup_keys.is_empty() {
-    return Ok(());
-  }
+pub async fn has_any(db: &Database, owner: &NotificationOwner, kind: NotificationKind) -> Result<bool, Error> {
+  let count: i64 =
+    sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE owner_type = ? AND owner_id = ? AND kind = ? LIMIT 1")
+      .bind(owner.owner_type())
+      .bind(owner.owner_id())
+      .bind(kind.as_str())
+      .fetch_one(db.reader())
+      .await?;
+  Ok(count > 0)
+}
 
+/// dedup_key of the per-(owner, kind) sentinel a first scan always writes, so has_any() flips true even
+/// when the source had no history — otherwise a later first item would read as another first scan and be
+/// silently watermarked instead of surfaced. The "first_scan:" prefix can never collide with a real
+/// event key (none start with it).
+fn first_scan_sentinel(owner: &NotificationOwner, kind: NotificationKind) -> String {
+  format!(
+    "first_scan:{}:{}:{}",
+    kind.as_str(),
+    owner.owner_type(),
+    owner.owner_id()
+  )
+}
+
+// First-run backfill: insert suppressed=1 rows that occupy each dedup_key (so a later emit() with the
+// same key is a no-op) but never surface in list()/unread_count(). A per-(owner, kind) sentinel row is
+// always written so has_any() reports the subject as seen even when there was no history, keeping a
+// later first item surfacing instead of being silently watermarked. INSERT OR IGNORE makes re-running
+// the first-run guard safe. The rows carry the real owner+kind (not placeholders) so has_any() can
+// recognise the subject's first scan; the title/body/target columns stay empty since a watermark row is
+// a pure dedup ledger entry, never rendered.
+#[allow(dead_code)]
+pub async fn watermark(
+  db: &Database,
+  owner: &NotificationOwner,
+  kind: NotificationKind,
+  dedup_keys: &[String],
+) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
+  let sentinel = first_scan_sentinel(owner, kind);
   let mut tx = db.writer().begin().await?;
-  for dedup_key in dedup_keys {
+  for dedup_key in std::iter::once(&sentinel).chain(dedup_keys) {
     sqlx::query(
       "INSERT OR IGNORE INTO notifications \
         (kind, owner_type, owner_id, dedup_key, title, body, target_dest, created_at, suppressed) \
-        VALUES ('', 'character', 0, ?, '', '', '', ?, 1)",
+        VALUES (?, ?, ?, ?, '', '', '', ?, 1)",
     )
+    .bind(kind.as_str())
+    .bind(owner.owner_type())
+    .bind(owner.owner_id())
     .bind(dedup_key)
     .bind(&now)
     .execute(&mut *tx)
@@ -201,7 +239,14 @@ mod tests {
     async fn it_removes_surfaced_rows_but_keeps_watermarks() {
       let db = store::open_test().await.unwrap();
       emit(&db, &sample("skill:1")).await.unwrap();
-      watermark(&db, &["skill:wm".to_owned()]).await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
 
       clear_all(&db).await.unwrap();
 
@@ -242,7 +287,14 @@ mod tests {
     #[tokio::test]
     async fn it_does_not_surface_a_watermarked_key() {
       let db = store::open_test().await.unwrap();
-      watermark(&db, &["skill:1".to_owned()]).await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:1".to_owned()],
+      )
+      .await
+      .unwrap();
 
       let blocked = emit(&db, &sample("skill:1")).await.unwrap();
 
@@ -285,7 +337,14 @@ mod tests {
     #[tokio::test]
     async fn it_excludes_watermark_rows() {
       let db = store::open_test().await.unwrap();
-      watermark(&db, &["skill:wm".to_owned()]).await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
       emit(&db, &sample("skill:1")).await.unwrap();
 
       let listed = list(&db, 50).await.unwrap();
@@ -350,9 +409,84 @@ mod tests {
     async fn it_counts_only_surfaced_unread_rows() {
       let db = store::open_test().await.unwrap();
       emit(&db, &sample("skill:1")).await.unwrap();
-      watermark(&db, &["skill:wm".to_owned()]).await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
 
       assert_eq!(unread_count(&db).await.unwrap(), 1);
+    }
+  }
+
+  mod has_any {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_false_before_any_scan() {
+      let db = store::open_test().await.unwrap();
+
+      assert_eq!(
+        has_any(&db, &NotificationOwner::Character(42), NotificationKind::Skill)
+          .await
+          .unwrap(),
+        false
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_true_after_a_surfaced_row() {
+      let db = store::open_test().await.unwrap();
+      emit(&db, &sample("skill:1")).await.unwrap();
+
+      assert!(
+        has_any(&db, &NotificationOwner::Character(42), NotificationKind::Skill)
+          .await
+          .unwrap()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_true_after_a_watermark_even_with_no_history() {
+      let db = store::open_test().await.unwrap();
+      watermark(&db, &NotificationOwner::Character(42), NotificationKind::Skill, &[])
+        .await
+        .unwrap();
+
+      assert!(
+        has_any(&db, &NotificationOwner::Character(42), NotificationKind::Skill)
+          .await
+          .unwrap()
+      );
+    }
+
+    #[tokio::test]
+    async fn it_is_scoped_to_owner_and_kind() {
+      let db = store::open_test().await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
+
+      assert!(
+        !has_any(&db, &NotificationOwner::Character(42), NotificationKind::Mail)
+          .await
+          .unwrap()
+      );
+      assert!(
+        !has_any(&db, &NotificationOwner::Corporation(42), NotificationKind::Skill)
+          .await
+          .unwrap()
+      );
     }
   }
 
@@ -363,17 +497,33 @@ mod tests {
     async fn it_is_a_no_op_on_conflict() {
       let db = store::open_test().await.unwrap();
 
-      watermark(&db, &["skill:wm".to_owned()]).await.unwrap();
-      watermark(&db, &["skill:wm".to_owned()]).await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
 
       assert!(emit(&db, &sample("skill:wm")).await.unwrap().is_none());
     }
 
     #[tokio::test]
-    async fn it_ignores_an_empty_key_set() {
+    async fn it_surfaces_nothing_for_an_empty_key_set() {
       let db = store::open_test().await.unwrap();
 
-      watermark(&db, &[]).await.unwrap();
+      watermark(&db, &NotificationOwner::Character(42), NotificationKind::Skill, &[])
+        .await
+        .unwrap();
 
       assert!(list(&db, 50).await.unwrap().is_empty());
     }

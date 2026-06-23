@@ -4220,9 +4220,21 @@ fn handle_mcp(app: &mut App, request: mcp::McpRequest) -> Task<Message> {
 /// An MCP write tool reported that it changed the database, so reload whatever the open view shows.
 /// Marks the roster dirty and lifts the reload debounce so the refresh fires now, then drives the
 /// same per-view drains a sync pulse runs.
+// The MCP write signal is intentionally coarse and kind-agnostic: an agent wrote something, but we
+// don't know what. Force every open data view dirty (not just the roster) so the drain below actually
+// reloads the currently-open assets/wallet/character-detail view instead of waiting for the next sync.
 fn handle_mcp_data_changed(app: &mut App) -> Task<Message> {
   app.roster_dirty = true;
   app.next_roster_reload = None;
+  if let Some(assets) = app.assets.as_mut() {
+    assets.force_dirty();
+  }
+  if let Some(wallet) = app.wallet.as_mut() {
+    wallet.force_dirty();
+  }
+  if let Some(detail) = app.character_detail.as_mut() {
+    detail.force_dirty();
+  }
   let mut tasks: Vec<Task<Message>> = Vec::new();
   if let Some(reload) = drain_roster_dirty(app) {
     tasks.push(reload);
@@ -6516,6 +6528,27 @@ mod tests {
     app.skills = Some(skills::State::new(1));
     app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
     app
+  }
+
+  mod handle_mcp_data_changed {
+    use super::*;
+
+    #[test]
+    fn it_forces_every_open_data_view_dirty() {
+      let mut app = featured_app();
+
+      // No runtime, so the data-view drains short-circuit before touching the dirty flag, leaving the
+      // forced-dirty marks set for inspection (the roster drain is the pre-existing path and is not
+      // asserted here because it flips its own flag before bailing on the missing runtime).
+      let _task = handle_mcp_data_changed(&mut app);
+
+      assert!(app.assets.as_ref().unwrap().is_dirty(), "open assets view reloads");
+      assert!(app.wallet.as_ref().unwrap().is_dirty(), "open wallet view reloads");
+      assert!(
+        app.character_detail.as_ref().unwrap().is_dirty(),
+        "open character detail view reloads"
+      );
+    }
   }
 
   mod build_sync_esi {

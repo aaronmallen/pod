@@ -431,6 +431,19 @@ impl State {
     !self.dirty.is_empty()
   }
 
+  // Unconditional reload of every data type for the active character, for the kind-agnostic MCP write
+  // signal, which knows an agent wrote something but not which job kind, so it can't route through the
+  // per-JobKind mark_dirty path.
+  pub fn force_dirty(&mut self) {
+    self.dirty.extend([
+      DetailDataType::Clones,
+      DetailDataType::Contacts,
+      DetailDataType::Killlog,
+      DetailDataType::Notifications,
+      DetailDataType::Standings,
+    ]);
+  }
+
   pub fn mark_dirty(&mut self, key: JobKey) {
     if key.subject != Subject::Character(self.active) {
       return;

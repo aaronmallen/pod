@@ -8,9 +8,8 @@ use crate::{
     Database,
     model::{
       NewNotification, Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
-      OwnerType,
     },
-    repo::{calendar, character, industry, mail, notifications, org, sde, sync_ledger},
+    repo::{calendar, character, industry, mail, notifications, org, sde},
   },
   sync::JobKind,
 };
@@ -162,18 +161,17 @@ async fn character_name(db: &Database, character_id: i64) -> String {
     .unwrap_or_default()
 }
 
-/// Whether a subject has never had a successful sync of `kind`: an absent ledger row or a null
-/// `last_success_at` means the source has never landed, so the whole current history must be
-/// watermarked silently instead of surfaced.
-async fn is_first_sync(
+/// Whether this is the first scan of `(owner, kind)`: the notifications table holds no row — surfaced or
+/// suppressed watermark — for it yet. Deliberately independent of the sync ledger: the sync engine writes
+/// the ledger's `last_success_at` BEFORE the detector pulse, so a ledger-based check reads false on the
+/// very first sync and would flood the whole pre-existing history. On a true first scan the caller
+/// watermarks the current items (and a sentinel) so later passes only surface genuinely new items.
+async fn is_first_scan(
   db: &Database,
-  owner_type: OwnerType,
-  subject_id: i64,
-  kind: JobKind,
+  owner: NotificationOwner,
+  kind: NotificationKind,
 ) -> Result<bool, crate::store::Error> {
-  let key = format!("{kind:?}");
-  let row = sync_ledger::get(db, owner_type, subject_id, &key).await?;
-  Ok(row.is_none_or(|row| row.last_success_at().is_none()))
+  Ok(!notifications::has_any(db, &owner, kind).await?)
 }
 
 async fn corporation_name(db: &Database, corporation_id: i64) -> String {
@@ -202,14 +200,15 @@ async fn mail_detector(
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(db, OwnerType::Character, character_id, JobKind::CharacterMail).await?;
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::Mail).await?;
   let headers = mail::headers(db, character_id).await?;
   // Default: received mail not authored by the owner (drop self-sent copies in the Sent box).
   let received: Vec<_> = headers.into_iter().filter(|m| m.from_id() != character_id).collect();
   let watermarks: Vec<String> = received.iter().map(|m| mail_key(character_id, m.mail_id())).collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::Mail, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -250,7 +249,8 @@ async fn calendar_detector(
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(db, OwnerType::Character, character_id, JobKind::CharacterCalendar).await?;
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::Calendar).await?;
   // The table holds only real ESI events; Pod-derived overlays live in memory, so reading the table
   // already excludes synthetic ones.
   let events = calendar::events(db, character_id).await?;
@@ -260,7 +260,7 @@ async fn calendar_detector(
     .collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::Calendar, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -292,15 +292,15 @@ async fn killmail_detector(
   owner: NotificationOwner,
   features: &FeatureFlags,
 ) -> Result<Vec<Notification>, crate::store::Error> {
-  let (job, owner_type, subject_id) = match owner {
-    NotificationOwner::Character(id) => (JobKind::CharacterKillmails, OwnerType::Character, id),
-    NotificationOwner::Corporation(id) => (JobKind::CorporationKillmails, OwnerType::Corporation, id),
+  let (job, subject_id) = match owner {
+    NotificationOwner::Character(id) => (JobKind::CharacterKillmails, id),
+    NotificationOwner::Corporation(id) => (JobKind::CorporationKillmails, id),
   };
   if !job.is_feature_enabled(features) {
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(db, owner_type, subject_id, job).await?;
+  let first = is_first_scan(db, owner, NotificationKind::Killmail).await?;
   let rows: Vec<(i64, i64)> = match owner {
     NotificationOwner::Character(id) => character::killmails(db, id)
       .await?
@@ -313,13 +313,10 @@ async fn killmail_detector(
       .map(|k| (k.killmail_id(), k.ship_type_id()))
       .collect(),
   };
-  let watermarks: Vec<String> = rows
-    .iter()
-    .map(|(killmail_id, _)| killmail_key(subject_id, *killmail_id))
-    .collect();
+  let watermarks: Vec<String> = rows.iter().map(|(killmail_id, _)| killmail_key(*killmail_id)).collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::Killmail, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -330,7 +327,7 @@ async fn killmail_detector(
       db,
       &NewNotification {
         body: format!("{ship} destroyed"),
-        dedup_key: killmail_key(subject_id, killmail_id),
+        dedup_key: killmail_key(killmail_id),
         kind: NotificationKind::Killmail,
         owner,
         target: NotificationTarget {
@@ -357,7 +354,8 @@ async fn skill_detector(
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(db, OwnerType::Character, character_id, JobKind::CharacterSkills).await?;
+  let owner = NotificationOwner::Character(character_id);
+  let first = is_first_scan(db, owner, NotificationKind::Skill).await?;
   // A finished skill leaves no completion row; "new" is a finish_date crossing wall-clock. Scan the
   // whole queue so a multi-skill burst that matured while idle each fires once.
   let now_rfc = now.to_rfc3339();
@@ -373,7 +371,7 @@ async fn skill_detector(
     .collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::Skill, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -406,15 +404,15 @@ async fn industry_detector(
   owner: NotificationOwner,
   features: &FeatureFlags,
 ) -> Result<Vec<Notification>, crate::store::Error> {
-  let (job, owner_type, subject_id) = match owner {
-    NotificationOwner::Character(id) => (JobKind::CharacterIndustryJobs, OwnerType::Character, id),
-    NotificationOwner::Corporation(id) => (JobKind::CorporationIndustryJobs, OwnerType::Corporation, id),
+  let (job, subject_id) = match owner {
+    NotificationOwner::Character(id) => (JobKind::CharacterIndustryJobs, id),
+    NotificationOwner::Corporation(id) => (JobKind::CorporationIndustryJobs, id),
   };
   if !job.is_feature_enabled(features) {
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(db, owner_type, subject_id, job).await?;
+  let first = is_first_scan(db, owner, NotificationKind::Industry).await?;
   let jobs: Vec<(i64, Option<i64>)> = match owner {
     NotificationOwner::Character(id) => industry::list_for_character(db, id)
       .await?
@@ -432,7 +430,7 @@ async fn industry_detector(
   let watermarks: Vec<String> = jobs.iter().map(|(job_id, _)| industry_key(*job_id)).collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::Industry, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -472,13 +470,8 @@ async fn extraction_scheduled_detector(
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(
-    db,
-    OwnerType::Corporation,
-    corporation_id,
-    JobKind::CorporationMiningExtractions,
-  )
-  .await?;
+  let owner = NotificationOwner::Corporation(corporation_id);
+  let first = is_first_scan(db, owner, NotificationKind::ExtractionScheduled).await?;
   let scheduled: Vec<_> = org::corporation_mining_extractions(db, corporation_id)
     .await?
     .into_iter()
@@ -496,7 +489,7 @@ async fn extraction_scheduled_detector(
     .collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::ExtractionScheduled, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -534,13 +527,8 @@ async fn extraction_cracked_detector(
     return Ok(Vec::new());
   }
 
-  let first = is_first_sync(
-    db,
-    OwnerType::Corporation,
-    corporation_id,
-    JobKind::CorporationMiningExtractions,
-  )
-  .await?;
+  let owner = NotificationOwner::Corporation(corporation_id);
+  let first = is_first_scan(db, owner, NotificationKind::ExtractionCracked).await?;
   let now_rfc = now.to_rfc3339();
   let cracked: Vec<_> = org::corporation_mining_extractions(db, corporation_id)
     .await?
@@ -558,7 +546,7 @@ async fn extraction_cracked_detector(
     .collect();
 
   if first {
-    notifications::watermark(db, &watermarks).await?;
+    notifications::watermark(db, &owner, NotificationKind::ExtractionCracked, &watermarks).await?;
     return Ok(Vec::new());
   }
 
@@ -617,8 +605,11 @@ fn industry_key(job_id: i64) -> String {
   format!("industry:{job_id}")
 }
 
-fn killmail_key(owner_id: i64, killmail_id: i64) -> String {
-  format!("killmail:{owner_id}:{killmail_id}")
+// Keyed on the killmail id ALONE (no owner): a kill attributable to both an owned character and its
+// owned corporation must notify exactly once, so whichever owner's detector reaches it first wins and
+// the other's emit is an INSERT OR IGNORE no-op.
+fn killmail_key(killmail_id: i64) -> String {
+  format!("killmail:{killmail_id}")
 }
 
 fn mail_key(character_id: i64, mail_id: i64) -> String {
@@ -680,7 +671,7 @@ mod tests {
     fn it_builds_stable_kind_prefixed_keys() {
       assert_eq!(mail_key(1, 2), "mail:1:2");
       assert_eq!(calendar_key(1, 2), "calendar:1:2");
-      assert_eq!(killmail_key(98, 7), "killmail:98:7");
+      assert_eq!(killmail_key(7), "killmail:7");
       assert_eq!(
         skill_key(1, 3300, "2026-06-22T00:00:00+00:00"),
         "skill:1:3300:2026-06-22T00:00:00+00:00"
@@ -703,7 +694,10 @@ mod tests {
     use super::*;
     use crate::{
       config::Feature,
-      store::{self, model::CharacterKillEntry},
+      store::{
+        self,
+        model::{CharacterKillEntry, CorporationKillEntry},
+      },
     };
 
     const CHARACTER: i64 = 95_465_499;
@@ -765,24 +759,34 @@ mod tests {
       }
     }
 
-    async fn mark_synced(db: &Database) {
-      sync_ledger::upsert(
-        db,
-        OwnerType::Character,
-        CHARACTER,
-        &format!("{:?}", JobKind::CharacterKillmails),
-        "synced",
-        1,
-        None,
-        Some("2026-06-22T00:00:00+00:00"),
-        None,
-      )
-      .await
-      .unwrap();
+    const CORPORATION: i64 = 1;
+
+    fn corp_kill(killmail_id: i64) -> CorporationKillEntry {
+      CorporationKillEntry {
+        attacker_count: 1,
+        corporation_id: CORPORATION,
+        final_blow: true,
+        is_kill: true,
+        kill_hash: format!("corp-hash-{killmail_id}"),
+        kill_time: "2026-06-20T00:00:00+00:00".to_owned(),
+        killmail_id,
+        ship_type_id: 587,
+        synced_at: "2026-06-22T00:00:00+00:00".to_owned(),
+        system_id: 30_000_142,
+        value_destroyed_isk: 0.0,
+        value_final: true,
+        value_isk: 0.0,
+        value_recheck_count: 0,
+        value_source: "zkill".to_owned(),
+        victim_alliance_id: None,
+        victim_corp_id: None,
+        victim_damage_taken: 100,
+        victim_id: None,
+      }
     }
 
     #[tokio::test]
-    async fn it_watermarks_existing_history_on_the_first_sync() {
+    async fn it_watermarks_existing_history_on_the_first_scan() {
       let db = store::open_test().await.unwrap();
       seed_character(&db).await;
       character::upsert_killmail(&db, &kill(1)).await.unwrap();
@@ -796,14 +800,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_emits_exactly_one_after_the_first_sync() {
+    async fn it_emits_exactly_one_after_the_first_scan() {
       let db = store::open_test().await.unwrap();
       seed_character(&db).await;
       character::upsert_killmail(&db, &kill(1)).await.unwrap();
       killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
         .await
         .unwrap();
-      mark_synced(&db).await;
       character::upsert_killmail(&db, &kill(2)).await.unwrap();
 
       let surfaced = killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
@@ -811,7 +814,7 @@ mod tests {
         .unwrap();
 
       assert_eq!(surfaced.len(), 1);
-      assert_eq!(surfaced[0].dedup_key(), "killmail:95465499:2");
+      assert_eq!(surfaced[0].dedup_key(), "killmail:2");
       assert_eq!(notifications::unread_count(&db).await.unwrap(), 1);
     }
 
@@ -819,8 +822,11 @@ mod tests {
     async fn it_is_a_no_op_on_a_rerun_over_unchanged_data() {
       let db = store::open_test().await.unwrap();
       seed_character(&db).await;
-      mark_synced(&db).await;
       character::upsert_killmail(&db, &kill(1)).await.unwrap();
+      killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
+        .await
+        .unwrap();
+      character::upsert_killmail(&db, &kill(2)).await.unwrap();
       killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
         .await
         .unwrap();
@@ -833,11 +839,41 @@ mod tests {
       assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
     }
 
+    // Bug 3: a kill attributable to both an owned character and its owned corporation must notify once,
+    // because the dedup_key is keyed on the killmail id alone.
+    #[tokio::test]
+    async fn it_notifies_once_when_owned_by_both_a_character_and_its_corporation() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db).await;
+      // First scan over empty history watermarks nothing real for either owner.
+      killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
+        .await
+        .unwrap();
+      killmail_detector(&db, NotificationOwner::Corporation(CORPORATION), &flags())
+        .await
+        .unwrap();
+      character::upsert_killmail(&db, &kill(42)).await.unwrap();
+      org::upsert_corporation_killmail(&db, &corp_kill(42)).await.unwrap();
+
+      let from_char = killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
+        .await
+        .unwrap();
+      let from_corp = killmail_detector(&db, NotificationOwner::Corporation(CORPORATION), &flags())
+        .await
+        .unwrap();
+
+      assert_eq!(from_char.len(), 1, "the character detector surfaces the kill once");
+      assert!(
+        from_corp.is_empty(),
+        "the corp detector sees the same key already taken"
+      );
+      assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
+    }
+
     #[tokio::test]
     async fn it_does_not_run_for_a_disabled_feature() {
       let db = store::open_test().await.unwrap();
       seed_character(&db).await;
-      mark_synced(&db).await;
       character::upsert_killmail(&db, &kill(1)).await.unwrap();
 
       let surfaced = killmail_detector(&db, NotificationOwner::Character(CHARACTER), &killmails_disabled())

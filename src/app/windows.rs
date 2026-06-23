@@ -9,6 +9,7 @@ pub enum Window {
   Killmail,
   MailCompose,
   Main,
+  ManagePlans,
   SkillPlanEditor,
   Splash,
   StockpileEditor,
@@ -20,7 +21,12 @@ impl Window {
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
-      Self::Contract | Self::Killmail | Self::MailCompose | Self::Splash | Self::StockpileEditor => None,
+      Self::Contract
+      | Self::Killmail
+      | Self::MailCompose
+      | Self::ManagePlans
+      | Self::Splash
+      | Self::StockpileEditor => None,
     }
   }
 }
@@ -203,6 +209,7 @@ mod tests {
     fn it_never_persists_the_detached_child_windows() {
       assert_eq!(Window::Contract.state_key(), None);
       assert_eq!(Window::MailCompose.state_key(), None);
+      assert_eq!(Window::ManagePlans.state_key(), None);
       assert_eq!(Window::StockpileEditor.state_key(), None);
     }
 

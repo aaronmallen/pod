@@ -15,6 +15,7 @@ pub mod nav_catalog;
 pub mod registry;
 pub mod settings;
 pub mod skill_plan_editor;
+pub mod skill_plan_manager;
 pub mod skills;
 pub mod skills_compare;
 pub mod splash;

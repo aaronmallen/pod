@@ -74,6 +74,7 @@ pub enum Message {
   Loaded(Box<Loaded>),
   ModifiersChanged(keyboard::Modifiers),
   OpenCompare,
+  OpenManagePlans,
   OpenPlanEditor(EditorSeed),
   PaneDrag(f32),
   PaneDragEnd,
@@ -228,6 +229,7 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       Task::none()
     }
     Message::OpenCompare => Task::none(),
+    Message::OpenManagePlans => Task::none(),
     Message::OpenPlanEditor(_) => Task::none(),
     Message::PaneDrag(x) => {
       state.left_pane.drag_to(x);
@@ -299,6 +301,7 @@ fn update_right_panel(state: &mut State, message: right_panel::Message, db: &Dat
     right_panel::Message::Plans(right_panel::plans_tab::Message::FromSelected) => {
       Task::done(Message::CreatePlanFromSelection)
     }
+    right_panel::Message::Plans(right_panel::plans_tab::Message::ManagePlans) => Task::done(Message::OpenManagePlans),
     right_panel::Message::Plans(right_panel::plans_tab::Message::OpenPlan(plan_id)) => {
       Task::done(Message::OpenPlanEditor(EditorSeed::Existing(plan_id)))
     }

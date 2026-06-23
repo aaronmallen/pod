@@ -1,6 +1,7 @@
 pub mod empty_state;
 pub mod from_queue_button;
 pub mod from_selected_button;
+pub mod manage_plans_button;
 pub mod new_plan_button;
 pub mod plan_card;
 
@@ -37,6 +38,7 @@ pub enum Message {
   FromQueue,
   FromSelected,
   Loaded(Vec<PlanRow>),
+  ManagePlans,
   NewPlan,
   OpenPlan(i64),
 }
@@ -83,6 +85,7 @@ pub fn update(state: &mut State, message: Message, db: &Database, character_id: 
     }
     Message::FromQueue => iced::Task::none(),
     Message::FromSelected => iced::Task::none(),
+    Message::ManagePlans => iced::Task::none(),
     Message::Loaded(plans) => {
       state.plans = plans;
       state.loaded = true;
@@ -104,9 +107,6 @@ pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
   }
 
   if state.plans.is_empty() {
-    if selection_count == 0 {
-      return empty_state::empty_state();
-    }
     return Column::with_children(vec![empty_state::empty_state(), footer(selection_count)])
       .width(Length::Fill)
       .into();
@@ -140,6 +140,8 @@ fn footer<'a>(selection_count: usize) -> Element<'a, Message> {
     row.push(Space::new().width(Length::Fixed(spacing::SPACE_2)).into());
     row.push(from_selected_button::from_selected_button(selection_count));
   }
+  row.push(Space::new().width(Length::Fill).into());
+  row.push(manage_plans_button::manage_plans_button());
 
   container(Row::with_children(row).align_y(Vertical::Center))
     .width(Length::Fill)

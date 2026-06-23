@@ -27,8 +27,8 @@ use crate::{
   config,
   features::{
     assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, contract_detail,
-    corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor, skills,
-    skills_compare, splash, wallet, window_chrome,
+    corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor,
+    skill_plan_manager, skills, skills_compare, splash, wallet, window_chrome,
   },
   mcp, notifications,
   services::{images, updater},
@@ -193,6 +193,9 @@ struct App {
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
+  /// The detached single-instance Manage Plans window: id-keyed roster master/detail. `None` when closed;
+  /// re-opening focuses the existing window rather than spawning a second.
+  manage_plans: Option<(window::Id, skill_plan_manager::State)>,
   /// The embedded MCP automation server. `None` until the store is ready; thereafter its lifecycle
   /// is reconciled against the live [`config::McpConfig`] (off by default) via [`mcp::Server::apply`].
   mcp_server: Option<mcp::Server>,
@@ -340,6 +343,10 @@ enum Message {
   LockReleased,
   Mail(mail::Message),
   MailUnreadCounted(i64),
+  ManagePlans(skill_plan_manager::Message),
+  ManagePlansWindowReady {
+    id: window::Id,
+  },
   MarkAllNotificationsRead,
   Mcp(mcp::McpRequest),
   McpDataChanged,
@@ -419,6 +426,7 @@ impl Message {
       Message::CorporationDetail(msg) => msg.loads_data(),
       Message::Industry(msg) => msg.loads_data(),
       Message::Mail(msg) => msg.loads_data(),
+      Message::ManagePlans(msg) => msg.loads_data(),
       Message::Skills(msg) => msg.loads_data(),
       Message::Wallet(msg) => msg.loads_data(),
       _ => false,
@@ -448,6 +456,7 @@ impl Message {
       Message::Killmail(..) => "Killmail",
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
+      Message::ManagePlans(_) => "ManagePlans",
       Message::MarkAllNotificationsRead => "MarkAllNotificationsRead",
       Message::Mcp(_) => "Mcp",
       Message::McpDataChanged => "McpDataChanged",
@@ -498,6 +507,9 @@ impl Message {
       Message::KillmailWindowReady {
         ..
       } => "KillmailWindowReady",
+      Message::ManagePlansWindowReady {
+        ..
+      } => "ManagePlansWindowReady",
       Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
@@ -968,6 +980,7 @@ fn boot() -> (App, Task<Message>) {
     last_synced: None,
     mail: None,
     mail_unread: 0,
+    manage_plans: None,
     mcp_server: None,
     next_roster_reload: None,
     next_trash_purge: None,
@@ -1326,6 +1339,7 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
     Some(Window::Contract) => close_contract_window(app, id),
     Some(Window::Killmail) => close_killmail_window(app, id),
     Some(Window::MailCompose) => close_compose_window(app, id),
+    Some(Window::ManagePlans) => close_manage_plans_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::StockpileEditor) => close_stockpile_editor_window(app, id),
     _ => {
@@ -1355,6 +1369,7 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
       app.composes.remove(id);
       return Task::batch([save, shutdown_if_last_window(app)]);
     }
+    Window::ManagePlans if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) => app.manage_plans = None,
     Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
     Window::StockpileEditor => {
       app.stockpile_editors.remove(id);
@@ -1887,6 +1902,9 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
   if let Some((_, compare)) = app.compare.as_ref() {
     keys.extend(compare.stale_images());
   }
+  if let Some((_, manage_plans)) = app.manage_plans.as_ref() {
+    keys.extend(manage_plans.stale_images());
+  }
   for (_, contract) in app.contracts.iter() {
     keys.extend(contract.stale_images());
   }
@@ -1978,6 +1996,9 @@ fn image_reload(app: &App) -> Task<Message> {
   }
   if let Some((_, compare)) = app.compare.as_ref() {
     tasks.push(skills_compare::load(&runtime.db, compare.selected_ids().to_vec()).map(Message::Compare));
+  }
+  if app.manage_plans.is_some() {
+    tasks.push(skill_plan_manager::load(&runtime.db).map(Message::ManagePlans));
   }
   for (id, contract) in app.contracts.iter() {
     let load = contract_detail::load(&runtime.db, contract.source(), contract.contract_id());
@@ -2944,9 +2965,14 @@ fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
-    Some(Window::Contract | Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => {
-      splash_theme()
-    }
+    Some(
+      Window::Contract
+      | Window::Killmail
+      | Window::MailCompose
+      | Window::ManagePlans
+      | Window::Splash
+      | Window::StockpileEditor,
+    ) => splash_theme(),
     _ => pod_theme(),
   }
 }
@@ -3280,6 +3306,75 @@ fn handle_contract(app: &mut App, id: window::Id, msg: contract_detail::Message)
 
 fn close_contract_window(app: &mut App, id: window::Id) -> Task<Message> {
   app.contracts.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
+/// Opens the detached Manage Plans window centered on the main window, or focuses the existing one when
+/// already open (single-instance). Like the killmail/contract pilots the id is unknown until the centered
+/// open resolves, so registration, state seeding, and the roster loader run in
+/// [`handle_manage_plans_window_ready`]. Geometry is never persisted: every open is default-size.
+fn open_manage_plans_window(app: &mut App) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+  if let Some(id) = app.windows.id_for(Window::ManagePlans) {
+    return window::gain_focus(id);
+  }
+  let size = Size::new(
+    skill_plan_manager::MANAGE_PLANS_WINDOW_WIDTH,
+    skill_plan_manager::MANAGE_PLANS_WINDOW_HEIGHT,
+  );
+  open_centered_window(app, size, move |id| {
+    Task::done(Message::ManagePlansWindowReady {
+      id,
+    })
+  })
+}
+
+fn handle_manage_plans_window_ready(app: &mut App, id: window::Id) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let db = runtime.db.clone();
+  app.windows.register(id, Window::ManagePlans);
+  app.manage_plans = Some((id, skill_plan_manager::State::new()));
+  skill_plan_manager::load(&db).map(Message::ManagePlans)
+}
+
+fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
+  match msg {
+    skill_plan_manager::Message::CharacterSelected(character_id) => {
+      if let Some((_, state)) = app.manage_plans.as_mut() {
+        state.select(character_id);
+      }
+      Task::none()
+    }
+    skill_plan_manager::Message::Loaded(roster) => {
+      let Some((_, state)) = app.manage_plans.as_mut() else {
+        return Task::none();
+      };
+      state.set_roster(*roster);
+      let keys = state.stale_images();
+      dispatch_image_fetches(app, keys)
+    }
+    // The per-plan actions (Open / New / Copy / Delete) land in sibling tasks; the affordances render
+    // today but are inert here.
+    skill_plan_manager::Message::CopyPlan {
+      ..
+    }
+    | skill_plan_manager::Message::DeletePlan(_)
+    | skill_plan_manager::Message::NewPlan(_)
+    | skill_plan_manager::Message::OpenPlan {
+      ..
+    } => Task::none(),
+  }
+}
+
+fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
+  if app.manage_plans.as_ref().map(|(mid, _)| *mid) == Some(id) {
+    app.manage_plans = None;
+  }
   app.windows.remove(id);
   window::close(id)
 }
@@ -3633,6 +3728,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
+    Message::ManagePlans(msg) => handle_manage_plans(app, msg),
     Message::MarkAllNotificationsRead => handle_mark_all_notifications_read(app),
     Message::Mcp(request) => handle_mcp(app, request),
     Message::McpDataChanged => handle_mcp_data_changed(app),
@@ -3719,6 +3815,9 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
       killmail_id,
       source,
     } => handle_killmail_window_ready(app, id, source, killmail_id),
+    Message::ManagePlansWindowReady {
+      id,
+    } => handle_manage_plans_window_ready(app, id),
     Message::StockpileEditorWindowReady {
       id,
       seed,
@@ -5621,6 +5720,7 @@ fn handle_skills(app: &mut App, msg: skills::Message) -> Task<Message> {
         open_compare_window(app, seed_ids)
       }
     }
+    skills::Message::OpenManagePlans => open_manage_plans_window(app),
     skills::Message::OpenPlanEditor(seed) => match app.skills.as_ref().map(skills::State::active) {
       Some(id) => open_editor_window(app, id, seed),
       None => Task::none(),
@@ -5978,9 +6078,14 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
 
 fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
-    Some(Window::Contract | Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => {
-      disable_shadow(id)
-    }
+    Some(
+      Window::Contract
+      | Window::Killmail
+      | Window::MailCompose
+      | Window::ManagePlans
+      | Window::Splash
+      | Window::StockpileEditor,
+    ) => disable_shadow(id),
     _ => Task::none(),
   }
 }
@@ -6109,6 +6214,15 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
       }
       None => blank(),
     },
+    Some(Window::ManagePlans) => match app.manage_plans.as_ref() {
+      Some((manage_id, state)) if *manage_id == id => {
+        let body = skill_plan_manager::view(state).map(Message::ManagePlans);
+        window_chrome::shell(skill_plan_manager::MANAGE_PLANS_WINDOW_TITLE, body, move |event| {
+          Message::Chrome(id, event)
+        })
+      }
+      _ => blank(),
+    },
     Some(Window::SkillPlanEditor) => match app.editor.as_ref() {
       Some((editor_id, state)) if *editor_id == id => {
         skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
@@ -6179,6 +6293,7 @@ mod tests {
       last_synced: None,
       mail: None,
       mail_unread: 0,
+      manage_plans: None,
       mcp_server: None,
       next_roster_reload: None,
       next_trash_purge: None,
@@ -9419,6 +9534,68 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.killmails.get(id).is_none());
+    }
+  }
+
+  mod manage_plans_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn ready(app: &mut App) -> window::Id {
+      let id = window::Id::unique();
+      let _ = handle_manage_plans_window_ready(app, id);
+      id
+    }
+
+    #[tokio::test]
+    async fn it_registers_the_kind_and_seeds_the_per_window_state() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let id = ready(&mut app);
+
+      assert_eq!(app.windows.kind(id), Some(Window::ManagePlans));
+      assert_eq!(app.manage_plans.as_ref().map(|(mid, _)| *mid), Some(id));
+    }
+
+    #[tokio::test]
+    async fn it_focuses_the_existing_window_instead_of_opening_a_second() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app);
+
+      let _ = open_manage_plans_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::ManagePlans).count(), 1);
+      assert_eq!(app.manage_plans.as_ref().map(|(mid, _)| *mid), Some(first));
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_on_close() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app);
+
+      let _ = close_manage_plans_window(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.manage_plans.is_none());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.manage_plans.is_none());
     }
   }
 

@@ -566,6 +566,49 @@ mod tests {
       .expect("seed character");
   }
 
+  async fn seed_category(db: &Database, name: &str) -> i64 {
+    let group = budget_repo::create_group(
+      db,
+      &budget_repo::NewGroup {
+        name: "Ops".to_owned(),
+        position: 0,
+        scope: BudgetScope::All,
+      },
+    )
+    .await
+    .unwrap();
+    budget_repo::create_category(
+      db,
+      &budget_repo::NewCategory {
+        group_id: group.id(),
+        name: name.to_owned(),
+        note: None,
+        position: 0,
+        tone: None,
+      },
+    )
+    .await
+    .unwrap()
+    .id()
+  }
+
+  async fn seed_journal_entry(db: &Database, id: i64, character_id: i64) {
+    sqlx::query(
+      "INSERT INTO character_wallet_journal (id, character_id, date, description, ref_type, amount, balance) \
+        VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(character_id)
+    .bind("2026-01-01")
+    .bind("Test")
+    .bind("test")
+    .bind(100.0)
+    .bind(100.0)
+    .execute(db.writer())
+    .await
+    .expect("seed journal entry");
+  }
+
   fn deny_local_write() -> McpPerms {
     let mut perms = McpPerms::default();
     perms.set_local_write(false);
@@ -767,6 +810,432 @@ mod tests {
       let rule_id = value.get("rule_id").and_then(Value::as_i64).expect("rule id");
       let rules = budget_repo::list_rules(&db, BudgetScope::All).await.unwrap();
       assert_eq!(rules.iter().filter(|r| r.id() == rule_id).count(), 1);
+    }
+  }
+
+  mod budget_move_money {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_moves_assigned_money_between_categories() {
+      let db = database().await;
+      let from_id = seed_category(&db, "Fuel").await;
+      let to_id = seed_category(&db, "Ammo").await;
+      budget::persist_assignment(&db, from_id, "2026-01", 1000.0).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "month": "2026-01", "from_category_id": from_id, "to_category_id": to_id, "amount": 300.0 }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("amount").and_then(Value::as_f64), Some(300.0));
+      let view = budget::load(&db, BudgetScope::All, "2026-01").await;
+      assert_eq!(view.category(from_id).map(|c| c.assigned), Some(700.0));
+      assert_eq!(view.category(to_id).map(|c| c.assigned), Some(300.0));
+    }
+
+    #[tokio::test]
+    async fn it_moves_money_to_ready_to_assign_when_no_destination_is_given() {
+      let db = database().await;
+      let from_id = seed_category(&db, "Fuel").await;
+      budget::persist_assignment(&db, from_id, "2026-01", 1000.0).await;
+      let registry = registry();
+
+      registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db.clone(),
+          json!({ "month": "2026-01", "from_category_id": from_id, "amount": 250.0 }),
+        )
+        .await
+        .unwrap();
+
+      let view = budget::load(&db, BudgetScope::All, "2026-01").await;
+      assert_eq!(view.category(from_id).map(|c| c.assigned), Some(750.0));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_source_category() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db,
+          json!({ "month": "2026-01", "from_category_id": 9999, "amount": 100.0 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_destination_category() {
+      let db = database().await;
+      let from_id = seed_category(&db, "Fuel").await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db,
+          json!({ "month": "2026-01", "from_category_id": from_id, "to_category_id": 9999, "amount": 100.0 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_malformed_month() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_move_money",
+          &McpPerms::default(),
+          db,
+          json!({ "month": "2026", "from_category_id": 1, "amount": 100.0 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod budget_assign_entry {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_pins_a_journal_entry_to_a_category() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      seed_journal_entry(&db, 5001, 42).await;
+      let category_id = seed_category(&db, "Fuel").await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "budget_assign_entry",
+          &McpPerms::default(),
+          db,
+          json!({
+            "owner_kind": "character",
+            "owner_id": 42,
+            "entry_kind": "journal",
+            "entry_id": 5001,
+            "category_id": category_id,
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("category_id").and_then(Value::as_i64), Some(category_id));
+      assert_eq!(value.get("entry_id").and_then(Value::as_i64), Some(5001));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_entry_the_owner_does_not_hold() {
+      let db = database().await;
+      seed_character(&db, 42).await;
+      let category_id = seed_category(&db, "Fuel").await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_assign_entry",
+          &McpPerms::default(),
+          db,
+          json!({
+            "owner_kind": "character",
+            "owner_id": 42,
+            "entry_kind": "journal",
+            "entry_id": 9999,
+            "category_id": category_id,
+          }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_owner_kind() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_assign_entry",
+          &McpPerms::default(),
+          db,
+          json!({
+            "owner_kind": "alliance",
+            "owner_id": 1,
+            "entry_kind": "journal",
+            "entry_id": 1,
+            "category_id": 1,
+          }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_entry_kind() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "budget_assign_entry",
+          &McpPerms::default(),
+          db,
+          json!({
+            "owner_kind": "character",
+            "owner_id": 42,
+            "entry_kind": "dividend",
+            "entry_id": 1,
+            "category_id": 1,
+          }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod planner_replace_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_plan(db: &Database) -> i64 {
+      let tree = PlanTree {
+        product_type_id: 587,
+        root_facility_system: None,
+        runs: 10,
+        types: vec![PlanType {
+          built: false,
+          facility_structure: None,
+          facility_system: None,
+          me: 0,
+          te: 0,
+          type_id: 587,
+          use_stock: false,
+        }],
+      };
+      industry_repo::create_plan(db, "Rifter run", &tree).await.unwrap().id()
+    }
+
+    #[tokio::test]
+    async fn it_replaces_a_plans_segments() {
+      let db = database().await;
+      let plan_id = seed_plan(&db).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "planner_replace_segments",
+          &McpPerms::default(),
+          db.clone(),
+          json!({
+            "plan_id": plan_id,
+            "segments": [{ "type_id": 587, "runs": 5, "segment_index": 0 }],
+          }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("segment_count").and_then(Value::as_i64), Some(1));
+      assert_eq!(industry_repo::segments_for_plan(&db, plan_id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_missing_plan() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "planner_replace_segments",
+          &McpPerms::default(),
+          db,
+          json!({ "plan_id": 9999, "segments": [] }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_segments_that_are_not_an_array() {
+      let db = database().await;
+      let plan_id = seed_plan(&db).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "planner_replace_segments",
+          &McpPerms::default(),
+          db,
+          json!({ "plan_id": plan_id }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod parse_segments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_segments_with_optional_pilot_and_clone() {
+      let segments = super::super::parse_segments(&json!({
+        "segments": [{ "type_id": 587, "runs": 5, "segment_index": 0, "pilot_id": 42, "clone_id": 7 }],
+      }))
+      .unwrap();
+
+      assert_eq!(segments.len(), 1);
+      assert_eq!(segments[0].type_id, 587);
+      assert_eq!(segments[0].pilot_id, Some(42));
+      assert_eq!(segments[0].clone_id, Some(7));
+    }
+
+    #[test]
+    fn it_defaults_pilot_and_clone_to_none() {
+      let segments = super::super::parse_segments(&json!({
+        "segments": [{ "type_id": 587, "runs": 5, "segment_index": 0 }],
+      }))
+      .unwrap();
+
+      assert_eq!(segments[0].pilot_id, None);
+      assert_eq!(segments[0].clone_id, None);
+    }
+
+    #[test]
+    fn it_errors_when_segments_is_not_an_array() {
+      assert!(matches!(
+        super::super::parse_segments(&json!({})),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+
+    #[test]
+    fn it_errors_on_a_segment_missing_a_field() {
+      assert!(matches!(
+        super::super::parse_segments(&json!({ "segments": [{ "runs": 5, "segment_index": 0 }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+      assert!(matches!(
+        super::super::parse_segments(&json!({ "segments": [{ "type_id": 1, "segment_index": 0 }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+      assert!(matches!(
+        super::super::parse_segments(&json!({ "segments": [{ "type_id": 1, "runs": 5 }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+  }
+
+  mod parse_plan_entries {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_parses_entries_with_defaults() {
+      let entries = super::super::parse_plan_entries(&json!({
+        "entries": [{ "skill_id": 3300, "to_level": 5 }],
+      }))
+      .unwrap();
+
+      assert_eq!(entries.len(), 1);
+      assert_eq!(entries[0].skill_id, 3300);
+      assert_eq!(entries[0].to_level, 5);
+      assert_eq!(entries[0].priority, "normal");
+      assert_eq!(entries[0].note, "");
+      assert_eq!(entries[0].is_auto, 0);
+    }
+
+    #[test]
+    fn it_carries_through_priority_note_and_auto() {
+      let entries = super::super::parse_plan_entries(&json!({
+        "entries": [{ "skill_id": 3300, "to_level": 3, "priority": "high", "note": "first", "is_auto": true }],
+      }))
+      .unwrap();
+
+      assert_eq!(entries[0].priority, "high");
+      assert_eq!(entries[0].note, "first");
+      assert_eq!(entries[0].is_auto, 1);
+    }
+
+    #[test]
+    fn it_errors_when_entries_is_not_an_array() {
+      assert!(matches!(
+        super::super::parse_plan_entries(&json!({})),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+
+    #[test]
+    fn it_errors_on_a_missing_skill_id_or_out_of_range_level() {
+      assert!(matches!(
+        super::super::parse_plan_entries(&json!({ "entries": [{ "to_level": 5 }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+      assert!(matches!(
+        super::super::parse_plan_entries(&json!({ "entries": [{ "skill_id": 3300, "to_level": 6 }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+  }
+
+  mod require_month {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_accepts_a_well_formed_month() {
+      assert_eq!(
+        super::super::require_month(&json!({ "month": "2026-06" })).unwrap(),
+        "2026-06"
+      );
+    }
+
+    #[test]
+    fn it_rejects_a_malformed_or_missing_month() {
+      for bad in [
+        json!({}),
+        json!({ "month": "2026" }),
+        json!({ "month": "2026-6" }),
+        json!({ "month": "20XX-06" }),
+      ] {
+        assert!(matches!(
+          super::super::require_month(&bad),
+          Err(ToolError::InvalidArguments(_))
+        ));
+      }
     }
   }
 }

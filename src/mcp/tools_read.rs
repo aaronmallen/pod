@@ -548,7 +548,13 @@ fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{config::McpPerms, store::Database};
+  use crate::{
+    config::McpPerms,
+    store::{
+      Database,
+      repo::industry::{PlanTree, PlanType},
+    },
+  };
 
   async fn database() -> Database {
     crate::store::open_test().await.expect("open a migrated test database")
@@ -566,6 +572,24 @@ mod tests {
       registry.register(tool);
     }
     registry
+  }
+
+  async fn seed_plan(db: &Database, name: &str) -> i64 {
+    let tree = PlanTree {
+      product_type_id: 587,
+      root_facility_system: Some(30_000_142),
+      runs: 10,
+      types: vec![PlanType {
+        built: false,
+        facility_structure: None,
+        facility_system: Some(30_000_142),
+        me: 10,
+        te: 20,
+        type_id: 587,
+        use_stock: false,
+      }],
+    };
+    industry::create_plan(db, name, &tree).await.unwrap().id()
   }
 
   mod paginate_vec {
@@ -658,6 +682,108 @@ mod tests {
         .unwrap();
 
       assert!(value.get("characters").and_then(Value::as_array).is_some());
+    }
+  }
+
+  mod get_planner {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_lists_saved_plans_when_no_id_is_given() {
+      let db = database().await;
+      seed_plan(&db, "Rifter run").await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch("get_planner", &McpPerms::default(), db, Value::Null)
+        .await
+        .unwrap();
+
+      let plans = value.get("plans").and_then(Value::as_array).expect("plans array");
+      assert_eq!(plans.len(), 1);
+      assert_eq!(plans[0].get("name").and_then(Value::as_str), Some("Rifter run"));
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_full_tree_for_one_plan() {
+      let db = database().await;
+      let plan_id = seed_plan(&db, "Rifter run").await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch("get_planner", &McpPerms::default(), db, json!({ "plan_id": plan_id }))
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("plan_id").and_then(Value::as_i64), Some(plan_id));
+      assert_eq!(value.get("product_type_id").and_then(Value::as_i64), Some(587));
+      assert_eq!(value.get("types").and_then(Value::as_array).map(Vec::len), Some(1));
+      assert!(value.get("segments").and_then(Value::as_array).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_missing_plan_id() {
+      let db = database().await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch("get_planner", &McpPerms::default(), db, json!({ "plan_id": 9999 }))
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod pagination {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_to_page_zero_and_the_default_limit() {
+      let (page, limit) = super::super::pagination(&Value::Null);
+
+      assert_eq!(page, 0);
+      assert_eq!(limit, DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn it_clamps_a_negative_page_to_zero() {
+      let (page, _) = super::super::pagination(&json!({ "page": -5 }));
+
+      assert_eq!(page, 0);
+    }
+
+    #[test]
+    fn it_clamps_the_limit_into_its_bounds() {
+      let (_, low) = super::super::pagination(&json!({ "limit": 0 }));
+      let (_, high) = super::super::pagination(&json!({ "limit": 10_000 }));
+
+      assert_eq!(low, 1);
+      assert_eq!(high, MAX_LIMIT);
+    }
+  }
+
+  mod require_i64 {
+    use super::*;
+
+    #[test]
+    fn it_reads_an_integer_argument() {
+      assert_eq!(super::super::require_i64(&json!({ "x": 7 }), "x").unwrap(), 7);
+    }
+
+    #[test]
+    fn it_errors_when_the_argument_is_absent_or_not_an_integer() {
+      assert!(matches!(
+        super::super::require_i64(&json!({}), "x"),
+        Err(ToolError::InvalidArguments(_))
+      ));
+      assert!(matches!(
+        super::super::require_i64(&json!({ "x": "nope" }), "x"),
+        Err(ToolError::InvalidArguments(_))
+      ));
     }
   }
 }

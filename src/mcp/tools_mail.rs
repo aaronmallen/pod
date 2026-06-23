@@ -391,6 +391,42 @@ mod tests {
       .unwrap()
   }
 
+  async fn seed_mail(db: &Database, character_id: i64, mail_id: i64) {
+    let header = CharacterMail {
+      character_id,
+      from_corp: false,
+      from_id: 99,
+      from_name: "Sender".to_owned(),
+      from_system: false,
+      has_attachment: false,
+      important: false,
+      is_read: false,
+      mail_id,
+      subject: Some("Hi".to_owned()),
+      timestamp: "2026-01-01T00:00:00Z".to_owned(),
+    };
+    let body = CharacterMailBody {
+      body: "hello".to_owned(),
+      character_id,
+      mail_id,
+    };
+    mail::upsert_complete(db, &header, &body, &[]).await.expect("seed mail");
+  }
+
+  async fn seed_label(db: &Database, character_id: i64, label_id: i64) {
+    mail::insert_label(
+      db,
+      &CharacterMailLabel {
+        character_id,
+        color: None,
+        label_id,
+        name: format!("L{label_id}"),
+      },
+    )
+    .await
+    .expect("seed label");
+  }
+
   mod gates {
     use super::*;
 
@@ -519,6 +555,274 @@ mod tests {
 
       assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
       assert_eq!(pending_outbox(&db, "mail.create_label").await, 1);
+    }
+
+    #[tokio::test]
+    async fn it_sets_a_mails_labels_and_enqueues_the_change() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_mail(&db, 42, 7000).await;
+      seed_label(&db, 42, 11).await;
+      seed_label(&db, 42, 22).await;
+      mail::add_membership(&db, 42, 7000, 11).await.unwrap();
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db.clone(),
+          json!({ "character_id": 42, "action": "set_labels", "mail_id": 7000, "labels": [22] }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
+      assert_eq!(pending_outbox(&db, "mail.set_labels").await, 1);
+      assert_eq!(mail::membership(&db, 42, 7000).await.unwrap(), vec![22]);
+    }
+
+    #[tokio::test]
+    async fn it_enqueues_a_delete_label() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_label(&db, 42, 11).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db.clone(),
+          json!({ "character_id": 42, "action": "delete_label", "label_id": 11 }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
+      assert_eq!(pending_outbox(&db, "mail.delete_label").await, 1);
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_unknown_action() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db,
+          json!({ "character_id": 42, "action": "rename_label" }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_an_empty_label_name() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db,
+          json!({ "character_id": 42, "action": "create_label", "name": "   " }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_refuses_a_character_without_the_organize_scope() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "manage_labels",
+          &all_mail_perms(),
+          db,
+          json!({ "character_id": 42, "action": "create_label", "name": "Ops" }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod delete_mail {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_purges_the_mail_and_enqueues_the_delete() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_mail(&db, 42, 7000).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "delete_mail",
+          &all_mail_perms(),
+          db.clone(),
+          json!({ "character_id": 42, "mail_id": 7000 }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("queued").and_then(Value::as_bool), Some(true));
+      assert_eq!(pending_outbox(&db, "mail.delete").await, 1);
+      assert!(mail::mail(&db, 42, 7000).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_mail_the_character_does_not_hold() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "delete_mail",
+          &all_mail_perms(),
+          db,
+          json!({ "character_id": 42, "mail_id": 7000 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+
+    #[tokio::test]
+    async fn it_refuses_a_character_without_the_organize_scope() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL).await;
+      let registry = registry();
+
+      let outcome = registry
+        .dispatch(
+          "delete_mail",
+          &all_mail_perms(),
+          db,
+          json!({ "character_id": 42, "mail_id": 7000 }),
+        )
+        .await;
+
+      assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
+    }
+  }
+
+  mod apply_membership {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_adds_new_labels_and_removes_dropped_ones() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_mail(&db, 42, 7000).await;
+      for label_id in [1, 2, 3] {
+        seed_label(&db, 42, label_id).await;
+      }
+      mail::add_membership(&db, 42, 7000, 1).await.unwrap();
+      mail::add_membership(&db, 42, 7000, 2).await.unwrap();
+
+      super::super::apply_membership(&db, 42, 7000, &[1, 2], &[2, 3])
+        .await
+        .unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7000).await.unwrap(), vec![2, 3]);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_when_the_sets_match() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_mail(&db, 42, 7000).await;
+      seed_label(&db, 42, 1).await;
+      mail::add_membership(&db, 42, 7000, 1).await.unwrap();
+
+      super::super::apply_membership(&db, 42, 7000, &[1], &[1]).await.unwrap();
+
+      assert_eq!(mail::membership(&db, 42, 7000).await.unwrap(), vec![1]);
+    }
+  }
+
+  mod parse_recipients {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_the_recipient_type_to_character() {
+      let recipients = super::super::parse_recipients(&json!({ "recipients": [{ "id": 99 }] })).unwrap();
+
+      assert_eq!(recipients.len(), 1);
+      assert_eq!(recipients[0].id, 99);
+      assert_eq!(recipients[0].recipient_type, "character");
+    }
+
+    #[test]
+    fn it_reads_an_explicit_recipient_type() {
+      let recipients =
+        super::super::parse_recipients(&json!({ "recipients": [{ "id": 5, "type": "mailing_list" }] })).unwrap();
+
+      assert_eq!(recipients[0].recipient_type, "mailing_list");
+    }
+
+    #[test]
+    fn it_errors_when_recipients_is_not_an_array() {
+      assert!(matches!(
+        super::super::parse_recipients(&json!({})),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+
+    #[test]
+    fn it_errors_on_a_recipient_without_an_id() {
+      assert!(matches!(
+        super::super::parse_recipients(&json!({ "recipients": [{ "type": "character" }] })),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+  }
+
+  mod require_i64_array {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reads_an_integer_array() {
+      assert_eq!(
+        super::super::require_i64_array(&json!({ "labels": [1, 2, 3] }), "labels").unwrap(),
+        vec![1, 2, 3]
+      );
+    }
+
+    #[test]
+    fn it_errors_when_the_value_is_not_an_array() {
+      assert!(matches!(
+        super::super::require_i64_array(&json!({}), "labels"),
+        Err(ToolError::InvalidArguments(_))
+      ));
+    }
+
+    #[test]
+    fn it_errors_when_an_element_is_not_an_integer() {
+      assert!(matches!(
+        super::super::require_i64_array(&json!({ "labels": [1, "two"] }), "labels"),
+        Err(ToolError::InvalidArguments(_))
+      ));
     }
   }
 }

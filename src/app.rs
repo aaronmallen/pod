@@ -441,6 +441,10 @@ impl Message {
   }
 
   fn feature_variant_name(&self) -> Option<&'static str> {
+    self.screen_variant_name().or_else(|| self.notification_variant_name())
+  }
+
+  fn screen_variant_name(&self) -> Option<&'static str> {
     Some(match self {
       Message::Assets(_) => "Assets",
       Message::Auth(_) => "Auth",
@@ -457,6 +461,20 @@ impl Message {
       Message::Mail(_) => "Mail",
       Message::MailUnreadCounted(_) => "MailUnreadCounted",
       Message::ManagePlans(_) => "ManagePlans",
+      Message::Settings(_) => "Settings",
+      Message::SkillPlanEditor(_) => "SkillPlanEditor",
+      Message::Skills(_) => "Skills",
+      Message::StockpileEditor(..) => "StockpileEditor",
+      Message::Sync(_) => "Sync",
+      Message::Wallet(_) => "Wallet",
+      _ => return None,
+    })
+  }
+
+  fn notification_variant_name(&self) -> Option<&'static str> {
+    Some(match self {
+      Message::ClearNotifications => "ClearNotifications",
+      Message::CloseNotificationsPanel => "CloseNotificationsPanel",
       Message::MarkAllNotificationsRead => "MarkAllNotificationsRead",
       Message::Mcp(_) => "Mcp",
       Message::McpDataChanged => "McpDataChanged",
@@ -464,18 +482,10 @@ impl Message {
       Message::NavTo(..) => "NavTo",
       Message::NotificationActivated(_) => "NotificationActivated",
       Message::NotificationsRefreshed(_) => "NotificationsRefreshed",
-      Message::ClearNotifications => "ClearNotifications",
-      Message::CloseNotificationsPanel => "CloseNotificationsPanel",
-      Message::Settings(_) => "Settings",
-      Message::SkillPlanEditor(_) => "SkillPlanEditor",
-      Message::Skills(_) => "Skills",
-      Message::StockpileEditor(..) => "StockpileEditor",
-      Message::Sync(_) => "Sync",
       Message::ToastDismissed(_) => "ToastDismissed",
       Message::ToastHover(..) => "ToastHover",
       Message::ToastTick => "ToastTick",
       Message::ToggleNotificationsPanel => "ToggleNotificationsPanel",
-      Message::Wallet(_) => "Wallet",
       _ => return None,
     })
   }
@@ -3831,14 +3841,26 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Compare(msg) => handle_compare(app, msg),
     Message::Compose(id, msg) => handle_compose(app, id, msg),
     Message::Contract(id, msg) => handle_contract(app, id, msg),
-    Message::ClearNotifications => handle_clear_notifications(app),
-    Message::CloseNotificationsPanel => handle_close_notifications_panel(app),
     Message::CorporationDetail(msg) => handle_corporation_detail(app, msg),
     Message::Industry(msg) => handle_industry(app, msg),
     Message::Killmail(id, msg) => handle_killmail(app, id, msg),
     Message::Mail(msg) => handle_mail(app, msg),
     Message::MailUnreadCounted(unread) => handle_mail_unread_counted(app, unread),
     Message::ManagePlans(msg) => handle_manage_plans(app, msg),
+    Message::Settings(msg) => handle_settings(app, msg),
+    Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
+    Message::Skills(msg) => handle_skills(app, msg),
+    Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
+    Message::Sync(event) => handle_sync(app, event),
+    Message::Wallet(msg) => handle_wallet(app, msg),
+    other => return dispatch_feature_aux(app, other),
+  })
+}
+
+fn dispatch_feature_aux(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
+  Ok(match message {
+    Message::ClearNotifications => handle_clear_notifications(app),
+    Message::CloseNotificationsPanel => handle_close_notifications_panel(app),
     Message::MarkAllNotificationsRead => handle_mark_all_notifications_read(app),
     Message::Mcp(request) => handle_mcp(app, request),
     Message::McpDataChanged => handle_mcp_data_changed(app),
@@ -3848,16 +3870,10 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::NotificationsRefreshed(snapshot) => handle_notifications_refreshed(app, *snapshot),
     Message::RailHover(destination) => handle_rail_hover(app, destination),
     Message::RailHoverExpire(generation) => handle_rail_hover_expire(app, generation),
-    Message::Settings(msg) => handle_settings(app, msg),
-    Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
-    Message::Skills(msg) => handle_skills(app, msg),
-    Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
-    Message::Sync(event) => handle_sync(app, event),
     Message::ToastDismissed(id) => handle_toast_dismissed(app, id),
     Message::ToastHover(id, hovered) => handle_toast_hover(app, id, hovered),
     Message::ToastTick => handle_toast_tick(app),
     Message::ToggleNotificationsPanel => handle_toggle_notifications_panel(app),
-    Message::Wallet(msg) => handle_wallet(app, msg),
     other => return Err(Box::new(other)),
   })
 }
@@ -6335,58 +6351,90 @@ fn retry_seed(app: &mut App) -> Task<Message> {
 
 fn view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.windows.kind(id) {
-    Some(Window::Splash) => match app.splash.as_ref() {
-      Some(state) => splash::view(state, app.now).map(Message::Splash),
-      None => blank(),
-    },
+    Some(Window::Splash) => splash_window_view(app),
     Some(Window::Main) => main_view(app),
-    Some(Window::Compare) => match app.compare.as_ref() {
-      Some((compare_id, state)) if *compare_id == id => skills_compare::view(state).map(Message::Compare),
-      _ => blank(),
-    },
-    Some(Window::Contract) => match app.contracts.get(id) {
-      Some(state) => contract_detail::view(state, move |event| Message::Chrome(id, event)),
-      None => blank(),
-    },
-    Some(Window::Killmail) => match app.killmails.get(id) {
-      Some(state) => killmail_detail::view(state, move |event| Message::Chrome(id, event)),
-      None => blank(),
-    },
-    Some(Window::MailCompose) => match app.composes.get(id) {
-      Some(draft) => {
-        let roster = app.mail.as_ref().map(mail::State::roster).unwrap_or(&[]);
-        let body = mail::compose::view(draft, roster).map(move |msg| Message::Compose(id, msg));
-        window_chrome::shell(&mail::compose::window_title(draft), body, move |event| {
-          Message::Chrome(id, event)
-        })
-      }
-      None => blank(),
-    },
-    Some(Window::ManagePlans) => match app.manage_plans.as_ref() {
-      Some((manage_id, state)) if *manage_id == id => {
-        let body = skill_plan_manager::view(state).map(Message::ManagePlans);
-        window_chrome::shell(skill_plan_manager::MANAGE_PLANS_WINDOW_TITLE, body, move |event| {
-          Message::Chrome(id, event)
-        })
-      }
-      _ => blank(),
-    },
-    Some(Window::SkillPlanEditor) => match app.editor.as_ref() {
-      Some((editor_id, state)) if *editor_id == id => {
-        skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
-      }
-      _ => blank(),
-    },
-    Some(Window::StockpileEditor) => match app.stockpile_editors.get(id) {
-      Some(editor) => {
-        let body = assets::stockpile_editor_view(editor).map(move |msg| Message::StockpileEditor(id, msg));
-        window_chrome::shell(assets::stockpile_editor_window_title(editor), body, move |event| {
-          Message::Chrome(id, event)
-        })
-      }
-      None => blank(),
-    },
+    Some(Window::Compare) => compare_window_view(app, id),
+    Some(Window::Contract) => contract_window_view(app, id),
+    Some(Window::Killmail) => killmail_window_view(app, id),
+    Some(Window::MailCompose) => compose_window_view(app, id),
+    Some(Window::ManagePlans) => manage_plans_window_view(app, id),
+    Some(Window::SkillPlanEditor) => skill_plan_editor_window_view(app, id),
+    Some(Window::StockpileEditor) => stockpile_editor_window_view(app, id),
     _ => blank(),
+  }
+}
+
+fn splash_window_view(app: &App) -> Element<'_, Message> {
+  match app.splash.as_ref() {
+    Some(state) => splash::view(state, app.now).map(Message::Splash),
+    None => blank(),
+  }
+}
+
+fn compare_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.compare.as_ref() {
+    Some((compare_id, state)) if *compare_id == id => skills_compare::view(state).map(Message::Compare),
+    _ => blank(),
+  }
+}
+
+fn contract_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.contracts.get(id) {
+    Some(state) => contract_detail::view(state, move |event| Message::Chrome(id, event)),
+    None => blank(),
+  }
+}
+
+fn killmail_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.killmails.get(id) {
+    Some(state) => killmail_detail::view(state, move |event| Message::Chrome(id, event)),
+    None => blank(),
+  }
+}
+
+fn compose_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.composes.get(id) {
+    Some(draft) => {
+      let roster = app.mail.as_ref().map(mail::State::roster).unwrap_or(&[]);
+      let body = mail::compose::view(draft, roster).map(move |msg| Message::Compose(id, msg));
+      window_chrome::shell(&mail::compose::window_title(draft), body, move |event| {
+        Message::Chrome(id, event)
+      })
+    }
+    None => blank(),
+  }
+}
+
+fn manage_plans_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.manage_plans.as_ref() {
+    Some((manage_id, state)) if *manage_id == id => {
+      let body = skill_plan_manager::view(state).map(Message::ManagePlans);
+      window_chrome::shell(skill_plan_manager::MANAGE_PLANS_WINDOW_TITLE, body, move |event| {
+        Message::Chrome(id, event)
+      })
+    }
+    _ => blank(),
+  }
+}
+
+fn skill_plan_editor_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.editor.as_ref() {
+    Some((editor_id, state)) if *editor_id == id => {
+      skill_plan_editor::view(state, app.now).map(Message::SkillPlanEditor)
+    }
+    _ => blank(),
+  }
+}
+
+fn stockpile_editor_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  match app.stockpile_editors.get(id) {
+    Some(editor) => {
+      let body = assets::stockpile_editor_view(editor).map(move |msg| Message::StockpileEditor(id, msg));
+      window_chrome::shell(assets::stockpile_editor_window_title(editor), body, move |event| {
+        Message::Chrome(id, event)
+      })
+    }
+    None => blank(),
   }
 }
 
@@ -6554,6 +6602,37 @@ mod tests {
     app.skills = Some(skills::State::new(1));
     app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
     app
+  }
+
+  fn ready_app() -> App {
+    let mut app = test_app();
+    app.character_manager = Some(character_manager::State::new());
+    app.character_detail = Some(character_detail::State::new(1, &[]));
+    app.skills = Some(skills::State::new(1));
+    app.mail = Some(mail::State::new(42));
+    app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
+    app.assets = Some(assets::State::new(config::FeatureFlags::default()));
+    app
+  }
+
+  fn test_notification(id: i64, destination: store::model::NotificationDestination) -> store::model::Notification {
+    use store::model::{NotificationKind, NotificationOwner, NotificationTarget};
+
+    store::model::Notification {
+      body: "body".to_owned(),
+      created_at: Utc::now().to_rfc3339(),
+      dedup_key: format!("dedup-{id}"),
+      id,
+      kind: NotificationKind::Skill,
+      owner: NotificationOwner::Character(1),
+      read_at: None,
+      target: NotificationTarget {
+        character: Some(1),
+        destination,
+        sub: None,
+      },
+      title: "title".to_owned(),
+    }
   }
 
   mod handle_mcp_data_changed {
@@ -11556,17 +11635,6 @@ mod tests {
   mod views {
     use super::*;
 
-    fn ready_app() -> App {
-      let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
-      app.character_detail = Some(character_detail::State::new(1, &[]));
-      app.skills = Some(skills::State::new(1));
-      app.mail = Some(mail::State::new(42));
-      app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
-      app.assets = Some(assets::State::new(config::FeatureFlags::default()));
-      app
-    }
-
     fn render_route(route: Route) {
       let app = ready_app();
       let mut app = app;
@@ -11714,6 +11782,443 @@ mod tests {
         id: 1,
       });
       let _ = status_bar_view(&app);
+    }
+
+    #[test]
+    fn it_dispatches_every_per_window_view_helper() {
+      let mut app = ready_app();
+
+      let compose_id = window::Id::unique();
+      app.windows.register(compose_id, Window::MailCompose);
+      let _ = view(&app, compose_id);
+      app.composes.insert(
+        compose_id,
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+          from_character_id: 1,
+        }),
+      );
+      let _ = view(&app, compose_id);
+
+      let manage_id = window::Id::unique();
+      app.windows.register(manage_id, Window::ManagePlans);
+      let _ = view(&app, manage_id);
+      app.manage_plans = Some((manage_id, skill_plan_manager::State::new()));
+      let _ = view(&app, manage_id);
+
+      let compare_id = window::Id::unique();
+      app.windows.register(compare_id, Window::Compare);
+      let _ = view(&app, compare_id);
+      app.compare = Some((compare_id, skills_compare::State::new(vec![1], Vec::new())));
+      let _ = view(&app, compare_id);
+
+      let contract_id = window::Id::unique();
+      app.windows.register(contract_id, Window::Contract);
+      let _ = view(&app, contract_id);
+
+      let killmail_id = window::Id::unique();
+      app.windows.register(killmail_id, Window::Killmail);
+      let _ = view(&app, killmail_id);
+
+      let stockpile_id = window::Id::unique();
+      app.windows.register(stockpile_id, Window::StockpileEditor);
+      let _ = view(&app, stockpile_id);
+    }
+
+    #[test]
+    fn it_renders_the_notifications_panel_on_both_rail_sides() {
+      let mut app = ready_app();
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      let _ = notifications_panel(&app, config::NavLocation::Right);
+
+      app.notifications_unread = 2;
+      app.notifications.push(test_notification(1, store::model::NotificationDestination::Skills));
+      app
+        .notification_names
+        .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      let _ = notifications_panel(&app, config::NavLocation::Right);
+    }
+  }
+
+  mod subscription {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_arms_the_popover_panel_and_toast_listeners() {
+      let mut app = ready_app();
+      app.sync_popover_open = true;
+      app.notifications_panel_open = true;
+      app.toasts.push(ToastEntry {
+        notification: test_notification(1, store::model::NotificationDestination::Skills),
+        paused: false,
+        remaining: TOAST_MS,
+        who: String::new(),
+      });
+      app.keyboard_focus.set_focused(Some(iced::widget::Id::from("search")));
+      let _ = subscription(&app);
+
+      app.palette = Some(command_palette::State::default());
+      let _ = subscription(&app);
+    }
+  }
+
+  mod boot_variant_name {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_names_the_boot_messages() {
+      assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
+      assert_eq!(
+        Message::ComposeWindowReady {
+          id: window::Id::unique(),
+          seed: Box::new(mail::compose::Seed::Blank {
+            from_character_id: 1,
+          }),
+        }
+        .variant_name(),
+        "ComposeWindowReady"
+      );
+      assert_eq!(
+        Message::ContractWindowReady {
+          contract_id: 1,
+          id: window::Id::unique(),
+          source: contract_detail::Source::Character {
+            character_id: 1,
+          },
+        }
+        .variant_name(),
+        "ContractWindowReady"
+      );
+      assert_eq!(
+        Message::ManagePlansWindowReady {
+          id: window::Id::unique(),
+        }
+        .variant_name(),
+        "ManagePlansWindowReady"
+      );
+      assert_eq!(Message::Quit.variant_name(), "Quit");
+      assert_eq!(
+        Message::TextInputFocused(iced::widget::Id::from("x")).variant_name(),
+        "TextInputFocused"
+      );
+      assert_eq!(Message::Shortcut(Chord::FocusSearch).variant_name(), "Shortcut");
+      assert_eq!(Message::InitFailed("boom".to_owned()).variant_name(), "InitFailed");
+      assert_eq!(Message::FocusMainWindow.variant_name(), "FocusMainWindow");
+      assert_eq!(Message::SnoozesWoken(Vec::new()).variant_name(), "SnoozesWoken");
+      assert_eq!(Message::TrashPurged(Vec::new()).variant_name(), "TrashPurged");
+      assert_eq!(Message::StorageMigrated.variant_name(), "StorageMigrated");
+    }
+
+    #[test]
+    fn it_falls_back_to_window_for_unnamed_messages() {
+      assert_eq!(
+        Message::RailHover(Some(rail::Destination::Wallet)).variant_name(),
+        "Window"
+      );
+      assert_eq!(Message::RailHoverExpire(0).variant_name(), "Window");
+    }
+  }
+
+  mod dispatch_window_lifecycle {
+    use super::*;
+
+    #[test]
+    fn it_routes_window_lifecycle_messages_without_a_runtime() {
+      let mut app = ready_app();
+
+      let _ = dispatch_window_lifecycle(&mut app, Message::CloseSyncPopover);
+      assert!(!app.sync_popover_open);
+
+      app.sync_popover_open = false;
+      let _ = dispatch_window_lifecycle(&mut app, Message::ToggleSyncPopover);
+      assert!(app.sync_popover_open);
+
+      let _ = dispatch_window_lifecycle(&mut app, Message::FocusMainWindow);
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::TextInputFocused(iced::widget::Id::from("search")),
+      );
+      let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterDismissToast);
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::ComposeWindowReady {
+          id: window::Id::unique(),
+          seed: Box::new(mail::compose::Seed::Blank {
+            from_character_id: 1,
+          }),
+        },
+      );
+      let _ = dispatch_window_lifecycle(
+        &mut app,
+        Message::ManagePlansWindowReady {
+          id: window::Id::unique(),
+        },
+      );
+      let _ = dispatch_window_lifecycle(&mut app, Message::WindowOpened(window::Id::unique()));
+
+      // An unmatched message falls through to a no-op task.
+      let _ = dispatch_window_lifecycle(&mut app, Message::ClockTick);
+    }
+  }
+
+  mod handle_manage_plans {
+    use super::*;
+
+    fn app_with_manage_plans() -> (App, window::Id) {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+      app.manage_plans = Some((id, skill_plan_manager::State::new()));
+      (app, id)
+    }
+
+    #[test]
+    fn it_handles_the_state_only_messages_without_a_runtime() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CancelDelete);
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CharacterSelected(7));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::RequestDelete(3));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ToggleCopyMenu(3));
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::CancelDelete);
+    }
+
+    #[test]
+    fn it_short_circuits_the_runtime_backed_messages_when_no_runtime_is_present() {
+      let (mut app, _id) = app_with_manage_plans();
+
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::ConfirmDelete(1));
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::CopyPlan {
+          plan_id: 1,
+          target_character_id: 2,
+        },
+      );
+      let _ = handle_manage_plans(&mut app, skill_plan_manager::Message::NewPlan(1));
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::OpenPlan {
+          character_id: 1,
+          plan_id: 5,
+        },
+      );
+    }
+
+    #[tokio::test]
+    async fn it_loads_the_roster_and_fetches_stale_images() {
+      let (mut app, _id) = app_with_manage_plans();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_manage_plans(
+        &mut app,
+        skill_plan_manager::Message::Loaded(Box::default()),
+      );
+    }
+  }
+
+  mod handle_compose {
+    use super::*;
+
+    fn app_with_compose() -> (App, window::Id) {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+      app.composes.insert(
+        id,
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+          from_character_id: 1,
+        }),
+      );
+      (app, id)
+    }
+
+    #[test]
+    fn it_is_a_no_op_without_a_runtime() {
+      let mut app = ready_app();
+      let id = window::Id::unique();
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftSaved(Some(7)));
+    }
+
+    #[tokio::test]
+    async fn it_threads_draft_load_and_save_ids_per_window() {
+      let (mut app, id) = app_with_compose();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftSaved(Some(42)));
+      assert_eq!(app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id), Some(42));
+
+      let _ = handle_compose(&mut app, id, mail::Message::DraftLoaded(Box::new(None)));
+
+      // An unknown id falls through to a no-op.
+      let _ = handle_compose(&mut app, window::Id::unique(), mail::Message::PickerToggled);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_successful_send_through_completion() {
+      let (mut app, id) = app_with_compose();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_compose(&mut app, id, mail::Message::ComposeSent(Ok(())));
+      assert!(app.composes.get(id).is_none(), "the window closes on send");
+    }
+  }
+
+  mod navigate_to_notification_target {
+    use pretty_assertions::assert_eq;
+    use store::model::{NotificationDestination, NotificationTarget};
+
+    use super::*;
+
+    fn target(destination: NotificationDestination, character: Option<i64>) -> NotificationTarget {
+      NotificationTarget {
+        character,
+        destination,
+        sub: None,
+      }
+    }
+
+    #[test]
+    fn it_routes_every_destination_to_its_route() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Assets, None));
+      assert_eq!(app.route, Route::Assets);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Calendar, Some(1)));
+      assert_eq!(app.route, Route::Calendar);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, Some(9)));
+      assert_eq!(app.route, Route::CharacterDetail(9));
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Industry, Some(1)));
+      assert_eq!(app.route, Route::Industry);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Mail, Some(1)));
+      assert_eq!(app.route, Route::Mail);
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Skills, Some(1)));
+      assert_eq!(app.route, Route::Skills(1));
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::Wallet, None));
+      assert_eq!(app.route, Route::Wallet);
+    }
+
+    #[test]
+    fn it_lands_a_character_less_character_detail_on_the_roster() {
+      let mut app = ready_app();
+
+      let _ = navigate_to_notification_target(&mut app, &target(NotificationDestination::CharacterDetail, None));
+
+      assert_eq!(app.route, Route::Characters);
+    }
+  }
+
+  mod handle_notification_activated {
+    use super::*;
+
+    #[test]
+    fn it_marks_read_clears_the_toast_and_navigates_to_the_target() {
+      let mut app = ready_app();
+      app.notifications_unread = 1;
+      app.notifications_panel_open = true;
+      app.notifications.push(test_notification(5, store::model::NotificationDestination::Wallet));
+      app.toasts.push(ToastEntry {
+        notification: test_notification(5, store::model::NotificationDestination::Wallet),
+        paused: false,
+        remaining: TOAST_MS,
+        who: String::new(),
+      });
+
+      let _ = handle_notification_activated(&mut app, 5);
+
+      assert!(!app.notifications_panel_open, "the panel closes");
+      assert!(app.toasts.is_empty(), "the matching toast is removed");
+      assert_eq!(app.notifications_unread, 0, "the row is marked read");
+      assert_eq!(app.route, Route::Wallet, "it navigates to the target");
+      assert!(
+        app.notifications[0].read_at().is_some(),
+        "the activated row carries a read timestamp"
+      );
+    }
+
+    #[test]
+    fn it_only_marks_read_when_the_id_is_unknown() {
+      let mut app = ready_app();
+      app.route = Route::Characters;
+      app.notifications_panel_open = true;
+
+      let _ = handle_notification_activated(&mut app, 999);
+
+      assert!(!app.notifications_panel_open);
+      assert_eq!(app.route, Route::Characters, "no target means no navigation");
+    }
+  }
+
+  mod open_centered_window {
+    use super::*;
+
+    #[test]
+    fn it_builds_an_open_task_with_and_without_a_main_window() {
+      let app = ready_app();
+      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| Task::done(Message::WindowOpened(id)));
+
+      let mut app = ready_app();
+      let main_id = window::Id::unique();
+      app.windows.register(main_id, Window::Main);
+      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| Task::done(Message::WindowOpened(id)));
+    }
+  }
+
+  mod handle_assets {
+    use super::*;
+
+    #[test]
+    fn it_handles_the_window_opening_and_pane_messages() {
+      let mut app = ready_app();
+
+      let _ = handle_assets(&mut app, assets::Message::PaneSettled("assets.left", 0.4));
+      assert_eq!(app.ui_state.panes.get("assets.left"), Some(&0.4));
+
+      // Without a runtime, the stockpile-editor openers short-circuit to a no-op.
+      let _ = handle_assets(&mut app, assets::Message::StockpileNew);
+      let _ = handle_assets(&mut app, assets::Message::StockpileEditStarted(1));
+      let _ = handle_assets(&mut app, assets::Message::StockpileImportConfirmed);
+      let _ = handle_assets(&mut app, assets::Message::ReauthRequested(1));
+    }
+
+    #[tokio::test]
+    async fn it_opens_the_stockpile_editor_window_with_a_runtime() {
+      let mut app = ready_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = handle_assets(&mut app, assets::Message::StockpileNew);
+    }
+  }
+
+  mod handle_wallet {
+    use super::*;
+
+    #[test]
+    fn it_handles_the_pane_flag_and_list_persistence_messages() {
+      let mut app = ready_app();
+
+      let _ = handle_wallet(&mut app, wallet::Message::PaneSettled("wallet.left", 0.6));
+      assert_eq!(app.ui_state.panes.get("wallet.left"), Some(&0.6));
+
+      let _ = handle_wallet(&mut app, wallet::Message::UiFlagPersisted("pin".to_owned(), true));
+      assert_eq!(app.ui_state.flags.get("pin"), Some(&true));
+
+      let _ = handle_wallet(
+        &mut app,
+        wallet::Message::UiListPersisted("order".to_owned(), vec!["a".to_owned()]),
+      );
+      assert_eq!(app.ui_state.lists.get("order"), Some(&vec!["a".to_owned()]));
+
+      // ContractSelected with no matching source is a no-op; ReauthRequested reroutes through update.
+      let _ = handle_wallet(&mut app, wallet::Message::ContractSelected(404));
+      let _ = handle_wallet(&mut app, wallet::Message::ReauthRequested(1));
     }
   }
 

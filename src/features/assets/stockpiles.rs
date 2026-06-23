@@ -1927,6 +1927,164 @@ mod tests {
         EditorEffect::Save
       );
     }
+
+    fn location(id: i64, name: &str) -> LocationRef {
+      LocationRef {
+        context: None,
+        id,
+        name: name.to_owned(),
+        security_status: None,
+        tier: LocationTier::from_id(id),
+      }
+    }
+
+    #[test]
+    fn it_sets_the_name_with_no_follow_up() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(&mut editor, Message::StockpileEditorNameChanged("Cache".to_owned()));
+
+      assert_eq!(effect, EditorEffect::None);
+      assert_eq!(editor.name(), "Cache");
+    }
+
+    #[test]
+    fn it_toggles_the_location_picker() {
+      let mut editor = Editor::blank();
+
+      apply_editor(&mut editor, Message::StockpileEditorLocationToggled);
+      assert!(editor.location_open());
+
+      apply_editor(&mut editor, Message::StockpileEditorLocationToggled);
+      assert!(!editor.location_open());
+    }
+
+    #[test]
+    fn it_requests_a_location_search_for_a_searchable_query() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(
+        &mut editor,
+        Message::StockpileEditorLocationSearchChanged("Jita".to_owned()),
+      );
+
+      assert!(matches!(
+        effect,
+        EditorEffect::LocationSearch {
+          query,
+          ..
+        } if query == "Jita"
+      ));
+    }
+
+    #[test]
+    fn it_holds_a_too_short_location_query_without_a_search() {
+      let mut editor = Editor::blank();
+
+      let effect = apply_editor(&mut editor, Message::StockpileEditorLocationSearchChanged("Ji".to_owned()));
+
+      assert_eq!(effect, EditorEffect::None);
+    }
+
+    #[test]
+    fn it_accepts_location_results_and_picks_one() {
+      let mut editor = Editor::blank();
+      let generation = editor.set_location_query("Jita".to_owned()).unwrap();
+
+      apply_editor(
+        &mut editor,
+        Message::StockpileEditorLocationResults(generation, vec![location(60_003_760, "Jita IV")]),
+      );
+      assert_eq!(editor.location_results().len(), 1);
+
+      apply_editor(
+        &mut editor,
+        Message::StockpileEditorLocationPicked(location(60_003_760, "Jita IV")),
+      );
+      assert_eq!(editor.location().map(|loc| loc.id), Some(60_003_760));
+      assert!(!editor.location_open());
+    }
+
+    #[test]
+    fn it_clears_a_picked_location() {
+      let mut editor = Editor::blank();
+      apply_editor(
+        &mut editor,
+        Message::StockpileEditorLocationPicked(location(60_003_760, "Jita IV")),
+      );
+
+      apply_editor(&mut editor, Message::StockpileEditorLocationCleared);
+
+      assert!(editor.location().is_none());
+    }
+
+    #[test]
+    fn it_records_resolved_scope_pilots() {
+      let mut editor = Editor::blank();
+      let pilots = vec![ScopePilot {
+        corp: "TST".to_owned(),
+        id: 1,
+        name: "Aria".to_owned(),
+        portrait: images::ImageState::Stale {
+          id: 1,
+          kind: images::ImageKind::CharacterPortrait,
+        },
+      }];
+
+      let effect = apply_editor(&mut editor, Message::StockpileEditorScopeResolved(pilots));
+
+      assert_eq!(effect, EditorEffect::None);
+      assert_eq!(editor.scope_pilots().len(), 1);
+      assert_eq!(editor.scope_corps(), 1);
+    }
+
+    #[test]
+    fn it_fills_item_suggestions_excluding_already_added_types() {
+      let mut editor = Editor::blank();
+      editor.pick_item(34, "Tritanium".to_owned());
+
+      apply_editor(
+        &mut editor,
+        Message::StockpileEditorItemResults(vec![(34, "Tritanium".to_owned()), (35, "Pyerite".to_owned())]),
+      );
+
+      let suggestions = &editor.item_search().suggestions;
+      assert_eq!(suggestions, &[(35, "Pyerite".to_owned())]);
+    }
+
+    #[test]
+    fn it_edits_and_removes_an_item_row() {
+      let mut editor = Editor::blank();
+      editor.pick_item(34, "Tritanium".to_owned());
+
+      apply_editor(&mut editor, Message::StockpileEditorItemTargetChanged(0, "500".to_owned()));
+      assert_eq!(editor.items()[0].target, "500");
+
+      apply_editor(&mut editor, Message::StockpileEditorItemRemoved(0));
+      assert!(editor.items().is_empty());
+    }
+
+    #[test]
+    fn it_closes_open_popovers() {
+      let mut editor = Editor::blank();
+      editor.toggle_location();
+
+      let effect = apply_editor(&mut editor, Message::StockpileEditorPopoversClosed);
+
+      assert_eq!(effect, EditorEffect::None);
+      assert!(!editor.location_open());
+    }
+
+    #[test]
+    fn it_ignores_an_unrelated_message() {
+      let mut editor = Editor::blank();
+      let before = editor.clone();
+
+      let effect = apply_editor(&mut editor, Message::StockpileImportClosed);
+
+      assert_eq!(effect, EditorEffect::None);
+      assert_eq!(editor, before);
+    }
   }
 
   mod economics {

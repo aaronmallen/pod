@@ -1045,6 +1045,99 @@ mod tests {
         .unwrap();
     }
 
+    async fn seed_corp(db: &Database, corporation_id: i64, division: i64) {
+      let mut corp = Corporation::new(corporation_id, "Test Corp", "TSTC");
+      corp.set_ceo_id(100);
+      corp.set_creator_id(100);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      crate::store::repo::org::upsert_corporation(db, &corp).await.unwrap();
+      finance::upsert_divisions(
+        db,
+        &[crate::store::model::CorporationWalletDivision {
+          balance: Some(0.0),
+          corporation_id,
+          division,
+          name: Some(format!("Division {division}")),
+        }],
+      )
+      .await
+      .unwrap();
+    }
+
+    fn corp_txn_row(
+      corporation_id: i64,
+      division: i64,
+      transaction_id: i64,
+      type_id: i64,
+      location_id: i64,
+      is_buy: bool,
+      quantity: i64,
+      unit_price: f64,
+    ) -> crate::store::model::CorporationWalletTransaction {
+      crate::store::model::CorporationWalletTransaction {
+        client_id: 1_000_035,
+        corporation_id,
+        date: "2026-05-30T12:00:00Z".to_owned(),
+        division,
+        is_buy,
+        journal_ref_id: 1,
+        location_id,
+        quantity,
+        transaction_id,
+        type_id,
+        unit_price,
+      }
+    }
+
+    async fn seed_station(db: &Database, id: i64, name: &str) {
+      use crate::store::model::{Constellation, Region, SolarSystem, Station};
+      let region = Region {
+        description: None,
+        id: 10_000_002,
+        name: "The Forge".to_owned(),
+      };
+      let constellation = Constellation {
+        id: 20_000_020,
+        name: "Kimotoro".to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        region_id: 10_000_002,
+      };
+      let system = SolarSystem {
+        constellation_id: 20_000_020,
+        id: 30_000_142,
+        name: "Jita".to_owned(),
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        security_class: None,
+        security_status: 0.9,
+        star_id: None,
+      };
+      let station = Station {
+        id,
+        max_dockable_ship_volume: 0.0,
+        name: name.to_owned(),
+        office_rental_cost: 0.0,
+        owner: None,
+        position_x: 0.0,
+        position_y: 0.0,
+        position_z: 0.0,
+        race_id: None,
+        reprocessing_efficiency: 0.0,
+        reprocessing_stations_take: 0.0,
+        services: "[]".to_owned(),
+        system_id: 30_000_142,
+        // References a previously seeded item type so the station FK holds in tests.
+        type_id: 34,
+      };
+      sde::insert_station_with_geography(db, &station, &system, &constellation, &region)
+        .await
+        .unwrap();
+    }
+
     async fn seed_item_type(db: &Database, id: i64, name: &str) {
       let category = ItemCategory {
         id: 1,
@@ -1094,6 +1187,73 @@ mod tests {
         entries.is_empty(),
         "a transaction with an unresolved location is withheld, never shown as Unknown"
       );
+    }
+
+    mod load_all_market {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      const STATION_ID: i64 = 60_003_760;
+
+      #[tokio::test]
+      async fn it_returns_no_entries_for_an_empty_scope() {
+        let db = store::open_test().await.unwrap();
+
+        let entries = load_all_market(&db, &[], &[]).await;
+
+        assert!(entries.is_empty());
+      }
+
+      #[tokio::test]
+      async fn it_loads_a_characters_resolved_transactions_newest_id_first() {
+        let db = store::open_test().await.unwrap();
+        seed_character(&db, 42).await;
+        seed_item_type(&db, 34, "Tritanium").await;
+        seed_station(&db, STATION_ID, "Jita Trade Hub").await;
+        finance::append_wallet_transaction(
+          &db,
+          &[
+            txn_row(1, 34, STATION_ID, true, 10, 5.0),
+            txn_row(3, 34, STATION_ID, false, 4, 2.0),
+          ],
+        )
+        .await
+        .unwrap();
+
+        let entries = load_all_market(&db, &[42], &[]).await;
+
+        assert_eq!(entries.iter().map(|e| e.transaction_id).collect::<Vec<_>>(), [3, 1]);
+        assert_eq!(entries[0].item, "Tritanium");
+        assert_eq!(entries[0].location, "Jita Trade Hub");
+        assert_eq!(entries[0].total, 8.0);
+        assert_eq!(entries[1].owner, BudgetOwner::Character(42));
+      }
+
+      #[tokio::test]
+      async fn it_unions_corporation_divisions_keyed_to_the_corporation_owner() {
+        let db = store::open_test().await.unwrap();
+        let corp_id = 98_000_001;
+        seed_corp(&db, corp_id, 1).await;
+        seed_corp(&db, corp_id, 2).await;
+        seed_item_type(&db, 34, "Tritanium").await;
+        seed_station(&db, STATION_ID, "Jita Trade Hub").await;
+        finance::append_corporation_wallet_transaction(
+          &db,
+          &[
+            corp_txn_row(corp_id, 1, 10, 34, STATION_ID, false, 100, 4.0),
+            corp_txn_row(corp_id, 2, 20, 34, STATION_ID, true, 50, 2.0),
+          ],
+        )
+        .await
+        .unwrap();
+
+        let entries = load_all_market(&db, &[], &[corp_id]).await;
+
+        assert_eq!(entries.iter().map(|e| e.transaction_id).collect::<Vec<_>>(), [20, 10]);
+        assert!(entries.iter().all(|e| e.owner == BudgetOwner::Corporation(corp_id)));
+        assert_eq!(entries[1].total, 400.0);
+      }
     }
   }
 

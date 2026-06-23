@@ -807,13 +807,7 @@ fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'
     text("Copy to \u{25be}")
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(if enabled {
-          color::accent::PLASMA
-        } else {
-          color::text::tertiary()
-        }),
-      }),
+      .style(move |_| copy_button_label_style(enabled)),
   )
   .padding(Padding {
     top: 6.0,
@@ -821,35 +815,47 @@ fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'
     bottom: 6.0,
     left: spacing::SPACE_2_5,
   })
-  .style(move |_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let border_color = if menu_open || (enabled && hover) {
-      color::accent::PLASMA
-    } else if enabled {
-      color::accent::PLASMA_MUTED
-    } else {
-      color::with_alpha(color::text::PRIMARY, 0.1)
-    };
-    button::Style {
-      background: (enabled && hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
-      border: Border {
-        color: border_color,
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: if enabled {
-        color::accent::PLASMA
-      } else {
-        color::text::tertiary()
-      },
-      ..button::Style::default()
-    }
-  });
+  .style(move |_, status| copy_button_style(enabled, menu_open, status));
 
   if enabled {
     label.on_press(Message::ToggleCopyMenu(plan_id)).into()
   } else {
     label.into()
+  }
+}
+
+fn copy_button_label_style(enabled: bool) -> text::Style {
+  text::Style {
+    color: Some(if enabled {
+      color::accent::PLASMA
+    } else {
+      color::text::tertiary()
+    }),
+  }
+}
+
+fn copy_button_style(enabled: bool, menu_open: bool, status: button::Status) -> button::Style {
+  let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+  let border_color = if menu_open || (enabled && hover) {
+    color::accent::PLASMA
+  } else if enabled {
+    color::accent::PLASMA_MUTED
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.1)
+  };
+  button::Style {
+    background: (enabled && hover).then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
+    border: Border {
+      color: border_color,
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    text_color: if enabled {
+      color::accent::PLASMA
+    } else {
+      color::text::tertiary()
+    },
+    ..button::Style::default()
   }
 }
 
@@ -1340,6 +1346,84 @@ mod tests {
       let state = State::new();
 
       let _el: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod copy_to_button {
+    use super::*;
+
+    #[test]
+    fn it_builds_an_enabled_button_with_an_open_menu() {
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, true);
+    }
+
+    #[test]
+    fn it_builds_an_enabled_button_with_a_closed_menu() {
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, true, false);
+    }
+
+    #[test]
+    fn it_builds_a_disabled_button_when_there_are_no_targets() {
+      let _el: Element<'_, Message> = super::super::copy_to_button(10, false, false);
+    }
+  }
+
+  mod copy_button_label_style {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_accent_when_enabled() {
+      assert_eq!(super::super::copy_button_label_style(true).color, Some(color::accent::PLASMA));
+    }
+
+    #[test]
+    fn it_dims_the_label_when_disabled() {
+      assert_eq!(
+        super::super::copy_button_label_style(false).color,
+        Some(color::text::tertiary())
+      );
+    }
+  }
+
+  mod copy_button_style {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_accents_the_border_for_an_open_menu_even_without_hover() {
+      let style = super::super::copy_button_style(true, true, button::Status::Active);
+
+      assert_eq!(style.border.color, color::accent::PLASMA);
+      assert_eq!(style.background, None);
+    }
+
+    #[test]
+    fn it_accents_and_fills_an_enabled_button_on_hover() {
+      let style = super::super::copy_button_style(true, false, button::Status::Hovered);
+
+      assert_eq!(style.border.color, color::accent::PLASMA);
+      assert!(style.background.is_some());
+      assert_eq!(style.text_color, color::accent::PLASMA);
+    }
+
+    #[test]
+    fn it_uses_the_muted_border_for_an_enabled_resting_button() {
+      let style = super::super::copy_button_style(true, false, button::Status::Active);
+
+      assert_eq!(style.border.color, color::accent::PLASMA_MUTED);
+      assert_eq!(style.background, None);
+    }
+
+    #[test]
+    fn it_dims_the_border_and_text_for_a_disabled_button() {
+      let style = super::super::copy_button_style(false, false, button::Status::Hovered);
+
+      assert_eq!(style.border.color, color::with_alpha(color::text::PRIMARY, 0.1));
+      assert_eq!(style.text_color, color::text::tertiary());
+      assert_eq!(style.background, None, "a disabled button never fills on hover");
     }
   }
 }

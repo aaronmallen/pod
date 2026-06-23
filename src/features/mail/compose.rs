@@ -1554,6 +1554,131 @@ mod tests {
     }
   }
 
+  mod apply_link {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_selects_a_kind_and_resets_the_typed_url() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+      apply_link(&mut draft, Message::ComposeLinkUrlChanged("example.com".to_owned())).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkKindSelected(LinkKind::Character)).unwrap();
+
+      let popover = draft.link.as_ref().unwrap();
+      assert_eq!(popover.kind, LinkKind::Character);
+      assert!(popover.url.is_empty(), "switching kinds clears a typed http url");
+    }
+
+    #[test]
+    fn it_records_a_typed_url_into_the_open_popover() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkUrlChanged("foo.example".to_owned())).unwrap();
+
+      assert_eq!(draft.link.as_ref().unwrap().url, "foo.example");
+    }
+
+    #[test]
+    fn it_drops_a_url_change_when_no_popover_is_open() {
+      let mut draft = Draft::blank(42);
+
+      apply_link(&mut draft, Message::ComposeLinkUrlChanged("foo.example".to_owned())).unwrap();
+
+      assert!(draft.link.is_none());
+    }
+
+    #[test]
+    fn it_accepts_link_results_for_the_live_generation_and_drops_a_stale_one() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+      apply_link(&mut draft, Message::ComposeLinkKindSelected(LinkKind::Character)).unwrap();
+      let generation = draft.link_search().unwrap().0;
+
+      apply_link(
+        &mut draft,
+        Message::ComposeLinkSearched {
+          generation,
+          results: vec![entity(1, "Vex")],
+        },
+      )
+      .unwrap();
+      assert_eq!(draft.link.as_ref().unwrap().results.len(), 1);
+
+      apply_link(
+        &mut draft,
+        Message::ComposeLinkSearched {
+          generation: generation.wrapping_sub(1),
+          results: vec![entity(2, "Stale")],
+        },
+      )
+      .unwrap();
+      assert_eq!(
+        draft.link.as_ref().unwrap().results.len(),
+        1,
+        "a stale generation does not overwrite the live results"
+      );
+    }
+
+    #[test]
+    fn it_inserts_entity_markup_and_closes_the_popover_on_pick() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+      apply_link(&mut draft, Message::ComposeLinkKindSelected(LinkKind::Character)).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkPicked(entity(95_000_001, "Vex"))).unwrap();
+
+      assert!(draft.body.text().contains("showinfo:1377//95000001"));
+      assert!(draft.link.is_none(), "a successful pick closes the popover");
+    }
+
+    #[test]
+    fn it_keeps_the_popover_open_when_picking_under_the_http_kind() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkPicked(entity(95_000_001, "Vex"))).unwrap();
+
+      assert!(draft.body.text().is_empty(), "http has no entity markup to insert");
+      assert!(draft.link.is_some());
+    }
+
+    #[test]
+    fn it_inserts_an_http_link_and_closes_the_popover_on_insert() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+      apply_link(&mut draft, Message::ComposeLinkUrlChanged("example.com/x".to_owned())).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkInsert).unwrap();
+
+      assert!(draft.body.text().contains("http://example.com/x"));
+      assert!(draft.link.is_none());
+    }
+
+    #[test]
+    fn it_does_nothing_on_insert_with_an_empty_url() {
+      let mut draft = Draft::blank(42);
+      apply_link(&mut draft, Message::ComposeLinkToggled).unwrap();
+
+      apply_link(&mut draft, Message::ComposeLinkInsert).unwrap();
+
+      assert!(draft.body.text().is_empty());
+      assert!(draft.link.is_some(), "an empty url leaves the popover open");
+    }
+
+    #[test]
+    fn it_returns_the_message_back_for_an_unrelated_kind() {
+      let mut draft = Draft::blank(42);
+
+      let returned = apply_link(&mut draft, Message::ComposeSubjectChanged("Hi".to_owned()));
+
+      assert!(matches!(returned, Err(Message::ComposeSubjectChanged(_))));
+    }
+  }
+
   fn render() -> MailRender {
     MailRender {
       body: CharacterMailBody {

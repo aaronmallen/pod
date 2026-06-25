@@ -967,6 +967,15 @@ fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<
 fn bulk_assign_picker<'a>(state: &'a State, anchor: Point) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let mut rows: Vec<Element<'a, Message>> = Vec::new();
+  // A Clear row mirrors the per-row chip's unassign: it routes through the
+  // authoritative DB-side cross-owner delete so clearing a selection removes the
+  // mark for every owner of each event, not just the loaded copies.
+  rows.push(budget_picker_row(
+    "Clear",
+    false,
+    color::text::tertiary(),
+    Message::LedgerBulkAssignChosen(None),
+  ));
   for group in &chips.envelopes {
     rows.push(
       text(group.name.clone())
@@ -981,7 +990,7 @@ fn bulk_assign_picker<'a>(state: &'a State, anchor: Point) -> Element<'a, Messag
         &cat.name,
         false,
         tint,
-        Message::LedgerBulkAssignChosen(cat.id),
+        Message::LedgerBulkAssignChosen(Some(cat.id)),
       ));
     }
   }

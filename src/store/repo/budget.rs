@@ -191,6 +191,78 @@ pub async fn delete_entry_assignment(
   Ok(())
 }
 
+// Authoritative cross-owner unassign, as a single static SQL statement so it passes
+// to `sqlx::query` without a dynamic-string audit (it carries only bound leg
+// parameters). The `legs` CTE mirrors `RECONCILE_SPLIT_OWNER_ASSIGNMENTS_SQL`: every
+// concrete wallet leg of a market event keyed by its `transaction_id` (a market row
+// by its own `transaction_id`; a `market_transaction` journal twin and the
+// broker-fee / transaction-tax legs by `context_id`). `event` is the
+// transaction_id(s) the cleared leg belongs to; the DELETE removes every All-scope
+// assignment for any leg of those events across ALL owners — including owners whose
+// wallet is unsynced and absent from the in-memory cascade — so the reconciler has
+// nothing left to resurrect. The cleared leg's own row is OR'd in so a leg the CTE
+// does not represent (a non-market journal entry) is still removed.
+const DELETE_EVENT_ASSIGNMENTS_SQL: &str = "WITH legs AS ( \
+    SELECT transaction_id AS transaction_id, 'character' AS owner_kind, character_id AS owner_id, \
+           'market' AS entry_kind, transaction_id AS entry_id \
+      FROM character_wallet_transaction \
+    UNION ALL \
+    SELECT transaction_id, 'corporation', corporation_id, 'market', transaction_id \
+      FROM corporation_wallet_transaction \
+    UNION ALL \
+    SELECT context_id, 'character', character_id, 'journal', id \
+      FROM character_wallet_journal \
+     WHERE context_id IS NOT NULL \
+       AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax') \
+    UNION ALL \
+    SELECT context_id, 'corporation', corporation_id, 'journal', id \
+      FROM corporation_wallet_journal \
+     WHERE context_id IS NOT NULL \
+       AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax') \
+  ), \
+    event AS ( \
+      SELECT DISTINCT transaction_id FROM legs \
+       WHERE owner_kind = ?1 AND owner_id = ?2 AND entry_kind = ?3 AND entry_id = ?4 \
+    ) \
+    DELETE FROM budget_entry_assignments \
+     WHERE scope_kind = 'all' AND scope_id IS NULL \
+       AND ( \
+         EXISTS ( \
+           SELECT 1 FROM legs l JOIN event e ON e.transaction_id = l.transaction_id \
+            WHERE l.owner_kind = budget_entry_assignments.owner_kind \
+              AND l.owner_id = budget_entry_assignments.owner_id \
+              AND l.entry_kind = budget_entry_assignments.entry_kind \
+              AND l.entry_id = budget_entry_assignments.entry_id \
+         ) \
+         OR (owner_kind = ?1 AND owner_id = ?2 AND entry_kind = ?3 AND entry_id = ?4) \
+       )";
+
+/// Authoritative cross-owner unassign for a single budget event. Given the leg the
+/// user cleared, this deletes the All-scope assignment for every leg of that event
+/// (the market mirror, its journal twin, and the broker-fee / transaction-tax legs)
+/// across ALL owners sharing its `transaction_id` — DB-side, regardless of what is
+/// loaded in memory — so a mark cleared while a sibling owner's wallet is unsynced
+/// leaves no orphan copy behind. Keyed by the event, not by `(owner, entry_id)`:
+/// reuses the same linkage as [`reconcile_split_owner_assignments`] so the two stay
+/// in step, and combined with the reconciler's `updated_at` guard guarantees a
+/// cleared mark is not resurrected on the next sync.
+// Authoritative cross-owner unassign; called from the wallet chip- and bulk-clear paths.
+pub async fn delete_event_assignments(
+  db: &Database,
+  owner: BudgetOwner,
+  entry_kind: BudgetEntryKind,
+  entry_id: i64,
+) -> Result<(), Error> {
+  sqlx::query(DELETE_EVENT_ASSIGNMENTS_SQL)
+    .bind(owner.owner_kind())
+    .bind(owner.owner_id())
+    .bind(entry_kind.as_str())
+    .bind(entry_id)
+    .execute(db.writer())
+    .await?;
+  Ok(())
+}
+
 /// Forward GC for per-entry overrides whose entry has since been pruned from
 /// every live ledger. The one-time migration heals the historical backlog; this
 /// keeps it clean going forward by dropping any assignment whose `entry_id` no
@@ -1311,6 +1383,216 @@ mod tests {
 
       assert_eq!(remaining.len(), 1);
       assert_eq!(remaining[0].entry_id(), 2);
+    }
+  }
+
+  mod delete_event_assignments {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    // The cross-owner delete resolves an event's legs from real wallet rows, so the
+    // test seeds the market/journal twins directly. Wallet tables carry an owner FK
+    // (characters/corporations); the linkage query never reads those parents, so the
+    // FK is disabled to keep the fixture to just the legs under test.
+    async fn disable_foreign_keys(db: &Database) {
+      sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
+    async fn seed_market(db: &Database, table: &str, owner_col: &str, owner_id: i64, transaction_id: i64, twin: i64) {
+      let (extra_col, extra_val) = if owner_col == "character_id" {
+        (", is_personal", ", 0")
+      } else {
+        (", division", ", 1")
+      };
+      // Closed set of literal table / column names from this test module, never caller
+      // data, so the dynamically-built statement is safe to assert.
+      sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} \
+          (transaction_id, {owner_col}, client_id, date, is_buy, journal_ref_id, location_id, quantity, type_id, unit_price{extra_col}) \
+          VALUES (?, ?, 0, '2026-06-01T00:00:00Z', 0, ?, 0, 1, 34, 1.0{extra_val})",
+      )))
+      .bind(transaction_id)
+      .bind(owner_id)
+      .bind(twin)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    async fn seed_journal(
+      db: &Database,
+      table: &str,
+      owner_col: &str,
+      owner_id: i64,
+      id: i64,
+      ref_type: &str,
+      context_id: Option<i64>,
+    ) {
+      let division = if owner_col == "corporation_id" {
+        ", division"
+      } else {
+        ""
+      };
+      let division_val = if owner_col == "corporation_id" { ", 1" } else { "" };
+      // Closed set of literal table / column names (see seed_market) — safe to assert.
+      sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {table} (id, {owner_col}{division}, date, description, ref_type, amount, context_id) \
+          VALUES (?, ?{division_val}, '2026-06-01T00:00:00Z', '', ?, -1.0, ?)"
+      )))
+      .bind(id)
+      .bind(owner_id)
+      .bind(ref_type)
+      .bind(context_id)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_removes_both_owners_copies_for_a_shared_market_event() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      let grp = group(&db, BudgetScope::All, "Trade").await;
+      let cat = category(&db, grp.id(), "Sales").await;
+      // One trade mirrored into a character and a corporation, sharing transaction_id 500.
+      seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
+      seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
+      // Both owners hold a mark on their market copy (as if reconciliation had filled
+      // the corp copy while its wallet was loaded earlier).
+      for owner in [BudgetOwner::Character(1), BudgetOwner::Corporation(2)] {
+        upsert_entry_assignment(&db, BudgetScope::All, owner, BudgetEntryKind::Market, 500, cat.id())
+          .await
+          .unwrap();
+      }
+
+      // Clear via the character leg only — the sibling corp wallet is not "loaded".
+      delete_event_assignments(&db, BudgetOwner::Character(1), BudgetEntryKind::Market, 500)
+        .await
+        .unwrap();
+
+      let remaining = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+      assert!(
+        remaining.is_empty(),
+        "both owners' copies must be removed, leaving none: {remaining:?}"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_removes_the_journal_and_fee_legs_across_owners() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      let grp = group(&db, BudgetScope::All, "Trade").await;
+      let cat = category(&db, grp.id(), "Sales").await;
+      // Market mirror plus the corp journal twin and a tax fee leg, all linked by
+      // transaction_id 500 / context_id 500.
+      seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
+      seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
+      seed_journal(
+        &db,
+        "corporation_wallet_journal",
+        "corporation_id",
+        2,
+        9002,
+        "market_transaction",
+        Some(500),
+      )
+      .await;
+      seed_journal(
+        &db,
+        "corporation_wallet_journal",
+        "corporation_id",
+        2,
+        9003,
+        "transaction_tax",
+        Some(500),
+      )
+      .await;
+      for (owner, kind, entry_id) in [
+        (BudgetOwner::Character(1), BudgetEntryKind::Market, 500),
+        (BudgetOwner::Corporation(2), BudgetEntryKind::Market, 500),
+        (BudgetOwner::Corporation(2), BudgetEntryKind::Journal, 9002),
+        (BudgetOwner::Corporation(2), BudgetEntryKind::Journal, 9003),
+      ] {
+        upsert_entry_assignment(&db, BudgetScope::All, owner, kind, entry_id, cat.id())
+          .await
+          .unwrap();
+      }
+
+      delete_event_assignments(&db, BudgetOwner::Character(1), BudgetEntryKind::Market, 500)
+        .await
+        .unwrap();
+
+      assert!(list_entry_assignments(&db, BudgetScope::All).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_leaves_an_unrelated_events_assignment_intact() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      let grp = group(&db, BudgetScope::All, "Trade").await;
+      let cat = category(&db, grp.id(), "Sales").await;
+      seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
+      seed_market(&db, "character_wallet_transaction", "character_id", 1, 600, 9005).await;
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        500,
+        cat.id(),
+      )
+      .await
+      .unwrap();
+      upsert_entry_assignment(
+        &db,
+        BudgetScope::All,
+        BudgetOwner::Character(1),
+        BudgetEntryKind::Market,
+        600,
+        cat.id(),
+      )
+      .await
+      .unwrap();
+
+      delete_event_assignments(&db, BudgetOwner::Character(1), BudgetEntryKind::Market, 500)
+        .await
+        .unwrap();
+
+      let remaining = list_entry_assignments(&db, BudgetScope::All).await.unwrap();
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].entry_id(), 600);
+    }
+
+    #[tokio::test]
+    async fn it_survives_reconciliation_with_no_resurrection() {
+      let db = store::open_test().await.unwrap();
+      disable_foreign_keys(&db).await;
+      let grp = group(&db, BudgetScope::All, "Trade").await;
+      let cat = category(&db, grp.id(), "Sales").await;
+      seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
+      seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
+      // Mark under both owners, then authoritatively clear via the character leg.
+      for owner in [BudgetOwner::Character(1), BudgetOwner::Corporation(2)] {
+        upsert_entry_assignment(&db, BudgetScope::All, owner, BudgetEntryKind::Market, 500, cat.id())
+          .await
+          .unwrap();
+      }
+      delete_event_assignments(&db, BudgetOwner::Character(1), BudgetEntryKind::Market, 500)
+        .await
+        .unwrap();
+
+      // The reconciler must find no surviving source mark to propagate, so the cleared
+      // event stays gone (the updated_at guard has nothing newer to resurrect from).
+      reconcile_split_owner_assignments(&db).await.unwrap();
+
+      assert!(
+        list_entry_assignments(&db, BudgetScope::All).await.unwrap().is_empty(),
+        "a cleared mark must not be resurrected by reconciliation"
+      );
     }
   }
 

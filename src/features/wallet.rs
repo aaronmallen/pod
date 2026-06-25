@@ -288,7 +288,7 @@ pub enum Message {
   DivisionSelected(i64),
   FeaturesChanged(crate::config::FeatureFlags),
   FiltersCleared,
-  LedgerBulkAssignChosen(i64),
+  LedgerBulkAssignChosen(Option<i64>),
   LedgerBulkAssignOpened,
   LedgerCursorMoved(iced::Point),
   LedgerMenuDismissed,
@@ -2485,18 +2485,22 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   // assigning any one cascades to the rest so the trade's full cost lands in the
   // chosen envelope (and the trade is counted against it exactly once). Every
   // cascaded row shares the row's owner; a manually-overridden fee is preserved.
+  // Assigning cascades to the in-memory twins/fee legs; clearing is authoritative
+  // DB-side across every owner of the event (including unsynced siblings the
+  // in-memory cascade cannot see), so a cleared mark leaves no orphan copy and the
+  // reconciler has nothing to resurrect.
   let counterparts = budget_cascade_targets(state, owner, kind, entry_id);
   let db = db.clone();
   Task::perform(
     async move {
-      for (owner, kind, entry_id) in std::iter::once((owner, kind, entry_id)).chain(counterparts) {
-        match choice {
-          Some(category_id) => {
+      match choice {
+        Some(category_id) => {
+          for (owner, kind, entry_id) in std::iter::once((owner, kind, entry_id)).chain(counterparts) {
             let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
           }
-          None => {
-            let _ = crate::store::repo::budget::delete_entry_assignment(&db, scope, owner, kind, entry_id).await;
-          }
+        }
+        None => {
+          let _ = crate::store::repo::budget::delete_event_assignments(&db, owner, kind, entry_id).await;
         }
       }
       loaders::load_budget_chips(&db, scope).await
@@ -2673,7 +2677,7 @@ fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Mes
       // deleted envelope would otherwise linger here too.
       reload_budget_chips(state, db)
     }
-    Message::LedgerBulkAssignChosen(category_id) => budget_bulk_assign(state, db, category_id),
+    Message::LedgerBulkAssignChosen(choice) => budget_bulk_assign(state, db, choice),
     _ => Task::none(),
   }
 }
@@ -2714,11 +2718,14 @@ fn ledger_order(state: &State, kind: BudgetEntryKind) -> Vec<selection::RowKey> 
   }
 }
 
-/// Assigns every selected row in the menu's tab to `category_id` in one action,
-/// looping the same per-row assign-plus-cascade path the chip uses so the result
-/// is identical to assigning each row individually. Assignment is owner-keyed at
-/// the single All budget, so it is correct under every ledger filter.
-fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Task<Message> {
+/// Assigns (or clears) every selected row in the menu's tab in one action,
+/// mirroring the per-row chip so the bulk result is identical to acting on each row
+/// individually. Assigning loops the assign-plus-cascade path; clearing is
+/// authoritative DB-side across every owner of each event (including unsynced
+/// siblings the in-memory cascade cannot see), so no orphan copy survives and the
+/// reconciler has nothing to resurrect. Owner-keyed at the single All budget, so it
+/// is correct under every ledger filter.
+fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> Task<Message> {
   let Some(menu) = state.ledger_menu.take() else {
     return Task::none();
   };
@@ -2731,12 +2738,15 @@ fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Tas
   let order = ledger_order(state, kind);
   let selected = ledger_selection(state, kind).ordered(&order);
 
-  // Expand each selected row to itself plus its cascade targets (journal twin
-  // and tax/fee rows) so a bulk assign mirrors the per-row chip exactly.
+  // Assigning expands each selected row to itself plus its in-memory cascade targets
+  // (journal twin and tax/fee rows); clearing leaves the selected rows as-is because
+  // the DB-side delete resolves the full event itself.
   let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
   for (owner, entry_id) in selected {
     targets.push((owner, kind, entry_id));
-    targets.extend(budget_cascade_targets(state, owner, kind, entry_id));
+    if choice.is_some() {
+      targets.extend(budget_cascade_targets(state, owner, kind, entry_id));
+    }
   }
   ledger_selection_mut(state, kind).clear();
   if targets.is_empty() {
@@ -2747,7 +2757,14 @@ fn budget_bulk_assign(state: &mut State, db: &Database, category_id: i64) -> Tas
   Task::perform(
     async move {
       for (owner, kind, entry_id) in targets {
-        let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
+        match choice {
+          Some(category_id) => {
+            let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
+          }
+          None => {
+            let _ = crate::store::repo::budget::delete_event_assignments(&db, owner, kind, entry_id).await;
+          }
+        }
       }
       loaders::load_budget_chips(&db, scope).await
     },
@@ -7823,7 +7840,7 @@ mod tests {
       );
       let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
 
-      let _ = update(&mut state, Message::LedgerBulkAssignChosen(7), &db);
+      let _ = update(&mut state, Message::LedgerBulkAssignChosen(Some(7)), &db);
 
       assert!(!state.journal_selected(BudgetOwner::Character(1), 1));
       assert!(state.ledger_menu_open().is_none());
@@ -7877,7 +7894,7 @@ mod tests {
         &db,
       );
       let _ = update(&mut state, Message::LedgerBulkAssignOpened, &db);
-      let _ = update(&mut state, Message::LedgerBulkAssignChosen(7), &db);
+      let _ = update(&mut state, Message::LedgerBulkAssignChosen(Some(7)), &db);
 
       assert_eq!(
         state.tab_scroll_offset(),

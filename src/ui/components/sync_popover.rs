@@ -84,14 +84,32 @@ pub struct Model {
   pub total: usize,
 }
 
+/// The disambiguated freshness a row renders, mirroring the shared `Freshness` vocabulary
+/// (`crate::sync`) one-for-one, with the attention bucket split into its user-distinct conditions so
+/// the row can carry a clear label. No bare "Queued" remains: a job the engine has not yet reported
+/// on is `CatchingUp`, a transient backoff is `Refreshing` (calm), and only persistent failure /
+/// blocked / re-auth land in an attention state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowState {
-  Attention,
-  Done,
-  Empty,
-  Error,
-  Queued,
-  Syncing,
+  Blocked,
+  CatchingUp,
+  Failed,
+  Fresh,
+  Reauth,
+  Refreshing,
+}
+
+impl RowState {
+  /// The shared freshness state this row maps onto, so a row's rendering always agrees with the
+  /// chip's aggregate from the same `Freshness` vocabulary.
+  fn freshness(self) -> Freshness {
+    match self {
+      RowState::Blocked | RowState::Failed | RowState::Reauth => Freshness::Attention,
+      RowState::CatchingUp => Freshness::CatchingUp,
+      RowState::Fresh => Freshness::Fresh,
+      RowState::Refreshing => Freshness::Refreshing,
+    }
+  }
 }
 
 pub fn build_model(
@@ -105,7 +123,9 @@ pub fn build_model(
   let mut summary = FreshnessSummary::default();
   for_each_job(pilots, features, |pilot, label, key| {
     let (state, error) = row_state(status, &key);
-    summary.record(freshness_of(status, &key));
+    // Count from the very row the user sees, so the header/footer aggregate can never drift from the
+    // disambiguated rows below it (and, sharing the `Freshness` vocabulary, from the chip).
+    summary.record(state.freshness());
     rows.push(JobRow {
       character_color: pilot.color,
       character_name: pilot.name.clone(),
@@ -118,9 +138,11 @@ pub fn build_model(
 
   let total = summary.total;
   // Fresh — Synced OR Empty within interval — is the single up-to-date count both surfaces share, so
-  // an empty-result endpoint is never undercounted the way RowState::Done alone undercounted it.
+  // an empty-result endpoint is never undercounted the way a Done-only count undercounted it.
   let done = summary.fresh;
-  let errors = rows.iter().filter(|row| row.state == RowState::Error).count();
+  // Persistent failures are the "retry pending" footer count; blocked / re-auth are attention but not
+  // a retry, and a transient backoff is Refreshing, so neither inflates the error tally.
+  let errors = rows.iter().filter(|row| row.state == RowState::Failed).count();
   let active = summary.refreshing;
   let queued = summary.catching_up;
 
@@ -173,28 +195,45 @@ fn is_error_phase(status: &sync::SyncStatus, key: &JobKey) -> bool {
   matches!(status.phase(key), Some(Phase::Failed))
 }
 
+/// Sentinel reason the engine seeds for a credential flagged `needs_reauth`, so the row can surface
+/// re-auth as its own user-actionable attention state rather than a generic "blocked".
+const REAUTH_REASON: &str = "needs re-authentication";
+
+/// Derive a row's disambiguated freshness state and its detail line from the shared phase, never
+/// collapsing distinct conditions onto a bare "Queued":
+///
+/// - `Done`/`Empty` -> `Fresh` (the next-in countdown is rendered separately from `next_in_secs`).
+/// - `Syncing`/`BackingOff` -> `Refreshing`; a transient backoff self-heals and stays calm, so it is
+///   never an attention state — though its retry detail is kept for the sub-label.
+/// - `None` (enrolled but never reported) -> `CatchingUp`.
+/// - `Failed` -> `Failed`; `Blocked`/`NotReady` -> `Blocked`, except a `needs re-authentication`
+///   reason, which becomes the distinct `Reauth` state.
 pub fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<String>) {
   match status.phase(key) {
-    None => (RowState::Queued, None),
-    Some(Phase::Done) => (RowState::Done, None),
-    Some(Phase::Syncing) => (RowState::Syncing, None),
-    Some(Phase::Failed) => (RowState::Error, status.reason(key).map(str::to_owned)),
+    None => (RowState::CatchingUp, None),
+    Some(Phase::Done) => (RowState::Fresh, None),
+    Some(Phase::Empty) => (RowState::Fresh, Some("No data".to_owned())),
+    Some(Phase::Syncing) => (RowState::Refreshing, None),
     Some(Phase::BackingOff) => {
       let detail = status
         .retry_secs(key)
-        .map(|secs| format!("Backing off {secs}s"))
+        .map(|secs| format!("Retrying in {secs}s"))
         .or_else(|| status.reason(key).map(str::to_owned));
-      (RowState::Error, detail)
+      (RowState::Refreshing, detail)
     }
-    Some(Phase::Blocked) => (
-      RowState::Attention,
-      status
-        .reason(key)
-        .map(str::to_owned)
-        .or_else(|| Some("Blocked".to_owned())),
-    ),
-    Some(Phase::Empty) => (RowState::Empty, Some("No data".to_owned())),
-    Some(Phase::NotReady) => (RowState::Attention, Some("Waiting on dependencies".to_owned())),
+    Some(Phase::Failed) => (RowState::Failed, status.reason(key).map(str::to_owned)),
+    Some(Phase::Blocked) => {
+      let reason = status.reason(key);
+      if reason == Some(REAUTH_REASON) {
+        (RowState::Reauth, Some("Needs re-authentication".to_owned()))
+      } else {
+        (
+          RowState::Blocked,
+          reason.map(str::to_owned).or_else(|| Some("Blocked".to_owned())),
+        )
+      }
+    }
+    Some(Phase::NotReady) => (RowState::Blocked, Some("Waiting on dependencies".to_owned())),
   }
 }
 
@@ -401,7 +440,9 @@ fn job_row<'a, M>(row: &JobRow, pulse_on: bool) -> Element<'a, M>
 where
   M: 'a,
 {
-  let queued = row.state == RowState::Queued;
+  // A catching-up row is the calmest, faintest state (never-reported-yet); its border recedes the way
+  // the old "Queued" row did.
+  let catching_up = row.state == RowState::CatchingUp;
 
   let body = Row::with_children(vec![
     row_marker(row, pulse_on),
@@ -423,7 +464,7 @@ where
     })
     .style(move |_| container::Style {
       border: Border {
-        color: color::with_alpha(color::text::PRIMARY, if queued { 0.05 } else { 0.1 }),
+        color: color::with_alpha(color::text::PRIMARY, if catching_up { 0.05 } else { 0.1 }),
         width: 1.0,
         ..Border::default()
       },
@@ -472,9 +513,12 @@ where
   M: 'a,
 {
   let (label, tone) = match row.state {
-    RowState::Syncing => ("Syncing".to_owned(), color::text::secondary()),
-    RowState::Queued => ("Queued".to_owned(), color::text::tertiary()),
-    _ => match row.next_in_secs {
+    RowState::Refreshing => ("Refreshing".to_owned(), color::text::secondary()),
+    RowState::CatchingUp => ("Catching up".to_owned(), color::text::tertiary()),
+    // Attention rows carry their detail in the sub-label, so the countdown column stays clear.
+    RowState::Blocked | RowState::Failed | RowState::Reauth => (String::new(), color::text::tertiary()),
+    // Fresh — the only state with a meaningful next-run deadline.
+    RowState::Fresh => match row.next_in_secs {
       Some(secs) => (format!("Next in {}", format_next_in(secs)), color::text::tertiary()),
       None => (String::new(), color::text::tertiary()),
     },
@@ -498,12 +542,12 @@ where
   M: 'a,
 {
   let (glyph, glyph_color) = match row.state {
-    RowState::Attention => ("∅", color::status::WARNING),
-    RowState::Done => ("✓", color::text::secondary()),
-    RowState::Empty => ("∅", color::text::secondary()),
-    RowState::Error => ("!", color::status::DANGER),
-    RowState::Queued => ("··", color::text::tertiary()),
-    RowState::Syncing => ("~", color::text::secondary()),
+    RowState::Blocked => ("∅", color::status::WARNING),
+    RowState::CatchingUp => ("··", color::text::tertiary()),
+    RowState::Failed => ("!", color::status::DANGER),
+    RowState::Fresh => ("✓", color::text::secondary()),
+    RowState::Reauth => ("⚿", color::status::WARNING),
+    RowState::Refreshing => ("~", color::text::secondary()),
   };
 
   container(
@@ -523,7 +567,7 @@ fn row_labels<'a, M>(row: &JobRow) -> Element<'a, M>
 where
   M: 'a,
 {
-  let primary_color = if row.state == RowState::Queued {
+  let primary_color = if row.state == RowState::CatchingUp {
     color::text::secondary()
   } else {
     color::text::PRIMARY
@@ -536,12 +580,14 @@ where
       color: Some(primary_color),
     });
 
+  // The sub-label carries the attention detail (failure reason / blocked / re-auth) in its state tone,
+  // and otherwise names the character; a fresh "No data" empty result reads as a benign tertiary note.
   let (sub_text, sub_color) = match (row.state, &row.error) {
-    (RowState::Error, Some(message)) => (message.to_uppercase(), color::status::DANGER),
-    (RowState::Error, None) => (row.character_name.to_uppercase(), color::status::DANGER),
-    (RowState::Attention, Some(message)) => (message.to_uppercase(), color::status::WARNING),
-    (RowState::Attention, None) => (row.character_name.to_uppercase(), color::status::WARNING),
-    (RowState::Empty, Some(message)) => (message.to_uppercase(), color::text::tertiary()),
+    (RowState::Failed, Some(message)) => (message.to_uppercase(), color::status::DANGER),
+    (RowState::Failed, None) => (row.character_name.to_uppercase(), color::status::DANGER),
+    (RowState::Blocked | RowState::Reauth, Some(message)) => (message.to_uppercase(), color::status::WARNING),
+    (RowState::Blocked | RowState::Reauth, None) => (row.character_name.to_uppercase(), color::status::WARNING),
+    (RowState::Fresh, Some(message)) => (message.to_uppercase(), color::text::tertiary()),
     _ => (row.character_name.to_uppercase(), color::text::tertiary()),
   };
 
@@ -562,12 +608,11 @@ where
   M: 'a,
 {
   let dot_color = match row.state {
-    RowState::Attention => color::status::WARNING,
-    RowState::Done => color::status::ONLINE,
-    RowState::Empty => color::status::ONLINE,
-    RowState::Error => color::status::DANGER,
-    RowState::Queued => color::text::tertiary(),
-    RowState::Syncing => {
+    RowState::Blocked | RowState::Reauth => color::status::WARNING,
+    RowState::CatchingUp => color::text::tertiary(),
+    RowState::Failed => color::status::DANGER,
+    RowState::Fresh => color::status::ONLINE,
+    RowState::Refreshing => {
       if pulse_on {
         color::accent::PLASMA
       } else {
@@ -576,7 +621,7 @@ where
     }
   };
 
-  let tone = if row.state == RowState::Queued {
+  let tone = if row.state == RowState::CatchingUp {
     color::with_alpha(row.character_color, QUEUED_OPACITY)
   } else {
     row.character_color
@@ -593,12 +638,11 @@ where
   M: 'a,
 {
   let (fill_portion, fill_color) = match row.state {
-    RowState::Attention => (1.0, color::status::WARNING),
-    RowState::Done => (1.0, color::status::ONLINE),
-    RowState::Empty => (1.0, color::status::ONLINE),
-    RowState::Error => (1.0, color::status::DANGER),
-    RowState::Queued => (0.0, color::accent::PLASMA),
-    RowState::Syncing => {
+    RowState::Blocked | RowState::Reauth => (1.0, color::status::WARNING),
+    RowState::CatchingUp => (0.0, color::accent::PLASMA),
+    RowState::Failed => (1.0, color::status::DANGER),
+    RowState::Fresh => (1.0, color::status::ONLINE),
+    RowState::Refreshing => {
       let plasma = if pulse_on {
         color::accent::PLASMA
       } else {
@@ -703,6 +747,91 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::sync::Event;
+
+    fn seed_every_job(status: &mut sync::SyncStatus, id: i64, outcome: crate::sync::Outcome) {
+      for (kind, _) in POPOVER_JOBS {
+        status.apply(&Event::Seeded {
+          key: JobKey::new(kind, Subject::Character(id)),
+          outcome: outcome.clone(),
+          next_in_secs: Some(3_600),
+        });
+      }
+    }
+
+    #[test]
+    fn it_reads_an_all_fresh_roster_as_a_calm_up_to_date_idle_header() {
+      let pilots = vec![pilot(1)];
+      let mut status = sync::SyncStatus::new();
+      seed_every_job(&mut status, 1, crate::sync::Outcome::synced());
+
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), Some(12), false);
+
+      assert!(
+        matches!(model.header, Header::Idle { .. }),
+        "every job fresh means no active headline — the surface stays calm"
+      );
+      assert_eq!(model.done, model.total, "fresh count reaches the full total");
+      assert_eq!(model.errors, 0);
+      assert!(model.rows.iter().all(|row| row.state == RowState::Fresh));
+    }
+
+    #[test]
+    fn it_counts_an_empty_outcome_as_fresh_in_the_done_total() {
+      let pilots = vec![pilot(1)];
+      let mut status = sync::SyncStatus::new();
+      seed_every_job(&mut status, 1, crate::sync::Outcome::Empty);
+
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), None, false);
+
+      assert_eq!(
+        model.done, model.total,
+        "an empty result is a fresh success and is never undercounted"
+      );
+    }
+
+    #[test]
+    fn it_never_emits_a_bare_queued_row_for_an_unreported_roster() {
+      let pilots = vec![pilot(1)];
+      let status = sync::SyncStatus::new();
+
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), None, false);
+
+      assert!(
+        model.rows.iter().all(|row| row.state == RowState::CatchingUp),
+        "a cold launch shows catching-up rows, not the old ambiguous Queued"
+      );
+      assert_eq!(model.done, 0);
+    }
+
+    #[test]
+    fn it_surfaces_a_persistent_failure_in_the_error_footer_count() {
+      let pilots = vec![pilot(1)];
+      let mut status = sync::SyncStatus::new();
+      status.apply(&Event::Failed {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+        reason: "token expired".to_owned(),
+      });
+
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), None, false);
+
+      assert_eq!(model.errors, 1, "a persistent failure is one retry-pending error");
+    }
+
+    #[test]
+    fn it_keeps_a_transient_backoff_out_of_the_error_count() {
+      let pilots = vec![pilot(1)];
+      let mut status = sync::SyncStatus::new();
+      status.apply(&Event::BackingOff {
+        key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
+        retry_secs: 30,
+      });
+
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), None, false);
+
+      assert_eq!(model.errors, 0, "a self-healing backoff is refreshing, not an error");
+      assert!(matches!(model.header, Header::Syncing { .. }));
+    }
 
     #[test]
     fn it_drops_jobs_whose_feature_is_disabled() {
@@ -792,13 +921,14 @@ mod tests {
         },
         pulse_on: true,
         rows: vec![
-          row("Profile", RowState::Done, None),
-          row("Telemetry", RowState::Syncing, None),
-          row("Wallet", RowState::Error, Some("Backing off 30s")),
-          row("Abyssals", RowState::Attention, Some("No data")),
-          row("Profile", RowState::Queued, None),
+          row("Profile", RowState::Fresh, None),
+          row("Telemetry", RowState::Refreshing, Some("Retrying in 30s")),
+          row("Wallet", RowState::Failed, Some("token expired")),
+          row("Clones", RowState::Blocked, Some("missing scope")),
+          row("Skills", RowState::Reauth, Some("Needs re-authentication")),
+          row("Contacts", RowState::CatchingUp, None),
         ],
-        total: 5,
+        total: 6,
       };
       let _populated: Element<'_, ()> = sync_popover(&populated, ());
 
@@ -809,7 +939,7 @@ mod tests {
           last_synced_secs: Some(125),
         },
         pulse_on: false,
-        rows: vec![row("Profile", RowState::Done, None)],
+        rows: vec![row("Profile", RowState::Fresh, None)],
         total: 4,
       };
       let _idle: Element<'_, ()> = sync_popover(&idle, ());
@@ -835,7 +965,7 @@ mod tests {
           queued: 0,
         },
         pulse_on: true,
-        rows: (0..8).map(|_| row("Profile", RowState::Syncing, None)).collect(),
+        rows: (0..8).map(|_| row("Profile", RowState::Refreshing, None)).collect(),
         total: 8,
       };
       let _overflowing: Element<'_, ()> = sync_popover(&overflowing, ());
@@ -853,30 +983,50 @@ mod tests {
     }
 
     #[test]
-    fn it_maps_done_and_syncing_phases() {
+    fn it_maps_a_synced_job_to_fresh() {
       let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::Started {
-        key: key(),
-      });
-      assert_eq!(row_state(&status, &key()), (RowState::Syncing, None));
 
       status.apply(&Event::Finished {
         key: key(),
         outcome: crate::sync::Outcome::synced(),
       });
-      assert_eq!(row_state(&status, &key()), (RowState::Done, None));
+
+      let (state, _) = row_state(&status, &key());
+      assert_eq!(state, RowState::Fresh);
+      assert_eq!(state.freshness(), Freshness::Fresh);
     }
 
     #[test]
-    fn it_reads_an_unreported_job_as_queued() {
-      let status = sync::SyncStatus::new();
+    fn it_maps_an_empty_outcome_to_a_benign_fresh_row() {
+      let mut status = sync::SyncStatus::new();
 
-      assert_eq!(row_state(&status, &key()), (RowState::Queued, None));
+      status.apply(&Event::Finished {
+        key: key(),
+        outcome: crate::sync::Outcome::Empty,
+      });
+
+      assert_eq!(
+        row_state(&status, &key()),
+        (RowState::Fresh, Some("No data".to_owned())),
+        "a successful empty sync is fresh data, never an attention chip"
+      );
     }
 
     #[test]
-    fn it_renders_a_backoff_countdown_as_error_text() {
+    fn it_maps_a_running_job_to_refreshing() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Started {
+        key: key(),
+      });
+
+      let (state, detail) = row_state(&status, &key());
+      assert_eq!((state, detail), (RowState::Refreshing, None));
+      assert_eq!(state.freshness(), Freshness::Refreshing);
+    }
+
+    #[test]
+    fn it_maps_a_transient_backoff_to_refreshing_not_attention() {
       let mut status = sync::SyncStatus::new();
 
       status.apply(&Event::BackingOff {
@@ -884,14 +1034,30 @@ mod tests {
         retry_secs: 30,
       });
 
+      let (state, detail) = row_state(&status, &key());
       assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Error, Some("Backing off 30s".to_owned()))
+        (state, detail),
+        (RowState::Refreshing, Some("Retrying in 30s".to_owned())),
+        "a self-healing backoff reads as refreshing, never an attention state"
       );
+      assert_eq!(state.freshness(), Freshness::Refreshing);
     }
 
     #[test]
-    fn it_surfaces_a_failure_reason_as_error_text() {
+    fn it_maps_an_unreported_enrolled_job_to_catching_up() {
+      let status = sync::SyncStatus::new();
+
+      let (state, detail) = row_state(&status, &key());
+      assert_eq!(
+        (state, detail),
+        (RowState::CatchingUp, None),
+        "a never-reported job catches up; it is never a bare Queued"
+      );
+      assert_eq!(state.freshness(), Freshness::CatchingUp);
+    }
+
+    #[test]
+    fn it_maps_a_persistent_failure_to_an_attention_failed_row() {
       let mut status = sync::SyncStatus::new();
 
       status.apply(&Event::Failed {
@@ -899,25 +1065,14 @@ mod tests {
         reason: "token expired".to_owned(),
       });
 
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Error, Some("token expired".to_owned()))
-      );
+      let (state, detail) = row_state(&status, &key());
+      assert_eq!((state, detail), (RowState::Failed, Some("token expired".to_owned())));
+      assert_eq!(state.freshness(), Freshness::Attention);
     }
 
     #[test]
-    fn it_surfaces_an_empty_outcome_as_benign_and_a_blocked_outcome_as_attention() {
+    fn it_maps_a_blocked_outcome_to_an_attention_blocked_row() {
       let mut status = sync::SyncStatus::new();
-
-      status.apply(&Event::Finished {
-        key: key(),
-        outcome: crate::sync::Outcome::Empty,
-      });
-      assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Empty, Some("No data".to_owned())),
-        "a successful empty sync is benign, not an amber attention chip"
-      );
 
       status.apply(&Event::Finished {
         key: key(),
@@ -925,10 +1080,31 @@ mod tests {
           reason: "missing scope".to_owned(),
         },
       });
+
+      let (state, detail) = row_state(&status, &key());
+      assert_eq!((state, detail), (RowState::Blocked, Some("missing scope".to_owned())));
+      assert_eq!(state.freshness(), Freshness::Attention);
+    }
+
+    #[test]
+    fn it_distinguishes_a_needs_reauth_block_as_its_own_attention_state() {
+      let mut status = sync::SyncStatus::new();
+
+      status.apply(&Event::Seeded {
+        key: key(),
+        outcome: crate::sync::Outcome::Blocked {
+          reason: REAUTH_REASON.to_owned(),
+        },
+        next_in_secs: None,
+      });
+
+      let (state, detail) = row_state(&status, &key());
       assert_eq!(
-        row_state(&status, &key()),
-        (RowState::Attention, Some("missing scope".to_owned()))
+        (state, detail),
+        (RowState::Reauth, Some("Needs re-authentication".to_owned())),
+        "re-auth is user-actionable and surfaced distinctly from a generic block"
       );
+      assert_eq!(state.freshness(), Freshness::Attention);
     }
   }
 }

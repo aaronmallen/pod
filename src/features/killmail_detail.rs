@@ -8,11 +8,11 @@ use iced::{
 use crate::{
   features::{
     character_detail::killmail_loader as character_killmail,
-    corporation_detail::killmail_loader as corporation_killmail, window_chrome,
+    corporation_detail::killmail_loader as corporation_killmail,
   },
   store::{Database, images},
   ui::{
-    components::{clip::clip_layer, eyebrow::eyebrow_text, icon_tile::icon_tile},
+    components::{clip::clip_layer, eyebrow::eyebrow_text, header, icon_tile::icon_tile},
     format::fmt_isk,
     style::{color, radius, spacing, typography},
   },
@@ -147,7 +147,7 @@ impl State {
       .unwrap_or_default()
   }
 
-  fn title(&self) -> String {
+  pub fn title(&self) -> String {
     match &self.detail {
       Some(detail) => format!("{} \u{2014} #{}", detail.ship_name, detail.killmail_id),
       None => format!("Killmail #{}", self.killmail_id),
@@ -172,17 +172,13 @@ pub fn load(db: &Database, source: Source, killmail_id: i64) -> Task<Message> {
   )
 }
 
-pub fn view<'a, M: Clone + 'a, F>(state: &'a State, on_event: F) -> Element<'a, M>
-where
-  F: Fn(window_chrome::Event) -> M + Copy + 'a,
-{
-  let title = state.title();
-  window_chrome::shell(&title, window_body(state.detail.as_ref()), on_event)
+pub fn view<M: 'static>(state: &State) -> Element<'_, M> {
+  window_body(state.detail.as_ref())
 }
 
 fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
-  let Some(detail) = detail else {
-    return container(
+  let body: Element<'a, M> = match detail {
+    None => container(
       text("Loading killmail\u{2026}")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
@@ -194,34 +190,34 @@ fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> 
     .height(Length::Fill)
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
-    .into();
+    .into(),
+    Some(detail) => container(
+      scrollable(
+        Column::with_children(vec![
+          Row::with_children(vec![victim_card(detail), value_card(detail)])
+            .spacing(spacing::SPACE_3_5)
+            .width(Length::Fill)
+            .into(),
+          Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
+            .spacing(spacing::SPACE_3_5)
+            .align_y(Vertical::Top)
+            .width(Length::Fill)
+            .into(),
+        ])
+        .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
+        .padding(spacing::SPACE_3_5 + spacing::UNIT)
+        .width(Length::Fill),
+      )
+      .style(crate::ui::style::control::scrollbar)
+      .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into(),
   };
 
-  let body = container(
-    scrollable(
-      Column::with_children(vec![
-        Row::with_children(vec![victim_card(detail), value_card(detail)])
-          .spacing(spacing::SPACE_3_5)
-          .width(Length::Fill)
-          .into(),
-        Row::with_children(vec![fitting_panel(detail), attacker_panel(detail)])
-          .spacing(spacing::SPACE_3_5)
-          .align_y(Vertical::Top)
-          .width(Length::Fill)
-          .into(),
-      ])
-      .spacing(spacing::SPACE_3_5 + spacing::SPACE_2)
-      .padding(spacing::SPACE_3_5 + spacing::UNIT)
-      .width(Length::Fill),
-    )
-    .style(crate::ui::style::control::scrollbar)
-    .height(Length::Fill),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill);
-
   container(
-    Column::with_children(vec![header(detail), body.into()])
+    Column::with_children(vec![header(detail), body])
       .width(Length::Fill)
       .height(Length::Fill),
   )
@@ -281,8 +277,19 @@ fn parse_iso8601(s: &str) -> Option<i64> {
   Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
 }
 
-fn header<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
-  let accent = side_accent(detail.is_kill);
+fn header<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
+  let Some(detail) = detail else {
+    let left: Vec<Element<'a, M>> = vec![
+      text("Killmail")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::LG + 2.0)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        })
+        .into(),
+    ];
+    return header::header(left, Vec::new());
+  };
 
   let title = Row::with_children(vec![
     text(detail.ship_name.clone())
@@ -309,47 +316,24 @@ fn header<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
 
   let info = Column::with_children(vec![title.into(), meta.into()]).spacing(spacing::UNIT);
 
-  let content = Row::with_children(vec![
-    type_icon(&detail.ship_icon, SHIP_ICON_BOX),
-    info.into(),
-    Space::new().width(Length::Fill).into(),
+  let left: Vec<Element<'a, M>> = vec![type_icon(&detail.ship_icon, SHIP_ICON_BOX), info.into()];
+
+  let value = Column::with_children(vec![
+    eyebrow_text("Total value", Some(color::text::tertiary())).into(),
+    text(format!("{} ISK", fmt_isk(detail.value_isk)))
+      .font(typography::mono::MEDIUM)
+      .size(typography::size::LG)
+      .style(move |_| text::Style {
+        color: Some(side_accent(detail.is_kill)),
+      })
+      .into(),
   ])
-  .spacing(spacing::SPACE_3_5)
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
+  .spacing(spacing::UNIT)
+  .align_x(Horizontal::Right);
 
-  // The header height follows its content. The accent is a left strip drawn by
-  // the outer container's background showing through 4px of left padding; a
-  // Length::Fill accent bar would make iced balloon the header to fill the whole
-  // window when it sits in a Fill-height column.
-  let inner = container(content)
-    .padding(Padding {
-      top: spacing::SPACE_3_5,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_3_5,
-      left: spacing::SPACE_3_5,
-    })
-    .width(Length::Fill)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      ..container::Style::default()
-    });
+  let right: Vec<Element<'a, M>> = vec![value.into()];
 
-  // Square corners and no border: the only colored region is the 4px left strip,
-  // so the accent never wraps the header.
-  container(inner)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: 0.0,
-      right: 0.0,
-      bottom: 0.0,
-      left: 4.0,
-    })
-    .style(move |_| container::Style {
-      background: Some(Background::Color(accent)),
-      ..container::Style::default()
-    })
-    .into()
+  header::header(left, right)
 }
 
 fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
@@ -1145,7 +1129,7 @@ mod tests {
       );
       state.set_detail(Some(heavy));
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
@@ -1157,7 +1141,7 @@ mod tests {
         100,
       );
       kill_state.set_detail(Some(detail()));
-      let _kill: Element<'_, ()> = view(&kill_state, |_| ());
+      let _kill: Element<'_, ()> = view(&kill_state);
 
       let mut loss = detail();
       loss.is_kill = false;
@@ -1168,7 +1152,7 @@ mod tests {
         100,
       );
       loss_state.set_detail(Some(loss));
-      let _loss: Element<'_, ()> = view(&loss_state, |_| ());
+      let _loss: Element<'_, ()> = view(&loss_state);
     }
 
     #[test]
@@ -1180,7 +1164,7 @@ mod tests {
         100,
       );
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
@@ -1198,7 +1182,7 @@ mod tests {
       );
       state.set_detail(Some(bare));
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
   }
 

@@ -355,11 +355,6 @@ enum Message {
   Industry(industry::Message),
   InitFailed(String),
   Killmail(window::Id, killmail_detail::Message),
-  KillmailWindowReady {
-    id: window::Id,
-    killmail_id: i64,
-    source: killmail_detail::Source,
-  },
   LeaseHeartbeat,
   LockReleased,
   Mail(mail::Message),
@@ -554,9 +549,6 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
-      Message::KillmailWindowReady {
-        ..
-      } => "KillmailWindowReady",
       Message::ManagePlansWindowReady {
         ..
       } => "ManagePlansWindowReady",
@@ -3209,7 +3201,11 @@ fn window_title(app: &App, id: window::Id) -> String {
       Some(state) => format!("Pod \u{2014} {}", state.title()),
       None => "Pod \u{2014} Contract".to_string(),
     },
-    Some(Window::Killmail) => "Pod — Killmail".to_string(),
+    Some(Window::Killmail) => app
+      .killmails
+      .get(id)
+      .map(|state| format!("Pod — {}", state.title()))
+      .unwrap_or_else(|| "Pod — Killmail".to_string()),
     Some(Window::MailCompose) => "Pod — Compose Mail".to_string(),
     Some(Window::Main) => "Pod".to_string(),
     Some(Window::ManagePlans) => "Pod — Manage Skill Plans".to_string(),
@@ -3448,42 +3444,28 @@ fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([window::close(id), reload])
 }
 
-/// Opens a detached killmail window centered on the main window. The id is unknown until the centered
-/// open resolves, so kind registration, state seeding, and the loader kickoff are deferred to
-/// [`handle_killmail_window_ready`] via a `KillmailWindowReady` message keyed by the new id. Unlimited
-/// instances coexist, duplicates included, because every open mints a fresh id.
+/// Opens a detached native-chrome killmail window. The window opens via the shared native-window
+/// helper (native frame, OS title bar, centered default geometry), registering the kind and seeding
+/// the per-id state synchronously. Unlimited instances coexist, duplicates included, because every
+/// open mints a fresh id.
 fn open_killmail_window(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> Task<Message> {
-  if app.runtime.is_none() {
-    return Task::none();
-  }
-  let size = Size::new(
-    killmail_detail::KILLMAIL_WINDOW_WIDTH,
-    killmail_detail::KILLMAIL_WINDOW_HEIGHT,
-  );
-  open_centered_window(app, size, move |id| {
-    Task::done(Message::KillmailWindowReady {
-      id,
-      killmail_id,
-      source,
-    })
-  })
-}
-
-fn handle_killmail_window_ready(
-  app: &mut App,
-  id: window::Id,
-  source: killmail_detail::Source,
-  killmail_id: i64,
-) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
   let db = runtime.db.clone();
-  app.windows.register(id, Window::Killmail);
+  let size = Size::new(
+    killmail_detail::KILLMAIL_WINDOW_WIDTH,
+    killmail_detail::KILLMAIL_WINDOW_HEIGHT,
+  );
+  let (id, open_task) = open_native_window(app, Window::Killmail, size);
   app
     .killmails
     .insert(id, killmail_detail::State::new(source, killmail_id));
-  killmail_detail::load(&db, source, killmail_id).map(move |msg| Message::Killmail(id, msg))
+
+  Task::batch([
+    open_task,
+    killmail_detail::load(&db, source, killmail_id).map(move |msg| Message::Killmail(id, msg)),
+  ])
 }
 
 fn handle_killmail(app: &mut App, id: window::Id, msg: killmail_detail::Message) -> Task<Message> {
@@ -4162,11 +4144,6 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
       seed,
     } => handle_compose_window_ready(app, id, *seed),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    Message::KillmailWindowReady {
-      id,
-      killmail_id,
-      source,
-    } => handle_killmail_window_ready(app, id, source, killmail_id),
     Message::ManagePlansWindowReady {
       id,
     } => handle_manage_plans_window_ready(app, id),
@@ -6910,7 +6887,7 @@ fn contract_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 
 fn killmail_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.killmails.get(id) {
-    Some(state) => killmail_detail::view(state, move |event| Message::Chrome(id, event)),
+    Some(state) => killmail_detail::view(state),
     None => blank(),
   }
 }
@@ -10378,7 +10355,10 @@ mod tests {
 
     fn ready(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> window::Id {
       let id = window::Id::unique();
-      let _ = handle_killmail_window_ready(app, id, source, killmail_id);
+      app.windows.register(id, Window::Killmail);
+      app
+        .killmails
+        .insert(id, killmail_detail::State::new(source, killmail_id));
       id
     }
 
@@ -13195,16 +13175,6 @@ mod tests {
       let id = window::Id::unique();
 
       let _ = dispatch_window_lifecycle(&mut app, Message::Chrome(id, window_chrome::Event::Drag));
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::KillmailWindowReady {
-          id,
-          killmail_id: 1,
-          source: killmail_detail::Source::Character {
-            character_id: 1,
-          },
-        },
-      );
       let _ = dispatch_window_lifecycle(
         &mut app,
         Message::StockpileEditorWindowReady {

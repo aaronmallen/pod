@@ -1035,7 +1035,6 @@ fn select_resource_dir(
 ///   live working-copy protection is never redirected via an import.
 ///
 /// Pure value transform: the caller owns persisting the result via [`save`]/`save_to`.
-#[allow(dead_code)]
 pub fn merge_for_restore(local: &Settings, archived: &Settings) -> Settings {
   let mut merged = local.clone();
 

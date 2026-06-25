@@ -121,6 +121,9 @@ pub enum Outcome {
     end: DateTime<Utc>,
     start: DateTime<Utc>,
   },
+  ImportData {
+    path: std::path::PathBuf,
+  },
   IndustryPin(crate::features::industry::PinnedStructure),
   IndustrySearch {
     activity: i64,

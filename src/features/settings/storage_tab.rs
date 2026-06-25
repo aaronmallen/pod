@@ -13,6 +13,7 @@ use iced::{
 
 use super::{
   Outcome,
+  data_export::{self, VersionVerdict},
   log_export::{self, RangePreset},
 };
 use crate::{
@@ -27,17 +28,22 @@ const PANEL_SIDE_PADDING: f32 = 36.0;
 const DESCRIPTION_MAX_WIDTH: f32 = 620.0;
 const CHECKBOX_SIZE: f32 = 18.0;
 const CONFIRM_MODAL_WIDTH: f32 = 460.0;
+const IMPORT_MODAL_WIDTH: f32 = 480.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
   Browse(PathKind),
+  CancelDataImport,
   CancelMove,
+  ConfirmDataImport,
   ConfirmMove,
   DataExportFinished(Result<Option<PathBuf>, String>),
+  DataImportFinished(Result<Option<PathBuf>, String>),
   DismissError,
   ExportFinished(Result<Option<PathBuf>, String>),
   ExportLogs(RangePreset),
   RequestDataExport,
+  RequestDataImport,
   LogLevelChanged(LogLevel),
   PathEdited(PathKind, String),
   PathSubmitted(PathKind),
@@ -130,6 +136,21 @@ pub struct PendingMove {
   to: PathBuf,
 }
 
+/// A validated import archive awaiting the user's explicit confirmation in the confirm-import modal.
+/// Built only after the picked `.zip` parses and clears the version guard, so the modal exists solely
+/// to gate the destructive replace — no data is touched until `ConfirmDataImport` fires. Distinct from
+/// `PendingMove` so the path-move flow and the import flow never share state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingImport {
+  /// The picked archive path, re-opened by the async restore once the user confirms.
+  path: PathBuf,
+  /// Pod version recorded in the archive's manifest, surfaced in the modal.
+  pod_version: String,
+  /// Compatibility verdict; `WillMigrate` adds a forward-migration note (`Incompatible` never reaches
+  /// here — it is refused before a modal is shown).
+  verdict: VersionVerdict,
+}
+
 /// A request to migrate the on-disk database layout because the storage configuration crossed (or
 /// could have crossed) the Direct/Sync boundary. Carries the configuration as it was *before* the
 /// change so the lifecycle engine in `app.rs` can drive the async file migration with both ends in
@@ -150,6 +171,8 @@ pub struct SyncStatus {
 #[derive(Debug, Default)]
 pub struct State {
   data_export_pending: bool,
+  data_import_confirm: Option<PendingImport>,
+  data_import_pending: bool,
   drafts: HashMap<PathKind, String>,
   error: Option<String>,
   export_pending: bool,
@@ -335,11 +358,25 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       state.drafts.insert(kind, to.display().to_string());
       apply_destination(state, kind, to, settings)
     }
+    Message::CancelDataImport => {
+      state.data_import_confirm = None;
+      Outcome::None
+    }
     Message::CancelMove => {
       if let Some(pending) = state.pending.take() {
         sync_draft(state, pending.kind, settings);
       }
       Outcome::None
+    }
+    Message::ConfirmDataImport => {
+      let Some(pending) = state.data_import_confirm.take() else {
+        return Outcome::None;
+      };
+      state.error = None;
+      state.data_import_pending = true;
+      Outcome::ImportData {
+        path: pending.path,
+      }
     }
     Message::ConfirmMove => {
       let Some(pending) = state.pending.take() else {
@@ -359,6 +396,15 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
     }
     Message::DataExportFinished(result) => {
       state.data_export_pending = false;
+      if let Err(error) = result {
+        state.error = Some(error);
+      }
+      Outcome::None
+    }
+    Message::DataImportFinished(result) => {
+      // The success path quits the app to re-seed from the restored database, so an Ok here only
+      // lands if the dialog was a no-op; either way the import is no longer in flight.
+      state.data_import_pending = false;
       if let Err(error) = result {
         state.error = Some(error);
       }
@@ -414,6 +460,25 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       state.error = None;
       state.data_export_pending = true;
       Outcome::ExportData
+    }
+    Message::RequestDataImport => {
+      state.error = None;
+      let Some(path) = pick_data_archive() else {
+        return Outcome::None;
+      };
+      // Read and version-guard the archive up front so the confirm modal exists only for a restorable
+      // archive — an incompatible or corrupt one is refused here and never offers a Replace action,
+      // and no data is touched until the user confirms.
+      match validate_archive(&path) {
+        Ok(pending) => {
+          state.data_import_confirm = Some(pending);
+          Outcome::None
+        }
+        Err(error) => {
+          state.error = Some(error);
+          Outcome::None
+        }
+      }
     }
     Message::ResetToDefault(kind) => {
       state.error = None;
@@ -472,6 +537,42 @@ fn apply_destination(state: &mut State, kind: PathKind, to: PathBuf, settings: &
   }
 }
 
+/// Prompts for a `.zip` data archive to import. Stubbed to a no-op (returns `None`) under
+/// `cfg(test)` so the import update path can be exercised without opening a real file dialog,
+/// mirroring the export save stub in `app.rs`.
+fn pick_data_archive() -> Option<PathBuf> {
+  #[cfg(not(test))]
+  {
+    rfd::FileDialog::new()
+      .set_title("Import data")
+      .add_filter("Zip archive", &["zip"])
+      .pick_file()
+  }
+  #[cfg(test)]
+  {
+    None
+  }
+}
+
+/// Reads the picked archive and runs the version guard, producing the pending-import the confirm
+/// modal renders. A missing/corrupt archive or a newer-major (incompatible) one is rejected with a
+/// clear message so the destructive confirm action is never offered for an archive Pod can't restore.
+fn validate_archive(path: &Path) -> Result<PendingImport, String> {
+  let bytes = fs::read(path).map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
+  let parsed = data_export::read_archive(&bytes)?;
+  if parsed.verdict == VersionVerdict::Incompatible {
+    return Err(format!(
+      "This archive was made by a newer Pod ({}); it can't be restored into this build.",
+      parsed.manifest.pod_version
+    ));
+  }
+  Ok(PendingImport {
+    path: path.to_path_buf(),
+    pod_version: parsed.manifest.pod_version,
+    verdict: parsed.verdict,
+  })
+}
+
 fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
   let mut dialog = rfd::FileDialog::new().set_title(format!("Select {} folder", kind.label()));
   let start = kind.resolved_dir(settings);
@@ -503,6 +604,9 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
     .height(Length::Fill)
     .into();
 
+  if let Some(pending) = state.data_import_confirm.as_ref() {
+    return modal_overlay(base, Some(Message::CancelDataImport), confirm_import_modal(pending));
+  }
   match state.pending.as_ref() {
     Some(pending) => modal_overlay(base, Some(Message::CancelMove), confirm_move_modal(pending)),
     None => base,
@@ -590,6 +694,7 @@ fn path_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Messag
   }
 
   children.push(data_export_row(state));
+  children.push(data_import_row(state));
 
   let inner = container(Column::with_children(children).width(Length::Fill))
     .width(Length::Fill)
@@ -812,6 +917,63 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
   if state.data_export_pending {
     controls.push(
       text("Exporting\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+  }
+
+  let actions = Row::with_children(controls)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  let cell = container(
+    Column::with_children(vec![label.into(), explanation.into(), actions.into()])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: 0.0,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_6 + 4.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn data_import_row(state: &State) -> Element<'_, Message> {
+  let label = text("Import data")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::PRIMARY));
+  let explanation = text(
+    "Restore the database and settings from a previously exported .zip. This replaces the current \
+      data and reopens Pod to apply.",
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::SM)
+  .style(typography::colored(color::text::secondary()));
+
+  let mut control = button(
+    text("Import data\u{2026}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .style(control::ghost_button);
+  if !state.data_import_pending {
+    control = control.on_press(Message::RequestDataImport);
+  }
+
+  let mut controls: Vec<Element<'_, Message>> = vec![control.into()];
+  if state.data_import_pending {
+    controls.push(
+      text("Restoring\u{2026}")
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::tertiary()))
@@ -1256,6 +1418,108 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
     Column::with_children(vec![header.into(), rule::horizontal_alpha(0.18), footer.into()]).width(Length::Fill),
   )
   .width(Length::Fixed(CONFIRM_MODAL_WIDTH))
+  .clip(true)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    shadow: shadow::CARD,
+    ..container::Style::default()
+  });
+
+  container(card)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(spacing::SPACE_6)
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .into()
+}
+
+fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
+  let eyebrow = text("Restore data")
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::status::DANGER));
+  let title = text("Replace this machine's data?")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(color::text::PRIMARY));
+  let body = text(
+    "Importing replaces the current database with the archive's. Pod backs up the current database \
+      first, then closes so you can reopen to apply. This can't be undone in place.",
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::MD)
+  .style(typography::colored(color::text::secondary()));
+
+  let mut details: Vec<Element<'_, Message>> = vec![path_line("from", &pending.path)];
+  details.push(
+    text(format!("Archive Pod version: {}", pending.pod_version))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  );
+  if pending.verdict == VersionVerdict::WillMigrate {
+    details.push(
+      text("This archive is from an older Pod; its data migrates forward on next launch.")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::status::WARNING))
+        .into(),
+    );
+  }
+  let details = Column::with_children(details).spacing(spacing::UNIT);
+
+  let header = container(
+    Column::with_children(vec![eyebrow.into(), title.into(), body.into(), details.into()]).spacing(spacing::SPACE_2),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_6,
+    right: spacing::SPACE_6,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_6,
+  });
+
+  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
+    .padding(control::padding())
+    .on_press(Message::CancelDataImport)
+    .style(control::ghost_button);
+  let replace = button(
+    text("Replace data")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::ConfirmDataImport)
+  .style(control::danger_button);
+
+  let footer = container(
+    Row::with_children(vec![
+      Space::new().width(Length::Fill).into(),
+      cancel.into(),
+      replace.into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3,
+    right: spacing::SPACE_6,
+    bottom: spacing::SPACE_6,
+    left: spacing::SPACE_6,
+  });
+
+  let card = container(
+    Column::with_children(vec![header.into(), rule::horizontal_alpha(0.18), footer.into()]).width(Length::Fill),
+  )
+  .width(Length::Fixed(IMPORT_MODAL_WIDTH))
   .clip(true)
   .style(|_| container::Style {
     background: Some(Background::Color(color::surface::RAISED)),
@@ -1891,6 +2155,194 @@ mod tests {
       );
       assert!(!state.data_export_pending);
       assert_eq!(state.error.as_deref(), Some("disk full"));
+    }
+
+    #[test]
+    fn request_data_import_is_a_no_op_when_the_pick_dialog_is_stubbed() {
+      // pick_data_archive returns None under cfg(test), so the request clears any error and parks
+      // without opening a confirm modal.
+      let mut state = state();
+      let mut settings = Settings::default();
+      state.error = Some("stale".to_owned());
+
+      assert_eq!(
+        update(&mut state, Message::RequestDataImport, &mut settings),
+        Outcome::None
+      );
+
+      assert!(state.error.is_none(), "requesting an import clears any prior error");
+      assert!(
+        state.data_import_confirm.is_none(),
+        "the stubbed pick shows no confirm modal"
+      );
+      assert!(!state.data_import_pending);
+    }
+
+    #[test]
+    fn confirm_data_import_arms_the_flag_and_carries_the_path() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      let path = PathBuf::from("/tmp/pod-data.zip");
+      state.data_import_confirm = Some(PendingImport {
+        path: path.clone(),
+        pod_version: env!("CARGO_PKG_VERSION").to_owned(),
+        verdict: VersionVerdict::Ok,
+      });
+
+      let outcome = update(&mut state, Message::ConfirmDataImport, &mut settings);
+
+      assert_eq!(
+        outcome,
+        Outcome::ImportData {
+          path
+        }
+      );
+      assert!(state.data_import_pending, "the import is marked in-flight");
+      assert!(
+        state.data_import_confirm.is_none(),
+        "confirming consumes the pending import"
+      );
+    }
+
+    #[test]
+    fn confirm_data_import_without_a_pending_archive_is_inert() {
+      let mut state = state();
+      let mut settings = Settings::default();
+
+      assert_eq!(
+        update(&mut state, Message::ConfirmDataImport, &mut settings),
+        Outcome::None
+      );
+      assert!(!state.data_import_pending);
+    }
+
+    #[test]
+    fn cancel_data_import_dismisses_the_confirm_modal_without_touching_data() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      state.data_import_confirm = Some(PendingImport {
+        path: PathBuf::from("/tmp/pod-data.zip"),
+        pod_version: env!("CARGO_PKG_VERSION").to_owned(),
+        verdict: VersionVerdict::WillMigrate,
+      });
+
+      assert_eq!(
+        update(&mut state, Message::CancelDataImport, &mut settings),
+        Outcome::None
+      );
+      assert!(
+        state.data_import_confirm.is_none(),
+        "cancelling clears the pending import"
+      );
+      assert!(!state.data_import_pending);
+    }
+
+    #[test]
+    fn data_import_finished_clears_the_flag_and_surfaces_errors() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      state.data_import_pending = true;
+
+      assert_eq!(
+        update(&mut state, Message::DataImportFinished(Ok(None)), &mut settings),
+        Outcome::None
+      );
+      assert!(!state.data_import_pending);
+      assert!(state.error.is_none());
+
+      state.data_import_pending = true;
+      assert_eq!(
+        update(
+          &mut state,
+          Message::DataImportFinished(Err("lease held".to_owned())),
+          &mut settings
+        ),
+        Outcome::None
+      );
+      assert!(!state.data_import_pending);
+      assert_eq!(state.error.as_deref(), Some("lease held"));
+    }
+
+    #[test]
+    fn validate_archive_refuses_a_newer_major_archive() {
+      let archive = newer_major_archive();
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("pod-data.zip");
+      fs::write(&path, &archive).unwrap();
+
+      let error = validate_archive(&path).unwrap_err();
+
+      assert!(
+        error.contains("newer Pod"),
+        "an incompatible archive is refused: {error}"
+      );
+    }
+
+    #[test]
+    fn validate_archive_accepts_this_builds_archive() {
+      let archive = current_version_archive();
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("pod-data.zip");
+      fs::write(&path, &archive).unwrap();
+
+      let pending = validate_archive(&path).unwrap();
+
+      assert_eq!(pending.path, path);
+      assert_eq!(pending.pod_version, env!("CARGO_PKG_VERSION"));
+      assert_eq!(pending.verdict, VersionVerdict::Ok);
+    }
+
+    #[test]
+    fn validate_archive_rejects_bytes_that_are_not_an_archive() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("not-a-zip.zip");
+      fs::write(&path, b"definitely not a zip").unwrap();
+
+      assert!(validate_archive(&path).is_err());
+    }
+
+    /// Builds a `.zip` data archive carrying the given Pod version, reusing the export writer so the
+    /// import guard runs against the same on-disk format production produces.
+    fn archive_with_version(version: &str) -> Vec<u8> {
+      use std::io::{Cursor, Write};
+
+      use zip::{CompressionMethod, ZipWriter, write::FileOptions};
+
+      let manifest = serde_json::json!({
+        "archive_version": 1,
+        "arch": "x86_64",
+        "created_at": "2026-06-25T00:00:00+00:00",
+        "pod_version": version,
+        "os": "linux",
+        "storage": {
+          "cache_dir": "/cache",
+          "database_path": "/db/pod.db",
+          "db_dir": "/db",
+          "log_dir": "/logs",
+        },
+        "files": [],
+      });
+      let mut buf = Vec::new();
+      {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+        let options: FileOptions<'_, ()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("pod.db", options).unwrap();
+        zip.write_all(b"db bytes").unwrap();
+        zip.start_file("config.toml", options).unwrap();
+        zip.write_all(b"[storage]\nnetwork = false\n").unwrap();
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        zip.finish().unwrap();
+      }
+      buf
+    }
+
+    fn current_version_archive() -> Vec<u8> {
+      archive_with_version(env!("CARGO_PKG_VERSION"))
+    }
+
+    fn newer_major_archive() -> Vec<u8> {
+      archive_with_version("999.0.0")
     }
 
     #[test]

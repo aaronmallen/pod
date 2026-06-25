@@ -35,7 +35,6 @@ pub enum Error {
 /// lease must be held: the archive lands on the shared canonical and the generation is bumped past
 /// the local marker so the next launch's `pull_if_newer` re-seeds the working copy from canonical,
 /// leaving the exit `checkpoint_and_push` unable to clobber the restore with a stale working copy.
-#[allow(dead_code)]
 pub fn restore(storage: &StorageConfig, machine_id: String, temp_db: &Path, now: DateTime<Utc>) -> Result<(), Error> {
   match storage.storage_mode() {
     StorageMode::Direct => restore_direct(storage, temp_db),

@@ -46,7 +46,6 @@ const MANIFEST_TXT_NAME: &str = "MANIFEST.txt";
 /// `created_at` is rendered as an RFC 3339 string because the project does not enable chrono's
 /// optional serde feature (see `store::share_meta`); a string keeps the format language-agnostic and
 /// avoids pulling in that feature.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Manifest {
   /// Archive layout version (see `ARCHIVE_VERSION`).
@@ -165,7 +164,6 @@ pub fn default_file_name(now: DateTime<Utc>) -> String {
 /// An archive from an older or equal Pod restores fine — migrations run forward on next launch. An
 /// archive from a newer Pod (a higher major version than this build) is refused, because a newer
 /// schema cannot be downgraded. The import UI maps these to "ok / will migrate / incompatible".
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VersionVerdict {
   /// Archive Pod version matches this build exactly; restore as-is.
@@ -179,7 +177,6 @@ pub enum VersionVerdict {
 /// An archive parsed out of its `.zip` container: the raw `pod.db` and `config.toml` bytes, the
 /// parsed `manifest.json`, and the version-guard verdict the import confirm modal displays. The
 /// import join (T7) consumes the bytes to restore and reads `verdict` to gate the restore.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct ParsedArchive {
   /// Raw bytes of the self-contained `pod.db` snapshot entry.
@@ -198,7 +195,6 @@ pub struct ParsedArchive {
 /// a missing or corrupt entry is rejected with a clear `String` error so nothing is partially
 /// applied. The returned `verdict` reflects ADR-0038's policy: an older/equal archive restores
 /// (migrations run forward), a newer-major archive is `Incompatible` and the import must refuse.
-#[allow(dead_code)]
 pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
   let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|err| format!("Couldn't open archive: {err}"))?;
 

@@ -4650,6 +4650,14 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       };
       return Task::batch(vec![task, export_data(database_path, config_bytes, diagnostics)]);
     }
+    settings::Outcome::ImportData {
+      path,
+    } => {
+      let storage = state.settings().storage().clone();
+      let local_settings = state.settings().clone();
+      let machine_id = storage.machine_id().clone().unwrap_or_default();
+      return Task::batch(vec![task, import_data(path, storage, machine_id, local_settings)]);
+    }
     settings::Outcome::SetLogLevel(level) => {
       apply_log_level(level);
       return task;
@@ -4965,6 +4973,91 @@ async fn save_data_archive(default_name: String, bytes: Vec<u8>) -> Result<Optio
     let _ = (default_name, bytes);
     Ok(None)
   }
+}
+
+/// Drives the confirmed import: re-reads the archive, atomically restores its database into place,
+/// merges the archived config while preserving this machine's identity, and on success quits Pod so
+/// the next launch re-seeds from the restored database (ADR-0038's quit-and-reopen). A restore
+/// failure surfaces through `DataImportFinished(Err)` and leaves the live data untouched.
+fn import_data(
+  path: std::path::PathBuf,
+  storage: config::StorageConfig,
+  machine_id: String,
+  local_settings: config::Settings,
+) -> Task<Message> {
+  Task::perform(
+    import_data_archive(path, storage, machine_id, local_settings),
+    |result| match result {
+      // Success: quit through the existing shutdown chain so the restored database takes effect on the
+      // next launch (the checkpoint there is a no-op or re-establishes the restored canonical).
+      Ok(()) => Message::Quit,
+      Err(error) => Message::Settings(settings::Message::Storage(
+        settings::storage_tab::Message::DataImportFinished(Err(error)),
+      )),
+    },
+  )
+}
+
+async fn import_data_archive(
+  path: std::path::PathBuf,
+  storage: config::StorageConfig,
+  machine_id: String,
+  local_settings: config::Settings,
+) -> Result<(), String> {
+  let bytes = tokio::fs::read(&path)
+    .await
+    .map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
+
+  // Re-validate the picked archive on the restore path: the UI version-guarded it for the confirm
+  // modal, but the bytes are re-read here so the restore never trusts a stale parse.
+  let parsed = tokio::task::spawn_blocking(move || settings::data_export::read_archive(&bytes))
+    .await
+    .map_err(|err| err.to_string())??;
+  if parsed.verdict == settings::data_export::VersionVerdict::Incompatible {
+    return Err(format!(
+      "This archive was made by a newer Pod ({}); it can't be restored into this build.",
+      parsed.manifest.pod_version
+    ));
+  }
+
+  // Stage the archived pod.db to a tempfile so the atomic restore publishes a real on-disk file.
+  let staging = tempfile::Builder::new()
+    .prefix("pod-import-")
+    .suffix(".db")
+    .tempfile()
+    .map_err(|err| format!("Couldn't create import staging file: {err}"))?;
+  let temp_db = staging.path().to_path_buf();
+  tokio::fs::write(&temp_db, &parsed.database)
+    .await
+    .map_err(|err| format!("Couldn't stage the archived database: {err}"))?;
+
+  // Atomically replace the live database (backing up the prior state first); Sync mode acquires the
+  // lease and bumps the generation so the next launch re-seeds the working copy from the canonical.
+  let now = Utc::now();
+  let restore_storage = storage.clone();
+  let restore_machine_id = machine_id.clone();
+  let restore_temp_db = temp_db.clone();
+  tokio::task::spawn_blocking(move || {
+    crate::store::data_restore::restore(&restore_storage, restore_machine_id, &restore_temp_db, now)
+  })
+  .await
+  .map_err(|err| err.to_string())?
+  .map_err(|err| err.to_string())?;
+
+  // Hold the staging file until the restore has copied it into place.
+  drop(staging);
+
+  // Merge the archived portable settings over this machine's identity, then persist so the next
+  // launch reads features/ui/accessibility/industry from the archive while keeping local paths,
+  // machine_id, and tokens.
+  let config_text =
+    String::from_utf8(parsed.config).map_err(|err| format!("The archived settings aren't valid UTF-8: {err}"))?;
+  let archived: config::Settings =
+    toml::from_str(&config_text).map_err(|err| format!("Couldn't parse the archived settings: {err}"))?;
+  let merged = config::merge_for_restore(&local_settings, &archived);
+  config::save(&merged);
+
+  Ok(())
 }
 
 /// Routes the storage tab's "Release lock" up to the lifecycle lease engine, force-releasing the
@@ -8345,6 +8438,125 @@ mod tests {
       let result = export_data_archive(database_path, b"config".to_vec(), diagnostics).await;
 
       assert!(result.is_err(), "a missing live database surfaces an error");
+    }
+
+    /// Builds an in-memory `.zip` data archive carrying the given database bytes, config text, and Pod
+    /// version, reusing the production `read_archive` format so the import path is exercised end to end.
+    fn import_archive(db: &[u8], config: &str, version: &str) -> Vec<u8> {
+      use std::io::{Cursor, Write};
+
+      use zip::{CompressionMethod, ZipWriter, write::FileOptions};
+
+      let manifest = serde_json::json!({
+        "archive_version": 1,
+        "arch": "x86_64",
+        "created_at": "2026-06-25T00:00:00+00:00",
+        "pod_version": version,
+        "os": "linux",
+        "storage": {
+          "cache_dir": "/cache",
+          "database_path": "/db/pod.db",
+          "db_dir": "/db",
+          "log_dir": "/logs",
+        },
+        "files": [],
+      });
+      let mut buf = Vec::new();
+      {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+        let options: FileOptions<'_, ()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        zip.start_file("pod.db", options).unwrap();
+        zip.write_all(db).unwrap();
+        zip.start_file("config.toml", options).unwrap();
+        zip.write_all(config.as_bytes()).unwrap();
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        zip.finish().unwrap();
+      }
+      buf
+    }
+
+    #[tokio::test]
+    async fn import_data_archive_restores_the_database_and_persists_the_merged_config() {
+      // Keep config::save off the real user config by pointing XDG_CONFIG_HOME at a tempdir.
+      let config_home = tempfile::tempdir().unwrap();
+      // SAFETY: tests run single-threaded enough here; only this test touches XDG_CONFIG_HOME.
+      unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", config_home.path());
+      }
+
+      let dir = tempfile::tempdir().unwrap();
+      let mut storage = config::StorageConfig::default();
+      storage.set_db_dir(Some(dir.path().join("data")));
+      std::fs::create_dir_all(storage.resolved_db_dir()).unwrap();
+      std::fs::write(storage.resolved_database_path(), b"old live data").unwrap();
+
+      let archive = import_archive(
+        b"restored archive bytes",
+        "[storage]\nnetwork = false\n",
+        env!("CARGO_PKG_VERSION"),
+      );
+      let archive_path = dir.path().join("pod-data.zip");
+      std::fs::write(&archive_path, &archive).unwrap();
+
+      let result = import_data_archive(
+        archive_path,
+        storage.clone(),
+        "machine-a".to_owned(),
+        config::Settings::default(),
+      )
+      .await;
+
+      assert_eq!(result, Ok(()));
+      assert_eq!(
+        std::fs::read(storage.resolved_database_path()).unwrap(),
+        b"restored archive bytes",
+        "the canonical database is replaced with the archive's"
+      );
+      let backup = std::fs::read_dir(storage.resolved_db_dir())
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".backup"));
+      assert!(backup.is_some(), "the prior database is backed up before replacement");
+    }
+
+    #[tokio::test]
+    async fn import_data_archive_refuses_a_newer_major_archive_without_touching_data() {
+      let dir = tempfile::tempdir().unwrap();
+      let mut storage = config::StorageConfig::default();
+      storage.set_db_dir(Some(dir.path().join("data")));
+      std::fs::create_dir_all(storage.resolved_db_dir()).unwrap();
+      std::fs::write(storage.resolved_database_path(), b"old live data").unwrap();
+
+      let archive = import_archive(b"never written", "[storage]\n", "999.0.0");
+      let archive_path = dir.path().join("pod-data.zip");
+      std::fs::write(&archive_path, &archive).unwrap();
+
+      let result = import_data_archive(
+        archive_path,
+        storage.clone(),
+        "machine-a".to_owned(),
+        config::Settings::default(),
+      )
+      .await;
+
+      assert!(result.is_err(), "a newer-major archive is refused");
+      assert_eq!(
+        std::fs::read(storage.resolved_database_path()).unwrap(),
+        b"old live data",
+        "the live database is untouched when the archive is refused"
+      );
+    }
+
+    #[tokio::test]
+    async fn import_data_archive_errors_when_the_archive_is_missing() {
+      let dir = tempfile::tempdir().unwrap();
+      let storage = config::StorageConfig::default();
+      let missing = dir.path().join("absent.zip");
+
+      let result = import_data_archive(missing, storage, "machine-a".to_owned(), config::Settings::default()).await;
+
+      assert!(result.is_err(), "a missing archive file surfaces an error");
     }
 
     #[tokio::test]

@@ -123,6 +123,7 @@ impl DetailDataType {
       JobKind::CharacterNotifications => Some(Self::Notifications),
       JobKind::CharacterStandings => Some(Self::Standings),
       JobKind::AssetSync
+      | JobKind::BudgetAssignmentReconcile
       | JobKind::CharacterAbyssals
       | JobKind::CharacterBlueprints
       | JobKind::CharacterCalendar

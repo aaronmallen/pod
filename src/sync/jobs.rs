@@ -1,6 +1,7 @@
 pub mod abyssals;
 pub mod asset_sync;
 pub mod blueprints;
+pub mod budget_assignment_reconcile;
 pub mod character_calendar;
 pub mod character_clones;
 pub mod character_contacts;

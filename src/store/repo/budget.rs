@@ -199,9 +199,8 @@ pub async fn delete_entry_assignment(
 /// owner-keyed so a corp and a character sharing an EVE id are never confused,
 /// and set-based so a single call cleans the whole table. Returns the number of
 /// overrides removed.
-// Per-entry budget assignment GC (data-repair follow-up); consumed by the Budget data path. Exercised
-// by unit tests until wired into a maintenance trigger.
-#[allow(dead_code)]
+// Per-entry budget assignment GC; run from the BudgetAssignmentReconcile post-sync job so a
+// reconciled copy whose wallet row later disappears is collected on the next pass.
 pub async fn prune_orphan_entry_assignments(db: &Database) -> Result<u64, Error> {
   let result = sqlx::query(
     "DELETE FROM budget_entry_assignments \
@@ -220,6 +219,97 @@ pub async fn prune_orphan_entry_assignments(db: &Database) -> Result<u64, Error>
   )
   .execute(db.writer())
   .await?;
+  Ok(result.rows_affected())
+}
+
+// Post-sync cross-owner reconciliation, as a single static SQL statement so it
+// passes to `sqlx::query` without a dynamic-string audit (it carries no caller
+// data — only the bound `updated_at`/`created_at` parameter). The `legs` CTE is
+// every concrete wallet leg of a market event keyed by its `transaction_id`,
+// stamped with its owner: a market row is keyed by its own `transaction_id`; a
+// journal twin (`market_transaction`) and the broker-fee / transaction-tax legs
+// are keyed by `context_id`, which EVE sets to the trade's `transaction_id`. That
+// is the same linkage the in-memory cascade encodes (wallet.rs:3609-3729), set in
+// SQL so it sees every locally-held leg, not just the loaded/scope-filtered page.
+const RECONCILE_SPLIT_OWNER_ASSIGNMENTS_SQL: &str = "WITH legs AS ( \
+    SELECT transaction_id AS transaction_id, 'character' AS owner_kind, character_id AS owner_id, \
+           'market' AS entry_kind, transaction_id AS entry_id \
+      FROM character_wallet_transaction \
+    UNION ALL \
+    SELECT transaction_id, 'corporation', corporation_id, 'market', transaction_id \
+      FROM corporation_wallet_transaction \
+    UNION ALL \
+    SELECT context_id, 'character', character_id, 'journal', id \
+      FROM character_wallet_journal \
+     WHERE context_id IS NOT NULL \
+       AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax') \
+    UNION ALL \
+    SELECT context_id, 'corporation', corporation_id, 'journal', id \
+      FROM corporation_wallet_journal \
+     WHERE context_id IS NOT NULL \
+       AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax') \
+  ), \
+    sources AS ( \
+      SELECT l.transaction_id AS transaction_id, a.category_id AS category_id, a.updated_at AS updated_at, a.id AS id \
+        FROM budget_entry_assignments a \
+        JOIN legs l \
+          ON l.owner_kind = a.owner_kind AND l.owner_id = a.owner_id \
+         AND l.entry_kind = a.entry_kind AND l.entry_id = a.entry_id \
+       WHERE a.scope_kind = 'all' AND a.scope_id IS NULL \
+    ), \
+    winners AS ( \
+      SELECT s.transaction_id AS transaction_id, s.category_id AS category_id \
+        FROM sources s \
+        JOIN ( \
+          SELECT transaction_id, MAX(updated_at) AS updated_at FROM sources GROUP BY transaction_id \
+        ) latest ON latest.transaction_id = s.transaction_id AND latest.updated_at = s.updated_at \
+        JOIN ( \
+          SELECT transaction_id, updated_at, MAX(id) AS id FROM sources GROUP BY transaction_id, updated_at \
+        ) tiebreak ON tiebreak.transaction_id = s.transaction_id AND tiebreak.updated_at = s.updated_at \
+                  AND tiebreak.id = s.id \
+    ) \
+    INSERT INTO budget_entry_assignments \
+      (scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at) \
+    SELECT 'all', NULL, l.owner_kind, l.owner_id, l.entry_kind, l.entry_id, w.category_id, ?1, ?1 \
+      FROM legs l \
+      JOIN winners w ON w.transaction_id = l.transaction_id \
+     WHERE NOT EXISTS ( \
+       SELECT 1 FROM budget_entry_assignments a \
+        WHERE a.scope_kind = 'all' AND a.scope_id IS NULL \
+          AND a.owner_kind = l.owner_kind AND a.owner_id = l.owner_id \
+          AND a.entry_kind = l.entry_kind AND a.entry_id = l.entry_id \
+     ) \
+     GROUP BY l.owner_kind, l.owner_id, l.entry_kind, l.entry_id, w.category_id \
+    ON CONFLICT(scope_kind, COALESCE(scope_id, -1), owner_kind, owner_id, entry_kind, entry_id) DO NOTHING";
+
+/// Post-sync cross-owner budget reconciliation. For every market event whose legs
+/// (a market row, its journal twin, and its broker-fee / transaction-tax legs)
+/// span more than one owner, this materializes the missing per-owner assignment
+/// copies so a mark placed on one owner's fast-arriving copy reaches the slow
+/// sibling legs that synced later. See ADR draft xnszopnu / spec mqzpprvw.
+///
+/// It is fill-only, override-respecting, idempotent, and guarded against
+/// resurrection:
+///   - fill-only / override-respecting: a target leg that already carries its own
+///     assignment is never touched (`NOT EXISTS` against the assignment table), so
+///     a deliberate corp-side mark survives.
+///   - resurrection guard: each event's category is taken from the *newest*
+///     assignment in the group (max `updated_at`, ties broken by max id). A leg
+///     whose owner deliberately unassigned has no row, so it can only be re-filled
+///     by a source mark that is strictly newer — a stale source can never win.
+///   - idempotent: writes route through the owner-aware unique index via the same
+///     `ON CONFLICT ... DO NOTHING`-shaped upsert, so a second pass is a no-op.
+///
+/// Operates over the All scope only (resolution is always `scope_kind='all'`).
+/// Returns the number of sibling copies written. This SQL is the source of truth
+/// the one-time backfill migration mirrors.
+// Cross-owner budget reconciliation (post-sync job); wired into BudgetAssignmentReconcile.
+pub async fn reconcile_split_owner_assignments(db: &Database) -> Result<u64, Error> {
+  let now = chrono::Utc::now().to_rfc3339();
+  let result = sqlx::query(RECONCILE_SPLIT_OWNER_ASSIGNMENTS_SQL)
+    .bind(&now)
+    .execute(db.writer())
+    .await?;
   Ok(result.rows_affected())
 }
 

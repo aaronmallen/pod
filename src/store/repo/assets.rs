@@ -1006,6 +1006,27 @@ macro_rules! value_expr {
     concat!("CAST(a.quantity * ", unit_price_expr!(), " AS REAL)")
   };
 }
+// Per-type sum of each output material's mineral value, priced at the same global ESI prices the
+// inventory already uses (unpriced materials COALESCE to 0, undervaluing rather than false-positiving).
+macro_rules! reproc_per_unit_expr {
+  () => {
+    "(SELECT COALESCE(SUM(tm.quantity * COALESCE(mpm.adjusted_price, mpm.average_price, 0)), 0) \
+      FROM type_materials tm \
+      LEFT JOIN market_prices mpm ON mpm.type_id = tm.material_type_id \
+      WHERE tm.type_id = a.type_id)"
+  };
+}
+// `{reproc_yield}` is replaced at runtime with the configured flat refine yield (a controlled f64).
+// Blueprint copies and stacks smaller than one portion (or types without a portion size) yield 0.
+macro_rules! reproc_value_expr {
+  () => {
+    concat!(
+      "CAST(CASE WHEN a.is_blueprint_copy = 1 OR COALESCE(it.portion_size, 0) <= 0 THEN 0 ELSE ",
+      reproc_per_unit_expr!(),
+      " * {reproc_yield} * CAST(a.quantity / it.portion_size AS INTEGER) END AS REAL)"
+    )
+  };
+}
 
 const DISPLAY_NAME_EXPR: &str = display_name_expr!();
 const TYPE_NAME_EXPR: &str = type_name_expr!();
@@ -1278,25 +1299,44 @@ pub async fn children_render_for_character(
   db: &Database,
   character_id: i64,
   container_id: i64,
+  reproc_yield: f64,
 ) -> Result<Vec<InventoryRow>, Error> {
-  children_render(db, "character_assets", "character_id", &[character_id], container_id).await
+  children_render(
+    db,
+    "character_assets",
+    "character_id",
+    &[character_id],
+    container_id,
+    reproc_yield,
+  )
+  .await
 }
 
 pub async fn children_render_for_characters(
   db: &Database,
   character_ids: &[i64],
   container_id: i64,
+  reproc_yield: f64,
 ) -> Result<Vec<InventoryRow>, Error> {
   if character_ids.is_empty() {
     return Ok(Vec::new());
   }
-  children_render(db, "character_assets", "character_id", character_ids, container_id).await
+  children_render(
+    db,
+    "character_assets",
+    "character_id",
+    character_ids,
+    container_id,
+    reproc_yield,
+  )
+  .await
 }
 
 pub async fn children_render_for_corporation(
   db: &Database,
   corporation_id: i64,
   container_id: i64,
+  reproc_yield: f64,
 ) -> Result<Vec<InventoryRow>, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(Vec::new());
@@ -1307,6 +1347,7 @@ pub async fn children_render_for_corporation(
     "corporation_id",
     &[corporation_id],
     container_id,
+    reproc_yield,
   )
   .await
 }
@@ -1438,8 +1479,9 @@ async fn children_render(
   owner_column: &'static str,
   owner_ids: &[i64],
   container_id: i64,
+  reproc_yield: f64,
 ) -> Result<Vec<InventoryRow>, Error> {
-  let select_head = inventory_select_head(table, owner_column);
+  let select_head = inventory_select_head(table, owner_column, reproc_yield);
 
   let mut builder = QueryBuilder::<Sqlite>::new(select_head);
   push_owner_predicate(&mut builder, owner_ids);
@@ -1603,7 +1645,7 @@ async fn inventory_page(
   owner_ids: &[i64],
   query: &InventoryQuery<'_>,
 ) -> Result<Vec<InventoryRow>, Error> {
-  let select_head = inventory_select_head(table, owner_column);
+  let select_head = inventory_select_head(table, owner_column, query.reproc_yield);
   let sort_expr = sort_column_expr(query.sort, owner_column);
 
   let mut builder = QueryBuilder::<Sqlite>::new(select_head);
@@ -1765,12 +1807,13 @@ fn combined_sort_column_expr(sort: SortColumn) -> &'static str {
   }
 }
 
-fn combined_arm_head(table: &str, owner_column: &str) -> &'static str {
-  match (table, owner_column) {
+fn combined_arm_head(table: &str, owner_column: &str, reproc_yield: f64) -> String {
+  let head = match (table, owner_column) {
     ("character_assets", "character_id") => COMBINED_ARM_CHARACTER,
     ("corporation_assets", "corporation_id") => COMBINED_ARM_CORPORATION,
     _ => unreachable!("combined_arm_head called with an unknown owner table"),
-  }
+  };
+  bind_reproc_yield(head, reproc_yield)
 }
 
 fn push_combined_arm(
@@ -1779,8 +1822,9 @@ fn push_combined_arm(
   owner_column: &'static str,
   owner_ids: &[i64],
   top_level_only: bool,
+  reproc_yield: f64,
 ) {
-  builder.push(combined_arm_head(table, owner_column));
+  builder.push(combined_arm_head(table, owner_column, reproc_yield));
   push_owner_predicate(builder, owner_ids);
   if top_level_only {
     builder.push(" AND a.container_id IS NULL");
@@ -1792,6 +1836,7 @@ fn push_combined_union(
   character_ids: &[i64],
   corporation_ids: &[i64],
   top_level_only: bool,
+  reproc_yield: f64,
 ) {
   let mut needs_union = false;
   if !character_ids.is_empty() {
@@ -1801,6 +1846,7 @@ fn push_combined_union(
       "character_id",
       character_ids,
       top_level_only,
+      reproc_yield,
     );
     needs_union = true;
   }
@@ -1814,6 +1860,7 @@ fn push_combined_union(
       "corporation_id",
       corporation_ids,
       top_level_only,
+      reproc_yield,
     );
   }
 }
@@ -1828,7 +1875,7 @@ async fn combined_inventory_page(
   let sort_expr = combined_sort_column_expr(query.sort);
 
   let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM (");
-  push_combined_union(&mut builder, character_ids, corporation_ids, true);
+  push_combined_union(&mut builder, character_ids, corporation_ids, true, query.reproc_yield);
   // No-op WHERE seed so every optional facet below can append uniformly with "AND".
   builder.push(") a WHERE 1 = 1");
 
@@ -1884,7 +1931,8 @@ async fn combined_inventory_totals(
     "SELECT SUM(a.quantity) AS items, COUNT(DISTINCT a.location_id) AS locations, SUM(a.value) AS value, \
     SUM(a.row_volume) AS volume FROM (",
   );
-  push_combined_union(&mut builder, character_ids, corporation_ids, false);
+  // Totals never sum reproc value, so a 0 yield elides its contribution without changing the schema.
+  push_combined_union(&mut builder, character_ids, corporation_ids, false, 0.0);
   builder.push(") a WHERE 1 = 1");
 
   if !location_ids.is_empty() {
@@ -1957,12 +2005,25 @@ fn merge_geo_locations(rows: Vec<GeoLocation>) -> Vec<GeoLocation> {
   out
 }
 
-fn inventory_select_head(table: &str, owner_column: &str) -> &'static str {
-  match (table, owner_column) {
+fn inventory_select_head(table: &str, owner_column: &str, reproc_yield: f64) -> String {
+  let head = match (table, owner_column) {
     ("character_assets", "character_id") => INVENTORY_SELECT_CHARACTER,
     ("corporation_assets", "corporation_id") => INVENTORY_SELECT_CORPORATION,
     _ => unreachable!("inventory_select_head called with an unknown owner table"),
-  }
+  };
+  bind_reproc_yield(head, reproc_yield)
+}
+
+// Substitutes the `{reproc_yield}` token with the configured flat refine yield. The value is an
+// internal config f64 (never user input), so formatting it into the SQL literal is safe; using
+// {:?} guarantees a finite, parseable decimal (e.g. 0.5).
+fn bind_reproc_yield(sql: &str, reproc_yield: f64) -> String {
+  let safe_yield = if reproc_yield.is_finite() {
+    reproc_yield.max(0.0)
+  } else {
+    0.0
+  };
+  sql.replace("{reproc_yield}", &format!("{safe_yield:?}"))
 }
 
 fn inventory_totals_head(table: &str, owner_column: &str) -> &'static str {
@@ -2031,6 +2092,8 @@ macro_rules! inventory_select_sql {
       " AS unit_price, ",
       value_expr!(),
       " AS value, ",
+      reproc_value_expr!(),
+      " AS reproc_value, ",
       location_label_expr!(),
       " AS location_label ",
       query_join_sql!($table, $owner, $owner_type, $abyssal)
@@ -2058,6 +2121,8 @@ macro_rules! combined_arm_sql {
       " AS unit_price, ",
       value_expr!(),
       " AS value, ",
+      reproc_value_expr!(),
+      " AS reproc_value, ",
       location_label_expr!(),
       " AS location_label, sys.name AS system_name, con.name AS constellation_name, reg.name AS region_name ",
       query_join_sql!($table, $owner, $owner_type, $abyssal)
@@ -4320,6 +4385,7 @@ mod asset_tests {
           limit: 1,
           location_ids: &[],
           me_id: None,
+          reproc_yield: 0.5,
           sort: SortColumn::Value,
         },
       )
@@ -4726,6 +4792,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -5028,6 +5095,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -5285,6 +5353,7 @@ mod asset_tests {
         limit: 200,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -5363,7 +5432,7 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
       ingest_two_characters(&db).await;
 
-      let children = children_render_for_characters(&db, &[42, 43], 100).await.unwrap();
+      let children = children_render_for_characters(&db, &[42, 43], 100, 0.5).await.unwrap();
       let count = child_count_for_characters(&db, &[42, 43], 100).await.unwrap();
       let rollup = node_rollup_for_characters(&db, &[42, 43], 100).await.unwrap();
 
@@ -5405,6 +5474,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -5558,6 +5628,7 @@ mod asset_tests {
         limit: 200,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -5656,7 +5727,7 @@ mod asset_tests {
       assert!(roots_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
       assert!(render_for_corporation(&db, CORP_ID).await.unwrap().is_empty());
       assert!(
-        children_render_for_corporation(&db, CORP_ID, 100)
+        children_render_for_corporation(&db, CORP_ID, 100, 0.5)
           .await
           .unwrap()
           .is_empty()
@@ -5686,7 +5757,7 @@ mod asset_tests {
       assert_eq!(roots_for_corporation(&db, CORP_ID).await.unwrap().len(), 1);
       assert_eq!(render_for_corporation(&db, CORP_ID).await.unwrap().len(), 2);
       assert_eq!(
-        children_render_for_corporation(&db, CORP_ID, 100)
+        children_render_for_corporation(&db, CORP_ID, 100, 0.5)
           .await
           .unwrap()
           .iter()
@@ -5777,9 +5848,9 @@ mod asset_tests {
         "no blank metadata (post-mortem #5)"
       );
 
-      let root_children = children_render_for_character(&db, 42, 100).await.unwrap();
+      let root_children = children_render_for_character(&db, 42, 100, 0.5).await.unwrap();
       assert_eq!(root_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
-      let ship_children = children_render_for_character(&db, 42, 101).await.unwrap();
+      let ship_children = children_render_for_character(&db, 42, 101, 0.5).await.unwrap();
       assert_eq!(ship_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
       assert_eq!(child_count_for_character(&db, 42, 100).await.unwrap(), 1);
 
@@ -5833,7 +5904,7 @@ mod asset_tests {
         .unwrap();
       assert_eq!(corp_totals.items, 3);
       assert_eq!(corp_totals.value, 3_000.0);
-      let corp_children = children_render_for_corporation(&db, CORP_ID, 200).await.unwrap();
+      let corp_children = children_render_for_corporation(&db, CORP_ID, 200, 0.5).await.unwrap();
       assert_eq!(corp_children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [201, 202]);
       assert_eq!(node_rollup_for_corporation(&db, CORP_ID, 200).await.unwrap().items, 2);
     }
@@ -5921,6 +5992,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -6293,6 +6365,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort,
       }
     }
@@ -6674,7 +6747,7 @@ mod asset_tests {
       child.type_id = 587;
       replace_for_corporation(&db, CORP_ID, &[root, child]).await.unwrap();
 
-      let children = children_render_for_corporation(&db, CORP_ID, 100).await.unwrap();
+      let children = children_render_for_corporation(&db, CORP_ID, 100, 0.5).await.unwrap();
 
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
       assert_eq!(child_count_for_corporation(&db, CORP_ID, 100).await.unwrap(), 1);
@@ -6699,7 +6772,7 @@ mod asset_tests {
         .await
         .unwrap();
 
-      let children = children_render_for_character(&db, 42, 100).await.unwrap();
+      let children = children_render_for_character(&db, 42, 100, 0.5).await.unwrap();
 
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 102]);
       assert_eq!(children[0].type_name, "Rifter");
@@ -6731,6 +6804,7 @@ mod asset_tests {
         limit: 100,
         location_ids: &[],
         me_id: None,
+        reproc_yield: 0.5,
         sort: SortColumn::Name,
       };
       let rows = inventory_page_for_character(&db, 42, &query).await.unwrap();
@@ -7220,6 +7294,204 @@ mod asset_tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].type_name, "Rifter");
       assert_eq!(rows[0].category, "ship");
+    }
+  }
+
+  mod reproc_value {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const TRIT: i64 = 34;
+    const PYE: i64 = 35;
+
+    async fn seed_reprocessable_type(db: &Database, type_id: i64, portion_size: i64) {
+      seed_item_type(db, type_id, "Refinable", 25, "Frigate", "Ship").await;
+      sqlx::query("UPDATE item_types SET portion_size = ? WHERE id = ?")
+        .bind(portion_size)
+        .bind(type_id)
+        .execute(db.writer())
+        .await
+        .unwrap();
+    }
+
+    async fn seed_materials(db: &Database, type_id: i64, materials: &[(i64, i64)]) {
+      let rows: Vec<sde::TypeMaterial> = materials
+        .iter()
+        .map(|&(material_type_id, quantity)| sde::TypeMaterial {
+          material_type_id,
+          quantity,
+          type_id,
+        })
+        .collect();
+      sde::seed_many_type_materials(db, &rows).await.unwrap();
+    }
+
+    fn query() -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Descending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        reproc_yield: 0.5,
+        sort: SortColumn::Value,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_computes_reproc_value_from_materials_prices_yield_and_portion() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 100).await;
+      seed_price(&db, TRIT, 5.0).await;
+      seed_price(&db, PYE, 10.0).await;
+      seed_materials(&db, 587, &[(TRIT, 1_000), (PYE, 500)]).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 300;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+
+      // per_unit = 1000*5 + 500*10 = 10_000; floor(300/100) = 3; yield 0.5 => 10_000 * 0.5 * 3.
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].reproc_value, 15_000.0);
+    }
+
+    #[tokio::test]
+    async fn it_scales_the_reproc_value_with_the_configured_yield() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 1).await;
+      seed_price(&db, TRIT, 5.0).await;
+      seed_materials(&db, 587, &[(TRIT, 100)]).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 1;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let mut query = query();
+      query.reproc_yield = 1.0;
+      let rows = inventory_page_for_character(&db, 42, &query).await.unwrap();
+
+      // per_unit = 100 * 5 = 500; full yield, one portion.
+      assert_eq!(rows[0].reproc_value, 500.0);
+    }
+
+    #[tokio::test]
+    async fn it_flags_worth_reprocessing_only_when_reproc_beats_sell() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 1).await;
+      // Material value 1000/unit; refined at 0.5 yield => 500/unit reproc.
+      seed_price(&db, TRIT, 1_000.0).await;
+      seed_materials(&db, 587, &[(TRIT, 1)]).await;
+      // Sell value below the 500 reproc => worth reprocessing.
+      seed_price(&db, 587, 100.0).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 1;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+
+      assert_eq!(rows[0].reproc_value, 500.0);
+      assert_eq!(rows[0].value, 100.0);
+      assert!(rows[0].worth_reprocessing());
+
+      // Raise the sell price above the reproc value => no longer worth it.
+      sqlx::query("UPDATE market_prices SET adjusted_price = 1000.0 WHERE type_id = 587")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+      assert!(!rows[0].worth_reprocessing());
+    }
+
+    #[tokio::test]
+    async fn it_yields_zero_for_a_partial_stack_below_one_portion() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 100).await;
+      seed_price(&db, TRIT, 5.0).await;
+      seed_materials(&db, 587, &[(TRIT, 1_000)]).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 50;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+
+      assert_eq!(rows[0].reproc_value, 0.0);
+      assert!(!rows[0].worth_reprocessing());
+    }
+
+    #[tokio::test]
+    async fn it_yields_zero_for_a_type_with_no_materials() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 1).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 10;
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+
+      assert_eq!(rows[0].reproc_value, 0.0);
+    }
+
+    #[tokio::test]
+    async fn it_yields_zero_for_a_blueprint_copy() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_reprocessable_type(&db, 587, 1).await;
+      seed_price(&db, TRIT, 5.0).await;
+      seed_materials(&db, 587, &[(TRIT, 1_000)]).await;
+      let mut asset = char_asset(100, 42, None);
+      asset.type_id = 587;
+      asset.quantity = 10;
+      asset.is_blueprint_copy = Some(true);
+      replace_for_character(&db, 42, &[asset]).await.unwrap();
+
+      let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+
+      assert_eq!(rows[0].reproc_value, 0.0);
+      assert!(!rows[0].worth_reprocessing());
+    }
+
+    #[tokio::test]
+    async fn it_matches_reproc_value_across_combined_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_reprocessable_type(&db, 587, 100).await;
+      seed_price(&db, TRIT, 5.0).await;
+      seed_materials(&db, 587, &[(TRIT, 1_000)]).await;
+
+      let mut char_a = char_asset(100, 42, None);
+      char_a.type_id = 587;
+      char_a.quantity = 300;
+      replace_for_character(&db, 42, &[char_a]).await.unwrap();
+
+      let mut corp_a = corp_asset(200, CORP_ID, None);
+      corp_a.type_id = 587;
+      corp_a.quantity = 300;
+      replace_for_corporation(&db, CORP_ID, &[corp_a]).await.unwrap();
+
+      let single = inventory_page_for_character(&db, 42, &query()).await.unwrap();
+      let combined = inventory_page_for_combined(&db, &[42], &[CORP_ID], &query())
+        .await
+        .unwrap();
+
+      // per_unit = 1000*5 = 5000; floor(300/100)=3; yield 0.5 => 7500 per stack, both scopes.
+      assert_eq!(single[0].reproc_value, 7_500.0);
+      assert_eq!(combined.len(), 2);
+      for row in &combined {
+        assert_eq!(row.reproc_value, 7_500.0);
+      }
     }
   }
 }

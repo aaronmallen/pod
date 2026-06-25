@@ -279,6 +279,7 @@ pub struct InventoryQuery<'a> {
   pub limit: i64,
   pub location_ids: &'a [i64],
   pub me_id: Option<i64>,
+  pub reproc_yield: f64,
   pub sort: SortColumn,
 }
 
@@ -297,6 +298,7 @@ pub struct InventoryRow {
   pub name: Option<String>,
   pub owner_id: i64,
   pub quantity: i64,
+  pub reproc_value: f64,
   pub row_volume: f64,
   pub type_icon: IconResolution,
   pub type_id: i64,
@@ -306,6 +308,12 @@ pub struct InventoryRow {
 }
 
 impl InventoryRow {
+  // The reproc-vs-sell verdict; surfaced by the phase-3 inventory UI in a follow-up.
+  #[allow(dead_code)]
+  pub fn worth_reprocessing(&self) -> bool {
+    self.reproc_value > self.value
+  }
+
   pub fn cursor(&self, sort: SortColumn) -> InventoryCursor {
     let sort_value = match sort {
       SortColumn::Category => SortValue::Text(self.category.clone()),
@@ -339,6 +347,7 @@ pub struct InventoryRowSql {
   pub name: Option<String>,
   pub owner_id: i64,
   pub quantity: i64,
+  pub reproc_value: f64,
   pub row_volume: f64,
   pub type_id: i64,
   pub type_name: String,
@@ -364,6 +373,7 @@ impl InventoryRowSql {
       name: self.name,
       owner_id: self.owner_id,
       quantity: self.quantity,
+      reproc_value: self.reproc_value,
       row_volume: self.row_volume,
       type_icon,
       type_id: self.type_id,

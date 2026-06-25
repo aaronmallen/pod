@@ -919,6 +919,7 @@ mod tests {
       name: None,
       owner_id,
       quantity: 10,
+      reproc_value: 0.0,
       row_volume: 100.0,
       type_icon: IconResolution::Missing,
       type_id: 587,

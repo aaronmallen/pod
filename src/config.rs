@@ -535,6 +535,9 @@ pub struct Settings {
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default, skip_serializing_if = "McpConfig::is_default")]
   mcp: McpConfig,
+  #[getset(get = "pub", set = "pub")]
+  #[serde(default = "default_reprocessing_yield")]
+  reprocessing_yield: f64,
   #[getset(get = "pub", get_mut = "pub")]
   #[serde(default)]
   storage: StorageConfig,
@@ -551,6 +554,7 @@ impl Default for Settings {
       features: FeatureFlags::default(),
       industry: IndustryConfig::default(),
       mcp: McpConfig::default(),
+      reprocessing_yield: default_reprocessing_yield(),
       storage: StorageConfig::default(),
       ui: UiConfig::default(),
     }
@@ -906,6 +910,10 @@ where
   )
 }
 
+fn default_reprocessing_yield() -> f64 {
+  0.5
+}
+
 fn default_scale_100() -> u8 {
   100
 }
@@ -948,6 +956,12 @@ fn is_not_high_contrast(high_contrast: &bool) -> bool {
 
 pub fn load() -> Result<Settings, Error> {
   load_from(&config_path()?)
+}
+
+pub fn reprocessing_yield_or_default() -> f64 {
+  load()
+    .map(|s| s.reprocessing_yield)
+    .unwrap_or_else(|_| default_reprocessing_yield())
 }
 
 fn load_from(path: &Path) -> Result<Settings, Error> {
@@ -1281,6 +1295,26 @@ mod tests {
       assert_eq!(*storage.log_dir(), None);
       assert_eq!(*storage.cache_dir(), None);
       assert_eq!(*storage.machine_id(), None);
+    }
+
+    #[test]
+    fn it_defaults_the_reprocessing_yield_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
+
+      let settings = load_from(&dir.path().join("config.toml")).unwrap();
+
+      assert_eq!(*settings.reprocessing_yield(), 0.5);
+    }
+
+    #[test]
+    fn it_reads_a_reprocessing_yield_override() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "reprocessing_yield = 0.78\n").unwrap();
+
+      let settings = load_from(&path).unwrap();
+
+      assert_eq!(*settings.reprocessing_yield(), 0.78);
     }
 
     #[test]

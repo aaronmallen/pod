@@ -1996,6 +1996,7 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
     limit: view.limit,
     location_ids: &view.location_ids,
     me_id,
+    reproc_yield: crate::config::reprocessing_yield_or_default(),
     sort: view.sort,
   };
 
@@ -2065,6 +2066,7 @@ async fn load_inventory_page(
     limit: INVENTORY_PAGE_SIZE,
     location_ids: &view.location_ids,
     me_id,
+    reproc_yield: crate::config::reprocessing_yield_or_default(),
     sort: view.sort,
   };
   match &owner {
@@ -2088,27 +2090,28 @@ async fn load_container_children(
   let Some(owner) = resolve_scope_owner(scope, roster, corporations) else {
     return Vec::new();
   };
+  let reproc_yield = crate::config::reprocessing_yield_or_default();
   match &owner {
-    Owner::Character(id) => assets::children_render_for_character(db, *id, container_id)
+    Owner::Character(id) => assets::children_render_for_character(db, *id, container_id, reproc_yield)
       .await
       .unwrap_or_default(),
     Owner::Combined {
       character_ids,
       corporation_ids,
     } => {
-      let mut children = assets::children_render_for_characters(db, character_ids, container_id)
+      let mut children = assets::children_render_for_characters(db, character_ids, container_id, reproc_yield)
         .await
         .unwrap_or_default();
       for corporation_id in corporation_ids {
         children.extend(
-          assets::children_render_for_corporation(db, *corporation_id, container_id)
+          assets::children_render_for_corporation(db, *corporation_id, container_id, reproc_yield)
             .await
             .unwrap_or_default(),
         );
       }
       children
     }
-    Owner::Corporation(id) => assets::children_render_for_corporation(db, *id, container_id)
+    Owner::Corporation(id) => assets::children_render_for_corporation(db, *id, container_id, reproc_yield)
       .await
       .unwrap_or_default(),
   }
@@ -2503,6 +2506,7 @@ mod tests {
         name: None,
         owner_id: 7,
         quantity: 1,
+        reproc_value: 0.0,
         row_volume: 10.0,
         type_icon: images::IconResolution::Missing,
         type_id: 587,

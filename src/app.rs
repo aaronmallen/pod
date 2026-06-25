@@ -48,6 +48,7 @@ use crate::{
       rail::{self, rail},
       status, sync_chip,
       sync_popover::{self, JobStats, Model},
+      tab_select::{Tab, TabLayout, tab_select_with},
       updater_banner,
     },
     style::{color, control, radius, shadow, spacing, typography},
@@ -158,6 +159,13 @@ const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
 static UPDATER_RECEIVER: std::sync::Mutex<Option<tokio::sync::watch::Receiver<updater::State>>> =
   std::sync::Mutex::new(None);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum NotificationTab {
+  #[default]
+  New,
+  History,
+}
+
 struct App {
   accessibility: config::AccessibilityConfig,
   assets: Option<assets::State>,
@@ -212,6 +220,7 @@ struct App {
   notification_names: std::collections::HashMap<store::model::NotificationOwner, String>,
   notifications_dirty: bool,
   notifications_panel_open: bool,
+  notifications_tab: NotificationTab,
   notifications_unread: i64,
   now: DateTime<Utc>,
   outbox: sync::OutboxStatus,
@@ -367,6 +376,7 @@ enum Message {
   ReauthCharacter(i64),
   RestartSync,
   SeedProgress(splash::seed::Progress),
+  SelectNotificationTab(NotificationTab),
   Settings(settings::Message),
   Shortcut(Chord),
   SkillPlanEditor(skill_plan_editor::Message),
@@ -482,6 +492,7 @@ impl Message {
       Message::NavTo(..) => "NavTo",
       Message::NotificationActivated(_) => "NotificationActivated",
       Message::NotificationsRefreshed(_) => "NotificationsRefreshed",
+      Message::SelectNotificationTab(_) => "SelectNotificationTab",
       Message::ToastDismissed(_) => "ToastDismissed",
       Message::ToastHover(..) => "ToastHover",
       Message::ToastTick => "ToastTick",
@@ -998,6 +1009,7 @@ fn boot() -> (App, Task<Message>) {
     notifications: Vec::new(),
     notifications_dirty: false,
     notifications_panel_open: false,
+    notifications_tab: NotificationTab::default(),
     notifications_unread: 0,
     now: Utc::now(),
     outbox: sync::OutboxStatus::new(),
@@ -2164,12 +2176,23 @@ const NOTIFICATIONS_PANEL_WIDTH: f32 = 384.0;
 
 const NOTIFICATIONS_PANEL_MAX_HEIGHT: f32 = 560.0;
 
-/// The notification center panel: a card flying out beside the rail, bottom-aligned to the bell. It
-/// lists the cached notifications newest-first (the repo already orders them), with a header count +
-/// "Mark all read" and a footer "Clear all" + total. Each row marks itself read and deep-links on
-/// click; opening the panel never auto-reads.
+const NOTIFICATIONS_TAB_STRIP_HEIGHT: f32 = 40.0;
+
+/// The notification center panel: a card flying out beside the rail, bottom-aligned to the bell. A
+/// header with the title and a "Mark all read" button sits above a New/History tab strip. The New tab
+/// filters to unread notifications; the History tab lists every loaded notification newest-first (the
+/// repo already orders them). A later task will repoint History at a paginated source, so the row
+/// rendering is factored out of the tab shell. Each row marks itself read and deep-links on click;
+/// opening the panel never auto-reads. A footer "Clear all" + total stays available.
 fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<'_, Message> {
   let unread = app.notifications_unread;
+  let new_count = app
+    .notifications
+    .iter()
+    .filter(|notification| notification.read_at().is_none())
+    .count();
+  let total = app.notifications.len();
+
   let header = Row::with_children(vec![
     text("Notifications")
       .font(typography::body::MEDIUM)
@@ -2177,59 +2200,23 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
       .style(typography::colored(color::text::PRIMARY))
       .into(),
     Space::new().width(Length::Fill).into(),
-    notifications_text_button(format!("{unread} new"), unread > 0, Message::MarkAllNotificationsRead).into(),
+    mark_all_read_button(unread > 0).into(),
   ])
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_2);
 
-  let body: Element<'_, Message> = if app.notifications.is_empty() {
-    container(
-      text("You\u{2019}re all caught up")
-        .font(typography::body::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::secondary())),
-    )
-    .width(Length::Fill)
-    .padding(spacing::SPACE_4_5)
-    .align_x(Horizontal::Center)
-    .into()
-  } else {
-    let rows: Vec<Element<'_, Message>> = app
-      .notifications
-      .iter()
-      .map(|notification| {
-        let who = app
-          .notification_names
-          .get(&notification.owner())
-          .map(String::as_str)
-          .unwrap_or("");
-        let when = relative_time(notification.created_at(), app.now);
-        notification_row(
-          notification,
-          who,
-          &when,
-          true,
-          Message::NotificationActivated(notification.id()),
-        )
-      })
-      .collect();
-    scrollable(
-      Column::with_children(rows)
-        .spacing(spacing::UNIT / 2.0)
-        .width(Length::Fill),
-    )
-    .height(Length::Shrink)
-    .into()
-  };
+  let tabs = notifications_tab_strip(app.notifications_tab, new_count, total);
 
-  let mut children: Vec<Element<'_, Message>> = vec![header.into(), rule_line(), body];
+  let body = notifications_tab_body(app, app.notifications_tab);
+
+  let mut children: Vec<Element<'_, Message>> = vec![header.into(), tabs, rule_line(), body];
   if !app.notifications.is_empty() {
     children.push(rule_line());
     children.push(
       Row::with_children(vec![
         notifications_text_button("Clear all".to_owned(), true, Message::ClearNotifications).into(),
         Space::new().width(Length::Fill).into(),
-        text(format!("{} total", app.notifications.len()))
+        text(format!("{total} total"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::tertiary()))
@@ -2303,6 +2290,123 @@ fn notifications_text_button(label: String, enabled: bool, message: Message) -> 
     ..button::Style::default()
   });
   if enabled { button.on_press(message) } else { button }
+}
+
+fn mark_all_read_button<'a>(enabled: bool) -> button::Button<'a, Message> {
+  let color = if enabled {
+    color::text::PRIMARY
+  } else {
+    color::text::tertiary()
+  };
+  let button = button(
+    text("Mark all read")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::XS_PLUS)
+      .style(move |_| text::Style {
+        color: Some(color),
+      }),
+  )
+  .padding(Padding {
+    top: spacing::UNIT,
+    right: spacing::SPACE_2,
+    bottom: spacing::UNIT,
+    left: spacing::SPACE_2,
+  })
+  .style(control::ghost_button);
+  if enabled {
+    button.on_press(Message::MarkAllNotificationsRead)
+  } else {
+    button
+  }
+}
+
+fn notifications_tab_strip<'a>(active: NotificationTab, new_count: usize, total: usize) -> Element<'a, Message> {
+  let tabs = vec![
+    Tab {
+      count: new_count.to_string(),
+      icon: None,
+      label: "New",
+      on_press: (active != NotificationTab::New).then_some(Message::SelectNotificationTab(NotificationTab::New)),
+      selected: active == NotificationTab::New,
+    },
+    Tab {
+      count: total.to_string(),
+      icon: None,
+      label: "History",
+      on_press: (active != NotificationTab::History)
+        .then_some(Message::SelectNotificationTab(NotificationTab::History)),
+      selected: active == NotificationTab::History,
+    },
+  ];
+  container(tab_select_with(tabs, TabLayout::Fill))
+    .width(Length::Fill)
+    .height(Length::Fixed(NOTIFICATIONS_TAB_STRIP_HEIGHT))
+    .into()
+}
+
+fn notifications_tab_body(app: &App, active: NotificationTab) -> Element<'_, Message> {
+  let rows: Vec<Element<'_, Message>> = app
+    .notifications
+    .iter()
+    .filter(|notification| match active {
+      NotificationTab::New => notification.read_at().is_none(),
+      NotificationTab::History => true,
+    })
+    .map(|notification| {
+      let who = app
+        .notification_names
+        .get(&notification.owner())
+        .map(String::as_str)
+        .unwrap_or("");
+      let when = relative_time(notification.created_at(), app.now);
+      notification_row(
+        notification,
+        who,
+        &when,
+        true,
+        Message::NotificationActivated(notification.id()),
+      )
+    })
+    .collect();
+
+  if rows.is_empty() {
+    let (title, subtitle) = match active {
+      NotificationTab::New => ("You\u{2019}re all caught up", "No new events"),
+      NotificationTab::History => ("Nothing here yet", "No past notifications"),
+    };
+    return notifications_empty_state(title, subtitle);
+  }
+
+  scrollable(
+    Column::with_children(rows)
+      .spacing(spacing::UNIT / 2.0)
+      .width(Length::Fill),
+  )
+  .height(Length::Shrink)
+  .into()
+}
+
+fn notifications_empty_state<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
+  container(
+    Column::with_children(vec![
+      text(title)
+        .font(typography::body::MEDIUM)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::secondary()))
+        .into(),
+      text(subtitle)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    ])
+    .spacing(spacing::UNIT)
+    .align_x(Horizontal::Center),
+  )
+  .width(Length::Fill)
+  .padding(spacing::SPACE_4_5)
+  .align_x(Horizontal::Center)
+  .into()
 }
 
 fn notifications_toaster(app: &App) -> Option<Element<'_, Message>> {
@@ -3888,6 +3992,7 @@ fn dispatch_feature_aux(app: &mut App, message: Message) -> Result<Task<Message>
     Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
     Message::NotificationActivated(id) => handle_notification_activated(app, id),
     Message::NotificationsRefreshed(snapshot) => handle_notifications_refreshed(app, *snapshot),
+    Message::SelectNotificationTab(tab) => handle_select_notification_tab(app, tab),
     Message::RailHover(destination) => handle_rail_hover(app, destination),
     Message::RailHoverExpire(generation) => handle_rail_hover_expire(app, generation),
     Message::ToastDismissed(id) => handle_toast_dismissed(app, id),
@@ -4987,6 +5092,11 @@ fn handle_clear_notifications(app: &mut App) -> Task<Message> {
     async move { store::repo::notifications::clear_all(&db).await.is_ok() },
     |_| Message::CloseNotificationsPanel,
   )
+}
+
+fn handle_select_notification_tab(app: &mut App, tab: NotificationTab) -> Task<Message> {
+  app.notifications_tab = tab;
+  Task::none()
 }
 
 fn handle_mark_all_notifications_read(app: &mut App) -> Task<Message> {
@@ -6517,6 +6627,7 @@ mod tests {
       notifications: Vec::new(),
       notifications_dirty: false,
       notifications_panel_open: false,
+      notifications_tab: NotificationTab::default(),
       notifications_unread: 0,
       now: Utc::now(),
       outbox: sync::OutboxStatus::new(),
@@ -11692,6 +11803,10 @@ mod tests {
         Message::NotificationsRefreshed(Box::default()).variant_name(),
         "NotificationsRefreshed"
       );
+      assert_eq!(
+        Message::SelectNotificationTab(NotificationTab::History).variant_name(),
+        "SelectNotificationTab"
+      );
       assert_eq!(Message::ToastDismissed(1).variant_name(), "ToastDismissed");
       assert_eq!(Message::ToastHover(1, true).variant_name(), "ToastHover");
       assert_eq!(Message::ToastTick.variant_name(), "ToastTick");
@@ -11982,6 +12097,113 @@ mod tests {
     }
   }
 
+  mod notification_tabs {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn read_notification(id: i64) -> store::model::Notification {
+      store::model::Notification {
+        read_at: Some(Utc::now().to_rfc3339()),
+        ..test_notification(id, store::model::NotificationDestination::Skills)
+      }
+    }
+
+    fn unread_notification(id: i64) -> store::model::Notification {
+      test_notification(id, store::model::NotificationDestination::Skills)
+    }
+
+    fn ids(rows: &[store::model::Notification], tab: NotificationTab) -> Vec<i64> {
+      rows
+        .iter()
+        .filter(|notification| match tab {
+          NotificationTab::New => notification.read_at().is_none(),
+          NotificationTab::History => true,
+        })
+        .map(store::model::Notification::id)
+        .collect()
+    }
+
+    #[test]
+    fn it_filters_the_new_tab_to_unread_and_history_to_all() {
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), read_notification(2), unread_notification(3)];
+
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::New),
+        vec![1, 3],
+        "the New tab lists only unread notifications"
+      );
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::History),
+        vec![1, 2, 3],
+        "the History tab lists every loaded notification"
+      );
+    }
+
+    #[test]
+    fn it_selects_a_tab_as_durable_app_state() {
+      let mut app = ready_app();
+      assert_eq!(
+        app.notifications_tab,
+        NotificationTab::New,
+        "the panel opens on the New tab"
+      );
+
+      let _ = handle_select_notification_tab(&mut app, NotificationTab::History);
+      assert_eq!(
+        app.notifications_tab,
+        NotificationTab::History,
+        "selecting History sticks"
+      );
+
+      let _ = handle_select_notification_tab(&mut app, NotificationTab::New);
+      assert_eq!(app.notifications_tab, NotificationTab::New, "selecting New sticks");
+    }
+
+    #[test]
+    fn it_empties_the_new_tab_but_retains_history_after_mark_all_read() {
+      // Marking all read flips every row's read_at; the New tab filters on read_at.is_none() while
+      // History is unconditional, so the same row set empties New but stays in History.
+      let marked: Vec<store::model::Notification> = vec![unread_notification(1), unread_notification(2)]
+        .into_iter()
+        .map(|notification| store::model::Notification {
+          read_at: Some(Utc::now().to_rfc3339()),
+          ..notification
+        })
+        .collect();
+
+      assert!(
+        ids(&marked, NotificationTab::New).is_empty(),
+        "the New tab is emptied once every row is read"
+      );
+      assert_eq!(
+        ids(&marked, NotificationTab::History),
+        vec![1, 2],
+        "History keeps every notification"
+      );
+    }
+
+    #[test]
+    fn it_renders_both_tabs_with_their_empty_states() {
+      let mut app = ready_app();
+      app.notifications = vec![read_notification(1)];
+      app
+        .notification_names
+        .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
+
+      // New is empty (the only row is read) -> "all caught up"; History lists the read row.
+      app.notifications_tab = NotificationTab::New;
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+      app.notifications_tab = NotificationTab::History;
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+
+      // History empty state when nothing is loaded at all.
+      app.notifications.clear();
+      let _ = notifications_panel(&app, config::NavLocation::Left);
+    }
+  }
+
   mod subscription {
     use super::*;
 
@@ -12166,6 +12388,7 @@ mod tests {
       assert!(dispatch_feature_aux(&mut app, Message::NavTo(rail::Destination::Settings, Some("mcp"))).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::NotificationActivated(1)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::NotificationsRefreshed(Box::default())).is_ok());
+      assert!(dispatch_feature_aux(&mut app, Message::SelectNotificationTab(NotificationTab::History)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::RailHover(Some(rail::Destination::Wallet))).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::RailHoverExpire(0)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::ToastDismissed(1)).is_ok());

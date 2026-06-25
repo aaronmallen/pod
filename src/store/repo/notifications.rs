@@ -9,9 +9,10 @@ use crate::store::{
 
 /// Time-based retention window for surfaced rows. emit() prunes surfaced rows whose created_at is
 /// older than this many days opportunistically, so the center is bounded by age (not count) and the
-/// full recent history stays available for keyset paging in the History view. Suppressed watermark
-/// rows are the dedup ledger and are NEVER pruned here — dropping one would let its event re-notify
-/// on the next detector pass. Tunable; ~90 days keeps a meaningful history without unbounded growth.
+/// full recent history stays available for keyset paging in the History view. Pruning tombstones
+/// (suppressed = 1) rather than deletes, so an aged row leaves the center but keeps its dedup_key
+/// occupied — its event can never re-notify on a later detector pass. Tunable; ~90 days keeps a
+/// meaningful history without unbounded growth.
 const NOTIFICATION_RETENTION_DAYS: i64 = 90;
 
 /// Default keyset page size for the History view. A caller may request a different limit.
@@ -81,9 +82,13 @@ impl Row {
 
 // Notification storage repo (epic zyrmyrlk, spec A). Called by the detectors (spec B) and the
 // center/toast UI (specs C/D); exercised only by unit tests until those land.
+// Clearing the center tombstones the surfaced rows (suppressed = 1) rather than deleting them: the
+// dedup_key stays occupied, so emit()'s INSERT OR IGNORE remains a permanent no-op and a cleared
+// event can never re-surface or re-toast on a later detector pass. The rows drop out of
+// list()/unread_count() (both filter suppressed = 0) but persist as ledger tombstones across restart.
 #[allow(dead_code)]
 pub async fn clear_all(db: &Database) -> Result<(), Error> {
-  sqlx::query("DELETE FROM notifications WHERE suppressed = 0")
+  sqlx::query("UPDATE notifications SET suppressed = 1 WHERE suppressed = 0")
     .execute(db.writer())
     .await?;
   Ok(())
@@ -282,14 +287,16 @@ pub async fn watermark(
   Ok(())
 }
 
-// Time-based retention: drop surfaced rows whose created_at is older than the retention window,
+// Time-based retention: tombstone surfaced rows whose created_at is older than the retention window,
 // computed as now - NOTIFICATION_RETENTION_DAYS and bound as an RFC3339 string. String comparison is
-// exact over the normalized RFC3339 timestamps emit() writes. Suppressed watermark rows are exempt —
-// they are the dedup ledger, so dropping one would let its event re-notify on a later detector pass.
+// exact over the normalized RFC3339 timestamps emit() writes. Aged rows are flipped to suppressed = 1
+// rather than deleted, so they leave the center (list()/unread_count() filter suppressed = 0) while
+// keeping their dedup_key occupied — emit() stays a permanent no-op and the event never re-notifies.
+// Suppressed watermark rows are already excluded by the suppressed = 0 guard.
 #[allow(dead_code)]
 async fn prune(db: &Database) -> Result<(), Error> {
   let cutoff = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS)).to_rfc3339();
-  sqlx::query("DELETE FROM notifications WHERE suppressed = 0 AND created_at < ?")
+  sqlx::query("UPDATE notifications SET suppressed = 1 WHERE suppressed = 0 AND created_at < ?")
     .bind(&cutoff)
     .execute(db.writer())
     .await?;
@@ -352,6 +359,38 @@ mod tests {
 
       assert!(list(&db, 50).await.unwrap().is_empty());
       assert!(emit(&db, &sample("skill:wm")).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_tombstones_so_a_cleared_key_never_re_surfaces() {
+      let db = store::open_test().await.unwrap();
+      emit(&db, &sample("skill:1")).await.unwrap();
+
+      clear_all(&db).await.unwrap();
+
+      // Re-emitting the cleared key is a permanent no-op — the tombstone keeps the dedup_key occupied.
+      assert_eq!(emit(&db, &sample("skill:1")).await.unwrap(), None);
+      assert!(list(&db, 50).await.unwrap().is_empty());
+      assert_eq!(unread_count(&db).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_still_surfaces_a_genuinely_new_event_after_a_clear() {
+      let db = store::open_test().await.unwrap();
+      emit(&db, &sample("skill:1")).await.unwrap();
+      clear_all(&db).await.unwrap();
+
+      // A distinct dedup_key was never tombstoned, so it surfaces exactly once.
+      let fresh = emit(&db, &sample("skill:2")).await.unwrap();
+
+      assert!(fresh.is_some(), "a new event still surfaces after a clear");
+      let keys = list(&db, 50)
+        .await
+        .unwrap()
+        .iter()
+        .map(|n| n.dedup_key().clone())
+        .collect::<Vec<_>>();
+      assert_eq!(keys, ["skill:2"]);
     }
   }
 
@@ -428,10 +467,37 @@ mod tests {
         .iter()
         .map(|n| n.dedup_key().clone())
         .collect::<Vec<_>>();
-      assert!(!keys.contains(&"skill:old".to_owned()), "the aged row is pruned");
+      assert!(
+        !keys.contains(&"skill:old".to_owned()),
+        "the aged row leaves the center"
+      );
       assert!(keys.contains(&"skill:recent".to_owned()), "a recent row survives");
       // The watermark is exempt from prune: re-emitting its key is still a no-op.
       assert!(emit(&db, &sample("skill:wm")).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn it_tombstones_aged_rows_so_they_never_re_surface() {
+      let db = store::open_test().await.unwrap();
+      let old = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS + 1)).to_rfc3339();
+      seed_surfaced(&db, "skill:old", &old).await;
+
+      // A fresh emit triggers prune(), which tombstones (not deletes) the aged row.
+      emit(&db, &sample("skill:trigger")).await.unwrap();
+
+      // Re-emitting the aged key is a permanent no-op: its tombstone still occupies the dedup_key, so
+      // the event can never re-surface or re-toast.
+      assert_eq!(emit(&db, &sample("skill:old")).await.unwrap(), None);
+      let keys = list(&db, 50)
+        .await
+        .unwrap()
+        .iter()
+        .map(|n| n.dedup_key().clone())
+        .collect::<Vec<_>>();
+      assert!(
+        !keys.contains(&"skill:old".to_owned()),
+        "the tombstone stays out of the center"
+      );
     }
   }
 

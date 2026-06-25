@@ -5373,9 +5373,10 @@ fn handle_toast_tick(app: &mut App) -> Task<Message> {
 }
 
 fn handle_toast_dismissed(app: &mut App, id: i64) -> Task<Message> {
-  // The X dismisses without marking read: the row stays unread in the center.
+  // The X dismisses the toast and marks the row read: it stays visible in the center as read history
+  // and, because mark_read stamps read_at durably, never re-toasts on a later detector pass.
   app.toasts.retain(|toast| toast.notification.id() != id);
-  Task::none()
+  mark_notification_read(app, id)
 }
 
 fn handle_toast_hover(app: &mut App, id: i64, hovered: bool) -> Task<Message> {
@@ -9587,7 +9588,7 @@ mod tests {
       use super::*;
 
       #[test]
-      fn it_removes_the_toast_without_marking_it_read() {
+      fn it_removes_the_toast_and_marks_the_row_read() {
         let mut app = test_app();
         enqueue_toast(&mut app, notification(1));
         app.notifications = vec![notification(1)];
@@ -9596,7 +9597,11 @@ mod tests {
         let _ = handle_toast_dismissed(&mut app, 1);
 
         assert!(app.toasts.is_empty());
-        assert_eq!(app.notifications_unread, 1, "the X leaves the row unread in the center");
+        assert_eq!(app.notifications_unread, 0, "the X marks the dismissed row read");
+        assert!(
+          app.notifications[0].read_at().is_some(),
+          "the row stays in the center as read history"
+        );
       }
     }
 

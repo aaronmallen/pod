@@ -334,10 +334,6 @@ enum Message {
   CloseSyncPopover,
   Compare(skills_compare::Message),
   Compose(window::Id, mail::Message),
-  ComposeWindowReady {
-    id: window::Id,
-    seed: Box<mail::compose::Seed>,
-  },
   ConfirmTakeOver,
   Contract(window::Id, contract_detail::Message),
   ClearNotifications,
@@ -535,9 +531,6 @@ impl Message {
   fn boot_variant_name(&self) -> Option<&'static str> {
     Some(match self {
       Message::ClockTick => "ClockTick",
-      Message::ComposeWindowReady {
-        ..
-      } => "ComposeWindowReady",
       Message::StockpileEditorWindowReady {
         ..
       } => "StockpileEditorWindowReady",
@@ -3172,7 +3165,7 @@ fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
     // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
     // own conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => splash_theme(),
+    Some(Window::Killmail | Window::Splash | Window::StockpileEditor) => splash_theme(),
     _ => pod_theme(),
   }
 }
@@ -3198,7 +3191,11 @@ fn window_title(app: &App, id: window::Id) -> String {
       .get(id)
       .map(|state| format!("Pod — {}", state.title()))
       .unwrap_or_else(|| "Pod — Killmail".to_string()),
-    Some(Window::MailCompose) => "Pod — Compose Mail".to_string(),
+    Some(Window::MailCompose) => app
+      .composes
+      .get(id)
+      .map(|draft| format!("Pod — {}", mail::compose::window_title(draft)))
+      .unwrap_or_else(|| "Pod — Compose Mail".to_string()),
     Some(Window::Main) => "Pod".to_string(),
     Some(Window::ManagePlans) => "Pod — Manage Skill Plans".to_string(),
     Some(Window::SkillPlanEditor) => "Pod — Skill Plan Editor".to_string(),
@@ -3781,22 +3778,28 @@ fn close_stockpile_editor_window(app: &mut App, id: window::Id) -> Task<Message>
   window::close(id)
 }
 
-/// Opens a detached compose window (new / reply / forward) centered on the main window. Multiple
-/// composes coexist, each minting a fresh id; the seed is applied in [`handle_compose_window_ready`].
+/// Opens a detached Mail Compose window with native chrome. `open_native_window` mints the id
+/// synchronously, so registration, state seeding, and the draft loader all happen here with no
+/// ready-message indirection. Unlimited instances coexist, duplicates included, because every open
+/// mints a fresh id; geometry is never persisted, so each window opens centered at the default size.
 fn open_compose_window(app: &mut App, seed: mail::compose::Seed) -> Task<Message> {
-  if app.runtime.is_none() {
+  let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
-  }
+  };
+  let load = match seed.draft_id() {
+    Some(draft_id) => {
+      let db = runtime.db.clone();
+      mail::compose::load_draft(&db, draft_id)
+    }
+    None => Task::none(),
+  };
   let size = Size::new(
     mail::compose::COMPOSE_WINDOW_WIDTH,
     mail::compose::COMPOSE_WINDOW_HEIGHT,
   );
-  open_centered_window(app, size, move |id| {
-    Task::done(Message::ComposeWindowReady {
-      id,
-      seed: Box::new(seed.clone()),
-    })
-  })
+  let (id, open_task) = open_native_window(app, Window::MailCompose, size);
+  app.composes.insert(id, mail::compose::Draft::from_seed(seed));
+  Task::batch([open_task, load.map(move |msg| Message::Compose(id, msg))])
 }
 
 /// Opens a compose window seeded for a persisted draft `draft_id`; the row is loaded into the window
@@ -3812,19 +3815,6 @@ fn open_draft_window(app: &mut App, draft_id: i64) -> Task<Message> {
       from_character_id: from,
     },
   )
-}
-
-fn handle_compose_window_ready(app: &mut App, id: window::Id, seed: mail::compose::Seed) -> Task<Message> {
-  let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
-  };
-  let load = match seed.draft_id() {
-    Some(draft_id) => mail::compose::load_draft(&runtime.db, draft_id).map(move |msg| Message::Compose(id, msg)),
-    None => Task::none(),
-  };
-  app.windows.register(id, Window::MailCompose);
-  app.composes.insert(id, mail::compose::Draft::from_seed(seed));
-  load
 }
 
 /// Routes a per-window compose message to its window's [`Draft`], applies it, and dispatches the
@@ -4120,10 +4110,6 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
     Message::Chrome(id, event) => handle_chrome_event(app, id, event),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
-    Message::ComposeWindowReady {
-      id,
-      seed,
-    } => handle_compose_window_ready(app, id, *seed),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::StockpileEditorWindowReady {
       id,
@@ -6709,7 +6695,7 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => disable_shadow(id),
+    Some(Window::Killmail | Window::Splash | Window::StockpileEditor) => disable_shadow(id),
     _ => Task::none(),
   }
 }
@@ -6872,10 +6858,7 @@ fn compose_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.composes.get(id) {
     Some(draft) => {
       let roster = app.mail.as_ref().map(mail::State::roster).unwrap_or(&[]);
-      let body = mail::compose::view(draft, roster).map(move |msg| Message::Compose(id, msg));
-      window_chrome::shell(&mail::compose::window_title(draft), body, move |event| {
-        Message::Chrome(id, event)
-      })
+      mail::compose::view(draft, roster).map(move |msg| Message::Compose(id, msg))
     }
     None => blank(),
   }
@@ -9153,12 +9136,12 @@ mod tests {
       app.runtime = Some(test_runtime().await);
 
       let id = window::Id::unique();
-      let _ = handle_compose_window_ready(
-        &mut app,
+      app.windows.register(id, Window::MailCompose);
+      app.composes.insert(
         id,
-        mail::compose::Seed::Blank {
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
           from_character_id: 42,
-        },
+        }),
       );
 
       let _to = handle_compose(&mut app, id, mail::Message::ComposeToInput("Vexor".to_owned()));
@@ -10919,7 +10902,8 @@ mod tests {
 
     fn ready(app: &mut App, seed: mail::compose::Seed) -> window::Id {
       let id = window::Id::unique();
-      let _ = handle_compose_window_ready(app, id, seed);
+      app.windows.register(id, Window::MailCompose);
+      app.composes.insert(id, mail::compose::Draft::from_seed(seed));
       id
     }
 
@@ -13061,16 +13045,6 @@ mod tests {
     #[test]
     fn it_names_the_boot_messages() {
       assert_eq!(Message::ClockTick.variant_name(), "ClockTick");
-      assert_eq!(
-        Message::ComposeWindowReady {
-          id: window::Id::unique(),
-          seed: Box::new(mail::compose::Seed::Blank {
-            from_character_id: 1,
-          }),
-        }
-        .variant_name(),
-        "ComposeWindowReady"
-      );
       assert_eq!(Message::Quit.variant_name(), "Quit");
       assert_eq!(
         Message::TextInputFocused(iced::widget::Id::from("x")).variant_name(),
@@ -13111,15 +13085,6 @@ mod tests {
       let _ = dispatch_window_lifecycle(&mut app, Message::FocusMainWindow);
       let _ = dispatch_window_lifecycle(&mut app, Message::TextInputFocused(iced::widget::Id::from("search")));
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterDismissToast);
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::ComposeWindowReady {
-          id: window::Id::unique(),
-          seed: Box::new(mail::compose::Seed::Blank {
-            from_character_id: 1,
-          }),
-        },
-      );
       let _ = dispatch_window_lifecycle(&mut app, Message::WindowOpened(window::Id::unique()));
 
       // An unmatched message falls through to a no-op task.
@@ -13548,6 +13513,35 @@ mod tests {
       );
 
       assert_eq!(window_title(&app, id), "Pod — Contract #42");
+    }
+
+    #[test]
+    fn it_titles_a_compose_window_from_its_draft_subject() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::MailCompose);
+      let mut draft = mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+        from_character_id: 42,
+      });
+      draft.subject = "CTA tonight".to_owned();
+      app.composes.insert(id, draft);
+
+      assert_eq!(window_title(&app, id), "Pod — CTA tonight");
+    }
+
+    #[test]
+    fn it_titles_a_blank_compose_window_as_a_new_message() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::MailCompose);
+      app.composes.insert(
+        id,
+        mail::compose::Draft::from_seed(mail::compose::Seed::Blank {
+          from_character_id: 42,
+        }),
+      );
+
+      assert_eq!(window_title(&app, id), "Pod — New message");
     }
   }
 

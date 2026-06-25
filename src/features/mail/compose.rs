@@ -21,6 +21,7 @@ use crate::{
       avatar::Avatar,
       entity_search::{EntityKind, EntityRef, EntitySearch, MultiSelect},
       eyebrow::eyebrow_text,
+      header,
       icon::Icon,
       picker::TriggerPortrait,
       rule,
@@ -478,9 +479,30 @@ pub fn send(db: &Database, draft: &Draft) -> Task<Message> {
   Task::perform(enqueue_send(db, draft), Message::ComposeSent)
 }
 
-/// Renders the compose as the body of a detached window. The app layer wraps this in window chrome.
+/// Renders the compose as the body of a native-chrome window: an in-content header (matching the
+/// Compare/SkillPlanEditor convention) stacked above the compose form. The OS frame supplies the
+/// title bar; the kind-aware OS title reuses [`window_title`].
 pub fn view<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
-  window_body(draft, roster)
+  let title = text(window_title(draft))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG + 2.0)
+    .style(|_| text::Style {
+      color: Some(color::text::PRIMARY),
+    });
+  let header = header::header(vec![title.into()], Vec::new());
+
+  container(
+    Column::with_children(vec![header, window_body(draft, roster)])
+      .width(Length::Fill)
+      .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    ..container::Style::default()
+  })
+  .into()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1285,8 +1307,8 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
     .into()
 }
 
-/// The "Discard" footer affordance: closes the window without saving a draft. The window-chrome close
-/// button auto-saves a non-empty draft; this is the explicit throw-away path.
+/// The "Discard" footer affordance: closes the window without saving a draft. The native title-bar
+/// close button auto-saves a non-empty draft; this is the explicit throw-away path.
 fn discard_button<'a>() -> Element<'a, Message> {
   let button = container(
     text("Discard")

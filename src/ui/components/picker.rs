@@ -15,7 +15,7 @@ static LOCK_ICON: &[u8] = include_bytes!("../../../assets/images/icons/lock.svg"
 
 const BADGE_ICON_SIZE: f32 = 20.0;
 const BADGE_SIZE: f32 = 38.0;
-const CARET: &str = "\u{25be}";
+const CARET_SIZE: f32 = 14.0;
 const DROPDOWN_WIDTH: f32 = 360.0;
 const HEADER_PAD_X: f32 = 14.0;
 const HEADER_PAD_Y: f32 = 10.0;
@@ -215,7 +215,7 @@ pub fn trigger_badge_identity<'a, M: 'static>(
     .into()
 }
 
-pub fn trigger_identity<'a, M: 'a>(
+pub fn trigger_identity<'a, M: 'static>(
   title: impl Into<String>,
   subtitle: impl Into<String>,
   portrait: Option<TriggerPortrait>,
@@ -238,12 +238,10 @@ pub fn trigger_identity<'a, M: 'a>(
   ])
   .spacing(spacing::UNIT - 1.0);
 
-  let caret = text(CARET)
-    .font(typography::mono::REGULAR)
-    .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    });
+  let caret = Icon::chevron_down()
+    .color(color::text::secondary())
+    .size(CARET_SIZE)
+    .render::<M>();
 
   let mut cells: Vec<Element<'a, M>> = Vec::with_capacity(3);
   if let Some(portrait) = portrait {
@@ -267,7 +265,7 @@ pub fn trigger_identity<'a, M: 'a>(
     cells.push(tile.into());
   }
   cells.push(identity.into());
-  cells.push(caret.into());
+  cells.push(caret);
 
   Row::with_children(cells)
     .spacing(spacing::SPACE_3)

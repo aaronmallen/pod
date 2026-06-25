@@ -21,7 +21,6 @@ const CELL_PAD_X: f32 = 14.0;
 const CELL_PAD_Y: f32 = 13.0;
 const HEADS_PORTRAIT: f32 = 26.0;
 const HEADS_UNDERLINE_ALPHA: f32 = 0.18;
-const LEADER_GLYPH: &str = "\u{25bc}";
 const MARKER_GAP: f32 = 2.0;
 const MARKER_HEIGHT: f32 = 9.0;
 const MARKER_SIZE: f32 = 8.0;
@@ -327,16 +326,11 @@ fn mastery_marker<'a>(fraction: f32, accent: Color, leader: bool) -> Element<'a,
 
   let filled = (fraction.clamp(0.0, 1.0) * 1000.0) as u16;
   let remaining = 1000u16.saturating_sub(filled);
-  let caret = text(LEADER_GLYPH)
-    .font(typography::mono::REGULAR)
-    .size(MARKER_SIZE)
-    .style(move |_| text::Style {
-      color: Some(accent),
-    });
+  let caret = Icon::chevron_down().size(MARKER_SIZE).color(accent).render();
 
   Row::with_children(vec![
     Space::new().width(marker_portion(filled)).into(),
-    caret.into(),
+    caret,
     Space::new().width(marker_portion(remaining)).into(),
   ])
   .height(Length::Fixed(MARKER_HEIGHT))

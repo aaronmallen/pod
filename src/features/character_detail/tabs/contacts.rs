@@ -98,11 +98,8 @@ impl ContactSort {
     }
   }
 
-  fn caret(self, column: SortColumn) -> Option<&'static str> {
-    (self.column == column).then_some(match self.direction {
-      SortDirection::Ascending => "\u{25b2}",
-      SortDirection::Descending => "\u{25bc}",
-    })
+  fn caret(self, column: SortColumn) -> Option<SortDirection> {
+    (self.column == column).then_some(self.direction)
   }
 }
 
@@ -399,16 +396,12 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
   };
 
   let mut children: Vec<Element<'a, Message>> = vec![eyebrow_text(label, Some(label_color)).into()];
-  if let Some(caret) = sort.caret(column) {
-    children.push(
-      text(caret)
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
-        })
-        .into(),
-    );
+  if let Some(direction) = sort.caret(column) {
+    let chevron = match direction {
+      SortDirection::Ascending => Icon::chevron_up(),
+      SortDirection::Descending => Icon::chevron_down(),
+    };
+    children.push(chevron.size(typography::size::XS).color(color::accent::PLASMA).render());
   }
 
   let inner = container(
@@ -930,7 +923,7 @@ mod tests {
         direction: SortDirection::Descending,
       };
 
-      assert_eq!(sort.caret(SortColumn::Standing), Some("\u{25bc}"));
+      assert_eq!(sort.caret(SortColumn::Standing), Some(SortDirection::Descending));
       assert!(sort.caret(SortColumn::Entity).is_none());
       assert!(sort.caret(SortColumn::Type).is_none());
     }

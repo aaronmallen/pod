@@ -8,14 +8,13 @@ use super::{LABEL_COLUMN_WIDTH, Message, State};
 use crate::{
   features::skills::fmt_sp,
   ui::{
-    components::{avatar::Avatar, eyebrow::eyebrow_text, rule},
+    components::{avatar::Avatar, eyebrow::eyebrow_text, icon::Icon, rule},
     style::{color, radius, spacing, typography},
   },
 };
 
 const HEAD_PORTRAIT: f32 = 38.0;
 const HEADS_ROW_HEIGHT: f32 = 60.0;
-const LEADER_GLYPH: &str = "\u{25b2}";
 const MARKER_SIZE: f32 = 9.0;
 const ROW_HEIGHT: f32 = 38.0;
 
@@ -155,15 +154,7 @@ fn stat_cell<'a>(state: &State, pilot_id: i64, label: String, leading: bool) -> 
   let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if leading {
     let accent = state.pilot_accent(pilot_id);
-    cells.push(
-      text(LEADER_GLYPH)
-        .font(typography::mono::REGULAR)
-        .size(MARKER_SIZE)
-        .style(move |_| text::Style {
-          color: Some(accent),
-        })
-        .into(),
-    );
+    cells.push(Icon::chevron_up().size(MARKER_SIZE).color(accent).render());
   }
   cells.push(
     text(label)

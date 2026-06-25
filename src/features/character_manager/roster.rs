@@ -1,7 +1,7 @@
-use std::{collections::HashMap, f32::consts::FRAC_PI_2};
+use std::collections::HashMap;
 
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Point, Radians, Rotation,
+  Background, Border, Color, Element, Length, Padding, Point,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, Stack, button, container, mouse_area, scrollable, svg, text},
 };
@@ -15,7 +15,7 @@ use super::{
 use crate::{
   sync::SyncStatus,
   ui::{
-    components::{eyebrow::eyebrow, rule, status},
+    components::{eyebrow::eyebrow, icon::Icon, rule, status},
     style::{color, control, radius, spacing, typography},
   },
 };
@@ -46,8 +46,6 @@ const DROP_HIGHLIGHT_ALPHA: f32 = 0.08;
 const EMPTY_CELL_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
 
 static SQUADS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/squads.svg");
-
-static CHEVRON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/chevron.svg");
 
 static DROP_ICON: &[u8] = include_bytes!("../../../assets/images/icons/drop.svg");
 
@@ -278,13 +276,14 @@ fn squad_bar_source<'a>(
 fn squad_bar<'a>(group: &'a SquadGroup, collapsed: bool, dragged: bool) -> Element<'a, Message> {
   let accent = group.accent;
 
-  let chevron_glyph = svg(svg::Handle::from_memory(CHEVRON_ICON))
-    .width(Length::Fixed(SQUAD_CHEVRON_GLYPH))
-    .height(Length::Fixed(SQUAD_CHEVRON_GLYPH))
-    .rotation(Rotation::Floating(Radians(if collapsed { -FRAC_PI_2 } else { 0.0 })))
-    .style(|_, _| svg::Style {
-      color: Some(color::text::secondary()),
-    });
+  let chevron_glyph = if collapsed {
+    Icon::chevron_right()
+  } else {
+    Icon::chevron()
+  }
+  .size(SQUAD_CHEVRON_GLYPH)
+  .color(color::text::secondary())
+  .render();
   let chevron = mouse_area(
     container(chevron_glyph)
       .width(Length::Fixed(SQUAD_CHEVRON_CELL))

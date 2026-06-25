@@ -124,9 +124,7 @@ fn warn_on_suspected_global_feed(character_id: i64, candidates: usize, non_parti
       character_id,
       candidates,
       non_participants,
-      "character killmails: suspected global-feed contamination — a large discovery batch was almost \
-       entirely non-participant mails (likely a zKillboard global firehose during an ESI outage); all \
-       such mails were discarded"
+      "character killmails: suspected global-feed contamination — a large discovery batch was almost entirely non-participant mails (likely a zKillboard global firehose during an ESI outage); all such mails were discarded"
     );
   }
 }

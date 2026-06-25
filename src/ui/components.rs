@@ -1,3 +1,4 @@
+pub mod add_tag_modal;
 pub mod anchored_dropdown;
 pub mod avatar;
 pub mod backdrop;

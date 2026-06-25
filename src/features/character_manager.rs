@@ -5,7 +5,6 @@ mod roster;
 mod roster_tabs;
 mod search_help;
 mod squad_ui;
-mod tag_ui;
 
 use std::{
   collections::{HashMap, HashSet},
@@ -40,6 +39,7 @@ use crate::{
   sync::{JobKey, JobKind, Phase, Subject, SyncStatus},
   ui::{
     components::{
+      add_tag_modal::{self, AddTagMessage, AddTagModal},
       color_picker, confirm_modal,
       context_menu::{self, Item},
       header,
@@ -80,13 +80,6 @@ const AUTO_SCROLL_MAX_SPEED: f32 = 18.0;
 /// Pixels-per-tick at the inner edge of the hot zone (proximity ~0), so crossing the
 /// threshold starts a gentle creep rather than a dead band that suddenly jumps.
 const AUTO_SCROLL_MIN_SPEED: f32 = 2.0;
-
-#[derive(Clone, Debug)]
-pub struct AddTagModal {
-  pub entity_id: i64,
-  pub entity_type: &'static str,
-  pub input: String,
-}
 
 #[derive(Clone, Debug)]
 pub struct ContextMenu {
@@ -999,11 +992,7 @@ fn update_tags(state: &mut State, message: Message, db: &Database) -> ControlFlo
     } => {
       state.context_menu = None;
       state.corp_context_menu = None;
-      state.add_tag_modal = Some(AddTagModal {
-        entity_id,
-        entity_type,
-        input: String::new(),
-      });
+      state.add_tag_modal = Some(AddTagModal::new(entity_id, entity_type));
       Task::none()
     }
     Message::UnassignTag {
@@ -1306,7 +1295,7 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
     let (name, assigned, assignable) = resolve_add_tag_modal(state, modal.entity_type, modal.entity_id);
     return Some((
       Message::CloseAddTagModal,
-      tag_ui::modal_view(modal, name, assigned, assignable),
+      add_tag_modal::view(modal, name, assigned, assignable, map_add_tag_message),
     ));
   }
 
@@ -1432,6 +1421,34 @@ fn squad_menu_view(menu: &SquadMenu) -> Element<'_, Message> {
   ];
   let anchor = iced::Point::new((menu.anchor.x - context_menu::MENU_WIDTH).max(0.0), menu.anchor.y);
   context_menu::context_menu(&menu.name, items, anchor)
+}
+
+fn map_add_tag_message(message: AddTagMessage) -> Message {
+  match message {
+    AddTagMessage::InputChanged(input) => Message::AddTagInputChanged(input),
+    AddTagMessage::Assign {
+      entity_id,
+      entity_type,
+      tag_id,
+    } => Message::AssignTag {
+      entity_id,
+      entity_type,
+      tag_id,
+    },
+    AddTagMessage::CreateAndAssign {
+      ..
+    } => Message::CreateAndAssignTag,
+    AddTagMessage::Unassign {
+      entity_id,
+      entity_type,
+      tag_id,
+    } => Message::UnassignTag {
+      entity_id,
+      entity_type,
+      tag_id,
+    },
+    AddTagMessage::Close => Message::CloseAddTagModal,
+  }
 }
 
 fn resolve_add_tag_modal<'a>(

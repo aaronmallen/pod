@@ -4,7 +4,6 @@ use iced::{
   widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
 
-use super::{AddTagModal, Message};
 use crate::{
   store::model::Tag,
   ui::{
@@ -26,22 +25,63 @@ const LIST_PAD: f32 = 6.0;
 const ROW_PAD_X: f32 = 12.0;
 const ROW_PAD_Y: f32 = 9.0;
 
-pub(super) fn modal_view<'a>(
+#[derive(Clone, Debug)]
+pub struct AddTagModal {
+  pub entity_id: i64,
+  pub entity_type: &'static str,
+  pub input: String,
+}
+
+impl AddTagModal {
+  pub fn new(entity_id: i64, entity_type: &'static str) -> Self {
+    Self {
+      entity_id,
+      entity_type,
+      input: String::new(),
+    }
+  }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AddTagMessage {
+  InputChanged(String),
+  Assign {
+    entity_id: i64,
+    entity_type: &'static str,
+    tag_id: i64,
+  },
+  CreateAndAssign {
+    entity_id: i64,
+    entity_type: &'static str,
+  },
+  Unassign {
+    entity_id: i64,
+    entity_type: &'static str,
+    tag_id: i64,
+  },
+  Close,
+}
+
+pub fn view<'a, M>(
   modal: &'a AddTagModal,
   entity_name: &'a str,
   assigned: Vec<&'a Tag>,
   assignable: Vec<&'a Tag>,
-) -> Element<'a, Message> {
-  let mut children: Vec<Element<'a, Message>> = vec![header(entity_name), rule::horizontal()];
-  if let Some(current) = current_tags(modal, &assigned) {
+  on_message: impl Fn(AddTagMessage) -> M + Clone + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let mut children: Vec<Element<'a, M>> = vec![header(entity_name), rule::horizontal()];
+  if let Some(current) = current_tags(modal, &assigned, on_message.clone()) {
     children.push(current);
     children.push(rule::horizontal());
   }
-  children.push(search_input(modal));
+  children.push(search_input(modal, on_message.clone()));
   children.push(rule::horizontal());
-  children.push(tag_list(modal, &assignable));
+  children.push(tag_list(modal, &assignable, on_message.clone()));
   children.push(rule::horizontal());
-  children.push(footer());
+  children.push(footer(on_message));
 
   let card = container(Column::with_children(children).width(Length::Fill))
     .width(Length::Fixed(CARD_WIDTH))
@@ -66,7 +106,10 @@ pub(super) fn modal_view<'a>(
     .into()
 }
 
-fn header(entity_name: &str) -> Element<'_, Message> {
+fn header<'a, M>(entity_name: &str) -> Element<'a, M>
+where
+  M: 'a,
+{
   let titles = Column::with_children(vec![
     text("Add tag")
       .font(typography::mono::REGULAR)
@@ -97,22 +140,29 @@ fn header(entity_name: &str) -> Element<'_, Message> {
     .into()
 }
 
-fn current_tags<'a>(modal: &AddTagModal, assigned: &[&'a Tag]) -> Option<Element<'a, Message>> {
+fn current_tags<'a, M>(
+  modal: &AddTagModal,
+  assigned: &[&'a Tag],
+  on_message: impl Fn(AddTagMessage) -> M + 'a,
+) -> Option<Element<'a, M>>
+where
+  M: Clone + 'a,
+{
   if assigned.is_empty() {
     return None;
   }
 
   let entity_id = modal.entity_id;
   let entity_type = modal.entity_type;
-  let chips: Vec<Element<'a, Message>> = assigned
+  let chips: Vec<Element<'a, M>> = assigned
     .iter()
     .map(|tag| {
       Chip::new(tag.name().clone(), hex_to_color(tag.color().as_deref()))
-        .on_remove(Message::UnassignTag {
+        .on_remove(on_message(AddTagMessage::Unassign {
           entity_id,
           entity_type,
           tag_id: tag.id(),
-        })
+        }))
         .view()
     })
     .collect();
@@ -144,7 +194,13 @@ fn current_tags<'a>(modal: &AddTagModal, assigned: &[&'a Tag]) -> Option<Element
   )
 }
 
-fn search_input(modal: &AddTagModal) -> Element<'_, Message> {
+fn search_input<'a, M>(modal: &'a AddTagModal, on_message: impl Fn(AddTagMessage) -> M + Clone + 'a) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
+  let entity_id = modal.entity_id;
+  let entity_type = modal.entity_type;
+  let on_change = on_message.clone();
   let input = text_input("Search or create a tag…", &modal.input)
     .size(typography::size::MD)
     .padding(Padding {
@@ -153,8 +209,11 @@ fn search_input(modal: &AddTagModal) -> Element<'_, Message> {
       bottom: INPUT_WELL_PAD_Y,
       left: INPUT_WELL_PAD_X,
     })
-    .on_input(Message::AddTagInputChanged)
-    .on_submit(Message::CreateAndAssignTag)
+    .on_input(move |value| on_change(AddTagMessage::InputChanged(value)))
+    .on_submit(on_message(AddTagMessage::CreateAndAssign {
+      entity_id,
+      entity_type,
+    }))
     .style(search_input_style);
 
   container(input)
@@ -168,7 +227,14 @@ fn search_input(modal: &AddTagModal) -> Element<'_, Message> {
     .into()
 }
 
-fn tag_list<'a>(modal: &AddTagModal, assignable: &[&'a Tag]) -> Element<'a, Message> {
+fn tag_list<'a, M>(
+  modal: &AddTagModal,
+  assignable: &[&'a Tag],
+  on_message: impl Fn(AddTagMessage) -> M + Clone + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
   let query = modal.input.trim().to_lowercase();
   let matches: Vec<&Tag> = assignable
     .iter()
@@ -177,15 +243,20 @@ fn tag_list<'a>(modal: &AddTagModal, assignable: &[&'a Tag]) -> Element<'a, Mess
     .collect();
   let can_create = !query.is_empty() && !assignable.iter().any(|tag| tag.name().to_lowercase() == query);
 
-  let mut rows: Vec<Element<'a, Message>> = Vec::with_capacity(matches.len() + 1);
+  let mut rows: Vec<Element<'a, M>> = Vec::with_capacity(matches.len() + 1);
   if can_create {
-    rows.push(create_row(modal.input.trim()));
+    rows.push(create_row(
+      modal.entity_type,
+      modal.entity_id,
+      modal.input.trim(),
+      on_message.clone(),
+    ));
   }
   for tag in matches {
-    rows.push(tag_row(modal.entity_type, modal.entity_id, tag));
+    rows.push(tag_row(modal.entity_type, modal.entity_id, tag, on_message.clone()));
   }
 
-  let body: Element<'a, Message> = if rows.is_empty() {
+  let body: Element<'a, M> = if rows.is_empty() {
     empty_placeholder(assignable.is_empty())
   } else {
     Column::with_children(rows).width(Length::Fill).into()
@@ -204,7 +275,15 @@ fn tag_list<'a>(modal: &AddTagModal, assignable: &[&'a Tag]) -> Element<'a, Mess
   .into()
 }
 
-fn tag_row<'a>(entity_type: &'static str, entity_id: i64, tag: &Tag) -> Element<'a, Message> {
+fn tag_row<'a, M>(
+  entity_type: &'static str,
+  entity_id: i64,
+  tag: &Tag,
+  on_message: impl Fn(AddTagMessage) -> M + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
   let label = Row::with_children(vec![
     text("Tag")
       .font(typography::mono::REGULAR)
@@ -232,16 +311,24 @@ fn tag_row<'a>(entity_type: &'static str, entity_id: i64, tag: &Tag) -> Element<
       bottom: ROW_PAD_Y,
       left: ROW_PAD_X,
     })
-    .on_press(Message::AssignTag {
+    .on_press(on_message(AddTagMessage::Assign {
       entity_id,
       entity_type,
       tag_id: tag.id(),
-    })
+    }))
     .style(row_button)
     .into()
 }
 
-fn create_row<'a>(input: &str) -> Element<'a, Message> {
+fn create_row<'a, M>(
+  entity_type: &'static str,
+  entity_id: i64,
+  input: &str,
+  on_message: impl Fn(AddTagMessage) -> M + 'a,
+) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
   let label = Row::with_children(vec![
     text("New")
       .font(typography::mono::REGULAR)
@@ -269,12 +356,18 @@ fn create_row<'a>(input: &str) -> Element<'a, Message> {
       bottom: ROW_PAD_Y,
       left: ROW_PAD_X,
     })
-    .on_press(Message::CreateAndAssignTag)
+    .on_press(on_message(AddTagMessage::CreateAndAssign {
+      entity_id,
+      entity_type,
+    }))
     .style(row_button)
     .into()
 }
 
-fn empty_placeholder<'a>(nothing_assignable: bool) -> Element<'a, Message> {
+fn empty_placeholder<'a, M>(nothing_assignable: bool) -> Element<'a, M>
+where
+  M: 'a,
+{
   let copy = if nothing_assignable {
     "All tags already assigned"
   } else {
@@ -295,7 +388,10 @@ fn empty_placeholder<'a>(nothing_assignable: bool) -> Element<'a, Message> {
   .into()
 }
 
-fn footer<'a>() -> Element<'a, Message> {
+fn footer<'a, M>(on_message: impl Fn(AddTagMessage) -> M + 'a) -> Element<'a, M>
+where
+  M: Clone + 'a,
+{
   let hint = text("Click a tag to add it · remove from Current tags")
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -305,7 +401,7 @@ fn footer<'a>() -> Element<'a, Message> {
 
   let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
     .padding(crate::ui::style::control::padding())
-    .on_press(Message::CloseAddTagModal)
+    .on_press(on_message(AddTagMessage::Close))
     .style(crate::ui::style::control::ghost_button);
 
   let row = Row::with_children(vec![
@@ -380,6 +476,14 @@ mod tests {
     infra::tag_all(&db).await.unwrap()
   }
 
+  #[test]
+  fn it_builds_a_modal_with_a_blank_input() {
+    let modal = AddTagModal::new(7, ENTITY_TYPE_CHARACTER);
+    assert_eq!(modal.entity_id, 7);
+    assert_eq!(modal.entity_type, ENTITY_TYPE_CHARACTER);
+    assert!(modal.input.is_empty());
+  }
+
   #[tokio::test]
   async fn it_renders_a_create_row_when_the_typed_name_is_new() {
     let tags = seed_tags().await;
@@ -390,7 +494,7 @@ mod tests {
       input: "Logi".to_owned(),
     };
 
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), assignable);
+    let _el: Element<'_, AddTagMessage> = view(&modal, "Test Pilot", Vec::new(), assignable, |m| m);
   }
 
   #[tokio::test]
@@ -405,15 +509,15 @@ mod tests {
     };
 
     assert!(
-      current_tags(&modal, &assigned).is_some(),
+      current_tags(&modal, &assigned, |m: AddTagMessage| m).is_some(),
       "an entity with tags shows the current-tags section"
     );
     assert!(
-      current_tags(&modal, &[]).is_none(),
+      current_tags(&modal, &[], |m: AddTagMessage| m).is_none(),
       "an entity with no tags omits the current-tags section"
     );
 
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", assigned, assignable);
+    let _el: Element<'_, AddTagMessage> = view(&modal, "Test Pilot", assigned, assignable, |m| m);
   }
 
   #[tokio::test]
@@ -424,7 +528,7 @@ mod tests {
       input: String::new(),
     };
 
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), Vec::new());
+    let _el: Element<'_, AddTagMessage> = view(&modal, "Test Pilot", Vec::new(), Vec::new(), |m| m);
   }
 
   #[tokio::test]
@@ -437,6 +541,19 @@ mod tests {
       input: String::new(),
     };
 
-    let _el: Element<'_, Message> = modal_view(&modal, "Test Pilot", Vec::new(), assignable);
+    let _el: Element<'_, AddTagMessage> = view(&modal, "Test Pilot", Vec::new(), assignable, |m| m);
+  }
+
+  #[test]
+  fn it_maps_messages_through_the_host_mapper() {
+    let mapped: Vec<u8> = [AddTagMessage::InputChanged("x".to_owned()), AddTagMessage::Close]
+      .into_iter()
+      .map(|message| match message {
+        AddTagMessage::InputChanged(_) => 1u8,
+        AddTagMessage::Close => 2u8,
+        _ => 0u8,
+      })
+      .collect();
+    assert_eq!(mapped, vec![1, 2]);
   }
 }

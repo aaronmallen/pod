@@ -16,6 +16,7 @@ const RECOGNIZED_KEYS: &[&str] = &[
   "region",
   "s",
   "system",
+  "tag",
   "type",
 ];
 
@@ -47,6 +48,7 @@ pub struct ColumnSchema {
   pub group_name: &'static str,
   pub is_blueprint_copy: &'static str,
   pub is_singleton: &'static str,
+  pub item_id: &'static str,
   pub location_name: &'static str,
   pub name: &'static str,
   pub region_name: &'static str,
@@ -63,6 +65,7 @@ impl Default for ColumnSchema {
       group_name: "group_name",
       is_blueprint_copy: "is_blueprint_copy",
       is_singleton: "is_singleton",
+      item_id: "item_id",
       location_name: "location_name",
       name: "name",
       region_name: "region_name",
@@ -125,6 +128,7 @@ impl Compiler<'_> {
       "region" => self.push_exact(self.schema.region_name, value),
       "constellation" => self.push_exact(self.schema.constellation_name, value),
       "owner" => self.push_owner(value, context),
+      "tag" => self.push_tag(value),
       "type" => self.push_type(value),
       // Unknown facet key compiles to a predicate that matches no rows.
       _ => self.sql.push_str("0 = 1"),
@@ -140,6 +144,16 @@ impl Compiler<'_> {
       }
       _ => self.sql.push_str("0 = 1"),
     }
+  }
+
+  fn push_tag(&mut self, value: &str) {
+    self.sql.push_str(
+      "EXISTS (SELECT 1 FROM entity_tags et JOIN tags t ON t.id = et.tag_id WHERE et.entity_type = 'asset' AND et.entity_id = ",
+    );
+    self.sql.push_str(self.schema.item_id);
+    self.sql.push_str(" AND t.name = ");
+    self.push_param(FilterParam::Text(value.to_owned()));
+    self.sql.push_str(" COLLATE NOCASE)");
   }
 
   fn push_type(&mut self, value: &str) {
@@ -583,6 +597,55 @@ mod tests {
     }
 
     #[test]
+    fn it_compiles_tag_to_an_exists_against_the_entity_tags_join() {
+      let clause = compile_default("tag:Sell").unwrap();
+      assert_eq!(
+        clause.sql,
+        "(EXISTS (SELECT 1 FROM entity_tags et JOIN tags t ON t.id = et.tag_id \
+        WHERE et.entity_type = 'asset' AND et.entity_id = item_id AND t.name = ? COLLATE NOCASE))"
+      );
+      assert_eq!(clause.params, vec![text("sell")]);
+    }
+
+    #[test]
+    fn it_uses_the_schema_item_id_column_in_the_tag_exists() {
+      let schema = ColumnSchema {
+        item_id: "a.item_id",
+        ..ColumnSchema::default()
+      };
+      let clause = compile_query("tag:Sell", &schema, FilterContext::default()).unwrap();
+      assert!(
+        clause.sql.contains("et.entity_id = a.item_id"),
+        "expected the schema item_id column in the EXISTS join, got {}",
+        clause.sql
+      );
+    }
+
+    #[test]
+    fn it_combines_tag_multi_values_as_or_within_a_key() {
+      let clause = compile_default("tag:Sell,Junk").unwrap();
+      assert_eq!(
+        clause.sql,
+        "(EXISTS (SELECT 1 FROM entity_tags et JOIN tags t ON t.id = et.tag_id \
+        WHERE et.entity_type = 'asset' AND et.entity_id = item_id AND t.name = ? COLLATE NOCASE) \
+        OR EXISTS (SELECT 1 FROM entity_tags et JOIN tags t ON t.id = et.tag_id \
+        WHERE et.entity_type = 'asset' AND et.entity_id = item_id AND t.name = ? COLLATE NOCASE))"
+      );
+      assert_eq!(clause.params, vec![text("sell"), text("junk")]);
+    }
+
+    #[test]
+    fn it_negates_a_tag_with_a_not_prefix() {
+      let clause = compile_default("-tag:Junk").unwrap();
+      assert_eq!(
+        clause.sql,
+        "NOT (EXISTS (SELECT 1 FROM entity_tags et JOIN tags t ON t.id = et.tag_id \
+        WHERE et.entity_type = 'asset' AND et.entity_id = item_id AND t.name = ? COLLATE NOCASE))"
+      );
+      assert_eq!(clause.params, vec![text("junk")]);
+    }
+
+    #[test]
     fn it_negates_a_facet_with_a_not_prefix() {
       let clause = compile_default("-category:ship").unwrap();
       assert_eq!(clause.sql, "NOT (category = ? COLLATE NOCASE)");
@@ -681,6 +744,18 @@ mod tests {
           key: "category".to_owned(),
           negated: false,
           values: vec!["drone".to_owned(), "ship".to_owned()],
+        }]
+      );
+    }
+
+    #[test]
+    fn it_parses_tag_as_a_recognized_key_with_lowercased_values() {
+      assert_eq!(
+        parse("tag:Sell,Junk"),
+        vec![AssetFilterToken::KeyValue {
+          key: "tag".to_owned(),
+          negated: false,
+          values: vec!["sell".to_owned(), "junk".to_owned()],
         }]
       );
     }

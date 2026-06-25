@@ -1044,6 +1044,7 @@ fn render_column_schema(owner_column: &'static str) -> ColumnSchema {
     group_name: GROUP_NAME_EXPR,
     is_blueprint_copy: "a.is_blueprint_copy",
     is_singleton: "a.is_singleton",
+    item_id: "a.item_id",
     location_name: location_label_expr!(),
     name: "a.name",
     region_name: "reg.name",
@@ -1786,6 +1787,7 @@ fn combined_column_schema() -> ColumnSchema {
     group_name: "group_name",
     is_blueprint_copy: "is_blueprint_copy",
     is_singleton: "is_singleton",
+    item_id: "item_id",
     location_name: "location_label",
     name: "name",
     region_name: "region_name",
@@ -5612,6 +5614,237 @@ mod asset_tests {
         [100, 101],
         "the corp item renamed Aaa sorts ahead of the unnamed Mmm despite its Zilch type name"
       );
+    }
+  }
+
+  mod tag_filter {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn query(sort: SortColumn) -> InventoryQuery<'static> {
+      InventoryQuery {
+        cursor: None,
+        direction: SortDirection::Ascending,
+        filter: "",
+        limit: 100,
+        location_ids: &[],
+        me_id: None,
+        reproc_yield: 0.5,
+        sort,
+      }
+    }
+
+    async fn seed_tag(db: &Database, id: i64, name: &str) {
+      sqlx::query("INSERT INTO tags (id, created_at, name, position, updated_at) VALUES (?, 0, ?, ?, 0)")
+        .bind(id)
+        .bind(name)
+        .bind(id)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    async fn tag_asset(db: &Database, tag_id: i64, item_id: i64) {
+      sqlx::query("INSERT INTO entity_tags (tag_id, entity_type, entity_id) VALUES (?, 'asset', ?)")
+        .bind(tag_id)
+        .bind(item_id)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_two_tagged_ships(db: &Database) {
+      seed_character(db, 42).await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut sell = char_asset(100, 42, None);
+      sell.type_id = 587;
+      let mut junk = char_asset(101, 42, None);
+      junk.type_id = 587;
+      let mut plain = char_asset(102, 42, None);
+      plain.type_id = 587;
+      replace_for_character(db, 42, &[sell, junk, plain]).await.unwrap();
+      seed_tag(db, 1, "Sell").await;
+      seed_tag(db, 2, "Junk").await;
+      tag_asset(db, 1, 100).await;
+      tag_asset(db, 2, 101).await;
+    }
+
+    #[tokio::test]
+    async fn it_matches_a_tag_exact_and_case_insensitively() {
+      let db = store::open_test().await.unwrap();
+      seed_two_tagged_ships(&db).await;
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "tag:sell",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "tag: matches the Sell-tagged stack case-insensitively"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_tag_and_keeps_untagged_stacks_with_negation() {
+      let db = store::open_test().await.unwrap();
+      seed_two_tagged_ships(&db).await;
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "-tag:Junk",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 102],
+        "-tag: drops the Junk-tagged stack but keeps the untagged one"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ors_multi_value_tags_within_one_token() {
+      let db = store::open_test().await.unwrap();
+      seed_two_tagged_ships(&db).await;
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "tag:Sell,Junk",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 101],
+        "tag:a,b matches stacks with either tag"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_ands_separate_tag_tokens() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut both = char_asset(100, 42, None);
+      both.type_id = 587;
+      let mut only_sell = char_asset(101, 42, None);
+      only_sell.type_id = 587;
+      replace_for_character(&db, 42, &[both, only_sell]).await.unwrap();
+      seed_tag(&db, 1, "Sell").await;
+      seed_tag(&db, 2, "Ship").await;
+      tag_asset(&db, 1, 100).await;
+      tag_asset(&db, 2, 100).await;
+      tag_asset(&db, 1, 101).await;
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "tag:Sell tag:Ship",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "separate tag tokens require every tag"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_composes_a_tag_with_another_facet() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_item_type(&db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      let mut ship = char_asset(100, 42, None);
+      ship.type_id = 587;
+      let mut mineral = char_asset(101, 42, None);
+      mineral.type_id = 24;
+      replace_for_character(&db, 42, &[ship, mineral]).await.unwrap();
+      seed_tag(&db, 1, "Sell").await;
+      tag_asset(&db, 1, 100).await;
+      tag_asset(&db, 1, 101).await;
+
+      let rows = inventory_page_for_character(
+        &db,
+        42,
+        &InventoryQuery {
+          filter: "tag:Sell category:ship",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100],
+        "tag: composes with category: as AND"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_filters_by_tag_in_the_combined_all_scope() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      seed_item_type(&db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      seed_price(&db, 587, 100.0).await;
+      let mut owned = char_asset(100, 42, None);
+      owned.type_id = 587;
+      let mut corp = corp_asset(200, CORP_ID, None);
+      corp.type_id = 587;
+      replace_for_character(&db, 42, &[owned]).await.unwrap();
+      replace_for_corporation(&db, CORP_ID, &[corp]).await.unwrap();
+      seed_tag(&db, 1, "Sell").await;
+      tag_asset(&db, 1, 100).await;
+      tag_asset(&db, 1, 200).await;
+
+      let rows = inventory_page_for_combined(
+        &db,
+        &[42],
+        &[CORP_ID],
+        &InventoryQuery {
+          filter: "tag:Sell",
+          ..query(SortColumn::Name)
+        },
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(
+        rows.iter().map(|r| r.item_id).collect::<Vec<_>>(),
+        [100, 200],
+        "tag: filters across both owners in the combined scope"
+      );
+
+      let totals = inventory_totals_for_combined(&db, &[42], &[CORP_ID], "tag:Sell", &[], None)
+        .await
+        .unwrap();
+      assert_eq!(totals.items, 2, "combined totals count only the tagged rows");
     }
   }
 

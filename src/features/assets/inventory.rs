@@ -44,16 +44,17 @@ const REPROC_EDGE_WIDTH: f32 = 2.0;
 /// Header and data rows share these so they stay aligned.
 const COLUMN_PORTIONS: [u16; 9] = [4, 2, 1, 2, 2, 2, 2, 2, 2];
 
-const FILTER_HELP_EXAMPLES: [(&str, &str); 6] = [
+const FILTER_HELP_EXAMPLES: [(&str, &str); 7] = [
   ("category:ship", "all ships"),
   ("region:\"The Forge\"", "in The Forge"),
   ("name:Tritanium", "name contains Tritanium"),
   ("category:ship -name:Rifter", "ships, not Rifters"),
   ("system:Jita type:stack", "stacks in Jita"),
   ("owner:me category:module", "my modules"),
+  ("tag:Sell -tag:Junk", "tagged Sell, not Junk"),
 ];
 
-const FILTER_HELP_KEYS: [(&str, &str, &str); 9] = [
+const FILTER_HELP_KEYS: [(&str, &str, &str); 10] = [
   ("name:", "n:", "type name (partial)"),
   ("group:", "g:", "group name (partial)"),
   ("category:", "cat:", "category key (exact)"),
@@ -62,6 +63,7 @@ const FILTER_HELP_KEYS: [(&str, &str, &str); 9] = [
   ("system:", "s:", "system name (partial)"),
   ("location:", "loc:", "location name (partial)"),
   ("owner:", "", "character name or \"me\""),
+  ("tag:", "", "asset tag name (exact)"),
   ("type:", "", "singleton \u{b7} bpc \u{b7} bpo \u{b7} stack"),
 ];
 
@@ -1099,6 +1101,7 @@ mod tests {
           ("category:ship -name:Rifter", "ships, not Rifters"),
           ("system:Jita type:stack", "stacks in Jita"),
           ("owner:me category:module", "my modules"),
+          ("tag:Sell -tag:Junk", "tagged Sell, not Junk"),
         ]
       );
     }
@@ -1116,6 +1119,7 @@ mod tests {
           ("system:", "s:", "system name (partial)"),
           ("location:", "loc:", "location name (partial)"),
           ("owner:", "", "character name or \"me\""),
+          ("tag:", "", "asset tag name (exact)"),
           ("type:", "", "singleton \u{b7} bpc \u{b7} bpo \u{b7} stack"),
         ]
       );

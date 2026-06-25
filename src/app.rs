@@ -28,7 +28,7 @@ use crate::{
   features::{
     assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, contract_detail,
     corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor,
-    skill_plan_manager, skills, skills_compare, splash, wallet, window_chrome,
+    skill_plan_manager, skills, skills_compare, splash, wallet,
   },
   mcp, notifications,
   services::{images, updater},
@@ -332,7 +332,6 @@ enum Message {
   CancelTakeOver,
   CharacterDetail(character_detail::Message),
   CharacterManager(character_manager::Message),
-  Chrome(window::Id, window_chrome::Event),
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
@@ -4138,7 +4137,6 @@ fn dispatch_sync_lifecycle(app: &mut App, message: Message) -> Task<Message> {
 
 fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
   match message {
-    Message::Chrome(id, event) => handle_chrome_event(app, id, event),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::Palette(msg) => handle_palette(app, msg),
@@ -6770,17 +6768,6 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(Window::Killmail | Window::Splash) => disable_shadow(id),
     _ => Task::none(),
-  }
-}
-
-// Translates a window-chrome interaction on the window `id` into the matching iced window task: the drag
-// bar moves the window, a resize edge begins an edge/corner drag-resize, and the close button routes through
-// the standard close path so lifetime/shutdown bookkeeping stays in one place.
-fn handle_chrome_event(app: &mut App, id: window::Id, event: window_chrome::Event) -> Task<Message> {
-  match event {
-    window_chrome::Event::Close => handle_close_requested(app, id),
-    window_chrome::Event::Drag => window::drag(id),
-    window_chrome::Event::Resize(direction) => window::drag_resize(id, direction),
   }
 }
 
@@ -10295,37 +10282,6 @@ mod tests {
     }
   }
 
-  mod handle_chrome_event {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_closes_the_window_through_the_standard_close_path() {
-      let mut app = test_app();
-      let main = window::Id::unique();
-      let killmail = window::Id::unique();
-      app.windows.register(main, Window::Main);
-      app.windows.register(killmail, Window::Killmail);
-
-      let _ = handle_chrome_event(&mut app, killmail, window_chrome::Event::Close);
-
-      assert_eq!(app.windows.kind(killmail), None);
-      assert_eq!(app.windows.kind(main), Some(Window::Main));
-    }
-
-    #[test]
-    fn it_leaves_the_registry_untouched_for_a_drag() {
-      let mut app = test_app();
-      let killmail = window::Id::unique();
-      app.windows.register(killmail, Window::Killmail);
-
-      let _ = handle_chrome_event(&mut app, killmail, window_chrome::Event::Drag);
-
-      assert_eq!(app.windows.kind(killmail), Some(Window::Killmail));
-    }
-  }
-
   mod killmail_window {
     use pretty_assertions::assert_eq;
 
@@ -13390,7 +13346,6 @@ mod tests {
       let mut app = ready_app();
       let id = window::Id::unique();
 
-      let _ = dispatch_window_lifecycle(&mut app, Message::Chrome(id, window_chrome::Event::Drag));
       let _ = dispatch_window_lifecycle(&mut app, Message::Palette(PaletteMessage::Close));
       let _ = dispatch_window_lifecycle(&mut app, Message::Shortcut(Chord::FocusSearch));
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));

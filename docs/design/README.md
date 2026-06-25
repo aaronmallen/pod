@@ -43,6 +43,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0032] | Skill Plans Store Full Set, Project Per-Char    | ![Active][badge-active] | 2026-06-22 |
 | [0033] | Embedded MCP Server for Agent Automation        | ![Active][badge-active] | 2026-06-22 |
 | [0034] | MCP Tool Input Schemas via Declarative Arg-Spec | ![Active][badge-active] | 2026-06-23 |
+| [0035] | Post-Sync Cross-Owner Budget Mark Reconcile     | ![Active][badge-active] | 2026-06-23 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -80,5 +81,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0032]: 0032-skill-plan-full-storage-projection.md
 [0033]: 0033-embedded-mcp-server.md
 [0034]: 0034-mcp-tool-input-schemas-via-declarative-arg-spec.md
+[0035]: 0035-post-sync-cross-owner-budget-mark-reconciliation.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

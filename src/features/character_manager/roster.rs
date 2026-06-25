@@ -873,6 +873,7 @@ mod tests {
     card.total_sp = sp;
     card.training = training.then(|| super::super::card::Training {
       level: 4,
+      paused: None,
       progress: 0.5,
       remaining: "1d".to_owned(),
       skill: "Skill".to_owned(),

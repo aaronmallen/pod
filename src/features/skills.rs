@@ -22,11 +22,14 @@ use iced::{
   widget::{Column, Row, Stack, container, scrollable, text},
 };
 
-pub use self::right_panel::RightTab;
 use self::{
   layout_shell::layout_shell,
   optimizer::{Attribute, Attributes},
   right_panel::Panel,
+};
+pub use self::{
+  queue::{QueueStatus, queue_status},
+  right_panel::RightTab,
 };
 pub use crate::features::skill_plan_editor::Seed as EditorSeed;
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp};

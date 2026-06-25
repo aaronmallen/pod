@@ -47,7 +47,8 @@ const SEARCH_SELECT: &str = "\
     it.name AS training_skill_name, \
     head.finished_level AS training_finished_level, \
     head.start_date AS training_start_date, \
-    head.finish_date AS training_finish_date \
+    head.finish_date AS training_finish_date, \
+    (SELECT COUNT(*) FROM character_skillqueue q WHERE q.character_id = oc.id) AS training_queued_count \
   FROM owned_characters oc \
   LEFT JOIN character_state cstate ON cstate.character_id = oc.id \
   LEFT JOIN corporations corp ON corp.id = oc.corporation_id \
@@ -184,6 +185,7 @@ fn into_card_row(sql: CardRowSql) -> CardRow {
   let training = sql.training_skill_id.map(|skill_id| CardTraining {
     finish_date: sql.training_finish_date,
     finished_level: sql.training_finished_level.unwrap_or_default(),
+    queued_count: sql.training_queued_count.max(0) as usize,
     skill_id,
     skill_name: sql.training_skill_name,
     start_date: sql.training_start_date,
@@ -2514,6 +2516,50 @@ mod tests {
       assert_eq!(scout.tags.len(), 1);
       assert_eq!(scout.tags[0].name, "PvP");
       assert_eq!(scout.tags[0].color_hex.as_deref(), Some("#ff0000"));
+    }
+
+    #[tokio::test]
+    async fn it_carries_the_full_skillqueue_count_for_the_card() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+
+      // The scout's single active-training entry yields a queued count of 1.
+      let scout = search(&db, &parse("tag:pvp"), NOW).await.unwrap();
+      assert_eq!(
+        scout[0].training.as_ref().map(|training| training.queued_count),
+        Some(1)
+      );
+
+      // A paused multi-skill queue: undated head plus two trailing entries → count 3.
+      let paused: Vec<CharacterSkillqueue> = (0..3)
+        .map(|position| CharacterSkillqueue {
+          character_id: COBALT_RECRUIT,
+          finish_date: None,
+          finished_level: 3,
+          level_end_sp: None,
+          level_start_sp: None,
+          queue_position: position,
+          skill_id: 3300 + position,
+          start_date: None,
+          training_start_sp: None,
+        })
+        .collect();
+      replace_skillqueue(&db, COBALT_RECRUIT, &paused).await.unwrap();
+
+      let rows = search(&db, &parse("name:recruit"), NOW).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert_eq!(rows[0].training.as_ref().map(|training| training.queued_count), Some(3));
+    }
+
+    #[tokio::test]
+    async fn it_reports_a_zero_queued_count_with_no_training_for_an_empty_queue() {
+      let db = store::open_test().await.unwrap();
+      seed_roster(&db).await;
+
+      // RED_BARON has no skillqueue rows; the head join misses, so training is absent.
+      let rows = search(&db, &parse("name:baron"), NOW).await.unwrap();
+      assert_eq!(rows.len(), 1);
+      assert!(rows[0].training.is_none());
     }
 
     #[tokio::test]

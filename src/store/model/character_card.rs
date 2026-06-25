@@ -29,6 +29,7 @@ pub struct CardRowSql {
   pub total_sp: Option<i64>,
   pub training_finish_date: Option<String>,
   pub training_finished_level: Option<i64>,
+  pub training_queued_count: i64,
   pub training_skill_id: Option<i64>,
   pub training_skill_name: Option<String>,
   pub training_start_date: Option<String>,
@@ -46,6 +47,7 @@ pub struct CardTag {
 pub struct CardTraining {
   pub finish_date: Option<String>,
   pub finished_level: i64,
+  pub queued_count: usize,
   pub skill_id: i64,
   pub skill_name: Option<String>,
   pub start_date: Option<String>,

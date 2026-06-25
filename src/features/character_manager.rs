@@ -24,7 +24,10 @@ use iced::{
 
 use crate::{
   config::FeatureFlags,
-  features::{auth as auth_feature, registry},
+  features::{
+    auth as auth_feature, registry,
+    skills::{QueueStatus, queue_status},
+  },
   store::{
     Database, images,
     model::{
@@ -2187,6 +2190,14 @@ async fn resolve_training(
   let item_type = sde::get_item_type(db, entry.skill_id()).await?;
   let skill = skill_label(item_type.as_ref().map(|t| t.name().as_str()), entry.skill_id());
 
+  let queued_count = character::skillqueue(db, entry.character_id()).await?.len();
+  let paused = match queue_status(Some(entry), queued_count) {
+    QueueStatus::Paused {
+      queued,
+    } => Some(queued),
+    QueueStatus::Training | QueueStatus::Empty => None,
+  };
+
   let finish = entry.finish_date().as_deref().and_then(parse_timestamp);
   let start = entry.start_date().as_deref().and_then(parse_timestamp);
 
@@ -2203,6 +2214,7 @@ async fn resolve_training(
   Ok(Training {
     skill,
     level: entry.finished_level(),
+    paused,
     remaining,
     progress,
   })
@@ -2462,6 +2474,24 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
   let finish = training.finish_date.as_deref().and_then(parse_timestamp);
   let start = training.start_date.as_deref().and_then(parse_timestamp);
 
+  let head = CharacterSkillqueue {
+    character_id: 0,
+    finish_date: training.finish_date.clone(),
+    finished_level: training.finished_level,
+    level_end_sp: None,
+    level_start_sp: None,
+    queue_position: 0,
+    skill_id: training.skill_id,
+    start_date: training.start_date.clone(),
+    training_start_sp: None,
+  };
+  let paused = match queue_status(Some(&head), training.queued_count) {
+    QueueStatus::Paused {
+      queued,
+    } => Some(queued),
+    QueueStatus::Training | QueueStatus::Empty => None,
+  };
+
   let remaining = finish.map_or_else(|| "—".to_owned(), |finish| format_remaining(finish - now));
   let progress = match (start, finish) {
     (Some(start), Some(finish)) if finish > start => {
@@ -2475,6 +2505,7 @@ fn training_from_row(training: character_card::CardTraining, now: DateTime<Utc>)
   Training {
     skill: skill_label(training.skill_name.as_deref(), training.skill_id),
     level: training.finished_level,
+    paused,
     remaining,
     progress,
   }
@@ -3773,6 +3804,7 @@ mod tests {
         training: Some(character_card::CardTraining {
           finish_date: Some("2026-06-01T01:00:00Z".to_owned()),
           finished_level: 4,
+          queued_count: 1,
           skill_id: 3300,
           skill_name: Some("Gunnery".to_owned()),
           start_date: Some("2026-05-31T23:00:00Z".to_owned()),
@@ -3995,6 +4027,83 @@ mod tests {
         card.portrait.stale_key(),
         Some((images::ImageKind::CharacterPortrait, 42))
       );
+    }
+
+    #[test]
+    fn it_renders_an_actively_training_row_with_no_paused_label() {
+      let training = character_card::CardTraining {
+        finish_date: Some("2026-06-02T00:00:00Z".to_owned()),
+        finished_level: 4,
+        queued_count: 3,
+        skill_id: 3300,
+        skill_name: Some("Gunnery".to_owned()),
+        start_date: Some("2026-05-31T00:00:00Z".to_owned()),
+      };
+
+      let resolved = training_from_row(training, now());
+
+      assert!(resolved.paused.is_none());
+      assert!(resolved.progress > 0.0);
+      assert_ne!(resolved.remaining, "—");
+      assert!(
+        super::QueueStatus::Training.is_training(),
+        "the row is classified through the shared training status"
+      );
+    }
+
+    #[test]
+    fn it_renders_a_paused_row_with_its_queued_count() {
+      let training = character_card::CardTraining {
+        finish_date: None,
+        finished_level: 4,
+        queued_count: 5,
+        skill_id: 3300,
+        skill_name: Some("Gunnery".to_owned()),
+        start_date: None,
+      };
+
+      let resolved = training_from_row(training, now());
+
+      assert_eq!(resolved.paused, Some(5));
+      assert!(
+        super::QueueStatus::Paused {
+          queued: 5
+        }
+        .is_paused()
+      );
+    }
+
+    #[test]
+    fn it_treats_a_partially_dated_head_with_queued_skills_as_paused() {
+      let training = character_card::CardTraining {
+        finish_date: None,
+        finished_level: 4,
+        queued_count: 2,
+        skill_id: 3300,
+        skill_name: Some("Gunnery".to_owned()),
+        start_date: Some("2026-05-31T00:00:00Z".to_owned()),
+      };
+
+      let resolved = training_from_row(training, now());
+
+      assert_eq!(resolved.paused, Some(2));
+    }
+
+    #[test]
+    fn it_leaves_a_lone_undated_head_unpaused_when_nothing_is_queued() {
+      let training = character_card::CardTraining {
+        finish_date: None,
+        finished_level: 4,
+        queued_count: 0,
+        skill_id: 3300,
+        skill_name: Some("Gunnery".to_owned()),
+        start_date: None,
+      };
+
+      let resolved = training_from_row(training, now());
+
+      assert!(resolved.paused.is_none());
+      assert!(super::QueueStatus::Empty.is_empty());
     }
 
     #[tokio::test]

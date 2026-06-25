@@ -66,6 +66,7 @@ pub(super) struct Sections {
 #[derive(Clone, Debug)]
 pub struct Training {
   pub level: i64,
+  pub paused: Option<usize>,
   pub progress: f32,
   pub remaining: String,
   pub skill: String,
@@ -382,7 +383,7 @@ fn training_section(model: &CardModel) -> Element<'_, Message> {
     Some(training) => Row::with_children(vec![
       label.into(),
       Space::new().width(Length::Fill).into(),
-      text(training.remaining.clone())
+      text(training.paused.map_or_else(|| training.remaining.clone(), paused_label))
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {
@@ -404,6 +405,11 @@ fn training_section(model: &CardModel) -> Element<'_, Message> {
     .into()
 }
 
+fn paused_label(queued: usize) -> String {
+  let noun = if queued == 1 { "skill" } else { "skills" };
+  format!("Paused \u{b7} {queued} {noun} queued")
+}
+
 fn training_detail(character_id: i64, training: &Training) -> Element<'_, Message> {
   let skill = button(
     text(format!("{} {}", training.skill, roman(training.level)))
@@ -414,9 +420,15 @@ fn training_detail(character_id: i64, training: &Training) -> Element<'_, Messag
   .on_press(Message::TrainingSkillClicked(character_id))
   .style(name_button);
 
+  let progress_color = if training.paused.is_some() {
+    color::text::secondary()
+  } else {
+    color::accent::PLASMA
+  };
+
   Column::with_children(vec![
     skill.into(),
-    progress_bar(training.progress, color::accent::PLASMA, PROGRESS_HEIGHT),
+    progress_bar(training.progress, progress_color, PROGRESS_HEIGHT),
   ])
   .spacing(spacing::SPACE_2)
   .into()
@@ -614,6 +626,7 @@ mod tests {
       total_sp: Some(82_000_000),
       training: Some(Training {
         level: 5,
+        paused: None,
         progress: 0.71,
         remaining: "2d 14h".to_owned(),
         skill: "Caldari Cruiser".to_owned(),
@@ -695,6 +708,26 @@ mod tests {
       model.training = None;
 
       let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+    }
+
+    #[test]
+    fn it_renders_a_paused_card() {
+      let mut model = base_model();
+      if let Some(training) = model.training.as_mut() {
+        training.paused = Some(4);
+      }
+
+      let _el: Element<'_, Message> = card(&model, None, false, all_sections());
+    }
+
+    #[test]
+    fn it_labels_a_paused_queue_with_its_real_count() {
+      assert_eq!(paused_label(4), "Paused \u{b7} 4 skills queued");
+    }
+
+    #[test]
+    fn it_uses_the_singular_noun_for_a_one_skill_paused_queue() {
+      assert_eq!(paused_label(1), "Paused \u{b7} 1 skill queued");
     }
 
     #[test]

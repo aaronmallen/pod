@@ -10,6 +10,7 @@
 //! This module is the epic linchpin: the read/write/mail specs register their tools on the
 //! [`Registry`] built by [`registry`] and consume the [`bridge::McpRequest`] / [`tool`] API here.
 
+pub mod args;
 pub mod bridge;
 pub mod protocol;
 pub mod reload;

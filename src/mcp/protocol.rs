@@ -7,7 +7,10 @@
 
 use serde_json::{Value, json};
 
-use crate::mcp::tool::{Registry, ToolError};
+use crate::mcp::{
+  args::input_schema,
+  tool::{Registry, ToolError},
+};
 
 /// The MCP protocol revision Pod advertises in `initialize`.
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -98,7 +101,7 @@ fn tools_result(registry: &Registry) -> Value {
       json!({
         "name": tool.name(),
         "description": tool.description(),
-        "inputSchema": { "type": "object", "properties": {} },
+        "inputSchema": input_schema(tool.args()),
       })
     })
     .collect();
@@ -130,7 +133,10 @@ fn tool_call(id: Value, request: &Value) -> Dispatch {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::mcp::tool::{McpTool, Permission};
+  use crate::mcp::{
+    args::ArgSpec,
+    tool::{McpTool, Permission},
+  };
 
   fn registry() -> Registry {
     Registry::default().with(McpTool::new(
@@ -170,6 +176,45 @@ mod tests {
       let tools = response["result"]["tools"].as_array().unwrap();
       assert_eq!(tools.len(), 1);
       assert_eq!(tools[0]["name"], "ping");
+    }
+
+    #[test]
+    fn tools_list_emits_a_real_input_schema_from_arg_specs() {
+      let registry = Registry::default()
+        .with(
+          McpTool::new("with_args", "Has args", Permission::Read, |_db, _args| async move {
+            Ok(json!({}))
+          })
+          .with_args([
+            ArgSpec::integer("character_id", "The character id"),
+            ArgSpec::optional_integer("page", 0, "Zero-based page"),
+          ]),
+        )
+        .with(McpTool::new(
+          "no_args",
+          "No args",
+          Permission::Read,
+          |_db, _args| async move { Ok(json!({})) },
+        ));
+      let request = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" });
+
+      let Some(Dispatch::Respond(response)) = dispatch(&request, &registry) else {
+        panic!("tools/list resolves in-band");
+      };
+
+      let tools = response["result"]["tools"].as_array().unwrap();
+      let with_args = tools.iter().find(|t| t["name"] == "with_args").unwrap();
+      let no_args = tools.iter().find(|t| t["name"] == "no_args").unwrap();
+
+      let schema = &with_args["inputSchema"];
+      assert_eq!(schema["type"], "object");
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["character_id"]["description"], "The character id");
+      assert_eq!(schema["properties"]["page"]["type"], "integer");
+      assert_eq!(schema["required"], json!(["character_id"]));
+
+      assert_eq!(no_args["inputSchema"]["properties"], json!({}));
+      assert_eq!(no_args["inputSchema"]["required"], json!([]));
     }
 
     #[test]

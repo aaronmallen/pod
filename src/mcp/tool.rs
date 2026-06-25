@@ -10,7 +10,7 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 
-use crate::{config::McpPerms, store::Database};
+use crate::{config::McpPerms, mcp::args::ArgSpec, store::Database};
 
 /// The five-flag trust surface a tool can require. Mirrors [`crate::config::McpPerms`] one-to-one so
 /// the gate can map a tool's requirement straight onto the configured flag.
@@ -76,6 +76,7 @@ type ToolHandler = Arc<dyn Fn(Database, Value) -> ToolFuture + Send + Sync>;
 /// it requires, and the async handler that produces its result.
 #[derive(Clone)]
 pub struct McpTool {
+  args: Vec<ArgSpec>,
   description: &'static str,
   handler: ToolHandler,
   name: &'static str,
@@ -89,11 +90,24 @@ impl McpTool {
     Fut: Future<Output = ToolOutcome> + Send + 'static,
   {
     Self {
+      args: Vec::new(),
       description,
       handler: Arc::new(move |db, args| Box::pin(handler(db, args))),
       name,
       permission,
     }
+  }
+
+  /// Attaches the declarative argument list that becomes this tool's advertised JSON Schema. Tools
+  /// that omit this call advertise empty properties.
+  #[allow(dead_code)]
+  pub fn with_args(mut self, args: impl IntoIterator<Item = ArgSpec>) -> Self {
+    self.args = args.into_iter().collect();
+    self
+  }
+
+  pub fn args(&self) -> &[ArgSpec] {
+    &self.args
   }
 
   pub fn description(&self) -> &'static str {

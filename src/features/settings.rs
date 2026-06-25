@@ -1,5 +1,6 @@
 pub mod about_tab;
 pub mod accessibility_tab;
+pub mod data_export;
 pub mod features_tab;
 pub mod industry_tab;
 pub mod log_export;

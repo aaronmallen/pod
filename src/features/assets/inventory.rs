@@ -504,16 +504,10 @@ fn header_cell<'a>(
   ];
   if active {
     let caret = match dir {
-      SortDirection::Ascending => "\u{25b2}",
-      SortDirection::Descending => "\u{25bc}",
+      SortDirection::Ascending => Icon::chevron_up(),
+      SortDirection::Descending => Icon::chevron_down(),
     };
-    content.push(
-      text(caret)
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(typography::colored(color::accent::PLASMA))
-        .into(),
-    );
+    content.push(caret.size(12.0).color(color::accent::PLASMA).render());
   }
 
   let inner = Row::with_children(content)
@@ -711,17 +705,17 @@ fn row_prefix<'a>(inventory_row: &InventoryRow, expanded: bool) -> Element<'a, M
 }
 
 fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
-  button(
-    text(if expanded { "\u{25bc}" } else { "\u{25b6}" })
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(0)
-  .width(Length::Fixed(TOGGLE_WIDTH))
-  .on_press(Message::ContainerToggled(item_id))
-  .style(|_, _| button::Style::default())
-  .into()
+  let caret = if expanded {
+    Icon::chevron_down()
+  } else {
+    Icon::chevron_right()
+  };
+  button(caret.size(12.0).color(color::text::secondary()).render())
+    .padding(0)
+    .width(Length::Fixed(TOGGLE_WIDTH))
+    .on_press(Message::ContainerToggled(item_id))
+    .style(|_, _| button::Style::default())
+    .into()
 }
 
 fn group_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {

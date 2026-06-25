@@ -340,11 +340,6 @@ enum Message {
   },
   ConfirmTakeOver,
   Contract(window::Id, contract_detail::Message),
-  ContractWindowReady {
-    contract_id: i64,
-    id: window::Id,
-    source: contract_detail::Source,
-  },
   ClearNotifications,
   CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
@@ -551,9 +546,6 @@ impl Message {
       Message::ComposeWindowReady {
         ..
       } => "ComposeWindowReady",
-      Message::ContractWindowReady {
-        ..
-      } => "ContractWindowReady",
       Message::StockpileEditorWindowReady {
         ..
       } => "StockpileEditorWindowReady",
@@ -3194,14 +3186,9 @@ fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
     // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
     // own conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(
-      Window::Contract
-      | Window::Killmail
-      | Window::MailCompose
-      | Window::ManagePlans
-      | Window::Splash
-      | Window::StockpileEditor,
-    ) => splash_theme(),
+    Some(Window::Killmail | Window::MailCompose | Window::ManagePlans | Window::Splash | Window::StockpileEditor) => {
+      splash_theme()
+    }
     _ => pod_theme(),
   }
 }
@@ -3218,7 +3205,10 @@ fn window_title(app: &App, id: window::Id) -> String {
   match app.windows.kind(id) {
     Some(Window::CalendarEvent) => "Pod".to_string(),
     Some(Window::Compare) => "Pod — Compare Skills".to_string(),
-    Some(Window::Contract) => "Pod — Contract".to_string(),
+    Some(Window::Contract) => match app.contracts.get(id) {
+      Some(state) => format!("Pod \u{2014} {}", state.title()),
+      None => "Pod \u{2014} Contract".to_string(),
+    },
     Some(Window::Killmail) => "Pod — Killmail".to_string(),
     Some(Window::MailCompose) => "Pod — Compose Mail".to_string(),
     Some(Window::Main) => "Pod".to_string(),
@@ -3512,41 +3502,27 @@ fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens a detached contract window centered on the main window. Like the killmail pilot the id is
-/// unknown until the centered open resolves, so registration, state seeding, and the loader run in
-/// [`handle_contract_window_ready`]. Unlimited instances coexist, duplicates included.
+/// Opens a detached contract window with native chrome. `open_native_window` mints the id
+/// synchronously, so registration, state seeding, and the loader kickoff all happen here with no
+/// ready-message indirection. Unlimited instances coexist, duplicates included, because every open
+/// mints a fresh id; geometry is never persisted, so each window opens centered at the default size.
 fn open_contract_window(app: &mut App, source: contract_detail::Source, contract_id: i64) -> Task<Message> {
-  if app.runtime.is_none() {
-    return Task::none();
-  }
-  let size = Size::new(
-    contract_detail::CONTRACT_WINDOW_WIDTH,
-    contract_detail::CONTRACT_WINDOW_HEIGHT,
-  );
-  open_centered_window(app, size, move |id| {
-    Task::done(Message::ContractWindowReady {
-      contract_id,
-      id,
-      source,
-    })
-  })
-}
-
-fn handle_contract_window_ready(
-  app: &mut App,
-  id: window::Id,
-  source: contract_detail::Source,
-  contract_id: i64,
-) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
   let db = runtime.db.clone();
-  app.windows.register(id, Window::Contract);
+  let size = Size::new(
+    contract_detail::CONTRACT_WINDOW_WIDTH,
+    contract_detail::CONTRACT_WINDOW_HEIGHT,
+  );
+  let (id, open_task) = open_native_window(app, Window::Contract, size);
   app
     .contracts
     .insert(id, contract_detail::State::new(source, contract_id));
-  contract_detail::load(&db, source, contract_id).map(move |msg| Message::Contract(id, msg))
+  Task::batch([
+    open_task,
+    contract_detail::load(&db, source, contract_id).map(move |msg| Message::Contract(id, msg)),
+  ])
 }
 
 fn handle_contract(app: &mut App, id: window::Id, msg: contract_detail::Message) -> Task<Message> {
@@ -4185,11 +4161,6 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
       id,
       seed,
     } => handle_compose_window_ready(app, id, *seed),
-    Message::ContractWindowReady {
-      contract_id,
-      id,
-      source,
-    } => handle_contract_window_ready(app, id, source, contract_id),
     Message::FocusMainWindow => handle_focus_main_window(app),
     Message::KillmailWindowReady {
       id,
@@ -6783,14 +6754,9 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(
-      Window::Contract
-      | Window::Killmail
-      | Window::MailCompose
-      | Window::ManagePlans
-      | Window::Splash
-      | Window::StockpileEditor,
-    ) => disable_shadow(id),
+    Some(Window::Killmail | Window::MailCompose | Window::ManagePlans | Window::Splash | Window::StockpileEditor) => {
+      disable_shadow(id)
+    }
     _ => Task::none(),
   }
 }
@@ -6937,7 +6903,7 @@ fn compare_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 
 fn contract_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.contracts.get(id) {
-    Some(state) => contract_detail::view(state, move |event| Message::Chrome(id, event)),
+    Some(state) => contract_detail::view(state),
     None => blank(),
   }
 }
@@ -10744,7 +10710,10 @@ mod tests {
 
     fn ready(app: &mut App, source: contract_detail::Source, contract_id: i64) -> window::Id {
       let id = window::Id::unique();
-      let _ = handle_contract_window_ready(app, id, source, contract_id);
+      app.windows.register(id, Window::Contract);
+      app
+        .contracts
+        .insert(id, contract_detail::State::new(source, contract_id));
       id
     }
 
@@ -10852,6 +10821,46 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.contracts.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_registers_and_seeds_synchronously_via_the_native_opener() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_contract_window(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      let id = app
+        .windows
+        .ids_for(Window::Contract)
+        .next()
+        .expect("contract window registered");
+      assert_eq!(
+        app.contracts.get(id).map(contract_detail::State::contract_id),
+        Some(100)
+      );
+    }
+
+    #[test]
+    fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = open_contract_window(
+        &mut app,
+        contract_detail::Source::Character {
+          character_id: 42,
+        },
+        100,
+      );
+
+      assert_eq!(app.windows.ids_for(Window::Contract).count(), 0);
+      assert_eq!(app.contracts.len(), 0);
     }
   }
 
@@ -13113,17 +13122,6 @@ mod tests {
         "ComposeWindowReady"
       );
       assert_eq!(
-        Message::ContractWindowReady {
-          contract_id: 1,
-          id: window::Id::unique(),
-          source: contract_detail::Source::Character {
-            character_id: 1,
-          },
-        }
-        .variant_name(),
-        "ContractWindowReady"
-      );
-      assert_eq!(
         Message::ManagePlansWindowReady {
           id: window::Id::unique(),
         }
@@ -13197,16 +13195,6 @@ mod tests {
       let id = window::Id::unique();
 
       let _ = dispatch_window_lifecycle(&mut app, Message::Chrome(id, window_chrome::Event::Drag));
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::ContractWindowReady {
-          contract_id: 1,
-          id,
-          source: contract_detail::Source::Character {
-            character_id: 1,
-          },
-        },
-      );
       let _ = dispatch_window_lifecycle(
         &mut app,
         Message::KillmailWindowReady {
@@ -13615,6 +13603,24 @@ mod tests {
       app.windows.register(main, Window::Main);
 
       assert_eq!(window_title(&app, main), "Pod");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_contract_title_before_the_detail_loads() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Contract);
+      app.contracts.insert(
+        id,
+        contract_detail::State::new(
+          contract_detail::Source::Character {
+            character_id: 1,
+          },
+          42,
+        ),
+      );
+
+      assert_eq!(window_title(&app, id), "Pod — Contract #42");
     }
   }
 

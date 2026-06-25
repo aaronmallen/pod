@@ -7,7 +7,6 @@ use iced::{
 
 use crate::{
   clients::eve_image::Size,
-  features::window_chrome,
   store::{
     Database, images,
     repo::{character, finance, org, sde},
@@ -134,7 +133,7 @@ impl State {
       .unwrap_or_default()
   }
 
-  fn title(&self) -> String {
+  pub fn title(&self) -> String {
     match &self.detail {
       Some(detail) => format!("{} \u{2014} #{}", detail.title, detail.contract_id),
       None => format!("Contract #{}", self.contract_id),
@@ -358,12 +357,8 @@ pub fn contract_status_color(status: &str) -> iced::Color {
   }
 }
 
-pub fn view<'a, M: Clone + 'a, F>(state: &'a State, on_event: F) -> Element<'a, M>
-where
-  F: Fn(window_chrome::Event) -> M + Copy + 'a,
-{
-  let title = state.title();
-  window_chrome::shell(&title, window_body(state.detail.as_ref()), on_event)
+pub fn view<M: 'static>(state: &State) -> Element<'_, M> {
+  window_body(state.detail.as_ref())
 }
 
 fn window_body<'a, M: 'a>(detail: Option<&'a ContractDetail>) -> Element<'a, M> {
@@ -1871,21 +1866,21 @@ mod tests {
     fn it_renders_a_courier_with_a_route() {
       let state = state_with(courier());
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
     fn it_renders_an_auction_with_bids() {
       let state = state_with(auction());
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
     fn it_renders_an_item_trade() {
       let state = state_with(item_trade());
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
@@ -1897,7 +1892,7 @@ mod tests {
         12_345,
       );
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
 
     #[test]
@@ -1907,7 +1902,7 @@ mod tests {
       bare.items = Vec::new();
       let state = state_with(bare);
 
-      let _el: Element<'_, ()> = view(&state, |_| ());
+      let _el: Element<'_, ()> = view(&state);
     }
   }
 

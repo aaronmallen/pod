@@ -116,6 +116,7 @@ pub enum Message {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
   AccessibilityChanged,
+  ExportData,
   ExportLogs {
     end: DateTime<Utc>,
     start: DateTime<Utc>,

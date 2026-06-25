@@ -33,9 +33,11 @@ pub enum Message {
   Browse(PathKind),
   CancelMove,
   ConfirmMove,
+  DataExportFinished(Result<Option<PathBuf>, String>),
   DismissError,
   ExportFinished(Result<Option<PathBuf>, String>),
   ExportLogs(RangePreset),
+  RequestDataExport,
   LogLevelChanged(LogLevel),
   PathEdited(PathKind, String),
   PathSubmitted(PathKind),
@@ -147,6 +149,7 @@ pub struct SyncStatus {
 
 #[derive(Debug, Default)]
 pub struct State {
+  data_export_pending: bool,
   drafts: HashMap<PathKind, String>,
   error: Option<String>,
   export_pending: bool,
@@ -354,6 +357,13 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
         }
       }
     }
+    Message::DataExportFinished(result) => {
+      state.data_export_pending = false;
+      if let Err(error) = result {
+        state.error = Some(error);
+      }
+      Outcome::None
+    }
     Message::DismissError => {
       state.error = None;
       Outcome::None
@@ -400,6 +410,11 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       outcome
     }
     Message::ReleaseLock => Outcome::ReleaseLock,
+    Message::RequestDataExport => {
+      state.error = None;
+      state.data_export_pending = true;
+      Outcome::ExportData
+    }
     Message::ResetToDefault(kind) => {
       state.error = None;
       let to = kind.default_dir();
@@ -573,6 +588,8 @@ fn path_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Messag
       }
     }
   }
+
+  children.push(data_export_row(state));
 
   let inner = container(Column::with_children(children).width(Length::Fill))
     .width(Length::Fill)
@@ -766,6 +783,61 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
   Row::with_children(children)
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2)
+    .into()
+}
+
+fn data_export_row(state: &State) -> Element<'_, Message> {
+  let label = text("Export data")
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::PRIMARY));
+  let explanation =
+    text("Bundle the database and your settings into a single .zip you can archive or move to another machine.")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()));
+
+  let mut control = button(
+    text("Export data\u{2026}")
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .style(control::ghost_button);
+  if !state.data_export_pending {
+    control = control.on_press(Message::RequestDataExport);
+  }
+
+  let mut controls: Vec<Element<'_, Message>> = vec![control.into()];
+  if state.data_export_pending {
+    controls.push(
+      text("Exporting\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+  }
+
+  let actions = Row::with_children(controls)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  let cell = container(
+    Column::with_children(vec![label.into(), explanation.into(), actions.into()])
+      .spacing(spacing::SPACE_2)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: 0.0,
+    bottom: spacing::SPACE_3_5,
+    left: spacing::SPACE_6 + 4.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
     .into()
 }
 
@@ -1777,6 +1849,48 @@ mod tests {
       assert_eq!(update(&mut state, Message::CancelMove, &mut settings), Outcome::None);
       assert_eq!(update(&mut state, Message::ConfirmMove, &mut settings), Outcome::None);
       assert_eq!(update(&mut state, Message::SkipMove, &mut settings), Outcome::None);
+    }
+
+    #[test]
+    fn request_data_export_arms_the_flag_and_returns_the_outcome() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      state.error = Some("stale".to_owned());
+
+      assert_eq!(
+        update(&mut state, Message::RequestDataExport, &mut settings),
+        Outcome::ExportData
+      );
+
+      assert!(state.data_export_pending, "the export is marked in-flight");
+      assert!(state.error.is_none(), "requesting an export clears any prior error");
+      assert!(!state.export_pending, "the log export flag is untouched");
+    }
+
+    #[test]
+    fn data_export_finished_clears_the_flag_and_surfaces_errors() {
+      let mut state = state();
+      let mut settings = Settings::default();
+      state.data_export_pending = true;
+
+      assert_eq!(
+        update(&mut state, Message::DataExportFinished(Ok(None)), &mut settings),
+        Outcome::None
+      );
+      assert!(!state.data_export_pending, "a finished export is no longer in-flight");
+      assert!(state.error.is_none());
+
+      state.data_export_pending = true;
+      assert_eq!(
+        update(
+          &mut state,
+          Message::DataExportFinished(Err("disk full".to_owned())),
+          &mut settings
+        ),
+        Outcome::None
+      );
+      assert!(!state.data_export_pending);
+      assert_eq!(state.error.as_deref(), Some("disk full"));
     }
 
     #[test]

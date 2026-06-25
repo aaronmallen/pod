@@ -4628,6 +4628,28 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       let log_dir = storage.resolved_log_dir();
       return Task::batch(vec![task, export_logs(log_dir, start, end, diagnostics)]);
     }
+    settings::Outcome::ExportData => {
+      let storage = state.settings().storage();
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: storage.resolved_cache_dir(),
+        database_path: storage.resolved_database_path(),
+        db_dir: storage.resolved_db_dir(),
+        log_dir: storage.resolved_log_dir(),
+      };
+      let database_path = storage.resolved_database_path();
+      let config_bytes = match toml::to_string_pretty(state.settings()) {
+        Ok(toml) => toml.into_bytes(),
+        Err(error) => {
+          return Task::batch(vec![
+            task,
+            Task::done(Message::Settings(settings::Message::Storage(
+              settings::storage_tab::Message::DataExportFinished(Err(format!("Couldn't serialize settings: {error}"))),
+            ))),
+          ]);
+        }
+      };
+      return Task::batch(vec![task, export_data(database_path, config_bytes, diagnostics)]);
+    }
     settings::Outcome::SetLogLevel(level) => {
       apply_log_level(level);
       return task;
@@ -4857,6 +4879,77 @@ async fn save_log_bundle(default_name: String, bytes: Vec<u8>) -> Result<Option<
   {
     let Some(handle) = rfd::AsyncFileDialog::new()
       .set_title("Export logs")
+      .set_file_name(default_name)
+      .add_filter("Zip archive", &["zip"])
+      .save_file()
+      .await
+    else {
+      return Ok(None);
+    };
+    std::fs::write(handle.path(), bytes).map_err(|err| err.to_string())?;
+    Ok(Some(handle.path().to_path_buf()))
+  }
+  #[cfg(test)]
+  {
+    let _ = (default_name, bytes);
+    Ok(None)
+  }
+}
+
+fn export_data(
+  database_path: std::path::PathBuf,
+  config_bytes: Vec<u8>,
+  diagnostics: settings::log_export::Diagnostics,
+) -> Task<Message> {
+  Task::perform(
+    export_data_archive(database_path, config_bytes, diagnostics),
+    |result| {
+      Message::Settings(settings::Message::Storage(
+        settings::storage_tab::Message::DataExportFinished(result),
+      ))
+    },
+  )
+}
+
+async fn export_data_archive(
+  database_path: std::path::PathBuf,
+  config_bytes: Vec<u8>,
+  diagnostics: settings::log_export::Diagnostics,
+) -> Result<Option<std::path::PathBuf>, String> {
+  let default_name = settings::data_export::default_file_name(Utc::now());
+
+  // Stage a self-contained snapshot of the live working file: checkpoint_into folds the WAL in so
+  // the bundled pod.db carries no -wal/-shm trail. This works in both Direct and Sync modes because
+  // the resolved DB path always points at the live file Pod is writing.
+  let staging = tempfile::Builder::new()
+    .prefix("pod-export-")
+    .suffix(".db")
+    .tempfile()
+    .map_err(|err| format!("Couldn't create export staging file: {err}"))?;
+  let snapshot_path = staging.path().to_path_buf();
+  crate::store::sync_copy::checkpoint_into(&database_path, &snapshot_path)
+    .await
+    .map_err(|err| format!("Couldn't snapshot the database: {err}"))?;
+
+  let bytes = tokio::task::spawn_blocking(move || {
+    settings::data_export::build_archive(&snapshot_path, &config_bytes, &diagnostics)
+  })
+  .await
+  .map_err(|err| err.to_string())??;
+
+  // Keep the staging file alive until the archive bytes are built, then drop it.
+  drop(staging);
+
+  save_data_archive(default_name, bytes).await
+}
+
+/// Prompts for a save location via the native dialog and writes the archive there. Stubbed to a
+/// no-op under `cfg(test)` so tests never open a real file dialog.
+async fn save_data_archive(default_name: String, bytes: Vec<u8>) -> Result<Option<std::path::PathBuf>, String> {
+  #[cfg(not(test))]
+  {
+    let Some(handle) = rfd::AsyncFileDialog::new()
+      .set_title("Export data")
       .set_file_name(default_name)
       .add_filter("Zip archive", &["zip"])
       .save_file()
@@ -8208,6 +8301,50 @@ mod tests {
       .await;
 
       assert_eq!(result, Ok(None), "the cfg(test) save dialog is a no-op");
+    }
+
+    #[tokio::test]
+    async fn export_data_archive_snapshots_the_db_then_writes_nowhere_when_stubbed() {
+      use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+
+      let dir = tempfile::tempdir().unwrap();
+      let database_path = dir.path().join("pod.db");
+      let options = SqliteConnectOptions::new()
+        .filename(&database_path)
+        .create_if_missing(true);
+      let mut connection = SqliteConnection::connect_with(&options).await.unwrap();
+      sqlx::query("CREATE TABLE note (body TEXT)")
+        .execute(&mut connection)
+        .await
+        .unwrap();
+      connection.close().await.unwrap();
+
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: dir.path().join("cache"),
+        database_path: database_path.clone(),
+        db_dir: dir.path().to_path_buf(),
+        log_dir: dir.path().join("logs"),
+      };
+
+      let result = export_data_archive(database_path, b"[storage]\n".to_vec(), diagnostics).await;
+
+      assert_eq!(result, Ok(None), "the cfg(test) save dialog is a no-op");
+    }
+
+    #[tokio::test]
+    async fn export_data_archive_errors_when_the_database_is_missing() {
+      let dir = tempfile::tempdir().unwrap();
+      let database_path = dir.path().join("absent.db");
+      let diagnostics = settings::log_export::Diagnostics {
+        cache_dir: dir.path().join("cache"),
+        database_path: database_path.clone(),
+        db_dir: dir.path().to_path_buf(),
+        log_dir: dir.path().join("logs"),
+      };
+
+      let result = export_data_archive(database_path, b"config".to_vec(), diagnostics).await;
+
+      assert!(result.is_err(), "a missing live database surfaces an error");
     }
 
     #[tokio::test]

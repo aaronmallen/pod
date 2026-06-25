@@ -13,7 +13,7 @@ use super::{
 use crate::{
   features::budget::MonthFlow,
   ui::{
-    components::eyebrow::eyebrow_text,
+    components::{eyebrow::eyebrow_text, icon::Icon},
     style::{color, spacing, typography},
   },
 };
@@ -157,18 +157,24 @@ fn stat_cell<'a>(
 
   let mut children: Vec<Element<'a, Message>> = vec![eyebrow_text(label, None).into(), value_row.into()];
   if let Some((up, body)) = delta {
-    let arrow = if up { "\u{25b2}" } else { "\u{25bc}" };
+    let arrow = if up { Icon::chevron_up() } else { Icon::chevron_down() };
     let delta_color = if up {
       color::status::ONLINE
     } else {
       color::status::DANGER
     };
     children.push(
-      text(format!("{arrow} {body}"))
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(typography::colored(delta_color))
-        .into(),
+      Row::with_children(vec![
+        arrow.size(typography::size::XS_PLUS).color(delta_color).render(),
+        text(body)
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS_PLUS)
+          .style(typography::colored(delta_color))
+          .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .align_y(Vertical::Center)
+      .into(),
     );
   }
 
@@ -521,18 +527,24 @@ fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
       .into(),
   ];
   if let Some((up, body)) = age_delta(reflect) {
-    let arrow = if up { "\u{25b2}" } else { "\u{25bc}" };
+    let arrow = if up { Icon::chevron_up() } else { Icon::chevron_down() };
     let delta_color = if up {
       color::status::ONLINE
     } else {
       color::status::DANGER
     };
     head.push(
-      text(format!("{arrow} {body}"))
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS_PLUS)
-        .style(typography::colored(delta_color))
-        .into(),
+      Row::with_children(vec![
+        arrow.size(typography::size::XS_PLUS).color(delta_color).render(),
+        text(body)
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS_PLUS)
+          .style(typography::colored(delta_color))
+          .into(),
+      ])
+      .spacing(spacing::UNIT)
+      .align_y(Vertical::Center)
+      .into(),
     );
   }
 

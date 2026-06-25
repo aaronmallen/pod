@@ -4383,11 +4383,10 @@ fn select_trigger<'a>(label: &str, toggle: Message) -> Element<'a, Message> {
         .width(Length::Fill)
         .style(typography::colored(color::text::PRIMARY))
         .into(),
-      text("\u{25BE}")
-        .font(typography::mono::REGULAR)
+      Icon::chevron_down()
         .size(typography::size::XS)
-        .style(typography::colored(color::text::tertiary()))
-        .into(),
+        .color(color::text::tertiary())
+        .render(),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center),

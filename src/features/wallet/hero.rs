@@ -1,16 +1,15 @@
-use std::f32::consts::PI;
-
 use chrono::{DateTime, NaiveDate, Utc};
 use iced::{
-  Background, Border, Color, Element, Length, Padding, Radians, Rotation,
+  Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, canvas, container, mouse_area, svg, text},
+  widget::{Column, Row, Space, canvas, container, mouse_area, text},
 };
 
 use super::{Composition, Message, NetWorthPoint, Scope, State, Timeframe, fmt_isk};
 use crate::ui::{
   components::{
     eyebrow::eyebrow_text,
+    icon::Icon,
     line_chart::{self, ChartPoint, LineChart},
     segmented::segment_button_style,
     status,
@@ -25,8 +24,6 @@ const GRAPH_HEIGHT: f32 = 220.0;
 const HERO_COLLAPSED_FLAG: &str = "wallet.hero_collapsed";
 const TOGGLE_GLYPH_SIZE: f32 = 16.0;
 const TOGGLE_SIZE: f32 = 30.0;
-
-static CHEVRON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/chevron.svg");
 
 pub(super) fn hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let collapsed = state.ui_flag(HERO_COLLAPSED_FLAG, false);
@@ -107,7 +104,7 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   } else {
     color::status::DANGER
   };
-  let arrow = if up { "\u{25b2}" } else { "\u{25bc}" };
+  let arrow = if up { Icon::chevron_up() } else { Icon::chevron_down() };
 
   let label = Row::with_children(vec![
     eyebrow_text("Net worth", None).into(),
@@ -137,7 +134,8 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 
   let change_chip = container(
     Row::with_children(vec![
-      text(format!("{arrow} {:+.1}%", pct))
+      arrow.size(typography::size::SM).color(change_color).render(),
+      text(format!("{:+.1}%", pct))
         .font(typography::mono::MEDIUM)
         .size(typography::size::SM)
         .style(move |_| text::Style {
@@ -231,14 +229,12 @@ fn hero_container_style(_: &iced::Theme) -> container::Style {
 }
 
 fn hero_toggle<'a>(collapsed: bool) -> Element<'a, Message> {
-  let rotation = if collapsed { 0.0 } else { PI };
-  let glyph = svg(svg::Handle::from_memory(CHEVRON_ICON))
-    .width(Length::Fixed(TOGGLE_GLYPH_SIZE))
-    .height(Length::Fixed(TOGGLE_GLYPH_SIZE))
-    .rotation(Rotation::Floating(Radians(rotation)))
-    .style(|_, _| svg::Style {
-      color: Some(color::text::secondary()),
-    });
+  let chevron = if collapsed {
+    Icon::chevron_down()
+  } else {
+    Icon::chevron_up()
+  };
+  let glyph = chevron.size(TOGGLE_GLYPH_SIZE).color(color::text::secondary()).render();
 
   mouse_area(
     container(glyph)
@@ -281,11 +277,12 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
   } else {
     color::status::DANGER
   };
-  let arrow = if up { "\u{25b2}" } else { "\u{25bc}" };
+  let arrow = if up { Icon::chevron_up() } else { Icon::chevron_down() };
   let sign = if up { "+" } else { "-" };
   let chip = container(
     Row::with_children(vec![
-      text(format!("{arrow} {sign}{} ISK", fmt_isk(Some(change.abs()))))
+      arrow.size(typography::size::SM).color(change_color).render(),
+      text(format!("{sign}{} ISK", fmt_isk(Some(change.abs()))))
         .font(typography::mono::MEDIUM)
         .size(typography::size::SM)
         .style(move |_| text::Style {

@@ -813,11 +813,10 @@ fn assigned_chip<'a>(name: &str, tone: iced::Color, on_press: Message) -> Elemen
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
         .into(),
-      text("\u{25BE}")
-        .font(typography::mono::REGULAR)
+      Icon::chevron_down()
         .size(typography::size::XS)
-        .style(typography::colored(color::text::tertiary()))
-        .into(),
+        .color(color::text::tertiary())
+        .render(),
     ])
     .spacing(spacing::UNIT + 2.0)
     .align_y(Vertical::Center),

@@ -44,6 +44,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0033] | Embedded MCP Server for Agent Automation        | ![Active][badge-active] | 2026-06-22 |
 | [0034] | MCP Tool Input Schemas via Declarative Arg-Spec | ![Active][badge-active] | 2026-06-23 |
 | [0035] | Post-Sync Cross-Owner Budget Mark Reconcile     | ![Active][badge-active] | 2026-06-23 |
+| [0036] | Freshness-First Sync Status via Seed Events     | ![Active][badge-active] | 2026-06-23 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -82,5 +83,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0033]: 0033-embedded-mcp-server.md
 [0034]: 0034-mcp-tool-input-schemas-via-declarative-arg-spec.md
 [0035]: 0035-post-sync-cross-owner-budget-mark-reconciliation.md
+[0036]: 0036-freshness-first-sync-status.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

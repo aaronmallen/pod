@@ -7,6 +7,7 @@ use sqlx::{
 
 pub mod asset_filter;
 pub mod bootstrap;
+pub mod data_restore;
 pub mod fs_kind;
 pub mod images;
 pub mod killmail_slot;

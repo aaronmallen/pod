@@ -477,6 +477,7 @@ pub enum QueueStatus {
   Empty,
 }
 
+#[allow(dead_code)]
 impl QueueStatus {
   pub fn is_training(self) -> bool {
     matches!(self, QueueStatus::Training)

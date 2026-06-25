@@ -498,8 +498,9 @@ pub(super) fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
 fn panes<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let head = state.queue.first();
   let mut left_children: Vec<Element<'a, Message>> = Vec::with_capacity(3);
-  left_children.push(training_hero::training_hero(&state.computed, head, now));
-  if let Some(strip) = warning_strip::warning_strip(&state.computed, head) {
+  let queued_count = state.queue.len();
+  left_children.push(training_hero::training_hero(&state.computed, head, queued_count, now));
+  if let Some(strip) = warning_strip::warning_strip(&state.computed, head, queued_count) {
     left_children.push(strip);
   }
   left_children.push(queue_section::queue_section(

@@ -196,17 +196,27 @@ impl QueueSelection {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum QueueWarning {
-  Idle,
+  Empty,
   LowQueue,
+  Paused { queued: usize },
 }
 
 impl QueueWarning {
-  pub fn message(self) -> &'static str {
+  pub fn message(self) -> String {
     match self {
-      QueueWarning::Idle => "Training inactive \u{b7} no skill is currently training",
-      QueueWarning::LowQueue => "Low queue \u{b7} less than 24h of training remains",
+      QueueWarning::Empty => "Training inactive \u{b7} skill queue is empty".to_owned(),
+      QueueWarning::LowQueue => "Low queue \u{b7} less than 24h of training remains".to_owned(),
+      QueueWarning::Paused {
+        queued,
+      } => {
+        format!("Training paused \u{b7} {queued} {} queued", skill_word(queued))
+      }
     }
   }
+}
+
+pub fn skill_word(count: usize) -> &'static str {
+  if count == 1 { "skill" } else { "skills" }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -497,18 +507,22 @@ pub fn queue_status(head: Option<&CharacterSkillqueue>, queued_count: usize) -> 
   }
 }
 
-pub fn is_idle(head: Option<&CharacterSkillqueue>) -> bool {
-  !head_is_training(head)
-}
-
-pub fn queue_warnings(computed: &ComputedQueue, idle: bool) -> Vec<QueueWarning> {
-  if idle {
-    return vec![QueueWarning::Idle];
+pub fn queue_warnings(computed: &ComputedQueue, status: QueueStatus) -> Vec<QueueWarning> {
+  match status {
+    QueueStatus::Paused {
+      queued,
+    } => vec![QueueWarning::Paused {
+      queued,
+    }],
+    QueueStatus::Empty => vec![QueueWarning::Empty],
+    QueueStatus::Training => {
+      if computed.total_secs > 0.0 && computed.total_secs < LOW_QUEUE_THRESHOLD_SECS {
+        vec![QueueWarning::LowQueue]
+      } else {
+        Vec::new()
+      }
+    }
   }
-  if computed.total_secs > 0.0 && computed.total_secs < LOW_QUEUE_THRESHOLD_SECS {
-    return vec![QueueWarning::LowQueue];
-  }
-  Vec::new()
 }
 
 #[cfg(test)]
@@ -869,38 +883,6 @@ mod tests {
       assert_eq!(Attr::from_neural_id(166), Attr::Memory);
       assert_eq!(Attr::from_neural_id(167), Attr::Perception);
       assert_eq!(Attr::from_neural_id(168), Attr::Willpower);
-    }
-  }
-
-  mod is_idle {
-    use super::*;
-
-    fn dated() -> CharacterSkillqueue {
-      CharacterSkillqueue {
-        finish_date: Some("2026-06-11T00:00:00Z".to_owned()),
-        start_date: Some("2026-06-01T00:00:00Z".to_owned()),
-        ..entry(0, 100, 5)
-      }
-    }
-
-    #[test]
-    fn it_reports_active_for_a_fully_dated_head() {
-      assert!(!is_idle(Some(&dated())));
-    }
-
-    #[test]
-    fn it_reports_idle_for_a_head_missing_either_date() {
-      assert!(is_idle(Some(&entry(0, 100, 5))));
-      let only_start = CharacterSkillqueue {
-        start_date: Some("2026-06-01T00:00:00Z".to_owned()),
-        ..entry(0, 100, 5)
-      };
-      assert!(is_idle(Some(&only_start)));
-    }
-
-    #[test]
-    fn it_reports_idle_with_no_head() {
-      assert!(is_idle(None));
     }
   }
 
@@ -1298,30 +1280,92 @@ mod tests {
 
     #[test]
     fn it_does_not_warn_for_a_healthy_queue() {
-      let warnings = queue_warnings(&computed(48.0 * 3_600.0, 2), false);
+      let warnings = queue_warnings(&computed(48.0 * 3_600.0, 2), QueueStatus::Training);
 
       assert!(warnings.is_empty());
     }
 
     #[test]
     fn it_never_warns_for_a_zero_duration_active_queue() {
-      let warnings = queue_warnings(&computed(0.0, 0), false);
+      let warnings = queue_warnings(&computed(0.0, 0), QueueStatus::Training);
 
       assert!(warnings.is_empty());
     }
 
     #[test]
-    fn it_surfaces_the_idle_warning_and_suppresses_low_queue() {
-      let warnings = queue_warnings(&computed(1.0 * 3_600.0, 1), true);
+    fn it_surfaces_the_paused_warning_with_a_count_and_suppresses_low_queue() {
+      let warnings = queue_warnings(
+        &computed(1.0 * 3_600.0, 1),
+        QueueStatus::Paused {
+          queued: 7,
+        },
+      );
 
-      assert_eq!(warnings, vec![QueueWarning::Idle]);
+      assert_eq!(
+        warnings,
+        vec![QueueWarning::Paused {
+          queued: 7,
+        }]
+      );
+    }
+
+    #[test]
+    fn it_surfaces_the_empty_warning_for_an_empty_queue() {
+      let warnings = queue_warnings(&computed(0.0, 0), QueueStatus::Empty);
+
+      assert_eq!(warnings, vec![QueueWarning::Empty]);
     }
 
     #[test]
     fn it_surfaces_the_low_queue_warning_under_24h() {
-      let warnings = queue_warnings(&computed(23.0 * 3_600.0, 1), false);
+      let warnings = queue_warnings(&computed(23.0 * 3_600.0, 1), QueueStatus::Training);
 
       assert_eq!(warnings, vec![QueueWarning::LowQueue]);
+    }
+  }
+
+  mod queue_warning_message {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_pluralizes_the_paused_skill_count() {
+      assert_eq!(
+        QueueWarning::Paused {
+          queued: 1,
+        }
+        .message(),
+        "Training paused \u{b7} 1 skill queued"
+      );
+      assert_eq!(
+        QueueWarning::Paused {
+          queued: 12,
+        }
+        .message(),
+        "Training paused \u{b7} 12 skills queued"
+      );
+    }
+
+    #[test]
+    fn it_describes_an_empty_queue_distinctly_from_paused() {
+      assert_eq!(
+        QueueWarning::Empty.message(),
+        "Training inactive \u{b7} skill queue is empty"
+      );
+    }
+  }
+
+  mod skill_word {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_uses_the_singular_only_for_one() {
+      assert_eq!(skill_word(0), "skills");
+      assert_eq!(skill_word(1), "skill");
+      assert_eq!(skill_word(2), "skills");
     }
   }
 

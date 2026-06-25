@@ -6,7 +6,7 @@ use iced::{
 
 use super::{
   Message,
-  queue::{ComputedQueue, QueueWarning, is_idle, queue_warnings},
+  queue::{ComputedQueue, QueueWarning, queue_status, queue_warnings},
 };
 use crate::{
   store::model::CharacterSkillqueue,
@@ -15,9 +15,12 @@ use crate::{
 
 const QUEUE_SIDE_MARGIN: f32 = 28.0;
 
-pub fn warning_strip<'a>(computed: &ComputedQueue, head: Option<&CharacterSkillqueue>) -> Option<Element<'a, Message>> {
-  let idle = is_idle(head);
-  let warnings = queue_warnings(computed, idle);
+pub fn warning_strip<'a>(
+  computed: &ComputedQueue,
+  head: Option<&CharacterSkillqueue>,
+  queued_count: usize,
+) -> Option<Element<'a, Message>> {
+  let warnings = queue_warnings(computed, queue_status(head, queued_count));
   if warnings.is_empty() {
     return None;
   }

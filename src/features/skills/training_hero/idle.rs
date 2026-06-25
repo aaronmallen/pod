@@ -4,7 +4,13 @@ use iced::{
   widget::{Column, Row, container, text},
 };
 
-use super::{super::Message, hero_card};
+use super::{
+  super::{
+    Message,
+    queue::{QueueStatus, skill_word},
+  },
+  hero_card,
+};
 use crate::ui::{
   components::eyebrow::eyebrow,
   style::{color, spacing, typography},
@@ -12,7 +18,27 @@ use crate::ui::{
 
 const HERO_ICON: f32 = 48.0;
 
-pub(super) fn idle<'a>() -> Element<'a, Message> {
+pub(super) fn idle<'a>(status: QueueStatus) -> Element<'a, Message> {
+  let (eyebrow_text, headline) = match status {
+    QueueStatus::Paused {
+      queued,
+    } => (
+      format!("Training paused \u{b7} {queued} {} queued", skill_word(queued)),
+      "Training is paused".to_owned(),
+    ),
+    _ => (
+      "Training inactive \u{b7} queue empty".to_owned(),
+      "No skill is currently training".to_owned(),
+    ),
+  };
+
+  let supporting = match status {
+    QueueStatus::Paused {
+      ..
+    } => "Resume training in EVE to continue the queue.",
+    _ => "Apply a skill plan to start training.",
+  };
+
   let icon = container(
     text("\u{26a0}")
       .font(typography::mono::REGULAR)
@@ -36,15 +62,15 @@ pub(super) fn idle<'a>() -> Element<'a, Message> {
   });
 
   let copy = Column::with_children(vec![
-    eyebrow("Training paused \u{b7} queue empty", Some(color::status::DANGER)),
-    text("No skill is currently training")
+    eyebrow(&eyebrow_text, Some(color::status::DANGER)),
+    text(headline)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("Apply a skill plan to start training.")
+    text(supporting)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {

@@ -12,7 +12,7 @@ use iced::{
 
 use super::{
   Message,
-  queue::{ComputedQueue, ComputedQueueItem},
+  queue::{ComputedQueue, ComputedQueueItem, QueueStatus, queue_status},
 };
 use crate::{
   store::model::CharacterSkillqueue,
@@ -29,14 +29,14 @@ const HERO_SIDE_MARGIN: f32 = 28.0;
 pub fn training_hero<'a>(
   computed: &'a ComputedQueue,
   head: Option<&'a CharacterSkillqueue>,
+  queued_count: usize,
   now: DateTime<Utc>,
 ) -> Element<'a, Message> {
-  let item = computed.items.first();
-  let paused = head.is_none_or(|entry| entry.start_date().is_none() || entry.finish_date().is_none());
+  let status = queue_status(head, queued_count);
 
-  match (item, paused) {
-    (Some(item), false) => active::active(item, computed.sp_rate, now),
-    _ => idle::idle(),
+  match (computed.items.first(), status) {
+    (Some(item), QueueStatus::Training) => active::active(item, computed.sp_rate, now),
+    (_, status) => idle::idle(status),
   }
 }
 

@@ -36,6 +36,13 @@ pub struct ImplantTimeBonus {
   pub value: f64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
+pub struct TypeMaterial {
+  pub material_type_id: i64,
+  pub quantity: i64,
+  pub type_id: i64,
+}
+
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(
     "SELECT charisma, corporation_id, description, id, intelligence, memory, name, \
@@ -1384,6 +1391,61 @@ pub async fn upsert_structure(db: &Database, structure: &Structure) -> Result<()
   .bind(structure.type_id())
   .execute(db.writer())
   .await?;
+  Ok(())
+}
+
+// Phase-2 reprocess-value accessor; consumed by the reprocess-vs-sell feature in a follow-up.
+#[allow(dead_code)]
+pub async fn materials_for_type(db: &Database, type_id: i64) -> Result<Vec<(i64, i64)>, Error> {
+  let rows = sqlx::query_as::<_, (i64, i64)>(
+    "SELECT material_type_id, quantity FROM type_materials WHERE type_id = ? ORDER BY material_type_id",
+  )
+  .bind(type_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(rows)
+}
+
+// Phase-2 reprocess-value accessor; consumed by the reprocess-vs-sell feature in a follow-up.
+#[allow(dead_code)]
+pub async fn materials_for_types(db: &Database, type_ids: &[i64]) -> Result<Vec<TypeMaterial>, Error> {
+  if type_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let mut rows = Vec::new();
+  for chunk in type_ids.chunks(SQLITE_MAX_BIND_PARAMS) {
+    let mut builder =
+      QueryBuilder::<Sqlite>::new("SELECT material_type_id, quantity, type_id FROM type_materials WHERE type_id IN (");
+    let mut separated = builder.separated(", ");
+    for id in chunk {
+      separated.push_bind(*id);
+    }
+    separated.push_unseparated(") ");
+    builder.push("ORDER BY type_id, material_type_id");
+    rows.extend(builder.build_query_as::<TypeMaterial>().fetch_all(&db.0).await?);
+  }
+  Ok(rows)
+}
+
+pub async fn seed_many_type_materials(db: &Database, materials: &[TypeMaterial]) -> Result<(), Error> {
+  if materials.is_empty() {
+    return Ok(());
+  }
+
+  let mut tx = db.writer().begin().await?;
+
+  for chunk in materials.chunks(SQLITE_MAX_BIND_PARAMS / 3) {
+    let mut builder = QueryBuilder::<Sqlite>::new("INSERT INTO type_materials (type_id, material_type_id, quantity) ");
+    builder.push_values(chunk, |mut b, material| {
+      b.push_bind(material.type_id)
+        .push_bind(material.material_type_id)
+        .push_bind(material.quantity);
+    });
+    builder.push(" ON CONFLICT(type_id, material_type_id) DO UPDATE SET quantity = excluded.quantity");
+    builder.build().execute(&mut *tx).await?;
+  }
+
+  tx.commit().await?;
   Ok(())
 }
 
@@ -2838,6 +2900,92 @@ mod universe_tests {
 
       let result = get_region(&db, 10000003).await.unwrap().unwrap();
       assert_eq!(result.name(), "Updated Region");
+    }
+  }
+}
+
+#[cfg(test)]
+mod type_materials_tests {
+  use super::*;
+  use crate::store;
+
+  fn material(type_id: i64, material_type_id: i64, quantity: i64) -> TypeMaterial {
+    TypeMaterial {
+      material_type_id,
+      quantity,
+      type_id,
+    }
+  }
+
+  mod seed_many_type_materials {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_is_a_noop_for_empty_input() {
+      let db = store::open_test().await.unwrap();
+
+      seed_many_type_materials(&db, &[]).await.unwrap();
+
+      assert!(materials_for_type(&db, 18).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_inserted_rows() {
+      let db = store::open_test().await.unwrap();
+
+      seed_many_type_materials(&db, &[material(18, 34, 175), material(18, 36, 70)])
+        .await
+        .unwrap();
+
+      let rows = materials_for_type(&db, 18).await.unwrap();
+
+      assert_eq!(rows, vec![(34, 175), (36, 70)]);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_quantity_on_reseed() {
+      let db = store::open_test().await.unwrap();
+      seed_many_type_materials(&db, &[material(18, 34, 175)]).await.unwrap();
+
+      seed_many_type_materials(&db, &[material(18, 34, 200)]).await.unwrap();
+
+      let rows = materials_for_type(&db, 18).await.unwrap();
+
+      assert_eq!(rows, vec![(34, 200)]);
+    }
+  }
+
+  mod materials_for_types {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_empty_for_no_ids() {
+      let db = store::open_test().await.unwrap();
+      seed_many_type_materials(&db, &[material(18, 34, 175)]).await.unwrap();
+
+      assert!(super::materials_for_types(&db, &[]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn it_returns_rows_for_each_requested_type_ordered() {
+      let db = store::open_test().await.unwrap();
+      seed_many_type_materials(
+        &db,
+        &[material(18, 36, 70), material(18, 34, 175), material(19, 34, 48_000)],
+      )
+      .await
+      .unwrap();
+
+      let rows = super::materials_for_types(&db, &[18, 19]).await.unwrap();
+
+      assert_eq!(
+        rows,
+        vec![material(18, 34, 175), material(18, 36, 70), material(19, 34, 48_000),]
+      );
     }
   }
 }

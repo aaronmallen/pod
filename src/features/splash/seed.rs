@@ -20,7 +20,7 @@ use crate::{
   },
 };
 
-const SEED_FORMAT_REVISION: u32 = 6;
+const SEED_FORMAT_REVISION: u32 = 7;
 
 const SKILL_CATEGORY_ID: i64 = 16;
 
@@ -401,6 +401,19 @@ struct SdeTypeEntry {
   volume: Option<f64>,
 }
 
+#[derive(Default, Deserialize)]
+struct SdeTypeMaterialEntry {
+  #[serde(default)]
+  materials: Vec<SdeTypeMaterialQuantity>,
+}
+
+#[derive(Deserialize)]
+struct SdeTypeMaterialQuantity {
+  #[serde(rename = "materialTypeID")]
+  material_type_id: i64,
+  quantity: i64,
+}
+
 type Tx = iced::futures::channel::mpsc::Sender<Progress>;
 
 pub fn seed(db: Database, http: Arc<http::Client>) -> Task<Progress> {
@@ -577,6 +590,12 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
   if blueprints_path.exists() {
     step(tx, "Seeding blueprints\u{2026}").await;
     seed_blueprints(db, &blueprints_path).await?;
+  }
+
+  let type_materials_path = r.join("typeMaterials.yaml");
+  if type_materials_path.exists() {
+    step(tx, "Seeding type materials\u{2026}").await;
+    seed_type_materials(db, &type_materials_path).await?;
   }
 
   Ok(())
@@ -1282,6 +1301,29 @@ async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMeta
   tx.commit().await.map_err(|e| e.to_string())
 }
 
+fn build_type_material_rows(entries: HashMap<i64, SdeTypeMaterialEntry>) -> Vec<sde::TypeMaterial> {
+  let mut rows: Vec<sde::TypeMaterial> = Vec::new();
+  for (type_id, entry) in entries {
+    for material in entry.materials {
+      rows.push(sde::TypeMaterial {
+        material_type_id: material.material_type_id,
+        quantity: material.quantity,
+        type_id,
+      });
+    }
+  }
+  rows
+}
+
+async fn seed_type_materials(db: &Database, path: &Path) -> Result<(), String> {
+  let entries: HashMap<i64, SdeTypeMaterialEntry> = read_yaml(path).await?;
+  let rows = build_type_material_rows(entries);
+
+  sde::seed_many_type_materials(db, &rows)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 fn derive_orbit_name(
   orbit_id: Option<i64>,
   planets: &HashMap<i64, SdeMapPlanetEntry>,
@@ -1453,6 +1495,55 @@ fn default_one_f64() -> f64 {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod build_type_material_rows {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn parse(yaml: &str) -> HashMap<i64, SdeTypeMaterialEntry> {
+      serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn it_flattens_each_type_into_its_material_rows() {
+      let entries = parse(
+        "18:\n  materials:\n  - materialTypeID: 34\n    quantity: 175\n  \
+        - materialTypeID: 36\n    quantity: 70\n",
+      );
+
+      let mut rows = build_type_material_rows(entries);
+      rows.sort_by_key(|row| row.material_type_id);
+
+      assert_eq!(
+        rows,
+        vec![
+          sde::TypeMaterial {
+            material_type_id: 34,
+            quantity: 175,
+            type_id: 18,
+          },
+          sde::TypeMaterial {
+            material_type_id: 36,
+            quantity: 70,
+            type_id: 18,
+          },
+        ]
+      );
+    }
+
+    #[test]
+    fn it_ignores_randomized_materials() {
+      let entries = parse(
+        "90283:\n  randomizedMaterials:\n  - materialTypeID: 34\n    \
+        quantityMax: 496800\n    quantityMin: 368000\n",
+      );
+
+      let rows = build_type_material_rows(entries);
+
+      assert!(rows.is_empty());
+    }
+  }
 
   mod build_blueprint_rows {
     use pretty_assertions::assert_eq;

@@ -360,9 +360,6 @@ enum Message {
   Mail(mail::Message),
   MailUnreadCounted(i64),
   ManagePlans(skill_plan_manager::Message),
-  ManagePlansWindowReady {
-    id: window::Id,
-  },
   MarkAllNotificationsRead,
   Mcp(mcp::McpRequest),
   McpDataChanged,
@@ -549,9 +546,6 @@ impl Message {
         ..
       } => "ImageReady",
       Message::InitFailed(_) => "InitFailed",
-      Message::ManagePlansWindowReady {
-        ..
-      } => "ManagePlansWindowReady",
       Message::Palette(_) => "Palette",
       Message::Quit => "Quit",
       Message::Ready(_) => "Ready",
@@ -3178,9 +3172,7 @@ fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
     // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
     // own conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::MailCompose | Window::ManagePlans | Window::Splash | Window::StockpileEditor) => {
-      splash_theme()
-    }
+    Some(Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => splash_theme(),
     _ => pod_theme(),
   }
 }
@@ -3523,14 +3515,15 @@ fn close_contract_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens the detached Manage Plans window centered on the main window, or focuses the existing one when
-/// already open (single-instance). Like the killmail/contract pilots the id is unknown until the centered
-/// open resolves, so registration, state seeding, and the roster loader run in
-/// [`handle_manage_plans_window_ready`]. Geometry is never persisted: every open is default-size.
+/// Opens the detached Manage Plans window with native chrome, or focuses the existing one when already
+/// open (single-instance). The shared native-window helper mints the id synchronously, so registration,
+/// state seeding, and the roster loader all happen here with no ready-message indirection. Geometry
+/// persists across launches via the window's `state_key` + `restored_geometry`.
 fn open_manage_plans_window(app: &mut App) -> Task<Message> {
-  if app.runtime.is_none() {
+  let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
-  }
+  };
+  let db = runtime.db.clone();
   if let Some(id) = app.windows.id_for(Window::ManagePlans) {
     return window::gain_focus(id);
   }
@@ -3538,21 +3531,9 @@ fn open_manage_plans_window(app: &mut App) -> Task<Message> {
     skill_plan_manager::MANAGE_PLANS_WINDOW_WIDTH,
     skill_plan_manager::MANAGE_PLANS_WINDOW_HEIGHT,
   );
-  open_centered_window(app, size, move |id| {
-    Task::done(Message::ManagePlansWindowReady {
-      id,
-    })
-  })
-}
-
-fn handle_manage_plans_window_ready(app: &mut App, id: window::Id) -> Task<Message> {
-  let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
-  };
-  let db = runtime.db.clone();
-  app.windows.register(id, Window::ManagePlans);
+  let (id, open_task) = open_native_window(app, Window::ManagePlans, size);
   app.manage_plans = Some((id, skill_plan_manager::State::new()));
-  skill_plan_manager::load(&db).map(Message::ManagePlans)
+  Task::batch([open_task, skill_plan_manager::load(&db).map(Message::ManagePlans)])
 }
 
 fn handle_manage_plans(app: &mut App, msg: skill_plan_manager::Message) -> Task<Message> {
@@ -4144,9 +4125,6 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
       seed,
     } => handle_compose_window_ready(app, id, *seed),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    Message::ManagePlansWindowReady {
-      id,
-    } => handle_manage_plans_window_ready(app, id),
     Message::StockpileEditorWindowReady {
       id,
       seed,
@@ -6731,9 +6709,7 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::MailCompose | Window::ManagePlans | Window::Splash | Window::StockpileEditor) => {
-      disable_shadow(id)
-    }
+    Some(Window::Killmail | Window::MailCompose | Window::Splash | Window::StockpileEditor) => disable_shadow(id),
     _ => Task::none(),
   }
 }
@@ -6907,12 +6883,7 @@ fn compose_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
 
 fn manage_plans_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.manage_plans.as_ref() {
-    Some((manage_id, state)) if *manage_id == id => {
-      let body = skill_plan_manager::view(state).map(Message::ManagePlans);
-      window_chrome::shell(skill_plan_manager::MANAGE_PLANS_WINDOW_TITLE, body, move |event| {
-        Message::Chrome(id, event)
-      })
-    }
+    Some((manage_id, state)) if *manage_id == id => skill_plan_manager::view(state).map(Message::ManagePlans),
     _ => blank(),
   }
 }
@@ -10475,9 +10446,8 @@ mod tests {
     use super::*;
 
     fn ready(app: &mut App) -> window::Id {
-      let id = window::Id::unique();
-      let _ = handle_manage_plans_window_ready(app, id);
-      id
+      let _ = open_manage_plans_window(app);
+      app.manage_plans.as_ref().map(|(id, _)| *id).expect("window registered")
     }
 
     #[tokio::test]
@@ -13101,13 +13071,6 @@ mod tests {
         .variant_name(),
         "ComposeWindowReady"
       );
-      assert_eq!(
-        Message::ManagePlansWindowReady {
-          id: window::Id::unique(),
-        }
-        .variant_name(),
-        "ManagePlansWindowReady"
-      );
       assert_eq!(Message::Quit.variant_name(), "Quit");
       assert_eq!(
         Message::TextInputFocused(iced::widget::Id::from("x")).variant_name(),
@@ -13155,12 +13118,6 @@ mod tests {
           seed: Box::new(mail::compose::Seed::Blank {
             from_character_id: 1,
           }),
-        },
-      );
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::ManagePlansWindowReady {
-          id: window::Id::unique(),
         },
       );
       let _ = dispatch_window_lifecycle(&mut app, Message::WindowOpened(window::Id::unique()));

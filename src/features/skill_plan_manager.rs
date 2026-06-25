@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, button, container, image, scrollable, text},
 };
 
 use crate::{
@@ -10,13 +10,12 @@ use crate::{
     repo::{character, org, skills},
   },
   ui::{
-    components::{avatar::avatar, chip::chip, clip::clip_layer, eyebrow::eyebrow_text, icon::Icon},
+    components::{avatar::avatar, chip::chip, clip::clip_layer, eyebrow::eyebrow_text, header, icon::Icon},
     style::{color, radius, spacing, typography},
   },
 };
 
 pub const MANAGE_PLANS_WINDOW_HEIGHT: f32 = 620.0;
-pub const MANAGE_PLANS_WINDOW_TITLE: &str = "Manage skill plans";
 pub const MANAGE_PLANS_WINDOW_WIDTH: f32 = 940.0;
 
 const RAIL_WIDTH: f32 = 256.0;
@@ -309,18 +308,7 @@ fn header(state: &State) -> Element<'_, Message> {
   ])
   .spacing(spacing::UNIT);
 
-  container(
-    Row::with_children(vec![info.into(), Space::new().width(Length::Fill).into()])
-      .align_y(Vertical::Center)
-      .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .padding(spacing::SPACE_3_5)
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::SUNKEN)),
-    ..container::Style::default()
-  })
-  .into()
+  header::header(vec![info.into()], Vec::new())
 }
 
 fn rail(state: &State) -> Element<'_, Message> {

@@ -4,7 +4,7 @@ mod budget_view;
 mod header;
 mod hero;
 mod loaders;
-mod selection;
+pub(crate) mod selection;
 mod shell;
 mod side_filter;
 mod wallets_view;

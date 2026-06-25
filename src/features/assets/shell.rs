@@ -10,7 +10,7 @@ use super::{
 };
 use crate::ui::{
   components::{
-    add_tag_modal, backdrop, forbidden,
+    add_tag_modal, backdrop, context_menu, forbidden,
     icon::Icon,
     modal_overlay::modal_overlay,
     positioned_dropdown::positioned_dropdown,
@@ -92,6 +92,25 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       base.into(),
       Some(Message::StockpileContextMenuClosed),
       stockpiles::context_menu_view(menu),
+    );
+  }
+
+  if state.tab() == Tab::Inventory
+    && let Some(anchor) = state.inventory_menu()
+  {
+    let count = state.inventory_selection_count();
+    let title = format!("{count} stack{}", if count == 1 { "" } else { "s" });
+    return modal_overlay(
+      base.into(),
+      Some(Message::InventoryMenuDismissed),
+      context_menu::context_menu(
+        &title,
+        vec![context_menu::Item::action(
+          "Edit Tags\u{2026}",
+          Message::OpenSelectionTagModal,
+        )],
+        anchor,
+      ),
     );
   }
 

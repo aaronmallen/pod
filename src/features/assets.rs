@@ -31,6 +31,7 @@ pub use self::{
 };
 pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};
 use crate::{
+  features::wallet::selection::{ClickKind, RowSelection},
   store::{
     Database, images,
     model::{
@@ -216,11 +217,23 @@ pub enum Message {
   FilterExamplePicked(&'static str),
   GeoNodeSelected(GeoSelection),
   GeoNodeToggled(GeoNodeKey),
+  InventoryCursorMoved(iced::Point),
   InventoryHelpToggled,
+  /// Tracks the live keyboard modifiers so a left-click on a row can resolve its
+  /// plain/range/toggle intent (mirrors the wallet ledger's modifier tracking).
+  InventoryModifiersChanged(iced::keyboard::Modifiers),
+  /// Dismisses the row context menu (Escape or backdrop click).
+  InventoryMenuDismissed,
   InventoryPageLoaded {
     epoch: u64,
     rows: Vec<InventoryRow>,
   },
+  /// A left-click on an inventory row, applying the active modifiers to the
+  /// multi-row selection.
+  InventoryRowClicked(i64),
+  /// A right-click on an inventory row: selects the row if it is not already in
+  /// the selection, then opens the Edit Tags context menu at the cursor.
+  InventoryRowRightPressed(i64),
   /// `relative` is the 0.0–1.0 scroll fraction that drives the pagination threshold; `absolute` is
   /// the pixel offset stored to window the virtual list.
   InventoryScrolled {
@@ -228,6 +241,9 @@ pub enum Message {
     relative: f32,
   },
   Loaded(Box<Loaded>),
+  /// Opens the shared add-tag modal over the current multi-row selection, fanning every
+  /// assign/unassign across all selected stacks. Triggered by the row context menu's "Edit Tags".
+  OpenSelectionTagModal,
   /// Opens the shared add-tag modal scoped to asset tags for one inventory row, keyed on its ESI
   /// `item_id`. Phase 4 adds a sibling that opens the same modal over a multi-row selection.
   OpenAssetTagModal {
@@ -387,11 +403,20 @@ pub struct State {
   geo_tree: GeoTree,
   inventory: Vec<InventoryRow>,
   inventory_children: HashMap<i64, Vec<InventoryRow>>,
+  inventory_cursor: Option<iced::Point>,
   inventory_has_more: bool,
   inventory_help_open: bool,
   inventory_loading: bool,
+  /// The cursor anchor of the open row context menu; `None` when closed.
+  inventory_menu: Option<iced::Point>,
+  inventory_modifiers: iced::keyboard::Modifiers,
   inventory_page_epoch: LoadEpoch,
   inventory_scroll_offset: f32,
+  /// Multi-row selection over the inventory, keyed on the globally-unique ESI `item_id`.
+  inventory_selection: RowSelection<i64>,
+  /// The item_ids the open add-tag modal applies to. One entry for a per-row open; the whole
+  /// selection for a bulk Edit Tags open. Assign/unassign fan across every id here.
+  selection_tag_ids: Vec<i64>,
   nav: tracker::NavSeries,
   picker_open: bool,
   roster: Vec<RosterPilot>,
@@ -444,11 +469,16 @@ impl State {
       geo_tree: GeoTree::default(),
       inventory: Vec::new(),
       inventory_children: HashMap::new(),
+      inventory_cursor: None,
       inventory_has_more: false,
       inventory_help_open: false,
       inventory_loading: false,
+      inventory_menu: None,
+      inventory_modifiers: iced::keyboard::Modifiers::default(),
       inventory_page_epoch: LoadEpoch::default(),
       inventory_scroll_offset: 0.0,
+      inventory_selection: RowSelection::default(),
+      selection_tag_ids: Vec::new(),
       picker_open: false,
       roster: Vec::new(),
       saved_filter_active: None,
@@ -636,20 +666,83 @@ impl State {
       .unwrap_or_else(|| format!("Item {item_id}"))
   }
 
-  /// The assigned/assignable partition for the open modal's target item: assigned tags resolve from the
-  /// membership map, assignable is every other asset-scoped tag.
+  /// The assigned/assignable partition for the open modal's targets.
+  ///
+  /// For a single target (per-row open) this is simply that stack's tags vs every other asset-scoped
+  /// tag. For a bulk selection (Edit Tags) a tag counts as "assigned" only when it is on *all* selected
+  /// stacks (the intersection), so the Current-tags chips show what the whole selection shares; every
+  /// other tag is assignable. Adding a tag tags all selected stacks; removing untags all of them.
   pub(super) fn asset_tag_modal_partition(&self) -> (Vec<&Tag>, Vec<&Tag>) {
-    let Some(modal) = &self.add_tag_modal else {
+    if self.add_tag_modal.is_none() || self.selection_tag_ids.is_empty() {
       return (Vec::new(), Vec::new());
-    };
-    let assigned_ids: &[i64] = self.tag_memberships.get(&modal.entity_id).map_or(&[], Vec::as_slice);
-    let assigned = self.asset_tags_for(modal.entity_id);
+    }
+    let assigned_ids = self.common_tag_ids();
+    let assigned = self
+      .asset_tags
+      .iter()
+      .filter(|tag| assigned_ids.contains(&tag.id()))
+      .collect();
     let assignable = self
       .asset_tags
       .iter()
       .filter(|tag| !assigned_ids.contains(&tag.id()))
       .collect();
     (assigned, assignable)
+  }
+
+  /// The tag ids shared by *every* selected stack (the intersection of their membership sets). For a
+  /// single target this is just that stack's tags; empty when any selected stack is untagged.
+  fn common_tag_ids(&self) -> Vec<i64> {
+    let mut iter = self.selection_tag_ids.iter();
+    let Some(first) = iter.next() else {
+      return Vec::new();
+    };
+    let mut common: Vec<i64> = self.tag_memberships.get(first).cloned().unwrap_or_default();
+    for item_id in iter {
+      let theirs: &[i64] = self.tag_memberships.get(item_id).map_or(&[], Vec::as_slice);
+      common.retain(|tag_id| theirs.contains(tag_id));
+      if common.is_empty() {
+        break;
+      }
+    }
+    common
+  }
+
+  /// The currently-loaded inventory rows in display order (flattened with any expanded containers'
+  /// children spliced inline), keyed on `item_id` — the order the selection's range/prune resolve
+  /// against.
+  pub(super) fn inventory_order(&self) -> Vec<i64> {
+    let mut order = Vec::with_capacity(self.inventory.len());
+    for row in &self.inventory {
+      push_inventory_order(self, &mut order, row);
+    }
+    order
+  }
+
+  pub(super) fn inventory_row_selected(&self, item_id: i64) -> bool {
+    self.inventory_selection.contains(item_id)
+  }
+
+  pub(super) fn inventory_selection_count(&self) -> usize {
+    self.inventory_selection.len()
+  }
+
+  pub(super) fn inventory_menu(&self) -> Option<iced::Point> {
+    self.inventory_menu
+  }
+
+  /// The summed value and volume of the selected rows, for the selection summary slot. Walks the loaded
+  /// rows (parents + expanded children) and sums those in the selection.
+  pub(super) fn inventory_selection_totals(&self) -> (f64, f64) {
+    let mut value = 0.0;
+    let mut volume = 0.0;
+    for row in self.inventory.iter().chain(self.inventory_children.values().flatten()) {
+      if self.inventory_selection.contains(row.item_id) {
+        value += row.value;
+        volume += row.row_volume;
+      }
+    }
+    (value, volume)
   }
 
   fn find_inventory_row(&self, item_id: i64) -> Option<&InventoryRow> {
@@ -1192,6 +1285,18 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_slider_edit_text = String::new();
   state.abyssal_stat_templates = Vec::new();
   state.geo_tree = geo_tree;
+  prune_inventory_selection(state);
+}
+
+/// Drops selected rows that a reload, filter change, or container collapse removed from the live
+/// inventory so a stale selection never points at rows the user can no longer see, and clears the
+/// open context menu when its target selection emptied out.
+fn prune_inventory_selection(state: &mut State) {
+  let order = state.inventory_order();
+  state.inventory_selection.prune(&order);
+  if state.inventory_selection.is_empty() {
+    state.inventory_menu = None;
+  }
 }
 
 /// Refreshes data from a sync-triggered reload while preserving transient interaction state
@@ -1237,6 +1342,7 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   let present: HashSet<i64> = state.inventory.iter().map(|row| row.item_id).collect();
   state.expanded_containers.retain(|id| present.contains(id));
   state.inventory_children.retain(|id, _| present.contains(id));
+  prune_inventory_selection(state);
 }
 
 fn effective_filter(category: Category, search: &str) -> String {
@@ -1288,6 +1394,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     | Message::AssetTagsReloaded {
       ..
     }
+    | Message::InventoryCursorMoved(_)
+    | Message::InventoryModifiersChanged(_)
+    | Message::InventoryMenuDismissed
+    | Message::InventoryRowClicked(_)
+    | Message::InventoryRowRightPressed(_)
+    | Message::OpenSelectionTagModal
     | Message::OpenAssetTagModal {
       ..
     } => update_asset_tags(state, message, db),
@@ -1604,8 +1716,53 @@ fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task
     Message::OpenAssetTagModal {
       item_id,
     } => {
+      state.selection_tag_ids = vec![item_id];
       state.add_tag_modal_name = state.resolve_item_name(item_id);
       state.add_tag_modal = Some(AddTagModal::new(item_id, ENTITY_TYPE_ASSET));
+      Task::none()
+    }
+    Message::OpenSelectionTagModal => {
+      let order = state.inventory_order();
+      let selected = state.inventory_selection.ordered(&order);
+      if selected.is_empty() {
+        return Task::none();
+      }
+      state.inventory_menu = None;
+      state.add_tag_modal_name = selection_modal_name(state, &selected);
+      // The modal's single `entity_id` is the first selected stack (a stand-in); assign/unassign
+      // fan across every id in `selection_tag_ids`, so bulk acts on the whole selection.
+      state.add_tag_modal = Some(AddTagModal::new(selected[0], ENTITY_TYPE_ASSET));
+      state.selection_tag_ids = selected;
+      Task::none()
+    }
+    Message::InventoryModifiersChanged(modifiers) => {
+      state.inventory_modifiers = modifiers;
+      Task::none()
+    }
+    Message::InventoryCursorMoved(point) => {
+      state.inventory_cursor = Some(point);
+      Task::none()
+    }
+    Message::InventoryRowClicked(item_id) => {
+      let order = state.inventory_order();
+      let kind = ClickKind::from_modifiers(state.inventory_modifiers.command(), state.inventory_modifiers.shift());
+      state.inventory_selection.apply(item_id, kind, &order);
+      Task::none()
+    }
+    Message::InventoryRowRightPressed(item_id) => {
+      // Right-clicking a row outside the current selection makes it the selection so the menu always
+      // acts on what the user pointed at.
+      if !state.inventory_selection.contains(item_id) {
+        let order = state.inventory_order();
+        state.inventory_selection.apply(item_id, ClickKind::Plain, &order);
+      }
+      if let Some(anchor) = state.inventory_cursor {
+        state.inventory_menu = Some(anchor);
+      }
+      Task::none()
+    }
+    Message::InventoryMenuDismissed => {
+      state.inventory_menu = None;
       Task::none()
     }
     Message::AssetTagsReloaded {
@@ -1621,6 +1778,33 @@ fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task
   }
 }
 
+/// The modal header for a bulk Edit Tags: the lone stack's name for a single selection, otherwise an
+/// "N stacks" count so the modal reads as acting on the whole selection.
+fn selection_modal_name(state: &State, selected: &[i64]) -> String {
+  match selected {
+    [only] => state.resolve_item_name(*only),
+    many => format!("{} stacks", many.len()),
+  }
+}
+
+/// Fans a closure across every selected stack, building one task per id and batching them, each
+/// followed by the shared tag reload. Used by the bulk modal so an assign/unassign applies to the
+/// whole selection (the modal's single `entity_id` only names one stack).
+fn fan_tag_write<F>(state: &State, db: &Database, write: F) -> Task<Message>
+where
+  F: Fn(Database, i64) -> Task<Message>,
+{
+  if state.selection_tag_ids.is_empty() {
+    return Task::none();
+  }
+  let tasks: Vec<Task<Message>> = state
+    .selection_tag_ids
+    .iter()
+    .map(|&item_id| write(db.clone(), item_id))
+    .collect();
+  Task::batch(tasks)
+}
+
 fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Database) -> Task<Message> {
   match message {
     AddTagMessage::InputChanged(value) => {
@@ -1631,39 +1815,37 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
     }
     AddTagMessage::Close => {
       state.add_tag_modal = None;
+      state.selection_tag_ids = Vec::new();
       Task::none()
     }
     AddTagMessage::Assign {
-      entity_id,
       entity_type,
       tag_id,
-    } => {
-      let db = db.clone();
+      ..
+    } => fan_tag_write(state, db, move |db, item_id| {
       Task::perform(
         async move {
-          infra::assign(&db, entity_type, entity_id, tag_id).await.ok();
+          infra::assign(&db, entity_type, item_id, tag_id).await.ok();
           reload_asset_tags(db).await
         },
         |message| message,
       )
-    }
+    }),
     AddTagMessage::Unassign {
-      entity_id,
       entity_type,
       tag_id,
-    } => {
-      let db = db.clone();
+      ..
+    } => fan_tag_write(state, db, move |db, item_id| {
       Task::perform(
         async move {
-          infra::unassign(&db, entity_type, entity_id, tag_id).await.ok();
+          infra::unassign(&db, entity_type, item_id, tag_id).await.ok();
           reload_asset_tags(db).await
         },
         |message| message,
       )
-    }
+    }),
     AddTagMessage::CreateAndAssign {
-      entity_id,
-      entity_type,
+      entity_type, ..
     } => {
       let Some(name) = state
         .add_tag_modal
@@ -1673,6 +1855,9 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       else {
         return Task::none();
       };
+      if state.selection_tag_ids.is_empty() {
+        return Task::none();
+      }
       // Reuse an existing asset tag of the same name (case-insensitive) rather than creating a duplicate.
       let existing = state
         .asset_tags
@@ -1682,6 +1867,9 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       if let Some(modal) = &mut state.add_tag_modal {
         modal.input.clear();
       }
+      // Resolve (or create) the tag once, then assign it to every selected stack so a bulk create tags
+      // the whole selection in one action.
+      let item_ids = state.selection_tag_ids.clone();
       let db = db.clone();
       Task::perform(
         async move {
@@ -1693,12 +1881,29 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
               .map(|tag| tag.id()),
           };
           if let Some(tag_id) = tag_id {
-            infra::assign(&db, entity_type, entity_id, tag_id).await.ok();
+            for item_id in item_ids {
+              infra::assign(&db, entity_type, item_id, tag_id).await.ok();
+            }
           }
           reload_asset_tags(db).await
         },
         |message| message,
       )
+    }
+  }
+}
+
+/// Depth-first walk of the inventory order: a row, then any loaded children of an expanded container.
+/// Mirrors `inventory::flatten_rows` so the selection's range/highlight resolve against the same order
+/// the table renders.
+fn push_inventory_order(state: &State, out: &mut Vec<i64>, row: &InventoryRow) {
+  out.push(row.item_id);
+  if row.is_container
+    && state.expanded_containers.contains(&row.item_id)
+    && let Some(children) = state.inventory_children.get(&row.item_id)
+  {
+    for child in children {
+      push_inventory_order(state, out, child);
     }
   }
 }
@@ -1791,6 +1996,8 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
     Message::ContainerToggled(item_id) => {
       if state.expanded_containers.remove(&item_id) {
         state.inventory_children.remove(&item_id);
+        // The collapsed container's children left the loaded rows, so drop them from the selection.
+        prune_inventory_selection(state);
         return Task::none();
       }
       state.expanded_containers.insert(item_id);
@@ -2159,12 +2366,39 @@ fn update_pane(state: &mut State, message: Message) -> Task<Message> {
 }
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
-  if state.active_drag().is_none() {
-    return iced::Subscription::none();
+  let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
+  if state.active_drag().is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
+    }));
   }
-  iced::event::listen_with(|event, _status, _id| {
-    resizable_pane::drag_event(event, Message::PaneDrag, Message::PaneDragEnd)
-  })
+  // Track keyboard modifiers on the Inventory tab so a row click resolves its plain/range/toggle
+  // intent, mirroring the wallet ledger.
+  if state.tab == Tab::Inventory {
+    subs.push(iced::event::listen_with(|event, _status, _id| match event {
+      iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+        Some(Message::InventoryModifiersChanged(modifiers))
+      }
+      _ => None,
+    }));
+  }
+  // Escape dismisses an open row context menu.
+  if state.inventory_menu.is_some() {
+    subs.push(iced::event::listen_with(|event, _status, _id| {
+      is_escape_pressed(&event).then_some(Message::InventoryMenuDismissed)
+    }));
+  }
+  iced::Subscription::batch(subs)
+}
+
+fn is_escape_pressed(event: &iced::Event) -> bool {
+  matches!(
+    event,
+    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+      key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+      ..
+    })
+  )
 }
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
@@ -4437,6 +4671,280 @@ mod tests {
         ["Keep"]
       );
       assert_eq!(state.tag_memberships.get(&5001), Some(&vec![keep.id()]));
+    }
+  }
+
+  mod inventory_selection {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn row(item_id: i64) -> InventoryRow {
+      InventoryRow {
+        category: "ship".to_owned(),
+        container_id: None,
+        depth: 0,
+        group_name: "Frigate".to_owned(),
+        is_active_ship: false,
+        is_blueprint_copy: None,
+        is_container: false,
+        item_id,
+        location_id: 60_003_760,
+        location_label: Some("Jita".to_owned()),
+        name: None,
+        owner_id: 7,
+        quantity: 1,
+        reproc_value: 0.0,
+        row_volume: 10.0,
+        type_icon: images::IconResolution::Missing,
+        type_id: 587,
+        type_name: "Rifter".to_owned(),
+        unit_price: 100.0,
+        value: 100.0,
+      }
+    }
+
+    fn seeded(rows: &[i64]) -> State {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.inventory = rows.iter().map(|&id| row(id)).collect();
+      state
+    }
+
+    async fn db() -> Database {
+      crate::store::open_test().await.unwrap()
+    }
+
+    async fn seeded_tag(db: &Database, name: &str) -> Tag {
+      infra::create_scoped(db, name, None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_plain_click_selects_a_single_row_and_a_modifier_click_extends() {
+      let db = db().await;
+      let mut state = seeded(&[1, 2, 3, 4]);
+
+      let _ = update(&mut state, Message::InventoryRowClicked(2), &db);
+      assert!(state.inventory_row_selected(2));
+      assert_eq!(state.inventory_selection_count(), 1);
+
+      // Shift extends a contiguous range from the anchor.
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(4), &db);
+      assert_eq!(
+        state.inventory_selection.ordered(&state.inventory_order()),
+        vec![2, 3, 4]
+      );
+
+      // ⌘ toggles an individual row out.
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::COMMAND),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(3), &db);
+      assert_eq!(state.inventory_selection.ordered(&state.inventory_order()), vec![2, 4]);
+    }
+
+    #[tokio::test]
+    async fn a_right_click_outside_the_selection_reselects_then_opens_the_menu() {
+      let db = db().await;
+      let mut state = seeded(&[1, 2, 3]);
+      let _ = update(&mut state, Message::InventoryRowClicked(1), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryCursorMoved(iced::Point::new(20.0, 40.0)),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::InventoryRowRightPressed(3), &db);
+
+      // Row 3 was not selected, so it becomes the lone selection, and the menu opens at the cursor.
+      assert_eq!(state.inventory_selection.ordered(&state.inventory_order()), vec![3]);
+      assert_eq!(state.inventory_menu(), Some(iced::Point::new(20.0, 40.0)));
+
+      let _ = update(&mut state, Message::InventoryMenuDismissed, &db);
+      assert!(state.inventory_menu().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_right_click_inside_the_selection_keeps_it() {
+      let db = db().await;
+      let mut state = seeded(&[1, 2, 3]);
+      let _ = update(&mut state, Message::InventoryRowClicked(1), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(3), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryCursorMoved(iced::Point::new(5.0, 5.0)),
+        &db,
+      );
+
+      let _ = update(&mut state, Message::InventoryRowRightPressed(2), &db);
+
+      // The whole range stays selected — the menu acts on it, not just the pointed row.
+      assert_eq!(
+        state.inventory_selection.ordered(&state.inventory_order()),
+        vec![1, 2, 3]
+      );
+    }
+
+    #[tokio::test]
+    async fn a_reload_prunes_rows_that_left_the_filter() {
+      let db = db().await;
+      let mut state = seeded(&[1, 2, 3]);
+      let _ = update(&mut state, Message::InventoryRowClicked(2), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::COMMAND),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(3), &db);
+      assert_eq!(state.inventory_selection_count(), 2);
+
+      // A reload narrows the inventory to row 2 only; row 3 drops out of the selection.
+      let loaded = Loaded {
+        inventory: vec![row(2)],
+        ..Loaded::default()
+      };
+      apply_loaded(&mut state, loaded);
+
+      assert_eq!(state.inventory_selection.ordered(&state.inventory_order()), vec![2]);
+      assert!(!state.inventory_row_selected(3));
+    }
+
+    /// Opening Edit Tags over a selection captures every selected stack into `selection_tag_ids`, the
+    /// set the modal's Assign/Unassign arms fan their write across. The async writes themselves are
+    /// driven separately (the returned `Task` is not executed in a unit test) to assert the bulk effect.
+    #[tokio::test]
+    async fn opening_edit_tags_targets_every_selected_stack() {
+      let db = db().await;
+      let mut state = seeded(&[10, 20, 30]);
+
+      let _ = update(&mut state, Message::InventoryRowClicked(10), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(30), &db);
+      let _ = update(&mut state, Message::OpenSelectionTagModal, &db);
+
+      assert!(state.asset_tag_modal().is_some());
+      assert!(state.inventory_menu().is_none());
+      assert_eq!(state.selection_tag_ids, vec![10, 20, 30]);
+    }
+
+    #[tokio::test]
+    async fn a_bulk_assign_applies_the_tag_to_every_targeted_stack() {
+      let db = db().await;
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = seeded(&[10, 20, 30]);
+      state.selection_tag_ids = vec![10, 20, 30];
+
+      // Mirror the write the modal's Assign arm fans across `selection_tag_ids`.
+      for &id in &state.selection_tag_ids {
+        infra::assign(&db, ENTITY_TYPE_ASSET, id, keep.id()).await.unwrap();
+      }
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      for id in [10, 20, 30] {
+        assert_eq!(
+          state.asset_tags_for(id).iter().map(|t| t.id()).collect::<Vec<_>>(),
+          vec![keep.id()],
+          "stack {id} should carry the bulk-assigned tag"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn a_bulk_unassign_removes_the_tag_from_every_targeted_stack() {
+      let db = db().await;
+      let keep = seeded_tag(&db, "Keep").await;
+      for id in [10, 20, 30] {
+        infra::assign(&db, ENTITY_TYPE_ASSET, id, keep.id()).await.unwrap();
+      }
+      let mut state = seeded(&[10, 20, 30]);
+      state.selection_tag_ids = vec![10, 20, 30];
+
+      // Mirror the write the modal's Unassign arm fans across `selection_tag_ids`.
+      for &id in &state.selection_tag_ids {
+        infra::unassign(&db, ENTITY_TYPE_ASSET, id, keep.id()).await.unwrap();
+      }
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      for id in [10, 20, 30] {
+        assert!(
+          state.asset_tags_for(id).is_empty(),
+          "stack {id} should have the bulk-unassigned tag removed"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn the_bulk_partition_uses_the_intersection_of_the_selection() {
+      let db = db().await;
+      let keep = seeded_tag(&db, "Keep").await;
+      let sell = seeded_tag(&db, "Sell").await;
+      // Keep is on both stacks; Sell only on one — so only Keep is "assigned" across the selection.
+      infra::assign(&db, ENTITY_TYPE_ASSET, 10, keep.id()).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 20, keep.id()).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 10, sell.id()).await.unwrap();
+
+      let mut state = seeded(&[10, 20]);
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+      let _ = update(&mut state, Message::InventoryRowClicked(10), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(20), &db);
+      let _ = update(&mut state, Message::OpenSelectionTagModal, &db);
+
+      let (assigned, assignable) = state.asset_tag_modal_partition();
+      assert_eq!(assigned.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(), ["Keep"]);
+      assert_eq!(
+        assignable.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+        ["Sell"]
+      );
+    }
+
+    #[tokio::test]
+    async fn the_selection_modal_titles_a_multi_row_selection_by_count() {
+      let db = db().await;
+      let mut state = seeded(&[10, 20]);
+      let _ = update(&mut state, Message::InventoryRowClicked(10), &db);
+      let _ = update(
+        &mut state,
+        Message::InventoryModifiersChanged(iced::keyboard::Modifiers::SHIFT),
+        &db,
+      );
+      let _ = update(&mut state, Message::InventoryRowClicked(20), &db);
+      let _ = update(&mut state, Message::OpenSelectionTagModal, &db);
+
+      assert_eq!(state.asset_tag_modal_entity_name(), "2 stacks");
+    }
+
+    #[test]
+    fn it_renders_the_inventory_context_menu_overlay() {
+      let mut state = seeded(&[1, 2]);
+      state.tab = Tab::Inventory;
+      state
+        .inventory_selection
+        .apply(1, ClickKind::Plain, &state.inventory_order());
+      state.inventory_menu = Some(iced::Point::new(10.0, 10.0));
+
+      let _el: Element<'_, Message> = view(&state, Utc::now());
     }
   }
 }

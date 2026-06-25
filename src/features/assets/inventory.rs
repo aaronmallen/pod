@@ -307,14 +307,24 @@ fn help_toggle<'a>(open: bool) -> Element<'a, Message> {
 }
 
 fn totals_summary(state: &State) -> Element<'_, Message> {
-  let rows = state.inventory();
-  let count = rows.len() as i64;
-  let value: f64 = rows.iter().map(|r| r.value).sum();
-  let volume: f64 = rows.iter().map(|r| r.row_volume).sum();
+  // When rows are selected, the summary reflects the selection (count + summed value/volume) so the
+  // user sees what a bulk Edit Tags will act on; otherwise it shows the whole loaded page.
+  let (label, count, value, volume) = if state.inventory_selection_count() > 0 {
+    let (value, volume) = state.inventory_selection_totals();
+    ("Selected", state.inventory_selection_count() as i64, value, volume)
+  } else {
+    let rows = state.inventory();
+    (
+      "Rows",
+      rows.len() as i64,
+      rows.iter().map(|r| r.value).sum(),
+      rows.iter().map(|r| r.row_volume).sum(),
+    )
+  };
 
   container(
     Row::with_children(vec![
-      summary_stat("Rows", fmt_count(count)),
+      summary_stat(label, fmt_count(count)),
       summary_stat("Value", fmt_isk(value)),
       summary_stat("Volume", fmt_volume(volume)),
     ])
@@ -381,18 +391,30 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
       let inventory_row = flat[index];
       let expanded = state.container_is_open(inventory_row.item_id);
       let tags = state.asset_tags_for(inventory_row.item_id);
-      table_row(inventory_row, state.roster(), state.corporations(), expanded, tags)
+      let selected = state.inventory_row_selected(inventory_row.item_id);
+      table_row(
+        inventory_row,
+        state.roster(),
+        state.corporations(),
+        expanded,
+        tags,
+        selected,
+      )
     })
     .view();
 
-    scrollable(list)
+    let scroll = scrollable(list)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)
       .on_scroll(|viewport| Message::InventoryScrolled {
         relative: viewport.relative_offset().y,
         absolute: viewport.absolute_offset().y,
-      })
+      });
+
+    // Track the cursor over the table so a right-click can anchor the context menu at the pointer.
+    iced::widget::mouse_area(scroll)
+      .on_move(Message::InventoryCursorMoved)
       .into()
   })
 }
@@ -543,6 +565,7 @@ fn table_row<'a>(
   corporations: &[RosterCorp],
   expanded: bool,
   tags: Vec<&'a Tag>,
+  selected: bool,
 ) -> Element<'a, Message> {
   let cells: Vec<Element<'a, Message>> = vec![
     row_prefix(inventory_row, expanded),
@@ -588,7 +611,8 @@ fn table_row<'a>(
     bottom: spacing::SPACE_2,
     left: HEADER_SIDE_PADDING,
   })
-  .style(|_| container::Style {
+  .style(move |_| container::Style {
+    background: selected.then_some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.14))),
     border: Border {
       color: color::with_alpha(color::text::PRIMARY, 0.06),
       width: 1.0,
@@ -597,11 +621,23 @@ fn table_row<'a>(
     ..container::Style::default()
   });
 
-  if inventory_row.worth_reprocessing() {
+  let edged: Element<'a, Message> = if inventory_row.worth_reprocessing() {
     reproc_edge(row.into())
   } else {
     row.into()
-  }
+  };
+
+  select_wrap(edged, inventory_row.item_id)
+}
+
+/// Wraps a row so a left-click selects it (honoring the live keyboard modifiers) and a right-click
+/// opens the bulk Edit Tags menu. The `+ Tag` affordance and container toggle keep their own presses —
+/// `mouse_area` does not swallow inner button presses.
+fn select_wrap<'a>(row: Element<'a, Message>, item_id: i64) -> Element<'a, Message> {
+  iced::widget::mouse_area(row)
+    .on_press(Message::InventoryRowClicked(item_id))
+    .on_right_press(Message::InventoryRowRightPressed(item_id))
+    .into()
 }
 
 /// Wrap a row in an outer container whose warning-colored background is revealed

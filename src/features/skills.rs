@@ -304,7 +304,6 @@ fn update_right_panel(state: &mut State, message: right_panel::Message, db: &Dat
     right_panel::Message::Plans(right_panel::plans_tab::Message::FromSelected) => {
       Task::done(Message::CreatePlanFromSelection)
     }
-    right_panel::Message::Plans(right_panel::plans_tab::Message::ManagePlans) => Task::done(Message::OpenManagePlans),
     right_panel::Message::Plans(right_panel::plans_tab::Message::OpenPlan(plan_id)) => {
       Task::done(Message::OpenPlanEditor(EditorSeed::Existing(plan_id)))
     }

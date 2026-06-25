@@ -256,6 +256,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/personal.svg"))
   }
 
+  pub fn plans() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/plans.svg"))
+  }
+
   pub fn plus() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
   }

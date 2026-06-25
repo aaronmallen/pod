@@ -45,7 +45,11 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     queue_stat(queue.len(), remaining),
   ];
 
-  let mut right: Vec<Element<'a, Message>> = vec![compare_button()];
+  let mut right: Vec<Element<'a, Message>> = vec![
+    manage_plans_button(),
+    Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
+    compare_button(),
+  ];
   if let Some(seconds) = remaining.filter(|secs| *secs > 0) {
     right.push(Space::new().width(Length::Fixed(spacing::SPACE_3)).into());
     right.push(stat_block(
@@ -57,6 +61,48 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
   }
 
   header_band(left, right)
+}
+
+fn manage_plans_button<'a>() -> Element<'a, Message> {
+  let label = Row::with_children(vec![
+    Icon::plans().size(16.0).color(color::text::secondary()).render(),
+    text("Manage Plans")
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+  ])
+  .spacing(spacing::UNIT)
+  .align_y(Vertical::Center);
+
+  button(label)
+    .padding(Padding {
+      top: 7.0,
+      bottom: 7.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(Message::OpenManagePlans)
+    .style(|_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: None,
+        border: Border {
+          color: color::with_alpha(color::text::PRIMARY, if hover { 0.25 } else { 0.1 }),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: if hover {
+          color::text::PRIMARY
+        } else {
+          color::text::secondary()
+        },
+        ..button::Style::default()
+      }
+    })
+    .into()
 }
 
 fn compare_button<'a>() -> Element<'a, Message> {
@@ -221,6 +267,11 @@ mod tests {
       state.picker_open = true;
 
       let _el: Element<'_, Message> = header(&state, now());
+    }
+
+    #[test]
+    fn it_renders_the_manage_plans_trigger() {
+      let _el: Element<'_, Message> = manage_plans_button();
     }
   }
 

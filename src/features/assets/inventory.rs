@@ -1300,8 +1300,7 @@ mod tests {
     fn it_composes_the_tooltip_with_per_unit_reproc_sell_and_gain() {
       assert_eq!(
         reproc_tooltip_text(&worth_row()),
-        "Reprocesses to 250/unit \u{2014} 150% above its 100/unit sell price. \
-         Worth refining rather than selling."
+        "Reprocesses to 250/unit \u{2014} 150% above its 100/unit sell price. Worth refining rather than selling."
       );
     }
 

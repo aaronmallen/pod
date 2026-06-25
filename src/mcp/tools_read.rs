@@ -2,16 +2,15 @@ use serde_json::{Value, json};
 
 use crate::{
   features::wallet::budget,
-  mcp::tool::{McpTool, Permission, ToolError},
+  mcp::{
+    args::{ArgSpec, DEFAULT_LIMIT, paginate_vec, pagination, require_i64},
+    tool::{McpTool, Permission, ToolError},
+  },
   store::{
     model::{BudgetScope, CharacterMail},
     repo::{assets, character, finance, industry, mail, org},
   },
 };
-
-const DEFAULT_LIMIT: i64 = 50;
-
-const MAX_LIMIT: i64 = 500;
 
 pub fn tools() -> Vec<McpTool> {
   vec![
@@ -104,7 +103,7 @@ fn get_wallet_balances_tool() -> McpTool {
 fn list_journal_tool() -> McpTool {
   McpTool::new(
     "list_journal",
-    "Pages a character's wallet journal (most recent first). Args: character_id, page, limit.",
+    "Pages a character's wallet journal (most recent first).",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -130,12 +129,13 @@ fn list_journal_tool() -> McpTool {
       Ok(json!({ "entries": entries, "has_more": has_more, "page": page }))
     },
   )
+  .with_args(paginated_character_args())
 }
 
 fn list_market_transactions_tool() -> McpTool {
   McpTool::new(
     "list_market_transactions",
-    "Pages a character's market transactions (most recent first). Args: character_id, page, limit.",
+    "Pages a character's market transactions (most recent first).",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -162,12 +162,13 @@ fn list_market_transactions_tool() -> McpTool {
       Ok(json!({ "has_more": has_more, "page": page, "transactions": entries }))
     },
   )
+  .with_args(paginated_character_args())
 }
 
 fn list_contracts_tool() -> McpTool {
   McpTool::new(
     "list_contracts",
-    "Pages a character's contracts (most recent first). Args: character_id, page, limit.",
+    "Pages a character's contracts (most recent first).",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -195,6 +196,7 @@ fn list_contracts_tool() -> McpTool {
       Ok(json!({ "contracts": entries, "has_more": has_more, "page": page }))
     },
   )
+  .with_args(paginated_character_args())
 }
 
 fn get_budget_view_tool() -> McpTool {
@@ -244,7 +246,7 @@ fn get_budget_view_tool() -> McpTool {
 fn get_skills_tool() -> McpTool {
   McpTool::new(
     "get_skills",
-    "Returns a character's trained skills and total skill points. Args: character_id.",
+    "Returns a character's trained skills and total skill points.",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -264,12 +266,13 @@ fn get_skills_tool() -> McpTool {
       Ok(json!({ "skills": rows, "total_sp": state.as_ref().and_then(|s| s.total_sp) }))
     },
   )
+  .with_args([character_id_arg()])
 }
 
 fn get_skill_queue_tool() -> McpTool {
   McpTool::new(
     "get_skill_queue",
-    "Returns a character's skill training queue in position order. Args: character_id.",
+    "Returns a character's skill training queue in position order.",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -289,6 +292,7 @@ fn get_skill_queue_tool() -> McpTool {
       Ok(json!({ "queue": rows }))
     },
   )
+  .with_args([character_id_arg()])
 }
 
 fn list_industry_jobs_tool() -> McpTool {
@@ -340,7 +344,7 @@ fn list_industry_jobs_tool() -> McpTool {
 fn get_planner_tool() -> McpTool {
   McpTool::new(
     "get_planner",
-    "Lists saved industry plans, or returns one plan's full type tree and segments. Args: plan_id (optional).",
+    "Lists saved industry plans, or returns one plan's full type tree and segments.",
     Permission::Read,
     |db, args: Value| async move {
       if let Some(plan_id) = args.get("plan_id").and_then(Value::as_i64) {
@@ -401,12 +405,17 @@ fn get_planner_tool() -> McpTool {
       Ok(json!({ "plans": rows }))
     },
   )
+  .with_args([ArgSpec::optional_integer(
+    "plan_id",
+    0,
+    "An industry plan id; omit to list every saved plan.",
+  )])
 }
 
 fn list_assets_tool() -> McpTool {
   McpTool::new(
     "list_assets",
-    "Pages a character's asset holdings. Args: character_id, page, limit.",
+    "Pages a character's asset holdings.",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -430,12 +439,13 @@ fn list_assets_tool() -> McpTool {
       Ok(json!({ "assets": entries, "has_more": has_more, "page": page }))
     },
   )
+  .with_args(paginated_character_args())
 }
 
 fn list_mail_tool() -> McpTool {
   McpTool::new(
     "list_mail",
-    "Pages a character's mail headers (most recent first). Args: character_id, page, limit.",
+    "Pages a character's mail headers (most recent first).",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -458,12 +468,13 @@ fn list_mail_tool() -> McpTool {
       Ok(json!({ "has_more": has_more, "mail": entries, "page": page }))
     },
   )
+  .with_args(paginated_character_args())
 }
 
 fn get_mail_body_tool() -> McpTool {
   McpTool::new(
     "get_mail_body",
-    "Returns a single mail's header, recipients, labels, and full body. Args: character_id, mail_id.",
+    "Returns a single mail's header, recipients, labels, and full body.",
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -485,6 +496,10 @@ fn get_mail_body_tool() -> McpTool {
       }))
     },
   )
+  .with_args([
+    character_id_arg(),
+    ArgSpec::integer("mail_id", "The mail id whose body to fetch."),
+  ])
 }
 
 fn get_market_prices_tool() -> McpTool {
@@ -519,30 +534,20 @@ fn internal(error: impl std::fmt::Display) -> ToolError {
   ToolError::Internal(error.to_string())
 }
 
-fn pagination(args: &Value) -> (i64, i64) {
-  let page = args.get("page").and_then(Value::as_i64).unwrap_or(0).max(0);
-  let limit = args
-    .get("limit")
-    .and_then(Value::as_i64)
-    .unwrap_or(DEFAULT_LIMIT)
-    .clamp(1, MAX_LIMIT);
-  (page, limit)
+fn character_id_arg() -> ArgSpec {
+  ArgSpec::integer("character_id", "The character whose data to read.")
 }
 
-/// Slices `rows` to the requested page and reports whether further pages remain, taking ownership of
-/// the window so callers serialize without an extra clone.
-fn paginate_vec<T>(rows: &mut Vec<T>, page: i64, limit: i64) -> (Vec<T>, bool) {
-  let start = (page * limit).min(rows.len() as i64).max(0) as usize;
-  let end = (start as i64 + limit).min(rows.len() as i64).max(0) as usize;
-  let has_more = end < rows.len();
-  (rows.drain(start..end).collect(), has_more)
-}
-
-fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
-  args
-    .get(key)
-    .and_then(Value::as_i64)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be an integer")))
+fn paginated_character_args() -> [ArgSpec; 3] {
+  [
+    character_id_arg(),
+    ArgSpec::optional_integer("page", 0, "Zero-based page index (defaults to 0)."),
+    ArgSpec::optional_integer(
+      "limit",
+      DEFAULT_LIMIT,
+      "Maximum rows per page (1..=500, defaults to 50).",
+    ),
+  ]
 }
 
 #[cfg(test)]
@@ -592,37 +597,60 @@ mod tests {
     industry::create_plan(db, name, &tree).await.unwrap().id()
   }
 
-  mod paginate_vec {
+  mod input_schema {
     use pretty_assertions::assert_eq;
 
-    #[test]
-    fn it_reports_more_when_the_page_does_not_reach_the_end() {
-      let mut rows: Vec<i64> = (0..10).collect();
+    use super::*;
+    use crate::mcp::args::input_schema;
 
-      let (slice, has_more) = super::super::paginate_vec(&mut rows, 0, 4);
+    fn tool(name: &str) -> McpTool {
+      tools().into_iter().find(|t| t.name() == name).expect("tool exists")
+    }
 
-      assert_eq!(slice, vec![0, 1, 2, 3]);
-      assert!(has_more);
+    fn schema(name: &str) -> Value {
+      input_schema(tool(name).args())
     }
 
     #[test]
-    fn it_reports_no_more_on_the_last_page() {
-      let mut rows: Vec<i64> = (0..6).collect();
+    fn list_journal_advertises_character_id_and_pagination() {
+      let schema = schema("list_journal");
 
-      let (slice, has_more) = super::super::paginate_vec(&mut rows, 1, 4);
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["page"]["type"], "integer");
+      assert_eq!(schema["properties"]["limit"]["type"], "integer");
 
-      assert_eq!(slice, vec![4, 5]);
-      assert!(!has_more);
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("character_id")));
+      assert!(!required.contains(&json!("page")));
+      assert!(!required.contains(&json!("limit")));
     }
 
     #[test]
-    fn it_returns_an_empty_window_past_the_end() {
-      let mut rows: Vec<i64> = (0..3).collect();
+    fn get_mail_body_requires_two_integer_ids() {
+      let schema = schema("get_mail_body");
 
-      let (slice, has_more) = super::super::paginate_vec(&mut rows, 5, 4);
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["mail_id"]["type"], "integer");
 
-      assert!(slice.is_empty());
-      assert!(!has_more);
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("character_id")));
+      assert!(required.contains(&json!("mail_id")));
+    }
+
+    #[test]
+    fn get_skills_advertises_a_single_required_integer() {
+      let schema = schema("get_skills");
+
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert!(schema["required"].as_array().unwrap().contains(&json!("character_id")));
+    }
+
+    #[test]
+    fn zero_arg_tools_advertise_no_properties() {
+      let schema = schema("list_characters");
+
+      assert!(schema["properties"].as_object().unwrap().is_empty());
+      assert!(schema["required"].as_array().unwrap().is_empty());
     }
   }
 
@@ -733,57 +761,6 @@ mod tests {
         .await;
 
       assert!(matches!(outcome, Err(ToolError::InvalidArguments(_))));
-    }
-  }
-
-  mod pagination {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_defaults_to_page_zero_and_the_default_limit() {
-      let (page, limit) = super::super::pagination(&Value::Null);
-
-      assert_eq!(page, 0);
-      assert_eq!(limit, DEFAULT_LIMIT);
-    }
-
-    #[test]
-    fn it_clamps_a_negative_page_to_zero() {
-      let (page, _) = super::super::pagination(&json!({ "page": -5 }));
-
-      assert_eq!(page, 0);
-    }
-
-    #[test]
-    fn it_clamps_the_limit_into_its_bounds() {
-      let (_, low) = super::super::pagination(&json!({ "limit": 0 }));
-      let (_, high) = super::super::pagination(&json!({ "limit": 10_000 }));
-
-      assert_eq!(low, 1);
-      assert_eq!(high, MAX_LIMIT);
-    }
-  }
-
-  mod require_i64 {
-    use super::*;
-
-    #[test]
-    fn it_reads_an_integer_argument() {
-      assert_eq!(super::super::require_i64(&json!({ "x": 7 }), "x").unwrap(), 7);
-    }
-
-    #[test]
-    fn it_errors_when_the_argument_is_absent_or_not_an_integer() {
-      assert!(matches!(
-        super::super::require_i64(&json!({}), "x"),
-        Err(ToolError::InvalidArguments(_))
-      ));
-      assert!(matches!(
-        super::super::require_i64(&json!({ "x": "nope" }), "x"),
-        Err(ToolError::InvalidArguments(_))
-      ));
     }
   }
 }

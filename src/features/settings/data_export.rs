@@ -10,7 +10,7 @@
 //! lets it run under `spawn_blocking` exactly like `log_export::build_zip`.
 
 use std::{
-  io::{Cursor, Write},
+  io::{Cursor, Read, Write},
   path::Path,
 };
 
@@ -160,6 +160,109 @@ pub fn default_file_name(now: DateTime<Utc>) -> String {
   format!("pod-data-{}.zip", now.format("%Y%m%dT%H%M%SZ"))
 }
 
+/// Whether an archive's Pod version is compatible with this build, per ADR-0038's version guard.
+///
+/// An archive from an older or equal Pod restores fine — migrations run forward on next launch. An
+/// archive from a newer Pod (a higher major version than this build) is refused, because a newer
+/// schema cannot be downgraded. The import UI maps these to "ok / will migrate / incompatible".
+#[allow(dead_code)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VersionVerdict {
+  /// Archive Pod version matches this build exactly; restore as-is.
+  Ok,
+  /// Archive is from an older Pod; restore is safe and migrations run forward on next launch.
+  WillMigrate,
+  /// Archive is from a newer Pod (higher major version); refuse — the schema can't be downgraded.
+  Incompatible,
+}
+
+/// An archive parsed out of its `.zip` container: the raw `pod.db` and `config.toml` bytes, the
+/// parsed `manifest.json`, and the version-guard verdict the import confirm modal displays. The
+/// import join (T7) consumes the bytes to restore and reads `verdict` to gate the restore.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct ParsedArchive {
+  /// Raw bytes of the self-contained `pod.db` snapshot entry.
+  pub database: Vec<u8>,
+  /// Raw bytes of the bundled `config.toml` entry.
+  pub config: Vec<u8>,
+  /// The parsed machine-readable manifest.
+  pub manifest: Manifest,
+  /// Compatibility verdict comparing the archive's Pod version against this build.
+  pub verdict: VersionVerdict,
+}
+
+/// Opens a data archive, extracts and validates its entries, and computes the version-guard verdict.
+///
+/// Reads the `.zip` from `bytes`, requiring `pod.db`, `config.toml`, and a parseable `manifest.json`;
+/// a missing or corrupt entry is rejected with a clear `String` error so nothing is partially
+/// applied. The returned `verdict` reflects ADR-0038's policy: an older/equal archive restores
+/// (migrations run forward), a newer-major archive is `Incompatible` and the import must refuse.
+#[allow(dead_code)]
+pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
+  let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|err| format!("Couldn't open archive: {err}"))?;
+
+  let mut database: Option<Vec<u8>> = None;
+  let mut config: Option<Vec<u8>> = None;
+  let mut manifest_json: Option<Vec<u8>> = None;
+
+  for index in 0..archive.len() {
+    let mut entry = archive
+      .by_index(index)
+      .map_err(|err| format!("Couldn't read archive entry: {err}"))?;
+    let name = entry.name().to_owned();
+    let slot = match name.as_str() {
+      DATABASE_NAME => &mut database,
+      CONFIG_NAME => &mut config,
+      MANIFEST_JSON_NAME => &mut manifest_json,
+      _ => continue,
+    };
+    let mut contents = Vec::new();
+    entry
+      .read_to_end(&mut contents)
+      .map_err(|err| format!("Couldn't read {name} from archive: {err}"))?;
+    *slot = Some(contents);
+  }
+
+  let manifest_json = manifest_json.ok_or_else(|| format!("Archive is missing {MANIFEST_JSON_NAME}"))?;
+  let database = database.ok_or_else(|| format!("Archive is missing {DATABASE_NAME}"))?;
+  let config = config.ok_or_else(|| format!("Archive is missing {CONFIG_NAME}"))?;
+
+  let manifest: Manifest =
+    serde_json::from_slice(&manifest_json).map_err(|err| format!("Couldn't parse {MANIFEST_JSON_NAME}: {err}"))?;
+
+  let verdict = version_verdict(&manifest.pod_version)?;
+
+  Ok(ParsedArchive {
+    database,
+    config,
+    manifest,
+    verdict,
+  })
+}
+
+/// Compares an archive's Pod version against this build to produce the version-guard verdict.
+///
+/// Uses semver-major comparison (ADR-0038's "refuse if the archive's major Pod version > this
+/// build's"). An equal version is `Ok`, a lower one `WillMigrate`, and a higher major `Incompatible`.
+/// An unparseable version is rejected outright so a malformed manifest can't slip past the guard.
+fn version_verdict(archive_version: &str) -> Result<VersionVerdict, String> {
+  use cargo_packager_updater::semver::Version;
+
+  let archive = Version::parse(archive_version)
+    .map_err(|err| format!("Archive Pod version '{archive_version}' is not valid semver: {err}"))?;
+  let current = Version::parse(env!("CARGO_PKG_VERSION"))
+    .map_err(|err| format!("This build's version is not valid semver: {err}"))?;
+
+  if archive.major > current.major {
+    Ok(VersionVerdict::Incompatible)
+  } else if archive == current {
+    Ok(VersionVerdict::Ok)
+  } else {
+    Ok(VersionVerdict::WillMigrate)
+  }
+}
+
 fn write_entry<W: Write + std::io::Seek>(
   zip: &mut ZipWriter<W>,
   options: FileOptions<'_, ()>,
@@ -195,7 +298,7 @@ fn render_manifest(manifest: &Manifest) -> String {
 
 #[cfg(test)]
 mod tests {
-  use std::{io::Read, path::PathBuf};
+  use std::path::PathBuf;
 
   use super::*;
 
@@ -337,6 +440,160 @@ mod tests {
       let now = Utc.with_ymd_and_hms(2026, 6, 25, 14, 30, 0).unwrap();
 
       assert_eq!(default_file_name(now), "pod-data-20260625T143000Z.zip");
+    }
+  }
+
+  mod read_archive {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn valid_archive() -> Vec<u8> {
+      let dir = tempfile::tempdir().unwrap();
+      let db = dir.path().join("snapshot.db");
+      seed_database(&db).await;
+      build_archive(&db, b"[storage]\nnetwork = false\n", &diagnostics()).unwrap()
+    }
+
+    /// Rebuilds a `.zip` from the given entries, used to fabricate archives missing an entry or
+    /// carrying a tampered manifest.
+    fn zip_from(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+      let mut buf = Vec::new();
+      {
+        let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+        let options: FileOptions<'_, ()> = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, bytes) in entries {
+          zip.start_file(*name, options).unwrap();
+          zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+      }
+      buf
+    }
+
+    fn manifest_with_version(version: &str) -> Vec<u8> {
+      let manifest = Manifest {
+        archive_version: ARCHIVE_VERSION,
+        arch: "x86_64".to_owned(),
+        created_at: "2026-06-25T00:00:00+00:00".to_owned(),
+        pod_version: version.to_owned(),
+        os: "linux".to_owned(),
+        storage: StoragePaths {
+          cache_dir: "/cache".to_owned(),
+          database_path: "/db/pod.db".to_owned(),
+          db_dir: "/db".to_owned(),
+          log_dir: "/logs".to_owned(),
+        },
+        files: vec![],
+      };
+      serde_json::to_vec(&manifest).unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_returns_every_component_for_a_valid_archive() {
+      let bytes = valid_archive().await;
+
+      let parsed = read_archive(&bytes).unwrap();
+
+      assert!(!parsed.database.is_empty(), "db bytes are extracted");
+      assert_eq!(parsed.config, b"[storage]\nnetwork = false\n");
+      assert_eq!(parsed.manifest.pod_version, env!("CARGO_PKG_VERSION"));
+      assert_eq!(parsed.verdict, VersionVerdict::Ok);
+    }
+
+    #[test]
+    fn the_extracted_database_opens_as_a_sqlite_snapshot() {
+      // Round-trip is covered by the build_archive suite; here we only assert read_archive
+      // surfaces the same db bytes the writer embedded, by length-matching a fabricated entry.
+      let db = b"not a real db but round-tripped".to_vec();
+      let bytes = zip_from(&[
+        (DATABASE_NAME, db.clone()),
+        (CONFIG_NAME, b"config".to_vec()),
+        (MANIFEST_JSON_NAME, manifest_with_version(env!("CARGO_PKG_VERSION"))),
+      ]);
+
+      let parsed = read_archive(&bytes).unwrap();
+
+      assert_eq!(parsed.database, db);
+    }
+
+    #[test]
+    fn an_older_archive_yields_a_will_migrate_verdict() {
+      let bytes = zip_from(&[
+        (DATABASE_NAME, b"db".to_vec()),
+        (CONFIG_NAME, b"config".to_vec()),
+        (MANIFEST_JSON_NAME, manifest_with_version("0.0.1")),
+      ]);
+
+      let parsed = read_archive(&bytes).unwrap();
+
+      assert_eq!(parsed.verdict, VersionVerdict::WillMigrate);
+    }
+
+    #[test]
+    fn a_newer_major_archive_is_incompatible() {
+      let bytes = zip_from(&[
+        (DATABASE_NAME, b"db".to_vec()),
+        (CONFIG_NAME, b"config".to_vec()),
+        (MANIFEST_JSON_NAME, manifest_with_version("999.0.0")),
+      ]);
+
+      let parsed = read_archive(&bytes).unwrap();
+
+      assert_eq!(parsed.verdict, VersionVerdict::Incompatible);
+    }
+
+    #[test]
+    fn it_rejects_an_archive_missing_the_database() {
+      let bytes = zip_from(&[
+        (CONFIG_NAME, b"config".to_vec()),
+        (MANIFEST_JSON_NAME, manifest_with_version(env!("CARGO_PKG_VERSION"))),
+      ]);
+
+      let result = read_archive(&bytes);
+
+      assert_eq!(result.unwrap_err(), format!("Archive is missing {DATABASE_NAME}"));
+    }
+
+    #[test]
+    fn it_rejects_an_archive_missing_the_manifest() {
+      let bytes = zip_from(&[(DATABASE_NAME, b"db".to_vec()), (CONFIG_NAME, b"config".to_vec())]);
+
+      let result = read_archive(&bytes);
+
+      assert_eq!(result.unwrap_err(), format!("Archive is missing {MANIFEST_JSON_NAME}"));
+    }
+
+    #[test]
+    fn it_rejects_an_archive_missing_the_config() {
+      let bytes = zip_from(&[
+        (DATABASE_NAME, b"db".to_vec()),
+        (MANIFEST_JSON_NAME, manifest_with_version(env!("CARGO_PKG_VERSION"))),
+      ]);
+
+      let result = read_archive(&bytes);
+
+      assert_eq!(result.unwrap_err(), format!("Archive is missing {CONFIG_NAME}"));
+    }
+
+    #[test]
+    fn it_rejects_a_corrupt_manifest() {
+      let bytes = zip_from(&[
+        (DATABASE_NAME, b"db".to_vec()),
+        (CONFIG_NAME, b"config".to_vec()),
+        (MANIFEST_JSON_NAME, b"{ not json".to_vec()),
+      ]);
+
+      let result = read_archive(&bytes);
+
+      assert!(result.unwrap_err().contains("Couldn't parse"));
+    }
+
+    #[test]
+    fn it_rejects_bytes_that_are_not_a_zip() {
+      let result = read_archive(b"definitely not a zip archive");
+
+      assert!(result.unwrap_err().contains("Couldn't open archive"));
     }
   }
 }

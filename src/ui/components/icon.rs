@@ -1,3 +1,5 @@
+use std::f32::consts::{FRAC_PI_2, PI};
+
 use iced::{Color, Element, Radians, Rotation, widget::svg};
 
 use crate::ui::style::color;
@@ -52,12 +54,22 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron.svg"))
   }
 
+  #[allow(dead_code)]
+  pub fn chevron_down() -> Self {
+    Self::chevron()
+  }
+
+  #[allow(dead_code)]
+  pub fn chevron_up() -> Self {
+    Self::chevron().rotation(Radians(PI))
+  }
+
   pub fn chevron_left() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron-left.svg"))
+    Self::chevron().rotation(Radians(FRAC_PI_2))
   }
 
   pub fn chevron_right() -> Self {
-    Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron-right.svg"))
+    Self::chevron().rotation(Radians(-FRAC_PI_2))
   }
 
   pub fn clock() -> Self {
@@ -380,6 +392,39 @@ mod tests {
     #[test]
     fn it_builds_a_sized_and_tinted_icon() {
       let _el: Element<'_, ()> = Icon::pencil().size(14.0).color(color::text::PRIMARY).render();
+    }
+  }
+
+  mod chevron {
+    use super::*;
+
+    #[test]
+    fn down_uses_the_unrotated_base() {
+      assert_eq!(Icon::chevron_down().rotation, Radians(0.0));
+      assert_eq!(Icon::chevron().rotation, Radians(0.0));
+    }
+
+    #[test]
+    fn up_is_a_half_turn() {
+      assert_eq!(Icon::chevron_up().rotation, Radians(PI));
+    }
+
+    #[test]
+    fn left_is_a_quarter_turn() {
+      assert_eq!(Icon::chevron_left().rotation, Radians(FRAC_PI_2));
+    }
+
+    #[test]
+    fn right_is_the_opposite_quarter_turn() {
+      assert_eq!(Icon::chevron_right().rotation, Radians(-FRAC_PI_2));
+    }
+
+    #[test]
+    fn directional_helpers_are_chainable_and_render() {
+      let _up: Element<'_, ()> = Icon::chevron_up().size(14.0).color(color::text::PRIMARY).render();
+      let _down: Element<'_, ()> = Icon::chevron_down().render();
+      let _left: Element<'_, ()> = Icon::chevron_left().render();
+      let _right: Element<'_, ()> = Icon::chevron_right().render();
     }
   }
 }

@@ -10,7 +10,7 @@ use std::{
 use iced::{
   Background, Border, ContentFit, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, image, opaque, scrollable, text, text_editor},
+  widget::{Column, Row, Space, button, container, image, opaque, scrollable, text, text_editor},
 };
 
 use super::{
@@ -29,9 +29,9 @@ use crate::{
     components::{
       anchored_dropdown::AnchoredDropdown,
       avatar::avatar,
-      backdrop,
       context_menu::{self, Item},
       eyebrow::eyebrow,
+      header,
       icon::Icon,
       icon_tile::icon_tile,
       location_combobox::{LocationCombobox, LocationSearch},
@@ -47,6 +47,10 @@ pub const EDITOR_WINDOW_HEIGHT: f32 = 700.0;
 
 pub const EDITOR_WINDOW_WIDTH: f32 = 620.0;
 
+pub const IMPORT_WINDOW_HEIGHT: f32 = 620.0;
+
+pub const IMPORT_WINDOW_WIDTH: f32 = 560.0;
+
 pub const SEARCH_MIN_CHARS: usize = 3;
 
 const MAX_SUGGESTIONS: usize = 20;
@@ -54,7 +58,6 @@ const SUGGESTIONS_MAX_HEIGHT: f32 = 240.0;
 const ICON_SIZE: Size = Size::S64;
 const ICON_BOX: f32 = 22.0;
 const EXPORT_MODAL_WIDTH: f32 = 500.0;
-const IMPORT_PANEL_WIDTH: f32 = 560.0;
 const IMPORT_FIELD_HEIGHT: f32 = 168.0;
 const MODAL_PAD_X: f32 = 20.0;
 const MODAL_PAD_Y: f32 = 16.0;
@@ -192,7 +195,7 @@ pub struct ImportPanel {
 }
 
 impl ImportPanel {
-  pub(super) fn blank() -> Self {
+  pub fn blank() -> Self {
     Self::default()
   }
 
@@ -225,7 +228,7 @@ impl ImportPanel {
     self.resolution = None;
   }
 
-  pub(super) fn text(&self) -> String {
+  pub fn text(&self) -> String {
     self.text.text()
   }
 }
@@ -241,6 +244,18 @@ pub enum EditorEffect {
   None,
   Save,
   ScopeResolve(String),
+}
+
+/// What the detached Import-Multibuy window needs the app layer to do after a message is applied.
+/// Text edits stay in-panel and return [`ImportEffect::None`]; resolve/confirm/close carry the work
+/// the runtime-owning app dispatcher must run (it holds the ESI clients, the window lifetime, and the
+/// editor-window opener the confirm path spawns).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImportEffect {
+  Close,
+  Confirm(Vec<MultibuyMatch>),
+  None,
+  Resolve(String),
 }
 
 /// How a freshly-opened editor window is seeded: a blank New pile, an Edit cloned from a card, or a
@@ -663,6 +678,26 @@ pub fn apply_editor(editor: &mut Editor, message: Message) -> EditorEffect {
   EditorEffect::None
 }
 
+/// Applies an import sub-message to a single detached Import-Multibuy window's [`ImportPanel`] and
+/// reports the follow-up the app dispatcher must run. Mirrors [`apply_editor`]: text edits and the
+/// resolved-result land in-panel; resolve/confirm/close hand the runtime work back to the app.
+pub fn apply_import(panel: &mut ImportPanel, message: Message) -> ImportEffect {
+  match message {
+    Message::StockpileImportTextChanged(action) => panel.apply(action),
+    Message::StockpileImportResolved(resolution) => panel.set_resolution(resolution),
+    Message::StockpileImportResolveRequested => {
+      let text = panel.text();
+      if !text.trim().is_empty() {
+        return ImportEffect::Resolve(text);
+      }
+    }
+    Message::StockpileImportConfirmed => return ImportEffect::Confirm(panel.matched().to_vec()),
+    Message::StockpileImportClosed => return ImportEffect::Close,
+    _ => {}
+  }
+  ImportEffect::None
+}
+
 pub async fn resolve_scope_pilots(db: Database, query: String) -> Vec<ScopePilot> {
   let now = chrono::Utc::now().to_rfc3339();
   let parsed = crate::store::search::parse_with_keys(&query, crate::store::search::AVAILABLE_KEYS);
@@ -688,34 +723,16 @@ async fn type_name_of(db: &Database, type_id: i64) -> String {
     .unwrap_or_else(|| format!("Type {type_id}"))
 }
 
-pub(super) fn body<'a>(
-  cards: &'a [StockpileCard],
-  import: Option<&'a ImportPanel>,
-  expanded: &HashSet<i64>,
-) -> Element<'a, Message> {
-  let list = container(
+pub(super) fn body<'a>(cards: &'a [StockpileCard], expanded: &HashSet<i64>) -> Element<'a, Message> {
+  container(
     scrollable(card_grid::view(cards, expanded))
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill),
   )
   .width(Length::Fill)
-  .height(Length::Fill);
-
-  let mut layers: Vec<Element<'a, Message>> = vec![list.into()];
-  if let Some(panel) = import {
-    layers.push(backdrop::backdrop(Message::StockpileImportClosed));
-    layers.push(import_overlay(panel));
-  }
-
-  if layers.len() == 1 {
-    layers.pop().unwrap()
-  } else {
-    Stack::with_children(layers)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .into()
-  }
+  .height(Length::Fill)
+  .into()
 }
 
 pub(super) fn context_menu_view(menu: &StockpileContextMenu) -> Element<'_, Message> {
@@ -1002,38 +1019,38 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
     ],
   );
 
-  let header = modal_section(
-    Column::with_children(vec![
-      text(title)
-        .font(typography::body::MEDIUM)
-        .size(typography::size::LG)
-        .style(typography::colored(color::text::PRIMARY))
-        .into(),
-      eyebrow(subtitle, Some(color::text::secondary())),
-    ])
-    .spacing(spacing::UNIT)
-    .width(Length::Fill)
-    .into(),
-  );
+  let header = window_header(title, subtitle);
 
   container(
-    Column::with_children(vec![
-      header,
-      rule::horizontal(),
-      content.into(),
-      rule::horizontal(),
-      footer,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill),
+    Column::with_children(vec![header, content.into(), rule::horizontal(), footer])
+      .width(Length::Fill)
+      .height(Length::Fill),
   )
   .width(Length::Fill)
   .height(Length::Fill)
   .style(|_| container::Style {
-    background: Some(Background::Color(color::surface::RAISED)),
+    background: Some(Background::Color(color::surface::BASE)),
     ..container::Style::default()
   })
   .into()
+}
+
+/// The in-content header band for a native-chrome stockpile window: the title (mirrored by the OS
+/// title bar) stacked over a subtitle eyebrow, rendered with the shared [`header::header`] band used
+/// by the other detached windows. Replaces the former modal title section now that the OS frame owns
+/// the chrome.
+fn window_header<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
+  let titles = Column::with_children(vec![
+    text(title)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    eyebrow(subtitle, Some(color::text::secondary())),
+  ])
+  .spacing(spacing::UNIT);
+
+  header::header(vec![titles.into()], Vec::new())
 }
 
 fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
@@ -1375,7 +1392,17 @@ fn type_icon_for_id<'a>(type_id: i64) -> Element<'a, Message> {
   type_icon(&images::default_store().resolve_type_icon(type_id, None, ICON_SIZE))
 }
 
-fn import_overlay(panel: &ImportPanel) -> Element<'_, Message> {
+/// The window title for the detached Import-Multibuy window. Single-instance, so it is a constant
+/// (unlike the New/Edit-aware editor title).
+pub fn import_window_title() -> &'static str {
+  "Import multibuy"
+}
+
+/// Renders the import panel as the body of a detached native-chrome window. Like the editor, the OS
+/// frame owns the title bar/close/resize; this just stacks the in-content header over the paste field
+/// (or the resolved-match preview). Emits the same `assets::Message` family, routed per-window by the
+/// app's `StockpileImport(id, _)` channel.
+pub fn import_window_view(panel: &ImportPanel) -> Element<'_, Message> {
   match panel.resolution() {
     Some(resolution) => import_preview(resolution),
     None => import_paste(panel),
@@ -1741,16 +1768,23 @@ fn import_shell_body<'a>(
     ],
   );
 
-  modal_overlay(modal_panel(
-    IMPORT_PANEL_WIDTH,
-    vec![
-      modal_header(title, subtitle, Message::StockpileImportClosed),
-      rule::horizontal(),
-      content,
+  container(
+    Column::with_children(vec![
+      window_header(title, subtitle),
+      container(content).width(Length::Fill).height(Length::Fill).into(),
       rule::horizontal(),
       footer,
-    ],
-  ))
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill),
+  )
+  .width(Length::Fill)
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::BASE)),
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn primary_button_owned<'a>(label: String) -> button::Button<'a, Message> {
@@ -2424,6 +2458,98 @@ mod tests {
     }
   }
 
+  mod apply_import {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_applies_a_text_edit_in_panel_with_no_follow_up() {
+      let mut panel = ImportPanel::blank();
+
+      let effect = apply_import(
+        &mut panel,
+        Message::StockpileImportTextChanged(text_editor::Action::Edit(text_editor::Edit::Paste(
+          std::sync::Arc::new("Tritanium 100".to_owned()),
+        ))),
+      );
+
+      assert_eq!(effect, ImportEffect::None);
+      assert_eq!(panel.text(), "Tritanium 100");
+    }
+
+    #[test]
+    fn it_requests_a_resolve_when_the_text_is_non_empty() {
+      let mut panel = ImportPanel::blank();
+      panel.set_text("Tritanium 100".to_owned());
+
+      let effect = apply_import(&mut panel, Message::StockpileImportResolveRequested);
+
+      assert_eq!(effect, ImportEffect::Resolve("Tritanium 100".to_owned()));
+    }
+
+    #[test]
+    fn it_holds_a_blank_resolve_without_a_follow_up() {
+      let mut panel = ImportPanel::blank();
+
+      let effect = apply_import(&mut panel, Message::StockpileImportResolveRequested);
+
+      assert_eq!(effect, ImportEffect::None);
+    }
+
+    #[test]
+    fn it_stores_the_resolution_in_panel() {
+      let mut panel = ImportPanel::blank();
+
+      let effect = apply_import(
+        &mut panel,
+        Message::StockpileImportResolved(MultibuyResolution {
+          matched: vec![MultibuyMatch {
+            name: "Tritanium".to_owned(),
+            quantity: 100,
+            type_id: 34,
+          }],
+          unmatched: Vec::new(),
+        }),
+      );
+
+      assert_eq!(effect, ImportEffect::None);
+      assert_eq!(panel.matched().len(), 1);
+    }
+
+    #[test]
+    fn it_confirms_with_the_matched_items() {
+      let mut panel = ImportPanel::blank();
+      panel.set_resolution(MultibuyResolution {
+        matched: vec![MultibuyMatch {
+          name: "Tritanium".to_owned(),
+          quantity: 100,
+          type_id: 34,
+        }],
+        unmatched: Vec::new(),
+      });
+
+      let effect = apply_import(&mut panel, Message::StockpileImportConfirmed);
+
+      match effect {
+        ImportEffect::Confirm(matched) => {
+          assert_eq!(matched.iter().map(|m| m.type_id).collect::<Vec<_>>(), vec![34]);
+        }
+        other => panic!("expected Confirm, got {other:?}"),
+      }
+    }
+
+    #[test]
+    fn it_signals_close_on_cancel() {
+      let mut panel = ImportPanel::blank();
+
+      assert_eq!(
+        apply_import(&mut panel, Message::StockpileImportClosed),
+        ImportEffect::Close
+      );
+    }
+  }
+
   mod multibuy_deficit {
     use pretty_assertions::assert_eq;
 
@@ -2576,7 +2702,7 @@ mod tests {
     #[test]
     fn it_renders_the_card_grid_and_fill_status() {
       let cards = vec![card_model()];
-      let _el: Element<'_, Message> = body(&cards, None, &HashSet::new());
+      let _el: Element<'_, Message> = body(&cards, &HashSet::new());
     }
 
     #[test]
@@ -2670,19 +2796,19 @@ mod tests {
 
     #[test]
     fn it_renders_the_empty_state() {
-      let _el: Element<'_, Message> = body(&[], None, &HashSet::new());
+      let _el: Element<'_, Message> = body(&[], &HashSet::new());
     }
 
     #[test]
-    fn it_renders_the_import_paste_overlay() {
+    fn it_renders_the_import_paste_window() {
       let mut panel = ImportPanel::blank();
       panel.set_text("Tritanium 1000".to_owned());
 
-      let _el: Element<'_, Message> = body(&[], Some(&panel), &HashSet::new());
+      let _el: Element<'_, Message> = import_window_view(&panel);
     }
 
     #[test]
-    fn it_renders_the_import_reconcile_preview() {
+    fn it_renders_the_import_reconcile_window() {
       let mut panel = ImportPanel::blank();
       panel.set_resolution(MultibuyResolution {
         matched: vec![MultibuyMatch {
@@ -2693,7 +2819,7 @@ mod tests {
         unmatched: vec!["Notathing".to_owned()],
       });
 
-      let _el: Element<'_, Message> = body(&[], Some(&panel), &HashSet::new());
+      let _el: Element<'_, Message> = import_window_view(&panel);
     }
 
     #[test]

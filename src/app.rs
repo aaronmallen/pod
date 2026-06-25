@@ -259,6 +259,7 @@ struct App {
   splash_step: u32,
   status: sync::SyncStatus,
   stockpile_editors: WindowStates<assets::Editor>,
+  stockpile_imports: WindowStates<assets::ImportPanel>,
   store_ready: Option<StoreReady>,
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
@@ -400,10 +401,7 @@ enum Message {
   SnoozesWoken(Vec<(i64, i64)>),
   Splash(splash::Message),
   StockpileEditor(window::Id, assets::Message),
-  StockpileEditorWindowReady {
-    id: window::Id,
-    seed: Box<assets::EditorSeed>,
-  },
+  StockpileImport(window::Id, assets::Message),
   StorageMigrated,
   StoreOpened(Box<StoreReady>),
   Sync(sync::Event),
@@ -492,6 +490,7 @@ impl Message {
       Message::SkillPlanEditor(_) => "SkillPlanEditor",
       Message::Skills(_) => "Skills",
       Message::StockpileEditor(..) => "StockpileEditor",
+      Message::StockpileImport(..) => "StockpileImport",
       Message::Sync(_) => "Sync",
       Message::Wallet(_) => "Wallet",
       _ => return None,
@@ -534,9 +533,6 @@ impl Message {
   fn boot_variant_name(&self) -> Option<&'static str> {
     Some(match self {
       Message::ClockTick => "ClockTick",
-      Message::StockpileEditorWindowReady {
-        ..
-      } => "StockpileEditorWindowReady",
       Message::FocusMainWindow => "FocusMainWindow",
       Message::ImageReady {
         ..
@@ -1047,6 +1043,7 @@ fn boot() -> (App, Task<Message>) {
     splash: Some(splash::State::default()),
     splash_step: 0,
     stockpile_editors: WindowStates::default(),
+    stockpile_imports: WindowStates::default(),
     store_ready: None,
     status: sync::SyncStatus::new(),
     sync_popover_open: false,
@@ -1383,6 +1380,7 @@ fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
     Some(Window::ManagePlans) => close_manage_plans_window(app, id),
     Some(Window::SkillPlanEditor) => close_editor_window(app, id),
     Some(Window::StockpileEditor) => close_stockpile_editor_window(app, id),
+    Some(Window::StockpileImport) => close_stockpile_import_window(app, id),
     _ => {
       app.windows.remove(id);
       window::close(id)
@@ -1417,6 +1415,9 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
     Window::SkillPlanEditor if app.editor.as_ref().map(|(eid, _)| *eid) == Some(id) => app.editor = None,
     Window::StockpileEditor => {
       app.stockpile_editors.remove(id);
+    }
+    Window::StockpileImport => {
+      app.stockpile_imports.remove(id);
     }
     _ => {}
   }
@@ -3173,7 +3174,7 @@ fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
     // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
     // own conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::Splash | Window::StockpileEditor) => splash_theme(),
+    Some(Window::Killmail | Window::Splash) => splash_theme(),
     _ => pod_theme(),
   }
 }
@@ -3212,8 +3213,12 @@ fn window_title(app: &App, id: window::Id) -> String {
     Some(Window::ManagePlans) => "Pod — Manage Skill Plans".to_string(),
     Some(Window::SkillPlanEditor) => "Pod — Skill Plan Editor".to_string(),
     Some(Window::Splash) => "Pod".to_string(),
-    Some(Window::StockpileEditor) => "Pod — Stockpile Editor".to_string(),
-    Some(Window::StockpileImport) => "Pod — Import Stockpile".to_string(),
+    Some(Window::StockpileEditor) => app
+      .stockpile_editors
+      .get(id)
+      .map(|editor| format!("Pod \u{2014} {}", assets::stockpile_editor_window_title(editor)))
+      .unwrap_or_else(|| "Pod \u{2014} Stockpile Editor".to_string()),
+    Some(Window::StockpileImport) => format!("Pod \u{2014} {}", assets::stockpile_import_window_title()),
     None => "Pod".to_string(),
   }
 }
@@ -3288,50 +3293,6 @@ fn transition_to_main(app: &mut App) -> Task<Message> {
   app.windows.register(id, Window::Main);
 
   Task::batch([close, open_task.map(Message::WindowOpened)])
-}
-
-fn centered_position(parent_position: Point, parent_size: Size, new_size: Size) -> Point {
-  Point::new(
-    parent_position.x + (parent_size.width - new_size.width) / 2.0,
-    parent_position.y + (parent_size.height - new_size.height) / 2.0,
-  )
-}
-
-// Used by the Killmail pilot and the not-yet-built Contract/Stockpile/Mail child windows that share this
-// reusable opener.
-fn splash_window_settings(position: window::Position, size: Size) -> window::Settings {
-  window::Settings {
-    size,
-    position,
-    decorations: false,
-    resizable: true,
-    transparent: true,
-    icon: app_icon(),
-    ..window::Settings::default()
-  }
-}
-
-// Opens a detached splash-chrome window centered on the main window (falling back to monitor-centered when
-// its geometry is unavailable) and hands the new window's id to `register` so the caller can record the
-// kind, seed per-window state, and kick its loader. Geometry is never restored: every open uses `size`.
-fn open_centered_window<F>(app: &App, size: Size, register: F) -> Task<Message>
-where
-  F: Fn(window::Id) -> Task<Message> + Send + 'static,
-{
-  let parent = app.windows.id_for(Window::Main);
-  let geometry = match parent {
-    Some(parent) => window::position(parent).then(move |position| window::size(parent).map(move |s| (position, s))),
-    None => Task::done((None, Size::ZERO)),
-  };
-
-  geometry.then(move |(position, parent_size)| {
-    let placement = match position {
-      Some(position) => window::Position::Specific(centered_position(position, parent_size, size)),
-      None => window::Position::Centered,
-    };
-    let (id, open_task) = window::open(splash_window_settings(placement, size));
-    Task::batch([open_task.map(Message::WindowOpened), register(id)])
-  })
 }
 
 /// Opens a real native-chrome OS window of `kind` and registers its id synchronously.
@@ -3692,27 +3653,12 @@ fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens a detached stockpile-editor window (New, Edit, or Import-prefill) centered on the main window.
-/// Like the killmail/contract pilots the id is unknown until the centered open resolves, so the seed is
-/// applied in [`handle_stockpile_editor_window_ready`]. Unlimited instances coexist (a New and an Edit
-/// at once), each minting a fresh id.
+/// Opens a detached Stockpile Editor window with native chrome. `open_native_window` mints the id
+/// synchronously, so registration, per-window `Editor` seeding, and the on-open scope resolve all
+/// happen here with no `*WindowReady` round-trip. Multi-instance: every open mints a fresh id (New,
+/// Edit, and import-prefill can coexist), and geometry is never persisted, so each opens centered at
+/// the default size.
 fn open_stockpile_editor_window(app: &mut App, seed: assets::EditorSeed) -> Task<Message> {
-  if app.runtime.is_none() {
-    return Task::none();
-  }
-  let size = Size::new(
-    assets::STOCKPILE_EDITOR_WINDOW_WIDTH,
-    assets::STOCKPILE_EDITOR_WINDOW_HEIGHT,
-  );
-  open_centered_window(app, size, move |id| {
-    Task::done(Message::StockpileEditorWindowReady {
-      id,
-      seed: Box::new(seed.clone()),
-    })
-  })
-}
-
-fn handle_stockpile_editor_window_ready(app: &mut App, id: window::Id, seed: assets::EditorSeed) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
@@ -3720,12 +3666,20 @@ fn handle_stockpile_editor_window_ready(app: &mut App, id: window::Id, seed: ass
   // Seed the live pilot preview as soon as the window opens, before the user edits the scope, mirroring
   // the former on-open scope resolve.
   let scope = editor.scope_query().to_owned();
-  app.windows.register(id, Window::StockpileEditor);
+  let resolve = stockpile_scope_resolve(runtime, scope);
+  let size = Size::new(
+    assets::STOCKPILE_EDITOR_WINDOW_WIDTH,
+    assets::STOCKPILE_EDITOR_WINDOW_HEIGHT,
+  );
+  let (id, open_task) = open_native_window(app, Window::StockpileEditor, size);
   app.stockpile_editors.insert(id, editor);
-  stockpile_scope_resolve(runtime, scope).map(move |msg| match msg {
-    Message::Assets(assets) => Message::StockpileEditor(id, assets),
-    other => other,
-  })
+  Task::batch([
+    open_task,
+    resolve.map(move |msg| match msg {
+      Message::Assets(assets) => Message::StockpileEditor(id, assets),
+      other => other,
+    }),
+  ])
 }
 
 /// Routes a per-window editor message to its window's [`Editor`], applies it, and dispatches the
@@ -3786,6 +3740,68 @@ fn stockpile_save_window(runtime: &Runtime, editor: assets::Editor) -> Task<Mess
 
 fn close_stockpile_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   app.stockpile_editors.remove(id);
+  app.windows.remove(id);
+  window::close(id)
+}
+
+/// Opens the detached Import-Multibuy window with native chrome. Single-instance: any already-open
+/// import window is closed first so a fresh paste starts clean, and `Window::StockpileImport` carries
+/// a `state_key`, so `open_native_window` restores its persisted size/position. Confirming a paste in
+/// this window opens a prefilled Stockpile Editor window (a window spawning another window).
+fn open_stockpile_import_window(app: &mut App) -> Task<Message> {
+  if app.runtime.is_none() {
+    return Task::none();
+  }
+
+  let close_existing = match app.windows.id_for(Window::StockpileImport) {
+    Some(existing) => close_stockpile_import_window(app, existing),
+    None => Task::none(),
+  };
+
+  let size = Size::new(
+    assets::STOCKPILE_IMPORT_WINDOW_WIDTH,
+    assets::STOCKPILE_IMPORT_WINDOW_HEIGHT,
+  );
+  let (id, open_task) = open_native_window(app, Window::StockpileImport, size);
+  app.stockpile_imports.insert(id, assets::ImportPanel::blank());
+  Task::batch([close_existing, open_task])
+}
+
+/// Routes a per-window import message to its window's [`ImportPanel`], applies it, and dispatches the
+/// reported follow-up. Resolve runs the multibuy resolver; Confirm opens a prefilled editor window and
+/// closes the import window; Close just closes the window.
+fn handle_stockpile_import(app: &mut App, id: window::Id, msg: assets::Message) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let Some(panel) = app.stockpile_imports.get_mut(id) else {
+    return Task::none();
+  };
+  match assets::apply_import(panel, msg) {
+    assets::ImportEffect::None => Task::none(),
+    assets::ImportEffect::Resolve(text) => {
+      stockpile_import_resolve(runtime, text).map(move |msg| reroute_to_stockpile_import(id, msg))
+    }
+    assets::ImportEffect::Confirm(matched) => {
+      let matched: Vec<assets::MultibuyMatch> = matched;
+      let open = open_stockpile_editor_window(app, assets::EditorSeed::Prefill(matched));
+      Task::batch([open, close_stockpile_import_window(app, id)])
+    }
+    assets::ImportEffect::Close => close_stockpile_import_window(app, id),
+  }
+}
+
+/// Re-tags an `assets::Message` produced by the import resolver so the result routes back to the
+/// originating import window instead of the main assets view.
+fn reroute_to_stockpile_import(id: window::Id, msg: Message) -> Message {
+  match msg {
+    Message::Assets(assets) => Message::StockpileImport(id, assets),
+    other => other,
+  }
+}
+
+fn close_stockpile_import_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.stockpile_imports.remove(id);
   app.windows.remove(id);
   window::close(id)
 }
@@ -4038,6 +4054,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::SkillPlanEditor(msg) => handle_skill_plan_editor(app, msg),
     Message::Skills(msg) => handle_skills(app, msg),
     Message::StockpileEditor(id, msg) => handle_stockpile_editor(app, id, msg),
+    Message::StockpileImport(id, msg) => handle_stockpile_import(app, id, msg),
     Message::Sync(event) => handle_sync(app, event),
     Message::Wallet(msg) => handle_wallet(app, msg),
     other => return dispatch_feature_aux(app, other),
@@ -4124,10 +4141,6 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Chrome(id, event) => handle_chrome_event(app, id, event),
     Message::CloseSyncPopover => set_sync_popover_open(app, false),
     Message::FocusMainWindow => handle_focus_main_window(app),
-    Message::StockpileEditorWindowReady {
-      id,
-      seed,
-    } => handle_stockpile_editor_window_ready(app, id, *seed),
     Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),
@@ -4340,17 +4353,9 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
       }
       return open_stockpile_editor_window(app, assets::EditorSeed::FromCard(Box::new(card)));
     }
-    assets::Message::StockpileImportConfirmed => {
-      let matched = app
-        .assets
-        .as_ref()
-        .map(assets::State::stockpile_import_matched)
-        .unwrap_or_default();
-      if let Some(state) = app.assets.as_mut() {
-        state.close_stockpile_import();
-      }
-      return open_stockpile_editor_window(app, assets::EditorSeed::Prefill(matched));
-    }
+    // The import multibuy panel is its own single-instance native window now, so the main view's
+    // "Import multibuy" button opens it instead of toggling an in-place overlay.
+    assets::Message::StockpileImportOpened => return open_stockpile_import_window(app),
     _ => {}
   }
 
@@ -4362,13 +4367,7 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
 }
 
 fn dispatch_assets_with_runtime(state: &mut assets::State, runtime: &Runtime, msg: assets::Message) -> Task<Message> {
-  match msg {
-    assets::Message::StockpileImportResolveRequested => match state.stockpile_import_text() {
-      Some(text) => stockpile_import_resolve(runtime, text),
-      None => Task::none(),
-    },
-    msg => assets::update(state, msg, &runtime.db).map(Message::Assets),
-  }
+  assets::update(state, msg, &runtime.db).map(Message::Assets)
 }
 
 fn stockpile_import_resolve(runtime: &Runtime, text: String) -> Task<Message> {
@@ -6769,7 +6768,7 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
-    Some(Window::Killmail | Window::Splash | Window::StockpileEditor) => disable_shadow(id),
+    Some(Window::Killmail | Window::Splash) => disable_shadow(id),
     _ => Task::none(),
   }
 }
@@ -6893,11 +6892,11 @@ fn calendar_event_window_view(app: &App, id: window::Id) -> Element<'_, Message>
   }
 }
 
-// Native-window placeholder. The Stockpile-Import conversion task replaces this body with its real
-// single-instance view.
-#[allow(unused_variables)]
 fn stockpile_import_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
-  blank()
+  match app.stockpile_imports.get(id) {
+    Some(panel) => assets::stockpile_import_view(panel).map(move |msg| Message::StockpileImport(id, msg)),
+    None => blank(),
+  }
 }
 
 fn splash_window_view(app: &App) -> Element<'_, Message> {
@@ -6956,12 +6955,7 @@ fn skill_plan_editor_window_view(app: &App, id: window::Id) -> Element<'_, Messa
 
 fn stockpile_editor_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.stockpile_editors.get(id) {
-    Some(editor) => {
-      let body = assets::stockpile_editor_view(editor).map(move |msg| Message::StockpileEditor(id, msg));
-      window_chrome::shell(assets::stockpile_editor_window_title(editor), body, move |event| {
-        Message::Chrome(id, event)
-      })
-    }
+    Some(editor) => assets::stockpile_editor_view(editor).map(move |msg| Message::StockpileEditor(id, msg)),
     None => blank(),
   }
 }
@@ -7052,6 +7046,7 @@ mod tests {
       splash: None,
       splash_step: 0,
       stockpile_editors: WindowStates::default(),
+      stockpile_imports: WindowStates::default(),
       store_ready: None,
       status: sync::SyncStatus::new(),
       sync_popover_open: false,
@@ -10300,30 +10295,6 @@ mod tests {
     }
   }
 
-  mod centered_position {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_centers_a_smaller_window_inside_its_parent() {
-      let position = centered_position(
-        Point::new(100.0, 200.0),
-        Size::new(1200.0, 800.0),
-        Size::new(600.0, 400.0),
-      );
-
-      assert_eq!(position, Point::new(400.0, 400.0));
-    }
-
-    #[test]
-    fn it_offsets_negatively_when_the_new_window_is_larger_than_its_parent() {
-      let position = centered_position(Point::new(0.0, 0.0), Size::new(400.0, 300.0), Size::new(600.0, 500.0));
-
-      assert_eq!(position, Point::new(-100.0, -100.0));
-    }
-  }
-
   mod handle_chrome_event {
     use pretty_assertions::assert_eq;
 
@@ -11002,7 +10973,8 @@ mod tests {
 
     fn ready(app: &mut App, seed: assets::EditorSeed) -> window::Id {
       let id = window::Id::unique();
-      let _ = handle_stockpile_editor_window_ready(app, id, seed);
+      app.windows.register(id, Window::StockpileEditor);
+      app.stockpile_editors.insert(id, assets::Editor::from_seed(seed));
       id
     }
 
@@ -11090,6 +11062,130 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.stockpile_editors.get(id).is_none());
+    }
+  }
+
+  mod stockpile_import_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn open(app: &mut App) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::StockpileImport);
+      app.stockpile_imports.insert(id, assets::ImportPanel::blank());
+      id
+    }
+
+    fn import_resolution() -> assets::MultibuyResolution {
+      assets::MultibuyResolution {
+        matched: vec![assets::MultibuyMatch {
+          name: "Tritanium".to_owned(),
+          quantity: 100,
+          type_id: 34,
+        }],
+        unmatched: Vec::new(),
+      }
+    }
+
+    #[tokio::test]
+    async fn it_opens_a_single_instance_window_with_a_runtime() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_stockpile_import_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 1);
+      assert_eq!(app.stockpile_imports.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_replaces_the_existing_import_window_on_reopen() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let _ = open_stockpile_import_window(&mut app);
+      let _ = open_stockpile_import_window(&mut app);
+
+      // Single-instance: the second open closes the first, leaving exactly one registered.
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_without_a_runtime() {
+      let mut app = test_app();
+
+      let _ = open_stockpile_import_window(&mut app);
+
+      assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 0);
+      assert_eq!(app.stockpile_imports.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_text_edit_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let id = open(&mut app);
+
+      let _ = handle_stockpile_import(
+        &mut app,
+        id,
+        assets::Message::StockpileImportTextChanged(iced::widget::text_editor::Action::Edit(
+          iced::widget::text_editor::Edit::Paste(std::sync::Arc::new("Tritanium 100".to_owned())),
+        )),
+      );
+
+      assert_eq!(
+        app.stockpile_imports.get(id).map(assets::ImportPanel::text),
+        Some("Tritanium 100".to_owned())
+      );
+    }
+
+    #[tokio::test]
+    async fn it_closes_the_window_on_cancel() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+
+      let _ = handle_stockpile_import(&mut app, id, assets::Message::StockpileImportClosed);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_imports.get(id).is_none());
+    }
+
+    #[tokio::test]
+    async fn it_confirms_into_a_prefilled_editor_and_closes_the_import_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+      // Resolve a paste so the panel holds a match, then confirm it. (The resolver itself runs against
+      // ESI, so the panel is seeded directly via the resolved message the resolver would emit.)
+      let _ = handle_stockpile_import(
+        &mut app,
+        id,
+        assets::Message::StockpileImportResolved(import_resolution()),
+      );
+
+      let _ = handle_stockpile_import(&mut app, id, assets::Message::StockpileImportConfirmed);
+
+      // The import window is gone and a prefilled editor window took its place.
+      assert!(app.stockpile_imports.get(id).is_none());
+      assert_eq!(app.windows.ids_for(Window::StockpileEditor).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = open(&mut app);
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.stockpile_imports.get(id).is_none());
     }
   }
 
@@ -13295,13 +13391,6 @@ mod tests {
       let id = window::Id::unique();
 
       let _ = dispatch_window_lifecycle(&mut app, Message::Chrome(id, window_chrome::Event::Drag));
-      let _ = dispatch_window_lifecycle(
-        &mut app,
-        Message::StockpileEditorWindowReady {
-          id,
-          seed: Box::new(assets::EditorSeed::Blank),
-        },
-      );
       let _ = dispatch_window_lifecycle(&mut app, Message::Palette(PaletteMessage::Close));
       let _ = dispatch_window_lifecycle(&mut app, Message::Shortcut(Chord::FocusSearch));
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterAction(updater_banner::Action::Apply));
@@ -13428,6 +13517,7 @@ mod tests {
       );
       assert!(dispatch_feature(&mut app, Message::Skills(skills::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::StockpileEditor(id, assets::Message::PickerToggled)).is_ok());
+      assert!(dispatch_feature(&mut app, Message::StockpileImport(id, assets::Message::PickerToggled)).is_ok());
       assert!(dispatch_feature(&mut app, Message::Wallet(wallet::Message::PickerToggled)).is_ok());
     }
 
@@ -13643,25 +13733,6 @@ mod tests {
     }
   }
 
-  mod open_centered_window {
-    use super::*;
-
-    #[test]
-    fn it_builds_an_open_task_with_and_without_a_main_window() {
-      let app = ready_app();
-      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| {
-        Task::done(Message::WindowOpened(id))
-      });
-
-      let mut app = ready_app();
-      let main_id = window::Id::unique();
-      app.windows.register(main_id, Window::Main);
-      let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| {
-        Task::done(Message::WindowOpened(id))
-      });
-    }
-  }
-
   mod window_title {
     use pretty_assertions::assert_eq;
 
@@ -13683,7 +13754,19 @@ mod tests {
       app.windows.register(import, Window::StockpileImport);
 
       assert_eq!(window_title(&app, compare), "Pod — Compare Skills");
-      assert_eq!(window_title(&app, import), "Pod — Import Stockpile");
+      assert_eq!(window_title(&app, import), "Pod — Import multibuy");
+    }
+
+    #[test]
+    fn it_distinguishes_a_new_from_an_edit_stockpile_editor_title() {
+      let mut app = test_app();
+      let new = window::Id::unique();
+      app.windows.register(new, Window::StockpileEditor);
+      app
+        .stockpile_editors
+        .insert(new, assets::Editor::from_seed(assets::EditorSeed::Blank));
+
+      assert_eq!(window_title(&app, new), "Pod — New stockpile");
     }
 
     #[test]
@@ -13765,10 +13848,10 @@ mod tests {
       let _ = handle_assets(&mut app, assets::Message::PaneSettled("assets.left", 0.4));
       assert_eq!(app.ui_state.panes.get("assets.left"), Some(&0.4));
 
-      // Without a runtime, the stockpile-editor openers short-circuit to a no-op.
+      // Without a runtime, the stockpile-window openers short-circuit to a no-op.
       let _ = handle_assets(&mut app, assets::Message::StockpileNew);
       let _ = handle_assets(&mut app, assets::Message::StockpileEditStarted(1));
-      let _ = handle_assets(&mut app, assets::Message::StockpileImportConfirmed);
+      let _ = handle_assets(&mut app, assets::Message::StockpileImportOpened);
       let _ = handle_assets(&mut app, assets::Message::ReauthRequested(1));
     }
 

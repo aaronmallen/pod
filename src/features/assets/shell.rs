@@ -269,13 +269,9 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     Tab::Inventory => inventory_body(state),
     Tab::Abyssals => abyssals_body(state),
     Tab::Stockpiles => iced::widget::mouse_area(
-      container(stockpiles::body(
-        state.stockpiles(),
-        state.stockpile_import(),
-        state.stockpile_expanded(),
-      ))
-      .width(Length::Fill)
-      .height(Length::Fill),
+      container(stockpiles::body(state.stockpiles(), state.stockpile_expanded()))
+        .width(Length::Fill)
+        .height(Length::Fill),
     )
     .on_move(Message::StockpileCursorMoved)
     .into(),

@@ -25,7 +25,10 @@ pub use self::{
   },
   stockpiles::{
     EDITOR_WINDOW_HEIGHT as STOCKPILE_EDITOR_WINDOW_HEIGHT, EDITOR_WINDOW_WIDTH as STOCKPILE_EDITOR_WINDOW_WIDTH,
-    Editor, EditorEffect, EditorSeed, SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, apply_editor,
+    Editor, EditorEffect, EditorSeed, IMPORT_WINDOW_HEIGHT as STOCKPILE_IMPORT_WINDOW_HEIGHT,
+    IMPORT_WINDOW_WIDTH as STOCKPILE_IMPORT_WINDOW_WIDTH, ImportEffect, ImportPanel,
+    SEARCH_MIN_CHARS as STOCKPILE_SEARCH_MIN_CHARS, apply_editor, apply_import,
+    import_window_title as stockpile_import_window_title, import_window_view as stockpile_import_view,
     resolve_scope_pilots, save_stockpile, view as stockpile_editor_view, window_title as stockpile_editor_window_title,
   },
 };
@@ -434,7 +437,6 @@ pub struct State {
   stockpile_context_menu: Option<StockpileContextMenu>,
   stockpile_cursor: Option<iced::Point>,
   stockpile_expanded: HashSet<i64>,
-  stockpile_import: Option<stockpiles::ImportPanel>,
   stockpile_multibuy_copied: bool,
   stockpile_multibuy_export: Option<i64>,
   stockpile_multibuy_mode: stockpiles::MultibuyMode,
@@ -501,7 +503,6 @@ impl State {
       values: values::ValueSummary::default(),
       nav: tracker::NavSeries::default(),
       stockpiles: Vec::new(),
-      stockpile_import: None,
       stockpile_context_menu: None,
       stockpile_cursor: None,
       stockpile_expanded: HashSet::new(),
@@ -864,30 +865,6 @@ impl State {
   /// the menu's Edit action so the menu doesn't linger over the main view.
   pub fn dismiss_stockpile_context_menu(&mut self) {
     self.stockpile_context_menu = None;
-  }
-
-  /// Clears the open import panel, used by the app layer when an import is confirmed into a fresh
-  /// editor window.
-  pub fn close_stockpile_import(&mut self) {
-    self.stockpile_import = None;
-  }
-
-  /// The matched items from the open import panel, consumed when confirming an import into a fresh
-  /// editor window.
-  pub fn stockpile_import_matched(&self) -> Vec<MultibuyMatch> {
-    self
-      .stockpile_import
-      .as_ref()
-      .map(|panel| panel.matched().to_vec())
-      .unwrap_or_default()
-  }
-
-  pub(super) fn stockpile_import(&self) -> Option<&stockpiles::ImportPanel> {
-    self.stockpile_import.as_ref()
-  }
-
-  pub fn stockpile_import_text(&self) -> Option<String> {
-    self.stockpile_import.as_ref().map(stockpiles::ImportPanel::text)
   }
 
   pub(super) fn stockpile_context_menu(&self) -> Option<&StockpileContextMenu> {
@@ -2026,29 +2003,7 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
 }
 
 fn update_stockpile(state: &mut State, message: Message, db: &Database) -> Task<Message> {
-  match apply_stockpile_import(state, message) {
-    Ok(task) => task,
-    Err(message) => update_stockpile_lifecycle(state, message, db),
-  }
-}
-
-fn apply_stockpile_import(state: &mut State, message: Message) -> Result<Task<Message>, Message> {
-  match message {
-    Message::StockpileImportOpened => state.stockpile_import = Some(stockpiles::ImportPanel::blank()),
-    Message::StockpileImportClosed => state.stockpile_import = None,
-    Message::StockpileImportTextChanged(action) => {
-      if let Some(panel) = state.stockpile_import.as_mut() {
-        panel.apply(action);
-      }
-    }
-    Message::StockpileImportResolved(resolution) => {
-      if let Some(panel) = state.stockpile_import.as_mut() {
-        panel.set_resolution(resolution);
-      }
-    }
-    other => return Err(other),
-  }
-  Ok(Task::none())
+  update_stockpile_lifecycle(state, message, db)
 }
 
 fn update_stockpile_lifecycle(state: &mut State, message: Message, db: &Database) -> Task<Message> {
@@ -3847,54 +3802,6 @@ mod tests {
 
       let _ = update(&mut state, Message::StockpileMultibuyExportClosed, &db);
       assert!(state.stockpile_multibuy_export.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_opens_the_import_panel_records_its_text_then_closes_it() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-
-      let _ = update(&mut state, Message::StockpileImportOpened, &db);
-      assert!(state.stockpile_import.is_some());
-
-      let _ = update(
-        &mut state,
-        Message::StockpileImportTextChanged(text_editor::Action::Edit(text_editor::Edit::Paste(
-          std::sync::Arc::new("Tritanium 100".to_owned()),
-        ))),
-        &db,
-      );
-      assert_eq!(state.stockpile_import_text(), Some("Tritanium 100".to_owned()));
-
-      let _ = update(&mut state, Message::StockpileImportClosed, &db);
-      assert!(state.stockpile_import.is_none());
-    }
-
-    #[tokio::test]
-    async fn it_confirms_an_import_into_matched_items_then_closes_the_panel() {
-      use crate::features::assets::stockpile_search::{MultibuyMatch, MultibuyResolution};
-
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let _ = update(&mut state, Message::StockpileImportOpened, &db);
-      let _ = update(
-        &mut state,
-        Message::StockpileImportResolved(MultibuyResolution {
-          matched: vec![MultibuyMatch {
-            name: "Tritanium".to_owned(),
-            quantity: 100,
-            type_id: 34,
-          }],
-          unmatched: Vec::new(),
-        }),
-        &db,
-      );
-
-      let matched = state.stockpile_import_matched();
-      state.close_stockpile_import();
-
-      assert_eq!(matched.iter().map(|m| m.type_id).collect::<Vec<_>>(), vec![34]);
-      assert!(state.stockpile_import.is_none());
     }
 
     #[tokio::test]

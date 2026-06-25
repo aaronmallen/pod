@@ -123,6 +123,3 @@ engine already honors (`engine.rs` enroll/dispatch) and the character cards alre
 - ADR-0002 — Sync/Render Separation (UI observes; sync owns execution).
 - ADR-0014 — Persisted Sync Ledger and Honest Job Outcomes.
 - Spec: gest artifact `ortpkouw` — Freshness-first sync status.
-</content>
-
-</invoke>

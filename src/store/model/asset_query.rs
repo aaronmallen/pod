@@ -308,8 +308,7 @@ pub struct InventoryRow {
 }
 
 impl InventoryRow {
-  // The reproc-vs-sell verdict; surfaced by the phase-3 inventory UI in a follow-up.
-  #[allow(dead_code)]
+  // The reproc-vs-sell verdict; surfaced on inventory rows by the assets UI.
   pub fn worth_reprocessing(&self) -> bool {
     self.reproc_value > self.value
   }

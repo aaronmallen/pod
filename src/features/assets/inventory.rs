@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, image, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, scrollable, text, tooltip},
 };
 
 use super::{
@@ -33,6 +33,11 @@ const ICON_BOX: f32 = 26.0;
 const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
 const TOGGLE_WIDTH: f32 = 16.0;
+
+/// Width of the warning-colored left edge marking a worth-reprocessing row,
+/// revealed as the outer container's background by left padding (the
+/// `notification_toaster` padding-revealed-accent idiom).
+const REPROC_EDGE_WIDTH: f32 = 2.0;
 
 /// Relative flex widths for the inventory columns, in column order:
 /// Item, Group, Category, Qty, Volume, Unit, Value, Owner, Location.
@@ -554,10 +559,7 @@ fn table_row<'a>(
       numeric_cell(fmt_isk(inventory_row.unit_price), color::text::secondary()),
       COLUMN_PORTIONS[5],
     ),
-    portioned(
-      numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY),
-      COLUMN_PORTIONS[6],
-    ),
+    portioned(value_cell(inventory_row), COLUMN_PORTIONS[6]),
     portioned(
       owner_cell(inventory_row.owner_id, roster, corporations),
       COLUMN_PORTIONS[7],
@@ -571,7 +573,7 @@ fn table_row<'a>(
     ),
   ];
 
-  container(
+  let row = container(
     Row::with_children(cells)
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center),
@@ -590,8 +592,33 @@ fn table_row<'a>(
       radius: 0.0.into(),
     },
     ..container::Style::default()
-  })
-  .into()
+  });
+
+  if inventory_row.worth_reprocessing() {
+    reproc_edge(row.into())
+  } else {
+    row.into()
+  }
+}
+
+/// Wrap a row in an outer container whose warning-colored background is revealed
+/// by left padding, drawing the worth-reprocessing left edge. A `Length::Fill`
+/// accent bar would balloon vertically, so we reveal the background instead (the
+/// `notification_toaster` idiom).
+fn reproc_edge<'a>(row: Element<'a, Message>) -> Element<'a, Message> {
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: REPROC_EDGE_WIDTH,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::status::WARNING)),
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
@@ -636,6 +663,9 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   if inventory_row.is_active_ship {
     children.push(active_ship_badge());
   }
+  if inventory_row.worth_reprocessing() {
+    children.push(reprocess_badge(inventory_row));
+  }
 
   container(
     Row::with_children(children)
@@ -648,6 +678,11 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
 
 fn active_ship_badge<'a>() -> Element<'a, Message> {
   badge("ACTIVE", Some(color::accent::PLASMA))
+}
+
+/// A `↻ Reprocess` badge, wrapped in a hover tooltip explaining the reproc gain.
+fn reprocess_badge<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
+  reproc_tooltip(badge("\u{21bb} Reprocess", Some(color::status::WARNING)), inventory_row)
 }
 
 fn category_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
@@ -691,6 +726,75 @@ fn container_toggle<'a>(item_id: i64, expanded: bool) -> Element<'a, Message> {
 
 fn group_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
   TableCell::new(inventory_row.group_name.clone()).view()
+}
+
+/// The Value cell: the stack's sell value, plus a secondary warning-colored
+/// `↻ <reproc isk>` line (with the reproc tooltip) when worth reprocessing.
+fn value_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
+  let primary = numeric_cell(fmt_isk(inventory_row.value), color::text::PRIMARY);
+  if !inventory_row.worth_reprocessing() {
+    return primary;
+  }
+
+  let secondary = container(
+    text(format!("\u{21bb} {}", fmt_isk(inventory_row.reproc_value)))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::status::WARNING)),
+  )
+  .width(Length::Fill)
+  .align_x(Horizontal::Right);
+
+  Column::with_children(vec![primary, reproc_tooltip(secondary.into(), inventory_row)])
+    .spacing(1.0)
+    .width(Length::Fill)
+    .into()
+}
+
+/// Wrap an affordance in a hover tooltip comparing reproc to sell value.
+fn reproc_tooltip<'a>(content: Element<'a, Message>, inventory_row: &'a InventoryRow) -> Element<'a, Message> {
+  let body = container(
+    text(reproc_tooltip_text(inventory_row))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::PRIMARY)),
+  )
+  .max_width(280.0)
+  .padding(spacing::SPACE_2_5)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::surface::RAISED)),
+    border: Border {
+      color: color::rule_strong(),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  });
+
+  tooltip(content, body, tooltip::Position::Top)
+    .gap(spacing::SPACE_2)
+    .into()
+}
+
+/// Tooltip copy explaining the reproc gain: per-unit reproc price, the % above
+/// the per-unit sell price, and the sell price itself.
+fn reproc_tooltip_text(inventory_row: &InventoryRow) -> String {
+  let per_unit_reproc = if inventory_row.quantity > 0 {
+    inventory_row.reproc_value / inventory_row.quantity as f64
+  } else {
+    inventory_row.reproc_value
+  };
+  let gain_pct = if inventory_row.value > 0.0 {
+    ((inventory_row.reproc_value / inventory_row.value - 1.0) * 100.0).round() as i64
+  } else {
+    0
+  };
+  format!(
+    "Reprocesses to {}/unit \u{2014} {}% above its {}/unit sell price. Worth refining rather than selling.",
+    fmt_isk(per_unit_reproc),
+    gain_pct,
+    fmt_isk(inventory_row.unit_price),
+  )
 }
 
 fn numeric_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Message> {
@@ -1150,6 +1254,64 @@ mod tests {
     #[test]
     fn it_renders_the_help_popover() {
       let _el: Element<'_, Message> = help_popover();
+    }
+  }
+
+  mod reprocess {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn worth_row() -> InventoryRow {
+      // sell value 1_000, reproc 2_500 over qty 10 → 250/unit, 150% above sell.
+      InventoryRow {
+        reproc_value: 2_500.0,
+        ..sample_row(1, "Tritanium", "commodity", 7, 1_000.0)
+      }
+    }
+
+    #[test]
+    fn it_flags_a_stack_worth_more_reprocessed() {
+      assert!(worth_row().worth_reprocessing());
+    }
+
+    #[test]
+    fn it_does_not_flag_a_stack_worth_more_sold() {
+      let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
+      assert!(!row.worth_reprocessing());
+    }
+
+    #[test]
+    fn it_renders_the_badge_and_secondary_value_for_a_worth_row() {
+      let row = worth_row();
+      let _name: Element<'_, Message> = name_cell(&row);
+      let _value: Element<'_, Message> = value_cell(&row);
+      let _badge: Element<'_, Message> = reprocess_badge(&row);
+    }
+
+    #[test]
+    fn it_renders_a_plain_value_cell_for_a_non_worth_row() {
+      let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
+      let _value: Element<'_, Message> = value_cell(&row);
+      let _name: Element<'_, Message> = name_cell(&row);
+    }
+
+    #[test]
+    fn it_composes_the_tooltip_with_per_unit_reproc_sell_and_gain() {
+      assert_eq!(
+        reproc_tooltip_text(&worth_row()),
+        "Reprocesses to 250/unit \u{2014} 150% above its 100/unit sell price. \
+         Worth refining rather than selling."
+      );
+    }
+
+    #[test]
+    fn it_handles_a_zero_quantity_stack_without_dividing_by_zero() {
+      let mut row = worth_row();
+      row.quantity = 0;
+      // Per-unit falls back to the raw reproc value; no panic.
+      let _text = reproc_tooltip_text(&row);
+      let _value: Element<'_, Message> = value_cell(&row);
     }
   }
 

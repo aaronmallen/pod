@@ -3,7 +3,7 @@ use iced::{
   Background, Border, ContentFit, Element, Length, Padding, Point,
   alignment::{Horizontal, Vertical},
   mouse,
-  widget::{Column, Row, Space, Stack, button, container, image, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, button, container, image, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -25,7 +25,7 @@ use crate::{
       forbidden,
       glyph_badge::GlyphBadge,
       icon::Icon,
-      modal_overlay::modal_overlay,
+      modal_overlay::stable_overlay,
       positioned_dropdown::positioned_dropdown,
       resizable_pane::pane_handle,
       rule,
@@ -76,17 +76,21 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  // Always render through the overlay `Stack` with `base` pinned at child[0],
+  // even when no menu is active (empty `layers`). The ledger scrollable lives
+  // inside `base`; if it were sometimes the root container and sometimes child[0]
+  // of a Stack, Iced would drop its internal scroll offset on the reshape and snap
+  // the list to the top the moment a menu opened. Keeping `base` at a stable tree
+  // position preserves the scroll offset across every open/close.
+  stable_overlay(base.into(), overlay_layers(state))
+}
+
+/// The overlay layers to mount above the ledger, in z-order (bottom first). Empty
+/// when no menu/modal is open, so `base` renders alone at child[0] of the Stack.
+fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
-
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::PickerToggled), dropdown];
   }
 
   if let Some((anchor, picking)) = state.ledger_menu_open() {
@@ -104,34 +108,29 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
         anchor,
       )
     };
-    return modal_overlay(base.into(), Some(Message::LedgerMenuDismissed), overlay);
+    return vec![backdrop::backdrop(Message::LedgerMenuDismissed), overlay];
   }
 
   if state.budget_global_rules_open() {
-    let manager = modal_overlay(
-      base.into(),
-      Some(Message::BudgetGlobalRulesClosed),
+    let mut layers = vec![
+      backdrop::backdrop(Message::BudgetGlobalRulesClosed),
       super::budget_view::global_rules_modal(state),
-    );
+    ];
     if state.budget_rule_editor().is_some() {
-      return modal_overlay(
-        manager,
-        Some(Message::BudgetRuleEditorClosed),
-        super::budget_view::rule_editor_modal(state),
-      );
+      layers.push(backdrop::backdrop(Message::BudgetRuleEditorClosed));
+      layers.push(super::budget_view::rule_editor_modal(state));
     }
-    return manager;
+    return layers;
   }
 
   if state.budget_rule_editor().is_some() {
-    return modal_overlay(
-      base.into(),
-      Some(Message::BudgetRuleEditorClosed),
+    return vec![
+      backdrop::backdrop(Message::BudgetRuleEditorClosed),
       super::budget_view::rule_editor_modal(state),
-    );
+    ];
   }
 
-  base.into()
+  Vec::new()
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
@@ -1984,6 +1983,84 @@ mod tests {
 
       let _el: Element<'_, Message> = shell(&state, now());
       assert_eq!(crate::features::wallet::filtered_journal(&state).len(), 2_000);
+    }
+  }
+
+  mod ledger_menu_overlay {
+    use super::*;
+
+    fn populated_journal_state() -> State {
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.tab = Tab::Journal;
+      state.journal = (0..50)
+        .map(|index| JournalEntry {
+          amount: Some(index as f64),
+          balance: Some(5_000.0),
+          character_id: 1,
+          context_id: None,
+          date: "2026-05-30T12:00:00Z".to_owned(),
+          description: "Bounty payout".to_owned(),
+          id: index,
+          owner: BudgetOwner::Character(1),
+          reason: None,
+          ref_type: "bounty_prizes".to_owned(),
+        })
+        .collect();
+      state.tab_scroll_offset = 1_200.0;
+      state.recompute_derived();
+      state
+    }
+
+    fn open_bulk_assign_menu(state: &mut State) {
+      state.ledger_menu = Some(crate::features::wallet::LedgerMenu {
+        anchor: iced::Point::new(40.0, 120.0),
+        picking: false,
+        tab: Tab::Journal,
+      });
+    }
+
+    fn root_children(el: &Element<'_, Message>) -> usize {
+      let mut tree = iced::advanced::widget::Tree::new(el);
+      tree.diff(el);
+      tree.children.len()
+    }
+
+    fn base_tag(el: &Element<'_, Message>) -> iced::advanced::widget::tree::Tag {
+      let mut tree = iced::advanced::widget::Tree::new(el);
+      tree.diff(el);
+      tree.children[0].tag
+    }
+
+    #[test]
+    fn the_closed_shell_already_mounts_the_base_inside_a_stack() {
+      let state = populated_journal_state();
+
+      // Even with no menu open the root is the overlay Stack carrying the base
+      // alone, so the ledger never lives at a different tree position than it does
+      // while a menu is open.
+      assert_eq!(root_children(&shell(&state, now())), 1);
+    }
+
+    #[test]
+    fn opening_the_menu_only_adds_sibling_layers_above_the_base() {
+      let mut state = populated_journal_state();
+      open_bulk_assign_menu(&mut state);
+
+      // Base + scrim backdrop + context menu, with the base still at child[0].
+      assert_eq!(root_children(&shell(&state, now())), 3);
+    }
+
+    #[test]
+    fn opening_the_menu_keeps_the_ledger_base_at_a_stable_tree_position() {
+      let mut closed = populated_journal_state();
+      let closed_tag = base_tag(&shell(&closed, now()));
+
+      open_bulk_assign_menu(&mut closed);
+      let open_tag = base_tag(&shell(&closed, now()));
+
+      // child[0]'s tag is unchanged across open/close, so Iced preserves the
+      // scrollable's internal offset and the list does not snap to the top.
+      assert_eq!(closed_tag, open_tag);
     }
   }
 

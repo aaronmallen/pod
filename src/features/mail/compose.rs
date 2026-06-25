@@ -964,12 +964,10 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
       .into(),
   );
   trigger_cells.push(
-    text("\u{25be}")
+    Icon::chevron_down()
       .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      })
-      .into(),
+      .color(color::text::secondary())
+      .render::<Message>(),
   );
 
   let from_trigger = mouse_area(

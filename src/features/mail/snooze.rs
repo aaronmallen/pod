@@ -9,7 +9,7 @@ use super::{Message, labels};
 use crate::{
   store::{Database, repo::mail},
   ui::{
-    components::eyebrow::eyebrow_text,
+    components::{eyebrow::eyebrow_text, icon::Icon},
     style::{color, radius, spacing, typography},
   },
 };
@@ -349,7 +349,7 @@ fn preset_row<'a>(preset: Preset, enabled: bool) -> Element<'a, Message> {
 
 pub(super) fn calendar_menu(cal: &Calendar) -> Element<'_, Message> {
   let header = Row::with_children(vec![
-    nav_button("\u{2039}", Message::SnoozeCalendarPrevMonth),
+    nav_button(Icon::chevron_left(), Message::SnoozeCalendarPrevMonth),
     container(
       text(format!("{} {}", month_name(cal.view_month0), cal.view_year))
         .size(typography::size::MD)
@@ -361,7 +361,7 @@ pub(super) fn calendar_menu(cal: &Calendar) -> Element<'_, Message> {
     .width(Length::Fill)
     .align_x(Horizontal::Center)
     .into(),
-    nav_button("\u{203a}", Message::SnoozeCalendarNextMonth),
+    nav_button(Icon::chevron_right(), Message::SnoozeCalendarNextMonth),
     eve_tag(),
   ])
   .spacing(spacing::UNIT)
@@ -629,19 +629,13 @@ fn footer_button<'a>(label: &str, message: Message, primary: bool) -> Element<'a
   .into()
 }
 
-fn nav_button<'a>(glyph: &str, message: Message) -> Element<'a, Message> {
+fn nav_button<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
   mouse_area(
-    container(
-      text(glyph.to_owned())
-        .size(typography::size::MD)
-        .style(|_| text::Style {
-          color: Some(color::text::secondary()),
-        }),
-    )
-    .width(Length::Fixed(24.0))
-    .height(Length::Fixed(24.0))
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center),
+    container(icon.size(16.0).color(color::text::secondary()).render::<Message>())
+      .width(Length::Fixed(24.0))
+      .height(Length::Fixed(24.0))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center),
   )
   .on_press(message)
   .into()

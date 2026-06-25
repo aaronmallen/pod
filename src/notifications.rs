@@ -139,7 +139,23 @@ async fn resolve_owner_names(
   surfaced: &[Notification],
 ) -> HashMap<NotificationOwner, String> {
   let mut names = HashMap::new();
-  for owner in list.iter().chain(surfaced).map(Notification::owner) {
+  resolve_into(db, list, &mut names).await;
+  resolve_into(db, surfaced, &mut names).await;
+  names
+}
+
+/// Resolves a display name ("who") per distinct owner across an arbitrary slice of notifications, so a
+/// UI labelling freshly-paged History rows can fill the "who" line without a second DB round-trip.
+/// Each owner is looked up once even when many notifications share it.
+#[allow(dead_code)]
+pub async fn resolve_names(db: &Database, notifications: &[Notification]) -> HashMap<NotificationOwner, String> {
+  let mut names = HashMap::new();
+  resolve_into(db, notifications, &mut names).await;
+  names
+}
+
+async fn resolve_into(db: &Database, notifications: &[Notification], names: &mut HashMap<NotificationOwner, String>) {
+  for owner in notifications.iter().map(Notification::owner) {
     if names.contains_key(&owner) {
       continue;
     }
@@ -149,7 +165,6 @@ async fn resolve_owner_names(
     };
     names.insert(owner, name);
   }
-  names
 }
 
 async fn character_name(db: &Database, character_id: i64) -> String {

@@ -7,10 +7,39 @@ use crate::store::{
   },
 };
 
-/// Surfaced-row cap. emit() prunes the oldest surfaced rows beyond this many opportunistically, so the
-/// center never grows without bound. Suppressed watermark rows are the dedup ledger and are NEVER
-/// pruned here — dropping one would let its event re-notify on the next detector pass.
-const SURFACED_RETENTION: i64 = 200;
+/// Time-based retention window for surfaced rows. emit() prunes surfaced rows whose created_at is
+/// older than this many days opportunistically, so the center is bounded by age (not count) and the
+/// full recent history stays available for keyset paging in the History view. Suppressed watermark
+/// rows are the dedup ledger and are NEVER pruned here — dropping one would let its event re-notify
+/// on the next detector pass. Tunable; ~90 days keeps a meaningful history without unbounded growth.
+const NOTIFICATION_RETENTION_DAYS: i64 = 90;
+
+/// Default keyset page size for the History view. A caller may request a different limit.
+#[allow(dead_code)]
+pub const HISTORY_PAGE_SIZE: i64 = 50;
+
+/// A keyset cursor into the surfaced-row history: the (created_at, id) of the last row a page
+/// returned. The next page returns surfaced rows strictly older than this in the (created_at DESC,
+/// id DESC) order, so paging walks the whole history with no duplicated or skipped rows even when new
+/// rows are inserted between fetches (a newer insert sorts before the cursor and never reappears in a
+/// later page).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryCursor {
+  pub created_at: String,
+  pub id: i64,
+}
+
+#[allow(dead_code)]
+impl HistoryCursor {
+  /// The cursor positioned just after the last row of a page, or None when the page was empty (no
+  /// further rows to request).
+  pub fn from_page(page: &[Notification]) -> Option<Self> {
+    page.last().map(|last| Self {
+      created_at: last.created_at().clone(),
+      id: last.id(),
+    })
+  }
+}
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, FromRow)]
@@ -99,6 +128,59 @@ pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error>
     "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
       created_at, read_at \
       FROM notifications WHERE suppressed = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
+  )
+  .bind(limit)
+  .fetch_all(db.reader())
+  .await?;
+  Ok(rows.into_iter().filter_map(Row::into_notification).collect())
+}
+
+// Keyset page over surfaced rows for the History view. `cursor` is the (created_at, id) of the last
+// row the previous page returned; None requests the newest page. The row-value predicate
+// (created_at, id) < (?, ?) plus the matching ORDER BY rides the idx_notifications_surfaced_keyset
+// partial index, so deep history pages stay cheap. Walking with each page's last cursor visits every
+// surfaced row exactly once, even when newer rows are inserted mid-paging — they sort ahead of the
+// cursor and never reappear in a later page.
+#[allow(dead_code)]
+pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64) -> Result<Vec<Notification>, Error> {
+  let rows = match cursor {
+    Some(cursor) => {
+      sqlx::query_as::<_, Row>(
+        "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
+          created_at, read_at \
+          FROM notifications \
+          WHERE suppressed = 0 AND (created_at < ? OR (created_at = ? AND id < ?)) \
+          ORDER BY created_at DESC, id DESC LIMIT ?",
+      )
+      .bind(&cursor.created_at)
+      .bind(&cursor.created_at)
+      .bind(cursor.id)
+      .bind(limit)
+      .fetch_all(db.reader())
+      .await?
+    }
+    None => {
+      sqlx::query_as::<_, Row>(
+        "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
+          created_at, read_at \
+          FROM notifications WHERE suppressed = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
+      )
+      .bind(limit)
+      .fetch_all(db.reader())
+      .await?
+    }
+  };
+  Ok(rows.into_iter().filter_map(Row::into_notification).collect())
+}
+
+// Surfaced unread rows (read_at IS NULL AND suppressed = 0), newest-first, for the New tab — correct
+// independent of how far History has paged.
+#[allow(dead_code)]
+pub async fn list_unread(db: &Database, limit: i64) -> Result<Vec<Notification>, Error> {
+  let rows = sqlx::query_as::<_, Row>(
+    "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
+      created_at, read_at \
+      FROM notifications WHERE suppressed = 0 AND read_at IS NULL ORDER BY created_at DESC, id DESC LIMIT ?",
   )
   .bind(limit)
   .fetch_all(db.reader())
@@ -200,15 +282,17 @@ pub async fn watermark(
   Ok(())
 }
 
+// Time-based retention: drop surfaced rows whose created_at is older than the retention window,
+// computed as now - NOTIFICATION_RETENTION_DAYS and bound as an RFC3339 string. String comparison is
+// exact over the normalized RFC3339 timestamps emit() writes. Suppressed watermark rows are exempt —
+// they are the dedup ledger, so dropping one would let its event re-notify on a later detector pass.
 #[allow(dead_code)]
 async fn prune(db: &Database) -> Result<(), Error> {
-  sqlx::query(
-    "DELETE FROM notifications WHERE suppressed = 0 AND id NOT IN \
-      (SELECT id FROM notifications WHERE suppressed = 0 ORDER BY created_at DESC, id DESC LIMIT ?)",
-  )
-  .bind(SURFACED_RETENTION)
-  .execute(db.writer())
-  .await?;
+  let cutoff = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS)).to_rfc3339();
+  sqlx::query("DELETE FROM notifications WHERE suppressed = 0 AND created_at < ?")
+    .bind(&cutoff)
+    .execute(db.writer())
+    .await?;
   Ok(())
 }
 
@@ -230,6 +314,22 @@ mod tests {
       },
       title: format!("title {dedup_key}"),
     }
+  }
+
+  // Insert a surfaced row with an exact created_at so paging/prune boundaries are testable (emit()
+  // would stamp every row with now()). Returns the new row id.
+  async fn seed_surfaced(db: &Database, dedup_key: &str, created_at: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+      "INSERT INTO notifications \
+        (kind, owner_type, owner_id, dedup_key, title, body, target_dest, created_at, suppressed) \
+        VALUES ('skill', 'character', 42, ?, ?, '', 'skills', ?, 0) RETURNING id",
+    )
+    .bind(dedup_key)
+    .bind(format!("title {dedup_key}"))
+    .bind(created_at)
+    .fetch_one(db.writer())
+    .await
+    .unwrap()
   }
 
   mod clear_all {
@@ -303,17 +403,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_prunes_surfaced_rows_beyond_the_cap() {
+    async fn it_prunes_surfaced_rows_older_than_the_retention_window() {
       let db = store::open_test().await.unwrap();
-      for i in 0..(SURFACED_RETENTION + 5) {
-        let mut notification = sample(&format!("skill:{i}"));
-        notification.title = format!("{i:05}");
-        emit(&db, &notification).await.unwrap();
-      }
+      // A row aged just past the window, plus a recent row and a watermark, all seeded directly so
+      // their created_at is controlled. A fresh emit() then triggers prune().
+      let old = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS + 1)).to_rfc3339();
+      let recent = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+      seed_surfaced(&db, "skill:old", &old).await;
+      seed_surfaced(&db, "skill:recent", &recent).await;
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
 
-      let listed = list(&db, SURFACED_RETENTION + 100).await.unwrap();
+      emit(&db, &sample("skill:trigger")).await.unwrap();
 
-      assert_eq!(listed.len() as i64, SURFACED_RETENTION);
+      let keys = list(&db, 50)
+        .await
+        .unwrap()
+        .iter()
+        .map(|n| n.dedup_key().clone())
+        .collect::<Vec<_>>();
+      assert!(!keys.contains(&"skill:old".to_owned()), "the aged row is pruned");
+      assert!(keys.contains(&"skill:recent".to_owned()), "a recent row survives");
+      // The watermark is exempt from prune: re-emitting its key is still a no-op.
+      assert!(emit(&db, &sample("skill:wm")).await.unwrap().is_none());
     }
   }
 
@@ -526,6 +644,156 @@ mod tests {
         .unwrap();
 
       assert!(list(&db, 50).await.unwrap().is_empty());
+    }
+  }
+
+  mod list_page {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    // Distinct, ordered created_at values so (created_at, id) boundaries are unambiguous.
+    async fn seed_history(db: &Database) {
+      for i in 0..5 {
+        let created = format!("2026-06-{:02}T00:00:00+00:00", 20 - i);
+        seed_surfaced(db, &format!("skill:{i}"), &created).await;
+      }
+    }
+
+    #[tokio::test]
+    async fn it_returns_the_newest_page_for_a_none_cursor() {
+      let db = store::open_test().await.unwrap();
+      seed_history(&db).await;
+
+      let page = list_page(&db, None, 2).await.unwrap();
+
+      let keys = page.iter().map(Notification::dedup_key).collect::<Vec<_>>();
+      assert_eq!(keys, ["skill:0", "skill:1"]);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_watermark_rows() {
+      let db = store::open_test().await.unwrap();
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
+      seed_surfaced(&db, "skill:1", "2026-06-20T00:00:00+00:00").await;
+
+      let page = list_page(&db, None, 50).await.unwrap();
+
+      assert_eq!(page.len(), 1);
+      assert_eq!(page[0].dedup_key(), "skill:1");
+    }
+
+    #[tokio::test]
+    async fn it_walks_the_full_history_with_no_duplicates_or_gaps() {
+      let db = store::open_test().await.unwrap();
+      seed_history(&db).await;
+
+      let mut seen = Vec::new();
+      let mut cursor = None;
+      loop {
+        let page = list_page(&db, cursor.as_ref(), 2).await.unwrap();
+        if page.is_empty() {
+          break;
+        }
+        cursor = HistoryCursor::from_page(&page);
+        seen.extend(page.into_iter().map(|n| n.dedup_key().clone()));
+      }
+
+      assert_eq!(seen, ["skill:0", "skill:1", "skill:2", "skill:3", "skill:4"]);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_stable_ordering_when_a_row_is_inserted_mid_paging() {
+      let db = store::open_test().await.unwrap();
+      seed_history(&db).await;
+
+      let first = list_page(&db, None, 2).await.unwrap();
+      let cursor = HistoryCursor::from_page(&first).unwrap();
+      // A row newer than the cursor arrives between fetches; it sorts ahead of the cursor and must
+      // not reappear in the next (older) page.
+      seed_surfaced(&db, "skill:new", "2026-06-21T00:00:00+00:00").await;
+
+      let second = list_page(&db, Some(&cursor), 2).await.unwrap();
+
+      let keys = second.iter().map(|n| n.dedup_key().clone()).collect::<Vec<_>>();
+      assert_eq!(keys, ["skill:2", "skill:3"]);
+      assert!(
+        !keys.contains(&"skill:new".to_owned()),
+        "a row inserted after the cursor never appears in an older page"
+      );
+    }
+
+    // Two rows sharing a created_at must still page cleanly via the id tiebreak.
+    #[tokio::test]
+    async fn it_breaks_created_at_ties_by_id() {
+      let db = store::open_test().await.unwrap();
+      let ts = "2026-06-20T00:00:00+00:00";
+      let first = seed_surfaced(&db, "skill:a", ts).await;
+      let second = seed_surfaced(&db, "skill:b", ts).await;
+      assert!(second > first, "the second insert takes a higher id");
+
+      let page1 = list_page(&db, None, 1).await.unwrap();
+      assert_eq!(page1[0].dedup_key(), "skill:b");
+      let cursor = HistoryCursor::from_page(&page1).unwrap();
+      let page2 = list_page(&db, Some(&cursor), 1).await.unwrap();
+
+      assert_eq!(page2[0].dedup_key(), "skill:a");
+    }
+  }
+
+  mod list_unread {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_returns_only_surfaced_unread_rows_newest_first() {
+      let db = store::open_test().await.unwrap();
+      let read = seed_surfaced(&db, "skill:read", "2026-06-18T00:00:00+00:00").await;
+      seed_surfaced(&db, "skill:unread-old", "2026-06-19T00:00:00+00:00").await;
+      seed_surfaced(&db, "skill:unread-new", "2026-06-20T00:00:00+00:00").await;
+      watermark(
+        &db,
+        &NotificationOwner::Character(42),
+        NotificationKind::Skill,
+        &["skill:wm".to_owned()],
+      )
+      .await
+      .unwrap();
+      mark_read(&db, read).await.unwrap();
+
+      let unread = list_unread(&db, 50).await.unwrap();
+
+      let keys = unread.iter().map(Notification::dedup_key).collect::<Vec<_>>();
+      assert_eq!(keys, ["skill:unread-new", "skill:unread-old"]);
+    }
+  }
+
+  mod migration {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    // open_test() runs every embedded migration, so the keyset index exists only if 0105 applied.
+    #[tokio::test]
+    async fn it_creates_the_keyset_index() {
+      let db = store::open_test().await.unwrap();
+
+      let name: Option<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_notifications_surfaced_keyset'",
+      )
+      .fetch_optional(db.reader())
+      .await
+      .unwrap();
+
+      assert_eq!(name.as_deref(), Some("idx_notifications_surfaced_keyset"));
     }
   }
 }

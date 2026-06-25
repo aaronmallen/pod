@@ -33,7 +33,7 @@ use crate::{
   mcp, notifications,
   services::{images, updater},
   store,
-  sync::{self, JobKey, JobKind},
+  sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
     components::{
       backdrop,
@@ -2576,6 +2576,23 @@ fn expected_job_stats(app: &App) -> JobStats {
   sync_popover::job_stats(&roster(app), &app.status, &feature_flags(app))
 }
 
+// Regroup the shared `JobStats` — itself derived from the one freshness function the popover and chip
+// both consume — back into the `FreshnessSummary` the calm chip headline reads. The chip never recounts
+// jobs; it only renders the buckets. `errors` (persistent `Failed`) is split out of `JobStats::attention`
+// upstream, so the chip carries it alongside the summary and folds it back into its attention headline.
+fn chip_freshness(stats: &JobStats) -> FreshnessSummary {
+  let catching_up = stats
+    .total
+    .saturating_sub(stats.done + stats.active + stats.attention + stats.errors);
+  FreshnessSummary {
+    attention: stats.attention,
+    catching_up,
+    fresh: stats.done,
+    refreshing: stats.active,
+    total: stats.total,
+  }
+}
+
 fn roster(app: &App) -> Vec<OwnedPilot> {
   app
     .character_manager
@@ -2640,17 +2657,12 @@ fn status_affordance(state: &EngineState) -> Option<Element<'static, Message>> {
 
 fn status_bar_view(app: &App) -> Element<'_, Message> {
   let stats = expected_job_stats(app);
-  let percent = (stats.done * 100).checked_div(stats.total).unwrap_or(100) as u8;
   let chip = sync_chip::State {
-    syncing: engine_syncing(app),
-    done: stats.done,
-    total: stats.total,
-    percent,
     errors: stats.errors,
-    attention: stats.attention,
     last_synced_secs: app.last_synced.map(|at| (app.now - at).num_seconds().max(0) as u64),
     lifecycle: chip_lifecycle(app),
     pulse_on: app.sync_tick,
+    summary: chip_freshness(&stats),
   };
 
   let eve = container(eve_time(app.now))

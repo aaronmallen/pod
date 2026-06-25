@@ -45,7 +45,6 @@ impl FreshnessSummary {
     }
   }
 
-  #[allow(dead_code)]
   pub fn is_up_to_date(&self) -> bool {
     self.attention == 0 && self.catching_up == 0 && self.refreshing == 0
   }

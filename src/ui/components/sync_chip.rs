@@ -1,16 +1,16 @@
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Color, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Row, Space, container, text},
+  widget::{Row, container, text},
 };
 
-use crate::ui::{
-  components::status::{dot, format_since},
-  style::{color, spacing, typography},
+use crate::{
+  sync::FreshnessSummary,
+  ui::{
+    components::status::{dot, format_since},
+    style::{color, spacing, typography},
+  },
 };
-
-const BAR_HEIGHT: f32 = 2.0;
-const BAR_WIDTH: f32 = 200.0;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum Lifecycle {
@@ -24,15 +24,21 @@ pub enum Lifecycle {
 
 #[derive(Clone, Debug)]
 pub struct State {
-  pub attention: usize,
-  pub done: usize,
   pub errors: usize,
   pub last_synced_secs: Option<u64>,
   pub lifecycle: Lifecycle,
-  pub percent: u8,
   pub pulse_on: bool,
-  pub syncing: bool,
-  pub total: usize,
+  pub summary: FreshnessSummary,
+}
+
+impl State {
+  fn attention(&self) -> usize {
+    self.summary.attention + self.errors
+  }
+
+  fn refreshing(&self) -> bool {
+    self.summary.refreshing > 0
+  }
 }
 
 pub fn sync_chip<'a, M>(state: State) -> Element<'a, M>
@@ -65,16 +71,16 @@ where
 }
 
 fn active_dot_color(state: &State) -> Color {
-  if state.syncing {
-    if state.pulse_on {
-      color::accent::PLASMA
+  if state.attention() > 0 {
+    if state.errors > 0 {
+      color::status::DANGER
     } else {
-      color::accent::PLASMA_MUTED
+      color::status::WARNING
     }
-  } else if state.errors > 0 {
-    color::status::DANGER
-  } else if state.attention > 0 {
-    color::status::WARNING
+  } else if state.refreshing() && state.pulse_on {
+    color::accent::PLASMA
+  } else if state.refreshing() {
+    color::accent::PLASMA_MUTED
   } else {
     color::status::ONLINE
   }
@@ -84,61 +90,36 @@ fn active_label<'a, M>(state: &State) -> Element<'a, M>
 where
   M: 'a,
 {
-  if state.syncing {
-    syncing_label(state.done, state.total, state.percent)
-  } else if state.errors > 0 {
-    error_label(state.errors)
-  } else if state.attention > 0 {
-    attention_label(state.attention)
+  let attention = state.attention();
+  if attention > 0 {
+    attention_label(attention, state.errors)
+  } else if state.summary.catching_up > 0 {
+    catching_up_label(state.summary.catching_up)
   } else {
-    idle_label(state.last_synced_secs)
+    up_to_date_label(state)
   }
 }
 
-fn attention_label<'a, M>(attention: usize) -> Element<'a, M>
+fn attention_label<'a, M>(attention: usize, errors: usize) -> Element<'a, M>
 where
   M: 'a,
 {
-  mono_text(format!("{attention} pending"), color::status::WARNING)
+  let fill = if errors > 0 {
+    color::status::DANGER
+  } else {
+    color::status::WARNING
+  };
+  mono_text(format!("\u{26a0} {attention} need attention"), fill)
 }
 
-fn error_label<'a, M>(errors: usize) -> Element<'a, M>
+fn catching_up_label<'a, M>(left: usize) -> Element<'a, M>
 where
   M: 'a,
 {
-  let noun = if errors == 1 { "error" } else { "errors" };
-  mono_text(format!("{errors} sync {noun}"), color::status::DANGER)
-}
-
-fn fill_segment<'a, M>(width: Length) -> Element<'a, M>
-where
-  M: 'a,
-{
-  container(Space::new().width(Length::Fill).height(Length::Fixed(BAR_HEIGHT)))
-    .width(width)
-    .height(Length::Fixed(BAR_HEIGHT))
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn idle_label<'a, M>(last_synced_secs: Option<u64>) -> Element<'a, M>
-where
-  M: 'a,
-{
-  match last_synced_secs {
-    Some(secs) => Row::with_children(vec![
-      mono_text("Synced", color::text::secondary()),
-      mono_text("·", color::text::tertiary()),
-      mono_text(format_since(secs), color::text::dim()),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center)
-    .into(),
-    None => mono_text("Idle", color::text::dim()),
-  }
+  mono_text(
+    format!("\u{27f3} Catching up\u{2026} {left} left"),
+    color::accent::PLASMA,
+  )
 }
 
 fn mono_text<'a, M>(content: impl text::IntoFragment<'a>, fill: Color) -> Element<'a, M>
@@ -150,40 +131,6 @@ where
     .size(typography::size::SM)
     .style(move |_| text::Style {
       color: Some(fill),
-    })
-    .into()
-}
-
-fn progress_bar<'a, M>(percent: u8) -> Element<'a, M>
-where
-  M: 'a,
-{
-  let fill = u16::from(percent).clamp(1, 100);
-  let rest = 100 - fill;
-  let inner: Element<'a, M> = if rest == 0 {
-    fill_segment(Length::Fill)
-  } else {
-    Row::with_children(vec![
-      fill_segment(Length::FillPortion(fill)),
-      Space::new()
-        .width(Length::FillPortion(rest))
-        .height(Length::Fixed(BAR_HEIGHT))
-        .into(),
-    ])
-    .height(Length::Fixed(BAR_HEIGHT))
-    .into()
-  };
-
-  container(inner)
-    .width(Length::Fixed(BAR_WIDTH))
-    .height(Length::Fixed(BAR_HEIGHT))
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.1))),
-      border: Border {
-        radius: 1.0.into(),
-        ..Border::default()
-      },
-      ..container::Style::default()
     })
     .into()
 }
@@ -206,23 +153,169 @@ where
   mono_text("Sync stopped", color::status::DANGER)
 }
 
-fn syncing_label<'a, M>(done: usize, total: usize, percent: u8) -> Element<'a, M>
+fn up_to_date_label<'a, M>(state: &State) -> Element<'a, M>
 where
   M: 'a,
 {
-  Row::with_children(vec![
-    mono_text("Syncing", color::text::PRIMARY),
-    progress_bar(percent),
-    mono_text(format!("{done}/{total}"), color::text::secondary()),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center)
-  .into()
+  let headline = mono_text("\u{2713} Up to date", color::status::ONLINE);
+  // The quiet last-sync time is a steady aside: it only appears once everything has truly settled,
+  // so a routine mid-refresh never decorates the calm headline with a churning timestamp.
+  match state.last_synced_secs {
+    Some(secs) if state.summary.is_up_to_date() => Row::with_children(vec![
+      headline,
+      mono_text("\u{00b7}", color::text::tertiary()),
+      mono_text(format_since(secs), color::text::dim()),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Center)
+    .into(),
+    _ => headline,
+  }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  fn state(summary: FreshnessSummary, errors: usize) -> State {
+    State {
+      errors,
+      last_synced_secs: None,
+      lifecycle: Lifecycle::Active,
+      pulse_on: false,
+      summary,
+    }
+  }
+
+  fn fresh(total: usize) -> FreshnessSummary {
+    FreshnessSummary {
+      fresh: total,
+      total,
+      ..FreshnessSummary::default()
+    }
+  }
+
+  mod headline {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_reads_attention_above_catching_up_and_up_to_date() {
+      let summary = FreshnessSummary {
+        attention: 2,
+        catching_up: 3,
+        fresh: 5,
+        total: 10,
+        ..FreshnessSummary::default()
+      };
+      let state = state(summary, 0);
+
+      assert_eq!(state.attention(), 2);
+      assert_eq!(active_dot_color(&state), color::status::WARNING);
+      let _label: Element<'_, ()> = active_label(&state);
+    }
+
+    #[test]
+    fn it_treats_persistent_errors_as_attention_with_danger() {
+      let summary = FreshnessSummary {
+        attention: 1,
+        fresh: 4,
+        total: 5,
+        ..FreshnessSummary::default()
+      };
+      let state = state(summary, 2);
+
+      assert_eq!(state.attention(), 3, "errors fold into the need-attention count");
+      assert_eq!(active_dot_color(&state), color::status::DANGER);
+      let _label: Element<'_, ()> = active_label(&state);
+    }
+
+    #[test]
+    fn it_reads_catching_up_only_when_no_attention() {
+      let summary = FreshnessSummary {
+        catching_up: 4,
+        fresh: 1,
+        total: 5,
+        ..FreshnessSummary::default()
+      };
+      let state = state(summary, 0);
+
+      assert_eq!(state.attention(), 0);
+      assert_eq!(state.summary.catching_up, 4);
+      let _label: Element<'_, ()> = active_label(&state);
+    }
+
+    #[test]
+    fn it_reads_up_to_date_when_everything_is_fresh() {
+      let state = state(fresh(7), 0);
+
+      assert_eq!(state.attention(), 0);
+      assert_eq!(state.summary.catching_up, 0);
+      assert!(state.summary.is_up_to_date());
+      let _label: Element<'_, ()> = active_label(&state);
+    }
+
+    #[test]
+    fn it_stays_up_to_date_while_a_job_is_mid_refresh() {
+      let summary = FreshnessSummary {
+        fresh: 6,
+        refreshing: 1,
+        total: 7,
+        ..FreshnessSummary::default()
+      };
+      let state = state(summary, 0);
+
+      assert_eq!(
+        state.attention(),
+        0,
+        "a routine refresh never raises the attention headline"
+      );
+      assert_eq!(state.summary.catching_up, 0, "and never reads as catching up");
+      assert!(
+        !state.summary.is_up_to_date(),
+        "the strict settled check still sees the in-flight refresh"
+      );
+
+      // The headline words are still the calm Up-to-date state; only the dot pulses.
+      let _label: Element<'_, ()> = active_label(&state);
+    }
+  }
+
+  mod dot {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_pulses_plasma_only_while_refreshing() {
+      let summary = FreshnessSummary {
+        fresh: 6,
+        refreshing: 1,
+        total: 7,
+        ..FreshnessSummary::default()
+      };
+
+      let mut refreshing = state(summary, 0);
+      refreshing.pulse_on = true;
+      assert_eq!(active_dot_color(&refreshing), color::accent::PLASMA);
+
+      refreshing.pulse_on = false;
+      assert_eq!(active_dot_color(&refreshing), color::accent::PLASMA_MUTED);
+    }
+
+    #[test]
+    fn it_rests_online_when_nothing_is_in_flight() {
+      let mut calm = state(fresh(4), 0);
+      calm.pulse_on = true;
+
+      assert_eq!(
+        active_dot_color(&calm),
+        color::status::ONLINE,
+        "a settled system never pulses, regardless of the tick"
+      );
+    }
+  }
 
   mod render {
     use super::*;
@@ -230,87 +323,80 @@ mod tests {
     #[test]
     fn it_renders_stopped_and_read_only_lifecycle_states() {
       let stopped = State {
-        syncing: false,
-        done: 3,
-        total: 10,
-        percent: 30,
-        errors: 0,
-        attention: 0,
-        last_synced_secs: Some(42),
         lifecycle: Lifecycle::Stopped,
-        pulse_on: false,
+        ..state(fresh(10), 0)
       };
       let _stopped: Element<'_, ()> = sync_chip(stopped);
 
       let read_only = State {
-        syncing: false,
-        done: 0,
-        total: 10,
-        percent: 0,
-        errors: 0,
-        attention: 0,
-        last_synced_secs: None,
         lifecycle: Lifecycle::ReadOnly {
           hostname: Some("nebula".to_owned()),
         },
-        pulse_on: false,
+        ..state(fresh(10), 0)
       };
       let _read_only: Element<'_, ()> = sync_chip(read_only);
     }
 
     #[test]
-    fn it_renders_syncing_idle_error_and_attention_states() {
-      let syncing = State {
-        syncing: true,
-        done: 5,
-        total: 10,
-        percent: 50,
-        errors: 0,
-        attention: 0,
+    fn it_renders_every_active_headline_state() {
+      let refreshing = State {
         last_synced_secs: None,
-        lifecycle: Lifecycle::Active,
         pulse_on: true,
+        ..state(
+          FreshnessSummary {
+            fresh: 5,
+            refreshing: 5,
+            total: 10,
+            ..FreshnessSummary::default()
+          },
+          0,
+        )
       };
-      let _syncing: Element<'_, ()> = sync_chip(syncing);
+      let _refreshing: Element<'_, ()> = sync_chip(refreshing);
 
       let idle = State {
-        syncing: false,
-        done: 10,
-        total: 10,
-        percent: 100,
-        errors: 0,
-        attention: 0,
         last_synced_secs: Some(125),
-        lifecycle: Lifecycle::Active,
-        pulse_on: false,
+        ..state(fresh(10), 0)
       };
       let _idle: Element<'_, ()> = sync_chip(idle);
 
       let errored = State {
-        syncing: false,
-        done: 8,
-        total: 10,
-        percent: 80,
-        errors: 2,
-        attention: 0,
-        last_synced_secs: None,
-        lifecycle: Lifecycle::Active,
-        pulse_on: false,
+        ..state(
+          FreshnessSummary {
+            fresh: 8,
+            total: 10,
+            ..FreshnessSummary::default()
+          },
+          2,
+        )
       };
       let _errored: Element<'_, ()> = sync_chip(errored);
 
       let attention = State {
-        syncing: false,
-        done: 8,
-        total: 10,
-        percent: 80,
-        errors: 0,
-        attention: 2,
-        last_synced_secs: None,
-        lifecycle: Lifecycle::Active,
-        pulse_on: false,
+        ..state(
+          FreshnessSummary {
+            attention: 2,
+            fresh: 8,
+            total: 10,
+            ..FreshnessSummary::default()
+          },
+          0,
+        )
       };
       let _attention: Element<'_, ()> = sync_chip(attention);
+
+      let catching_up = State {
+        ..state(
+          FreshnessSummary {
+            catching_up: 3,
+            fresh: 7,
+            total: 10,
+            ..FreshnessSummary::default()
+          },
+          0,
+        )
+      };
+      let _catching_up: Element<'_, ()> = sync_chip(catching_up);
     }
   }
 }

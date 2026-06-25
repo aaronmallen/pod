@@ -62,6 +62,22 @@ const SEARCH_INPUT_ID: &str = "roster-search-input";
 /// [`roster::ROSTER_SCROLL_ID`] / [`roster::FILTERED_SCROLL_ID`].
 const CORP_SCROLL_ID: &str = "corporations-grid-scroll";
 
+/// How often the drag auto-scroll re-evaluates the cursor's edge proximity and nudges the
+/// grid. ~60 fps keeps the pull smooth without flooding the update loop.
+const AUTO_SCROLL_INTERVAL: Duration = Duration::from_millis(16);
+
+/// Thickness (pixels) of the hot zone at each viewport edge. The cursor must be within this
+/// band of the top or bottom edge for the grid to auto-scroll.
+const AUTO_SCROLL_EDGE_ZONE: f32 = 72.0;
+
+/// Pixels-per-tick at the very edge of the viewport (proximity 1.0). Scroll speed ramps
+/// linearly from [`AUTO_SCROLL_MIN_SPEED`] at the inner edge of the zone up to this.
+const AUTO_SCROLL_MAX_SPEED: f32 = 18.0;
+
+/// Pixels-per-tick at the inner edge of the hot zone (proximity ~0), so crossing the
+/// threshold starts a gentle creep rather than a dead band that suddenly jumps.
+const AUTO_SCROLL_MIN_SPEED: f32 = 2.0;
+
 #[derive(Clone, Debug)]
 pub struct AddTagModal {
   pub entity_id: i64,
@@ -110,6 +126,38 @@ pub struct DropTarget {
   pub squad_id: i64,
 }
 
+/// Snapshot of a roster grid's scroll geometry, captured from its scrollable viewport. Holds
+/// everything the drag auto-scroll needs to detect edge proximity (the visible band `top..top +
+/// height`) and clamp its nudges (`offset` in `0.0..=max_offset`), in absolute window pixels.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GridViewport {
+  pub height: f32,
+  pub max_offset: f32,
+  pub offset: f32,
+  pub top: f32,
+}
+
+impl GridViewport {
+  fn from_viewport(viewport: &iced::widget::scrollable::Viewport) -> Self {
+    let bounds = viewport.bounds();
+    let content = viewport.content_bounds();
+    Self {
+      height: bounds.height,
+      max_offset: (content.height - bounds.height).max(0.0),
+      offset: viewport.absolute_offset().y,
+      top: bounds.y,
+    }
+  }
+
+  #[cfg(test)]
+  fn at_offset(offset: f32) -> Self {
+    Self {
+      offset,
+      ..Self::default()
+    }
+  }
+}
+
 #[derive(Clone, Debug)]
 pub enum Filtered {
   Error(String),
@@ -121,6 +169,11 @@ pub enum Filtered {
 pub enum Message {
   AddCharacterRequested,
   AddCorporationRequested,
+  /// Fires on a fixed interval while a card or squad is being dragged. Pulls off-screen rows
+  /// into view by nudging the active grid's scroll offset toward whichever viewport edge the
+  /// cursor is hovering near, so trackpad press-drags (which emit no further `on_move`) can
+  /// still reach drop targets below or above the fold.
+  AutoScrollTick,
   AddTagInputChanged(String),
   AssignTag {
     entity_id: i64,
@@ -150,9 +203,9 @@ pub enum Message {
   CorporationRemoved(Result<(), String>),
   CorporationSelected(i64),
   CorpRightPressed(i64),
-  /// Persists the corporations grid's absolute vertical scroll offset (pixels) so it
-  /// survives a drag's tree-shape change. Reused by the auto-scroll-during-drag task.
-  CorpScrolled(f32),
+  /// Persists the corporations grid's scroll geometry so its offset survives a drag's
+  /// tree-shape change and the auto-scroll-during-drag tick can clamp to its bounds.
+  CorpScrolled(GridViewport),
   CorpSearchResults {
     generation: u64,
     result: Result<Vec<CorpCardModel>, String>,
@@ -162,9 +215,9 @@ pub enum Message {
   DeleteSquad(i64),
   DragMoved(iced::Point),
   DropDragged,
-  /// Persists the filtered/search roster grid's absolute vertical scroll offset (pixels)
-  /// so grabbing a card there does not snap the grid to the top.
-  FilteredScrolled(f32),
+  /// Persists the filtered/search roster grid's scroll geometry so grabbing a card there
+  /// does not snap the grid to the top and the auto-scroll tick can clamp to its bounds.
+  FilteredScrolled(GridViewport),
   HoverSquadSlot(usize),
   HoverTarget(DropTarget),
   InsertQuery(String),
@@ -185,9 +238,9 @@ pub enum Message {
   ReauthCorporationRequested(i64),
   RemoveCharacterConfirmed(i64),
   RemoveCorporationConfirmed(i64),
-  /// Persists the main (grouped) roster grid's absolute vertical scroll offset (pixels)
-  /// so grabbing a card there does not snap the grid to the top.
-  RosterScrolled(f32),
+  /// Persists the main (grouped) roster grid's scroll geometry so grabbing a card there
+  /// does not snap the grid to the top and the auto-scroll tick can clamp to its bounds.
+  RosterScrolled(GridViewport),
   SearchChanged(String),
   SearchResults {
     generation: u64,
@@ -363,6 +416,10 @@ pub struct State {
   pending: HashMap<i64, CardModel>,
   reauth_by_id: HashMap<i64, bool>,
   remove_confirm: Option<RemoveConfirm>,
+  // Geometry of whichever grid last reported a scroll, used by the drag auto-scroll to detect
+  // edge proximity and clamp. Drags only happen in the Characters pane, so this tracks the main
+  // or filtered grid; the corporations grid updates it too but never enters a drag.
+  roster_viewport: GridViewport,
   roster_scroll_offset: f32,
   search_generation: u64,
   search_help_open: bool,
@@ -703,16 +760,20 @@ fn update_drag(state: &mut State, message: Message, db: &Database) -> ControlFlo
       }
       Task::none()
     }
-    Message::CorpScrolled(offset) => {
-      state.corp_scroll_offset = offset;
+    Message::AutoScrollTick => auto_scroll_active_grid(state),
+    Message::CorpScrolled(viewport) => {
+      state.corp_scroll_offset = viewport.offset;
+      state.roster_viewport = viewport;
       Task::none()
     }
-    Message::FilteredScrolled(offset) => {
-      state.filtered_scroll_offset = offset;
+    Message::FilteredScrolled(viewport) => {
+      state.filtered_scroll_offset = viewport.offset;
+      state.roster_viewport = viewport;
       Task::none()
     }
-    Message::RosterScrolled(offset) => {
-      state.roster_scroll_offset = offset;
+    Message::RosterScrolled(viewport) => {
+      state.roster_scroll_offset = viewport.offset;
+      state.roster_viewport = viewport;
       Task::none()
     }
     Message::PickUpCard(character_id) => {
@@ -1186,13 +1247,17 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   if state.dragging.is_none() {
     return iced::Subscription::none();
   }
-  iced::event::listen_with(|event, _status, _id| {
+  let drop = iced::event::listen_with(|event, _status, _id| {
     matches!(
       event,
       iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left))
     )
     .then_some(Message::DropDragged)
-  })
+  });
+  // A fixed tick (not on_move) drives the edge auto-scroll so a trackpad press-drag held
+  // stationary in an edge zone keeps scrolling without further cursor events.
+  let auto_scroll = iced::time::every(AUTO_SCROLL_INTERVAL).map(|_| Message::AutoScrollTick);
+  iced::Subscription::batch([drop, auto_scroll])
 }
 
 pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
@@ -1451,7 +1516,7 @@ fn corp_grid_scroll<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Elemen
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
     .height(Length::Fill)
-    .on_scroll(|viewport| Message::CorpScrolled(viewport.absolute_offset().y));
+    .on_scroll(|viewport| Message::CorpScrolled(GridViewport::from_viewport(&viewport)));
 
   iced::widget::mouse_area(scroll).on_move(Message::DragMoved).into()
 }
@@ -1685,6 +1750,58 @@ fn restore_active_grid_scroll(state: &State) -> Task<Message> {
       y: offset,
     },
   )
+}
+
+/// Signed pixels to move the grid this tick given the cursor's vertical position, or `None`
+/// when the cursor is away from both edges or the grid cannot scroll further that way.
+///
+/// Proximity ramps from 0 at the inner edge of the hot zone to 1 at the viewport edge; speed
+/// ramps linearly between [`AUTO_SCROLL_MIN_SPEED`] and [`AUTO_SCROLL_MAX_SPEED`]. The result is
+/// clamped so the grid never scrolls past `0.0..=max_offset` (no overscroll/snap-back). A
+/// degenerate viewport (zero height, no scrollable content) yields `None`.
+fn auto_scroll_delta(cursor_y: f32, view: GridViewport) -> Option<f32> {
+  if view.height <= 0.0 || view.max_offset <= 0.0 {
+    return None;
+  }
+  let bottom = view.top + view.height;
+  let speed = |proximity: f32| AUTO_SCROLL_MIN_SPEED + (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED) * proximity;
+
+  // Distance past the top edge of the hot zone (cursor near the top scrolls the content up,
+  // i.e. toward a smaller offset); mirror for the bottom edge.
+  let from_top = view.top + AUTO_SCROLL_EDGE_ZONE - cursor_y;
+  let from_bottom = cursor_y - (bottom - AUTO_SCROLL_EDGE_ZONE);
+
+  let delta = if from_top > 0.0 && from_top >= from_bottom {
+    -speed((from_top / AUTO_SCROLL_EDGE_ZONE).clamp(0.0, 1.0))
+  } else if from_bottom > 0.0 {
+    speed((from_bottom / AUTO_SCROLL_EDGE_ZONE).clamp(0.0, 1.0))
+  } else {
+    return None;
+  };
+
+  let target = (view.offset + delta).clamp(0.0, view.max_offset);
+  let applied = target - view.offset;
+  (applied != 0.0).then_some(applied)
+}
+
+/// Advances the active grid's scroll offset one auto-scroll tick and re-applies it to the
+/// scrollable, so a stationary cursor held in an edge zone keeps pulling rows into view.
+fn auto_scroll_active_grid(state: &mut State) -> Task<Message> {
+  let Some(cursor) = state.cursor else {
+    return Task::none();
+  };
+  let Some(delta) = auto_scroll_delta(cursor.y, state.roster_viewport) else {
+    return Task::none();
+  };
+
+  let offset = (state.roster_viewport.offset + delta).clamp(0.0, state.roster_viewport.max_offset);
+  state.roster_viewport.offset = offset;
+  if state.is_filtered() {
+    state.filtered_scroll_offset = offset;
+  } else {
+    state.roster_scroll_offset = offset;
+  }
+  restore_active_grid_scroll(state)
 }
 
 fn end_drag(state: &mut State) {
@@ -4695,7 +4812,11 @@ mod tests {
       seed_character(&db, 1, "Pilot").await;
       let mut state = State::new();
       reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::RosterScrolled(4_200.0), &db);
+      let _ = update(
+        &mut state,
+        Message::RosterScrolled(GridViewport::at_offset(4_200.0)),
+        &db,
+      );
 
       let _ = update(&mut state, Message::PickUpCard(1), &db);
 
@@ -4712,7 +4833,11 @@ mod tests {
       let mut state = State::new();
       reload(&mut state, &db).await;
       state.filtered = Some(Filtered::Loaded(Vec::new()));
-      let _ = update(&mut state, Message::FilteredScrolled(3_100.0), &db);
+      let _ = update(
+        &mut state,
+        Message::FilteredScrolled(GridViewport::at_offset(3_100.0)),
+        &db,
+      );
 
       let _ = update(&mut state, Message::PickUpCard(1), &db);
 
@@ -4728,7 +4853,11 @@ mod tests {
       let a = character::create(&db, "A", None, None).await.unwrap();
       let mut state = State::new();
       reload(&mut state, &db).await;
-      let _ = update(&mut state, Message::RosterScrolled(2_500.0), &db);
+      let _ = update(
+        &mut state,
+        Message::RosterScrolled(GridViewport::at_offset(2_500.0)),
+        &db,
+      );
 
       let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
 
@@ -4744,7 +4873,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let mut state = State::new();
 
-      let _ = update(&mut state, Message::CorpScrolled(1_750.0), &db);
+      let _ = update(&mut state, Message::CorpScrolled(GridViewport::at_offset(1_750.0)), &db);
 
       assert_eq!(state.corp_scroll_offset, 1_750.0);
     }
@@ -5799,6 +5928,88 @@ mod tests {
       assert!(character::get_squad(&db, squad.id()).await.unwrap().is_some());
       assert!(character::members(&db, squad.id()).await.unwrap().is_empty());
       assert_eq!(reload_squad_of(&mut state, &db, 1).await, None);
+    }
+  }
+
+  mod auto_scroll {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    // A viewport whose top edge sits at `top`, 600px tall, with 1000px of headroom to scroll.
+    fn view(top: f32, offset: f32) -> GridViewport {
+      GridViewport {
+        height: 600.0,
+        max_offset: 1_000.0,
+        offset,
+        top,
+      }
+    }
+
+    #[test]
+    fn it_does_not_scroll_when_the_cursor_is_away_from_both_edges() {
+      // Cursor parked in the middle of a 600px viewport, well outside either 72px edge zone.
+      assert_eq!(auto_scroll_delta(300.0, view(0.0, 400.0)), None);
+    }
+
+    #[test]
+    fn it_scrolls_up_near_the_top_edge_and_down_near_the_bottom_edge() {
+      let up = auto_scroll_delta(10.0, view(0.0, 400.0)).unwrap();
+      assert!(up < 0.0, "cursor near the top edge scrolls toward a smaller offset");
+
+      let down = auto_scroll_delta(590.0, view(0.0, 400.0)).unwrap();
+      assert!(down > 0.0, "cursor near the bottom edge scrolls toward a larger offset");
+    }
+
+    #[test]
+    fn it_ramps_speed_with_edge_proximity() {
+      // Deeper into the bottom zone (cursor at the very edge) must move faster than just inside it.
+      let edge = auto_scroll_delta(600.0, view(0.0, 400.0)).unwrap();
+      let shallow = auto_scroll_delta(535.0, view(0.0, 400.0)).unwrap();
+
+      assert!(
+        edge > shallow,
+        "speed must ramp up as the cursor approaches the edge: {edge} !> {shallow}"
+      );
+      assert!(edge <= AUTO_SCROLL_MAX_SPEED);
+    }
+
+    #[test]
+    fn it_clamps_to_max_offset_at_the_bottom() {
+      // Already 5px from the bottom of the content: the nudge cannot exceed the remaining travel.
+      let delta = auto_scroll_delta(600.0, view(0.0, 995.0)).unwrap();
+      assert_eq!(delta, 5.0, "must not scroll past max_offset");
+    }
+
+    #[test]
+    fn it_stops_at_the_bottom_bound() {
+      // Pinned at max_offset: no further down-scroll is possible, so no nudge is emitted.
+      assert_eq!(auto_scroll_delta(600.0, view(0.0, 1_000.0)), None);
+    }
+
+    #[test]
+    fn it_stops_at_the_top_bound() {
+      // Pinned at offset 0: no further up-scroll is possible near the top edge.
+      assert_eq!(auto_scroll_delta(0.0, view(0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn it_does_not_scroll_a_grid_that_fits_its_viewport() {
+      let fits = GridViewport {
+        height: 600.0,
+        max_offset: 0.0,
+        offset: 0.0,
+        top: 0.0,
+      };
+      assert_eq!(auto_scroll_delta(600.0, fits), None);
+    }
+
+    #[test]
+    fn it_honors_the_viewport_top_offset() {
+      // Viewport pushed 200px down the window: the top edge zone is 200..272, not 0..72.
+      assert!(auto_scroll_delta(210.0, view(200.0, 400.0)).unwrap() < 0.0);
+      // The same window-y, with the viewport at the origin, is mid-grid and must not scroll.
+      assert_eq!(auto_scroll_delta(210.0, view(0.0, 400.0)), None);
     }
   }
 }

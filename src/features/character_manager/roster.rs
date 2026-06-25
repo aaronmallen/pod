@@ -7,7 +7,7 @@ use iced::{
 };
 
 use super::{
-  DropTarget, Filtered, Message, SquadGroup, State, card,
+  DropTarget, Filtered, GridViewport, Message, SquadGroup, State, card,
   card::{CardModel, format_isk, format_sp},
   card_failure, cursor, dragging_card, dragging_squad, drop_target, groups, is_squad_collapsed, load_error,
   squad_drop_target, unassigned, unassigned_squad_id,
@@ -170,7 +170,7 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
     .height(Length::Fill)
-    .on_scroll(|viewport| Message::RosterScrolled(viewport.absolute_offset().y));
+    .on_scroll(|viewport| Message::RosterScrolled(GridViewport::from_viewport(&viewport)));
 
   let tracked = mouse_area(scroll).on_move(Message::DragMoved);
 
@@ -708,7 +708,7 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
         .style(crate::ui::style::control::scrollbar)
         .width(Length::Fill)
         .height(Length::Fill)
-        .on_scroll(|viewport| Message::FilteredScrolled(viewport.absolute_offset().y));
+        .on_scroll(|viewport| Message::FilteredScrolled(GridViewport::from_viewport(&viewport)));
       mouse_area(scroll).on_move(Message::DragMoved).into()
     }
     Some(Filtered::Error(error)) => centered(message_text(format!("Search failed: {error}"), color::status::DANGER)),

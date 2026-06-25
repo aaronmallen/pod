@@ -6,7 +6,7 @@ use std::{
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
@@ -19,7 +19,7 @@ use super::{
 use crate::{
   config::{LogLevel, Settings, StorageConfig, StorageMode},
   ui::{
-    components::{modal_overlay::modal_overlay, rule, status},
+    components::{icon::Icon, modal_overlay::modal_overlay, rule, status},
     style::{color, control, radius, shadow, spacing, typography},
   },
 };
@@ -902,39 +902,40 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()));
 
-  let mut control = button(
-    text("Export data\u{2026}")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .style(control::ghost_button);
-  if !state.data_export_pending {
-    control = control.on_press(Message::RequestDataExport);
-  }
-
-  let mut controls: Vec<Element<'_, Message>> = vec![control.into()];
+  let mut copy: Vec<Element<'_, Message>> = vec![label.into(), explanation.into()];
   if state.data_export_pending {
-    controls.push(
+    copy.push(
       text("Exporting\u{2026}")
         .font(typography::body::REGULAR)
-        .size(typography::size::MD)
+        .size(typography::size::SM)
         .style(typography::colored(color::text::tertiary()))
         .into(),
     );
   }
+  let copy = Column::with_children(copy)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
 
-  let actions = Row::with_children(controls)
-    .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2);
+  let mut control = button(action_button_label(
+    (!state.data_export_pending).then(Icon::archive),
+    if state.data_export_pending {
+      "Preparing archive\u{2026}"
+    } else {
+      "Export data\u{2026}"
+    },
+    color::accent::PLASMA,
+  ))
+  .padding(control::padding())
+  .style(accent_ghost_button);
+  if !state.data_export_pending {
+    control = control.on_press(Message::RequestDataExport);
+  }
 
-  let cell = container(
-    Column::with_children(vec![label.into(), explanation.into(), actions.into()])
-      .spacing(spacing::SPACE_2)
-      .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
+  let row = Row::with_children(vec![copy.into(), control.into()])
+    .align_y(Vertical::Top)
+    .spacing(spacing::SPACE_6 - 6.0);
+
+  let cell = container(row).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_3_5,
     right: 0.0,
     bottom: spacing::SPACE_3_5,
@@ -944,6 +945,48 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
   Column::with_children(vec![cell.into(), rule::horizontal()])
     .width(Length::Fill)
     .into()
+}
+
+/// Composes a button child of an icon (optional, hidden while the action is in flight) followed by a
+/// text label, mirroring the mockup's right-aligned export/import controls. The `tint` colors both
+/// glyph and label so the accent (export) and ghost (import) variants match their button styles.
+fn action_button_label<'a>(icon: Option<Icon>, label: &'a str, tint: Color) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = Vec::new();
+  if let Some(icon) = icon {
+    children.push(icon.color(tint).size(15.0).render::<Message>());
+  }
+  children.push(
+    text(label.to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(tint))
+      .into(),
+  );
+  Row::with_children(children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2)
+    .into()
+}
+
+/// The accent variant of the storage ghost button: a faint plasma wash behind a plasma border, used
+/// for the primary "Export data" action so it reads as the emphasized control without the solid fill
+/// of `primary_button`. Matches the accent `GhostBtn` in the Settings → Storage mockup.
+fn accent_ghost_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
+  let bg_alpha = match status {
+    button::Status::Hovered | button::Status::Pressed => 0.12,
+    button::Status::Disabled => 0.04,
+    _ => 0.06,
+  };
+  button::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, bg_alpha))),
+    text_color: color::accent::PLASMA,
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.4),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..button::Style::default()
+  }
 }
 
 fn data_import_row(state: &State) -> Element<'_, Message> {
@@ -959,39 +1002,40 @@ fn data_import_row(state: &State) -> Element<'_, Message> {
   .size(typography::size::SM)
   .style(typography::colored(color::text::secondary()));
 
-  let mut control = button(
-    text("Import data\u{2026}")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
+  let mut copy: Vec<Element<'_, Message>> = vec![label.into(), explanation.into()];
+  if state.data_import_pending {
+    copy.push(
+      text("Restoring\u{2026}")
+        .font(typography::body::REGULAR)
+        .size(typography::size::SM)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    );
+  }
+  let copy = Column::with_children(copy)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
+
+  let mut control = button(action_button_label(
+    (!state.data_import_pending).then(Icon::upload),
+    if state.data_import_pending {
+      "Restoring\u{2026}"
+    } else {
+      "Import data\u{2026}"
+    },
+    color::text::PRIMARY,
+  ))
   .padding(control::padding())
   .style(control::ghost_button);
   if !state.data_import_pending {
     control = control.on_press(Message::RequestDataImport);
   }
 
-  let mut controls: Vec<Element<'_, Message>> = vec![control.into()];
-  if state.data_import_pending {
-    controls.push(
-      text("Restoring\u{2026}")
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .style(typography::colored(color::text::tertiary()))
-        .into(),
-    );
-  }
+  let row = Row::with_children(vec![copy.into(), control.into()])
+    .align_y(Vertical::Top)
+    .spacing(spacing::SPACE_6 - 6.0);
 
-  let actions = Row::with_children(controls)
-    .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2);
-
-  let cell = container(
-    Column::with_children(vec![label.into(), explanation.into(), actions.into()])
-      .spacing(spacing::SPACE_2)
-      .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
+  let cell = container(row).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_3_5,
     right: 0.0,
     bottom: spacing::SPACE_3_5,
@@ -2477,6 +2521,59 @@ mod tests {
       state.error = Some("Can't use /bad: permission denied".to_owned());
 
       let _el: Element<'_, Message> = view(&state, &settings);
+    }
+  }
+
+  mod data_rows {
+    use super::*;
+
+    #[test]
+    fn the_export_row_renders_its_right_aligned_action() {
+      let state = state();
+      let _el: Element<'_, Message> = data_export_row(&state);
+    }
+
+    #[test]
+    fn the_export_row_swaps_to_a_progress_label_while_exporting() {
+      let mut state = state();
+      state.data_export_pending = true;
+
+      let _el: Element<'_, Message> = data_export_row(&state);
+    }
+
+    #[test]
+    fn the_import_row_renders_its_right_aligned_action() {
+      let state = state();
+      let _el: Element<'_, Message> = data_import_row(&state);
+    }
+
+    #[test]
+    fn the_import_row_swaps_to_a_progress_label_while_restoring() {
+      let mut state = state();
+      state.data_import_pending = true;
+
+      let _el: Element<'_, Message> = data_import_row(&state);
+    }
+
+    #[test]
+    fn the_action_label_drops_the_icon_when_no_glyph_is_supplied() {
+      let _with_icon: Element<'_, Message> =
+        action_button_label(Some(Icon::archive()), "Export data\u{2026}", color::accent::PLASMA);
+      let _without_icon: Element<'_, Message> =
+        action_button_label(None, "Preparing archive\u{2026}", color::accent::PLASMA);
+    }
+
+    #[test]
+    fn the_accent_ghost_button_styles_every_status() {
+      for status in [
+        button::Status::Active,
+        button::Status::Hovered,
+        button::Status::Pressed,
+        button::Status::Disabled,
+      ] {
+        let style = accent_ghost_button(&iced::Theme::Dark, status);
+        assert_eq!(style.text_color, color::accent::PLASMA);
+      }
     }
   }
 }

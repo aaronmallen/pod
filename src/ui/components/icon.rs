@@ -336,6 +336,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/trash.svg"))
   }
 
+  pub fn upload() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/upload.svg"))
+  }
+
   pub fn values() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/values.svg"))
   }

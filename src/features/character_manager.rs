@@ -57,6 +57,11 @@ const SEARCH_DEBOUNCE_MS: u64 = 200;
 
 const SEARCH_INPUT_ID: &str = "roster-search-input";
 
+/// Stable scroll identity for the corporations grid, so its offset survives the same
+/// tree-shape changes that flipping into a drag triggers. Mirrors the roster grids'
+/// [`roster::ROSTER_SCROLL_ID`] / [`roster::FILTERED_SCROLL_ID`].
+const CORP_SCROLL_ID: &str = "corporations-grid-scroll";
+
 #[derive(Clone, Debug)]
 pub struct AddTagModal {
   pub entity_id: i64,
@@ -145,6 +150,9 @@ pub enum Message {
   CorporationRemoved(Result<(), String>),
   CorporationSelected(i64),
   CorpRightPressed(i64),
+  /// Persists the corporations grid's absolute vertical scroll offset (pixels) so it
+  /// survives a drag's tree-shape change. Reused by the auto-scroll-during-drag task.
+  CorpScrolled(f32),
   CorpSearchResults {
     generation: u64,
     result: Result<Vec<CorpCardModel>, String>,
@@ -154,6 +162,9 @@ pub enum Message {
   DeleteSquad(i64),
   DragMoved(iced::Point),
   DropDragged,
+  /// Persists the filtered/search roster grid's absolute vertical scroll offset (pixels)
+  /// so grabbing a card there does not snap the grid to the top.
+  FilteredScrolled(f32),
   HoverSquadSlot(usize),
   HoverTarget(DropTarget),
   InsertQuery(String),
@@ -174,6 +185,9 @@ pub enum Message {
   ReauthCorporationRequested(i64),
   RemoveCharacterConfirmed(i64),
   RemoveCorporationConfirmed(i64),
+  /// Persists the main (grouped) roster grid's absolute vertical scroll offset (pixels)
+  /// so grabbing a card there does not snap the grid to the top.
+  RosterScrolled(f32),
   SearchChanged(String),
   SearchResults {
     generation: u64,
@@ -335,18 +349,21 @@ pub struct State {
   corp_context_menu: Option<CorpContextMenu>,
   corp_filtered: Option<CorpFiltered>,
   corp_remove_confirm: Option<CorpRemoveConfirm>,
+  corp_scroll_offset: f32,
   corps: Vec<CorpCardModel>,
   cursor: Option<iced::Point>,
   dragging: Option<Drag>,
   drop_target: Option<DropTarget>,
   features: FeatureFlags,
   filtered: Option<Filtered>,
+  filtered_scroll_offset: f32,
   granted_scopes_by_id: HashMap<i64, Option<String>>,
   groups: Vec<SquadGroup>,
   load_error: Option<String>,
   pending: HashMap<i64, CardModel>,
   reauth_by_id: HashMap<i64, bool>,
   remove_confirm: Option<RemoveConfirm>,
+  roster_scroll_offset: f32,
   search_generation: u64,
   search_help_open: bool,
   search_query: String,
@@ -686,17 +703,33 @@ fn update_drag(state: &mut State, message: Message, db: &Database) -> ControlFlo
       }
       Task::none()
     }
+    Message::CorpScrolled(offset) => {
+      state.corp_scroll_offset = offset;
+      Task::none()
+    }
+    Message::FilteredScrolled(offset) => {
+      state.filtered_scroll_offset = offset;
+      Task::none()
+    }
+    Message::RosterScrolled(offset) => {
+      state.roster_scroll_offset = offset;
+      Task::none()
+    }
     Message::PickUpCard(character_id) => {
       state.dragging = Some(Drag::Card(character_id));
       state.drop_target = None;
       state.squad_drop_target = None;
-      Task::none()
+      // Grabbing re-wraps the scrollable in a Stack for the ghost overlay; re-apply the
+      // persisted offset so the grid holds its place instead of snapping to the top.
+      restore_active_grid_scroll(state)
     }
     Message::PickUpSquad(squad_id) => {
       if state.groups.iter().any(|group| group.squad_id == squad_id) {
         state.dragging = Some(Drag::Squad(squad_id));
         state.drop_target = None;
         state.squad_drop_target = None;
+        // A squad drag reshapes the same grid; hold its scroll position too.
+        return ControlFlow::Break(restore_active_grid_scroll(state));
       }
       Task::none()
     }
@@ -1414,9 +1447,11 @@ fn corp_grid_scroll<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Elemen
     .padding(spacing::SPACE_6);
   let centered = container(capped).width(Length::Fill).align_x(Horizontal::Center);
   let scroll = iced::widget::scrollable(centered)
+    .id(CORP_SCROLL_ID)
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .on_scroll(|viewport| Message::CorpScrolled(viewport.absolute_offset().y));
 
   iced::widget::mouse_area(scroll).on_move(Message::DragMoved).into()
 }
@@ -1632,6 +1667,24 @@ pub fn squad_drop_target(state: &State) -> Option<usize> {
 
 pub fn cursor(state: &State) -> Option<iced::Point> {
   state.cursor
+}
+
+/// Re-applies the persisted offset to whichever roster grid is currently visible, so a
+/// drag's tree-shape change cannot snap it to the top. The corporations grid never enters
+/// a card drag, so only the two character grids are re-applied here.
+fn restore_active_grid_scroll(state: &State) -> Task<Message> {
+  let (id, offset) = if state.is_filtered() {
+    (roster::FILTERED_SCROLL_ID, state.filtered_scroll_offset)
+  } else {
+    (roster::ROSTER_SCROLL_ID, state.roster_scroll_offset)
+  };
+  operation::scroll_to(
+    id,
+    operation::AbsoluteOffset {
+      x: 0.0,
+      y: offset,
+    },
+  )
 }
 
 fn end_drag(state: &mut State) {
@@ -4634,6 +4687,66 @@ mod tests {
       assert_eq!(dragging_squad(&state), None);
       assert_eq!(squad_drop_target(&state), None);
       assert_eq!(reload_group_names(&mut state, &db).await, ["A", "B"]);
+    }
+
+    #[tokio::test]
+    async fn grabbing_a_card_preserves_the_main_roster_scroll_offset() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::RosterScrolled(4_200.0), &db);
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+
+      assert_eq!(
+        state.roster_scroll_offset, 4_200.0,
+        "grabbing a card must hold the roster scroll position, not snap it to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn grabbing_a_card_preserves_the_filtered_roster_scroll_offset() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      state.filtered = Some(Filtered::Loaded(Vec::new()));
+      let _ = update(&mut state, Message::FilteredScrolled(3_100.0), &db);
+
+      let _ = update(&mut state, Message::PickUpCard(1), &db);
+
+      assert_eq!(
+        state.filtered_scroll_offset, 3_100.0,
+        "grabbing a card in the filtered grid must hold its scroll position"
+      );
+    }
+
+    #[tokio::test]
+    async fn grabbing_a_squad_preserves_the_main_roster_scroll_offset() {
+      let db = store::open_test().await.unwrap();
+      let a = character::create(&db, "A", None, None).await.unwrap();
+      let mut state = State::new();
+      reload(&mut state, &db).await;
+      let _ = update(&mut state, Message::RosterScrolled(2_500.0), &db);
+
+      let _ = update(&mut state, Message::PickUpSquad(a.id()), &db);
+
+      assert_eq!(dragging_squad(&state), Some(a.id()));
+      assert_eq!(
+        state.roster_scroll_offset, 2_500.0,
+        "grabbing a squad must hold the roster scroll position, not snap it to the top"
+      );
+    }
+
+    #[tokio::test]
+    async fn the_corporations_grid_persists_its_scroll_offset() {
+      let db = store::open_test().await.unwrap();
+      let mut state = State::new();
+
+      let _ = update(&mut state, Message::CorpScrolled(1_750.0), &db);
+
+      assert_eq!(state.corp_scroll_offset, 1_750.0);
     }
 
     #[tokio::test]

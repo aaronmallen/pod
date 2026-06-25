@@ -22,6 +22,15 @@ use crate::{
 
 const COLUMNS: usize = 3;
 
+/// Stable scroll identity for the main (grouped) roster grid. A fixed [`scrollable::Id`]
+/// keeps the scroll offset across the tree-shape change that grabbing a card triggers
+/// (the bare scrollable gets re-wrapped in a [`Stack`] for the ghost overlay), so the
+/// grid stays where the user grabbed instead of snapping to the top.
+pub(super) const ROSTER_SCROLL_ID: &str = "character-roster-scroll";
+
+/// Stable scroll identity for the filtered/search roster grid. See [`ROSTER_SCROLL_ID`].
+pub(super) const FILTERED_SCROLL_ID: &str = "character-roster-filtered-scroll";
+
 const GHOST_CARD_WIDTH: f32 = 320.0;
 
 const GHOST_CARD_HEIGHT: f32 = spacing::layout::CARD_HEIGHT;
@@ -157,9 +166,11 @@ pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Messa
   let centered = container(capped).width(Length::Fill).align_x(Horizontal::Center);
 
   let scroll = scrollable(centered)
+    .id(ROSTER_SCROLL_ID)
     .style(crate::ui::style::control::scrollbar)
     .width(Length::Fill)
-    .height(Length::Fill);
+    .height(Length::Fill)
+    .on_scroll(|viewport| Message::RosterScrolled(viewport.absolute_offset().y));
 
   let tracked = mouse_area(scroll).on_move(Message::DragMoved);
 
@@ -693,9 +704,11 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
         .padding(spacing::SPACE_6);
       let centered = container(capped).width(Length::Fill).align_x(Horizontal::Center);
       let scroll = scrollable(centered)
+        .id(FILTERED_SCROLL_ID)
         .style(crate::ui::style::control::scrollbar)
         .width(Length::Fill)
-        .height(Length::Fill);
+        .height(Length::Fill)
+        .on_scroll(|viewport| Message::FilteredScrolled(viewport.absolute_offset().y));
       mouse_area(scroll).on_move(Message::DragMoved).into()
     }
     Some(Filtered::Error(error)) => centered(message_text(format!("Search failed: {error}"), color::status::DANGER)),

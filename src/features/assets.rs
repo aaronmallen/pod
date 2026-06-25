@@ -34,7 +34,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      OwnerType, SavedAssetFilter, StatTemplate,
+      ENTITY_TYPE_ASSET, OwnerType, SavedAssetFilter, StatTemplate, TAG_SCOPE_ASSET, Tag,
       asset_query::{
         GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
       },
@@ -43,7 +43,10 @@ use crate::{
   },
   sync::JobKind,
   ui::{
-    components::resizable_pane::{self, PaneDrag},
+    components::{
+      add_tag_modal::{AddTagMessage, AddTagModal},
+      resizable_pane::{self, PaneDrag},
+    },
     load_epoch::LoadEpoch,
   },
   window_state::UiState,
@@ -155,6 +158,7 @@ pub enum GeoSelection {
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
   abyssals: abyssals::AbyssalsData,
+  asset_tags: Vec<Tag>,
   corporations: Vec<RosterCorp>,
   geo_tree: GeoTree,
   inventory: Vec<InventoryRow>,
@@ -162,6 +166,7 @@ pub struct Loaded {
   roster: Vec<RosterPilot>,
   saved_filters: Vec<SavedAssetFilter>,
   stockpiles: Vec<stockpiles::StockpileCard>,
+  tag_memberships: HashMap<i64, Vec<i64>>,
   totals: InventoryTotals,
   values: values::ValueSummary,
 }
@@ -195,6 +200,15 @@ pub enum Message {
   AbyssalTypeModalClosed,
   AbyssalTypeModalOpened,
   AssetChartHovered(Option<f32>),
+  /// A message from the shared add-tag modal, routed to the asset-tag host. Phase 4 (multi-select Edit
+  /// Tags) reuses this same arm to drive the modal over a selection.
+  AssetTagModal(AddTagMessage),
+  /// The asset-tag registry and per-item membership map, reloaded after a modal write so chips update
+  /// without a full inventory refetch.
+  AssetTagsReloaded {
+    memberships: HashMap<i64, Vec<i64>>,
+    tags: Vec<Tag>,
+  },
   CategorySelected(Category),
   ContainerChildrenLoaded(i64, Vec<InventoryRow>),
   ContainerToggled(i64),
@@ -214,6 +228,11 @@ pub enum Message {
     relative: f32,
   },
   Loaded(Box<Loaded>),
+  /// Opens the shared add-tag modal scoped to asset tags for one inventory row, keyed on its ESI
+  /// `item_id`. Phase 4 adds a sibling that opens the same modal over a multi-row selection.
+  OpenAssetTagModal {
+    item_id: i64,
+  },
   PaneDrag(f32),
   PaneDragEnd,
   PaneDragStart(Pane),
@@ -353,6 +372,9 @@ pub struct State {
   abyssals: Vec<abyssals::AbyssalCard>,
   abyssals_filter: PaneDrag,
   active: Scope,
+  add_tag_modal: Option<AddTagModal>,
+  add_tag_modal_name: String,
+  asset_tags: Vec<Tag>,
   category: Category,
   chart_hover: Option<f32>,
   corporations: Vec<RosterCorp>,
@@ -393,6 +415,7 @@ pub struct State {
   stockpile_multibuy_mode: stockpiles::MultibuyMode,
   stockpiles: Vec<stockpiles::StockpileCard>,
   tab: Tab,
+  tag_memberships: HashMap<i64, Vec<i64>>,
   totals: InventoryTotals,
   values: values::ValueSummary,
 }
@@ -406,6 +429,9 @@ impl State {
         crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
       ),
       active: Scope::default(),
+      add_tag_modal: None,
+      add_tag_modal_name: String::new(),
+      asset_tags: Vec::new(),
       category: Category::default(),
       chart_hover: None,
       corporations: Vec::new(),
@@ -440,6 +466,7 @@ impl State {
       sort: SortColumn::Value,
       sort_dir: SortDirection::Descending,
       tab: resolve_first_tab(&enabled_tabs),
+      tag_memberships: HashMap::new(),
       totals: InventoryTotals::default(),
       values: values::ValueSummary::default(),
       nav: tracker::NavSeries::default(),
@@ -565,6 +592,72 @@ impl State {
 
   pub(super) fn inventory(&self) -> &[InventoryRow] {
     &self.inventory
+  }
+
+  /// The asset-tag chips assigned to one inventory stack (keyed on its ESI `item_id`), resolved from the
+  /// loaded membership map against the asset-tag registry, in tag-position order. Empty for an untagged
+  /// or unknown item.
+  pub(super) fn asset_tags_for(&self, item_id: i64) -> Vec<&Tag> {
+    let Some(tag_ids) = self.tag_memberships.get(&item_id) else {
+      return Vec::new();
+    };
+    tag_ids
+      .iter()
+      .filter_map(|tag_id| self.asset_tags.iter().find(|tag| tag.id() == *tag_id))
+      .collect()
+  }
+
+  /// The shared add-tag modal when open over an asset row, plus the asset-name resolver and the
+  /// assigned/assignable tag partition for that row. Phase 4 reuses this same accessor shape (modal +
+  /// resolver) to render the modal over a multi-row selection.
+  pub(super) fn asset_tag_modal(&self) -> Option<&AddTagModal> {
+    self.add_tag_modal.as_ref()
+  }
+
+  /// The display name for the asset row the open modal targets, resolved and stored at open time so the
+  /// modal view can borrow it for the render's lifetime.
+  pub(super) fn asset_tag_modal_entity_name(&self) -> &str {
+    &self.add_tag_modal_name
+  }
+
+  /// Resolves an inventory row's display name — its custom name when set, else its type name, else a
+  /// bare `Item <id>` fallback when the row has scrolled out of the loaded page.
+  fn resolve_item_name(&self, item_id: i64) -> String {
+    self
+      .find_inventory_row(item_id)
+      .map(|row| {
+        row
+          .name
+          .as_deref()
+          .filter(|name| !name.is_empty())
+          .unwrap_or(&row.type_name)
+          .to_owned()
+      })
+      .unwrap_or_else(|| format!("Item {item_id}"))
+  }
+
+  /// The assigned/assignable partition for the open modal's target item: assigned tags resolve from the
+  /// membership map, assignable is every other asset-scoped tag.
+  pub(super) fn asset_tag_modal_partition(&self) -> (Vec<&Tag>, Vec<&Tag>) {
+    let Some(modal) = &self.add_tag_modal else {
+      return (Vec::new(), Vec::new());
+    };
+    let assigned_ids: &[i64] = self.tag_memberships.get(&modal.entity_id).map_or(&[], Vec::as_slice);
+    let assigned = self.asset_tags_for(modal.entity_id);
+    let assignable = self
+      .asset_tags
+      .iter()
+      .filter(|tag| !assigned_ids.contains(&tag.id()))
+      .collect();
+    (assigned, assignable)
+  }
+
+  fn find_inventory_row(&self, item_id: i64) -> Option<&InventoryRow> {
+    self
+      .inventory
+      .iter()
+      .chain(self.inventory_children.values().flatten())
+      .find(|row| row.item_id == item_id)
   }
 
   pub(super) fn inventory_total(&self) -> i64 {
@@ -1058,17 +1151,21 @@ fn run_search(db: Database, scope: Scope, view: InventoryView, generation: u64) 
 
 fn apply_loaded(state: &mut State, loaded: Loaded) {
   let Loaded {
+    asset_tags,
     corporations,
     geo_tree,
     inventory,
     roster,
     saved_filters,
+    tag_memberships,
     totals,
     values,
     nav,
     stockpiles,
     abyssals,
   } = loaded;
+  state.asset_tags = asset_tags;
+  state.tag_memberships = tag_memberships;
   state.corporations = corporations;
   state.saved_filters = saved_filters;
   state.inventory_page_epoch.next();
@@ -1103,17 +1200,21 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
 /// Contrast with `apply_loaded`, which resets all of that state on every reload.
 fn merge_loaded(state: &mut State, loaded: Loaded) {
   let Loaded {
+    asset_tags,
     corporations,
     geo_tree,
     inventory,
     roster,
     saved_filters,
+    tag_memberships,
     totals,
     values,
     nav,
     stockpiles,
     abyssals,
   } = loaded;
+  state.asset_tags = asset_tags;
+  state.tag_memberships = tag_memberships;
   state.corporations = corporations;
   state.saved_filters = saved_filters;
   state.inventory_page_epoch.next();
@@ -1182,6 +1283,14 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
     } => update_pagination(state, message, db),
 
     Message::GeoNodeSelected(_) | Message::GeoNodeToggled(_) => update_geo(state, message, db),
+
+    Message::AssetTagModal(_)
+    | Message::AssetTagsReloaded {
+      ..
+    }
+    | Message::OpenAssetTagModal {
+      ..
+    } => update_asset_tags(state, message, db),
 
     Message::SaveFilterCancelled
     | Message::SaveFilterConfirmed
@@ -1481,6 +1590,116 @@ fn update_saved_filter(state: &mut State, message: Message, db: &Database) -> Ta
       )
     }
     _ => Task::none(),
+  }
+}
+
+/// Drives the per-row asset-tag chips and the shared add-tag modal: open/close, search input, and the
+/// assign/create/unassign writes (each followed by a registry+membership reload so chips update).
+///
+/// The state/message surface here is the one phase 4 (multi-select Edit Tags) reuses: an `Option<AddTagModal>`
+/// host, the `AssetTagModal(AddTagMessage)` mapper arm, and the `reload_asset_tags` write-then-reload task.
+/// Phase 4 adds a sibling open path over a selection but routes its modal messages through this same arm.
+fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task<Message> {
+  match message {
+    Message::OpenAssetTagModal {
+      item_id,
+    } => {
+      state.add_tag_modal_name = state.resolve_item_name(item_id);
+      state.add_tag_modal = Some(AddTagModal::new(item_id, ENTITY_TYPE_ASSET));
+      Task::none()
+    }
+    Message::AssetTagsReloaded {
+      memberships,
+      tags,
+    } => {
+      state.asset_tags = tags;
+      state.tag_memberships = memberships;
+      Task::none()
+    }
+    Message::AssetTagModal(modal_message) => apply_asset_tag_modal(state, modal_message, db),
+    _ => Task::none(),
+  }
+}
+
+fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Database) -> Task<Message> {
+  match message {
+    AddTagMessage::InputChanged(value) => {
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input = value;
+      }
+      Task::none()
+    }
+    AddTagMessage::Close => {
+      state.add_tag_modal = None;
+      Task::none()
+    }
+    AddTagMessage::Assign {
+      entity_id,
+      entity_type,
+      tag_id,
+    } => {
+      let db = db.clone();
+      Task::perform(
+        async move {
+          infra::assign(&db, entity_type, entity_id, tag_id).await.ok();
+          reload_asset_tags(db).await
+        },
+        |message| message,
+      )
+    }
+    AddTagMessage::Unassign {
+      entity_id,
+      entity_type,
+      tag_id,
+    } => {
+      let db = db.clone();
+      Task::perform(
+        async move {
+          infra::unassign(&db, entity_type, entity_id, tag_id).await.ok();
+          reload_asset_tags(db).await
+        },
+        |message| message,
+      )
+    }
+    AddTagMessage::CreateAndAssign {
+      entity_id,
+      entity_type,
+    } => {
+      let Some(name) = state
+        .add_tag_modal
+        .as_ref()
+        .map(|modal| modal.input.trim().to_owned())
+        .filter(|name| !name.is_empty())
+      else {
+        return Task::none();
+      };
+      // Reuse an existing asset tag of the same name (case-insensitive) rather than creating a duplicate.
+      let existing = state
+        .asset_tags
+        .iter()
+        .find(|tag| tag.name().eq_ignore_ascii_case(&name))
+        .map(Tag::id);
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input.clear();
+      }
+      let db = db.clone();
+      Task::perform(
+        async move {
+          let tag_id = match existing {
+            Some(id) => Some(id),
+            None => infra::create_scoped(&db, &name, None, None, TAG_SCOPE_ASSET)
+              .await
+              .ok()
+              .map(|tag| tag.id()),
+          };
+          if let Some(tag_id) = tag_id {
+            infra::assign(&db, entity_type, entity_id, tag_id).await.ok();
+          }
+          reload_asset_tags(db).await
+        },
+        |message| message,
+      )
+    }
   }
 }
 
@@ -1966,18 +2185,33 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
   let stockpiles = stockpiles::load_cards(&db).await;
   let abyssals = abyssals::load_cards(&db, scope, &roster).await;
   let saved_filters = assets::saved_filters(&db).await.unwrap_or_default();
+  let asset_tags = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap_or_default();
+  let tag_memberships = infra::membership_map(&db, ENTITY_TYPE_ASSET).await.unwrap_or_default();
 
   Loaded {
+    asset_tags,
     corporations,
     geo_tree,
     inventory,
     roster,
     saved_filters,
+    tag_memberships,
     totals,
     values,
     nav,
     stockpiles,
     abyssals,
+  }
+}
+
+/// Reloads only the asset-tag registry and membership map after a modal write, so chips refresh without
+/// a full inventory refetch.
+async fn reload_asset_tags(db: Database) -> Message {
+  let tags = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap_or_default();
+  let memberships = infra::membership_map(&db, ENTITY_TYPE_ASSET).await.unwrap_or_default();
+  Message::AssetTagsReloaded {
+    memberships,
+    tags,
   }
 }
 
@@ -3464,6 +3698,7 @@ mod tests {
         nav: tracker::NavSeries::default(),
         stockpiles: vec![],
         abyssals: abyssals::AbyssalsData::default(),
+        ..Loaded::default()
       })
     }
 
@@ -3766,6 +4001,7 @@ mod tests {
           nav: tracker::NavSeries::default(),
           stockpiles: vec![],
           abyssals: abyssals::AbyssalsData::default(),
+          ..Loaded::default()
         })),
         &db,
       );
@@ -4050,6 +4286,157 @@ mod tests {
       });
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+  }
+
+  mod asset_tags {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn flags() -> crate::config::FeatureFlags {
+      crate::config::FeatureFlags::default()
+    }
+
+    fn test_row(item_id: i64, type_name: &str) -> InventoryRow {
+      InventoryRow {
+        category: "ship".to_owned(),
+        container_id: None,
+        depth: 0,
+        group_name: "Frigate".to_owned(),
+        is_active_ship: false,
+        is_blueprint_copy: None,
+        is_container: false,
+        item_id,
+        location_id: 60_003_760,
+        location_label: Some("Jita IV - Moon 4".to_owned()),
+        name: None,
+        owner_id: 7,
+        quantity: 1,
+        reproc_value: 0.0,
+        row_volume: 10.0,
+        type_icon: images::IconResolution::Missing,
+        type_id: 587,
+        type_name: type_name.to_owned(),
+        unit_price: 100.0,
+        value: 100.0,
+      }
+    }
+
+    async fn seeded_tag(db: &Database, name: &str) -> Tag {
+      infra::create_scoped(db, name, None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn opening_the_modal_keys_it_on_the_item_id_and_resolves_the_row_name() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      state.inventory = vec![InventoryRow {
+        name: Some("Loot Run".to_owned()),
+        ..test_row(5001, "Giant Secure Container")
+      }];
+
+      let _ = update(
+        &mut state,
+        Message::OpenAssetTagModal {
+          item_id: 5001,
+        },
+        &db,
+      );
+
+      let modal = state.asset_tag_modal().expect("the modal is open");
+      assert_eq!(modal.entity_id, 5001);
+      assert_eq!(modal.entity_type, ENTITY_TYPE_ASSET);
+      assert_eq!(state.asset_tag_modal_entity_name(), "Loot Run");
+    }
+
+    #[tokio::test]
+    async fn the_modal_input_round_trips_and_close_dismisses_it() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let _ = update(
+        &mut state,
+        Message::OpenAssetTagModal {
+          item_id: 5001,
+        },
+        &db,
+      );
+
+      let _ = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::InputChanged("Keep".to_owned())),
+        &db,
+      );
+      assert_eq!(state.asset_tag_modal().map(|m| m.input.as_str()), Some("Keep"));
+
+      let _ = update(&mut state, Message::AssetTagModal(AddTagMessage::Close), &db);
+      assert!(state.asset_tag_modal().is_none());
+    }
+
+    #[tokio::test]
+    async fn assign_then_unassign_round_trips_the_membership_for_an_item_id() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let keep = seeded_tag(&db, "Keep").await;
+
+      // Assign: the same write path the modal's Assign arm performs, then reload into state.
+      infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      assert_eq!(
+        state.asset_tags_for(5001).iter().map(|t| t.id()).collect::<Vec<_>>(),
+        vec![keep.id()]
+      );
+
+      // Unassign: the modal's Unassign arm write, reloaded — the chip disappears.
+      infra::unassign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      assert!(state.asset_tags_for(5001).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_modal_partition_splits_assigned_from_assignable_for_the_target_item() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let keep = seeded_tag(&db, "Keep").await;
+      let _sell = seeded_tag(&db, "Sell").await;
+      infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+
+      let _ = update(
+        &mut state,
+        Message::OpenAssetTagModal {
+          item_id: 5001,
+        },
+        &db,
+      );
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      let (assigned, assignable) = state.asset_tag_modal_partition();
+      assert_eq!(assigned.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(), ["Keep"]);
+      assert_eq!(
+        assignable.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+        ["Sell"]
+      );
+    }
+
+    #[tokio::test]
+    async fn the_loaded_inventory_carries_the_asset_tag_registry_and_membership_map() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let keep = seeded_tag(&db, "Keep").await;
+      infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+
+      let loaded = load_assets(db.clone(), Scope::All, InventoryView::default()).await;
+      apply_loaded(&mut state, loaded);
+
+      assert_eq!(
+        state.asset_tags.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+        ["Keep"]
+      );
+      assert_eq!(state.tag_memberships.get(&5001), Some(&vec![keep.id()]));
     }
   }
 }

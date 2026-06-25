@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::Utc;
 
 use crate::store::{
@@ -429,6 +431,27 @@ pub async fn memberships(db: &Database, entity_type: &str) -> Result<Vec<EntityT
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
+}
+
+// Per-entity tag membership map (entity_id -> tag_ids, in tag position order) for one entity type, so a view
+// can resolve every row's chips from a single query instead of a per-row scan. Consumed by the asset inventory
+// tag chips; exercised by unit tests until that caller lands.
+#[allow(dead_code)]
+pub async fn membership_map(db: &Database, entity_type: &str) -> Result<HashMap<i64, Vec<i64>>, Error> {
+  let rows = sqlx::query_as::<_, (i64, i64)>(
+    "SELECT et.entity_id, et.tag_id FROM entity_tags et \
+    JOIN tags t ON t.id = et.tag_id \
+    WHERE et.entity_type = ? ORDER BY et.entity_id, t.position",
+  )
+  .bind(entity_type)
+  .fetch_all(&db.0)
+  .await?;
+
+  let mut map: HashMap<i64, Vec<i64>> = HashMap::new();
+  for (entity_id, tag_id) in rows {
+    map.entry(entity_id).or_default().push(tag_id);
+  }
+  Ok(map)
 }
 
 pub async fn reorder(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
@@ -1750,6 +1773,65 @@ mod tag_tests {
       assert_eq!(
         members(&db, tag.id(), ENTITY_TYPE_CHARACTER).await.unwrap(),
         vec![100, 200]
+      );
+    }
+  }
+
+  mod membership_map {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{ENTITY_TYPE_ASSET, TAG_SCOPE_ASSET};
+
+    #[tokio::test]
+    async fn it_groups_tag_ids_by_asset_item_id_in_position_order() {
+      let db = store::open_test().await.unwrap();
+      let keep = create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      let sell = create_scoped(&db, "Sell", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      // Assign out of position order to prove the map orders by tag position, not insert order.
+      assign(&db, ENTITY_TYPE_ASSET, 1001, sell.id()).await.unwrap();
+      assign(&db, ENTITY_TYPE_ASSET, 1001, keep.id()).await.unwrap();
+      assign(&db, ENTITY_TYPE_ASSET, 2002, keep.id()).await.unwrap();
+
+      let map = membership_map(&db, ENTITY_TYPE_ASSET).await.unwrap();
+
+      assert_eq!(map.get(&1001), Some(&vec![keep.id(), sell.id()]));
+      assert_eq!(map.get(&2002), Some(&vec![keep.id()]));
+      assert_eq!(map.get(&3003), None);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_other_entity_types() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 100).await;
+      let asset_tag = create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      let char_tag = create(&db, "Crew", None, None).await.unwrap();
+      assign(&db, ENTITY_TYPE_ASSET, 1001, asset_tag.id()).await.unwrap();
+      assign(&db, ENTITY_TYPE_CHARACTER, 100, char_tag.id()).await.unwrap();
+
+      let map = membership_map(&db, ENTITY_TYPE_ASSET).await.unwrap();
+
+      assert_eq!(map.len(), 1);
+      assert_eq!(map.get(&1001), Some(&vec![asset_tag.id()]));
+    }
+
+    #[tokio::test]
+    async fn it_round_trips_an_assign_then_unassign_for_an_item_id() {
+      let db = store::open_test().await.unwrap();
+      let keep = create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+
+      assign(&db, ENTITY_TYPE_ASSET, 1001, keep.id()).await.unwrap();
+      assert_eq!(
+        membership_map(&db, ENTITY_TYPE_ASSET).await.unwrap().get(&1001),
+        Some(&vec![keep.id()])
+      );
+
+      unassign(&db, ENTITY_TYPE_ASSET, 1001, keep.id()).await.unwrap();
+      assert!(
+        !membership_map(&db, ENTITY_TYPE_ASSET)
+          .await
+          .unwrap()
+          .contains_key(&1001)
       );
     }
   }

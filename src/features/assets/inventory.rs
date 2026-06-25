@@ -10,12 +10,17 @@ use super::{
 use crate::{
   store::{
     images::IconResolution,
-    model::asset_query::{InventoryRow, SortColumn, SortDirection},
+    model::{
+      ENTITY_TYPE_ASSET, Tag,
+      asset_query::{InventoryRow, SortColumn, SortDirection},
+    },
   },
   ui::{
     components::{
+      add_tag_modal::AddTagMessage,
       avatar::avatar,
       badge::badge,
+      chip::Chip,
       empty_state::empty_state as shared_empty_state,
       eyebrow::eyebrow,
       icon::Icon,
@@ -375,7 +380,8 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     let list = VirtualList::new(config, |index| {
       let inventory_row = flat[index];
       let expanded = state.container_is_open(inventory_row.item_id);
-      table_row(inventory_row, state.roster(), state.corporations(), expanded)
+      let tags = state.asset_tags_for(inventory_row.item_id);
+      table_row(inventory_row, state.roster(), state.corporations(), expanded, tags)
     })
     .view();
 
@@ -536,11 +542,12 @@ fn table_row<'a>(
   roster: &[RosterPilot],
   corporations: &[RosterCorp],
   expanded: bool,
+  tags: Vec<&'a Tag>,
 ) -> Element<'a, Message> {
   let cells: Vec<Element<'a, Message>> = vec![
     row_prefix(inventory_row, expanded),
     row_icon(inventory_row),
-    portioned(name_cell(inventory_row), COLUMN_PORTIONS[0]),
+    portioned(name_cell(inventory_row, tags), COLUMN_PORTIONS[0]),
     portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
     portioned(category_cell(inventory_row), COLUMN_PORTIONS[2]),
     portioned(
@@ -633,7 +640,7 @@ fn custom_name(inventory_row: &InventoryRow) -> Option<&str> {
   inventory_row.name.as_deref().filter(|name| !name.is_empty())
 }
 
-fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
+fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>) -> Element<'a, Message> {
   let custom_name = custom_name(inventory_row);
 
   let mut lines: Vec<Element<'a, Message>> = vec![
@@ -652,8 +659,9 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
         .into(),
     );
   }
+  lines.push(tag_strip(inventory_row.item_id, tags));
 
-  let label = container(Column::with_children(lines)).width(Length::Fill);
+  let label = container(Column::with_children(lines).spacing(spacing::UNIT)).width(Length::Fill);
 
   let mut children: Vec<Element<'a, Message>> = vec![label.into()];
   if inventory_row.is_active_ship {
@@ -669,6 +677,54 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
       .align_y(Vertical::Center),
   )
   .width(Length::Fill)
+  .into()
+}
+
+/// The per-row asset-tag chips beneath the item name, each removable via its `×`, followed by the
+/// `+ Tag` control that opens the shared add-tag modal keyed on this stack's ESI `item_id`.
+fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = tags
+    .into_iter()
+    .map(|tag| {
+      Chip::new(tag.name().clone(), tag.color().as_deref().and_then(color::from_hex))
+        .on_remove(Message::AssetTagModal(AddTagMessage::Unassign {
+          entity_id: item_id,
+          entity_type: ENTITY_TYPE_ASSET,
+          tag_id: tag.id(),
+        }))
+        .view()
+    })
+    .collect();
+  children.push(add_tag_affordance(item_id));
+
+  Row::with_children(children)
+    .spacing(spacing::UNIT)
+    .align_y(Vertical::Center)
+    .wrap()
+    .into()
+}
+
+fn add_tag_affordance<'a>(item_id: i64) -> Element<'a, Message> {
+  button(
+    text("+ Tag")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .padding([spacing::UNIT / 2.0, spacing::SPACE_2])
+  .on_press(Message::OpenAssetTagModal {
+    item_id,
+  })
+  .style(|_, _| button::Style {
+    background: None,
+    text_color: color::text::secondary(),
+    border: Border {
+      color: color::with_alpha(color::text::PRIMARY, 0.1),
+      width: 1.0,
+      radius: 999.0.into(),
+    },
+    ..button::Style::default()
+  })
   .into()
 }
 
@@ -1057,13 +1113,13 @@ mod tests {
     #[test]
     fn it_renders_a_renamed_item_with_its_type_subtitle() {
       let row = named_row(Some("Loot Run"));
-      let _el: Element<'_, Message> = name_cell(&row);
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]
     fn it_renders_an_unnamed_item_as_the_type_name_alone() {
       let row = named_row(None);
-      let _el: Element<'_, Message> = name_cell(&row);
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]
@@ -1082,6 +1138,51 @@ mod tests {
     #[test]
     fn it_treats_an_empty_name_as_absent() {
       assert_eq!(super::super::custom_name(&named_row(Some(""))), None);
+    }
+  }
+
+  mod tags {
+    use super::*;
+    use crate::store::{
+      self,
+      model::{TAG_SCOPE_ASSET, Tag},
+      repo::infra,
+    };
+
+    async fn asset_tags() -> Vec<Tag> {
+      let db = store::open_test().await.unwrap();
+      infra::create_scoped(&db, "Keep", None, Some("#3FB8DB"), TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+      infra::create_scoped(&db, "Sell", None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+      infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_renders_a_chip_strip_with_the_rows_assigned_tags() {
+      let tags = asset_tags().await;
+      let assigned: Vec<&Tag> = tags.iter().collect();
+      let row = sample_row(7001, "Rifter", "ship", 7, 5_000.0);
+
+      // A row with assigned tags renders its chip strip beneath the name.
+      let _el: Element<'_, Message> = name_cell(&row, assigned);
+    }
+
+    #[tokio::test]
+    async fn it_renders_only_the_add_affordance_for_an_untagged_row() {
+      let row = sample_row(7002, "Rifter", "ship", 7, 5_000.0);
+
+      // An untagged row still renders the `+ Tag` control alone.
+      let _el: Element<'_, Message> = tag_strip(row.item_id, Vec::new());
+    }
+
+    #[test]
+    fn the_add_affordance_opens_the_modal_keyed_on_the_item_id() {
+      // The `+ Tag` control carries an open message keyed on the stack's item_id — the entry point the
+      // shared modal host (and phase 4's multi-select) consumes.
+      let _el: Element<'_, Message> = add_tag_affordance(7003);
     }
   }
 
@@ -1282,7 +1383,7 @@ mod tests {
     #[test]
     fn it_renders_the_badge_and_secondary_value_for_a_worth_row() {
       let row = worth_row();
-      let _name: Element<'_, Message> = name_cell(&row);
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
       let _value: Element<'_, Message> = value_cell(&row);
       let _badge: Element<'_, Message> = reprocess_badge(&row);
     }
@@ -1291,7 +1392,7 @@ mod tests {
     fn it_renders_a_plain_value_cell_for_a_non_worth_row() {
       let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
       let _value: Element<'_, Message> = value_cell(&row);
-      let _name: Element<'_, Message> = name_cell(&row);
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
     }
 
     #[test]

@@ -10,7 +10,7 @@ use super::{
 };
 use crate::ui::{
   components::{
-    backdrop, forbidden,
+    add_tag_modal, backdrop, forbidden,
     icon::Icon,
     modal_overlay::modal_overlay,
     positioned_dropdown::positioned_dropdown,
@@ -92,6 +92,23 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       base.into(),
       Some(Message::StockpileContextMenuClosed),
       stockpiles::context_menu_view(menu),
+    );
+  }
+
+  if state.tab() == Tab::Inventory
+    && let Some(modal) = state.asset_tag_modal()
+  {
+    let (assigned, assignable) = state.asset_tag_modal_partition();
+    return modal_overlay(
+      base.into(),
+      Some(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close)),
+      add_tag_modal::view(
+        modal,
+        state.asset_tag_modal_entity_name(),
+        assigned,
+        assignable,
+        Message::AssetTagModal,
+      ),
     );
   }
 

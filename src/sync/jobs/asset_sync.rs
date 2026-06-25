@@ -725,7 +725,11 @@ mod tests {
         key,
       });
 
-      assert!(status.is_syncing(), "the chip reads In Progress while AssetSync runs");
+      assert_eq!(
+        status.phase(&key),
+        Some(crate::sync::Phase::Syncing),
+        "the chip reads In Progress while AssetSync runs"
+      );
       assert!(
         assets::render_for_character(&db, 44).await.unwrap().is_empty(),
         "the screen is blank until AssetSync finishes"
@@ -737,7 +741,11 @@ mod tests {
         outcome: crate::sync::Outcome::synced(),
       });
 
-      assert!(!status.is_syncing(), "Finished clears the In Progress chip");
+      assert_eq!(
+        status.phase(&key),
+        Some(crate::sync::Phase::Done),
+        "Finished clears the In Progress chip"
+      );
 
       let rows = assets::render_for_character(&db, 44).await.unwrap();
       assert_eq!(rows.len(), 3, "two assets plus the synthetic ship are displayable");

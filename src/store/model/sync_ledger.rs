@@ -24,3 +24,20 @@ pub struct Model {
   #[getset(get_copy = "pub")]
   subject_type: OwnerType,
 }
+
+#[cfg(test)]
+impl Model {
+  pub fn new_for_test(kind: String, outcome: String, last_reason: Option<String>) -> Self {
+    Self {
+      kind,
+      last_attempt_at: "2026-01-01T00:00:00Z".to_string(),
+      last_reason,
+      last_success_at: None,
+      next_eligible_at: None,
+      outcome,
+      rows_touched: 0,
+      subject_id: 0,
+      subject_type: OwnerType::Character,
+    }
+  }
+}

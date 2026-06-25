@@ -35,6 +35,10 @@ impl Schedule {
     }
   }
 
+  pub fn features(&self) -> &FeatureFlags {
+    &self.features
+  }
+
   pub fn due(&self, now: Instant) -> Vec<JobKey> {
     self
       .entries

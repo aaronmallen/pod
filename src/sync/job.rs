@@ -93,6 +93,7 @@ impl JobKind {
       .collect()
   }
 
+  #[allow(dead_code)]
   pub fn feature(self) -> Option<Feature> {
     crate::features::registry::feature_for_job(self)
   }

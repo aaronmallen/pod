@@ -4,6 +4,7 @@ mod contact_handlers;
 mod drain;
 mod engine;
 mod event;
+mod freshness;
 mod handle;
 mod job;
 mod jobs;
@@ -20,6 +21,7 @@ pub mod token;
 pub use command::Command;
 pub use engine::spawn;
 pub use event::Event;
+pub use freshness::{Freshness, FreshnessSummary, freshness_of};
 pub use handle::Handle;
 pub use job::{JobKey, JobKind};
 // Outcome is re-exported only for test fixtures (`outcome: sync::Outcome::synced()`); no production reader yet.

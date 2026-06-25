@@ -5,9 +5,9 @@ use iced::{
 };
 
 use crate::{
-  config::Feature,
+  config::FeatureFlags,
   features::character_manager::OwnedPilot,
-  sync::{self, JobKey, JobKind, Phase, Subject},
+  sync::{self, Freshness, FreshnessSummary, JobKey, JobKind, Phase, Subject, freshness_of},
   ui::{
     components::status::{dot, format_since},
     style::{color, radius, shadow, spacing, typography},
@@ -97,13 +97,15 @@ pub enum RowState {
 pub fn build_model(
   pilots: &[OwnedPilot],
   status: &sync::SyncStatus,
-  enabled: &[Feature],
+  features: &FeatureFlags,
   last_synced_secs: Option<u64>,
   pulse_on: bool,
 ) -> Model {
   let mut rows = Vec::with_capacity(pilots.len() * POPOVER_JOBS.len());
-  for_each_job(pilots, enabled, |pilot, label, key| {
+  let mut summary = FreshnessSummary::default();
+  for_each_job(pilots, features, |pilot, label, key| {
     let (state, error) = row_state(status, &key);
+    summary.record(freshness_of(status, &key));
     rows.push(JobRow {
       character_color: pilot.color,
       character_name: pilot.name.clone(),
@@ -114,11 +116,13 @@ pub fn build_model(
     });
   });
 
-  let total = rows.len();
-  let done = rows.iter().filter(|row| row.state == RowState::Done).count();
+  let total = summary.total;
+  // Fresh — Synced OR Empty within interval — is the single up-to-date count both surfaces share, so
+  // an empty-result endpoint is never undercounted the way RowState::Done alone undercounted it.
+  let done = summary.fresh;
   let errors = rows.iter().filter(|row| row.state == RowState::Error).count();
-  let active = rows.iter().filter(|row| row.state == RowState::Syncing).count();
-  let queued = rows.iter().filter(|row| row.state == RowState::Queued).count();
+  let active = summary.refreshing;
+  let queued = summary.catching_up;
 
   let header = if active > 0 {
     let percent = (done * 100).checked_div(total).unwrap_or(100) as u8;
@@ -143,20 +147,30 @@ pub fn build_model(
   }
 }
 
-pub fn job_stats(pilots: &[OwnedPilot], status: &sync::SyncStatus, enabled: &[Feature]) -> JobStats {
+pub fn job_stats(pilots: &[OwnedPilot], status: &sync::SyncStatus, features: &FeatureFlags) -> JobStats {
   let mut stats = JobStats::default();
-  for_each_job(pilots, enabled, |_pilot, _label, key| {
-    let (state, _) = row_state(status, &key);
-    stats.total += 1;
-    match state {
-      RowState::Attention => stats.attention += 1,
-      RowState::Done | RowState::Empty => stats.done += 1,
-      RowState::Error => stats.errors += 1,
-      RowState::Syncing => stats.active += 1,
-      RowState::Queued => {}
+  let summary = FreshnessSummary::from_keys(status, &collect_keys(pilots, features));
+  for_each_job(pilots, features, |_pilot, _label, key| {
+    if matches!(freshness_of(status, &key), Freshness::Attention) && is_error_phase(status, &key) {
+      stats.errors += 1;
     }
   });
+  stats.total = summary.total;
+  stats.done = summary.fresh;
+  stats.active = summary.refreshing;
+  // Persistent failures surface as errors in the chip; blocked/needs-reauth/not-ready as attention.
+  stats.attention = summary.attention.saturating_sub(stats.errors);
   stats
+}
+
+fn collect_keys(pilots: &[OwnedPilot], features: &FeatureFlags) -> Vec<JobKey> {
+  let mut keys = Vec::with_capacity(pilots.len() * POPOVER_JOBS.len());
+  for_each_job(pilots, features, |_pilot, _label, key| keys.push(key));
+  keys
+}
+
+fn is_error_phase(status: &sync::SyncStatus, key: &JobKey) -> bool {
+  matches!(status.phase(key), Some(Phase::Failed))
 }
 
 pub fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<String>) {
@@ -302,13 +316,13 @@ where
     .into()
 }
 
-fn for_each_job(pilots: &[OwnedPilot], enabled: &[Feature], mut visit: impl FnMut(&OwnedPilot, &str, JobKey)) {
+fn for_each_job(pilots: &[OwnedPilot], features: &FeatureFlags, mut visit: impl FnMut(&OwnedPilot, &str, JobKey)) {
   for pilot in pilots {
     let subject = Subject::Character(pilot.id);
     for (kind, label) in POPOVER_JOBS {
-      // A feature-gated job whose feature is disabled is not syncing, so it must not appear queued;
-      // featureless jobs (e.g. Profile) always run and are always shown.
-      if kind.feature().is_some_and(|feature| !enabled.contains(&feature)) {
+      // The engine enrolls on sub-features (is_feature_enabled), so the row domain gates the same way:
+      // no phantom "Queued" row exists for a job the engine will never service.
+      if !kind.is_feature_enabled(features) {
         continue;
       }
       visit(pilot, label, JobKey::new(kind, subject));
@@ -677,6 +691,14 @@ mod tests {
     }
   }
 
+  fn all_off() -> FeatureFlags {
+    let mut flags = FeatureFlags::default();
+    for feature in crate::config::Feature::ALL {
+      flags.set_enabled(feature, false);
+    }
+    flags
+  }
+
   mod build_model {
     use pretty_assertions::assert_eq;
 
@@ -687,8 +709,8 @@ mod tests {
       let pilots = vec![pilot(1)];
       let status = sync::SyncStatus::new();
 
-      let with_all = build_model(&pilots, &status, &Feature::ALL, None, false);
-      let with_none = build_model(&pilots, &status, &[], None, false);
+      let with_all = build_model(&pilots, &status, &FeatureFlags::default(), None, false);
+      let with_none = build_model(&pilots, &status, &all_off(), None, false);
 
       assert!(with_none.rows.len() < with_all.rows.len());
     }
@@ -698,7 +720,7 @@ mod tests {
       let pilots = vec![pilot(1), pilot(2)];
       let status = sync::SyncStatus::new();
 
-      let model = build_model(&pilots, &status, &Feature::ALL, Some(5), false);
+      let model = build_model(&pilots, &status, &FeatureFlags::default(), Some(5), false);
 
       assert_eq!(model.total, model.rows.len());
       assert_eq!(model.rows.len(), pilots.len() * POPOVER_JOBS.len());
@@ -719,7 +741,7 @@ mod tests {
         key: JobKey::new(JobKind::CharacterProfile, Subject::Character(1)),
       });
 
-      let stats = job_stats(&pilots, &status, &Feature::ALL);
+      let stats = job_stats(&pilots, &status, &FeatureFlags::default());
 
       assert_eq!(stats.active, 1);
       assert_eq!(stats.total, POPOVER_JOBS.len());

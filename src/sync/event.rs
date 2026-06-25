@@ -2,6 +2,11 @@ use super::{job::JobKey, outcome::Outcome};
 
 #[derive(Clone, Debug)]
 pub enum Event {
+  Seeded {
+    key: JobKey,
+    outcome: Outcome,
+    next_in_secs: Option<u64>,
+  },
   BackingOff {
     key: JobKey,
     // Exercised only by unit tests / forward-looking sync surface; no production reader yet.

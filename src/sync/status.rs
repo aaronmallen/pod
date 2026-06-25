@@ -49,6 +49,9 @@ impl OutboxStatus {
       | Event::Scheduled {
         ..
       }
+      | Event::Seeded {
+        ..
+      }
       | Event::Started {
         ..
       } => {}
@@ -114,12 +117,6 @@ impl SyncStatus {
     Self::default()
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn active(&self) -> usize {
-    self.count(Phase::Syncing)
-  }
-
   pub fn apply(&mut self, event: &Event) {
     match event {
       Event::BackingOff {
@@ -160,48 +157,25 @@ impl SyncStatus {
         key,
         next_in_secs,
       } => self.set_next_in(*key, *next_in_secs),
+      Event::Seeded {
+        key,
+        outcome,
+        next_in_secs,
+      } => {
+        let (phase, reason) = phase_for_outcome(outcome);
+        self.set(*key, phase, reason, None);
+        if let Some(secs) = next_in_secs {
+          self.set_next_in(*key, *secs);
+        }
+      }
       Event::Started {
         key,
       } => self.set(*key, Phase::Syncing, None, None),
     }
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn attention(&self) -> usize {
-    self.count(Phase::Blocked) + self.count(Phase::NotReady)
-  }
-
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn done(&self) -> usize {
-    self.count(Phase::Done) + self.count(Phase::Empty)
-  }
-
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn errors(&self) -> usize {
-    self.count(Phase::BackingOff) + self.count(Phase::Failed)
-  }
-
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn is_syncing(&self) -> bool {
-    self.active() > 0
-  }
-
   pub fn phase(&self, key: &JobKey) -> Option<Phase> {
     self.tasks.get(key).map(|task| task.phase)
-  }
-
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn percent(&self) -> u8 {
-    let total = self.total();
-    if total == 0 {
-      return 100;
-    }
-    ((self.done() * 100) / total) as u8
   }
 
   pub fn next_in_secs(&self, key: &JobKey) -> Option<u64> {
@@ -222,27 +196,10 @@ impl SyncStatus {
     self.tasks.get(key).and_then(|task| task.retry_secs)
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn tasks(&self) -> impl Iterator<Item = &TaskStatus> {
-    self.tasks.values()
-  }
-
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
-  pub fn total(&self) -> usize {
-    self.tasks.len()
-  }
-
-  fn count(&self, phase: Phase) -> usize {
-    self.tasks.values().filter(|task| task.phase == phase).count()
-  }
-
   fn set(&mut self, key: JobKey, phase: Phase, reason: Option<String>, retry_secs: Option<u64>) {
     self.tasks.insert(
       key,
       TaskStatus {
-        key,
         phase,
         reason,
         retry_secs,
@@ -258,11 +215,10 @@ impl SyncStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TaskStatus {
-  pub key: JobKey,
-  pub phase: Phase,
-  pub reason: Option<String>,
-  pub retry_secs: Option<u64>,
+struct TaskStatus {
+  phase: Phase,
+  reason: Option<String>,
+  retry_secs: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -341,14 +297,10 @@ mod tests {
       ));
       status.apply(&finished(key(4), Outcome::NotReady));
 
-      assert_eq!(status.done(), 2, "synced and empty are both up-to-date successes");
-      assert_eq!(status.attention(), 2, "only blocked and not-ready need attention");
-      assert_eq!(status.errors(), 0, "an empty/blocked job is not an error");
-      assert_eq!(
-        status.percent(),
-        50,
-        "percent reflects the synced and empty jobs out of four"
-      );
+      let summary = crate::sync::FreshnessSummary::from_keys(&status, &[key(1), key(2), key(3), key(4)]);
+      assert_eq!(summary.fresh, 2, "synced and empty are both up-to-date successes");
+      assert_eq!(summary.attention, 2, "only blocked and not-ready need attention");
+      assert_eq!(summary.refreshing, 0, "an empty/blocked job is not a transient refresh");
     }
 
     #[test]
@@ -387,11 +339,10 @@ mod tests {
       });
 
       assert_eq!(
-        status.total(),
-        0,
+        status.phase(&key(1)),
+        None,
         "a Scheduled event for a key with no started task must not invent a phantom Done task"
       );
-      assert_eq!(status.done(), 0);
       assert_eq!(status.next_in_secs(&key(1)), None);
     }
 
@@ -401,8 +352,7 @@ mod tests {
 
       status.apply(&Event::Heartbeat);
 
-      assert_eq!(status.total(), 0);
-      assert_eq!(status.percent(), 100);
+      assert_eq!(status.phase(&key(1)), None);
     }
 
     #[test]
@@ -417,7 +367,11 @@ mod tests {
         reason: "boom".to_string(),
       });
 
-      assert_eq!(status.total(), 0, "outbox rows do not enter the job-keyed aggregate");
+      assert_eq!(
+        status.phase(&key(1)),
+        None,
+        "outbox rows do not enter the job-keyed aggregate"
+      );
     }
 
     #[test]
@@ -466,11 +420,8 @@ mod tests {
         retry_secs: 30,
       });
 
-      assert_eq!(status.errors(), 1);
-      assert_eq!(status.is_syncing(), false);
-      let task = status.tasks().next().unwrap();
-      assert_eq!(task.phase, Phase::BackingOff);
-      assert_eq!(task.retry_secs, Some(30));
+      assert_eq!(status.phase(&key(1)), Some(Phase::BackingOff));
+      assert_eq!(status.retry_secs(&key(1)), Some(30));
     }
 
     #[test]
@@ -504,7 +455,6 @@ mod tests {
       });
 
       assert_eq!(status.reason(&key(1)), Some("token expired"));
-      assert_eq!(status.tasks().next().unwrap().reason.as_deref(), Some("token expired"));
 
       status.apply(&Event::Started {
         key: key(1),
@@ -539,10 +489,12 @@ mod tests {
         outcome: crate::sync::Outcome::synced(),
       });
 
-      assert_eq!(status.active(), 1);
-      assert_eq!(status.done(), 1);
-      assert_eq!(status.total(), 2);
-      assert_eq!(status.percent(), 50);
+      assert_eq!(status.phase(&key(1)), Some(Phase::Done));
+      assert_eq!(status.phase(&key(2)), Some(Phase::Syncing));
+      let summary = crate::sync::FreshnessSummary::from_keys(&status, &[key(1), key(2)]);
+      assert_eq!(summary.fresh, 1);
+      assert_eq!(summary.refreshing, 1);
+      assert_eq!(summary.total, 2);
     }
   }
 

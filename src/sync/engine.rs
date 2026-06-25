@@ -143,30 +143,73 @@ impl Engine {
           .unwrap_or_default()
           .split_whitespace()
           .collect();
-        let seeds = self.seeds_for(subject, now).await;
+        let rows = self.ledger_rows(subject).await;
+        let seeds = future_seeds(&rows, now);
         let deferred = self.deferred_gathers(subject).await;
         // A flagged entity's token is known-bad, so enroll only its public (no-scope) jobs and keep
         // its privileged jobs out of the schedule until the TokenAudit clears the flag.
-        let kinds = if credential.needs_reauth() {
+        let needs_reauth = credential.needs_reauth();
+        let kinds = if needs_reauth {
           JobKind::public_for_subject(subject)
         } else {
           JobKind::granted_for_subject(subject, &granted)
         };
         self
           .schedule
-          .enroll_kinds_deferred(subject, kinds, now, &seeds, &deferred);
+          .enroll_kinds_deferred(subject, kinds.clone(), now, &seeds, &deferred);
+        self.emit_seeds(subject, &kinds, &rows, needs_reauth);
       }
     }
     if let Ok(characters) = character::all(&self.db).await {
       for character in characters {
         let subject = Subject::Character(character.id());
         if !owned_characters.contains(&character.id()) {
-          let seeds = self.seeds_for(subject, now).await;
-          self
-            .schedule
-            .enroll_kinds_seeded(subject, JobKind::public_for_subject(subject), now, &seeds);
+          let rows = self.ledger_rows(subject).await;
+          let seeds = future_seeds(&rows, now);
+          let kinds = JobKind::public_for_subject(subject);
+          self.schedule.enroll_kinds_seeded(subject, kinds.clone(), now, &seeds);
+          self.emit_seeds(subject, &kinds, &rows, false);
         }
       }
+    }
+  }
+
+  async fn ledger_rows(&self, subject: Subject) -> Vec<SyncLedger> {
+    let (subject_id, subject_type) = owner_of(subject);
+    sync_ledger::for_subject(&self.db, subject_type, subject_id)
+      .await
+      .unwrap_or_default()
+  }
+
+  fn emit_seeds(&self, subject: Subject, kinds: &[JobKind], rows: &[SyncLedger], needs_reauth: bool) {
+    for &kind in kinds {
+      if !kind.is_feature_enabled(self.schedule.features()) {
+        continue;
+      }
+      let key = JobKey::new(kind, subject);
+      if needs_reauth && kind.gating_scope(subject).is_some() {
+        self.emit(Event::Seeded {
+          key,
+          outcome: Outcome::Blocked {
+            reason: "needs re-authentication".to_string(),
+          },
+          next_in_secs: None,
+        });
+        continue;
+      }
+      let Some(row) = rows.iter().find(|row| *row.kind() == format!("{kind:?}")) else {
+        continue;
+      };
+      let Some(outcome) = seeded_outcome(row) else {
+        continue;
+      };
+      let next_in_secs =
+        future_seed(row, kind, Instant::now()).map(|at| at.saturating_duration_since(Instant::now()).as_secs());
+      self.emit(Event::Seeded {
+        key,
+        outcome,
+        next_in_secs,
+      });
     }
   }
 
@@ -176,10 +219,13 @@ impl Engine {
 
   async fn enroll_global(&mut self) {
     let now = Instant::now();
-    let seeds = self.seeds_for(GLOBAL_SUBJECT, now).await;
+    let rows = self.ledger_rows(GLOBAL_SUBJECT).await;
+    let seeds = future_seeds(&rows, now);
+    let kinds = global_kinds();
     self
       .schedule
-      .enroll_kinds_seeded(GLOBAL_SUBJECT, global_kinds(), now, &seeds);
+      .enroll_kinds_seeded(GLOBAL_SUBJECT, kinds.clone(), now, &seeds);
+    self.emit_seeds(GLOBAL_SUBJECT, &kinds, &rows, false);
   }
 
   async fn enroll_subject(&mut self, subject: Subject, now: Instant) {
@@ -475,24 +521,45 @@ impl Engine {
   }
 
   async fn seeds_for(&self, subject: Subject, now: Instant) -> HashMap<JobKind, Instant> {
-    let (subject_id, subject_type) = owner_of(subject);
-    let mut seeds = HashMap::new();
-    let Ok(rows) = sync_ledger::for_subject(&self.db, subject_type, subject_id).await else {
-      return seeds;
+    future_seeds(&self.ledger_rows(subject).await, now)
+  }
+}
+
+fn future_seeds(rows: &[SyncLedger], now: Instant) -> HashMap<JobKind, Instant> {
+  let mut seeds = HashMap::new();
+  for row in rows {
+    let Some(kind) = JobKind::ALL
+      .iter()
+      .copied()
+      .find(|kind| format!("{kind:?}") == *row.kind())
+    else {
+      continue;
     };
-    for row in &rows {
-      let Some(kind) = JobKind::ALL
-        .iter()
-        .copied()
-        .find(|kind| format!("{kind:?}") == *row.kind())
-      else {
-        continue;
-      };
-      if let Some(at) = future_seed(row, kind, now) {
-        seeds.insert(kind, at);
-      }
+    if let Some(at) = future_seed(row, kind, now) {
+      seeds.insert(kind, at);
     }
-    seeds
+  }
+  seeds
+}
+
+fn seeded_outcome(row: &SyncLedger) -> Option<Outcome> {
+  let reason = row.last_reason().clone().unwrap_or_default();
+  match row.outcome().as_str() {
+    "synced" => Some(Outcome::Synced {
+      rows_touched: row.rows_touched(),
+    }),
+    "empty" => Some(Outcome::Empty),
+    "blocked" => Some(Outcome::Blocked {
+      reason,
+    }),
+    "skipped" => Some(Outcome::Skipped {
+      reason,
+    }),
+    "failed" => Some(Outcome::Failed {
+      reason,
+    }),
+    "not_ready" => Some(Outcome::NotReady),
+    _ => None,
   }
 }
 
@@ -1999,6 +2066,90 @@ mod tests {
         future_seed(&row, JobKind::CharacterProfile, Instant::now()).is_none(),
         "a past eligibility leaves the kind due now"
       );
+    }
+
+    async fn seed_ledger_outcome(db: &Database, kind: &str, outcome: &str, next_eligible_at: Option<&str>) {
+      let success = matches!(outcome, "synced" | "empty").then_some("2026-01-01T00:00:00Z");
+      sync_ledger::upsert(
+        db,
+        OwnerType::Character,
+        0,
+        kind,
+        outcome,
+        0,
+        None,
+        success,
+        next_eligible_at,
+      )
+      .await
+      .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_emits_a_seeded_event_for_a_fresh_global_job_at_launch() {
+      let server = MockServer::start().await;
+      mount_json(&server, "/markets/prices/", serde_json::json!([])).await;
+      let db = store::open_test().await.unwrap();
+      let future = (Utc::now() + ChronoDuration::minutes(30)).to_rfc3339();
+      seed_ledger_outcome(&db, "MarketPrices", "synced", Some(&future)).await;
+
+      let (_handle, mut events, _images) = spawn_engine_with_db(db, server.uri()).await;
+
+      let seeded = wait_for(
+        &mut events,
+        |event| matches!(event, Event::Seeded { key, .. } if key.kind == JobKind::MarketPrices),
+      )
+      .await;
+      let Event::Seeded {
+        outcome,
+        next_in_secs,
+        ..
+      } = seeded
+      else {
+        panic!("expected a Seeded event");
+      };
+      assert!(
+        matches!(outcome, Outcome::Synced { .. }),
+        "a synced ledger row seeds Synced"
+      );
+      assert!(
+        next_in_secs.is_some_and(|secs| secs > 0),
+        "a future-eligible fresh job seeds a countdown rather than a bare Queued"
+      );
+    }
+
+    #[test]
+    fn it_maps_each_ledger_outcome_token_back_to_an_outcome() {
+      let row = |token: &str, reason: Option<&str>| {
+        SyncLedger::new_for_test(
+          "CharacterProfile".to_string(),
+          token.to_string(),
+          reason.map(str::to_string),
+        )
+      };
+
+      assert!(matches!(
+        seeded_outcome(&row("synced", None)),
+        Some(Outcome::Synced { .. })
+      ));
+      assert!(matches!(seeded_outcome(&row("empty", None)), Some(Outcome::Empty)));
+      assert!(matches!(
+        seeded_outcome(&row("not_ready", None)),
+        Some(Outcome::NotReady)
+      ));
+      assert_eq!(
+        seeded_outcome(&row("blocked", Some("no scope"))),
+        Some(Outcome::Blocked {
+          reason: "no scope".to_string()
+        })
+      );
+      assert_eq!(
+        seeded_outcome(&row("failed", Some("token expired"))),
+        Some(Outcome::Failed {
+          reason: "token expired".to_string()
+        })
+      );
+      assert!(seeded_outcome(&row("nonsense", None)).is_none());
     }
   }
 

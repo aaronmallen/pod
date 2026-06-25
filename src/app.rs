@@ -2566,14 +2566,14 @@ fn sync_model(app: &App) -> Model {
   sync_popover::build_model(
     &pilots,
     &app.status,
-    &enabled_features(app),
+    &feature_flags(app),
     last_synced_secs,
     app.sync_tick,
   )
 }
 
 fn expected_job_stats(app: &App) -> JobStats {
-  sync_popover::job_stats(&roster(app), &app.status, &enabled_features(app))
+  sync_popover::job_stats(&roster(app), &app.status, &feature_flags(app))
 }
 
 fn roster(app: &App) -> Vec<OwnedPilot> {
@@ -9317,7 +9317,14 @@ mod tests {
 
       assert_eq!(app.outbox.pending(), 1);
       assert_eq!(app.outbox.failed(), 1);
-      assert_eq!(app.status.total(), 0, "outbox events do not enter the job-keyed status");
+      assert_eq!(
+        app.status.phase(&sync::JobKey::new(
+          sync::JobKind::CharacterProfile,
+          sync::Subject::Character(1)
+        )),
+        None,
+        "outbox events do not enter the job-keyed status"
+      );
     }
 
     #[test]

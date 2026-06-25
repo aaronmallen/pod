@@ -4,6 +4,9 @@ use iced::window;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
+  // Registered by the foundation task; first constructed by the Calendar-detail conversion task.
+  #[allow(dead_code)]
+  CalendarEvent,
   Compare,
   Contract,
   Killmail,
@@ -13,6 +16,9 @@ pub enum Window {
   SkillPlanEditor,
   Splash,
   StockpileEditor,
+  // Registered by the foundation task; first constructed by the Stockpile-Import conversion task.
+  #[allow(dead_code)]
+  StockpileImport,
 }
 
 impl Window {
@@ -20,11 +26,13 @@ impl Window {
     match self {
       Self::Compare => Some("skills_compare"),
       Self::Main => Some("main"),
+      Self::ManagePlans => Some("skill_plan_manager"),
       Self::SkillPlanEditor => Some("skill_plan_editor"),
-      Self::Contract
+      Self::StockpileImport => Some("stockpile_import"),
+      Self::CalendarEvent
+      | Self::Contract
       | Self::Killmail
       | Self::MailCompose
-      | Self::ManagePlans
       | Self::Splash
       | Self::StockpileEditor => None,
     }
@@ -209,8 +217,22 @@ mod tests {
     fn it_never_persists_the_detached_child_windows() {
       assert_eq!(Window::Contract.state_key(), None);
       assert_eq!(Window::MailCompose.state_key(), None);
-      assert_eq!(Window::ManagePlans.state_key(), None);
       assert_eq!(Window::StockpileEditor.state_key(), None);
+    }
+
+    #[test]
+    fn it_never_persists_calendar_event() {
+      assert_eq!(Window::CalendarEvent.state_key(), None);
+    }
+
+    #[test]
+    fn it_maps_manage_plans_to_a_stable_key() {
+      assert_eq!(Window::ManagePlans.state_key(), Some("skill_plan_manager"));
+    }
+
+    #[test]
+    fn it_maps_stockpile_import_to_a_stable_key() {
+      assert_eq!(Window::StockpileImport.state_key(), Some("stockpile_import"));
     }
 
     #[test]

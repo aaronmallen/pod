@@ -3192,6 +3192,8 @@ fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
+    // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
+    // own conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(
       Window::Contract
       | Window::Killmail
@@ -3204,8 +3206,29 @@ fn theme(app: &App, id: window::Id) -> iced::Theme {
   }
 }
 
-fn title(_app: &App, _id: window::Id) -> String {
-  "Pod".to_string()
+fn title(app: &App, id: window::Id) -> String {
+  window_title(app, id)
+}
+
+/// Kind-aware OS title for the window `id`: one arm per `Window` kind so each conversion task
+/// fills in its own window's title on its own line. Multi-instance kinds derive their title from
+/// that window's per-id state; single-instance kinds use a constant. Unregistered ids fall back to
+/// the bare app name.
+fn window_title(app: &App, id: window::Id) -> String {
+  match app.windows.kind(id) {
+    Some(Window::CalendarEvent) => "Pod".to_string(),
+    Some(Window::Compare) => "Pod — Compare Skills".to_string(),
+    Some(Window::Contract) => "Pod — Contract".to_string(),
+    Some(Window::Killmail) => "Pod — Killmail".to_string(),
+    Some(Window::MailCompose) => "Pod — Compose Mail".to_string(),
+    Some(Window::Main) => "Pod".to_string(),
+    Some(Window::ManagePlans) => "Pod — Manage Skill Plans".to_string(),
+    Some(Window::SkillPlanEditor) => "Pod — Skill Plan Editor".to_string(),
+    Some(Window::Splash) => "Pod".to_string(),
+    Some(Window::StockpileEditor) => "Pod — Stockpile Editor".to_string(),
+    Some(Window::StockpileImport) => "Pod — Import Stockpile".to_string(),
+    None => "Pod".to_string(),
+  }
 }
 
 /// Always returns no monitors; window-position restore therefore falls back to the coordinate-range guard rather than per-display on-screen validation.
@@ -3324,6 +3347,31 @@ where
   })
 }
 
+/// Opens a real native-chrome OS window of `kind` and registers its id synchronously.
+///
+/// This is the single source of native-window open boilerplate. It builds an opaque, decorated,
+/// resizable `window::Settings`, restores persisted geometry when `kind.state_key()` is `Some(..)`
+/// (otherwise centers at `default_size`), calls `window::open`, and records `id -> kind` in the
+/// registry. `window::open` resolves the id immediately, so callers get it back directly with NO
+/// deferred `*WindowReady` round-trip.
+///
+/// Returns `(id, open_task)`: the caller seeds its per-window state under `id` and batches
+/// `open_task` (already mapped to `Message::WindowOpened`) alongside any loader it kicks off.
+fn open_native_window(app: &mut App, kind: Window, default_size: Size) -> (window::Id, Task<Message>) {
+  let (size, position) = restored_geometry(&app.ui_state, kind, default_size);
+  let settings = window::Settings {
+    size,
+    position,
+    decorations: true,
+    resizable: true,
+    icon: app_icon(),
+    ..window::Settings::default()
+  };
+  let (id, open_task) = window::open(settings);
+  app.windows.register(id, kind);
+  (id, open_task.map(Message::WindowOpened))
+}
+
 fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3343,26 +3391,16 @@ fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
     None => Task::none(),
   };
 
-  let (size, position) = restored_geometry(
-    &app.ui_state,
+  let (id, open_task) = open_native_window(
+    app,
     Window::Compare,
     Size::new(COMPARE_WINDOW_WIDTH, COMPARE_WINDOW_HEIGHT),
   );
-  let settings = window::Settings {
-    size,
-    position,
-    decorations: true,
-    resizable: true,
-    icon: app_icon(),
-    ..window::Settings::default()
-  };
-  let (id, open_task) = window::open(settings);
-  app.windows.register(id, Window::Compare);
   app.compare = Some((id, skills_compare::State::new(seed_ids.clone(), roster)));
 
   Task::batch([
     close_existing,
-    open_task.map(Message::WindowOpened),
+    open_task,
     skills_compare::load(&db, seed_ids).map(Message::Compare),
   ])
 }
@@ -3389,21 +3427,11 @@ fn open_editor_window(app: &mut App, character_id: i64, seed: skill_plan_editor:
     None => Task::none(),
   };
 
-  let (size, position) = restored_geometry(
-    &app.ui_state,
+  let (id, open_task) = open_native_window(
+    app,
     Window::SkillPlanEditor,
     Size::new(EDITOR_WINDOW_WIDTH, EDITOR_WINDOW_HEIGHT),
   );
-  let settings = window::Settings {
-    size,
-    position,
-    decorations: true,
-    resizable: true,
-    icon: app_icon(),
-    ..window::Settings::default()
-  };
-  let (id, open_task) = window::open(settings);
-  app.windows.register(id, Window::SkillPlanEditor);
   app.editor = Some((
     id,
     skill_plan_editor::State::new(character_id).with_restored_panes(&app.ui_state),
@@ -3411,7 +3439,7 @@ fn open_editor_window(app: &mut App, character_id: i64, seed: skill_plan_editor:
 
   Task::batch([
     close_existing,
-    open_task.map(Message::WindowOpened),
+    open_task,
     skill_plan_editor::load(&db, character_id, seed).map(Message::SkillPlanEditor),
   ])
 }
@@ -6753,6 +6781,8 @@ fn disable_shadow(_: window::Id) -> Task<Message> {
 
 fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
   match app.windows.kind(id) {
+    // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
+    // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(
       Window::Contract
       | Window::Killmail
@@ -6871,8 +6901,24 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
     Some(Window::ManagePlans) => manage_plans_window_view(app, id),
     Some(Window::SkillPlanEditor) => skill_plan_editor_window_view(app, id),
     Some(Window::StockpileEditor) => stockpile_editor_window_view(app, id),
+    Some(Window::CalendarEvent) => calendar_event_window_view(app, id),
+    Some(Window::StockpileImport) => stockpile_import_window_view(app, id),
     _ => blank(),
   }
+}
+
+// Native-window placeholder. The Calendar-detail conversion task replaces this body with its real
+// per-id view (look up state via an id-keyed `WindowStates<S>` like the killmail/contract views do).
+#[allow(unused_variables)]
+fn calendar_event_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  blank()
+}
+
+// Native-window placeholder. The Stockpile-Import conversion task replaces this body with its real
+// single-instance view.
+#[allow(unused_variables)]
+fn stockpile_import_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
+  blank()
 }
 
 fn splash_window_view(app: &App) -> Element<'_, Message> {
@@ -13535,6 +13581,52 @@ mod tests {
       let _ = open_centered_window(&app, Size::new(400.0, 300.0), |id| {
         Task::done(Message::WindowOpened(id))
       });
+    }
+  }
+
+  mod window_title {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_falls_back_to_the_app_name_for_an_unregistered_id() {
+      let app = test_app();
+
+      assert_eq!(window_title(&app, window::Id::unique()), "Pod");
+    }
+
+    #[test]
+    fn it_derives_a_per_kind_title_for_registered_windows() {
+      let mut app = test_app();
+      let compare = window::Id::unique();
+      let import = window::Id::unique();
+      app.windows.register(compare, Window::Compare);
+      app.windows.register(import, Window::StockpileImport);
+
+      assert_eq!(window_title(&app, compare), "Pod — Compare Skills");
+      assert_eq!(window_title(&app, import), "Pod — Import Stockpile");
+    }
+
+    #[test]
+    fn it_titles_the_main_window_with_the_bare_app_name() {
+      let mut app = test_app();
+      let main = window::Id::unique();
+      app.windows.register(main, Window::Main);
+
+      assert_eq!(window_title(&app, main), "Pod");
+    }
+  }
+
+  mod open_native_window {
+    use super::*;
+
+    #[test]
+    fn it_registers_the_kind_synchronously() {
+      let mut app = test_app();
+      let (id, _task) = super::super::open_native_window(&mut app, Window::Compare, Size::new(800.0, 600.0));
+
+      assert_eq!(app.windows.kind(id), Some(Window::Compare));
     }
   }
 

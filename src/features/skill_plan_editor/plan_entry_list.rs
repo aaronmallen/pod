@@ -8,14 +8,14 @@ use iced::{
 
 use super::{
   ACTIONS_COL_WIDTH, ATTR_COL_WIDTH, ComputedRow, EditRemap, GAP_START, Message, RemapControls, SP_COL_WIDTH, Sort,
-  SortColumn, TIME_COL_WIDTH,
+  SortColumn, SortDirection, TIME_COL_WIDTH,
   entry_row::entry_row,
   remap_divider::remap_divider,
   remap_insertion::{insertion_gap, remap_exhausted},
   stats_strip::stats_strip,
 };
 use crate::ui::{
-  components::rule,
+  components::{icon::Icon, rule},
   style::{color, radius, spacing, typography},
 };
 
@@ -254,16 +254,12 @@ fn sort_header<'a>(label: &'a str, column: SortColumn, width: f32, sort: Sort) -
       })
       .into(),
   ];
-  if let Some(caret) = sort.caret(column) {
-    children.push(
-      text(caret)
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(|_| text::Style {
-          color: Some(color::accent::PLASMA),
-        })
-        .into(),
-    );
+  if let Some(direction) = sort.caret(column) {
+    let caret = match direction {
+      SortDirection::Ascending => Icon::chevron_up(),
+      SortDirection::Descending => Icon::chevron_down(),
+    };
+    children.push(caret.size(typography::size::XS).color(color::accent::PLASMA).render());
   }
 
   button(

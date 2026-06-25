@@ -6,7 +6,7 @@ use iced::{
 
 use super::Message;
 use crate::ui::{
-  components::{rule, status},
+  components::{icon::Icon, rule, status},
   style::{color, radius, spacing, typography},
 };
 
@@ -124,7 +124,7 @@ fn inert_trigger<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> 
     row(vec![
       text(label).font(typography::body::REGULAR).size(13.0).into(),
       Space::new().width(spacing::SPACE_2).into(),
-      text("\u{25be}").font(typography::body::REGULAR).size(13.0).into(),
+      Icon::chevron_down().size(13.0).color(color::text::secondary()).render(),
     ])
     .align_y(Vertical::Center),
   )

@@ -10,7 +10,7 @@ use crate::{
     repo::{character, org, skills},
   },
   ui::{
-    components::{avatar::avatar, chip::chip, clip::clip_layer, eyebrow::eyebrow_text},
+    components::{avatar::avatar, chip::chip, clip::clip_layer, eyebrow::eyebrow_text, icon::Icon},
     style::{color, radius, spacing, typography},
   },
 };
@@ -803,11 +803,22 @@ fn ghost_button<'a>(label: &str, message: Message) -> Element<'a, Message> {
 }
 
 fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'a, Message> {
+  let label_color = if enabled {
+    color::accent::PLASMA
+  } else {
+    color::text::tertiary()
+  };
   let label = button(
-    text("Copy to \u{25be}")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(move |_| copy_button_label_style(enabled)),
+    Row::with_children(vec![
+      text("Copy to")
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM)
+        .style(move |_| copy_button_label_style(enabled))
+        .into(),
+      Icon::chevron_down().size(13.0).color(label_color).render(),
+    ])
+    .spacing(spacing::UNIT)
+    .align_y(Vertical::Center),
   )
   .padding(Padding {
     top: 6.0,

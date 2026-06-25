@@ -5,7 +5,10 @@ use iced::{
 };
 
 use super::super::Message;
-use crate::ui::style::{color, spacing, typography};
+use crate::ui::{
+  components::icon::Icon,
+  style::{color, spacing, typography},
+};
 
 pub(in crate::features::skill_plan_editor) fn group_header(
   id: i64,
@@ -14,13 +17,14 @@ pub(in crate::features::skill_plan_editor) fn group_header(
   total_skills: usize,
   open: bool,
 ) -> Element<'_, Message> {
-  let chevron = text(if open { "\u{25be}" } else { "\u{25b8}" })
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS_PLUS)
+  let chevron_icon = if open {
+    Icon::chevron_down()
+  } else {
+    Icon::chevron_right()
+  };
+  let chevron = container(chevron_icon.size(12.0).color(color::text::secondary()).render())
     .width(Length::Fixed(12.0))
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    });
+    .align_y(Vertical::Center);
 
   let label = text(name.to_owned())
     .font(typography::body::MEDIUM)

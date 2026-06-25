@@ -6,7 +6,7 @@ use iced::{
 
 use super::{EditRemap, Message, REMAP_ATTR_ORDER, attr_value, attribute_to_attr_key};
 use crate::ui::{
-  components::eyebrow::eyebrow,
+  components::{eyebrow::eyebrow, icon::Icon},
   style::{color, typography},
 };
 
@@ -110,9 +110,9 @@ fn stepper<'a>(local_id: i64, attribute: super::Attribute, value: u32) -> Elemen
     .into(),
     Space::new().width(4.0).into(),
     column(vec![
-      step_btn("\u{25b2}", Message::RemapAttrBumped(local_id, key, 1)),
+      step_btn(Icon::chevron_up(), Message::RemapAttrBumped(local_id, key, 1)),
       Space::new().height(1.0).into(),
-      step_btn("\u{25bc}", Message::RemapAttrBumped(local_id, key, -1)),
+      step_btn(Icon::chevron_down(), Message::RemapAttrBumped(local_id, key, -1)),
     ])
     .into(),
   ])
@@ -137,33 +137,26 @@ fn stepper<'a>(local_id: i64, attribute: super::Attribute, value: u32) -> Elemen
     .into()
 }
 
-fn step_btn<'a>(glyph: &'a str, message: Message) -> Element<'a, Message> {
-  button(
-    text(glyph)
-      .font(typography::mono::REGULAR)
-      .size(7.0)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(0.0)
-  .width(Length::Fixed(14.0))
-  .height(Length::Fixed(9.0))
-  .on_press(message)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.2)))
-      }
-      _ => None,
-    },
-    border: Border {
-      radius: 2.0.into(),
-      ..Border::default()
-    },
-    ..button::Style::default()
-  })
-  .into()
+fn step_btn<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
+  button(icon.size(7.0).color(color::text::secondary()).render())
+    .padding(0.0)
+    .width(Length::Fixed(14.0))
+    .height(Length::Fixed(9.0))
+    .on_press(message)
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => {
+          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.2)))
+        }
+        _ => None,
+      },
+      border: Border {
+        radius: 2.0.into(),
+        ..Border::default()
+      },
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn remove_btn<'a>(local_id: i64) -> Element<'a, Message> {

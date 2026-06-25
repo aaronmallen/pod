@@ -269,11 +269,8 @@ impl Sort {
     }
   }
 
-  pub fn caret(self, column: SortColumn) -> Option<&'static str> {
-    (self.column == column).then_some(match self.direction {
-      SortDirection::Ascending => "\u{2191}",
-      SortDirection::Descending => "\u{2193}",
-    })
+  pub fn caret(self, column: SortColumn) -> Option<SortDirection> {
+    (self.column == column).then_some(self.direction)
   }
 
   pub fn is_active(self, column: SortColumn) -> bool {
@@ -4651,7 +4648,7 @@ mod tests {
         direction: SortDirection::Descending,
       };
 
-      assert_eq!(sort.caret(SortColumn::Secondary), Some("\u{2193}"));
+      assert_eq!(sort.caret(SortColumn::Secondary), Some(SortDirection::Descending));
       assert_eq!(sort.caret(SortColumn::Time), None);
       assert_eq!(sort.caret(SortColumn::Primary), None);
     }

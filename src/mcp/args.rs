@@ -13,6 +13,8 @@ pub enum ArgType {
   Integer,
   IntegerArray,
   OptionalInteger { default: i64 },
+  OptionalIntegerArray,
+  OptionalString,
   String,
 }
 
@@ -23,13 +25,18 @@ impl ArgType {
       | ArgType::OptionalInteger {
         ..
       } => json!({ "type": "integer" }),
-      ArgType::IntegerArray => json!({ "type": "array", "items": { "type": "integer" } }),
-      ArgType::String => json!({ "type": "string" }),
+      ArgType::IntegerArray | ArgType::OptionalIntegerArray => {
+        json!({ "type": "array", "items": { "type": "integer" } })
+      }
+      ArgType::OptionalString | ArgType::String => json!({ "type": "string" }),
     }
   }
 
   fn required(self) -> bool {
-    !matches!(self, ArgType::OptionalInteger { .. })
+    !matches!(
+      self,
+      ArgType::OptionalInteger { .. } | ArgType::OptionalIntegerArray | ArgType::OptionalString
+    )
   }
 }
 
@@ -64,6 +71,22 @@ impl ArgSpec {
       ty: ArgType::OptionalInteger {
         default,
       },
+    }
+  }
+
+  pub fn optional_integer_array(name: &'static str, description: &'static str) -> Self {
+    Self {
+      description,
+      name,
+      ty: ArgType::OptionalIntegerArray,
+    }
+  }
+
+  pub fn optional_string(name: &'static str, description: &'static str) -> Self {
+    Self {
+      description,
+      name,
+      ty: ArgType::OptionalString,
     }
   }
 
@@ -299,6 +322,22 @@ mod tests {
       assert!(required.contains(&json!("name")));
       assert!(required.contains(&json!("ids")));
       assert!(!required.contains(&json!("page")));
+    }
+
+    #[test]
+    fn it_keeps_optional_string_and_array_args_out_of_required() {
+      let schema = input_schema(&[
+        ArgSpec::optional_string("month", "A month"),
+        ArgSpec::optional_integer_array("type_ids", "A list of type ids"),
+      ]);
+
+      assert_eq!(schema["properties"]["month"]["type"], "string");
+      assert_eq!(schema["properties"]["type_ids"]["type"], "array");
+      assert_eq!(schema["properties"]["type_ids"]["items"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(!required.contains(&json!("month")));
+      assert!(!required.contains(&json!("type_ids")));
     }
   }
 }

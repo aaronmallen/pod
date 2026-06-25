@@ -202,8 +202,7 @@ fn list_contracts_tool() -> McpTool {
 fn get_budget_view_tool() -> McpTool {
   McpTool::new(
     "get_budget_view",
-    "Returns the global budget envelopes, assignments, and Ready-to-Assign for a month. Args: month (YYYY-MM, \
-      defaults to current).",
+    "Returns the global budget envelopes, assignments, and Ready-to-Assign for a month.",
     Permission::Read,
     |db, args: Value| async move {
       let month = args
@@ -241,6 +240,10 @@ fn get_budget_view_tool() -> McpTool {
       }))
     },
   )
+  .with_args([ArgSpec::optional_string(
+    "month",
+    "A budget month (YYYY-MM); omit to use the current month.",
+  )])
 }
 
 fn get_skills_tool() -> McpTool {
@@ -505,7 +508,7 @@ fn get_mail_body_tool() -> McpTool {
 fn get_market_prices_tool() -> McpTool {
   McpTool::new(
     "get_market_prices",
-    "Returns the canonical per-type market prices (adjusted/average). Optional args: type_ids (array).",
+    "Returns the canonical per-type market prices (adjusted/average).",
     Permission::Read,
     |db, args: Value| async move {
       let filter: Option<Vec<i64>> = args
@@ -528,6 +531,10 @@ fn get_market_prices_tool() -> McpTool {
       Ok(json!({ "prices": rows }))
     },
   )
+  .with_args([ArgSpec::optional_integer_array(
+    "type_ids",
+    "Type ids to filter prices by; omit to return every type.",
+  )])
 }
 
 fn internal(error: impl std::fmt::Display) -> ToolError {
@@ -643,6 +650,24 @@ mod tests {
 
       assert_eq!(schema["properties"]["character_id"]["type"], "integer");
       assert!(schema["required"].as_array().unwrap().contains(&json!("character_id")));
+    }
+
+    #[test]
+    fn get_budget_view_advertises_an_optional_string_month() {
+      let schema = schema("get_budget_view");
+
+      assert_eq!(schema["properties"]["month"]["type"], "string");
+      assert!(!schema["properties"].as_object().unwrap().is_empty());
+      assert!(!schema["required"].as_array().unwrap().contains(&json!("month")));
+    }
+
+    #[test]
+    fn get_market_prices_advertises_an_optional_integer_array() {
+      let schema = schema("get_market_prices");
+
+      assert_eq!(schema["properties"]["type_ids"]["type"], "array");
+      assert_eq!(schema["properties"]["type_ids"]["items"]["type"], "integer");
+      assert!(!schema["required"].as_array().unwrap().contains(&json!("type_ids")));
     }
 
     #[test]

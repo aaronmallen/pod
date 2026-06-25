@@ -2,7 +2,10 @@ use serde_json::{Value, json};
 
 use crate::{
   clients::esi::scopes,
-  mcp::tool::{McpTool, Permission, ToolError},
+  mcp::{
+    args::{ArgSpec, require_i64, require_i64_array, require_str},
+    tool::{McpTool, Permission, ToolError},
+  },
   store::{
     Database,
     model::{CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailRecipient, OwnerType},
@@ -17,8 +20,7 @@ pub fn tools() -> Vec<McpTool> {
 fn send_mail_tool() -> McpTool {
   McpTool::new(
     "send_mail",
-    "Queues an EVE mail for delivery through Pod's outbox (optimistic Sent insert, real ESI send by the drainer). \
-      Args: character_id (sender), subject, body, recipients [{id, type?}].",
+    "Queues an EVE mail for delivery through Pod's outbox (optimistic Sent insert, real ESI send by the drainer).",
     Permission::SendMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -46,13 +48,22 @@ fn send_mail_tool() -> McpTool {
       Ok(json!({ "optimistic_mail_id": mail_id, "queued": true }))
     },
   )
+  .with_args([
+    ArgSpec::integer("character_id", "The sending character's id."),
+    ArgSpec::string("subject", "The mail subject line."),
+    ArgSpec::string("body", "The mail body text."),
+    ArgSpec::integer_array(
+      "recipients",
+      "The recipients as an array of objects, each `{ id: integer, type?: string }` where `type` defaults to `character` (e.g. `character`, `corporation`, `alliance`, `mailing_list`). At least one is required.",
+    ),
+  ])
 }
 
 fn delete_mail_tool() -> McpTool {
   McpTool::new(
     "delete_mail",
     "Permanently deletes a mail from Pod and the EVE mailbox through the outbox (optimistic purge, real ESI delete by \
-      the drainer, restore-on-failure). Args: character_id, mail_id.",
+      the drainer, restore-on-failure).",
     Permission::DeleteMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -75,13 +86,16 @@ fn delete_mail_tool() -> McpTool {
       Ok(json!({ "mail_id": mail_id, "queued": true }))
     },
   )
+  .with_args([
+    ArgSpec::integer("character_id", "The owning character's id."),
+    ArgSpec::integer("mail_id", "The id of the mail to delete."),
+  ])
 }
 
 fn manage_labels_tool() -> McpTool {
   McpTool::new(
     "manage_labels",
-    "Creates or deletes a mail label, or sets a mail's labels, through the outbox. Args: character_id, action \
-      (create_label|delete_label|set_labels), name+color? (create), label_id (delete), mail_id+labels[] (set).",
+    "Creates or deletes a mail label, or sets a mail's labels, through the outbox.",
     Permission::ManageLabels,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -96,6 +110,35 @@ fn manage_labels_tool() -> McpTool {
       }
     },
   )
+  .with_args([
+    ArgSpec::integer("character_id", "The owning character's id."),
+    ArgSpec::string(
+      "action",
+      "Which operation to perform: `create_label`, `delete_label`, or `set_labels`.",
+    ),
+    ArgSpec::string(
+      "name",
+      "The label name. Required (and must be non-blank) when `action` is `create_label`; ignored otherwise.",
+    ),
+    ArgSpec::string(
+      "color",
+      "Optional label color (e.g. `#ffffff`) used when `action` is `create_label`.",
+    ),
+    ArgSpec::optional_integer(
+      "label_id",
+      0,
+      "The id of the label to remove. Required when `action` is `delete_label`.",
+    ),
+    ArgSpec::optional_integer(
+      "mail_id",
+      0,
+      "The id of the mail whose labels to set. Required when `action` is `set_labels`.",
+    ),
+    ArgSpec::integer_array(
+      "labels",
+      "The full set of label ids the mail should carry. Required when `action` is `set_labels`.",
+    ),
+  ])
 }
 
 async fn create_label(db: &Database, character_id: i64, args: &Value) -> Result<Value, ToolError> {
@@ -297,35 +340,6 @@ async fn require_scope(
       "character {character_id} has not granted the `{scope}` scope required by {permission}; re-authorize in Pod"
     )))
   }
-}
-
-fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
-  args
-    .get(key)
-    .and_then(Value::as_i64)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be an integer")))
-}
-
-fn require_i64_array(args: &Value, key: &str) -> Result<Vec<i64>, ToolError> {
-  let items = args
-    .get(key)
-    .and_then(Value::as_array)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must be an array of integers")))?;
-  items
-    .iter()
-    .map(|item| {
-      item
-        .as_i64()
-        .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` must contain only integers")))
-    })
-    .collect()
-}
-
-fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, ToolError> {
-  args
-    .get(key)
-    .and_then(Value::as_str)
-    .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be a string")))
 }
 
 #[cfg(test)]
@@ -796,33 +810,80 @@ mod tests {
     }
   }
 
-  mod require_i64_array {
+  mod arg_specs {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::mcp::args::input_schema;
 
-    #[test]
-    fn it_reads_an_integer_array() {
-      assert_eq!(
-        super::super::require_i64_array(&json!({ "labels": [1, 2, 3] }), "labels").unwrap(),
-        vec![1, 2, 3]
-      );
+    fn schema_for(name: &str) -> Value {
+      let tool = tools()
+        .into_iter()
+        .find(|tool| tool.name() == name)
+        .expect("tool exists");
+      input_schema(tool.args())
     }
 
     #[test]
-    fn it_errors_when_the_value_is_not_an_array() {
-      assert!(matches!(
-        super::super::require_i64_array(&json!({}), "labels"),
-        Err(ToolError::InvalidArguments(_))
-      ));
+    fn send_mail_advertises_its_arguments() {
+      let schema = schema_for("send_mail");
+
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["subject"]["type"], "string");
+      assert_eq!(schema["properties"]["body"]["type"], "string");
+      assert_eq!(schema["properties"]["recipients"]["type"], "array");
+
+      let required = schema["required"].as_array().unwrap();
+      for arg in ["character_id", "subject", "body", "recipients"] {
+        assert!(required.contains(&json!(arg)), "{arg} must be required");
+      }
     }
 
     #[test]
-    fn it_errors_when_an_element_is_not_an_integer() {
-      assert!(matches!(
-        super::super::require_i64_array(&json!({ "labels": [1, "two"] }), "labels"),
-        Err(ToolError::InvalidArguments(_))
-      ));
+    fn delete_mail_advertises_its_integer_ids() {
+      let schema = schema_for("delete_mail");
+
+      assert_eq!(schema["properties"]["character_id"]["type"], "integer");
+      assert_eq!(schema["properties"]["mail_id"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("character_id")));
+      assert!(required.contains(&json!("mail_id")));
+    }
+
+    #[test]
+    fn manage_labels_advertises_action_and_the_labels_array() {
+      let schema = schema_for("manage_labels");
+
+      assert_eq!(schema["properties"]["action"]["type"], "string");
+      assert_eq!(schema["properties"]["labels"]["type"], "array");
+      assert_eq!(schema["properties"]["labels"]["items"]["type"], "integer");
+
+      let required = schema["required"].as_array().unwrap();
+      assert!(required.contains(&json!("character_id")));
+      assert!(required.contains(&json!("action")));
+      assert!(!required.contains(&json!("label_id")));
+    }
+
+    #[tokio::test]
+    async fn delete_mail_coerces_a_numeric_string_id() {
+      let db = database().await;
+      seed_character_with_scopes(&db, 42, scopes::CHARACTER_MAIL_ORGANIZE).await;
+      seed_mail(&db, 42, 7000).await;
+      let registry = registry();
+
+      let value = registry
+        .dispatch(
+          "delete_mail",
+          &all_mail_perms(),
+          db.clone(),
+          json!({ "character_id": "42", "mail_id": "7000" }),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(value.get("mail_id").and_then(Value::as_i64), Some(7000));
+      assert_eq!(pending_outbox(&db, "mail.delete").await, 1);
     }
   }
 }

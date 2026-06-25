@@ -15,13 +15,20 @@ mod year;
 use chrono::{DateTime, Utc};
 use iced::{Element, Task};
 
-pub use self::loaders::{CalendarEvent, RosterPilot};
+pub use self::{
+  loaders::{CalendarEvent, RosterPilot},
+  palette::Response,
+};
 use crate::{
   config::{CalendarTweaks, FeatureFlags},
   store::{Database, images, model::AttendeeTally},
 };
 
 pub const EMPTY_CALENDAR_SELECTION: i64 = 0;
+
+pub const EVENT_WINDOW_HEIGHT: f32 = 760.0;
+
+pub const EVENT_WINDOW_WIDTH: f32 = 660.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Scope {
@@ -89,17 +96,23 @@ pub enum Message {
   CursorPrev,
   CursorToday,
   DatePicked(DateTime<Utc>, View),
-  DetailAttendeesLoaded(Box<Option<AttendeeTally>>),
-  DetailClosed,
   EventOpened(i64, i64),
   FeaturesChanged(FeatureFlags),
   Loaded(Box<Loaded>),
   PickerToggled,
   ReauthRequested(i64),
-  Responded(i64, i64, palette::Response),
-  RsvpWritten,
   ScopeSelected(Scope),
   ViewSelected(View),
+}
+
+/// A per-window message for a detached calendar-event window. Each open event lives in its own native
+/// OS window keyed by `window::Id`, so these never flow through the main calendar `update`; the app
+/// shell routes them to [`event_window_update`].
+#[derive(Clone, Debug)]
+pub enum EventMessage {
+  AttendeesLoaded(Box<Option<AttendeeTally>>),
+  Responded(Response),
+  RsvpWritten,
 }
 
 impl Message {
@@ -115,7 +128,6 @@ impl Message {
 pub struct State {
   active: Scope,
   cursor: DateTime<Utc>,
-  detail: Option<Detail>,
   events: Vec<CalendarEvent>,
   features: FeatureFlags,
   picker_open: bool,
@@ -133,7 +145,6 @@ impl State {
         Scope::Mine(active)
       },
       cursor,
-      detail: None,
       events: Vec::new(),
       features,
       picker_open: false,
@@ -187,8 +198,17 @@ impl State {
     self.cursor
   }
 
-  pub(super) fn detail(&self) -> Option<&Detail> {
-    self.detail.as_ref()
+  /// Resolves the data a detached event window needs from the live calendar: the event itself plus
+  /// the owning pilot's display name. Returns `None` when the (character, event) pair is no longer
+  /// visible (e.g. the scope changed before the click resolved).
+  pub fn event_for(&self, character_id: i64, event_id: i64) -> Option<(CalendarEvent, Option<String>)> {
+    let event = self
+      .visible_events()
+      .into_iter()
+      .find(|event| event.character_id == character_id && event.event_id == event_id)?
+      .clone();
+    let pilot_name = self.pilot(character_id).map(|pilot| pilot.name.clone());
+    Some((event, pilot_name))
   }
 
   pub(super) fn picker_open(&self) -> bool {
@@ -258,11 +278,56 @@ impl State {
   }
 }
 
-#[derive(Debug)]
-pub(super) struct Detail {
+/// Per-window state for a detached calendar-event window: the resolved event, its loaded attendee
+/// tally (once the endpoint resolves), the owning pilot's display name, whether to mirror EVE times
+/// into local time, and the response value last seen locally (used to compensate an RSVP write).
+#[derive(Clone, Debug)]
+pub struct EventWindow {
   attendees: Option<AttendeeTally>,
-  character_id: i64,
-  event_id: i64,
+  event: CalendarEvent,
+  local_time: bool,
+  pilot_name: Option<String>,
+  previous_response: String,
+}
+
+impl EventWindow {
+  pub fn new(event: CalendarEvent, pilot_name: Option<String>, local_time: bool, previous_response: String) -> Self {
+    EventWindow {
+      attendees: None,
+      event,
+      local_time,
+      pilot_name,
+      previous_response,
+    }
+  }
+
+  #[cfg(test)]
+  pub(super) fn with_attendees(mut self, attendees: Option<AttendeeTally>) -> Self {
+    self.attendees = attendees;
+    self
+  }
+
+  #[cfg(test)]
+  pub(super) fn character_id(&self) -> i64 {
+    self.event.character_id
+  }
+
+  #[cfg(test)]
+  pub(super) fn event_id(&self) -> i64 {
+    self.event.event_id
+  }
+
+  pub fn title(&self) -> &str {
+    &self.event.title
+  }
+
+  pub(super) fn owner_kind(&self) -> palette::OwnerType {
+    self.event.owner_kind()
+  }
+
+  fn set_attendees(&mut self, attendees: Option<AttendeeTally>) {
+    self.attendees = attendees;
+  }
 }
 
 pub fn load(db: &Database, character: i64, features: FeatureFlags) -> Task<Message> {
@@ -303,26 +368,9 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       state.view = view;
       Task::none()
     }
-    Message::DetailAttendeesLoaded(tally) => {
-      if let Some(detail) = state.detail.as_mut() {
-        detail.attendees = *tally;
-      }
-      Task::none()
-    }
-    Message::DetailClosed => {
-      state.detail = None;
-      Task::none()
-    }
-    Message::EventOpened(character_id, event_id) => {
-      state.detail = Some(Detail {
-        attendees: None,
-        character_id,
-        event_id,
-      });
-      Task::perform(load_attendees(db.clone(), character_id, event_id), |tally| {
-        Message::DetailAttendeesLoaded(Box::new(tally))
-      })
-    }
+    // Opening an event is intercepted by the app shell to spawn a native window before this update
+    // runs, so reaching this arm is a no-op safety net.
+    Message::EventOpened(_, _) => Task::none(),
     Message::Loaded(loaded) => {
       let Loaded {
         events,
@@ -347,12 +395,9 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
       Task::none()
     }
     Message::ReauthRequested(_) => Task::none(),
-    Message::Responded(character_id, event_id, response) => respond_to(state, db, character_id, event_id, response),
-    Message::RsvpWritten => reload(db, state.active, state.features),
     Message::ScopeSelected(scope) => {
       state.active = scope;
       state.picker_open = false;
-      state.detail = None;
       reload(db, scope, state.features)
     }
     Message::ViewSelected(view) => {
@@ -364,6 +409,47 @@ pub fn update(state: &mut State, message: Message, db: &Database, now: DateTime<
 
 pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   shell::shell(state, now)
+}
+
+/// Loads the attendee tally for a freshly opened event window. The result threads back as
+/// [`EventMessage::AttendeesLoaded`], routed to that window by its `window::Id` in the app shell.
+pub fn load_event_attendees(db: &Database, character_id: i64, event_id: i64) -> Task<EventMessage> {
+  Task::perform(load_attendees(db.clone(), character_id, event_id), |tally| {
+    EventMessage::AttendeesLoaded(Box::new(tally))
+  })
+}
+
+/// Applies a per-window event message to its [`EventWindow`]: adopting a loaded attendee tally,
+/// optimistically flipping the local response and enqueuing the RSVP write, or absorbing the
+/// write-completed acknowledgement. RSVP writes need the database, so this returns the follow-up task.
+pub fn event_window_update(window: &mut EventWindow, message: EventMessage, db: &Database) -> Task<EventMessage> {
+  match message {
+    EventMessage::AttendeesLoaded(tally) => {
+      window.set_attendees(*tally);
+      Task::none()
+    }
+    EventMessage::Responded(response) => {
+      let previous = std::mem::replace(&mut window.previous_response, response.as_esi().to_owned());
+      window.event.response = response.as_esi().to_owned();
+      Task::perform(
+        respond::respond(
+          db.clone(),
+          window.event.character_id,
+          window.event.event_id,
+          response.as_esi().to_owned(),
+          previous,
+        ),
+        |()| EventMessage::RsvpWritten,
+      )
+    }
+    EventMessage::RsvpWritten => Task::none(),
+  }
+}
+
+/// The detached event window's content: an in-content header (subject as the OS-mirrored title plus a
+/// close affordance) above the scrollable event card.
+pub fn event_window_view(window: &EventWindow) -> Element<'_, EventMessage> {
+  shell::event_window(window)
 }
 
 fn advance(cursor: DateTime<Utc>, view: View, direction: i64) -> DateTime<Utc> {
@@ -404,32 +490,6 @@ async fn load_calendar(db: Database, scope: Scope, features: FeatureFlags) -> Lo
 
 fn registry_scopes() -> &'static [&'static str] {
   crate::features::registry::descriptor(crate::config::Feature::Calendar).scopes
-}
-
-fn respond_to(
-  state: &State,
-  db: &Database,
-  character_id: i64,
-  event_id: i64,
-  response: palette::Response,
-) -> Task<Message> {
-  let previous = state
-    .events
-    .iter()
-    .find(|event| event.character_id == character_id && event.event_id == event_id)
-    .map(|event| event.response.clone())
-    .unwrap_or_else(|| palette::Response::NotResponded.as_esi().to_owned());
-
-  Task::perform(
-    respond::respond(
-      db.clone(),
-      character_id,
-      event_id,
-      response.as_esi().to_owned(),
-      previous,
-    ),
-    |()| Message::RsvpWritten,
-  )
 }
 
 #[cfg(test)]
@@ -568,35 +628,10 @@ mod tests {
       let _ = update(&mut state, Message::CursorPrev, &db, n);
       let _ = update(&mut state, Message::CursorToday, &db, n);
       let _ = update(&mut state, Message::DatePicked(n, View::Day), &db, n);
+      // EventOpened is intercepted by the app shell to spawn a window, so its update arm is a no-op.
       let _ = update(&mut state, Message::EventOpened(1, 10), &db, n);
-      let _ = update(
-        &mut state,
-        Message::DetailAttendeesLoaded(Box::new(Some(AttendeeTally {
-          accepted: 1,
-          declined: 0,
-          invited: 2,
-          tentative: 1,
-        }))),
-        &db,
-        n,
-      );
-      let _ = update(&mut state, Message::DetailClosed, &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
-      let _ = update(
-        &mut state,
-        Message::Responded(1, 10, palette::Response::Accepted),
-        &db,
-        n,
-      );
-      // A response for an event the state does not know falls back to "not responded".
-      let _ = update(
-        &mut state,
-        Message::Responded(1, 999, palette::Response::Declined),
-        &db,
-        n,
-      );
-      let _ = update(&mut state, Message::RsvpWritten, &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Mine(1)), &db, n);
 
       // A load that matches the active scope is adopted; a stale one is dropped.
@@ -684,30 +719,80 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_pod_overlay_event_detail() {
-      let mut state = populated();
-      state.detail = Some(Detail {
-        attendees: None,
-        character_id: 1,
-        event_id: 14,
-      });
-      let _el: Element<'_, Message> = view(&state, now());
+    fn it_renders_a_pod_overlay_event_window() {
+      let state = populated();
+      let (event, pilot_name) = state.event_for(1, 14).unwrap();
+      let window = EventWindow::new(
+        event,
+        pilot_name,
+        false,
+        palette::Response::NotResponded.as_esi().to_owned(),
+      );
+
+      let _el: Element<'_, EventMessage> = event_window_view(&window);
     }
 
     #[test]
-    fn it_renders_the_respondable_event_detail_with_attendees() {
-      let mut state = populated();
-      state.detail = Some(Detail {
-        attendees: Some(AttendeeTally {
-          accepted: 3,
-          declined: 1,
-          invited: 6,
-          tentative: 2,
-        }),
-        character_id: 1,
-        event_id: 10,
-      });
-      let _el: Element<'_, Message> = view(&state, now());
+    fn it_renders_a_respondable_event_window_with_attendees() {
+      let state = populated();
+      let (event, pilot_name) = state.event_for(1, 10).unwrap();
+      let window = EventWindow::new(
+        event,
+        pilot_name,
+        true,
+        palette::Response::NotResponded.as_esi().to_owned(),
+      )
+      .with_attendees(Some(AttendeeTally {
+        accepted: 3,
+        declined: 1,
+        invited: 6,
+        tentative: 2,
+      }));
+
+      let _el: Element<'_, EventMessage> = event_window_view(&window);
+    }
+  }
+
+  mod event_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_loads_attendees_and_writes_an_optimistic_response() {
+      let db = crate::store::open_test().await.unwrap();
+      let state = populated();
+      let (event, pilot_name) = state.event_for(1, 10).unwrap();
+      let mut window = EventWindow::new(
+        event,
+        pilot_name,
+        true,
+        palette::Response::NotResponded.as_esi().to_owned(),
+      );
+
+      let _ = load_event_attendees(&db, window.character_id(), window.event_id());
+      let _ = event_window_update(
+        &mut window,
+        EventMessage::AttendeesLoaded(Box::new(Some(AttendeeTally {
+          accepted: 1,
+          declined: 0,
+          invited: 2,
+          tentative: 1,
+        }))),
+        &db,
+      );
+      assert!(window.attendees.is_some());
+
+      let _ = event_window_update(&mut window, EventMessage::Responded(palette::Response::Accepted), &db);
+      assert_eq!(window.event.response, "accepted");
+
+      let _ = event_window_update(&mut window, EventMessage::RsvpWritten, &db);
+    }
+
+    #[test]
+    fn it_returns_none_for_an_event_outside_the_visible_set() {
+      let state = populated();
+      assert!(state.event_for(1, 9_999).is_none());
     }
   }
 

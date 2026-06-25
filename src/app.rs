@@ -173,6 +173,7 @@ struct App {
   auth: auth::State,
   calendar: Option<calendar::State>,
   calendar_attention: i64,
+  calendar_events: WindowStates<calendar::EventWindow>,
   character_detail: Option<character_detail::State>,
   character_manager: Option<character_manager::State>,
   /// Monotonic count of 1-second clock ticks, used to stagger the periodic interactive-DB checks
@@ -326,6 +327,7 @@ enum Message {
   Auth(auth::Message),
   Calendar(calendar::Message),
   CalendarAttentionCounted(i64),
+  CalendarEvent(window::Id, calendar::EventMessage),
   CancelTakeOver,
   CharacterDetail(character_detail::Message),
   CharacterManager(character_manager::Message),
@@ -474,6 +476,7 @@ impl Message {
       Message::Auth(_) => "Auth",
       Message::Calendar(_) => "Calendar",
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
+      Message::CalendarEvent(..) => "CalendarEvent",
       Message::CharacterDetail(_) => "CharacterDetail",
       Message::CharacterManager(_) => "CharacterManager",
       Message::Compare(_) => "Compare",
@@ -988,6 +991,7 @@ fn boot() -> (App, Task<Message>) {
     auth: auth::State::default(),
     calendar: None,
     calendar_attention: 0,
+    calendar_events: WindowStates::default(),
     character_detail: None,
     character_manager: None,
     clock_tick: 0,
@@ -1371,6 +1375,7 @@ fn ui_config(app: &App) -> config::UiConfig {
 
 fn handle_close_requested(app: &mut App, id: window::Id) -> Task<Message> {
   let close = match app.windows.kind(id) {
+    Some(Window::CalendarEvent) => close_calendar_event_window(app, id),
     Some(Window::Compare) => close_compare_window(app, id),
     Some(Window::Contract) => close_contract_window(app, id),
     Some(Window::Killmail) => close_killmail_window(app, id),
@@ -1391,6 +1396,9 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
     return Task::none();
   };
   match kind {
+    Window::CalendarEvent => {
+      app.calendar_events.remove(id);
+    }
     Window::Compare if app.compare.as_ref().map(|(cid, _)| *cid) == Some(id) => app.compare = None,
     Window::Contract => {
       app.contracts.remove(id);
@@ -3180,7 +3188,11 @@ fn title(app: &App, id: window::Id) -> String {
 /// the bare app name.
 fn window_title(app: &App, id: window::Id) -> String {
   match app.windows.kind(id) {
-    Some(Window::CalendarEvent) => "Pod".to_string(),
+    Some(Window::CalendarEvent) => app
+      .calendar_events
+      .get(id)
+      .map(|window| format!("Pod \u{2014} {}", window.title()))
+      .unwrap_or_else(|| "Pod \u{2014} Event".to_string()),
     Some(Window::Compare) => "Pod — Compare Skills".to_string(),
     Some(Window::Contract) => match app.contracts.get(id) {
       Some(state) => format!("Pod \u{2014} {}", state.title()),
@@ -4010,6 +4022,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::Auth(msg) => handle_auth(app, msg),
     Message::Calendar(msg) => handle_calendar(app, msg),
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
+    Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
     Message::CharacterManager(msg) => handle_character_manager(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
@@ -5863,11 +5876,72 @@ fn handle_calendar(app: &mut App, msg: calendar::Message) -> Task<Message> {
     return update(app, Message::ReauthCharacter(id));
   }
 
+  // Opening an event is promoted to a detached native window rather than handled inline.
+  if let calendar::Message::EventOpened(character_id, event_id) = msg {
+    return open_calendar_event_window(app, character_id, event_id);
+  }
+
   let (Some(state), Some(runtime)) = (app.calendar.as_mut(), app.runtime.as_ref()) else {
     return Task::none();
   };
 
   calendar::update(state, msg, &runtime.db, app.now).map(Message::Calendar)
+}
+
+/// Opens a detached native-chrome calendar-event window. The window is multi-instance: every open
+/// mints a fresh `window::Id`, so several event windows can coexist (duplicates included). The event
+/// and its owning pilot are resolved from the live calendar at open time, the per-window state is
+/// seeded synchronously, and the attendee tally loads in the background routed by id.
+fn open_calendar_event_window(app: &mut App, character_id: i64, event_id: i64) -> Task<Message> {
+  let (Some(calendar), Some(runtime)) = (app.calendar.as_ref(), app.runtime.as_ref()) else {
+    return Task::none();
+  };
+  let Some((event, pilot_name)) = calendar.event_for(character_id, event_id) else {
+    return Task::none();
+  };
+  let local_time = calendar.tweaks().local_time();
+  let previous_response = event.response.clone();
+  let db = runtime.db.clone();
+
+  let size = Size::new(calendar::EVENT_WINDOW_WIDTH, calendar::EVENT_WINDOW_HEIGHT);
+  let (id, open_task) = open_native_window(app, Window::CalendarEvent, size);
+  app.calendar_events.insert(
+    id,
+    calendar::EventWindow::new(event, pilot_name, local_time, previous_response),
+  );
+
+  Task::batch([
+    open_task,
+    calendar::load_event_attendees(&db, character_id, event_id).map(move |msg| Message::CalendarEvent(id, msg)),
+  ])
+}
+
+/// Routes a per-window calendar-event message to its [`EventWindow`] and applies it (attendee load,
+/// optimistic RSVP write, or write acknowledgement). An RSVP write also refreshes the main calendar so
+/// the underlying grid reflects the new response once the local mirror flips.
+fn handle_calendar_event(app: &mut App, id: window::Id, msg: calendar::EventMessage) -> Task<Message> {
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  let reload_main = matches!(msg, calendar::EventMessage::RsvpWritten);
+  let db = runtime.db.clone();
+
+  let Some(window) = app.calendar_events.get_mut(id) else {
+    return Task::none();
+  };
+  let window_task = calendar::event_window_update(window, msg, &db).map(move |msg| Message::CalendarEvent(id, msg));
+
+  if reload_main && let (Some(state), Some(runtime)) = (app.calendar.as_ref(), app.runtime.as_ref()) {
+    let reload = calendar::reload(&runtime.db, state.active(), *runtime.settings.features()).map(Message::Calendar);
+    return Task::batch([window_task, reload]);
+  }
+  window_task
+}
+
+fn close_calendar_event_window(app: &mut App, id: window::Id) -> Task<Message> {
+  app.calendar_events.remove(id);
+  app.windows.remove(id);
+  window::close(id)
 }
 
 fn handle_calendar_attention_counted(app: &mut App, count: i64) -> Task<Message> {
@@ -6812,11 +6886,11 @@ fn view(app: &App, id: window::Id) -> Element<'_, Message> {
   }
 }
 
-// Native-window placeholder. The Calendar-detail conversion task replaces this body with its real
-// per-id view (look up state via an id-keyed `WindowStates<S>` like the killmail/contract views do).
-#[allow(unused_variables)]
 fn calendar_event_window_view(app: &App, id: window::Id) -> Element<'_, Message> {
-  blank()
+  match app.calendar_events.get(id) {
+    Some(window) => calendar::event_window_view(window).map(move |msg| Message::CalendarEvent(id, msg)),
+    None => blank(),
+  }
 }
 
 // Native-window placeholder. The Stockpile-Import conversion task replaces this body with its real
@@ -6922,6 +6996,7 @@ mod tests {
       auth: auth::State::default(),
       calendar: None,
       calendar_attention: 0,
+      calendar_events: WindowStates::default(),
       character_detail: None,
       character_manager: None,
       clock_tick: 0,
@@ -10420,6 +10495,129 @@ mod tests {
 
       assert_eq!(app.windows.kind(id), None);
       assert!(app.killmails.get(id).is_none());
+    }
+  }
+
+  mod calendar_event_window {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn event(character_id: i64, event_id: i64, title: &str) -> calendar::CalendarEvent {
+      calendar::CalendarEvent {
+        body: Some("<p>Form up.</p>".to_owned()),
+        character_id,
+        duration_minutes: 90,
+        event_id,
+        importance: 0,
+        owner_name: "Corp".to_owned(),
+        owner_type: "corporation".to_owned(),
+        response: "not_responded".to_owned(),
+        source: None,
+        timestamp: "2026-06-20T19:00:00Z".to_owned(),
+        title: title.to_owned(),
+      }
+    }
+
+    fn ready(app: &mut App, character_id: i64, event_id: i64, title: &str) -> window::Id {
+      let id = window::Id::unique();
+      app.windows.register(id, Window::CalendarEvent);
+      app.calendar_events.insert(
+        id,
+        calendar::EventWindow::new(
+          event(character_id, event_id, title),
+          Some("Pilot".to_owned()),
+          false,
+          "not_responded".to_owned(),
+        ),
+      );
+      id
+    }
+
+    #[tokio::test]
+    async fn it_holds_several_event_windows_under_distinct_ids() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 10, "Op Alpha");
+
+      assert_ne!(first, second);
+      assert_eq!(app.calendar_events.len(), 2);
+      assert_eq!(app.windows.ids_for(Window::CalendarEvent).count(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_titles_the_window_with_the_event_subject() {
+      let mut app = test_app();
+      let id = ready(&mut app, 1, 10, "Doctrine refit night");
+
+      assert_eq!(window_title(&app, id), "Pod \u{2014} Doctrine refit night");
+    }
+
+    #[tokio::test]
+    async fn it_renders_the_event_window_body() {
+      let mut app = test_app();
+      let id = ready(&mut app, 1, 10, "Op Alpha");
+
+      let _el: Element<'_, Message> = view(&app, id);
+    }
+
+    #[tokio::test]
+    async fn it_routes_a_per_window_message_to_only_its_own_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 20, "Op Beta");
+
+      let _ = handle_calendar_event(
+        &mut app,
+        first,
+        calendar::EventMessage::AttendeesLoaded(Box::new(Some(store::model::AttendeeTally {
+          accepted: 2,
+          declined: 0,
+          invited: 4,
+          tentative: 1,
+        }))),
+      );
+      let _ = handle_calendar_event(
+        &mut app,
+        first,
+        calendar::EventMessage::Responded(calendar::Response::Accepted),
+      );
+      let _ = handle_calendar_event(&mut app, first, calendar::EventMessage::RsvpWritten);
+
+      // The second window is untouched and still titled by its own subject.
+      assert_eq!(window_title(&app, second), "Pod \u{2014} Op Beta");
+    }
+
+    #[tokio::test]
+    async fn it_closes_only_the_targeted_window() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let first = ready(&mut app, 1, 10, "Op Alpha");
+      let second = ready(&mut app, 1, 20, "Op Beta");
+
+      let _ = close_calendar_event_window(&mut app, first);
+
+      assert_eq!(app.windows.kind(first), None);
+      assert!(app.calendar_events.get(first).is_none());
+      assert_eq!(app.windows.kind(second), Some(Window::CalendarEvent));
+      assert!(app.calendar_events.get(second).is_some());
+    }
+
+    #[tokio::test]
+    async fn it_drops_the_state_when_the_os_reports_the_window_closed() {
+      let mut app = test_app();
+      app.runtime = Some(test_runtime().await);
+      app.windows.register(window::Id::unique(), Window::Main);
+      let id = ready(&mut app, 1, 10, "Op Alpha");
+
+      let _ = on_window_closed(&mut app, id);
+
+      assert_eq!(app.windows.kind(id), None);
+      assert!(app.calendar_events.get(id).is_none());
     }
   }
 

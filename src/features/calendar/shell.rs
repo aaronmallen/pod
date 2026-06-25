@@ -1,19 +1,20 @@
 use chrono::{DateTime, Datelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
-  alignment::{Horizontal, Vertical},
+  alignment::Vertical,
   widget::{Column, Row, Space, Stack, button, container, text},
 };
 
 use super::{
-  Message, Scope, State, View, agenda, day, detail, grid, month, palette, palette::OwnerType, switcher, week, year,
+  EventMessage, EventWindow, Message, Scope, State, View, agenda, day, detail, grid, month, palette,
+  palette::OwnerType, switcher, week, year,
 };
 use crate::{
   config::Feature,
   ui::{
     components::{
-      backdrop, forbidden, icon::Icon, modal_overlay::modal_overlay, positioned_dropdown::positioned_dropdown, rule,
-      segmented::segment_button,
+      backdrop, forbidden, header::header as content_header, icon::Icon, positioned_dropdown::positioned_dropdown,
+      rule, segmented::segment_button,
     },
     style::{color, radius, spacing, typography},
   },
@@ -48,19 +49,42 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .into();
   }
 
-  if let Some(detail_state) = state.detail()
-    && let Some(card) = detail::modal(state, detail_state)
-  {
-    let centered = container(card)
-      .width(Length::Fill)
-      .height(Length::Fill)
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center)
-      .padding(spacing::SPACE_6);
-    return modal_overlay(base.into(), Some(Message::DetailClosed), centered.into());
-  }
-
   base.into()
+}
+
+/// The body of a detached calendar-event window: an in-content header carrying the event subject above
+/// the scrollable event card. The native frame and OS title bar supply the chrome, so there is no
+/// custom title bar or modal backdrop here.
+pub(super) fn event_window(window: &EventWindow) -> Element<'_, EventMessage> {
+  let owner = window.owner_kind();
+  let tint = owner.color();
+
+  let title = Row::with_children(vec![
+    owner.icon().color(tint).size(18.0).render::<EventMessage>(),
+    text(window.title().to_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let body = Column::with_children(vec![
+    content_header(vec![title.into()], Vec::new()),
+    detail::body(window),
+  ])
+  .width(Length::Fill)
+  .height(Length::Fill);
+
+  container(body)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn auth_banner<'a>(state: &'a State) -> Option<Element<'a, Message>> {

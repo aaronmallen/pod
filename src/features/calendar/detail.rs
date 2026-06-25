@@ -2,11 +2,11 @@ use chrono::{DateTime, Datelike, TimeZone, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, button, container, scrollable, text},
 };
 
 use super::{
-  CalendarEvent, Detail, Message, State,
+  CalendarEvent, EventMessage, EventWindow,
   palette::{OwnerType, Response},
   time::{fmt_eve, fmt_local},
 };
@@ -18,53 +18,50 @@ use crate::{
   },
 };
 
-const MODAL_WIDTH: f32 = 580.0;
+const BODY_WIDTH: f32 = 580.0;
 
-pub(super) fn modal<'a>(state: &'a State, detail: &'a Detail) -> Option<Element<'a, Message>> {
-  let event = state
-    .visible_events()
-    .into_iter()
-    .find(|event| event.character_id == detail.character_id && event.event_id == detail.event_id)?;
+/// The scrollable card body for a detached calendar-event window. The native frame and OS title bar
+/// replace the old modal chrome and close button, so this renders only the event content (accent bar,
+/// header block, meta grid, body, respond controls, attendees, provenance) on the base surface.
+pub(super) fn body(window: &EventWindow) -> Element<'_, EventMessage> {
+  let event = &window.event;
   let owner = event.owner_kind();
   let tint = owner.color();
 
-  let mut sections: Vec<Element<'a, Message>> = vec![
-    accent_bar(tint),
-    header(event, owner, tint),
-    meta_grid(state, event, owner),
-  ];
+  let mut sections: Vec<Element<'_, EventMessage>> =
+    vec![accent_bar(tint), header(event, owner, tint), meta_grid(window)];
 
-  if let Some(body) = event.body.as_deref().filter(|body| !body.is_empty()) {
-    sections.push(body_text(body));
+  if let Some(text) = event.body.as_deref().filter(|body| !body.is_empty()) {
+    sections.push(body_text(text));
   }
 
   if owner.respondable() {
     sections.push(respond_section(event));
   }
 
-  if let Some(att) = detail.attendees.as_ref() {
+  if let Some(att) = window.attendees.as_ref() {
     sections.push(attendees_section(att));
   }
 
   sections.push(provenance(event, owner));
 
   let card = container(Column::with_children(sections).spacing(spacing::SPACE_3))
-    .width(Length::Fixed(MODAL_WIDTH))
-    .padding(spacing::SPACE_6)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: color::rule_strong(),
-        radius: radius::CARD.into(),
-        width: 1.0,
-      },
-      ..container::Style::default()
-    });
+    .width(Length::Fixed(BODY_WIDTH))
+    .padding(spacing::SPACE_6);
 
-  Some(card.into())
+  let centered = container(card)
+    .width(Length::Fill)
+    .align_x(Horizontal::Center)
+    .padding(spacing::SPACE_3);
+
+  scrollable(centered)
+    .style(crate::ui::style::control::scrollbar)
+    .height(Length::Fill)
+    .width(Length::Fill)
+    .into()
 }
 
-fn accent_bar<'a>(tint: iced::Color) -> Element<'a, Message> {
+fn accent_bar<'a>(tint: iced::Color) -> Element<'a, EventMessage> {
   container(Space::new())
     .width(Length::Fill)
     .height(Length::Fixed(4.0))
@@ -79,7 +76,7 @@ fn accent_bar<'a>(tint: iced::Color) -> Element<'a, Message> {
     .into()
 }
 
-fn attendees_section<'a>(att: &AttendeeTally) -> Element<'a, Message> {
+fn attendees_section<'a>(att: &AttendeeTally) -> Element<'a, EventMessage> {
   let replied = att.accepted + att.tentative + att.declined;
 
   let summary = Row::with_children(vec![
@@ -101,7 +98,7 @@ fn attendees_section<'a>(att: &AttendeeTally) -> Element<'a, Message> {
     .into()
 }
 
-fn badge<'a>(label: &str, tint: iced::Color) -> Element<'a, Message> {
+fn badge<'a>(label: &str, tint: iced::Color) -> Element<'a, EventMessage> {
   container(
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
@@ -126,7 +123,7 @@ fn badge<'a>(label: &str, tint: iced::Color) -> Element<'a, Message> {
   .into()
 }
 
-fn body_text<'a>(body: &str) -> Element<'a, Message> {
+fn body_text<'a>(body: &str) -> Element<'a, EventMessage> {
   text(strip_html(body))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
@@ -134,34 +131,11 @@ fn body_text<'a>(body: &str) -> Element<'a, Message> {
     .into()
 }
 
-fn close_button<'a>() -> Element<'a, Message> {
-  button(
-    Icon::close()
-      .color(color::text::secondary())
-      .size(16.0)
-      .render::<Message>(),
-  )
-  .padding(spacing::SPACE_2)
-  .on_press(Message::DetailClosed)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
-      border: Border {
-        radius: radius::CONTROL.into(),
-        ..Border::default()
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
-}
-
 fn date_label(start: DateTime<Utc>) -> String {
   format!("{}, {} {}", long_weekday(start), long_month(start), start.day())
 }
 
-fn eyebrow<'a>(label: &str) -> Element<'a, Message> {
+fn eyebrow<'a>(label: &str) -> Element<'a, EventMessage> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -169,8 +143,8 @@ fn eyebrow<'a>(label: &str) -> Element<'a, Message> {
     .into()
 }
 
-fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> Element<'a, Message> {
-  let glyph = container(owner.icon().color(tint).size(20.0).render::<Message>())
+fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> Element<'a, EventMessage> {
+  let glyph = container(owner.icon().color(tint).size(20.0).render::<EventMessage>())
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))
     .align_x(Horizontal::Center)
@@ -185,7 +159,7 @@ fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> 
       ..container::Style::default()
     });
 
-  let mut badges: Vec<Element<'a, Message>> = vec![
+  let mut badges: Vec<Element<'a, EventMessage>> = vec![
     text(owner.label().to_uppercase())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
@@ -216,7 +190,6 @@ fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> 
     glyph.into(),
     title_block.into(),
     Space::new().width(Length::Fill).into(),
-    close_button(),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Top)
@@ -254,10 +227,12 @@ fn long_weekday(day: DateTime<Utc>) -> &'static str {
   DAYS[day.weekday().num_days_from_monday() as usize]
 }
 
-fn meta_grid<'a>(state: &'a State, event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, Message> {
-  let mut rows: Vec<Element<'a, Message>> = Vec::new();
+fn meta_grid(window: &EventWindow) -> Element<'_, EventMessage> {
+  let event = &window.event;
+  let owner = event.owner_kind();
+  let mut rows: Vec<Element<'_, EventMessage>> = Vec::new();
 
-  let when = when_value(event, state.tweaks().local_time(), &chrono::Local);
+  let when = when_value(event, window.local_time, &chrono::Local);
   rows.push(meta_row(Icon::clock(), "When", when));
 
   if let Some(start) = event.start() {
@@ -270,18 +245,18 @@ fn meta_grid<'a>(state: &'a State, event: &'a CalendarEvent, owner: OwnerType) -
     format!("{} \u{00B7} {}", event.owner_name, owner.label()),
   ));
 
-  if let Some(pilot) = state.pilot(event.character_id) {
-    rows.push(meta_row(Icon::characters(), "Calendar", pilot.name.clone()));
+  if let Some(pilot) = window.pilot_name.as_deref() {
+    rows.push(meta_row(Icon::characters(), "Calendar", pilot.to_owned()));
   }
 
   Column::with_children(rows).spacing(spacing::SPACE_2).into()
 }
 
-fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, Message> {
+fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, EventMessage> {
   Row::with_children(vec![
     container(
       Row::with_children(vec![
-        icon.color(color::text::secondary()).size(14.0).render::<Message>(),
+        icon.color(color::text::secondary()).size(14.0).render::<EventMessage>(),
         text(label.to_uppercase())
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
@@ -304,7 +279,7 @@ fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, Message> 
   .into()
 }
 
-fn provenance<'a>(event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, Message> {
+fn provenance<'a>(event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, EventMessage> {
   let line = if owner == OwnerType::Pod {
     match event.source.as_deref() {
       Some(source) => {
@@ -332,7 +307,7 @@ fn provenance<'a>(event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, Mes
   .into()
 }
 
-fn respond_button<'a>(event: &'a CalendarEvent, response: Response) -> Element<'a, Message> {
+fn respond_button<'a>(event: &'a CalendarEvent, response: Response) -> Element<'a, EventMessage> {
   let active = event.response_kind() == response;
   let tint = response.color();
 
@@ -340,7 +315,7 @@ fn respond_button<'a>(event: &'a CalendarEvent, response: Response) -> Element<'
     response_icon(response)
       .color(if active { tint } else { color::text::secondary() })
       .size(14.0)
-      .render::<Message>(),
+      .render::<EventMessage>(),
     text(response.label())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -357,7 +332,7 @@ fn respond_button<'a>(event: &'a CalendarEvent, response: Response) -> Element<'
   button(container(label).width(Length::Fill).align_x(Horizontal::Center))
     .padding(spacing::SPACE_2_5)
     .width(Length::Fill)
-    .on_press(Message::Responded(event.character_id, event.event_id, response))
+    .on_press(EventMessage::Responded(response))
     .style(move |_, status| {
       let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
       button::Style {
@@ -380,7 +355,7 @@ fn respond_button<'a>(event: &'a CalendarEvent, response: Response) -> Element<'
     .into()
 }
 
-fn respond_section<'a>(event: &'a CalendarEvent) -> Element<'a, Message> {
+fn respond_section<'a>(event: &'a CalendarEvent) -> Element<'a, EventMessage> {
   let buttons = Row::with_children(vec![
     respond_button(event, Response::Accepted),
     respond_button(event, Response::Tentative),
@@ -402,8 +377,8 @@ fn response_icon(response: Response) -> Icon {
   }
 }
 
-fn rsvp_bar<'a>(att: &AttendeeTally) -> Element<'a, Message> {
-  let mut segments: Vec<Element<'a, Message>> = Vec::new();
+fn rsvp_bar<'a>(att: &AttendeeTally) -> Element<'a, EventMessage> {
+  let mut segments: Vec<Element<'a, EventMessage>> = Vec::new();
   for (count, tint) in [
     (att.accepted, color::status::ONLINE),
     (att.tentative, color::status::WARNING),
@@ -452,9 +427,9 @@ fn strip_html(html: &str) -> String {
   out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn tally_cell<'a>(icon: Icon, count: i64, tint: iced::Color) -> Element<'a, Message> {
+fn tally_cell<'a>(icon: Icon, count: i64, tint: iced::Color) -> Element<'a, EventMessage> {
   Row::with_children(vec![
-    icon.color(tint).size(12.0).render::<Message>(),
+    icon.color(tint).size(12.0).render::<EventMessage>(),
     text(format!("{count}"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
@@ -509,6 +484,38 @@ mod tests {
       source: None,
       timestamp: "2026-06-20T19:00:00Z".to_owned(),
       title: "Op".to_owned(),
+    }
+  }
+
+  mod body {
+    use super::*;
+
+    #[test]
+    fn it_renders_a_respondable_event_with_attendees() {
+      let window = EventWindow::new(
+        event(90, "accepted"),
+        Some("Pilot 1".to_owned()),
+        true,
+        Response::NotResponded.as_esi().to_owned(),
+      )
+      .with_attendees(Some(AttendeeTally {
+        accepted: 3,
+        declined: 1,
+        invited: 6,
+        tentative: 2,
+      }));
+
+      let _el: Element<'_, EventMessage> = body(&window);
+    }
+
+    #[test]
+    fn it_renders_a_pod_overlay_without_respond_controls() {
+      let mut overlay = event(30, "not_responded");
+      overlay.owner_type = "pod".to_owned();
+      overlay.source = Some("skill".to_owned());
+      let window = EventWindow::new(overlay, None, false, Response::NotResponded.as_esi().to_owned());
+
+      let _el: Element<'_, EventMessage> = body(&window);
     }
   }
 

@@ -460,8 +460,45 @@ async fn resolve_skill_meta(
   meta
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QueueStatus {
+  Training,
+  Paused { queued: usize },
+  Empty,
+}
+
+impl QueueStatus {
+  pub fn is_training(self) -> bool {
+    matches!(self, QueueStatus::Training)
+  }
+
+  pub fn is_paused(self) -> bool {
+    matches!(self, QueueStatus::Paused { .. })
+  }
+
+  pub fn is_empty(self) -> bool {
+    matches!(self, QueueStatus::Empty)
+  }
+}
+
+fn head_is_training(head: Option<&CharacterSkillqueue>) -> bool {
+  head.is_some_and(|entry| entry.start_date().is_some() && entry.finish_date().is_some())
+}
+
+pub fn queue_status(head: Option<&CharacterSkillqueue>, queued_count: usize) -> QueueStatus {
+  if head_is_training(head) {
+    QueueStatus::Training
+  } else if queued_count > 0 {
+    QueueStatus::Paused {
+      queued: queued_count,
+    }
+  } else {
+    QueueStatus::Empty
+  }
+}
+
 pub fn is_idle(head: Option<&CharacterSkillqueue>) -> bool {
-  head.is_none_or(|entry| entry.start_date().is_none() || entry.finish_date().is_none())
+  !head_is_training(head)
 }
 
 pub fn queue_warnings(computed: &ComputedQueue, idle: bool) -> Vec<QueueWarning> {
@@ -864,6 +901,86 @@ mod tests {
     #[test]
     fn it_reports_idle_with_no_head() {
       assert!(is_idle(None));
+    }
+  }
+
+  mod queue_status {
+    use super::*;
+
+    fn dated() -> CharacterSkillqueue {
+      CharacterSkillqueue {
+        finish_date: Some("2026-06-11T00:00:00Z".to_owned()),
+        start_date: Some("2026-06-01T00:00:00Z".to_owned()),
+        ..entry(0, 100, 5)
+      }
+    }
+
+    #[test]
+    fn it_classifies_a_fully_dated_head_as_training() {
+      assert_eq!(queue_status(Some(&dated()), 3), QueueStatus::Training);
+    }
+
+    #[test]
+    fn it_classifies_an_undated_head_with_queued_skills_as_paused() {
+      assert_eq!(
+        queue_status(Some(&entry(0, 100, 5)), 4),
+        QueueStatus::Paused {
+          queued: 4
+        }
+      );
+    }
+
+    #[test]
+    fn it_classifies_a_head_missing_either_date_with_queued_skills_as_paused() {
+      let only_start = CharacterSkillqueue {
+        start_date: Some("2026-06-01T00:00:00Z".to_owned()),
+        ..entry(0, 100, 5)
+      };
+      assert_eq!(
+        queue_status(Some(&only_start), 2),
+        QueueStatus::Paused {
+          queued: 2
+        }
+      );
+
+      let only_finish = CharacterSkillqueue {
+        finish_date: Some("2026-06-11T00:00:00Z".to_owned()),
+        ..entry(0, 100, 5)
+      };
+      assert_eq!(
+        queue_status(Some(&only_finish), 1),
+        QueueStatus::Paused {
+          queued: 1
+        }
+      );
+    }
+
+    #[test]
+    fn it_classifies_no_head_as_empty() {
+      assert_eq!(queue_status(None, 0), QueueStatus::Empty);
+    }
+
+    #[test]
+    fn it_classifies_a_zero_count_as_empty_even_with_an_undated_head() {
+      assert_eq!(queue_status(Some(&entry(0, 100, 5)), 0), QueueStatus::Empty);
+    }
+
+    #[test]
+    fn it_prioritizes_training_over_count_when_the_head_is_dated() {
+      assert_eq!(queue_status(Some(&dated()), 0), QueueStatus::Training);
+    }
+
+    #[test]
+    fn it_exposes_predicate_helpers() {
+      assert!(QueueStatus::Training.is_training());
+      assert!(
+        QueueStatus::Paused {
+          queued: 1
+        }
+        .is_paused()
+      );
+      assert!(QueueStatus::Empty.is_empty());
+      assert!(!QueueStatus::Training.is_paused());
     }
   }
 

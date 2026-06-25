@@ -7,7 +7,7 @@ use iced::{
 use crate::{
   store::model::Notification,
   ui::{
-    components::notification_row::{accent, kind_label},
+    components::notification_row::{accent, kind_label, type_tile},
     style::{color, radius, shadow, spacing, typography},
   },
 };
@@ -146,7 +146,7 @@ where
     ..button::Style::default()
   });
 
-  let content = Row::with_children(vec![activate_area.into(), dismiss.into()])
+  let content = Row::with_children(vec![type_tile(kind), activate_area.into(), dismiss.into()])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Top);
 
@@ -208,6 +208,31 @@ mod tests {
         sub: None,
       },
       title: "title".to_owned(),
+    }
+  }
+
+  mod card {
+    use super::*;
+
+    #[test]
+    fn it_builds_a_card_with_the_per_kind_tile() {
+      for kind in [
+        NotificationKind::Calendar,
+        NotificationKind::ExtractionCracked,
+        NotificationKind::ExtractionScheduled,
+        NotificationKind::Industry,
+        NotificationKind::Killmail,
+        NotificationKind::Mail,
+        NotificationKind::Skill,
+      ] {
+        let mut notification = sample();
+        notification.kind = kind;
+        let toast = ToastView {
+          notification: &notification,
+          who: "Pilot",
+        };
+        let _card: Element<'_, ()> = card(&toast, (), (), (), ());
+      }
     }
   }
 

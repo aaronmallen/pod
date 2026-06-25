@@ -28,6 +28,38 @@ pub fn accent(kind: NotificationKind) -> iced::Color {
   }
 }
 
+/// The per-kind colored icon tile: the kind's icon centered in a fixed square with a tinted
+/// background and border derived from `accent(kind)`. Shared so the notification center row and the
+/// toast card render an identical tile from one source of geometry and color.
+pub fn type_tile<'a, M>(kind: NotificationKind) -> Element<'a, M>
+where
+  M: 'a,
+{
+  let tint = accent(kind);
+  container(
+    svg(svg::Handle::from_memory(icon_for(kind)))
+      .width(Length::Fixed(TILE_ICON_SIZE))
+      .height(Length::Fixed(TILE_ICON_SIZE))
+      .style(move |_, _| svg::Style {
+        color: Some(tint),
+      }),
+  )
+  .width(Length::Fixed(TILE_SIZE))
+  .height(Length::Fixed(TILE_SIZE))
+  .align_x(iced::alignment::Horizontal::Center)
+  .align_y(Vertical::Center)
+  .style(move |_| container::Style {
+    background: Some(Background::Color(color::with_alpha(tint, 0.13))),
+    border: Border {
+      color: color::with_alpha(tint, 0.4),
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
 pub fn kind_label(kind: NotificationKind) -> &'static str {
   match kind {
     NotificationKind::Calendar => "Calendar event",
@@ -58,27 +90,7 @@ where
   let tint = accent(kind);
   let is_unread = notification.read_at().is_none();
 
-  let tile = container(
-    svg(svg::Handle::from_memory(icon_for(kind)))
-      .width(Length::Fixed(TILE_ICON_SIZE))
-      .height(Length::Fixed(TILE_ICON_SIZE))
-      .style(move |_, _| svg::Style {
-        color: Some(tint),
-      }),
-  )
-  .width(Length::Fixed(TILE_SIZE))
-  .height(Length::Fixed(TILE_SIZE))
-  .align_x(iced::alignment::Horizontal::Center)
-  .align_y(Vertical::Center)
-  .style(move |_| container::Style {
-    background: Some(Background::Color(color::with_alpha(tint, 0.13))),
-    border: Border {
-      color: color::with_alpha(tint, 0.4),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..container::Style::default()
-  });
+  let tile = type_tile(kind);
 
   let label_row = Row::with_children(vec![
     text(kind_label(kind).to_owned())
@@ -128,7 +140,7 @@ where
     .spacing(spacing::UNIT / 2.0)
     .width(Length::Fill);
 
-  let mut row_children: Vec<Element<'a, M>> = vec![tile.into(), body.into()];
+  let mut row_children: Vec<Element<'a, M>> = vec![tile, body.into()];
   if unread_dot && is_unread {
     row_children.push(unread_marker());
   }
@@ -236,6 +248,7 @@ mod tests {
         let _ = accent(kind);
         let _ = icon_for(kind);
         let _ = kind_label(kind);
+        let _tile: Element<'_, ()> = type_tile(kind);
       }
     }
   }

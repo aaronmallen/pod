@@ -2,7 +2,7 @@ use chrono::Utc;
 
 use crate::store::{
   Database, Error,
-  model::{Credential, EntityTag, HttpCacheEntry, Outbox, OwnerType, Tag},
+  model::{Credential, EntityTag, HttpCacheEntry, Outbox, OwnerType, TAG_SCOPE_ENTITY, Tag},
 };
 
 pub async fn all(db: &Database) -> Result<Vec<Credential>, Error> {
@@ -303,9 +303,17 @@ pub fn like_pattern(value: &str) -> String {
 }
 
 pub async fn tag_all(db: &Database) -> Result<Vec<Tag>, Error> {
+  tag_all_scoped(db, TAG_SCOPE_ENTITY).await
+}
+
+// Public store API consumed by the asset-tag UI tasks (filter/modal/chips/settings); exercised by unit tests
+// until those callers land.
+#[allow(dead_code)]
+pub async fn tag_all_scoped(db: &Database, scope: &str) -> Result<Vec<Tag>, Error> {
   let rows = sqlx::query_as::<_, Tag>(
-    "SELECT color, created_at, description, id, name, position, updated_at FROM tags ORDER BY position",
+    "SELECT color, created_at, description, id, name, position, updated_at FROM tags WHERE scope = ? ORDER BY position",
   )
+  .bind(scope)
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
@@ -325,20 +333,59 @@ pub async fn assign(db: &Database, entity_type: &str, entity_id: i64, tag_id: i6
 }
 
 pub async fn create(db: &Database, name: &str, description: Option<&str>, color: Option<&str>) -> Result<Tag, Error> {
+  create_scoped(db, name, description, color, TAG_SCOPE_ENTITY).await
+}
+
+// Public store API consumed by the asset-tag UI tasks (settings/modal); exercised by unit tests until those
+// callers land.
+#[allow(dead_code)]
+pub async fn create_scoped(
+  db: &Database,
+  name: &str,
+  description: Option<&str>,
+  color: Option<&str>,
+  scope: &str,
+) -> Result<Tag, Error> {
   let now = Utc::now().timestamp();
   let tag = sqlx::query_as::<_, Tag>(
-    "INSERT INTO tags (color, created_at, description, name, position, updated_at) \
-    VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM tags), ?) \
+    "INSERT INTO tags (color, created_at, description, name, position, scope, updated_at) \
+    VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(position), -1) + 1 FROM tags WHERE scope = ?), ?, ?) \
     RETURNING color, created_at, description, id, name, position, updated_at",
   )
   .bind(color)
   .bind(now)
   .bind(description)
   .bind(name)
+  .bind(scope)
+  .bind(scope)
   .bind(now)
   .fetch_one(&db.0)
   .await?;
   Ok(tag)
+}
+
+// Tag-scope seed marker, mirroring budget's once-only seed guard: a seeded scope stays seeded so a deleted
+// default is never resurrected. Consumed by the asset-registry seed path; exercised by unit tests until wired.
+#[allow(dead_code)]
+pub async fn is_tag_scope_seeded(db: &Database, scope: &str) -> Result<bool, Error> {
+  let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM tag_scope_seeded WHERE scope = ?")
+    .bind(scope)
+    .fetch_optional(&db.0)
+    .await?;
+  Ok(row.is_some())
+}
+
+// Tag-scope seed marker companion to is_tag_scope_seeded. Consumed by the asset-registry seed path; exercised
+// by unit tests until wired.
+#[allow(dead_code)]
+pub async fn mark_tag_scope_seeded(db: &Database, scope: &str) -> Result<(), Error> {
+  let now = Utc::now().to_rfc3339();
+  sqlx::query("INSERT INTO tag_scope_seeded (scope, seeded_at) VALUES (?, ?) ON CONFLICT(scope) DO NOTHING")
+    .bind(scope)
+    .bind(&now)
+    .execute(db.writer())
+    .await?;
+  Ok(())
 }
 
 pub async fn tag_delete(db: &Database, id: i64) -> Result<(), Error> {
@@ -1488,6 +1535,96 @@ mod tag_tests {
     character::insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
       .await
       .unwrap();
+  }
+
+  mod scope {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::model::{TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY};
+
+    #[tokio::test]
+    async fn pre_existing_tags_backfill_to_the_entity_scope() {
+      let db = store::open_test().await.unwrap();
+      sqlx::query("INSERT INTO tags (color, created_at, description, name, position, updated_at) VALUES (NULL, 0, NULL, 'Legacy', 0, 0)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+
+      let entity = tag_all_scoped(&db, TAG_SCOPE_ENTITY).await.unwrap();
+      let asset = tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap();
+
+      assert_eq!(entity.iter().map(|t| t.name()).collect::<Vec<_>>(), ["Legacy"]);
+      assert!(asset.is_empty());
+    }
+
+    #[tokio::test]
+    async fn listing_a_scope_excludes_the_other_scope() {
+      let db = store::open_test().await.unwrap();
+      create_scoped(&db, "Pilot", None, None, TAG_SCOPE_ENTITY).await.unwrap();
+      create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+
+      assert_eq!(
+        tag_all_scoped(&db, TAG_SCOPE_ENTITY)
+          .await
+          .unwrap()
+          .iter()
+          .map(|t| t.name())
+          .collect::<Vec<_>>(),
+        ["Pilot"]
+      );
+      assert_eq!(
+        tag_all_scoped(&db, TAG_SCOPE_ASSET)
+          .await
+          .unwrap()
+          .iter()
+          .map(|t| t.name())
+          .collect::<Vec<_>>(),
+        ["Keep"]
+      );
+    }
+
+    #[tokio::test]
+    async fn the_entity_default_helpers_exclude_asset_tags() {
+      let db = store::open_test().await.unwrap();
+      create(&db, "Pilot", None, None).await.unwrap();
+      create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+
+      assert_eq!(
+        tag_all(&db).await.unwrap().iter().map(|t| t.name()).collect::<Vec<_>>(),
+        ["Pilot"]
+      );
+    }
+
+    #[tokio::test]
+    async fn positions_number_independently_per_scope() {
+      let db = store::open_test().await.unwrap();
+
+      let entity_first = create_scoped(&db, "Pilot", None, None, TAG_SCOPE_ENTITY).await.unwrap();
+      let asset_first = create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      let entity_second = create_scoped(&db, "Hauler", None, None, TAG_SCOPE_ENTITY)
+        .await
+        .unwrap();
+      let asset_second = create_scoped(&db, "Sell", None, None, TAG_SCOPE_ASSET).await.unwrap();
+
+      assert_eq!(entity_first.position(), 0);
+      assert_eq!(entity_second.position(), 1);
+      assert_eq!(asset_first.position(), 0);
+      assert_eq!(asset_second.position(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_seed_marker_round_trips_and_is_idempotent() {
+      let db = store::open_test().await.unwrap();
+
+      assert!(!is_tag_scope_seeded(&db, TAG_SCOPE_ASSET).await.unwrap());
+
+      mark_tag_scope_seeded(&db, TAG_SCOPE_ASSET).await.unwrap();
+      mark_tag_scope_seeded(&db, TAG_SCOPE_ASSET).await.unwrap();
+
+      assert!(is_tag_scope_seeded(&db, TAG_SCOPE_ASSET).await.unwrap());
+      assert!(!is_tag_scope_seeded(&db, TAG_SCOPE_ENTITY).await.unwrap());
+    }
   }
 
   mod all {

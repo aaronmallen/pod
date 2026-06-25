@@ -143,6 +143,39 @@ fn color_sort_key(tag: &Tag) -> (bool, String, String) {
   }
 }
 
+// The disposition vocabulary seeded into the asset-tag registry on first run. (name, color) — colored
+// entries get a default swatch; the rest seed uncolored.
+const ASSET_TAG_SEEDS: &[(&str, Option<&str>)] = &[
+  ("Keep", Some("#5BB97E")),
+  ("Sell", Some("#D9B252")),
+  ("Reprocess", Some("#3FB8DB")),
+  ("Reship", None),
+  ("Contract", None),
+  ("Hauling", None),
+  ("Loot", None),
+  ("Junk", Some("#E07559")),
+  ("Research", None),
+];
+
+// Seeds the asset-tag registry with the default disposition vocabulary exactly once. The persisted marker
+// means deleting a seeded default never resurrects it on the next launch. Consumed by the asset-tag UI tasks;
+// exercised by unit tests until those callers land.
+#[allow(dead_code)]
+pub async fn seed_asset_tags(db: &Database) -> Result<(), crate::store::Error> {
+  use crate::store::model::TAG_SCOPE_ASSET;
+
+  if infra::is_tag_scope_seeded(db, TAG_SCOPE_ASSET).await? {
+    return Ok(());
+  }
+
+  for (name, color) in ASSET_TAG_SEEDS {
+    infra::create_scoped(db, name, None, *color, TAG_SCOPE_ASSET).await?;
+  }
+
+  infra::mark_tag_scope_seeded(db, TAG_SCOPE_ASSET).await?;
+  Ok(())
+}
+
 pub fn load(db: &Database) -> iced::Task<Message> {
   iced::Task::perform(load_tags(db.clone()), Message::Loaded)
 }
@@ -1037,6 +1070,57 @@ mod tests {
   fn badge_counts_colored_tags() {
     let state = State::default();
     assert_eq!(badge(&state), "0");
+  }
+
+  #[tokio::test]
+  async fn seed_asset_tags_seeds_the_disposition_vocabulary_into_the_asset_scope() {
+    use crate::store::model::{TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY};
+
+    let db = store::open_test().await.unwrap();
+
+    seed_asset_tags(&db).await.unwrap();
+
+    let asset = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap();
+    assert_eq!(
+      asset.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
+      [
+        "Keep",
+        "Sell",
+        "Reprocess",
+        "Reship",
+        "Contract",
+        "Hauling",
+        "Loot",
+        "Junk",
+        "Research"
+      ]
+    );
+    assert_eq!(asset[0].color().as_deref(), Some("#5BB97E"));
+    assert!(infra::tag_all_scoped(&db, TAG_SCOPE_ENTITY).await.unwrap().is_empty());
+  }
+
+  #[tokio::test]
+  async fn seed_asset_tags_is_idempotent_and_a_deleted_default_stays_deleted() {
+    use crate::store::model::TAG_SCOPE_ASSET;
+
+    let db = store::open_test().await.unwrap();
+    seed_asset_tags(&db).await.unwrap();
+    let keep = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap()[0].id();
+    infra::tag_delete(&db, keep).await.unwrap();
+
+    seed_asset_tags(&db).await.unwrap();
+
+    let names = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET)
+      .await
+      .unwrap()
+      .into_iter()
+      .map(|t| t.name().clone())
+      .collect::<Vec<_>>();
+    assert!(
+      !names.contains(&"Keep".to_owned()),
+      "a deleted default is not resurrected"
+    );
+    assert_eq!(names.len(), 8);
   }
 
   #[tokio::test]

@@ -205,7 +205,12 @@ pub use corporation_wallet_journal::Model as CorporationWalletJournal;
 pub use corporation_wallet_transaction::Model as CorporationWalletTransaction;
 pub use credential::{Model as Credential, OwnerType};
 pub use dogma_attribute::Model as DogmaAttribute;
-pub use entity_tag::{ENTITY_TYPE_CHARACTER, ENTITY_TYPE_CORPORATION, Model as EntityTag};
+// ENTITY_TYPE_ASSET is re-exported for the asset assign/unassign tasks that land after this foundation.
+#[allow(unused_imports)]
+pub use entity_tag::{
+  ENTITY_TYPE_ASSET, ENTITY_TYPE_CHARACTER, ENTITY_TYPE_CORPORATION, Model as EntityTag, TAG_SCOPE_ASSET,
+  TAG_SCOPE_ENTITY,
+};
 pub use facility::Model as Facility;
 pub use faction::Model as Faction;
 pub use http_cache_entry::Model as HttpCacheEntry;

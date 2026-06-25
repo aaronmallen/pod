@@ -1018,6 +1018,61 @@ fn select_resource_dir(
   candidates.into_iter().find(|candidate| has_assets(candidate))
 }
 
+/// Merges an archived [`Settings`] onto the local one, restoring the user's portable preferences
+/// while preserving everything that identifies this machine.
+///
+/// Restoring a foreign `config.toml` wholesale would point Pod at the source machine's absolute
+/// storage paths and hijack its sync/MCP identity, so this transform splits the fields three ways:
+///
+/// - Portable (restored from the archive, but only when the archived value differs from its default
+///   so an archived default never clobbers a local override): `accessibility`, `features`,
+///   `industry`, `ui`, `eve_client_id`.
+/// - Machine-local (kept from local): the storage path overrides (`db_dir`, `log_dir`, `cache_dir`),
+///   the `network` flag, and `log_level`; plus `machine_id` (taken from the archive only when local
+///   has none) and the MCP `token` (taken from the archive only when local is empty). The rest of
+///   the MCP config (`enabled`, `perms`, `port`) is machine-local automation state and is kept.
+/// - Never serialized: `working_copy_dir` is `#[serde(skip)]`; the result resets it to `None` so the
+///   live working-copy protection is never redirected via an import.
+///
+/// Pure value transform: the caller owns persisting the result via [`save`]/`save_to`.
+#[allow(dead_code)]
+pub fn merge_for_restore(local: &Settings, archived: &Settings) -> Settings {
+  let mut merged = local.clone();
+
+  // Portable preferences: restore from the archive unless the archived value is still its default,
+  // which would otherwise wipe out a deliberate local override with an unset import.
+  if archived.accessibility != AccessibilityConfig::default() {
+    merged.accessibility = archived.accessibility;
+  }
+  if archived.features != FeatureFlags::default() {
+    merged.features = archived.features;
+  }
+  if archived.industry != IndustryConfig::default() {
+    merged.industry = archived.industry;
+  }
+  if archived.ui != UiConfig::default() {
+    merged.ui = archived.ui.clone();
+  }
+  if archived.eve_client_id != default_eve_client_id() {
+    merged.eve_client_id = archived.eve_client_id.clone();
+  }
+
+  // Machine-local identity stays as `local` (already cloned), with two recovery cases: a freshly
+  // imported install with no machine_id / no MCP token adopts the archived value so the user isn't
+  // left without one.
+  if merged.storage.machine_id.is_none() {
+    merged.storage.machine_id = archived.storage.machine_id.clone();
+  }
+  if merged.mcp.token.is_empty() {
+    merged.mcp.token = archived.mcp.token.clone();
+  }
+
+  // Never let an import redirect the live working copy onto a foreign / network path.
+  merged.storage.working_copy_dir = None;
+
+  merged
+}
+
 pub fn save(settings: &Settings) {
   match config_path() {
     Ok(path) => {
@@ -2356,6 +2411,128 @@ mod tests {
         assert_eq!(loaded.ui().rail_order()[0], Destination::Assets);
         assert_eq!(loaded.ui().rail_order()[1], Destination::Wallet);
       }
+    }
+  }
+
+  mod merge_for_restore {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_restores_a_portable_field_from_the_archive() {
+      let local = Settings::default();
+      let mut archived = Settings::default();
+      archived.accessibility.set_scale(125);
+      archived.accessibility.set_high_contrast(true);
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(*merged.accessibility().scale(), 125);
+      assert!(*merged.accessibility().high_contrast());
+    }
+
+    #[test]
+    fn it_restores_every_portable_field_group() {
+      let local = Settings::default();
+      let mut archived = Settings::default();
+      archived.features.set_enabled(Feature::Wallet, false);
+      archived.industry.set_manufacturing(Some(60003760));
+      archived.ui.set_nav_location(NavLocation::Right);
+      archived.eve_client_id = "imported-client-id".to_string();
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert!(!merged.features().is_enabled(Feature::Wallet));
+      assert_eq!(*merged.industry().manufacturing(), Some(60003760));
+      assert_eq!(merged.ui().nav_location(), &NavLocation::Right);
+      assert_eq!(merged.eve_client_id(), "imported-client-id");
+    }
+
+    #[test]
+    fn it_does_not_clobber_a_local_override_with_an_archived_default() {
+      let mut local = Settings::default();
+      local.accessibility.set_scale(150);
+      let archived = Settings::default(); // archived accessibility is still the default
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(
+        *merged.accessibility().scale(),
+        150,
+        "local override survives an archived default"
+      );
+    }
+
+    #[test]
+    fn it_preserves_local_machine_identity_and_paths() {
+      let mut local = Settings::default();
+      local.storage.set_machine_id(Some("local-machine".to_string()));
+      local.storage.set_db_dir(Some(PathBuf::from("/var/pod/db")));
+      local.storage.set_log_dir(Some(PathBuf::from("/var/pod/log")));
+      local.storage.set_cache_dir(Some(PathBuf::from("/var/pod/cache")));
+      local.storage.set_network(true);
+      local.storage.set_log_level(LogLevel::Verbose);
+      local.mcp.set_token("local-token".to_string());
+
+      let mut archived = Settings::default();
+      archived.storage.set_machine_id(Some("foreign-machine".to_string()));
+      archived.storage.set_db_dir(Some(PathBuf::from("/mnt/nas/db")));
+      archived.storage.set_log_dir(Some(PathBuf::from("/mnt/nas/log")));
+      archived.storage.set_cache_dir(Some(PathBuf::from("/mnt/nas/cache")));
+      archived.storage.set_network(false);
+      archived.storage.set_log_level(LogLevel::Normal);
+      archived.mcp.set_token("foreign-token".to_string());
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(merged.storage().machine_id().as_deref(), Some("local-machine"));
+      assert_eq!(merged.storage().db_dir().as_deref(), Some(Path::new("/var/pod/db")));
+      assert_eq!(merged.storage().log_dir().as_deref(), Some(Path::new("/var/pod/log")));
+      assert_eq!(
+        merged.storage().cache_dir().as_deref(),
+        Some(Path::new("/var/pod/cache"))
+      );
+      assert!(*merged.storage().network());
+      assert_eq!(*merged.storage().log_level(), LogLevel::Verbose);
+      assert_eq!(merged.mcp().token(), "local-token");
+    }
+
+    #[test]
+    fn it_adopts_the_archived_machine_id_when_local_has_none() {
+      let local = Settings::default(); // machine_id is None
+      let mut archived = Settings::default();
+      archived.storage.set_machine_id(Some("foreign-machine".to_string()));
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(merged.storage().machine_id().as_deref(), Some("foreign-machine"));
+    }
+
+    #[test]
+    fn it_adopts_the_archived_mcp_token_when_local_is_empty() {
+      let local = Settings::default(); // token is empty
+      let mut archived = Settings::default();
+      archived.mcp.set_token("foreign-token".to_string());
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(merged.mcp().token(), "foreign-token");
+    }
+
+    #[test]
+    fn it_resets_the_working_copy_dir() {
+      let mut local = Settings::default();
+      local.storage.working_copy_dir = Some(PathBuf::from("/var/pod/db/working"));
+      let mut archived = Settings::default();
+      archived.storage.working_copy_dir = Some(PathBuf::from("/mnt/nas/working"));
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(
+        merged.storage.working_copy_dir, None,
+        "working_copy_dir is never carried across a merge"
+      );
     }
   }
 }

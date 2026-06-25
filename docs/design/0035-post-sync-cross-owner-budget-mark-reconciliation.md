@@ -59,8 +59,8 @@ ADR-0028 invariant (exactly one materialized assignment row per (owner, entry_id
 3. Fill-only and override-respecting. For each event group where at least one owner copy is assigned, the pass inserts
    the same category for any sibling owner that holds a real wallet row for the leg (`owner_holds_entry`, inherently
    satisfied because the freshly-synced row is what triggered reconciliation) and has no assignment of its own. An owner
-   that already holds any assignment is never touched, so a deliberately different corp-side mark is preserved. Writes go
-   through the existing `upsert_entry_assignment`, whose `ON CONFLICT` on the owner-aware unique index makes the pass
+   that already holds any assignment is never touched, so a deliberately different corp-side mark is preserved. Writes
+   go through the existing `upsert_entry_assignment`, whose `ON CONFLICT` on the owner-aware unique index makes the pass
    idempotent and interrupt-safe.
 4. Resurrection guard. A copy is only propagated to a sibling when the source mark's `updated_at` is newer than the
    sibling leg's arrival / last unassignment, so a deliberate unassignment wins (reusing migration 0102's "newest
@@ -72,8 +72,8 @@ ADR-0028 invariant (exactly one materialized assignment row per (owner, entry_id
    materialize step.
 6. One-time backfill. A numbered migration mirror-fills the copies the broken mark-time cascade failed to write for
    events already split, using the same fill-only / override-respecting logic in SQL with `NOT EXISTS` guards
-   (idempotent, re-runnable). It only fills missing copies; it does not collapse or re-key (migration 0102 already healed
-   the historical aliasing).
+   (idempotent, re-runnable). It only fills missing copies; it does not collapse or re-key (migration 0102 already
+   healed the historical aliasing).
 
 Conflict policy: automation propagates intent into gaps but never overrides an explicit human decision on either copy.
 Differing char/corp marks stay independent at runtime; "newest updated_at wins" is reserved for the one-time backfill,
@@ -123,6 +123,3 @@ not the steady-state job.
 - Migrations 0099 (owner-aware identity) and 0102 (one-time assignment repair).
 - Root cause: `src/features/wallet.rs:3609-3729`; Uncategorized journal-leg loop `src/features/budget.rs:1555-1573`;
   assignment repo `src/store/repo/budget.rs:172-235,593-656`.
-</content>
-
-</invoke>

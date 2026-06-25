@@ -23,7 +23,7 @@ INSERT INTO budget_entry_assignments
   (scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at)
 WITH legs AS (
   SELECT transaction_id AS transaction_id, 'character' AS owner_kind, character_id AS owner_id,
-         'market' AS entry_kind, transaction_id AS entry_id
+          'market' AS entry_kind, transaction_id AS entry_id
     FROM character_wallet_transaction
   UNION ALL
   SELECT transaction_id, 'corporation', corporation_id, 'market', transaction_id
@@ -31,21 +31,21 @@ WITH legs AS (
   UNION ALL
   SELECT context_id, 'character', character_id, 'journal', id
     FROM character_wallet_journal
-   WHERE context_id IS NOT NULL
-     AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax')
+    WHERE context_id IS NOT NULL
+      AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax')
   UNION ALL
   SELECT context_id, 'corporation', corporation_id, 'journal', id
     FROM corporation_wallet_journal
-   WHERE context_id IS NOT NULL
-     AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax')
+    WHERE context_id IS NOT NULL
+      AND ref_type IN ('market_transaction', 'brokers_fee', 'transaction_tax')
 ),
 sources AS (
   SELECT l.transaction_id AS transaction_id, a.category_id AS category_id, a.updated_at AS updated_at, a.id AS id
     FROM budget_entry_assignments a
     JOIN legs l
       ON l.owner_kind = a.owner_kind AND l.owner_id = a.owner_id
-     AND l.entry_kind = a.entry_kind AND l.entry_id = a.entry_id
-   WHERE a.scope_kind = 'all' AND a.scope_id IS NULL
+      AND l.entry_kind = a.entry_kind AND l.entry_id = a.entry_id
+    WHERE a.scope_kind = 'all' AND a.scope_id IS NULL
 ),
 winners AS (
   SELECT s.transaction_id AS transaction_id, s.category_id AS category_id
@@ -59,14 +59,14 @@ winners AS (
               AND tiebreak.id = s.id
 )
 SELECT 'all', NULL, l.owner_kind, l.owner_id, l.entry_kind, l.entry_id, w.category_id,
-       strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
   FROM legs l
   JOIN winners w ON w.transaction_id = l.transaction_id
- WHERE NOT EXISTS (
-   SELECT 1 FROM budget_entry_assignments a
+  WHERE NOT EXISTS (
+    SELECT 1 FROM budget_entry_assignments a
     WHERE a.scope_kind = 'all' AND a.scope_id IS NULL
       AND a.owner_kind = l.owner_kind AND a.owner_id = l.owner_id
       AND a.entry_kind = l.entry_kind AND a.entry_id = l.entry_id
- )
- GROUP BY l.owner_kind, l.owner_id, l.entry_kind, l.entry_id, w.category_id
+  )
+  GROUP BY l.owner_kind, l.owner_id, l.entry_kind, l.entry_id, w.category_id
 ON CONFLICT(scope_kind, COALESCE(scope_id, -1), owner_kind, owner_id, entry_kind, entry_id) DO NOTHING;

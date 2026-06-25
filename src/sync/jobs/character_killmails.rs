@@ -50,13 +50,29 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
   let token = grant.access_token();
   let mut synced = 0usize;
   let mut skipped = 0usize;
+  // A fallback feed (notably the zKill character endpoint during an ESI outage) can answer with a
+  // global "recent kills" firehose rather than this character's mails; track how many of a batch are
+  // discarded as non-participants so a contaminated feed is loud in the logs.
+  let mut candidates = 0usize;
+  let mut non_participants = 0usize;
 
   for reference in dedupe(refs) {
     if known.contains(&reference.killmail_id) {
       continue;
     }
+    candidates += 1;
     match assemble(ctx, zkill, &prices, character_id, &reference, &synced_at, token).await {
       Ok((entry, detail)) => {
+        if !is_participant(character_id, &detail) {
+          non_participants += 1;
+          skipped += 1;
+          tracing::warn!(
+            character_id,
+            killmail_id = reference.killmail_id,
+            "character killmails: skipping killmail the character is not a participant of (victim or attacker)"
+          );
+          continue;
+        }
         character::upsert_killmail(ctx.db, &entry).await?;
         synced += 1;
         if let Err(error) = persist_killmail_detail(ctx, character_id, reference.killmail_id, &detail, &prices).await {
@@ -78,7 +94,41 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
     }
   }
 
+  warn_on_suspected_global_feed(character_id, candidates, non_participants);
   Ok(outcome(character_id, synced, skipped))
+}
+
+/// A discovered killmail belongs on a character's board only when that character is the victim or
+/// one of the attackers; discovery feeds are not trusted to be character-scoped (a zKill outage
+/// fallback can return an unrelated global feed), so participation is confirmed against the ESI
+/// detail before the killmail is persisted.
+fn is_participant(character_id: i64, detail: &Killmail) -> bool {
+  detail.victim.character_id == Some(character_id)
+    || detail
+      .attackers
+      .iter()
+      .any(|attacker| attacker.character_id == Some(character_id))
+}
+
+/// Threshold above which a batch that is (nearly) entirely non-participants is treated as a likely
+/// global-feed contamination rather than a few stray mails, and the WARN is emitted.
+const SUSPECTED_GLOBAL_FEED_MIN_BATCH: usize = 25;
+
+/// Emits a loud WARN when a fallback batch is implausibly large and (nearly) all of its mails were
+/// discarded as non-participants — the signature of a zKill global "recent kills" firehose served in
+/// place of the character's own feed during an ESI outage — so the contamination is diagnosable from
+/// logs. The participant guard already prevented any of these mails from being written.
+fn warn_on_suspected_global_feed(character_id: i64, candidates: usize, non_participants: usize) {
+  if candidates >= SUSPECTED_GLOBAL_FEED_MIN_BATCH && non_participants * 4 >= candidates * 3 {
+    tracing::warn!(
+      character_id,
+      candidates,
+      non_participants,
+      "character killmails: suspected global-feed contamination — a large discovery batch was almost \
+       entirely non-participant mails (likely a zKillboard global firehose during an ESI outage); all \
+       such mails were discarded"
+    );
+  }
 }
 
 /// Returns `Synced` when at least one killmail was stored, even if others were skipped; the skip
@@ -675,6 +725,64 @@ mod tests {
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].killmail_id(), 500);
       assert!(rows[0].is_kill());
+    }
+
+    #[tokio::test]
+    async fn it_writes_no_rows_when_the_discovery_feed_returns_killmails_the_character_is_not_on() {
+      // Simulates the zKill global "recent kills" firehose served during an ESI outage: the feed
+      // hands back a killmail the syncing character (42) neither dealt nor took, so the participant
+      // guard must discard it without writing any summary or child rows.
+      let esi_server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/characters/42/killmails/recent/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
+        .expect(0)
+        .mount(&esi_server)
+        .await;
+      mount_json(
+        &esi_server,
+        "/killmails/777/globalhash/",
+        serde_json::json!({
+          "killmail_id": 777,
+          "killmail_time": "2026-06-24T11:00:00Z",
+          "solar_system_id": 30000142,
+          "victim": {"character_id": 5005, "corporation_id": 6006, "ship_type_id": 587},
+          "attackers": [{"character_id": 8008, "final_blow": true}, {"character_id": 9009, "final_blow": false}]
+        }),
+      )
+      .await;
+
+      let zkill_server = MockServer::start().await;
+      mount_json(
+        &zkill_server,
+        "/characterID/42/kills/",
+        serde_json::json!([{"killmail_id": 777, "zkb": {"hash": "globalhash", "totalValue": 4242.0}}]),
+      )
+      .await;
+      mount_json(&zkill_server, "/characterID/42/losses/", serde_json::json!([])).await;
+
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("token", 42);
+      let ctx = ctx_with_grant(&db, &esi, &image, &image_store, &grant, 42);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      let outcome = run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      assert_eq!(
+        outcome,
+        Outcome::Skipped {
+          reason: "1 killmail(s) failed to assemble".to_owned()
+        }
+      );
+      assert!(character::killmails(&db, 42).await.unwrap().is_empty());
+      assert!(character::killmail_attackers(&db, 42, 777).await.unwrap().is_empty());
+      assert!(character::killmail_items(&db, 42, 777).await.unwrap().is_empty());
     }
 
     #[tokio::test]

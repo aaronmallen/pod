@@ -6,8 +6,8 @@ use crate::store::{
   Database, Error,
   asset_filter::{ColumnSchema, FilterContext, WhereClause, compile_query},
   model::{
-    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset, SavedAssetFilter,
-    StatRange, StatTemplate, Stockpile, StockpileItem,
+    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset, ENTITY_TYPE_ASSET,
+    SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
       AssetCompleteness, AssetRenderRow, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery, InventoryRow,
@@ -599,6 +599,7 @@ async fn delete_character_assets(db: &Database, character_id: i64, item_ids: &[i
   if item_ids.is_empty() {
     return Ok(());
   }
+  let mut tx = db.writer().begin().await?;
   let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM character_assets WHERE character_id = ");
   builder.push_bind(character_id);
   builder.push(" AND item_id IN (");
@@ -607,7 +608,9 @@ async fn delete_character_assets(db: &Database, character_id: i64, item_ids: &[i
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(db.writer()).await?;
+  builder.build().execute(&mut *tx).await?;
+  delete_asset_tag_memberships(&mut tx, item_ids).await?;
+  tx.commit().await?;
   Ok(())
 }
 
@@ -615,6 +618,7 @@ async fn delete_corporation_assets(db: &Database, corporation_id: i64, item_ids:
   if item_ids.is_empty() {
     return Ok(());
   }
+  let mut tx = db.writer().begin().await?;
   let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM corporation_assets WHERE corporation_id = ");
   builder.push_bind(corporation_id);
   builder.push(" AND item_id IN (");
@@ -623,7 +627,28 @@ async fn delete_corporation_assets(db: &Database, corporation_id: i64, item_ids:
     separated.push_bind(*id);
   }
   builder.push(")");
-  builder.build().execute(db.writer()).await?;
+  builder.build().execute(&mut *tx).await?;
+  delete_asset_tag_memberships(&mut tx, item_ids).await?;
+  tx.commit().await?;
+  Ok(())
+}
+
+// entity_tags has no foreign key to the asset tables, so a stale item's ('asset', item_id) tag rows would be
+// orphaned forever once the asset row is pruned. Delete them in the same transaction that removes the assets,
+// scoped strictly to entity_type = 'asset' so character/corporation memberships sharing an id are untouched.
+async fn delete_asset_tag_memberships(tx: &mut sqlx::Transaction<'_, Sqlite>, item_ids: &[i64]) -> Result<(), Error> {
+  if item_ids.is_empty() {
+    return Ok(());
+  }
+  let mut builder = QueryBuilder::<Sqlite>::new("DELETE FROM entity_tags WHERE entity_type = ");
+  builder.push_bind(ENTITY_TYPE_ASSET);
+  builder.push(" AND entity_id IN (");
+  let mut separated = builder.separated(", ");
+  for id in item_ids {
+    separated.push_bind(*id);
+  }
+  builder.push(")");
+  builder.build().execute(&mut **tx).await?;
   Ok(())
 }
 
@@ -4671,6 +4696,36 @@ mod asset_tests {
     }
 
     #[tokio::test]
+    async fn it_cleans_up_asset_tag_memberships_when_an_item_goes_stale() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      replace_for_character(&db, 42, &[char_asset(100, 42, None), char_asset(101, 42, None)])
+        .await
+        .unwrap();
+      let tag = infra::create(&db, "Loot", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 100, tag.id()).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 101, tag.id()).await.unwrap();
+      infra::assign(&db, crate::store::model::ENTITY_TYPE_CHARACTER, 100, tag.id())
+        .await
+        .unwrap();
+
+      // Item 100 disappears from the next sync; item 101 persists.
+      replace_for_character(&db, 42, &[char_asset(101, 42, None)])
+        .await
+        .unwrap();
+
+      let asset_members = infra::members(&db, tag.id(), ENTITY_TYPE_ASSET).await.unwrap();
+      assert_eq!(asset_members, vec![101]);
+      // The like-numbered character membership is a different scope and must survive.
+      assert_eq!(
+        infra::members(&db, tag.id(), crate::store::model::ENTITY_TYPE_CHARACTER)
+          .await
+          .unwrap(),
+        vec![100]
+      );
+    }
+
+    #[tokio::test]
     async fn it_reclaims_an_item_id_held_by_another_character() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
@@ -5262,6 +5317,33 @@ mod asset_tests {
         .unwrap();
       assert_eq!(owner, other_corp);
       assert_eq!(total, 1);
+    }
+
+    #[tokio::test]
+    async fn it_cleans_up_asset_tag_memberships_when_a_corp_item_goes_stale() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      authorize_corp(&db).await;
+      replace_for_corporation(
+        &db,
+        CORP_ID,
+        &[corp_asset(100, CORP_ID, None), corp_asset(101, CORP_ID, None)],
+      )
+      .await
+      .unwrap();
+      let tag = infra::create(&db, "Stock", None, None).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 100, tag.id()).await.unwrap();
+      infra::assign(&db, ENTITY_TYPE_ASSET, 101, tag.id()).await.unwrap();
+
+      // Item 100 disappears from the next sync; item 101 persists.
+      replace_for_corporation(&db, CORP_ID, &[corp_asset(101, CORP_ID, None)])
+        .await
+        .unwrap();
+
+      assert_eq!(
+        infra::members(&db, tag.id(), ENTITY_TYPE_ASSET).await.unwrap(),
+        vec![101]
+      );
     }
 
     #[tokio::test]

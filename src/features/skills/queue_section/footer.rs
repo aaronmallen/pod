@@ -8,7 +8,7 @@ use iced::{
 
 use super::super::{Message, fmt_duration, fmt_eta};
 use crate::ui::{
-  components::{eyebrow::eyebrow, rule},
+  components::{eyebrow::eyebrow, icon::Icon, rule},
   style::{color, radius, spacing, typography},
 };
 
@@ -161,36 +161,52 @@ fn clear_button<'a>() -> Element<'a, Message> {
 }
 
 fn create_button<'a>(count: usize) -> Element<'a, Message> {
-  button(
-    text(format!("Create plan \u{25b8} {count}"))
+  let label = Row::with_children(vec![
+    text("Create plan")
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
         color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 6.0,
-    bottom: 6.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::CreatePlanFromSelection)
-  .style(|_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(color::with_alpha(
-        color::accent::PLASMA,
-        if hover { 0.22 } else { 0.14 },
-      ))),
-      border: Border {
-        color: color::with_alpha(color::accent::PLASMA, if hover { 0.6 } else { 0.4 }),
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: color::accent::PLASMA,
-      ..button::Style::default()
-    }
-  })
-  .into()
+      })
+      .into(),
+    Icon::chevron_right()
+      .size(12.0)
+      .color(color::accent::PLASMA)
+      .render::<Message>(),
+    text(count.to_string())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::accent::PLASMA),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  button(label)
+    .padding(Padding {
+      top: 6.0,
+      bottom: 6.0,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .on_press(Message::CreatePlanFromSelection)
+    .style(|_, status| {
+      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
+      button::Style {
+        background: Some(Background::Color(color::with_alpha(
+          color::accent::PLASMA,
+          if hover { 0.22 } else { 0.14 },
+        ))),
+        border: Border {
+          color: color::with_alpha(color::accent::PLASMA, if hover { 0.6 } else { 0.4 }),
+          radius: radius::CONTROL.into(),
+          width: 1.0,
+        },
+        text_color: color::accent::PLASMA,
+        ..button::Style::default()
+      }
+    })
+    .into()
 }

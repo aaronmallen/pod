@@ -5,7 +5,10 @@ use iced::{
 };
 
 use super::{super::super::browse::GroupRow, Message};
-use crate::ui::style::{color, spacing, typography};
+use crate::ui::{
+  components::icon::Icon,
+  style::{color, spacing, typography},
+};
 
 fn fmt_group_sp(sp: i64) -> String {
   if sp >= 1_000_000 {
@@ -18,13 +21,17 @@ fn fmt_group_sp(sp: i64) -> String {
 }
 
 pub fn group_header(group: &GroupRow, open: bool) -> Element<'_, Message> {
-  let chevron = text(if open { "\u{25be}" } else { "\u{25b8}" })
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS_PLUS)
-    .width(Length::Fixed(12.0))
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    });
+  let chevron = container(
+    if open {
+      Icon::chevron_down()
+    } else {
+      Icon::chevron_right()
+    }
+    .size(12.0)
+    .color(color::text::secondary())
+    .render::<Message>(),
+  )
+  .width(Length::Fixed(12.0));
 
   let name = text(group.name.clone())
     .font(typography::body::MEDIUM)

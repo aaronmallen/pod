@@ -50,6 +50,7 @@ use crate::{
       sync_popover::{self, JobStats, Model},
       tab_select::{Tab, TabLayout, tab_select_with},
       updater_banner,
+      virtual_list::{self, VirtualList, VirtualListConfig},
     },
     style::{color, control, radius, shadow, spacing, typography},
   },
@@ -219,6 +220,22 @@ struct App {
   notifications: Vec<store::model::Notification>,
   notification_names: std::collections::HashMap<store::model::NotificationOwner, String>,
   notifications_dirty: bool,
+  /// History-tab page accumulator (newest-first), grown one keyset page at a time as the user scrolls.
+  /// Distinct from `notifications` (the live New-tab source) so paging arbitrarily deep never disturbs
+  /// the New tab or the bell badge.
+  notifications_history: Vec<store::model::Notification>,
+  /// Keyset cursor positioned just past the last accumulated History row; `None` requests the newest page.
+  notifications_history_cursor: Option<store::repo::notifications::HistoryCursor>,
+  /// Monotonic generation bumped whenever the History accumulator resets (panel open or newer rows
+  /// arrive). An in-flight page tagged with a stale generation is dropped so it can't append to the
+  /// freshly-reset accumulator.
+  notifications_history_epoch: u64,
+  /// Whether another older History page may exist (the last fetch filled a full page).
+  notifications_history_has_more: bool,
+  /// Guards against a second concurrent History page fetch while one is already in flight.
+  notifications_history_loading: bool,
+  /// Last absolute vertical scroll offset of the History list, fed back into the windowed view.
+  notifications_history_scroll: f32,
   notifications_panel_open: bool,
   notifications_tab: NotificationTab,
   notifications_unread: i64,
@@ -362,6 +379,20 @@ enum Message {
   Nav(rail::Destination),
   NavTo(rail::Destination, Option<&'static str>),
   NotificationActivated(i64),
+  /// One more keyset page of History finished loading; carries the rows and a per-owner "who" map for
+  /// the freshly-paged rows. An empty `epoch` is rejected against the live one so a page captured before
+  /// a reset (newer rows arrived) never appends to the fresh accumulator.
+  NotificationsHistoryPageLoaded {
+    epoch: u64,
+    rows: Vec<store::model::Notification>,
+    who: std::collections::HashMap<store::model::NotificationOwner, String>,
+  },
+  /// The History list scrolled; carries the absolute offset (fed back into the windowed view) and the
+  /// relative offset (0..1), used to trigger the next page once the user nears the bottom.
+  NotificationsHistoryScrolled {
+    absolute: f32,
+    relative: f32,
+  },
   NotificationsRefreshed(Box<notifications::Snapshot>),
   Palette(PaletteMessage),
   PeriodicPull,
@@ -491,6 +522,12 @@ impl Message {
       Message::Nav(_) => "Nav",
       Message::NavTo(..) => "NavTo",
       Message::NotificationActivated(_) => "NotificationActivated",
+      Message::NotificationsHistoryPageLoaded {
+        ..
+      } => "NotificationsHistoryPageLoaded",
+      Message::NotificationsHistoryScrolled {
+        ..
+      } => "NotificationsHistoryScrolled",
       Message::NotificationsRefreshed(_) => "NotificationsRefreshed",
       Message::SelectNotificationTab(_) => "SelectNotificationTab",
       Message::ToastDismissed(_) => "ToastDismissed",
@@ -1008,6 +1045,12 @@ fn boot() -> (App, Task<Message>) {
     notification_names: std::collections::HashMap::new(),
     notifications: Vec::new(),
     notifications_dirty: false,
+    notifications_history: Vec::new(),
+    notifications_history_cursor: None,
+    notifications_history_epoch: 0,
+    notifications_history_has_more: false,
+    notifications_history_loading: false,
+    notifications_history_scroll: 0.0,
     notifications_panel_open: false,
     notifications_tab: NotificationTab::default(),
     notifications_unread: 0,
@@ -2178,6 +2221,15 @@ const NOTIFICATIONS_PANEL_MAX_HEIGHT: f32 = 560.0;
 
 const NOTIFICATIONS_TAB_STRIP_HEIGHT: f32 = 40.0;
 
+/// Estimated pixel height of one History notification row, used by the windowed list's offset math.
+/// Rows are content-driven (title + a "who · when" line), so this is an estimate; overscan absorbs the
+/// variance.
+const NOTIFICATIONS_HISTORY_ROW_HEIGHT: f32 = 64.0;
+
+/// Fraction of the History list a scroll must reach (0..1) before the next keyset page is requested.
+/// Mirrors the mail list's load-more threshold so a page is fetched a little before the true bottom.
+const NOTIFICATIONS_HISTORY_SCROLL_THRESHOLD: f32 = 0.85;
+
 /// The notification center panel: a card flying out beside the rail, bottom-aligned to the bell. A
 /// header with the title and a "Mark all read" button sits above a New/History tab strip. The New tab
 /// filters to unread notifications; the History tab lists every loaded notification newest-first (the
@@ -2191,7 +2243,13 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     .iter()
     .filter(|notification| notification.read_at().is_none())
     .count();
-  let total = app.notifications.len();
+  // History tracks the keyset-paged accumulator; New tracks the live unread set. The footer "total"
+  // mirrors whichever tab is active so the count matches what the body actually renders.
+  let history_count = app.notifications_history.len();
+  let total = match app.notifications_tab {
+    NotificationTab::New => new_count,
+    NotificationTab::History => history_count,
+  };
 
   let header = Row::with_children(vec![
     text("Notifications")
@@ -2205,12 +2263,16 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_2);
 
-  let tabs = notifications_tab_strip(app.notifications_tab, new_count, total);
+  let tabs = notifications_tab_strip(app.notifications_tab, new_count, history_count);
 
   let body = notifications_tab_body(app, app.notifications_tab);
 
+  let footer_visible = match app.notifications_tab {
+    NotificationTab::New => !app.notifications.is_empty(),
+    NotificationTab::History => !app.notifications_history.is_empty(),
+  };
   let mut children: Vec<Element<'_, Message>> = vec![header.into(), tabs, rule_line(), body];
-  if !app.notifications.is_empty() {
+  if footer_visible {
     children.push(rule_line());
     children.push(
       Row::with_children(vec![
@@ -2345,36 +2407,24 @@ fn notifications_tab_strip<'a>(active: NotificationTab, new_count: usize, total:
 }
 
 fn notifications_tab_body(app: &App, active: NotificationTab) -> Element<'_, Message> {
+  match active {
+    NotificationTab::New => notifications_new_body(app),
+    NotificationTab::History => notifications_history_body(app),
+  }
+}
+
+/// The New tab: the live unread set drawn from the refresh-loaded `notifications` list. Bounded by the
+/// refresh limit and the unread count, so it renders in one shrink-scrollable column without paging.
+fn notifications_new_body(app: &App) -> Element<'_, Message> {
   let rows: Vec<Element<'_, Message>> = app
     .notifications
     .iter()
-    .filter(|notification| match active {
-      NotificationTab::New => notification.read_at().is_none(),
-      NotificationTab::History => true,
-    })
-    .map(|notification| {
-      let who = app
-        .notification_names
-        .get(&notification.owner())
-        .map(String::as_str)
-        .unwrap_or("");
-      let when = relative_time(notification.created_at(), app.now);
-      notification_row(
-        notification,
-        who,
-        &when,
-        true,
-        Message::NotificationActivated(notification.id()),
-      )
-    })
+    .filter(|notification| notification.read_at().is_none())
+    .map(|notification| notification_history_row(app, notification))
     .collect();
 
   if rows.is_empty() {
-    let (title, subtitle) = match active {
-      NotificationTab::New => ("You\u{2019}re all caught up", "No new events"),
-      NotificationTab::History => ("Nothing here yet", "No past notifications"),
-    };
-    return notifications_empty_state(title, subtitle);
+    return notifications_empty_state("You\u{2019}re all caught up", "No new events");
   }
 
   scrollable(
@@ -2384,6 +2434,49 @@ fn notifications_tab_body(app: &App, active: NotificationTab) -> Element<'_, Mes
   )
   .height(Length::Shrink)
   .into()
+}
+
+/// The History tab: the keyset-paged accumulator, windowed and infinite-scrolled. Each scroll past the
+/// load-more threshold emits `NotificationsHistoryScrolled`, which requests the next page once no fetch
+/// is in flight and an older page may exist.
+fn notifications_history_body(app: &App) -> Element<'_, Message> {
+  if app.notifications_history.is_empty() {
+    return notifications_empty_state("Nothing here yet", "No past notifications");
+  }
+
+  let rows = &app.notifications_history;
+  let offset = app.notifications_history_scroll;
+  virtual_list::responsive_window(move |viewport_height| {
+    let config = VirtualListConfig::new(rows.len(), NOTIFICATIONS_HISTORY_ROW_HEIGHT)
+      .viewport_height(viewport_height)
+      .scroll_offset(offset);
+    let windowed = VirtualList::new(config, |index| notification_history_row(app, &rows[index])).view();
+    scrollable(windowed)
+      .style(control::scrollbar)
+      .width(Length::Fill)
+      .height(Length::Fill)
+      .on_scroll(|viewport| Message::NotificationsHistoryScrolled {
+        absolute: viewport.absolute_offset().y,
+        relative: viewport.relative_offset().y,
+      })
+      .into()
+  })
+}
+
+fn notification_history_row<'a>(app: &'a App, notification: &'a store::model::Notification) -> Element<'a, Message> {
+  let who = app
+    .notification_names
+    .get(&notification.owner())
+    .map(String::as_str)
+    .unwrap_or("");
+  let when = relative_time(notification.created_at(), app.now);
+  notification_row(
+    notification,
+    who,
+    &when,
+    true,
+    Message::NotificationActivated(notification.id()),
+  )
 }
 
 fn notifications_empty_state<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
@@ -3991,6 +4084,15 @@ fn dispatch_feature_aux(app: &mut App, message: Message) -> Result<Task<Message>
     Message::Nav(destination) => handle_nav(app, destination),
     Message::NavTo(destination, sub_section) => handle_nav_to(app, destination, sub_section),
     Message::NotificationActivated(id) => handle_notification_activated(app, id),
+    Message::NotificationsHistoryPageLoaded {
+      epoch,
+      rows,
+      who,
+    } => handle_notifications_history_page_loaded(app, epoch, rows, who),
+    Message::NotificationsHistoryScrolled {
+      absolute,
+      relative,
+    } => handle_notifications_history_scrolled(app, absolute, relative),
     Message::NotificationsRefreshed(snapshot) => handle_notifications_refreshed(app, *snapshot),
     Message::SelectNotificationTab(tab) => handle_select_notification_tab(app, tab),
     Message::RailHover(destination) => handle_rail_hover(app, destination),
@@ -5038,13 +5140,96 @@ fn handle_notifications_refreshed(app: &mut App, snapshot: notifications::Snapsh
     unread,
     who,
   } = snapshot;
+  // Newer rows arrived if the live list's newest id differs from what History currently shows on top.
+  // Reset History to the first page so the new rows appear at the top without corrupting the cursor.
+  let newest_changed = list.first().map(store::model::Notification::id)
+    != app.notifications_history.first().map(store::model::Notification::id);
   app.notifications = list;
   app.notification_names = who;
   app.notifications_unread = unread;
   for notification in surfaced {
     enqueue_toast(app, notification);
   }
+  // Only reset once History has actually materialized a page: while the first page is still in flight
+  // (accumulator empty) that load already targets the newest page, so resetting would just discard it.
+  if app.notifications_panel_open && newest_changed && !app.notifications_history.is_empty() {
+    return reset_notifications_history(app);
+  }
   Task::none()
+}
+
+/// Clears the History accumulator and re-requests the newest keyset page, bumping the epoch so any
+/// in-flight older page is dropped on arrival. Returns the first-page fetch task (or none without a
+/// runtime). Driven on panel open and whenever a refresh surfaces a newer head row.
+fn reset_notifications_history(app: &mut App) -> Task<Message> {
+  app.notifications_history.clear();
+  app.notifications_history_cursor = None;
+  app.notifications_history_has_more = true;
+  app.notifications_history_loading = false;
+  app.notifications_history_scroll = 0.0;
+  app.notifications_history_epoch = app.notifications_history_epoch.wrapping_add(1);
+  load_more_notifications_history(app)
+}
+
+/// Fetches the next keyset History page past the current cursor and resolves "who" names for it. Guards
+/// against a second concurrent fetch and against fetching once the last page has been seen.
+fn load_more_notifications_history(app: &mut App) -> Task<Message> {
+  if app.notifications_history_loading || !app.notifications_history_has_more {
+    return Task::none();
+  }
+  let Some(runtime) = app.runtime.as_ref() else {
+    return Task::none();
+  };
+  app.notifications_history_loading = true;
+  let db = runtime.db.clone();
+  let cursor = app.notifications_history_cursor.clone();
+  let epoch = app.notifications_history_epoch;
+  Task::perform(
+    async move {
+      let rows =
+        store::repo::notifications::list_page(&db, cursor.as_ref(), store::repo::notifications::HISTORY_PAGE_SIZE)
+          .await
+          .unwrap_or_default();
+      let who = notifications::resolve_names(&db, &rows).await;
+      (rows, who)
+    },
+    move |(rows, who)| Message::NotificationsHistoryPageLoaded {
+      epoch,
+      rows,
+      who,
+    },
+  )
+}
+
+fn handle_notifications_history_page_loaded(
+  app: &mut App,
+  epoch: u64,
+  rows: Vec<store::model::Notification>,
+  who: std::collections::HashMap<store::model::NotificationOwner, String>,
+) -> Task<Message> {
+  // Drop a page captured before a reset (newer rows arrived / panel reopened): its rows belong to a
+  // stale cursor walk and would duplicate or interleave against the fresh accumulator.
+  if epoch != app.notifications_history_epoch {
+    return Task::none();
+  }
+  app.notifications_history_loading = false;
+  app.notifications_history_has_more = rows.len() as i64 == store::repo::notifications::HISTORY_PAGE_SIZE;
+  if let Some(cursor) = store::repo::notifications::HistoryCursor::from_page(&rows) {
+    app.notifications_history_cursor = Some(cursor);
+  }
+  // Merge freshly-resolved "who" names so the paged rows render their author line; the live refresh map
+  // already holds names for the New-tab rows.
+  app.notification_names.extend(who);
+  app.notifications_history.extend(rows);
+  Task::none()
+}
+
+fn handle_notifications_history_scrolled(app: &mut App, absolute: f32, relative: f32) -> Task<Message> {
+  app.notifications_history_scroll = absolute;
+  if relative < NOTIFICATIONS_HISTORY_SCROLL_THRESHOLD {
+    return Task::none();
+  }
+  load_more_notifications_history(app)
 }
 
 fn enqueue_toast(app: &mut App, notification: store::model::Notification) {
@@ -5069,8 +5254,9 @@ fn enqueue_toast(app: &mut App, notification: store::model::Notification) {
 fn handle_toggle_notifications_panel(app: &mut App) -> Task<Message> {
   app.notifications_panel_open = !app.notifications_panel_open;
   if app.notifications_panel_open {
-    // Opening reads the latest surfaced rows without re-scanning sources, and never auto-marks read.
-    refresh_notifications(app, false)
+    // Opening reads the latest surfaced rows without re-scanning sources, and never auto-marks read,
+    // and loads the first keyset page of History so it is ready when the user switches tabs.
+    Task::batch([refresh_notifications(app, false), reset_notifications_history(app)])
   } else {
     Task::none()
   }
@@ -5078,6 +5264,14 @@ fn handle_toggle_notifications_panel(app: &mut App) -> Task<Message> {
 
 fn handle_close_notifications_panel(app: &mut App) -> Task<Message> {
   app.notifications_panel_open = false;
+  // Drop the History page accumulator so a reopen starts from the newest page rather than re-showing a
+  // deep, possibly stale scroll position. The epoch bump invalidates any page still in flight.
+  app.notifications_history.clear();
+  app.notifications_history_cursor = None;
+  app.notifications_history_has_more = false;
+  app.notifications_history_loading = false;
+  app.notifications_history_scroll = 0.0;
+  app.notifications_history_epoch = app.notifications_history_epoch.wrapping_add(1);
   Task::none()
 }
 
@@ -6626,6 +6820,12 @@ mod tests {
       notification_names: std::collections::HashMap::new(),
       notifications: Vec::new(),
       notifications_dirty: false,
+      notifications_history: Vec::new(),
+      notifications_history_cursor: None,
+      notifications_history_epoch: 0,
+      notifications_history_has_more: false,
+      notifications_history_loading: false,
+      notifications_history_scroll: 0.0,
       notifications_panel_open: false,
       notifications_tab: NotificationTab::default(),
       notifications_unread: 0,
@@ -11800,6 +12000,23 @@ mod tests {
         "NotificationActivated"
       );
       assert_eq!(
+        Message::NotificationsHistoryPageLoaded {
+          epoch: 0,
+          rows: Vec::new(),
+          who: std::collections::HashMap::new(),
+        }
+        .variant_name(),
+        "NotificationsHistoryPageLoaded"
+      );
+      assert_eq!(
+        Message::NotificationsHistoryScrolled {
+          absolute: 0.0,
+          relative: 0.0,
+        }
+        .variant_name(),
+        "NotificationsHistoryScrolled"
+      );
+      assert_eq!(
         Message::NotificationsRefreshed(Box::default()).variant_name(),
         "NotificationsRefreshed"
       );
@@ -12192,15 +12409,266 @@ mod tests {
         .notification_names
         .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
 
-      // New is empty (the only row is read) -> "all caught up"; History lists the read row.
+      // New is empty (the only row is read) -> "all caught up". History renders the paged accumulator.
       app.notifications_tab = NotificationTab::New;
       let _ = notifications_panel(&app, config::NavLocation::Left);
+      app.notifications_history = vec![read_notification(1)];
       app.notifications_tab = NotificationTab::History;
       let _ = notifications_panel(&app, config::NavLocation::Left);
 
-      // History empty state when nothing is loaded at all.
+      // History empty state when nothing is paged in.
       app.notifications.clear();
+      app.notifications_history.clear();
       let _ = notifications_panel(&app, config::NavLocation::Left);
+    }
+  }
+
+  mod notifications_history {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    // A History row with a controllable id and created_at, so cursor and ordering assertions are exact.
+    fn history_notification(id: i64, created_at: &str) -> store::model::Notification {
+      store::model::Notification {
+        created_at: created_at.to_owned(),
+        ..test_notification(id, store::model::NotificationDestination::Skills)
+      }
+    }
+
+    // A full keyset page, so `has_more` flips true exactly when the fetch fills the page.
+    fn full_page() -> Vec<store::model::Notification> {
+      (0..store::repo::notifications::HISTORY_PAGE_SIZE)
+        .map(|i| history_notification(i, &format!("2026-06-01T00:00:{:02}+00:00", i % 60)))
+        .collect()
+    }
+
+    #[test]
+    fn it_appends_a_page_and_advances_the_cursor() {
+      let mut app = ready_app();
+      app.notifications_history_epoch = 7;
+      app.notifications_history_has_more = true;
+
+      let page = vec![
+        history_notification(3, "2026-06-03T00:00:00+00:00"),
+        history_notification(2, "2026-06-02T00:00:00+00:00"),
+      ];
+      let _ = handle_notifications_history_page_loaded(&mut app, 7, page, HashMap::new());
+
+      let ids: Vec<i64> = app
+        .notifications_history
+        .iter()
+        .map(store::model::Notification::id)
+        .collect();
+      assert_eq!(ids, vec![3, 2], "the page is appended newest-first");
+      assert_eq!(
+        app.notifications_history_cursor,
+        Some(store::repo::notifications::HistoryCursor {
+          created_at: "2026-06-02T00:00:00+00:00".to_owned(),
+          id: 2,
+        }),
+        "the cursor advances to the last row of the page"
+      );
+      assert!(!app.notifications_history_loading, "the in-flight guard is cleared");
+      assert!(
+        !app.notifications_history_has_more,
+        "a short page means no further pages remain"
+      );
+    }
+
+    #[test]
+    fn it_keeps_paging_while_pages_arrive_full() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+
+      let _ = handle_notifications_history_page_loaded(&mut app, 0, full_page(), HashMap::new());
+
+      assert_eq!(
+        app.notifications_history.len() as i64,
+        store::repo::notifications::HISTORY_PAGE_SIZE
+      );
+      assert!(
+        app.notifications_history_has_more,
+        "a full page leaves the door open for another"
+      );
+    }
+
+    #[test]
+    fn it_merges_resolved_who_names_for_the_paged_rows() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      let mut who = HashMap::new();
+      who.insert(store::model::NotificationOwner::Character(1), "Vex Voronova".to_owned());
+
+      let page = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      let _ = handle_notifications_history_page_loaded(&mut app, 0, page, who);
+
+      assert_eq!(
+        app
+          .notification_names
+          .get(&store::model::NotificationOwner::Character(1))
+          .map(String::as_str),
+        Some("Vex Voronova"),
+        "the paged rows' author names are merged in"
+      );
+    }
+
+    #[test]
+    fn it_drops_a_page_captured_against_a_stale_epoch() {
+      let mut app = ready_app();
+      app.notifications_history_epoch = 5;
+      app.notifications_history_loading = true;
+      app.notifications_history_has_more = true;
+
+      // A page tagged with the pre-reset epoch must not append to the freshly-reset accumulator.
+      let page = vec![history_notification(9, "2026-06-09T00:00:00+00:00")];
+      let _ = handle_notifications_history_page_loaded(&mut app, 4, page, HashMap::new());
+
+      assert!(
+        app.notifications_history.is_empty(),
+        "a stale-epoch page is discarded, not appended"
+      );
+      assert!(
+        app.notifications_history_loading,
+        "the stale page does not clear the live in-flight guard"
+      );
+    }
+
+    #[test]
+    fn it_requests_a_page_only_past_the_scroll_threshold() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      app
+        .notifications_history
+        .push(history_notification(1, "2026-06-01T00:00:00+00:00"));
+
+      // A shallow scroll records the offset but requests no page.
+      let _ = handle_notifications_history_scrolled(&mut app, 120.0, 0.10);
+      assert_eq!(app.notifications_history_scroll, 120.0, "the offset is tracked");
+      assert!(!app.notifications_history_loading, "a shallow scroll triggers no fetch");
+    }
+
+    #[test]
+    fn it_does_not_over_fetch_while_a_page_is_in_flight() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = true;
+      app.notifications_history_loading = true;
+
+      // A deep scroll while loading must not kick off a second concurrent fetch.
+      let task = load_more_notifications_history(&mut app);
+
+      assert!(app.notifications_history_loading);
+      // The guard short-circuits to an empty task.
+      let _ = task;
+    }
+
+    #[test]
+    fn it_does_not_fetch_once_the_last_page_is_reached() {
+      let mut app = ready_app();
+      app.notifications_history_has_more = false;
+      app.notifications_history_loading = false;
+
+      let _ = handle_notifications_history_scrolled(&mut app, 999.0, 0.99);
+
+      assert!(
+        !app.notifications_history_loading,
+        "no fetch starts once has_more is false"
+      );
+    }
+
+    #[test]
+    fn it_resets_the_accumulator_and_bumps_the_epoch() {
+      let mut app = ready_app();
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      app.notifications_history_cursor = Some(store::repo::notifications::HistoryCursor {
+        created_at: "2026-06-01T00:00:00+00:00".to_owned(),
+        id: 1,
+      });
+      app.notifications_history_scroll = 500.0;
+      let before = app.notifications_history_epoch;
+
+      let _ = reset_notifications_history(&mut app);
+
+      assert!(app.notifications_history.is_empty(), "the accumulator clears");
+      assert_eq!(
+        app.notifications_history_cursor, None,
+        "the cursor rewinds to the newest page"
+      );
+      assert_eq!(app.notifications_history_scroll, 0.0, "the scroll offset rewinds");
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "the epoch bumps so in-flight pages are invalidated"
+      );
+    }
+
+    #[test]
+    fn it_resets_history_when_a_refresh_brings_a_newer_head_row() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      let before = app.notifications_history_epoch;
+
+      // A refresh whose newest row (id 2) differs from History's head (id 1) resets History.
+      let snapshot = crate::notifications::Snapshot {
+        list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
+        surfaced: Vec::new(),
+        unread: 1,
+        who: HashMap::new(),
+      };
+      let _ = handle_notifications_refreshed(&mut app, snapshot);
+
+      assert!(
+        app.notifications_history.is_empty(),
+        "History rewinds to the first page"
+      );
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "the reset bumps the epoch"
+      );
+    }
+
+    #[test]
+    fn it_leaves_history_intact_when_a_refresh_brings_no_newer_head() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(2, "2026-06-02T00:00:00+00:00")];
+      let before = app.notifications_history_epoch;
+
+      // The refresh's newest row matches History's head, so no reset is needed.
+      let snapshot = crate::notifications::Snapshot {
+        list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
+        surfaced: Vec::new(),
+        unread: 0,
+        who: HashMap::new(),
+      };
+      let _ = handle_notifications_refreshed(&mut app, snapshot);
+
+      assert_eq!(app.notifications_history.len(), 1, "History is untouched");
+      assert_eq!(app.notifications_history_epoch, before, "the epoch is unchanged");
+    }
+
+    #[test]
+    fn it_clears_history_state_on_panel_close() {
+      let mut app = ready_app();
+      app.notifications_panel_open = true;
+      app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
+      app.notifications_history_has_more = true;
+      let before = app.notifications_history_epoch;
+
+      let _ = handle_close_notifications_panel(&mut app);
+
+      assert!(!app.notifications_panel_open);
+      assert!(app.notifications_history.is_empty(), "closing drops the accumulator");
+      assert!(!app.notifications_history_has_more);
+      assert_eq!(
+        app.notifications_history_epoch,
+        before.wrapping_add(1),
+        "closing invalidates any in-flight page"
+      );
     }
   }
 
@@ -12387,6 +12855,27 @@ mod tests {
       assert!(dispatch_feature_aux(&mut app, Message::Nav(rail::Destination::Wallet)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::NavTo(rail::Destination::Settings, Some("mcp"))).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::NotificationActivated(1)).is_ok());
+      assert!(
+        dispatch_feature_aux(
+          &mut app,
+          Message::NotificationsHistoryPageLoaded {
+            epoch: 0,
+            rows: Vec::new(),
+            who: std::collections::HashMap::new(),
+          }
+        )
+        .is_ok()
+      );
+      assert!(
+        dispatch_feature_aux(
+          &mut app,
+          Message::NotificationsHistoryScrolled {
+            absolute: 0.0,
+            relative: 0.0,
+          }
+        )
+        .is_ok()
+      );
       assert!(dispatch_feature_aux(&mut app, Message::NotificationsRefreshed(Box::default())).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::SelectNotificationTab(NotificationTab::History)).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::RailHover(Some(rail::Destination::Wallet))).is_ok());

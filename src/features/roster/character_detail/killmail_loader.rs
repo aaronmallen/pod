@@ -1,6 +1,6 @@
 use crate::{
   clients::eve_image::Size,
-  features::killmail_detail::{AttackerView, EntityView, ItemView, KillmailDetail, SlotGroupView},
+  features::roster::killmail_detail::{AttackerView, EntityView, ItemView, KillmailDetail, SlotGroupView},
   store::{
     Database, images,
     killmail_slot::SlotGroup,

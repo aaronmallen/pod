@@ -6,7 +6,7 @@ use iced::{
 };
 
 use crate::{
-  features::{
+  features::roster::{
     character_detail::killmail_loader as character_killmail,
     corporation_detail::killmail_loader as corporation_killmail,
   },

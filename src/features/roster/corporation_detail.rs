@@ -60,7 +60,7 @@ impl ContactsPage {
   /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
   /// layout rather than the keyset cursor (so the cursor is derived as `None`).
   #[cfg(test)]
-  pub(in crate::features::corporation_detail) fn for_test(
+  pub(in crate::features::roster::corporation_detail) fn for_test(
     rows: Vec<ContactRow>,
     labels: Vec<CorporationContactLabel>,
     has_more: bool,

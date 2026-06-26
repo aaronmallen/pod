@@ -1,7 +1,7 @@
 use crate::{
   clients::esi::scopes,
   config::{Feature, SubFeature},
-  features::character_detail::Tab,
+  features::roster::character_detail::Tab,
   sync::JobKind,
   ui::components::rail::Destination,
 };

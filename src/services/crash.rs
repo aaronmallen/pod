@@ -504,8 +504,8 @@ mod tests {
     let _ = RING.set(Mutex::new(Vec::new()));
     RING.get().unwrap().lock().unwrap().clear();
 
-    // pod::features::auth carries character_name and is NOT allow-listed.
-    ingest(r#"{"level":"INFO","target":"pod::features::auth","name":"Aaron","message":"signed in"}"#);
+    // pod::features::roster::auth carries character_name and is NOT allow-listed.
+    ingest(r#"{"level":"INFO","target":"pod::features::roster::auth","name":"Aaron","message":"signed in"}"#);
     // pod::nav is benign and allow-listed.
     ingest(r#"{"level":"INFO","target":"pod::nav","message":"navigated"}"#);
 

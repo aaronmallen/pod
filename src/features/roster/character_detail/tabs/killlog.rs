@@ -10,7 +10,6 @@ use super::{
   shared,
 };
 use crate::{
-  features::killmail_detail::relative_time,
   store::images::IconResolution,
   ui::{
     components::{
@@ -29,14 +28,14 @@ use crate::{
   },
 };
 
-const ATTACKERS_WIDTH: f32 = 80.0;
 /// Nominal height of one kill-log row, in pixels. Rows have a two-line victim/ship cell, so this only feeds the
 /// [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 52.0;
 const SHIP_ICON_BOX: f32 = 32.0;
 const SYSTEM_WIDTH: f32 = 100.0;
-const TIME_WIDTH: f32 = 90.0;
 const VALUE_WIDTH: f32 = 110.0;
+const ATTACKERS_WIDTH: f32 = 80.0;
+const TIME_WIDTH: f32 = 90.0;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct KillLogEntry {
@@ -71,7 +70,7 @@ impl KilllogFilter {
     (KilllogFilter::Losses, "Losses"),
   ];
 
-  pub(in crate::features::corporation_detail) fn matches(self, entry: &KillLogEntry) -> bool {
+  pub(in crate::features::roster::character_detail) fn matches(self, entry: &KillLogEntry) -> bool {
     match self {
       KilllogFilter::All => true,
       KilllogFilter::Kills => entry.is_kill,
@@ -87,10 +86,29 @@ struct KillStats {
   loss_isk: f64,
 }
 
+fn compute_stats(entries: &[KillLogEntry]) -> KillStats {
+  let mut stats = KillStats {
+    kill_count: 0,
+    kill_isk: 0.0,
+    loss_count: 0,
+    loss_isk: 0.0,
+  };
+  for entry in entries {
+    if entry.is_kill {
+      stats.kill_count += 1;
+      stats.kill_isk += entry.value_destroyed_isk;
+    } else {
+      stats.loss_count += 1;
+      stats.loss_isk += entry.value_destroyed_isk;
+    }
+  }
+  stats
+}
+
 /// The non-scrolling header for the Kill Log tab: the kill/loss summary tiles and the activity eyebrow with the
 /// kill/loss facet. Hoisted above the windowed list. Returns `None` for the loading/error/empty states (which the
 /// body renders as a single full-height placeholder instead).
-pub(in crate::features::corporation_detail) fn header(
+pub(in crate::features::roster::character_detail) fn header(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
 ) -> Option<Element<'_, Message>> {
@@ -123,7 +141,7 @@ pub(in crate::features::corporation_detail) fn header(
 
 /// The windowed body for the Kill Log tab: the (filtered) entries table, windowed so a multi-page kill log renders
 /// only the viewport's rows. Designed to be the sole content of the tab's scrollable.
-pub(in crate::features::corporation_detail) fn body(
+pub(in crate::features::roster::character_detail) fn body(
   killlog: &LoadState<Vec<KillLogEntry>>,
   filter: KilllogFilter,
   viewport_height: f32,
@@ -142,25 +160,6 @@ pub(in crate::features::corporation_detail) fn body(
 
   let visible: Vec<&KillLogEntry> = entries.iter().filter(|entry| filter.matches(entry)).collect();
   entries_card(visible, viewport_height, scroll_offset)
-}
-
-fn compute_stats(entries: &[KillLogEntry]) -> KillStats {
-  let mut stats = KillStats {
-    kill_count: 0,
-    kill_isk: 0.0,
-    loss_count: 0,
-    loss_isk: 0.0,
-  };
-  for entry in entries {
-    if entry.is_kill {
-      stats.kill_count += 1;
-      stats.kill_isk += entry.value_destroyed_isk;
-    } else {
-      stats.loss_count += 1;
-      stats.loss_isk += entry.value_destroyed_isk;
-    }
-  }
-  stats
 }
 
 fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
@@ -300,6 +299,15 @@ fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, viewport_height: f32, scroll
   card::panel(body, false)
 }
 
+fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
+  let cell = eyebrow_text(label, Some(color::text::tertiary())).width(Length::Fill);
+
+  container(cell)
+    .width(Length::Fill)
+    .align_x(if right { Horizontal::Right } else { Horizontal::Left })
+    .into()
+}
+
 fn header_row<'a>() -> Element<'a, Message> {
   let row = Row::with_children(vec![
     Space::new().width(Length::Fixed(4.0)).into(),
@@ -337,15 +345,6 @@ fn header_row<'a>() -> Element<'a, Message> {
       },
       ..container::Style::default()
     })
-    .into()
-}
-
-fn col_label<'a>(label: &str, right: bool) -> Element<'a, Message> {
-  let cell = eyebrow_text(label, Some(color::text::tertiary())).width(Length::Fill);
-
-  container(cell)
-    .width(Length::Fill)
-    .align_x(if right { Horizontal::Right } else { Horizontal::Left })
     .into()
 }
 
@@ -422,6 +421,23 @@ fn color_bar<'a>(accent: iced::Color) -> Element<'a, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+fn ship_icon<'a>(ship_icon: &IconResolution) -> Element<'a, Message> {
+  match ship_icon {
+    IconResolution::Found(path) => icon_tile(
+      clip_layer(
+        image(image::Handle::from_path(path.clone()))
+          .width(Length::Fill)
+          .height(Length::Fill)
+          .content_fit(ContentFit::Cover),
+        Length::Fill,
+        Length::Fill,
+      ),
+      SHIP_ICON_BOX,
+    ),
+    IconResolution::Missing => icon_tile(Space::new(), SHIP_ICON_BOX),
+  }
 }
 
 fn ship_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
@@ -525,29 +541,59 @@ fn value_col<'a>(entry: &'a KillLogEntry, accent: iced::Color) -> Element<'a, Me
   )
 }
 
-fn ship_icon<'a>(ship_icon: &IconResolution) -> Element<'a, Message> {
-  match ship_icon {
-    IconResolution::Found(path) => icon_tile(
-      clip_layer(
-        image(image::Handle::from_path(path.clone()))
-          .width(Length::Fill)
-          .height(Length::Fill)
-          .content_fit(ContentFit::Cover),
-        Length::Fill,
-        Length::Fill,
-      ),
-      SHIP_ICON_BOX,
-    ),
-    IconResolution::Missing => icon_tile(Space::new(), SHIP_ICON_BOX),
-  }
-}
-
 fn cell(child: Element<'_, Message>, width: f32) -> Element<'_, Message> {
   container(child).width(Length::Fixed(width)).into()
 }
 
 fn right_align(child: Element<'_, Message>) -> Element<'_, Message> {
   container(child).width(Length::Fill).align_x(Horizontal::Right).into()
+}
+
+pub(in crate::features::roster::character_detail) fn relative_time(iso: &str) -> String {
+  let Some(ts) = parse_iso8601(iso) else {
+    return iso.to_owned();
+  };
+  let now = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs() as i64)
+    .unwrap_or(0);
+  let diff = now - ts;
+  if diff < 60 {
+    "just now".to_owned()
+  } else if diff < 3600 {
+    format!("{}m ago", diff / 60)
+  } else if diff < 86_400 {
+    format!("{}h ago", diff / 3600)
+  } else {
+    format!("{}d ago", diff / 86_400)
+  }
+}
+
+fn parse_iso8601(s: &str) -> Option<i64> {
+  let s = s.trim().trim_end_matches('Z');
+  let (date, time) = s.split_once('T')?;
+  let date_parts: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
+  let time_parts: Vec<i64> = time
+    .split('+')
+    .next()
+    .unwrap_or("")
+    .split(':')
+    .filter_map(|p| p.parse::<f64>().ok().map(|v| v as i64))
+    .collect();
+  if date_parts.len() < 3 || time_parts.len() < 3 {
+    return None;
+  }
+  let days = days_since_epoch(date_parts[0], date_parts[1], date_parts[2]);
+  Some(days * 86_400 + time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2])
+}
+
+fn days_since_epoch(y: i64, m: i64, d: i64) -> i64 {
+  let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
+  let era = if y >= 0 { y } else { y - 399 } / 400;
+  let yoe = y - era * 400;
+  let doy = (153 * m + 2) / 5 + d - 1;
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]
@@ -646,7 +692,6 @@ mod tests {
       let entries = [entry(1, true, 1.0), entry(2, false, 1.0), entry(3, true, 1.0)];
       let kills = entries.iter().filter(|e| KilllogFilter::Kills.matches(e)).count();
       let losses = entries.iter().filter(|e| KilllogFilter::Losses.matches(e)).count();
-
       assert_eq!(kills, 2);
       assert_eq!(losses, 1);
     }
@@ -655,8 +700,24 @@ mod tests {
     fn it_passes_everything_for_all() {
       let entries = [entry(1, true, 1.0), entry(2, false, 1.0)];
       let matched = entries.iter().filter(|e| KilllogFilter::All.matches(e)).count();
-
       assert_eq!(matched, 2);
+    }
+  }
+
+  mod relative_time {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
+      let label = relative_time("2000-01-01T00:00:00Z");
+      assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");
+    }
+
+    #[test]
+    fn it_falls_back_to_the_raw_string_for_an_unparseable_value() {
+      assert_eq!(relative_time("not-a-date"), "not-a-date");
     }
   }
 

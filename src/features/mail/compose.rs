@@ -281,7 +281,7 @@ impl Draft {
     }
   }
 
-  pub fn link_search(&self) -> Option<(u64, crate::features::entity_search::EntityCategory)> {
+  pub fn link_search(&self) -> Option<(u64, crate::features::roster::entity_search::EntityCategory)> {
     let popover = self.link.as_ref()?;
     Some((popover.search.generation(), popover.kind.category()?))
   }
@@ -532,8 +532,8 @@ impl LinkKind {
 
   /// The entity-search category for searchable kinds; `None` for the plain `http` kind, which takes
   /// a typed URL rather than an entity search.
-  pub(super) fn category(self) -> Option<crate::features::entity_search::EntityCategory> {
-    use crate::features::entity_search::EntityCategory;
+  pub(super) fn category(self) -> Option<crate::features::roster::entity_search::EntityCategory> {
+    use crate::features::roster::entity_search::EntityCategory;
     match self {
       LinkKind::Character => Some(EntityCategory::Character),
       LinkKind::Corporation => Some(EntityCategory::Corporation),

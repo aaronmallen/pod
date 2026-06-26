@@ -1,6 +1,11 @@
-mod auth;
+mod add_character;
+pub mod auth;
 mod card;
+pub mod character_detail;
 mod corp_card;
+pub mod corporation_detail;
+pub mod entity_search;
+pub mod killmail_detail;
 mod roster;
 mod roster_tabs;
 mod search_help;
@@ -24,7 +29,8 @@ use iced::{
 use crate::{
   config::FeatureFlags,
   features::{
-    auth as auth_feature, registry,
+    registry,
+    roster::auth as auth_feature,
     skills::{QueueStatus, queue_status},
   },
   store::{
@@ -1499,7 +1505,7 @@ fn corp_for(state: &State, corporation_id: i64) -> Option<&CorpCardModel> {
 
 fn pane_actions<'a>(_state: &'a State, pane: Pane) -> Vec<Element<'a, Message>> {
   match pane {
-    Pane::Characters => vec![squad_ui::new_squad_button(), auth::add_character_button()],
+    Pane::Characters => vec![squad_ui::new_squad_button(), add_character::add_character_button()],
     Pane::Corporations => vec![add_corporation_button()],
   }
 }

@@ -15,7 +15,7 @@ mod ui;
 mod window_state;
 
 fn main() -> iced::Result {
-  if features::auth::forward_or_claim() {
+  if features::roster::auth::forward_or_claim() {
     std::process::exit(0);
   }
   app::run()

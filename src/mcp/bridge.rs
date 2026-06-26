@@ -1,6 +1,6 @@
 //! The inbound bridge from the server thread into the iced update loop.
 //!
-//! Mirrors `features::auth::deep_link`: an iced [`Subscription`] stashes a static `SENDER`, and the
+//! Mirrors `features::roster::auth::deep_link`: an iced [`Subscription`] stashes a static `SENDER`, and the
 //! server thread hands a fully-formed [`McpRequest`] to [`deliver`], which `try_send`s it so the
 //! app's `update()` can dispatch the tool on the UI thread (where it owns the live state) and reply
 //! through the oneshot the request carries.

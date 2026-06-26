@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use crate::{
   clients::{Error, eve_sso},
   config,
-  features::{auth, roster},
+  features::{roster, roster::auth},
   store::{
     Database,
     model::{Credential, OwnerType},

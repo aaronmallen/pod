@@ -1,14 +1,9 @@
 pub mod assets;
-pub mod auth;
 pub mod budget;
 pub mod calendar;
-pub mod character_detail;
 pub mod contract_detail;
-pub mod corporation_detail;
-pub mod entity_search;
 pub mod focus_search;
 pub mod industry;
-pub mod killmail_detail;
 pub mod mail;
 pub mod nav_catalog;
 pub mod registry;

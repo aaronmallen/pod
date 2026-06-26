@@ -7,12 +7,10 @@ use iced::{
   widget::{Column, Row, button, container, text},
 };
 
-use super::{
-  super::{ContactsPage, LoadState, Message},
-  shared,
-};
+use super::shared;
 use crate::{
-  store::{images::ImageState, model::CharacterContact},
+  features::roster::corporation_detail::{ContactsPage, LoadState, Message},
+  store::{images::ImageState, model::CorporationContact},
   ui::{
     components::{
       avatar::avatar,
@@ -29,8 +27,6 @@ use crate::{
   },
 };
 
-const ACTIONS_WIDTH: f32 = 70.0;
-const ACTION_SIZE: f32 = 28.0;
 const AVATAR_SIZE: f32 = 30.0;
 const STANDING_WIDTH: f32 = 70.0;
 const TYPE_WIDTH: f32 = 90.0;
@@ -57,9 +53,9 @@ impl ContactFilter {
     (ContactFilter::Alliance, "Alliances"),
   ];
 
-  /// The `character_contacts.contact_type` value this facet filters to, or `None` for the All facet. The feature
+  /// The `corporation_contacts.contact_type` value this facet filters to, or `None` for the All facet. The feature
   /// pushes this into the paginated SQL query rather than filtering an in-memory set.
-  pub(in crate::features::character_detail) fn contact_type(self) -> Option<&'static str> {
+  pub(in crate::features::roster::corporation_detail) fn contact_type(self) -> Option<&'static str> {
     match self {
       ContactFilter::All => None,
       ContactFilter::Character => Some("character"),
@@ -73,7 +69,7 @@ impl ContactFilter {
 /// row without holding the whole address book (and its image map) in memory.
 #[derive(Clone, Debug)]
 pub struct ContactRow {
-  pub contact: CharacterContact,
+  pub contact: CorporationContact,
   pub image: ImageState,
 }
 
@@ -145,23 +141,17 @@ impl SortDirection {
 
 /// The non-scrolling header for the Contacts tab: the address-book title (with a loaded-so-far count) and the
 /// entity-type facet. Hoisted above the windowed list so it stays put while the list scrolls.
-pub(in crate::features::character_detail) fn header<'a>(
+pub(in crate::features::roster::corporation_detail) fn header<'a>(
   contacts: &LoadState<ContactsPage>,
   filter: ContactFilter,
   query: &'a str,
-  write_enabled: bool,
 ) -> Element<'a, Message> {
   let (count, suffix) = match contacts {
     LoadState::Loaded(page) => (page.rows().len(), if page.has_more() { "+" } else { "" }),
     _ => (0, ""),
   };
 
-  let mut controls: Vec<Element<'a, Message>> = vec![filter_bar(query), segmented(filter)];
-  if write_enabled {
-    controls.push(add_button());
-  }
-
-  let controls = Row::with_children(controls)
+  let controls = Row::with_children(vec![filter_bar(query), segmented(filter)])
     .spacing(spacing::SPACE_3)
     .align_y(Vertical::Center)
     .width(Length::Fill);
@@ -221,64 +211,12 @@ fn clear_button<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn add_button<'a>() -> Element<'a, Message> {
-  let label = Row::with_children(vec![
-    Icon::plus().size(14.0).color(color::text::PRIMARY).render(),
-    text("Add contact")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  button(
-    container(label)
-      .height(Length::Fill)
-      .align_y(Vertical::Center)
-      .padding(Padding {
-        top: 0.0,
-        right: spacing::SPACE_3_5,
-        bottom: 0.0,
-        left: spacing::SPACE_3_5,
-      }),
-  )
-  .height(Length::Fixed(36.0))
-  .on_press(Message::ContactAddOpened)
-  .style(|_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hover.then_some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
-      border: Border {
-        color: if hover {
-          color::accent::PLASMA
-        } else {
-          color::rule_strong()
-        },
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: if hover {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
-}
-
 /// The windowed body for the Contacts tab: the column header plus the keyset page of rows, windowed so only the
 /// viewport's rows (plus overscan) are materialized regardless of how many pages have loaded. The caller wraps this
 /// in the tab's scrollable inside `responsive`, supplying the real `viewport_height`.
-pub(in crate::features::character_detail) fn body<'a>(
+pub(in crate::features::roster::corporation_detail) fn body<'a>(
   contacts: &'a LoadState<ContactsPage>,
   sort: ContactSort,
-  write_enabled: bool,
   viewport_height: f32,
   scroll_offset: f32,
 ) -> Element<'a, Message> {
@@ -320,16 +258,10 @@ pub(in crate::features::character_detail) fn body<'a>(
     .scroll_offset(scroll_offset);
   let list = VirtualList::new(config, |index| {
     let row = &rows[index];
-    contact_row(
-      &row.contact,
-      Some(&row.image),
-      &labels,
-      write_enabled,
-      index == rows.len() - 1,
-    )
+    contact_row(&row.contact, Some(&row.image), &labels, index == rows.len() - 1)
   })
   .view();
-  let body = Column::with_children(vec![column_header(sort, write_enabled), list]).width(Length::Fill);
+  let body = Column::with_children(vec![column_header(sort), list]).width(Length::Fill);
 
   card::panel(body, false)
 }
@@ -424,8 +356,8 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
     .into()
 }
 
-fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Message> {
-  let mut children = vec![
+fn column_header<'a>(sort: ContactSort) -> Element<'a, Message> {
+  let children = vec![
     sortable_label("Entity", false, SortColumn::Entity, sort),
     cell(sortable_label("Type", false, SortColumn::Type, sort), TYPE_WIDTH),
     cell(
@@ -435,9 +367,6 @@ fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Mess
     col_label("Note", false),
     cell(col_label("Watchlist", true), WATCHLIST_WIDTH),
   ];
-  if write_enabled {
-    children.push(cell(col_label("Edit", true), ACTIONS_WIDTH));
-  }
 
   let row = Row::with_children(children)
     .spacing(spacing::SPACE_3)
@@ -465,10 +394,9 @@ fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Mess
 }
 
 fn contact_row<'a>(
-  contact: &'a CharacterContact,
+  contact: &'a CorporationContact,
   image: Option<&ImageState>,
   labels: &HashMap<i64, &'a str>,
-  write_enabled: bool,
   last: bool,
 ) -> Element<'a, Message> {
   let standing = contact.standing();
@@ -522,16 +450,13 @@ fn contact_row<'a>(
     text("").width(Length::Fill).into()
   };
 
-  let mut children = vec![
+  let children = vec![
     entity.into(),
     cell(kind.into(), TYPE_WIDTH),
     cell(right_align(standing_text.into()), STANDING_WIDTH),
     note.into(),
     cell(right_align(watch), WATCHLIST_WIDTH),
   ];
-  if write_enabled {
-    children.push(cell(row_actions(contact), ACTIONS_WIDTH));
-  }
 
   let row = Row::with_children(children)
     .spacing(spacing::SPACE_3)
@@ -546,67 +471,7 @@ fn contact_row<'a>(
     .into()
 }
 
-fn row_actions(contact: &CharacterContact) -> Element<'_, Message> {
-  let edit = action_button(
-    Icon::pencil(),
-    false,
-    Message::ContactEditOpened(Box::new(contact.clone())),
-  );
-  let delete = action_button(
-    Icon::trash(),
-    true,
-    Message::ContactDeleteRequested(Box::new(contact.clone())),
-  );
-
-  Row::with_children(vec![edit, delete])
-    .spacing(spacing::UNIT)
-    .align_y(Vertical::Center)
-    .into()
-}
-
-fn action_button<'a>(icon: Icon, danger: bool, message: Message) -> Element<'a, Message> {
-  let tint = if danger {
-    color::status::DANGER
-  } else {
-    color::text::secondary()
-  };
-
-  button(
-    container(icon.size(14.0).color(tint).render())
-      .width(Length::Fixed(ACTION_SIZE))
-      .height(Length::Fixed(ACTION_SIZE))
-      .align_x(Horizontal::Center)
-      .align_y(Vertical::Center),
-  )
-  .padding(0)
-  .on_press(message)
-  .style(move |_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    let (border, background) = if hover && danger {
-      (
-        color::with_alpha(color::status::DANGER, 0.4),
-        color::with_alpha(color::status::DANGER, 0.12),
-      )
-    } else if hover {
-      (color::rule_strong(), color::with_alpha(color::text::PRIMARY, 0.06))
-    } else {
-      (iced::Color::TRANSPARENT, iced::Color::TRANSPARENT)
-    };
-    button::Style {
-      background: Some(Background::Color(background)),
-      border: Border {
-        color: border,
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: color::text::PRIMARY,
-      ..button::Style::default()
-    }
-  })
-  .into()
-}
-
-fn label_note(contact: &CharacterContact, labels: &HashMap<i64, &str>) -> String {
+fn label_note(contact: &CorporationContact, labels: &HashMap<i64, &str>) -> String {
   let ids: Vec<i64> = serde_json::from_str(contact.label_ids()).unwrap_or_default();
   ids
     .into_iter()
@@ -665,14 +530,14 @@ fn row_padding() -> Padding {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::store::model::CharacterContactLabel;
+  use crate::store::model::CorporationContactLabel;
 
-  fn contact(id: i64, kind: &str, standing: f64, watched: bool, label_ids: &str, name: &str) -> CharacterContact {
-    CharacterContact {
-      character_id: 42,
+  fn contact(id: i64, kind: &str, standing: f64, watched: bool, label_ids: &str, name: &str) -> CorporationContact {
+    CorporationContact {
       contact_id: id,
       contact_name: name.to_owned(),
       contact_type: kind.to_owned(),
+      corporation_id: 42,
       is_blocked: false,
       is_watched: watched,
       label_ids: label_ids.to_owned(),
@@ -680,9 +545,9 @@ mod tests {
     }
   }
 
-  fn label(id: i64, name: &str) -> CharacterContactLabel {
-    CharacterContactLabel {
-      character_id: 42,
+  fn label(id: i64, name: &str) -> CorporationContactLabel {
+    CorporationContactLabel {
+      corporation_id: 42,
       label_id: id,
       label_name: name.to_owned(),
     }
@@ -717,7 +582,7 @@ mod tests {
     fn it_renders_an_empty_page_as_a_no_match_panel() {
       let state = LoadState::Loaded(ContactsPage::for_test(Vec::new(), Vec::new(), false));
 
-      let _el: Element<'_, Message> = body(&state, ContactSort::default(), false, 600.0, 0.0);
+      let _el: Element<'_, Message> = body(&state, ContactSort::default(), 600.0, 0.0);
     }
 
     #[test]
@@ -732,7 +597,6 @@ mod tests {
               column,
               direction,
             },
-            true,
             600.0,
             0.0,
           );
@@ -745,8 +609,8 @@ mod tests {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
       let error: LoadState<ContactsPage> = LoadState::Error("boom".to_owned());
 
-      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), false, 600.0, 0.0);
-      let _error: Element<'_, Message> = body(&error, ContactSort::default(), false, 600.0, 0.0);
+      let _loading: Element<'_, Message> = body(&loading, ContactSort::default(), 600.0, 0.0);
+      let _error: Element<'_, Message> = body(&error, ContactSort::default(), 600.0, 0.0);
     }
   }
 
@@ -764,7 +628,7 @@ mod tests {
       labels.insert(1, "Fleet");
       labels.insert(2, "Trusted");
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false, false);
+      let _el: Element<'_, Message> = super::super::contact_row(&c, Some(&image), &labels, false);
     }
 
     #[test]
@@ -772,15 +636,7 @@ mod tests {
       let c = contact(200, "corporation", -5.0, false, "[]", "Hostile Corp");
       let labels: HashMap<i64, &str> = HashMap::new();
 
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, false, true);
-    }
-
-    #[test]
-    fn it_renders_the_edit_and_delete_actions_when_writes_are_enabled() {
-      let c = contact(100, "character", 8.5, true, "[1,2]", "Wingmate");
-      let labels: HashMap<i64, &str> = HashMap::new();
-
-      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true, false);
+      let _el: Element<'_, Message> = super::super::contact_row(&c, None, &labels, true);
     }
   }
 
@@ -818,7 +674,7 @@ mod tests {
     fn it_renders_a_zero_count_in_the_loading_state() {
       let loading: LoadState<ContactsPage> = LoadState::Loading;
 
-      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "", false);
+      let _el: Element<'_, Message> = super::super::header(&loading, ContactFilter::All, "");
     }
 
     #[test]
@@ -831,22 +687,15 @@ mod tests {
         ContactFilter::Corp,
         ContactFilter::Alliance,
       ] {
-        let _el: Element<'_, Message> = super::super::header(&state, filter, "", false);
+        let _el: Element<'_, Message> = super::super::header(&state, filter, "");
       }
-    }
-
-    #[test]
-    fn it_renders_the_add_button_when_writes_are_enabled() {
-      let state = LoadState::Loaded(loaded());
-
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", true);
     }
 
     #[test]
     fn it_renders_the_filter_bar_with_a_clear_button_for_an_active_query() {
       let state = LoadState::Loaded(loaded());
 
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing", false);
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "wing");
     }
 
     #[test]
@@ -858,7 +707,7 @@ mod tests {
       );
       let state = LoadState::Loaded(page);
 
-      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "", false);
+      let _el: Element<'_, Message> = super::super::header(&state, ContactFilter::All, "");
     }
   }
 

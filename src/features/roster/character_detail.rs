@@ -79,7 +79,7 @@ impl ContactsPage {
   /// Builds a page directly from render-ready rows and labels. Used by the tab's view tests, which assert on
   /// layout rather than the keyset cursor (so the cursor is derived as `None`).
   #[cfg(test)]
-  pub(in crate::features::character_detail) fn for_test(
+  pub(in crate::features::roster::character_detail) fn for_test(
     rows: Vec<ContactRow>,
     labels: Vec<CharacterContactLabel>,
     has_more: bool,
@@ -1579,7 +1579,7 @@ async fn load_killmail_detail(
   db: Database,
   character_id: i64,
   killmail_id: i64,
-) -> Option<crate::features::killmail_detail::KillmailDetail> {
+) -> Option<crate::features::roster::killmail_detail::KillmailDetail> {
   killmail_loader::load(&db, character_id, killmail_id, character_id).await
 }
 

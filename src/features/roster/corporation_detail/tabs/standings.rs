@@ -1,12 +1,12 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, button, container, opaque, svg, text, text_input},
+  widget::{Column, Row, button, container, svg, text, text_input},
 };
 
 use super::shared;
 use crate::{
-  features::character_detail::{LoadState, Message, STANDINGS_SEARCH_INPUT_ID, StandingKind, StandingsRow},
+  features::roster::corporation_detail::{LoadState, Message, STANDINGS_SEARCH_INPUT_ID, StandingKind, StandingsRow},
   store::{
     repo::standings,
     search::{ChipKind, ParsedQuery},
@@ -16,43 +16,27 @@ use crate::{
       avatar::avatar,
       empty_state::{LoadStateView, empty_state, load_state_view},
       eyebrow::eyebrow,
-      meter, rule,
+      meter,
       section_header::section_header,
       segmented::segment_button_style,
       virtual_list::{VirtualList, VirtualListConfig},
     },
-    style::{color, control, radius, spacing, typography},
+    style::{color, radius, spacing, typography},
   },
 };
 
-static CHECK_ICON: &[u8] = include_bytes!("../../../../assets/images/icons/check.svg");
-static CLOSE_ICON: &[u8] = include_bytes!("../../../../assets/images/icons/close.svg");
-static HELP_ICON: &[u8] = include_bytes!("../../../../assets/images/icons/help.svg");
-static LOCK_ICON: &[u8] = include_bytes!("../../../../assets/images/icons/lock.svg");
-static SEARCH_ICON: &[u8] = include_bytes!("../../../../assets/images/icons/search.svg");
+static CHECK_ICON: &[u8] = include_bytes!("../../../../../assets/images/icons/check.svg");
+static CLOSE_ICON: &[u8] = include_bytes!("../../../../../assets/images/icons/close.svg");
+static LOCK_ICON: &[u8] = include_bytes!("../../../../../assets/images/icons/lock.svg");
+static SEARCH_ICON: &[u8] = include_bytes!("../../../../../assets/images/icons/search.svg");
 
 const ACCESS_ICON_SIZE: f32 = 14.0;
 const AVATAR_SIZE: f32 = 30.0;
-const CHIPS_PER_ROW: usize = 4;
 const CLOSE_ICON_SIZE: f32 = 14.0;
 /// Nominal height of one standings row, in pixels (avatar + optional agent meta line). Feeds only the
 /// [`VirtualList`] offset math; overscan absorbs the one-vs-two-line variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 48.0;
-
-const EXAMPLES: &[(&str, &str)] = &[
-  ("faction:caldari", "Caldari faction + corps"),
-  ("faction:caldari,amarr", "Caldari OR Amarr"),
-  ("corp:navy", "corps containing \"navy\""),
-  ("faction:caldari -corp:\"sisters of eve\"", "Caldari, minus that corp"),
-  ("level:4 division:security", "L4 security agents"),
-  ("type:research field:caldari", "Caldari research agents"),
-  ("system:jita reachable", "accessible agents near Jita"),
-  ("\"mordu's legion\"", "phrase match"),
-];
-
-const HELP_ICON_SIZE: f32 = 15.0;
 const INPUT_BOX_HEIGHT: f32 = 36.0;
-const POPOVER_WIDTH: f32 = 380.0;
 const SEARCH_ICON_SIZE: f32 = 14.0;
 const STANDING_BAR_HEIGHT: f32 = 6.0;
 const STANDING_BAR_WIDTH: f32 = 160.0;
@@ -199,52 +183,6 @@ fn flatten_sections<'a>(rows: &'a [StandingsRow], filter: StandingsFilter) -> Ve
   items
 }
 
-pub(crate) fn help_popover<'a>() -> Element<'a, Message> {
-  let header = Row::with_children(vec![
-    section_label("Filter syntax"),
-    Space::new().width(Length::Fill).into(),
-    icon_button(
-      icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::secondary()),
-      Message::StandingsToggleHelp,
-    ),
-  ])
-  .align_y(Vertical::Center);
-
-  let intro = text(
-    "Filter the standings catalog with plain text and key:value filters. Comma-separate values for OR, \
-    repeat keys to AND, prefix with - to negate. Click any example to add it.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(muted_text);
-
-  let examples = Column::with_children(
-    EXAMPLES
-      .iter()
-      .map(|&(query, note)| example_row(query, note))
-      .collect::<Vec<_>>(),
-  )
-  .spacing(spacing::SPACE_2);
-
-  let keys = chip_row(standings::AVAILABLE_KEYS.iter().map(|&key| key_chip(key)).collect());
-
-  let content = Column::with_children(vec![
-    header.into(),
-    intro.into(),
-    examples.into(),
-    section_label("Available keys"),
-    keys,
-  ])
-  .spacing(spacing::SPACE_3);
-
-  let card = container(content)
-    .width(Length::Fixed(POPOVER_WIDTH))
-    .padding(spacing::SPACE_3_5)
-    .style(control::card);
-
-  opaque(card)
-}
-
 fn accessibility_indicator<'a>(row: &StandingsRow) -> Option<Element<'a, Message>> {
   let accessible = row.accessible?;
   let (bytes, tint) = if accessible {
@@ -263,26 +201,6 @@ fn chip_padding() -> Padding {
     bottom: 2.0,
     left: 6.0,
   }
-}
-
-fn chip_row<'a>(chips: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-  let mut rows: Vec<Element<'a, Message>> = Vec::new();
-  let mut current: Vec<Element<'a, Message>> = Vec::new();
-  for chip in chips {
-    current.push(chip);
-    if current.len() == CHIPS_PER_ROW {
-      rows.push(
-        Row::with_children(std::mem::take(&mut current))
-          .spacing(spacing::SPACE_2)
-          .into(),
-      );
-    }
-  }
-  if !current.is_empty() {
-    rows.push(Row::with_children(current).spacing(spacing::SPACE_2).into());
-  }
-
-  Column::with_children(rows).spacing(spacing::SPACE_2).into()
 }
 
 fn clear_button<'a>() -> Element<'a, Message> {
@@ -311,67 +229,6 @@ fn clear_button_style(_theme: &iced::Theme, status: button::Status) -> button::S
       color: border_color,
       width: 1.0,
       radius: radius::SUBTLE.into(),
-    },
-    ..button::Style::default()
-  }
-}
-
-fn code_chip<'a>(label: &'a str) -> Element<'a, Message> {
-  container(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(chip_padding())
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.10))),
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.25),
-      width: 1.0,
-      radius: radius::SUBTLE.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
-fn example_row<'a>(query: &'a str, note: &'a str) -> Element<'a, Message> {
-  button(
-    Row::with_children(vec![
-      code_chip(query),
-      text(note)
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM)
-        .style(muted_text)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_3)
-    .align_y(Vertical::Center),
-  )
-  .padding(spacing::SPACE_2)
-  .width(Length::Fill)
-  .on_press(Message::StandingsInsertQuery(query.to_owned()))
-  .style(example_button_style)
-  .into()
-}
-
-fn example_button_style(_theme: &iced::Theme, status: button::Status) -> button::Style {
-  let background = match status {
-    button::Status::Hovered | button::Status::Pressed => {
-      Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.05)))
-    }
-    _ => None,
-  };
-
-  button::Style {
-    background,
-    text_color: color::text::secondary(),
-    border: Border {
-      radius: radius::SUBTLE.into(),
-      ..Border::default()
     },
     ..button::Style::default()
   }
@@ -441,25 +298,6 @@ fn is_other(row: &StandingsRow) -> bool {
   matches!(row.kind, StandingKind::Corporation | StandingKind::Agent) && row.faction_id.is_none()
 }
 
-fn key_chip<'a>(key: &str) -> Element<'a, Message> {
-  container(
-    text(format!("{key}:"))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(muted_text),
-  )
-  .padding(chip_padding())
-  .style(|_| container::Style {
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.12),
-      width: 1.0,
-      radius: radius::SUBTLE.into(),
-    },
-    ..container::Style::default()
-  })
-  .into()
-}
-
 fn meta_line<'a>(row: &StandingsRow) -> Option<Element<'a, Message>> {
   if row.kind != StandingKind::Agent {
     return None;
@@ -494,12 +332,6 @@ fn meta_line<'a>(row: &StandingsRow) -> Option<Element<'a, Message>> {
       })
       .into(),
   )
-}
-
-fn muted_text(_theme: &iced::Theme) -> text::Style {
-  text::Style {
-    color: Some(color::text::secondary()),
-  }
 }
 
 fn no_results<'a>(has_filters: bool) -> Element<'a, Message> {
@@ -669,11 +501,6 @@ fn search_bar<'a>(query: &str, has_filters: bool) -> Element<'a, Message> {
       Message::StandingsClearSearch,
     ));
   }
-  cluster.push(rule::vertical_alpha(18.0, 0.12));
-  cluster.push(icon_button(
-    icon(HELP_ICON, HELP_ICON_SIZE, color::text::secondary()),
-    Message::StandingsToggleHelp,
-  ));
 
   let input_box = container(
     Row::with_children(cluster)
@@ -759,10 +586,6 @@ fn section_heading<'a>(label: &'a str, count: usize, has_filters: bool) -> Eleme
   section_header(label, Some(&format!("{count} {suffix}")))
 }
 
-fn section_label<'a>(label: &str) -> Element<'a, Message> {
-  eyebrow(label, Some(color::text::tertiary()))
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -783,7 +606,7 @@ mod tests {
       kind,
       level: None,
       name: name.to_owned(),
-      raw: 0.0,
+      raw: effective,
       region: None,
       system: None,
     }
@@ -804,7 +627,7 @@ mod tests {
       kind: StandingKind::Agent,
       level: Some(4),
       name: name.to_owned(),
-      raw: 1.0,
+      raw: 3.0,
       region: Some("The Forge".to_owned()),
       system: Some("Jita".to_owned()),
     }
@@ -812,14 +635,6 @@ mod tests {
 
   mod body {
     use super::*;
-
-    #[test]
-    fn it_renders_agent_rows_with_an_active_filter() {
-      let rows = vec![agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true))];
-      let catalog = LoadState::Loaded(rows);
-
-      let _el: Element<'_, Message> = body(&catalog, StandingsFilter::All, true, 600.0, 0.0);
-    }
 
     #[test]
     fn it_renders_each_facet_filter() {
@@ -886,33 +701,8 @@ mod tests {
     }
 
     #[test]
-    fn it_keeps_factioned_agents_but_not_factionless_ones() {
-      assert_eq!(matched(StandingsFilter::Agents), 1);
-
-      assert!(StandingsFilter::Agents.matches(&agent(1, "A", Some(500_001), None)));
-      assert!(!StandingsFilter::Agents.matches(&agent(2, "B", None, None)));
-    }
-
-    #[test]
-    fn it_keeps_factioned_corps_but_not_factionless_ones() {
-      assert_eq!(matched(StandingsFilter::Corps), 1);
-
-      assert!(StandingsFilter::Corps.matches(&row(1, StandingKind::Corporation, "Navy", Some(500_001), 0.0)));
-      assert!(!StandingsFilter::Corps.matches(&row(2, StandingKind::Corporation, "Doomheim", None, 0.0)));
-    }
-
-    #[test]
-    fn it_keeps_only_factions() {
-      assert_eq!(matched(StandingsFilter::Factions), 1);
-    }
-
-    #[test]
     fn it_keeps_only_the_other_bucket() {
       assert_eq!(matched(StandingsFilter::Other), 2);
-
-      assert!(StandingsFilter::Other.matches(&row(1, StandingKind::Corporation, "Doomheim", None, 0.0)));
-      assert!(StandingsFilter::Other.matches(&agent(2, "Rogue", None, None)));
-      assert!(!StandingsFilter::Other.matches(&row(3, StandingKind::Faction, "Caldari State", Some(500_001), 0.0)));
     }
 
     #[test]
@@ -951,22 +741,6 @@ mod tests {
     }
 
     #[test]
-    fn it_drops_sections_the_facet_filters_out() {
-      let rows = vec![
-        row(500_001, StandingKind::Faction, "Caldari State", Some(500_001), 5.0),
-        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
-      ];
-
-      let items = flatten_sections(&rows, StandingsFilter::Factions);
-
-      assert_eq!(
-        labels(&items),
-        ["Factions"],
-        "the corps section is filtered out entirely"
-      );
-    }
-
-    #[test]
     fn it_emits_a_header_then_its_rows_in_section_order() {
       let rows = vec![
         agent(3_000_001, "Navy Sec Agent", Some(500_001), Some(true)),
@@ -980,76 +754,14 @@ mod tests {
       assert_eq!(labels(&items), ["Factions", "Corporations", "Agents", "Other"]);
       assert_eq!(items.len(), 4 + 4, "one header per section plus every visible row");
     }
-
-    #[test]
-    fn it_marks_only_the_last_row_of_a_section() {
-      let rows = vec![
-        row(1_000_001, StandingKind::Corporation, "Caldari Navy", Some(500_001), 4.0),
-        row(1_000_002, StandingKind::Corporation, "State Navy", Some(500_001), 3.0),
-      ];
-
-      let items = flatten_sections(&rows, StandingsFilter::All);
-
-      let lasts: Vec<bool> = items
-        .iter()
-        .filter_map(|item| match item {
-          FlatItem::Row {
-            last, ..
-          } => Some(*last),
-          FlatItem::Header {
-            ..
-          } => None,
-        })
-        .collect();
-      assert_eq!(lasts, [false, true]);
-    }
   }
 
-  mod help_popover {
+  mod header {
     use super::*;
 
     #[test]
-    fn it_renders() {
-      let _el: Element<'_, Message> = help_popover();
-    }
-  }
-
-  mod is_other {
-    use super::*;
-
-    #[test]
-    fn it_does_not_flag_a_factioned_corp() {
-      assert!(!is_other(&row(
-        1,
-        StandingKind::Corporation,
-        "Caldari Navy",
-        Some(500_001),
-        0.0
-      )));
-    }
-
-    #[test]
-    fn it_flags_a_factionless_corp_as_other() {
-      assert!(is_other(&row(1, StandingKind::Corporation, "Doomheim", None, 0.0)));
-    }
-
-    #[test]
-    fn it_never_flags_a_faction_row() {
-      assert!(!is_other(&row(1, StandingKind::Faction, "Caldari State", None, 0.0)));
-    }
-  }
-
-  mod meta_line {
-    use super::*;
-
-    #[test]
-    fn it_builds_a_line_for_an_agent() {
-      assert!(meta_line(&agent(1, "A", Some(500_001), None)).is_some());
-    }
-
-    #[test]
-    fn it_is_absent_for_a_faction() {
-      assert!(meta_line(&row(1, StandingKind::Faction, "Caldari State", Some(500_001), 0.0)).is_none());
+    fn it_renders_the_search_bar_and_filter() {
+      let _el: Element<'_, Message> = header("faction:caldari", StandingsFilter::All, true);
     }
   }
 

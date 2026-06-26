@@ -51,7 +51,7 @@ const ID_KEYWORDS: &[&str] = &[
 /// `context_log` target allow-list. A buffered line survives only if its
 /// `target` field is exactly one of these benign targets; everything else —
 /// including the default module-path targets that carry PII such as
-/// `pod::features::auth`, `pod::lifecycle`, and `pod::sync::*` — is dropped.
+/// `pod::features::roster::auth`, `pod::lifecycle`, and `pod::sync::*` — is dropped.
 const ALLOWED_TARGETS: &[&str] = &[
   "pod::nav",
   "pod::ui",
@@ -557,7 +557,7 @@ mod tests {
       // benign, allow-listed
       "{\"level\":\"INFO\",\"target\":\"pod::nav\",\"message\":\"navigated\"}".to_owned(),
       // dropped: carries PII via module-path target
-      "{\"level\":\"INFO\",\"target\":\"pod::features::auth\",\"message\":\"x\"}".to_owned(),
+      "{\"level\":\"INFO\",\"target\":\"pod::features::roster::auth\",\"message\":\"x\"}".to_owned(),
       "{\"level\":\"INFO\",\"target\":\"pod::lifecycle\",\"message\":\"x\"}".to_owned(),
     ];
     let kept = scrub_context_log(&lines);
@@ -622,19 +622,19 @@ mod tests {
 
   // --- ADVERSARIAL: real current log lines, nothing sensitive survives ----
 
-  /// character_name logged at auth (real target `pod::features::auth`, which
+  /// character_name logged at auth (real target `pod::features::roster::auth`, which
   /// has NO explicit `target:` so the default is the module path). The whole
   /// line must be dropped — it is not on the target allow-list.
   #[test]
   fn adversarial_character_name_at_auth_is_dropped() {
     // Mirrors src/features/auth.rs:189
     // tracing::info!(character_id = signed.character_id, name = %signed.character_name, "character signed in");
-    let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"INFO\",\"target\":\"pod::features::auth\",\"character_id\":90000001,\"name\":\"Aaron Mallen\",\"message\":\"character signed in\"}";
+    let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"INFO\",\"target\":\"pod::features::roster::auth\",\"character_id\":90000001,\"name\":\"Aaron Mallen\",\"message\":\"character signed in\"}";
     let kept = scrub_context_log(&[line.to_owned()]);
     assert!(kept.is_empty(), "auth line survived: {kept:?}");
     // And it is NOT pod::auth in the allow-list either.
     assert!(!ALLOWED_TARGETS.contains(&"pod::auth"));
-    assert!(!ALLOWED_TARGETS.contains(&"pod::features::auth"));
+    assert!(!ALLOWED_TARGETS.contains(&"pod::features::roster::auth"));
     let joined = kept.join("");
     assert!(!joined.contains("Aaron"), "character_name leaked");
   }

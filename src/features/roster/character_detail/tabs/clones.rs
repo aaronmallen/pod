@@ -31,7 +31,9 @@ use crate::{
 const IMPLANT_SLOTS: usize = 10;
 const ICON_BOX: f32 = 32.0;
 
-pub(in crate::features::character_detail) fn body(clones: &LoadState<Option<CharacterClones>>) -> Element<'_, Message> {
+pub(in crate::features::roster::character_detail) fn body(
+  clones: &LoadState<Option<CharacterClones>>,
+) -> Element<'_, Message> {
   let clones = match clones {
     LoadState::Loaded(Some(clones)) => clones,
     LoadState::Loaded(None) => {

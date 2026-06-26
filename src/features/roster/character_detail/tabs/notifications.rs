@@ -99,7 +99,7 @@ impl NotificationsFilter {
     (NotificationsFilter::War, "War"),
   ];
 
-  pub(in crate::features::character_detail) fn matches(self, notification: &CharacterNotification) -> bool {
+  pub(in crate::features::roster::character_detail) fn matches(self, notification: &CharacterNotification) -> bool {
     match self {
       NotificationsFilter::All => true,
       NotificationsFilter::Unread => !notification.is_read(),
@@ -111,11 +111,11 @@ impl NotificationsFilter {
   }
 }
 
-pub(in crate::features::character_detail) fn unread_count(notifications: &[CharacterNotification]) -> usize {
+pub(in crate::features::roster::character_detail) fn unread_count(notifications: &[CharacterNotification]) -> usize {
   notifications.iter().filter(|n| !n.is_read()).count()
 }
 
-pub(in crate::features::character_detail) fn body(
+pub(in crate::features::roster::character_detail) fn body(
   notifications: &LoadState<Vec<CharacterNotification>>,
   filter: NotificationsFilter,
 ) -> Element<'_, Message> {
@@ -355,7 +355,7 @@ fn body_snippet(notification: &CharacterNotification) -> Option<String> {
   })
 }
 
-pub(in crate::features::character_detail) fn humanise_type(notif_type: &str) -> String {
+pub(in crate::features::roster::character_detail) fn humanise_type(notif_type: &str) -> String {
   let mut out = String::with_capacity(notif_type.len() + 4);
   for c in notif_type.chars() {
     if c.is_uppercase() && !out.is_empty() && !out.ends_with(' ') {
@@ -366,7 +366,7 @@ pub(in crate::features::character_detail) fn humanise_type(notif_type: &str) -> 
   out
 }
 
-pub(in crate::features::character_detail) fn category(notif_type: &str) -> &'static str {
+pub(in crate::features::roster::character_detail) fn category(notif_type: &str) -> &'static str {
   if let Some((_, cat)) = TYPE_OVERRIDES.iter().find(|(name, _)| *name == notif_type) {
     return cat;
   }

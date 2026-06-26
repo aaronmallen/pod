@@ -151,7 +151,7 @@ mod tests {
 
   mod header {
     use super::*;
-    use crate::{config::Feature, features::character_detail::HeadStats, store::images};
+    use crate::{config::Feature, features::roster::character_detail::HeadStats, store::images};
 
     fn pilot(id: i64, name: &str) -> PickerPilot {
       PickerPilot {

@@ -662,9 +662,10 @@ mod tests {
       #[test]
       fn it_keeps_market_orders_dormant_because_the_orders_scope_is_never_requested() {
         let subject = Subject::Character(7);
-        let everything: HashSet<&str> = crate::features::auth::scopes_for(&crate::config::FeatureFlags::default())
-          .into_iter()
-          .collect();
+        let everything: HashSet<&str> =
+          crate::features::roster::auth::scopes_for(&crate::config::FeatureFlags::default())
+            .into_iter()
+            .collect();
 
         assert!(
           !JobKind::CharacterMarketOrders.is_scope_granted(subject, &everything),

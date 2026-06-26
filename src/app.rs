@@ -26,9 +26,9 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, auth, calendar, character_detail, contract_detail, corporation_detail, focus_search, industry,
-    killmail_detail, mail, registry, roster, roster::OwnedPilot, settings, skill_plan_editor, skill_plan_manager,
-    skills, skills_compare, splash, wallet,
+    assets, calendar, contract_detail, focus_search, industry, mail, registry, roster,
+    roster::{OwnedPilot, auth, character_detail, corporation_detail, killmail_detail},
+    settings, skill_plan_editor, skill_plan_manager, skills, skills_compare, splash, wallet,
   },
   mcp, notifications,
   services::{crash, images, telemetry, updater},
@@ -4010,7 +4010,7 @@ fn compose_recipient_search(
   query: String,
   id: window::Id,
 ) -> Task<Message> {
-  use crate::features::entity_search;
+  use crate::features::roster::entity_search;
 
   if query.trim().chars().count() < mail::RECIPIENT_SEARCH_MIN_CHARS {
     return Task::none();
@@ -4050,7 +4050,7 @@ fn compose_link_search(
   query: String,
   id: window::Id,
 ) -> Task<Message> {
-  use crate::features::entity_search;
+  use crate::features::roster::entity_search;
 
   let Some((generation, category)) = draft.link_search() else {
     return Task::none();
@@ -6074,7 +6074,7 @@ fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) ->
 /// Captures the modal's current search generation and stamps it onto the async result so a stale response
 /// arriving after the user has typed again is discarded by the handler rather than clobbering newer results.
 fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, query: String) -> Task<Message> {
-  use crate::features::entity_search;
+  use crate::features::roster::entity_search;
 
   let generation = state.contact_search_generation();
   let db = runtime.db.clone();
@@ -6614,9 +6614,9 @@ fn open_reply_window(app: &mut App, mail_id: i64, kind: mail::compose::Kind) -> 
 }
 
 fn entity_ref_from_result(
-  result: crate::features::entity_search::EntityResult,
+  result: crate::features::roster::entity_search::EntityResult,
 ) -> crate::ui::components::entity_search::EntityRef {
-  use crate::{features::entity_search::EntityCategory, ui::components::entity_search::EntityKind};
+  use crate::{features::roster::entity_search::EntityCategory, ui::components::entity_search::EntityKind};
   let kind = match result.category {
     EntityCategory::Alliance => EntityKind::Alliance,
     EntityCategory::Character => EntityKind::Character,
@@ -9907,7 +9907,7 @@ mod tests {
 
   mod mark_detail_dirty {
     use super::*;
-    use crate::features::character_detail;
+    use crate::features::roster::character_detail;
 
     const PILOT: i64 = 42;
 
@@ -14030,7 +14030,7 @@ mod tests {
 
   mod entity_ref_from_result {
     use crate::{
-      features::entity_search::{EntityCategory, EntityResult},
+      features::roster::entity_search::{EntityCategory, EntityResult},
       ui::components::entity_search::EntityKind,
     };
 

@@ -10,6 +10,11 @@ use std::net::{IpAddr, Ipv4Addr};
 /// The single route the server answers. A request to any other path is a 404.
 pub const ENDPOINT: &str = "/mcp";
 
+/// The only HTTP method the endpoint answers. Streamable HTTP carries every JSON-RPC message in a
+/// `POST` body; Pod serves no server-initiated SSE, so a `GET` (the legacy stream probe) and any
+/// other verb are a 405 with an `Allow: POST` header.
+pub const ALLOWED_METHOD: &str = "POST";
+
 /// Loopback the server binds to. Never `0.0.0.0`: the automation surface must not be reachable off
 /// the machine, so it is pinned to localhost.
 pub const BIND_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -33,6 +38,7 @@ pub struct Request {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Reject {
   BadOrigin,
+  MethodNotAllowed,
   NotFound,
   Unauthorized,
 }
@@ -41,6 +47,7 @@ impl Reject {
   pub fn status_line(self) -> &'static str {
     match self {
       Reject::BadOrigin => "HTTP/1.1 403 Forbidden",
+      Reject::MethodNotAllowed => "HTTP/1.1 405 Method Not Allowed",
       Reject::NotFound => "HTTP/1.1 404 Not Found",
       Reject::Unauthorized => "HTTP/1.1 401 Unauthorized",
     }
@@ -50,8 +57,10 @@ impl Reject {
 /// Validates a parsed request against the route, the bearer token, and the Origin/Host allowlist.
 ///
 /// The checks, in order: the path must be [`ENDPOINT`] (else 404); the `Authorization` header must
-/// be `Bearer <token>` matching `token` exactly (else 401); and any `Origin`/`Host` present must be
-/// loopback (else 403). A request that passes all three is `Ok`.
+/// be `Bearer <token>` matching `token` exactly (else 401); any `Origin`/`Host` present must be
+/// loopback (else 403); and the method must be [`ALLOWED_METHOD`] (else 405). The method check runs
+/// last so the security boundary (path/bearer/origin) always decides first — an unauthorized `GET`
+/// is a 401, not a 405. A request that passes all four is `Ok`.
 pub fn authorize(request: &Request, token: &str) -> Result<(), Reject> {
   if request.path != ENDPOINT {
     return Err(Reject::NotFound);
@@ -61,6 +70,9 @@ pub fn authorize(request: &Request, token: &str) -> Result<(), Reject> {
   }
   if !origin_is_local(request.origin.as_deref()) || !host_is_local(request.host.as_deref()) {
     return Err(Reject::BadOrigin);
+  }
+  if request.method != ALLOWED_METHOD {
+    return Err(Reject::MethodNotAllowed);
   }
   Ok(())
 }
@@ -143,10 +155,31 @@ pub fn parse_request(raw: &str) -> Option<Request> {
 
 /// Serializes a JSON body into a complete HTTP/1.1 response with the given status line.
 pub fn http_response(status_line: &str, json: &str) -> String {
+  http_response_with_headers(status_line, json, &[])
+}
+
+/// Like [`http_response`], but threads through extra header lines (e.g. `Allow: POST` on a 405). Each
+/// entry is a `(name, value)` pair emitted verbatim before the body.
+pub fn http_response_with_headers(status_line: &str, json: &str, headers: &[(&str, &str)]) -> String {
+  let extra: String = headers
+    .iter()
+    .map(|(name, value)| format!("{name}: {value}\r\n"))
+    .collect();
   format!(
-    "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{json}",
+    "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{extra}Connection: close\r\n\r\n{json}",
     json.len()
   )
+}
+
+/// A complete HTTP/1.1 response with no body (`Content-Length: 0`) for the given status line — the
+/// shape Streamable HTTP wants for a `POST` that carried only notifications/responses (202 Accepted).
+/// Optional extra header lines are threaded through as in [`http_response_with_headers`].
+pub fn empty_response(status_line: &str, headers: &[(&str, &str)]) -> String {
+  let extra: String = headers
+    .iter()
+    .map(|(name, value)| format!("{name}: {value}\r\n"))
+    .collect();
+  format!("{status_line}\r\nContent-Length: 0\r\n{extra}Connection: close\r\n\r\n")
 }
 
 #[cfg(test)]
@@ -243,6 +276,66 @@ mod tests {
     }
 
     #[test]
+    fn it_rejects_an_authorized_get_as_method_not_allowed() {
+      let req = Request {
+        method: "GET".to_owned(),
+        body: String::new(),
+        ..request()
+      };
+
+      assert_eq!(authorize(&req, "pod_mcp_secret"), Err(Reject::MethodNotAllowed));
+    }
+
+    #[test]
+    fn it_rejects_any_authorized_non_post_method() {
+      for method in ["GET", "PUT", "DELETE", "OPTIONS", "HEAD"] {
+        let req = Request {
+          method: method.to_owned(),
+          ..request()
+        };
+
+        assert_eq!(
+          authorize(&req, "pod_mcp_secret"),
+          Err(Reject::MethodNotAllowed),
+          "{method} is not POST"
+        );
+      }
+    }
+
+    #[test]
+    fn an_unauthorized_get_is_a_401_not_a_405() {
+      let req = Request {
+        method: "GET".to_owned(),
+        authorization: None,
+        ..request()
+      };
+
+      assert_eq!(
+        authorize(&req, "pod_mcp_secret"),
+        Err(Reject::Unauthorized),
+        "the security boundary decides before the method check"
+      );
+    }
+
+    #[test]
+    fn an_unknown_path_get_is_a_404_not_a_405() {
+      let req = Request {
+        method: "GET".to_owned(),
+        path: "/admin".to_owned(),
+        ..request()
+      };
+
+      assert_eq!(authorize(&req, "pod_mcp_secret"), Err(Reject::NotFound));
+    }
+
+    #[test]
+    fn a_post_carrying_session_and_protocol_headers_still_authorizes() {
+      // Mcp-Session-Id / MCP-Protocol-Version are dropped by parse_request, so they never reach the
+      // checks — a request carrying them is indistinguishable from one without.
+      assert_eq!(authorize(&request(), "pod_mcp_secret"), Ok(()));
+    }
+
+    #[test]
     fn the_path_check_precedes_the_token_check() {
       let req = Request {
         authorization: None,
@@ -291,6 +384,17 @@ mod tests {
     fn it_returns_none_for_an_empty_request() {
       assert_eq!(parse_request(""), None);
     }
+
+    #[test]
+    fn it_tolerates_handshake_headers_by_ignoring_them() {
+      let raw = "POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer abc\r\nMcp-Session-Id: deadbeef\r\nMCP-Protocol-Version: 2025-06-18\r\n\r\n{}";
+
+      let parsed = parse_request(raw).unwrap();
+
+      assert_eq!(parsed.method, "POST");
+      assert_eq!(parsed.authorization.as_deref(), Some("Bearer abc"));
+      assert_eq!(parsed.body, "{}", "the handshake headers do not disturb parsing");
+    }
   }
 
   mod http_response {
@@ -304,6 +408,36 @@ mod tests {
 
       assert!(response.contains(&format!("Content-Length: {}", body.len())));
       assert!(response.ends_with(body));
+    }
+
+    #[test]
+    fn it_threads_extra_headers_before_the_body() {
+      let response = http_response_with_headers("HTTP/1.1 405 Method Not Allowed", "{}", &[("Allow", "POST")]);
+
+      assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed"));
+      assert!(response.contains("Allow: POST\r\n"));
+      assert!(response.ends_with("{}"));
+    }
+  }
+
+  mod empty_response {
+    use super::*;
+
+    #[test]
+    fn it_has_a_zero_content_length_and_no_body() {
+      let response = empty_response("HTTP/1.1 202 Accepted", &[]);
+
+      assert!(response.starts_with("HTTP/1.1 202 Accepted"));
+      assert!(response.contains("Content-Length: 0\r\n"));
+      assert!(response.ends_with("\r\n\r\n"), "no body follows the header terminator");
+    }
+
+    #[test]
+    fn it_carries_extra_headers() {
+      let response = empty_response("HTTP/1.1 405 Method Not Allowed", &[("Allow", "POST")]);
+
+      assert!(response.contains("Allow: POST\r\n"));
+      assert!(response.contains("Content-Length: 0\r\n"));
     }
   }
 }

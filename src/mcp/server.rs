@@ -233,7 +233,7 @@ async fn route(raw: &str, context: &Context) -> String {
     return transport::http_response("HTTP/1.1 200 OK", &body);
   };
   match protocol::dispatch(&value, &context.registry) {
-    None => transport::http_response("HTTP/1.1 202 Accepted", "{}"),
+    None => transport::empty_response("HTTP/1.1 202 Accepted", &[]),
     Some(Dispatch::Respond(response)) => transport::http_response("HTTP/1.1 200 OK", &response.to_string()),
     Some(Dispatch::ToolCall {
       id,
@@ -262,6 +262,11 @@ async fn call_tool(id: serde_json::Value, tool: String, args: serde_json::Value)
 }
 
 fn reject_response(reject: Reject) -> String {
+  // A 405 must advertise the one method the endpoint serves; it carries no JSON-RPC body (the request
+  // was never parsed). Every other rejection keeps the small JSON-RPC error body for client clarity.
+  if reject == Reject::MethodNotAllowed {
+    return transport::empty_response(reject.status_line(), &[("Allow", transport::ALLOWED_METHOD)]);
+  }
   let body = protocol::error(None, -32600, "request rejected").to_string();
   transport::http_response(reject.status_line(), &body)
 }
@@ -526,6 +531,71 @@ mod tests {
       let response = route(&raw, &context).await;
 
       assert!(response.contains("protocolVersion"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn an_authorized_get_returns_405_with_an_allow_post_header() {
+      let context = context();
+      let raw = "GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer pod_mcp_secret\r\n\r\n".to_owned();
+
+      let response = route(&raw, &context).await;
+
+      assert!(response.starts_with("HTTP/1.1 405 Method Not Allowed"), "{response}");
+      assert!(response.contains("Allow: POST\r\n"), "{response}");
+      assert!(
+        response.contains("Content-Length: 0\r\n"),
+        "the 405 has no body: {response}"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_unauthorized_get_is_still_401() {
+      let context = context();
+      let raw = "GET /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer nope\r\n\r\n".to_owned();
+
+      let response = route(&raw, &context).await;
+
+      assert!(response.starts_with("HTTP/1.1 401 Unauthorized"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_path_is_still_404() {
+      let context = context();
+      let raw = "POST /admin HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer pod_mcp_secret\r\n\r\n".to_owned();
+
+      let response = route(&raw, &context).await;
+
+      assert!(response.starts_with("HTTP/1.1 404 Not Found"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn a_notification_returns_202_with_an_empty_body() {
+      let context = context();
+      let raw = post(
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        "pod_mcp_secret",
+      );
+
+      let response = route(&raw, &context).await;
+
+      assert!(response.starts_with("HTTP/1.1 202 Accepted"), "{response}");
+      assert!(response.contains("Content-Length: 0\r\n"), "{response}");
+      assert!(response.ends_with("\r\n\r\n"), "the 202 carries no body: {response}");
+    }
+
+    #[tokio::test]
+    async fn a_post_carrying_handshake_headers_still_succeeds() {
+      let context = context();
+      let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+      let raw = format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer pod_mcp_secret\r\nMcp-Session-Id: deadbeef\r\nMCP-Protocol-Version: 2025-06-18\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+      );
+
+      let response = route(&raw, &context).await;
+
+      assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+      assert!(response.contains("\"ping\""), "{response}");
     }
   }
 }

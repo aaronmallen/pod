@@ -58,6 +58,26 @@ The server is therefore a minimal HTTP/1.1 listener: it accepts on `127.0.0.1`, 
 the auth checks, dispatches the JSON-RPC method, and writes a `Connection: close` response. Catalog methods
 (`initialize`, `ping`, `tools/list`) resolve in-band; `tools/call` is routed to the update loop.
 
+This listener is a **spec-compliant MCP Streamable-HTTP server operating in its sessionless, JSON-response mode** — not
+the legacy two-endpoint HTTP+SSE transport, and not a bespoke "single-shot" shape. Streamable HTTP explicitly permits a
+server with no server-push needs to (a) hold no session — Pod issues no `Mcp-Session-Id` and stays fully stateless — and
+(b) never open a server-initiated SSE stream — Pod answers every `POST /mcp` with a single `application/json` JSON-RPC
+reply. Concretely Pod:
+
+- advertises `protocolVersion` `2025-06-18` (the Streamable-HTTP-era revision) on `initialize`, echoing the client's
+  requested version when it is one Pod recognizes (`2024-11-05`, `2025-03-26`, `2025-06-18`) and otherwise falling back
+  to its latest;
+- serves the single `/mcp` endpoint over `POST` only — a `GET` (the legacy stream probe) or any other verb on the
+  authorized endpoint is a clean `405 Method Not Allowed` with an `Allow: POST` header and no body, so a stock native
+  client's stream probe gets a conformant answer instead of a malformed one;
+- returns `202 Accepted` with an empty body for a `POST` that carried only notifications/responses; and
+- tolerates inbound `Mcp-Session-Id` / `MCP-Protocol-Version` handshake headers (it ignores them rather than rejecting).
+
+The auth/security checks run first (path → bearer → origin/host), and the method check runs last, so the trust boundary
+still decides before the `405` — an unauthorized `GET` is a `401`, an unknown path a `404`. The upshot: a stock native
+MCP client (the MCP Inspector, Antigravity's `serverUrl`, Cursor) completes `initialize` + `tools/list` directly against
+Pod, with no `mcp-remote` stdio bridge.
+
 The cost is that Pod owns its HTTP parsing and must track MCP if the spec evolves. That is an acceptable trade for the
 dependency and architectural simplicity, and the transport is small enough to swap for rmcp later without touching the
 tool registry or the bridge.
@@ -157,8 +177,10 @@ stack was deliberately not adopted.
 
 - The Settings MCP tab (enable/port/token/permissions UI) and the actual read, local-write, and mail tool families are
   separate specs that build on this foundation.
-- Streamable-HTTP/SSE streaming (beyond the request/response `tools/call`) and an rmcp migration remain open if a future
-  client needs them.
+- Server-initiated SSE streaming and per-session state (issuing/validating `Mcp-Session-Id`) remain unimplemented by
+  design — the spec allows omitting both, and Pod has no server-push need — but would be the path if a future client
+  requires resumable streams or server notifications. An rmcp migration likewise remains open should the hand-rolled
+  transport's maintenance cost outgrow its simplicity.
 
 ## References
 

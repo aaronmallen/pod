@@ -12,8 +12,14 @@ use crate::mcp::{
   tool::{Registry, ToolError},
 };
 
-/// The MCP protocol revision Pod advertises in `initialize`.
-const PROTOCOL_VERSION: &str = "2024-11-05";
+/// The MCP protocol revision Pod advertises in `initialize` when the client requests none or one Pod
+/// does not recognize. This is the Streamable-HTTP-era revision; advertising it signals the
+/// single-endpoint transport rather than the legacy two-endpoint HTTP+SSE transport.
+const PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// The protocol revisions Pod will echo back when a client requests one. Any other requested version
+/// falls back to [`PROTOCOL_VERSION`].
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 
 const SERVER_NAME: &str = "pod";
 
@@ -47,7 +53,7 @@ pub fn dispatch(request: &Value, registry: &Registry) -> Option<Dispatch> {
   let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
 
   match method {
-    "initialize" => Some(Dispatch::Respond(success(id?, initialize_result()))),
+    "initialize" => Some(Dispatch::Respond(success(id?, initialize_result(request)))),
     "notifications/initialized" => None,
     "ping" => Some(Dispatch::Respond(success(id?, json!({})))),
     "tools/list" => Some(Dispatch::Respond(success(id?, tools_result(registry)))),
@@ -86,12 +92,24 @@ fn success(id: Value, result: Value) -> Value {
   json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
-fn initialize_result() -> Value {
+fn initialize_result(request: &Value) -> Value {
   json!({
-    "protocolVersion": PROTOCOL_VERSION,
+    "protocolVersion": negotiated_version(request),
     "capabilities": { "tools": {} },
     "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
   })
+}
+
+/// Picks the protocol version to advertise: echo the client's requested `params.protocolVersion` when
+/// Pod recognizes it, otherwise fall back to Pod's latest ([`PROTOCOL_VERSION`]). A request with no
+/// requested version also falls back to the default.
+fn negotiated_version(request: &Value) -> &str {
+  request
+    .get("params")
+    .and_then(|params| params.get("protocolVersion"))
+    .and_then(Value::as_str)
+    .filter(|requested| SUPPORTED_PROTOCOL_VERSIONS.contains(requested))
+    .unwrap_or(PROTOCOL_VERSION)
 }
 
 fn tools_result(registry: &Registry) -> Value {
@@ -163,6 +181,50 @@ mod tests {
       assert_eq!(response["result"]["protocolVersion"], PROTOCOL_VERSION);
       assert_eq!(response["result"]["serverInfo"]["name"], "pod");
       assert!(response["result"]["capabilities"]["tools"].is_object());
+    }
+
+    #[test]
+    fn initialize_defaults_to_the_latest_version_when_the_client_requests_none() {
+      let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize" });
+
+      let Some(Dispatch::Respond(response)) = dispatch(&request, &registry()) else {
+        panic!("initialize must resolve in-band");
+      };
+
+      assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+    }
+
+    #[test]
+    fn initialize_echoes_a_recognized_requested_version() {
+      for requested in ["2024-11-05", "2025-03-26", "2025-06-18"] {
+        let request = json!({
+          "jsonrpc": "2.0", "id": 1, "method": "initialize",
+          "params": { "protocolVersion": requested },
+        });
+
+        let Some(Dispatch::Respond(response)) = dispatch(&request, &registry()) else {
+          panic!("initialize must resolve in-band");
+        };
+
+        assert_eq!(
+          response["result"]["protocolVersion"], requested,
+          "a recognized requested version is echoed back"
+        );
+      }
+    }
+
+    #[test]
+    fn initialize_falls_back_to_the_latest_for_an_unrecognized_requested_version() {
+      let request = json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": { "protocolVersion": "1999-01-01" },
+      });
+
+      let Some(Dispatch::Respond(response)) = dispatch(&request, &registry()) else {
+        panic!("initialize must resolve in-band");
+      };
+
+      assert_eq!(response["result"]["protocolVersion"], PROTOCOL_VERSION);
     }
 
     #[test]

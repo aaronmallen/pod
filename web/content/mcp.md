@@ -67,11 +67,70 @@ counts the EVE effects you have enabled otherwise.
 
 ## Connecting an agent
 
-The Connect an agent section gives you a ready-made config block for your agent,
-for example claude_desktop_config.json. "Copy config" copies it with your real
-bearer token filled in, so you paste it in and go. After you add Pod to the
-agent's MCP config, restart the agent and it discovers Pod's tools
-automatically.
+Pod's server is a plain Streamable-HTTP endpoint on localhost: a single
+`POST http://127.0.0.1:7373/mcp` carrying JSON-RPC, speaking MCP protocol
+2025-06-18, behind your bearer token. That detail matters, because not every AI
+app can reach a local HTTP server the same way. The Connect an agent section
+gives you honest, per-app guidance with three tabs, Claude, ChatGPT, and Gemini,
+and a support-state band on each that says plainly whether the native chat app
+connects or names the supported tool to use instead. "Copy config" copies the
+active tab's snippet with your real bearer token filled in; in the card the
+token is shown as the literal `<token>` placeholder until you copy.
 
-Everything an agent does is recorded to Pod's normal logs. Review them under
-Settings, in the Storage tab.
+### Claude
+
+Connectable. Claude's native chat app does connect, but through the `mcp-remote`
+stdio bridge: the desktop config file is stdio-only and the in-app Connectors UI
+can't reach a plain-HTTP localhost server, so Claude shells out to `npx
+mcp-remote`, which proxies stdio to Pod's HTTP endpoint. You need Node.js
+installed, and you must fully quit and relaunch Claude after editing the config.
+
+Edit `claude_desktop_config.json` via Settings, Developer, Edit Config. The
+snippet uses an `npx mcp-remote` command and passes the bearer through an
+environment variable so a space in the header value isn't mangled:
+
+```json
+{
+  "mcpServers": {
+    "pod": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:7373/mcp", "--allow-http",
+               "--header", "Authorization:${POD_AUTH_HEADER}"],
+      "env": { "POD_AUTH_HEADER": "Bearer <token>" }
+    }
+  }
+}
+```
+
+### ChatGPT
+
+The ChatGPT desktop app cannot connect to a local server, so this tab routes you
+to the OpenAI Codex CLI instead. Add Pod to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.pod]
+url = "http://127.0.0.1:7373/mcp"
+http_headers = { Authorization = "Bearer <token>" }
+```
+
+### Gemini
+
+The consumer Gemini app has no custom-MCP support, so this tab routes you to
+Antigravity, which connects to Pod's Streamable-HTTP endpoint natively, with no
+bridge. Add Pod to `~/.gemini/antigravity/mcp_config.json`, or use the GUI under
+MCP Servers, Manage:
+
+```json
+{
+  "mcpServers": {
+    "pod": {
+      "serverUrl": "http://127.0.0.1:7373/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+After you add Pod to the tool's MCP config, restart it and it discovers Pod's
+tools automatically. Everything an agent does is recorded to Pod's normal logs.
+Review them under Settings, in the Storage tab.

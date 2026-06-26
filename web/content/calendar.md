@@ -2,7 +2,7 @@
 title: Calendar
 section: Features
 order: 6
-description: Pod's Calendar puts EVE Online calendar events for every pilot on the same grid as the deadlines Pod tracks, like skill completions, market order expiries, contract lapses, industry jobs, and moon extractions. Switch between five views and RSVP without leaving the app.
+description: Pod gathers EVE Online calendar events for every pilot alongside deadlines it tracks, like skill completions and industry jobs. Switch between five views, RSVP, and open events in their own windows.
 ---
 
 # Calendar
@@ -13,8 +13,8 @@ events arrive from ESI. Skill completions, market order expiries, contract lapse
 finishes, and moon extraction timers are added by Pod so that everything with a deadline lands on one
 grid.
 
-You reach the Calendar from the left rail. The feature has its own scope selector, five views, an
-event detail panel with RSVP controls, and a color legend.
+You reach the Calendar from the left rail. The feature has its own scope selector, five views, event
+windows with RSVP controls, and a color legend.
 
 ## Views
 
@@ -96,26 +96,33 @@ organizational and accept an RSVP. Personal events, EVE Server events, and Pod o
 
 ## Event detail and RSVP
 
-Clicking any event opens a detail panel. A colored bar across the top matches the event's owner type. A
-header shows an icon for the owner type, a badge naming the type, the event title, and a close control.
-An event marked important by its owner carries an "Important" badge, and a Pod overlay carries a "Pod"
-badge.
+Clicking any event opens it in its own window, separate from the main Pod window. Each window is framed
+by the operating system, so you move and close it with the native window controls, and its title reads
+"Pod" followed by the event subject. You can open several at once, including duplicates of the same
+event. Each window opens centered at a fixed default size, and Pod does not remember the size or
+position between opens, so every event starts fresh.
 
-A meta block lays out the specifics: when the event runs, shown as a start and end time or as "All day";
-the full date; the owning entity and its type; and which of your characters the event belongs to. If
-the event has a description, its text appears below the meta block.
+Inside the window, a colored bar across the top matches the event's owner type. A header shows an icon
+for the owner type, a badge naming the type, and the event title. An event marked important by its owner
+carries an "Important" badge, and a Pod overlay carries a "Pod" badge.
 
-For organizational events you can reply. A "Your response" row offers three choices: Accepted, Tentative,
-and Declined. The current choice is highlighted. Picking one writes your RSVP to ESI through Pod's
-outbox. Pod updates the event immediately and sends the change in the background. If ESI rejects the
-write, Pod restores your previous response. Across the app, these responses also read as short pills:
-"Going" for Accepted, "Maybe" for Tentative, "Can't" for Declined, and "No reply" when you have not
-answered.
+A meta block lays out the specifics, each row labeled: "When" reads the start and end time or "All day ·
+EVE" for an all-day event; "Date" gives the full date; "Owner" names the owning entity and its type;
+and "Calendar" names which of your characters the event belongs to. If the event has a description, its
+text appears below the meta block.
 
-When attendee numbers are available, the panel draws a response bar split into accepted, tentative, and
-declined segments, with a count for each and a tally of how many of the invited have replied.
+For organizational events you can reply. A "Your response" row offers three choices: Accepted,
+Tentative, and Declined. The current choice is highlighted. Picking one writes your RSVP to ESI through
+Pod's outbox. Pod updates the event immediately and sends the change in the background. If ESI rejects
+the write, Pod restores your previous response. Across the app, these responses also read as short
+pills: "Going" for Accepted, "Maybe" for Tentative, "Can't" for Declined, and "No reply" when you have
+not answered.
 
-A line at the bottom of the panel records where the event came from. An ESI event shows its calendar
+When attendee numbers are available, the window draws an "Attendees" response bar split into accepted,
+tentative, and declined segments, with a count for each and a tally of how many of the invited have
+replied.
+
+A line at the bottom of the window records where the event came from. An ESI event shows its calendar
 endpoint. A Pod overlay says it is a Pod-derived overlay for its source and is not an ESI calendar
 event, which is why it offers no RSVP.
 

@@ -463,7 +463,7 @@ mod tests {
 
     use super::*;
     use crate::features::{
-      assets, calendar, character_manager, industry,
+      assets, calendar, industry, roster,
       settings::{self},
       wallet,
     };
@@ -524,17 +524,14 @@ mod tests {
 
     #[test]
     fn characters_panes_match_one_to_one() {
-      fn catalog_id(pane: character_manager::Pane) -> &'static str {
+      fn catalog_id(pane: roster::Pane) -> &'static str {
         match pane {
-          character_manager::Pane::Characters => "characters",
-          character_manager::Pane::Corporations => "corporations",
+          roster::Pane::Characters => "characters",
+          roster::Pane::Corporations => "corporations",
         }
       }
 
-      let order = [
-        character_manager::Pane::Characters,
-        character_manager::Pane::Corporations,
-      ];
+      let order = [roster::Pane::Characters, roster::Pane::Corporations];
       let expected: Vec<&str> = order.into_iter().map(catalog_id).collect();
 
       assert_eq!(ids(Destination::Characters), expected);

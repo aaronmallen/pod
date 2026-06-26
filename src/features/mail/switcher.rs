@@ -3,7 +3,7 @@ use iced::Element;
 use super::{Message, RosterPilot, Scope, State};
 use crate::{
   config::Feature,
-  features::{character_manager, registry},
+  features::{registry, roster},
   ui::components::picker::{
     PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
     trigger_identity,
@@ -52,7 +52,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     pilot.corp.clone()
   };
   let required_scopes = registry::descriptor(Feature::Mail).scopes;
-  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
+  let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),

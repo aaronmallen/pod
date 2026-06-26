@@ -88,7 +88,7 @@ fn corporation_count(state: &State) -> usize {
 
 fn corporation_row<'a>(state: &'a State, owner: &'a RosterOwner) -> Element<'a, Message> {
   // Matches the Assets picker: corporation rows carry no re-auth indicator. Corp re-authorization
-  // is surfaced through the character_manager corp context menu.
+  // is surfaced through the roster corp context menu.
   picker_character_row(
     owner.id,
     owner.name.clone(),

@@ -3,7 +3,7 @@ use iced::Element;
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_count, fmt_isk, fmt_volume};
 use crate::{
   config::Feature,
-  features::{character_manager, registry},
+  features::{registry, roster},
   ui::{
     components::{
       header::{header as shared_header, header_divider, stat_block},
@@ -112,7 +112,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 
 fn character_row(pilot: &RosterPilot, active: Scope) -> Element<'_, Message> {
   let required_scopes = registry::descriptor(Feature::AssetTracking).scopes;
-  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
+  let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),

@@ -7,7 +7,7 @@ use iced::{
 use super::{HEADER_HEIGHT, Message, State};
 use crate::{
   config::Feature,
-  features::{character_manager, registry, skills::fmt_sp},
+  features::{registry, roster, skills::fmt_sp},
   ui::{
     components::{
       avatar::Avatar,
@@ -263,7 +263,7 @@ fn pilot_row(state: &State, pilot_id: i64) -> Element<'_, Message> {
     .find(|pilot| pilot.id == pilot_id)
     .and_then(|pilot| pilot.granted_scopes.as_deref());
   let required_scopes = registry::descriptor(Feature::SkillMonitoring).scopes;
-  let needs_reauth = character_manager::needs_reauthorization(granted_scopes, required_scopes);
+  let needs_reauth = roster::needs_reauthorization(granted_scopes, required_scopes);
 
   picker_character_row(
     pilot_id,

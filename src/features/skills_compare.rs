@@ -13,7 +13,7 @@ use iced::{
 pub(super) use model::CompareModel;
 
 use crate::{
-  features::{character_manager::OwnedPilot, skills::browse::SkillCatalog},
+  features::{roster::OwnedPilot, skills::browse::SkillCatalog},
   store::{
     Database, images,
     repo::{character, skills},

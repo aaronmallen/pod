@@ -6,7 +6,7 @@ use iced::{
 
 use crate::{
   config::FeatureFlags,
-  features::character_manager::OwnedPilot,
+  features::roster::OwnedPilot,
   sync::{self, Freshness, FreshnessSummary, JobKey, JobKind, Phase, Subject, freshness_of},
   ui::{
     components::status::{dot, format_since},

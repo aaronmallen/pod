@@ -6,7 +6,7 @@ use iced::{
 use super::{Message, RosterPilot, Scope, State, palette, registry_scopes};
 use crate::{
   config::Feature,
-  features::character_manager,
+  features::roster,
   ui::{
     components::{
       icon::Icon,
@@ -46,7 +46,7 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
 }
 
 fn character_row<'a>(state: &'a State, index: usize, pilot: &'a RosterPilot) -> Element<'a, Message> {
-  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), registry_scopes());
+  let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), registry_scopes());
   let trailing = (!needs_reauth).then(|| swatch(palette::pilot_color(index)));
 
   picker_character_row(

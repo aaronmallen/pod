@@ -26,9 +26,9 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, auth, calendar, character_detail, character_manager, character_manager::OwnedPilot, contract_detail,
-    corporation_detail, focus_search, industry, killmail_detail, mail, registry, settings, skill_plan_editor,
-    skill_plan_manager, skills, skills_compare, splash, wallet,
+    assets, auth, calendar, character_detail, contract_detail, corporation_detail, focus_search, industry,
+    killmail_detail, mail, registry, roster, roster::OwnedPilot, settings, skill_plan_editor, skill_plan_manager,
+    skills, skills_compare, splash, wallet,
   },
   mcp, notifications,
   services::{crash, images, telemetry, updater},
@@ -179,7 +179,7 @@ struct App {
   calendar_attention: i64,
   calendar_events: WindowStates<calendar::EventWindow>,
   character_detail: Option<character_detail::State>,
-  character_manager: Option<character_manager::State>,
+  roster: Option<roster::State>,
   /// Monotonic count of 1-second clock ticks, used to stagger the periodic interactive-DB checks
   /// across ticks (see the `TICK_*` cadences) instead of firing them all on every tick.
   clock_tick: u64,
@@ -338,7 +338,7 @@ enum Message {
   CalendarEvent(window::Id, calendar::EventMessage),
   CancelTakeOver,
   CharacterDetail(character_detail::Message),
-  CharacterManager(character_manager::Message),
+  Roster(roster::Message),
   ClockTick,
   CloseSyncPopover,
   Compare(skills_compare::Message),
@@ -451,7 +451,7 @@ impl Message {
       Message::Assets(msg) => msg.loads_data(),
       Message::Calendar(msg) => msg.loads_data(),
       Message::CharacterDetail(msg) => msg.loads_data(),
-      Message::CharacterManager(msg) => msg.loads_data(),
+      Message::Roster(msg) => msg.loads_data(),
       Message::Compare(msg) => msg.loads_data(),
       Message::CorporationDetail(msg) => msg.loads_data(),
       Message::Industry(msg) => msg.loads_data(),
@@ -482,7 +482,7 @@ impl Message {
       Message::CalendarAttentionCounted(_) => "CalendarAttentionCounted",
       Message::CalendarEvent(..) => "CalendarEvent",
       Message::CharacterDetail(_) => "CharacterDetail",
-      Message::CharacterManager(_) => "CharacterManager",
+      Message::Roster(_) => "Roster",
       Message::Compare(_) => "Compare",
       Message::Compose(..) => "Compose",
       Message::Contract(..) => "Contract",
@@ -1059,7 +1059,7 @@ fn boot() -> (App, Task<Message>) {
     calendar_attention: 0,
     calendar_events: WindowStates::default(),
     character_detail: None,
-    character_manager: None,
+    roster: None,
     clock_tick: 0,
     coalescer: WriteCoalescer::new(),
     compare: None,
@@ -1940,9 +1940,9 @@ fn navigate_to_assets(app: &mut App) -> Task<Message> {
 
 fn navigate_to_character_detail(app: &mut App, id: i64) -> Task<Message> {
   let owned: Vec<i64> = app
-    .character_manager
+    .roster
     .as_ref()
-    .map(character_manager::owned_roster)
+    .map(roster::owned_roster)
     .unwrap_or_default()
     .iter()
     .map(|pilot| pilot.id)
@@ -1991,7 +1991,7 @@ fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
 /// ~2x/s. Holding the dirty flag until [`ROSTER_RELOAD_DEBOUNCE`] has elapsed collapses the burst
 /// into one reload per window; the flag stays set so a later pulse reloads once the window opens.
 fn drain_roster_dirty_at(app: &mut App, now: Instant) -> Option<Task<Message>> {
-  if !app.roster_dirty || app.character_manager.is_none() {
+  if !app.roster_dirty || app.roster.is_none() {
     return None;
   }
   if app.next_roster_reload.is_some_and(|floor| now < floor) {
@@ -2000,7 +2000,7 @@ fn drain_roster_dirty_at(app: &mut App, now: Instant) -> Option<Task<Message>> {
   app.roster_dirty = false;
   app.next_roster_reload = Some(now + ROSTER_RELOAD_DEBOUNCE);
   let runtime = app.runtime.as_ref()?;
-  Some(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager))
+  Some(roster::load(&runtime.db, feature_flags(app)).map(Message::Roster))
 }
 
 fn drain_wallet_dirty(app: &mut App) -> Option<Task<Message>> {
@@ -2021,11 +2021,7 @@ fn collect_stale_images(app: &App) -> Vec<(store::images::ImageKind, i64)> {
       .as_ref()
       .map(character_detail::State::stale_images)
       .unwrap_or_default(),
-    Route::Characters => app
-      .character_manager
-      .as_ref()
-      .map(character_manager::State::stale_images)
-      .unwrap_or_default(),
+    Route::Characters => app.roster.as_ref().map(roster::State::stale_images).unwrap_or_default(),
     Route::CorporationDetail(_) => app
       .corporation_detail
       .as_ref()
@@ -2103,8 +2099,8 @@ fn image_reload(app: &App) -> Task<Message> {
       }
     }
     Route::Characters => {
-      if app.character_manager.is_some() {
-        tasks.push(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager));
+      if app.roster.is_some() {
+        tasks.push(roster::load(&runtime.db, feature_flags(app)).map(Message::Roster));
       }
     }
     Route::CorporationDetail(_) => {
@@ -2746,9 +2742,9 @@ fn calendar_route_view(app: &App) -> Element<'_, Message> {
 }
 
 fn characters_route_view(app: &App) -> Element<'_, Message> {
-  match &app.character_manager {
+  match &app.roster {
     Some(_) if app.auth.is_active() => auth::view(&app.auth).map(Message::Auth),
-    Some(state) => character_manager::view(state, &app.status).map(Message::CharacterManager),
+    Some(state) => roster::view(state, &app.status).map(Message::Roster),
     None => starting_up(),
   }
 }
@@ -2854,11 +2850,7 @@ fn chip_freshness(stats: &JobStats) -> FreshnessSummary {
 }
 
 fn roster(app: &App) -> Vec<OwnedPilot> {
-  app
-    .character_manager
-    .as_ref()
-    .map(character_manager::owned_roster)
-    .unwrap_or_default()
+  app.roster.as_ref().map(roster::owned_roster).unwrap_or_default()
 }
 
 fn engine_syncing(app: &App) -> bool {
@@ -3195,8 +3187,8 @@ fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   if let Some(state) = &app.assets {
     subs.push(assets::subscription(state).map(Message::Assets));
   }
-  if let Some(state) = &app.character_manager {
-    subs.push(character_manager::subscription(state).map(Message::CharacterManager));
+  if let Some(state) = &app.roster {
+    subs.push(roster::subscription(state).map(Message::Roster));
   }
   if let Some(state) = &app.settings {
     subs.push(settings::subscription(state).map(Message::Settings));
@@ -3411,11 +3403,7 @@ fn open_compare_window(app: &mut App, seed_ids: Vec<i64>) -> Task<Message> {
     return Task::none();
   };
   let db = runtime.db.clone();
-  let roster = app
-    .character_manager
-    .as_ref()
-    .map(character_manager::owned_roster)
-    .unwrap_or_default();
+  let roster = app.roster.as_ref().map(roster::owned_roster).unwrap_or_default();
 
   let close_existing = match app.compare.take() {
     Some((existing_id, _)) => {
@@ -4126,7 +4114,7 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
     Message::CalendarAttentionCounted(count) => handle_calendar_attention_counted(app, count),
     Message::CalendarEvent(id, msg) => handle_calendar_event(app, id, msg),
     Message::CharacterDetail(msg) => handle_character_detail(app, msg),
-    Message::CharacterManager(msg) => handle_character_manager(app, msg),
+    Message::Roster(msg) => handle_roster(app, msg),
     Message::Compare(msg) => handle_compare(app, msg),
     Message::Compose(id, msg) => handle_compose(app, id, msg),
     Message::Contract(id, msg) => handle_contract(app, id, msg),
@@ -4364,11 +4352,7 @@ fn palette_compose_from(app: &App) -> Option<i64> {
   if let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) {
     return Some(from);
   }
-  let roster = app
-    .character_manager
-    .as_ref()
-    .map(character_manager::owned_roster)
-    .unwrap_or_default();
+  let roster = app.roster.as_ref().map(roster::owned_roster).unwrap_or_default();
   resolve_mail_target(&roster, app.selected_character)
 }
 
@@ -4400,9 +4384,9 @@ fn palette_entries(app: &App) -> Vec<command_palette::Entry> {
 
 fn palette_characters(app: &App) -> Vec<(i64, String)> {
   app
-    .character_manager
+    .roster
     .as_ref()
-    .map(character_manager::owned_roster)
+    .map(roster::owned_roster)
     .unwrap_or_default()
     .into_iter()
     .map(|pilot| (pilot.id, pilot.name))
@@ -4410,11 +4394,7 @@ fn palette_characters(app: &App) -> Vec<(i64, String)> {
 }
 
 fn palette_corporations(app: &App) -> Vec<(i64, String)> {
-  app
-    .character_manager
-    .as_ref()
-    .map(character_manager::owned_corporations)
-    .unwrap_or_default()
+  app.roster.as_ref().map(roster::owned_corporations).unwrap_or_default()
 }
 
 fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
@@ -4731,7 +4711,7 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   let flags = *runtime.settings.features();
   let db = runtime.db.clone();
   runtime.sync.set_features(flags);
-  let mut tasks = vec![base, character_manager::load(&db, flags).map(Message::CharacterManager)];
+  let mut tasks = vec![base, roster::load(&db, flags).map(Message::Roster)];
 
   let route = app.route;
   if let Some(state) = app.calendar.as_ref() {
@@ -5324,9 +5304,9 @@ fn refresh_notifications(app: &App, run_detectors: bool) -> Task<Message> {
 
 fn owned_character_ids(app: &App) -> Vec<i64> {
   app
-    .character_manager
+    .roster
     .as_ref()
-    .map(character_manager::owned_roster)
+    .map(roster::owned_roster)
     .unwrap_or_default()
     .iter()
     .map(|pilot| pilot.id)
@@ -5335,9 +5315,9 @@ fn owned_character_ids(app: &App) -> Vec<i64> {
 
 fn owned_corporation_ids(app: &App) -> Vec<i64> {
   app
-    .character_manager
+    .roster
     .as_ref()
-    .map(character_manager::owned_corporations)
+    .map(roster::owned_corporations)
     .unwrap_or_default()
     .into_iter()
     .map(|(id, _)| id)
@@ -5883,13 +5863,11 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
   let enrolled = match event {
     Some(auth::Event::CorporationAdded(added)) => Some(sync::Subject::Corporation(added.corporation_id)),
     Some(auth::Event::SignedIn(signed)) => {
-      if app.character_manager.is_some() {
-        tasks.push(Task::done(Message::CharacterManager(
-          character_manager::Message::SignedIn {
-            character_id: signed.character_id,
-            name: signed.character_name,
-          },
-        )));
+      if app.roster.is_some() {
+        tasks.push(Task::done(Message::Roster(roster::Message::SignedIn {
+          character_id: signed.character_id,
+          name: signed.character_name,
+        })));
       }
       Some(sync::Subject::Character(signed.character_id))
     }
@@ -5902,54 +5880,50 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
     runtime.sync.enroll(subject);
     runtime.sync.run_now(subject);
     runtime.sync.discover();
-    if app.character_manager.is_some() {
-      tasks.push(character_manager::load(&runtime.db, feature_flags(app)).map(Message::CharacterManager));
+    if app.roster.is_some() {
+      tasks.push(roster::load(&runtime.db, feature_flags(app)).map(Message::Roster));
     }
   }
   Task::batch(tasks)
 }
 
-fn handle_character_manager(app: &mut App, msg: character_manager::Message) -> Task<Message> {
+fn handle_roster(app: &mut App, msg: roster::Message) -> Task<Message> {
   match msg {
-    character_manager::Message::AddCharacterRequested => {
-      update(app, Message::Auth(auth::Message::Start(feature_flags(app))))
-    }
-    character_manager::Message::AddCorporationRequested => update(
+    roster::Message::AddCharacterRequested => update(app, Message::Auth(auth::Message::Start(feature_flags(app)))),
+    roster::Message::AddCorporationRequested => update(
       app,
       Message::Auth(auth::Message::StartAddCorporation(feature_flags(app))),
     ),
-    character_manager::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
-    character_manager::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
-    character_manager::Message::TrainingSkillClicked(character_id) => {
+    roster::Message::CharacterSelected(id) => navigate_to_character_detail(app, id),
+    roster::Message::CorporationSelected(id) => navigate_to_corporation_detail(app, id),
+    roster::Message::TrainingSkillClicked(character_id) => {
       let owned = owned_pilot_ids(app);
       navigate_to_skills(app, Some(character_id), owned)
     }
-    character_manager::Message::ReauthCharacterRequested(character_id) => {
-      update(app, Message::ReauthCharacter(character_id))
-    }
-    character_manager::Message::ReauthCorporationRequested(corporation_id) => reauth_corporation(app, corporation_id),
-    character_manager::Message::RemoveCharacterConfirmed(id) => remove_subject_then_update(
+    roster::Message::ReauthCharacterRequested(character_id) => update(app, Message::ReauthCharacter(character_id)),
+    roster::Message::ReauthCorporationRequested(corporation_id) => reauth_corporation(app, corporation_id),
+    roster::Message::RemoveCharacterConfirmed(id) => remove_subject_then_update(
       app,
       sync::Subject::Character(id),
-      character_manager::Message::RemoveCharacterConfirmed(id),
+      roster::Message::RemoveCharacterConfirmed(id),
     ),
-    character_manager::Message::RemoveCorporationConfirmed(id) => remove_subject_then_update(
+    roster::Message::RemoveCorporationConfirmed(id) => remove_subject_then_update(
       app,
       sync::Subject::Corporation(id),
-      character_manager::Message::RemoveCorporationConfirmed(id),
+      roster::Message::RemoveCorporationConfirmed(id),
     ),
-    msg => match (app.character_manager.as_mut(), app.runtime.as_ref()) {
-      (Some(state), Some(runtime)) => character_manager::update(state, msg, &runtime.db).map(Message::CharacterManager),
+    msg => match (app.roster.as_mut(), app.runtime.as_ref()) {
+      (Some(state), Some(runtime)) => roster::update(state, msg, &runtime.db).map(Message::Roster),
       _ => Task::none(),
     },
   }
 }
 
-fn remove_subject_then_update(app: &mut App, subject: sync::Subject, msg: character_manager::Message) -> Task<Message> {
-  match (app.character_manager.as_mut(), app.runtime.as_ref()) {
+fn remove_subject_then_update(app: &mut App, subject: sync::Subject, msg: roster::Message) -> Task<Message> {
+  match (app.roster.as_mut(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => {
       runtime.sync.withdraw(subject);
-      character_manager::update(state, msg, &runtime.db).map(Message::CharacterManager)
+      roster::update(state, msg, &runtime.db).map(Message::Roster)
     }
     _ => Task::none(),
   }
@@ -6125,14 +6099,14 @@ fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, que
 }
 
 fn compare_seed_ids(app: &App) -> Vec<i64> {
-  let Some(manager) = app.character_manager.as_ref() else {
+  let Some(manager) = app.roster.as_ref() else {
     return Vec::new();
   };
 
-  let by_sp: Vec<(i64, i64)> = character_manager::groups(manager)
+  let by_sp: Vec<(i64, i64)> = roster::groups(manager)
     .iter()
     .flat_map(|group| group.cards.iter())
-    .chain(character_manager::unassigned(manager).iter())
+    .chain(roster::unassigned(manager).iter())
     .map(|card| (card.character_id, card.total_sp.unwrap_or(0)))
     .collect();
   let active = app.skills.as_ref().map(skills::State::active);
@@ -6160,9 +6134,9 @@ fn compare_seeds(mut by_sp: Vec<(i64, i64)>, active: Option<i64>) -> Vec<i64> {
 
 fn owned_pilot_ids(app: &App) -> Vec<i64> {
   app
-    .character_manager
+    .roster
     .as_ref()
-    .map(character_manager::owned_roster)
+    .map(roster::owned_roster)
     .unwrap_or_default()
     .iter()
     .map(|pilot| pilot.id)
@@ -6262,21 +6236,13 @@ fn handle_nav(app: &mut App, destination: rail::Destination) -> Task<Message> {
 
   match destination {
     rail::Destination::Skills => {
-      let roster = app
-        .character_manager
-        .as_ref()
-        .map(character_manager::owned_roster)
-        .unwrap_or_default();
+      let roster = app.roster.as_ref().map(roster::owned_roster).unwrap_or_default();
       let target = resolve_skills_target(&roster, app.selected_character);
       let owned = roster.iter().map(|pilot| pilot.id).collect();
       navigate_to_skills(app, target, owned)
     }
     rail::Destination::Mail => {
-      let roster = app
-        .character_manager
-        .as_ref()
-        .map(character_manager::owned_roster)
-        .unwrap_or_default();
+      let roster = app.roster.as_ref().map(roster::owned_roster).unwrap_or_default();
       let target = resolve_mail_target(&roster, app.selected_character);
       navigate_to_mail(app, target)
     }
@@ -6375,17 +6341,9 @@ fn select_calendar_sub_section(app: &mut App, id: &str) -> Task<Message> {
 }
 
 fn select_characters_sub_section(app: &mut App, id: &str) -> Task<Message> {
-  match character_manager::Pane::from_id(id) {
-    Some(pane)
-      if app
-        .character_manager
-        .as_mut()
-        .is_some_and(|state| state.select_pane_by_id(id)) =>
-    {
-      update(
-        app,
-        Message::CharacterManager(character_manager::Message::TabSelected(pane)),
-      )
+  match roster::Pane::from_id(id) {
+    Some(pane) if app.roster.as_mut().is_some_and(|state| state.select_pane_by_id(id)) => {
+      update(app, Message::Roster(roster::Message::TabSelected(pane)))
     }
     _ => Task::none(),
   }
@@ -6436,7 +6394,7 @@ fn active_sub_section(app: &App) -> Option<&'static str> {
   match app.route.destination() {
     rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Calendar => app.calendar.as_ref().map(|state| state.active_view().id()),
-    rail::Destination::Characters => app.character_manager.as_ref().map(|state| state.active_pane().id()),
+    rail::Destination::Characters => app.roster.as_ref().map(|state| state.active_pane().id()),
     rail::Destination::Industry => app.industry.as_ref().map(|state| state.active_tab().id()),
     rail::Destination::Settings => app.settings.as_ref().map(|state| state.active_category().id()),
     rail::Destination::Wallet => app.wallet.as_ref().map(|state| state.active_tab().id()),
@@ -6471,8 +6429,8 @@ fn handle_rail_hover_expire(app: &mut App, generation: u64) -> Task<Message> {
 }
 
 fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
-  let load_roster = character_manager::load(&runtime.db, *runtime.settings.features());
-  app.character_manager = Some(character_manager::State::new());
+  let load_roster = roster::load(&runtime.db, *runtime.settings.features());
+  app.roster = Some(roster::State::new());
   let settings_state = settings::State::new(runtime.settings.clone(), runtime.db.clone());
   let load_tags = settings::load(&settings_state).map(Message::Settings);
   app.settings = Some(settings_state);
@@ -6485,7 +6443,7 @@ fn handle_ready(app: &mut App, runtime: Runtime) -> Task<Message> {
   sync_mcp_server(app);
   refresh_storage_status(app);
   Task::batch([
-    load_roster.map(Message::CharacterManager),
+    load_roster.map(Message::Roster),
     load_tags,
     begin_splash_expand(app),
     replay_pending_auth(app),
@@ -7101,7 +7059,7 @@ mod tests {
       calendar_attention: 0,
       calendar_events: WindowStates::default(),
       character_detail: None,
-      character_manager: None,
+      roster: None,
       clock_tick: 0,
       coalescer: WriteCoalescer::new(),
       compare: None,
@@ -7238,7 +7196,7 @@ mod tests {
     app.assets = Some(assets::State::new(config::FeatureFlags::default()));
     app.calendar = Some(calendar::State::new(42, app.now, config::FeatureFlags::default()));
     app.character_detail = Some(character_detail::State::new(1, &[]));
-    app.character_manager = Some(character_manager::State::new());
+    app.roster = Some(roster::State::new());
     app.mail = Some(mail::State::new(42));
     app.skills = Some(skills::State::new(1));
     app.wallet = Some(wallet::State::new(config::FeatureFlags::default()));
@@ -7247,7 +7205,7 @@ mod tests {
 
   fn ready_app() -> App {
     let mut app = test_app();
-    app.character_manager = Some(character_manager::State::new());
+    app.roster = Some(roster::State::new());
     app.character_detail = Some(character_detail::State::new(1, &[]));
     app.skills = Some(skills::State::new(1));
     app.mail = Some(mail::State::new(42));
@@ -7471,7 +7429,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_returns_no_seeds_without_a_character_manager() {
+    fn it_returns_no_seeds_without_a_roster() {
       let app = test_app();
 
       assert!(super::super::compare_seed_ids(&app).is_empty());
@@ -7872,7 +7830,7 @@ mod tests {
     #[test]
     fn it_returns_to_running_when_a_respawn_arrives_after_a_stop() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       app.engine_state = EngineState::Stopped {
         reason: Some("gave up".to_owned()),
       };
@@ -7895,7 +7853,7 @@ mod tests {
     #[test]
     fn it_settles_a_running_engine_to_idle_when_jobs_finish() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       app.engine_state = EngineState::Running;
 
       let event = sync::Event::Finished {
@@ -8194,10 +8152,7 @@ mod tests {
       }
 
       // Drive the card / context-menu re-auth message through the top-level dispatch.
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
-      );
+      let _ = update(&mut app, Message::Roster(roster::Message::ReauthCharacterRequested(7)));
 
       let Some(auth::Message::Start(flags)) = app.pending_auth.clone() else {
         panic!("the re-auth must defer an auth Start, got {:?}", app.pending_auth);
@@ -9489,7 +9444,7 @@ mod tests {
     #[test]
     fn it_renders_the_main_view_with_an_active_updater_state() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       app.route = Route::Characters;
       app.updater_state = updater::State::ReadyToRestart {
         version: "1.2.3".to_owned(),
@@ -9535,31 +9490,19 @@ mod tests {
     }
 
     #[test]
-    fn it_routes_each_character_manager_intent_arm() {
+    fn it_routes_each_roster_intent_arm() {
       let mut app = test_app();
+      let _ = update(&mut app, Message::Roster(roster::Message::AddCharacterRequested));
+      let _ = update(&mut app, Message::Roster(roster::Message::AddCorporationRequested));
+      let _ = update(&mut app, Message::Roster(roster::Message::ReauthCharacterRequested(7)));
       let _ = update(
         &mut app,
-        Message::CharacterManager(character_manager::Message::AddCharacterRequested),
+        Message::Roster(roster::Message::ReauthCorporationRequested(7)),
       );
+      let _ = update(&mut app, Message::Roster(roster::Message::RemoveCharacterConfirmed(7)));
       let _ = update(
         &mut app,
-        Message::CharacterManager(character_manager::Message::AddCorporationRequested),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCharacterRequested(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::ReauthCorporationRequested(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::RemoveCharacterConfirmed(7)),
-      );
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::RemoveCorporationConfirmed(7)),
+        Message::Roster(roster::Message::RemoveCorporationConfirmed(7)),
       );
     }
 
@@ -11769,7 +11712,7 @@ mod tests {
     #[test]
     fn it_coalesces_a_burst_of_finished_events_into_one_pending_roster_refresh() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
 
       for character_id in 0..6 {
         let _ = update(&mut app, Message::Sync(finished_event(character_id)));
@@ -11789,7 +11732,7 @@ mod tests {
     #[test]
     fn it_holds_a_re_dirtied_roster_until_the_debounce_window_opens() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       let start = Instant::now();
 
       // First drain in the burst reloads immediately and arms the trailing-debounce floor.
@@ -11810,7 +11753,7 @@ mod tests {
     #[test]
     fn it_reloads_the_roster_again_once_the_debounce_window_elapses() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       let start = Instant::now();
 
       app.roster_dirty = true;
@@ -11967,10 +11910,7 @@ mod tests {
     fn it_navigates_to_the_character_detail_for_the_selected_character() {
       let mut app = test_app();
 
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
-      );
+      let _ = update(&mut app, Message::Roster(roster::Message::CharacterSelected(42)));
 
       assert_eq!(app.route, Route::CharacterDetail(42));
       assert_eq!(app.selected_character, Some(42));
@@ -11983,7 +11923,7 @@ mod tests {
 
       let _ = update(
         &mut app,
-        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+        Message::Roster(roster::Message::CorporationSelected(98_000_001)),
       );
 
       assert_eq!(app.route, Route::CorporationDetail(98_000_001));
@@ -12067,7 +12007,7 @@ mod tests {
     #[test]
     fn it_deep_navigates_to_a_specific_characters_pane() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
 
       let _ = update(
         &mut app,
@@ -12076,11 +12016,8 @@ mod tests {
 
       assert_eq!(app.route, Route::Characters);
       assert_eq!(
-        app
-          .character_manager
-          .as_ref()
-          .map(character_manager::State::active_pane),
-        Some(character_manager::Pane::Corporations)
+        app.roster.as_ref().map(roster::State::active_pane),
+        Some(roster::Pane::Corporations)
       );
     }
 
@@ -12361,7 +12298,7 @@ mod tests {
       let mut app = test_app();
       let _ = update(
         &mut app,
-        Message::CharacterManager(character_manager::Message::CorporationSelected(98_000_001)),
+        Message::Roster(roster::Message::CorporationSelected(98_000_001)),
       );
       assert_eq!(app.route, Route::CorporationDetail(98_000_001));
 
@@ -12373,10 +12310,7 @@ mod tests {
     #[test]
     fn it_returns_to_the_roster_grid_when_the_characters_rail_is_activated_from_detail() {
       let mut app = test_app();
-      let _ = update(
-        &mut app,
-        Message::CharacterManager(character_manager::Message::CharacterSelected(42)),
-      );
+      let _ = update(&mut app, Message::Roster(roster::Message::CharacterSelected(42)));
       assert_eq!(app.route, Route::CharacterDetail(42));
 
       let _ = update(&mut app, Message::Nav(rail::Destination::Characters));
@@ -12459,7 +12393,7 @@ mod tests {
     #[test]
     fn it_filters_synchronously_across_nav_commands_and_entities() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
 
       let _ = update(
@@ -12565,7 +12499,7 @@ mod tests {
     #[test]
     fn it_opens_a_character_detail_when_an_entity_result_is_activated() {
       let mut app = test_app();
-      app.character_manager = Some(character_manager::State::new());
+      app.roster = Some(roster::State::new());
       let _ = update(&mut app, Message::Palette(PaletteMessage::Open));
 
       let action = command_palette::Action::Detail(command_palette::Entity {
@@ -12866,8 +12800,8 @@ mod tests {
         "CharacterDetail"
       );
       assert_eq!(
-        Message::CharacterManager(character_manager::Message::AddCharacterRequested).variant_name(),
-        "CharacterManager"
+        Message::Roster(roster::Message::AddCharacterRequested).variant_name(),
+        "Roster"
       );
       assert_eq!(
         Message::Compare(skills_compare::Message::CloseRequested).variant_name(),
@@ -13693,13 +13627,7 @@ mod tests {
         )
         .is_ok()
       );
-      assert!(
-        dispatch_feature(
-          &mut app,
-          Message::CharacterManager(character_manager::Message::AddCharacterRequested),
-        )
-        .is_ok()
-      );
+      assert!(dispatch_feature(&mut app, Message::Roster(roster::Message::AddCharacterRequested),).is_ok());
       assert!(dispatch_feature(&mut app, Message::Compose(id, mail::Message::PickerToggled)).is_ok());
       assert!(
         dispatch_feature(

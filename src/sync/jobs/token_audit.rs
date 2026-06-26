@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use crate::{
   clients::{Error, eve_sso},
   config,
-  features::{auth, character_manager},
+  features::{auth, roster},
   store::{
     Database,
     model::{Credential, OwnerType},
@@ -94,7 +94,7 @@ fn scopes_sufficient(credential: &Credential, features: config::FeatureFlags) ->
     OwnerType::Character => auth::scopes_for(&features),
     OwnerType::Corporation => auth::corp_scopes_for(&features),
   };
-  !character_manager::needs_reauthorization(credential.scopes().as_deref(), &required)
+  !roster::needs_reauthorization(credential.scopes().as_deref(), &required)
 }
 
 /// True only when SSO positively rejects the refresh as revoked; a transient failure leaves the

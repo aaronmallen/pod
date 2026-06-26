@@ -4,7 +4,7 @@ use iced::Element;
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
 use crate::{
   config::Feature,
-  features::{character_manager, registry},
+  features::{registry, roster},
   ui::{
     components::{
       header::{header as shared_header, header_divider, stat_block},
@@ -138,7 +138,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     .and_then(|row| row.liquid);
   let sub = format!("{}  ·  {} ISK", pilot.corp, fmt_isk(liquid));
   let required_scopes = registry::descriptor(Feature::Wallet).scopes;
-  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
+  let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(
     pilot.id,
     pilot.name.clone(),

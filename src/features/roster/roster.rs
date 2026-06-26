@@ -812,7 +812,7 @@ fn message_text<'a>(content: String, fill: Color) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
   use super::{super::Drag, *};
-  use crate::{features::character_manager::card::TagChip, store::images};
+  use crate::{features::roster::card::TagChip, store::images};
 
   fn card_model(id: i64) -> CardModel {
     card_model_at(id, 0)

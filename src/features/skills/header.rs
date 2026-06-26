@@ -8,7 +8,7 @@ use iced::{
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
 use crate::{
   config::Feature,
-  features::{character_manager, registry},
+  features::{registry, roster},
   ui::{
     components::{
       header::{header as header_band, header_divider, stat_block},
@@ -189,7 +189,7 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
     .into();
 
   let required_scopes = registry::descriptor(Feature::SkillMonitoring).scopes;
-  let needs_reauth = character_manager::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
+  let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
 
   picker_character_row(
     pilot.id,

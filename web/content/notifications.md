@@ -26,22 +26,33 @@ Click the bell to open the notification center.
 ## The notification center
 
 The center is a card that flies out beside the rail, bottom-aligned to the bell.
-It lists your notifications newest first.
 
-![The notification center panel listing recent events](/docs/img/notifications/notification-center.png)
+The header reads "Notifications" with a "Mark all read" button. The button marks
+every item read at once and is disabled when nothing is unread.
 
-The header reads "Notifications" with a "{n} new" button that marks every item
-read at once. Each row carries the event title, a short body line, the owner it
-belongs to, and a relative time such as "2m ago". Click a row to open the
-feature the notification points at: a skill notification jumps to Skills, an
-industry job to Industry, a mail to that mailbox, and so on. Clicking a row also
-marks that one item read.
+Below the header sit two tabs, "New" and "History", each with its own count
+badge. "New" is the default and lists only your unread notifications, newest
+first. Marking an item read removes it from "New". "History" lists every
+notification Pod is holding, read or not, also newest first. Each row carries
+the event title, a short body line, the owner it belongs to, and a relative time
+such as "2m ago". Click a row to open the feature the notification points at: a
+skill notification jumps to Skills, an industry job to Industry, a mail to that
+mailbox, and so on. Clicking a row also marks that one item read.
 
-A footer carries a "Clear all" button and a running total of how many
-notifications are held. Opening the panel does not mark anything read on its
-own; only the per-row click and the "{n} new" button change the read state.
+A footer reports a single count for the active tab, "N unread" on "New" and "N
+total" on "History". It hides when the active tab has nothing to show. There is
+no clear-all control; items leave on their own as they age out (see below).
+Opening the panel does not mark anything read on its own. Only a per-row click
+and the "Mark all read" button change the read state.
 
-When there is nothing to show, the panel reads "You're all caught up."
+Each tab carries its own empty state. With nothing unread, "New" reads "You're
+all caught up". With no history to show, "History" reads "Nothing here yet".
+
+The "History" tab pages in older notifications as you scroll, loading the next
+batch a little before you reach the bottom. It resets to the newest items
+whenever you open the panel or a new event arrives, so the top always reflects
+the latest activity. Pod holds history for about 90 days and prunes older items
+on a time window rather than capping a fixed number of rows.
 
 ## What generates a notification
 
@@ -65,19 +76,22 @@ for example, Pod stops raising mail notifications. The first time Pod sees a
 source it records what is already there as a baseline rather than flooding the
 center with a backlog, so you only get notified about events from then on.
 
-![Recent notifications across skills, industry, and mail](/docs/img/notifications/notifications.png)
-
 ## Toasts
 
 When a new notification surfaces, Pod also pops it as a toast in the
 bottom-right corner. Up to three toasts stack at once; a fourth pushes the
-oldest out, though that item still lands in the center. Each toast holds the
-same title and body as its center row, with an "×" to dismiss it.
+oldest out, though that item still lands in the center. Each toast leads with a
+colored icon tile keyed to its kind, then the same title and body as its center
+row, with an "x" to dismiss it.
 
 A toast clears itself after 15 seconds. Hover it and the countdown pauses, so a
 toast you are reading does not vanish under the pointer. Click the body of a
-toast to open the feature it points at, the same deep-link the center row uses;
-the "×" dismisses the toast without opening anything.
+toast to open the feature it points at, the same deep-link the center row uses.
+Dismissing a toast with its "x" marks that item read: it moves to your read
+history and never toasts again.
+
+Each event toasts once. An item you dismiss or one that has aged out of history
+never re-notifies, since Pod records that it has already told you about it.
 
 ## How this differs from the in-game Notifications tab
 

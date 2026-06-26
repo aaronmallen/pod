@@ -31,7 +31,7 @@ use crate::{
     skill_plan_manager, skills, skills_compare, splash, wallet,
   },
   mcp, notifications,
-  services::{images, telemetry, updater},
+  services::{crash, images, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
@@ -778,11 +778,29 @@ fn navigate(app: &mut App, to: Route) {
 }
 
 pub fn run() -> iced::Result {
-  let (log_dir, log_level) = config::load()
+  let settings = config::load().ok();
+  let (log_dir, log_level) = settings
+    .as_ref()
     .map(|settings| (settings.storage().resolved_log_dir(), *settings.storage().log_level()))
-    .unwrap_or_else(|_| (config::log_dir(), config::LogLevel::default()));
+    .unwrap_or_else(|| (config::log_dir(), config::LogLevel::default()));
 
   let _log_guard = init_tracing(&log_dir, log_level);
+
+  // Crash pipeline (spec mmmzstpq §8.4): set the process-global attribution
+  // statics + the context_log ring BEFORE installing the panic hook, so a panic
+  // in early boot still produces a correctly-attributed, fully-scrubbed record.
+  // The ring layer added inside `init_tracing` above is inert until this runs.
+  let (machine_id, telemetry_config) = settings
+    .as_ref()
+    .map(|settings| {
+      (
+        settings.storage().machine_id().clone().unwrap_or_default(),
+        *settings.telemetry(),
+      )
+    })
+    .unwrap_or_default();
+  crash::install(&log_dir, &machine_id, telemetry_config);
+
   install_panic_hook();
   graphics::probe();
 
@@ -870,9 +888,15 @@ fn init_tracing(
     }
   };
 
+  // Crash context_log ring (spec mmmzstpq §5.5/§8.4): a bounded in-memory ring
+  // fed by every event, applying the allow-list AT INGEST so nothing unscrubbed
+  // is ever held. The panic hook reads this ring, never the rolling file.
+  let ring_layer = crash::RingLayer.with_filter(EnvFilter::new(file_filter(log_level)));
+
   let _ = tracing_subscriber::registry()
     .with(file_layer)
     .with(console_layer)
+    .with(ring_layer)
     .try_init();
 
   tracing::info!(
@@ -937,6 +961,16 @@ fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
     panic_backtrace = %backtrace,
     "the process panicked",
   );
+
+  // Crash pipeline (spec mmmzstpq §8.4): synchronously append one scrubbed
+  // NDJSON record to the on-disk buffer for next-launch delivery. This is the
+  // last thing the hook does and is fully best-effort: it never re-panics, does
+  // no network / async, and no-ops when telemetry is opted out or unbuilt.
+  crash::capture(
+    message,
+    info.location().map(|_| location.as_str()),
+    &backtrace.to_string(),
+  );
 }
 
 fn app_icon() -> Option<window::Icon> {
@@ -974,12 +1008,26 @@ fn boot() -> (App, Task<Message>) {
   // Built here, before `settings` is shadowed by the window settings below.
   let telemetry = clients::telemetry::Endpoint::from_env()
     .and_then(clients::telemetry::Sender::new)
-    .inspect(|_| {
+    .inspect(|sender| {
       telemetry::init(
         &settings.storage().machine_id().clone().unwrap_or_default(),
         *settings.telemetry(),
-      )
+      );
+      // Crash next-launch delivery (spec mmmzstpq §8.4): fire-and-forget the
+      // buffered crash records. The sender exists here only when an endpoint was
+      // baked in, so `has_endpoint` is true on this branch.
+      if let Some(buffer) = crash::buffer_path() {
+        crash::deliver(sender, &buffer, *settings.telemetry(), true);
+      }
     });
+
+  // Even with no baked endpoint (dev builds), proactively delete any stale crash
+  // buffer so a dev build never accumulates an unread crash file (§8.4).
+  if telemetry.is_none()
+    && let Some(buffer) = crash::buffer_path()
+  {
+    let _ = std::fs::remove_file(&buffer);
+  }
 
   auth::install();
   let settings = window::Settings {

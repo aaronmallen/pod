@@ -10,11 +10,17 @@ zone_name = "aaronmallen.dev"
 [[d1_databases]]
 binding = "DB"
 database_name = "pod-telemetry"
-database_id = "REPLACE_AFTER_d1_create"
+database_id = "c22d6a93-11ae-432b-9303-e51ec2882b75"
 migrations_dir = "migrations"
 
-[triggers]
-crons = ["0 4 * * *"]
+# Cron Triggers are disabled: the Cloudflare account currently rejects the
+# /schedules deploy ("non-user error"), so the worker is deployed without the
+# daily retention cron. The `scheduled` handler (90-day prune in src/index.ts)
+# stays in code — re-enable below once Cron Triggers work on the account
+# (dashboard → Workers → pod-telemetry → Triggers → Cron). Until then, run
+# retention manually if needed (see README "Retention").
+# [triggers]
+# crons = ["0 4 * * *"]
 
 [vars]
 # Parsed as an integer in index.ts via Number(env.SCHEMA_VERSION).

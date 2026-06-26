@@ -47,6 +47,17 @@ A daily cron (`0 4 * * *`) runs the `scheduled` handler, which
 `received_at`. The `DELETE` and the column `DEFAULT` use the identical
 `strftime('%Y-%m-%dT%H:%M:%SZ', …)` form so the string comparison is correct.
 
+> **Cron currently disabled.** The Cloudflare account rejects the `/schedules`
+> deploy, so the cron is commented out in `wrangler.toml` and the worker runs
+> without auto-prune (the `scheduled` handler is still in the code). Re-enable
+> the cron once Triggers work on the account. Until then, prune manually:
+>
+> ```sh
+> npx wrangler d1 execute pod-telemetry --remote --command \
+>   "DELETE FROM events WHERE received_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-90 days'); \
+>    DELETE FROM crashes WHERE received_at < strftime('%Y-%m-%dT%H:%M:%SZ','now','-90 days');"
+> ```
+
 ## Layout
 
 ```text

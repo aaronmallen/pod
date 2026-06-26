@@ -9,7 +9,7 @@ use crate::{
   config::{CascadeMode, NavLocation, Settings},
   features::registry,
   ui::{
-    components::rule,
+    components::{card, icon::Icon, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -19,7 +19,10 @@ const ICON_SIZE: f32 = 20.0;
 const ORDER_BUTTON_SIZE: f32 = 28.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PREVIEW_HEIGHT: f32 = 100.0;
-const SIDE_CARD_MAX_WIDTH: f32 = 240.0;
+const RADIO_DOT_SIZE: f32 = 14.0;
+const RADIO_CHECK_SIZE: f32 = 8.0;
+const SIDE_CARD_MAX_HEIGHT: f32 = 145.0;
+const SIDE_CARD_MAX_WIDTH: f32 = 245.0;
 const ROW_LIST_MAX_WIDTH: f32 = 560.0;
 
 const RAIL_SIDES: [NavLocation; 2] = [NavLocation::Left, NavLocation::Right];
@@ -303,11 +306,10 @@ fn live_chip<'a>(label: &'a str) -> Element<'a, Message> {
 
 fn side_cards(settings: &Settings) -> Element<'_, Message> {
   let selected = *settings.ui().nav_location();
-  let mut cards: Vec<Element<'_, Message>> = RAIL_SIDES
+  let cards: Vec<Element<'_, Message>> = RAIL_SIDES
     .into_iter()
     .map(|side| nav_card(side, selected == side))
     .collect();
-  cards.push(Space::new().width(Length::Fill).into());
 
   Row::with_children(cards)
     .spacing(spacing::SPACE_3_5)
@@ -347,27 +349,12 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
 
   let card = Column::with_children(vec![preview.into(), rule::horizontal(), footer.into()]).width(Length::Fill);
 
-  let card_button = button(card)
-    .padding(0)
-    .width(Length::Fill)
-    .on_press(Message::SideSelected(side))
-    .style(move |_, _| button::Style {
-      background: Some(Background::Color(color::surface::RAISED)),
-      border: Border {
-        color: if selected {
-          color::accent::PLASMA
-        } else {
-          color::with_alpha(color::text::PRIMARY, 0.1)
-        },
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    });
+  let card_button = card::selectable_card(card, selected, Message::SideSelected(side)).width(Length::Fill);
 
   container(card_button)
-    .width(Length::Fill)
+    .width(Length::FillPortion(1))
     .max_width(SIDE_CARD_MAX_WIDTH)
+    .max_height(SIDE_CARD_MAX_HEIGHT)
     .into()
 }
 
@@ -409,29 +396,16 @@ fn cascade_card<'a>(mode: CascadeMode, selected: bool) -> Element<'a, Message> {
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_2_5);
 
-  button(container(footer).width(Length::Fill).padding(Padding {
+  let body = container(footer).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_2_5,
     right: spacing::SPACE_3_5,
     bottom: spacing::SPACE_2_5,
     left: spacing::SPACE_3_5,
-  }))
-  .padding(0)
-  .width(Length::FillPortion(1))
-  .on_press(Message::CascadeSelected(mode))
-  .style(move |_, _| button::Style {
-    background: Some(Background::Color(color::surface::RAISED)),
-    border: Border {
-      color: if selected {
-        color::accent::PLASMA
-      } else {
-        color::with_alpha(color::text::PRIMARY, 0.1)
-      },
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  });
+
+  card::selectable_card(body, selected, Message::CascadeSelected(mode))
+    .width(Length::FillPortion(1))
+    .into()
 }
 
 fn cascade_note(mode: CascadeMode) -> &'static str {
@@ -529,15 +503,35 @@ fn nav_preview<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
     .height(Length::Fill)
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        radius: iced::border::Radius {
+          top_left: radius::NAV_CARD,
+          top_right: radius::NAV_CARD,
+          bottom_left: 0.0,
+          bottom_right: 0.0,
+        },
+        ..Border::default()
+      },
       ..container::Style::default()
     })
     .into()
 }
 
 fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
-  container(Space::new())
-    .width(Length::Fixed(14.0))
-    .height(Length::Fixed(14.0))
+  let check: Element<'a, Message> = if selected {
+    Icon::check()
+      .size(RADIO_CHECK_SIZE)
+      .color(color::surface::BASE)
+      .render()
+  } else {
+    Space::new().into()
+  };
+
+  container(check)
+    .width(Length::Fixed(RADIO_DOT_SIZE))
+    .height(Length::Fixed(RADIO_DOT_SIZE))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
     .style(move |_| container::Style {
       background: selected.then_some(Background::Color(color::accent::PLASMA)),
       border: Border {
@@ -547,7 +541,7 @@ fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
           color::rule_strong()
         },
         width: 1.0,
-        radius: 7.0.into(),
+        radius: (RADIO_DOT_SIZE / 2.0).into(),
       },
       ..container::Style::default()
     })
@@ -982,7 +976,30 @@ mod tests {
 
     #[test]
     fn it_caps_the_side_card_max_width_at_the_design_grid_bound() {
-      assert_eq!(SIDE_CARD_MAX_WIDTH, 240.0);
+      assert_eq!(SIDE_CARD_MAX_WIDTH, 245.0);
+    }
+
+    #[test]
+    fn it_caps_the_side_card_max_height_at_the_design_grid_bound() {
+      assert_eq!(SIDE_CARD_MAX_HEIGHT, 145.0);
+    }
+
+    #[test]
+    fn it_renders_a_selected_and_unselected_radio_dot() {
+      let _selected: Element<'_, Message> = radio_dot(true);
+      let _unselected: Element<'_, Message> = radio_dot(false);
+    }
+
+    #[test]
+    fn it_renders_both_rail_sides_as_an_evenly_gapped_pair() {
+      let settings = settings();
+      let _el: Element<'_, Message> = side_cards(&settings);
+    }
+
+    #[test]
+    fn it_renders_the_cascade_cards_with_the_shared_treatment() {
+      let settings = settings();
+      let _el: Element<'_, Message> = cascade_cards(&settings);
     }
 
     #[test]

@@ -199,4 +199,75 @@ mod tests {
     // no-op exactly as it does in every local / dev build.
     assert!(Endpoint::from_env().is_none());
   }
+
+  // ---- §7.3 send: the real reqwest POST, exercised end-to-end against a
+  // wiremock server so every branch of `send` (request construction, 2xx ->
+  // true, non-2xx -> false, transport error -> false) runs under coverage. The
+  // network I/O is local-loopback only; no live endpoint is contacted.
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{header, method, path},
+  };
+
+  /// A sender whose baked endpoint points at `url` with key `key`, built from
+  /// the public `Endpoint` fields (no build-time env needed).
+  fn sender_for(url: &str, key: &str) -> Sender {
+    Sender::new(Endpoint {
+      url: url.to_owned(),
+      key: key.to_owned(),
+    })
+    .expect("reqwest client builds")
+  }
+
+  fn fixture_batch() -> Batch {
+    serde_json::from_str(SESSION_ALL_STREAMS_FIXTURE).expect("golden fixture parses")
+  }
+
+  #[tokio::test]
+  async fn send_posts_the_batch_with_the_write_key_header_and_returns_true_on_2xx() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+      .and(path("/ingest"))
+      .and(header(WRITE_KEY_HEADER, "secret-key"))
+      .and(header(reqwest::header::CONTENT_TYPE.as_str(), "application/json"))
+      .respond_with(ResponseTemplate::new(202))
+      .expect(1)
+      .mount(&server)
+      .await;
+
+    let sender = sender_for(&format!("{}/ingest", server.uri()), "secret-key");
+    let accepted = sender.send(&fixture_batch()).await;
+
+    assert!(accepted, "a 2xx ingest response is reported as accepted");
+    // The mock's `.expect(1)` asserts on drop that exactly one matching POST
+    // (correct path, key header, content-type, JSON body) arrived.
+  }
+
+  #[tokio::test]
+  async fn send_returns_false_on_a_non_2xx_status() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+      .respond_with(ResponseTemplate::new(500))
+      .mount(&server)
+      .await;
+
+    let sender = sender_for(&server.uri(), "key");
+    let accepted = sender.send(&fixture_batch()).await;
+
+    assert!(!accepted, "a rejected (non-2xx) batch is reported as not accepted");
+  }
+
+  #[tokio::test]
+  async fn send_swallows_a_transport_error_and_returns_false() {
+    // No server is listening on this loopback port, so the POST fails at the
+    // transport layer; `send` must swallow it into a debug log and return false.
+    let sender = sender_for("http://127.0.0.1:1/ingest", "key");
+    let accepted = sender.send(&fixture_batch()).await;
+
+    assert!(
+      !accepted,
+      "a transport failure is swallowed and reported as not accepted"
+    );
+  }
 }

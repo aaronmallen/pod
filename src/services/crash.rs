@@ -668,6 +668,149 @@ mod tests {
     }
   }
 
+  // ---- the real `deliver`: drive every branch of the boot delivery. ----
+  //
+  // A `Sender` is built from the public `Endpoint` fields (no build-time env),
+  // pointed at a local wiremock server. The non-POST branches ignore the sender;
+  // the POST branch runs under a live tokio runtime against the mock.
+
+  use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{header, method},
+  };
+
+  fn sender_for(url: &str) -> Sender {
+    Sender::new(Endpoint {
+      url: url.to_owned(),
+      key: "test-key".to_owned(),
+    })
+    .expect("reqwest client builds")
+  }
+
+  /// One serialized NDJSON record line for a fresh crash (passes the age bound).
+  fn ndjson_line(message: &str) -> String {
+    let mut line = serde_json::to_string(&record(message, &rfc3339_days_ago(1))).expect("record serializes");
+    line.push('\n');
+    line
+  }
+
+  /// Wait (bounded) for `predicate` to hold, so the assertion does not race the
+  /// fire-and-forget `tokio::spawn` that `deliver` returns before completing.
+  async fn wait_until(predicate: impl Fn() -> bool) {
+    for _ in 0..200 {
+      if predicate() {
+        return;
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+  }
+
+  #[tokio::test]
+  async fn deliver_is_a_no_op_when_the_buffer_is_absent() {
+    // No global lock: these drive `deliver` against a unique-per-test buffer
+    // path and a local Sender, touching neither the STATE nor RING statics (so
+    // holding a std Mutex across the awaits below would be both needless and a
+    // clippy `await_holding_lock`).
+    let dir = tmp_dir();
+    let buffer = dir.join(BUFFER_FILE); // never created
+    let sender = sender_for("http://127.0.0.1:1/ingest");
+
+    // Unreadable/absent buffer: deliver returns immediately, nothing created.
+    deliver(&sender, &buffer, config(true, true), true);
+    assert!(!buffer.exists(), "no buffer => nothing to deliver, none created");
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[tokio::test]
+  async fn deliver_deletes_the_buffer_unsent_when_opted_out() {
+    let dir = tmp_dir();
+    let buffer = dir.join(BUFFER_FILE);
+    std::fs::write(&buffer, ndjson_line("boom")).unwrap();
+    let sender = sender_for("http://127.0.0.1:1/ingest");
+
+    // master off / crashes off / no endpoint each take the delete-unsent path.
+    deliver(&sender, &buffer, config(false, true), true);
+    assert!(!buffer.exists(), "master off => deleted unsent");
+
+    std::fs::write(&buffer, ndjson_line("boom")).unwrap();
+    deliver(&sender, &buffer, config(true, false), true);
+    assert!(!buffer.exists(), "crashes off => deleted unsent");
+
+    std::fs::write(&buffer, ndjson_line("boom")).unwrap();
+    deliver(&sender, &buffer, config(true, true), false);
+    assert!(!buffer.exists(), "no endpoint => deleted unsent");
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[tokio::test]
+  async fn deliver_clears_a_buffer_with_nothing_deliverable() {
+    let dir = tmp_dir();
+    let buffer = dir.join(BUFFER_FILE);
+    // Only malformed / blank lines survive parsing: assemble() yields None, so
+    // the buffer is cleared rather than POSTed.
+    std::fs::write(&buffer, "not json\n\n{also bad}\n").unwrap();
+    let sender = sender_for("http://127.0.0.1:1/ingest");
+
+    deliver(&sender, &buffer, config(true, true), true);
+    assert!(!buffer.exists(), "no deliverable record => buffer cleared");
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[tokio::test]
+  async fn deliver_posts_a_crash_batch_and_deletes_the_buffer_on_a_2xx() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+      .and(header("X-Pod-Telemetry-Key", "test-key"))
+      .respond_with(ResponseTemplate::new(200))
+      .expect(1)
+      .mount(&server)
+      .await;
+
+    let dir = tmp_dir();
+    let buffer = dir.join(BUFFER_FILE);
+    std::fs::write(&buffer, ndjson_line("called `Option::unwrap()` on a `None` value")).unwrap();
+    let sender = sender_for(&format!("{}/ingest", server.uri()));
+
+    deliver(&sender, &buffer, config(true, true), true);
+    let probe = buffer.clone();
+    wait_until(move || !probe.exists()).await;
+    assert!(!buffer.exists(), "a 2xx delivery deletes the buffer");
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1, "exactly one crash batch was POSTed");
+    let batch: Batch = serde_json::from_slice(&received[0].body).unwrap();
+    assert_eq!(batch.kind, Kind::Crash);
+    assert!(
+      batch.streams.crashes.is_some(),
+      "the POSTed batch carries the crash stream"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
+  #[tokio::test]
+  async fn deliver_keeps_the_buffer_on_a_failed_send() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+      .respond_with(ResponseTemplate::new(500))
+      .mount(&server)
+      .await;
+
+    let dir = tmp_dir();
+    let buffer = dir.join(BUFFER_FILE);
+    std::fs::write(&buffer, ndjson_line("boom")).unwrap();
+    let sender = sender_for(&format!("{}/ingest", server.uri()));
+
+    deliver(&sender, &buffer, config(true, true), true);
+    // Give the spawned send time to complete (and NOT delete the buffer).
+    let probe = buffer.clone();
+    wait_until(move || !probe.exists()).await; // returns when the 200ms budget elapses
+    assert!(
+      buffer.exists(),
+      "a non-2xx delivery leaves the buffer for the next launch"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+  }
+
   // ---- skip when crashes/master off or no endpoint (capture). ----
 
   #[test]

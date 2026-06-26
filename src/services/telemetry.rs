@@ -369,28 +369,46 @@ fn os_version_major() -> Option<String> {
       .output()
       .ok()
       .filter(|out| out.status.success())
-      .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+      .and_then(|out| parse_sw_vers(&String::from_utf8_lossy(&out.stdout)))
   } else if cfg!(target_os = "windows") {
     std::process::Command::new("cmd")
       .args(["/c", "ver"])
       .output()
       .ok()
       .filter(|out| out.status.success())
-      .and_then(|out| {
-        let text = String::from_utf8_lossy(&out.stdout);
-        text.split_once("Version ").map(|(_, rest)| rest.trim().to_owned())
-      })
+      .and_then(|out| parse_windows_ver(&String::from_utf8_lossy(&out.stdout)))
   } else {
-    std::fs::read_to_string("/etc/os-release").ok().and_then(|contents| {
-      contents.lines().find_map(|line| {
-        line
-          .strip_prefix("VERSION_ID=")
-          .map(|value| value.trim_matches('"').to_owned())
-      })
-    })
+    std::fs::read_to_string("/etc/os-release")
+      .ok()
+      .and_then(|contents| parse_os_release_version_id(&contents))
   }?;
 
   major_component(&raw)
+}
+
+/// The raw `sw_vers -productVersion` line, trimmed (`"15.5\n"` -> `"15.5"`),
+/// `None` when the output is blank. The major reduction is the caller's.
+fn parse_sw_vers(stdout: &str) -> Option<String> {
+  let trimmed = stdout.trim();
+  (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+/// The version token out of `cmd /c ver` output
+/// (`"... [Version 10.0.19045.0]"` -> `"10.0.19045.0]"`), `None` when the
+/// `"Version "` marker is absent. The major reduction is the caller's.
+fn parse_windows_ver(stdout: &str) -> Option<String> {
+  stdout.split_once("Version ").map(|(_, rest)| rest.trim().to_owned())
+}
+
+/// The unquoted `VERSION_ID` value out of `/etc/os-release` contents
+/// (`VERSION_ID="22.04"` -> `"22.04"`), `None` when the key is absent. The
+/// major reduction is the caller's.
+fn parse_os_release_version_id(contents: &str) -> Option<String> {
+  contents.lines().find_map(|line| {
+    line
+      .strip_prefix("VERSION_ID=")
+      .map(|value| value.trim_matches('"').to_owned())
+  })
 }
 
 /// The leading numeric component of a dotted version string (`"15.5"` -> `"15"`),
@@ -740,6 +758,69 @@ mod tests {
     assert_eq!(major_component("10.0.19045").as_deref(), Some("10"));
     assert_eq!(major_component("rolling"), None);
     assert_eq!(major_component(""), None);
+  }
+
+  // ---- per-platform os_version_major parse seams (pure, host-independent). ----
+
+  #[test]
+  fn parse_sw_vers_trims_the_product_version_line() {
+    // macOS `sw_vers -productVersion` typically prints the bare version + newline.
+    assert_eq!(parse_sw_vers("15.5\n").as_deref(), Some("15.5"));
+    assert_eq!(parse_sw_vers("  14.4.1  ").as_deref(), Some("14.4.1"));
+    // Reducing the parsed value yields the major component.
+    assert_eq!(
+      major_component(&parse_sw_vers("15.5\n").unwrap()).as_deref(),
+      Some("15")
+    );
+    // Blank / whitespace-only output => nothing to parse.
+    assert_eq!(parse_sw_vers(""), None);
+    assert_eq!(parse_sw_vers("   \n"), None);
+  }
+
+  #[test]
+  fn parse_windows_ver_extracts_the_token_after_the_version_marker() {
+    let raw = "\r\nMicrosoft Windows [Version 10.0.19045.0]\r\n";
+    assert_eq!(parse_windows_ver(raw).as_deref(), Some("10.0.19045.0]"));
+    // The major reduction stops at the first non-digit, dropping the trailing `]`.
+    assert_eq!(major_component(&parse_windows_ver(raw).unwrap()).as_deref(), Some("10"));
+    // No "Version " marker => no token.
+    assert_eq!(parse_windows_ver("some unexpected banner"), None);
+    assert_eq!(parse_windows_ver(""), None);
+  }
+
+  #[test]
+  fn parse_os_release_version_id_reads_the_unquoted_value() {
+    let release = "NAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nPRETTY_NAME=\"Ubuntu 22.04 LTS\"\n";
+    assert_eq!(parse_os_release_version_id(release).as_deref(), Some("22.04"));
+    assert_eq!(
+      major_component(&parse_os_release_version_id(release).unwrap()).as_deref(),
+      Some("22")
+    );
+    // Unquoted values (e.g. some rolling distros) are read verbatim.
+    assert_eq!(parse_os_release_version_id("VERSION_ID=36\n").as_deref(), Some("36"));
+    // A rolling release with no numeric id still parses; the major reduction is
+    // what yields `None` for the caller.
+    assert_eq!(
+      parse_os_release_version_id("VERSION_ID=rolling").as_deref(),
+      Some("rolling")
+    );
+    assert_eq!(major_component("rolling"), None);
+    // Missing key => no value.
+    assert_eq!(parse_os_release_version_id("NAME=\"Arch Linux\"\n"), None);
+    assert_eq!(parse_os_release_version_id(""), None);
+  }
+
+  #[test]
+  fn os_version_major_probes_the_live_host_without_panicking() {
+    // Drives the real per-platform branch on the test host (the macOS `sw_vers`
+    // path here). Best-effort: either a numeric major or `None`, never empty.
+    if let Some(major) = os_version_major() {
+      assert!(
+        major.chars().all(|c| c.is_ascii_digit()),
+        "major is digits only: {major}"
+      );
+      assert!(!major.is_empty());
+    }
   }
 
   #[test]

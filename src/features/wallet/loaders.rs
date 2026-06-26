@@ -21,7 +21,7 @@ const MARKET_ICON_SIZE: Size = Size::S64;
 pub struct BudgetChips {
   pub envelopes: Vec<EnvelopeGroup>,
   pub meta: std::collections::HashMap<i64, Envelope>,
-  pub resolution: crate::features::budget::ResolutionContext,
+  pub resolution: crate::features::wallet::budget_engine::ResolutionContext,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,13 +104,22 @@ impl JournalEntry {
     self.amount.is_some_and(|amount| amount > 0.0)
   }
 
-  pub fn match_target(&self) -> crate::features::budget::MatchTarget {
-    crate::features::budget::MatchTarget::journal(self.owner, &self.ref_type, self.amount, &self.match_text())
+  pub fn match_target(&self) -> crate::features::wallet::budget_engine::MatchTarget {
+    crate::features::wallet::budget_engine::MatchTarget::journal(
+      self.owner,
+      &self.ref_type,
+      self.amount,
+      &self.match_text(),
+    )
   }
 
   /// The same enriched text drives both wallet search and rule matching.
   pub fn match_text(&self) -> String {
-    crate::features::budget::journal_match_text(&self.ref_type, self.reason.as_deref(), &self.description)
+    crate::features::wallet::budget_engine::journal_match_text(
+      &self.ref_type,
+      self.reason.as_deref(),
+      &self.description,
+    )
   }
 }
 
@@ -134,8 +143,14 @@ pub struct MarketEntry {
 }
 
 impl MarketEntry {
-  pub fn match_target(&self) -> crate::features::budget::MatchTarget {
-    crate::features::budget::MatchTarget::market(self.owner, self.is_buy, self.total, &self.item, &self.location)
+  pub fn match_target(&self) -> crate::features::wallet::budget_engine::MatchTarget {
+    crate::features::wallet::budget_engine::MatchTarget::market(
+      self.owner,
+      self.is_buy,
+      self.total,
+      &self.item,
+      &self.location,
+    )
   }
 }
 
@@ -255,8 +270,8 @@ pub async fn load_market_page(
   cursor: Option<i64>,
   limit: i64,
 ) -> Vec<MarketEntry> {
-  let type_names = crate::features::budget::type_names(db).await;
-  let location_names = crate::features::budget::location_names(db).await;
+  let type_names = crate::features::wallet::budget_engine::type_names(db).await;
+  let location_names = crate::features::wallet::budget_engine::location_names(db).await;
 
   let mut entries = Vec::new();
   for &character_id in scope {
@@ -401,8 +416,8 @@ pub async fn load_all_journal(db: &Database, scope: &[i64], corp_scope: &[i64]) 
 }
 
 pub async fn load_all_market(db: &Database, scope: &[i64], corp_scope: &[i64]) -> Vec<MarketEntry> {
-  let type_names = crate::features::budget::type_names(db).await;
-  let location_names = crate::features::budget::location_names(db).await;
+  let type_names = crate::features::wallet::budget_engine::type_names(db).await;
+  let location_names = crate::features::wallet::budget_engine::location_names(db).await;
 
   let mut entries = Vec::new();
   for &character_id in scope {
@@ -439,8 +454,8 @@ pub async fn load_corp_journal(db: &Database, corporation_id: i64, division: i64
 }
 
 pub async fn load_corp_market(db: &Database, corporation_id: i64, division: i64) -> Vec<MarketEntry> {
-  let type_names = crate::features::budget::type_names(db).await;
-  let location_names = crate::features::budget::location_names(db).await;
+  let type_names = crate::features::wallet::budget_engine::type_names(db).await;
+  let location_names = crate::features::wallet::budget_engine::location_names(db).await;
   finance::corporation_wallet_transactions(db, corporation_id, division)
     .await
     .unwrap_or_default()
@@ -530,7 +545,7 @@ fn map_txn_row(
 }
 
 pub(super) async fn load_budget_chips(db: &Database, scope: BudgetScope) -> BudgetChips {
-  let resolution = crate::features::budget::ResolutionContext::load(db, scope).await;
+  let resolution = crate::features::wallet::budget_engine::ResolutionContext::load(db, scope).await;
   let groups = crate::store::repo::budget::list_groups(db, scope)
     .await
     .unwrap_or_default();
@@ -1526,7 +1541,7 @@ mod tests {
     #[tokio::test]
     async fn it_returns_non_empty_chips_and_meta_after_seeding() {
       let db = store::open_test().await.unwrap();
-      crate::features::budget::seed_scope(&db, BudgetScope::All)
+      crate::features::wallet::budget_engine::seed_scope(&db, BudgetScope::All)
         .await
         .unwrap();
 

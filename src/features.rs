@@ -1,7 +1,5 @@
 pub mod assets;
-pub mod budget;
 pub mod calendar;
-pub mod contract_detail;
 pub mod focus_search;
 pub mod industry;
 pub mod mail;

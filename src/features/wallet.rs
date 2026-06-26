@@ -1,6 +1,8 @@
 pub(crate) mod budget;
+pub(crate) mod budget_engine;
 mod budget_reflect;
 mod budget_view;
+pub(crate) mod contract_detail;
 mod header;
 mod hero;
 mod loaders;
@@ -18,7 +20,6 @@ pub use self::{
 };
 pub(crate) use crate::ui::format::fmt_isk_opt as fmt_isk;
 use crate::{
-  features::contract_detail,
   store::{
     Database, images,
     model::{
@@ -161,7 +162,7 @@ pub struct Loaded {
 
 #[derive(Clone, Debug)]
 pub struct BudgetLoad {
-  history: Vec<crate::features::budget::MonthFlow>,
+  history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
   scope: Scope,
   /// A category id to select once the reloaded view lands, used after adding a
   /// category so the new envelope opens in the inspector. `None` keeps the
@@ -550,7 +551,7 @@ pub struct State {
   budget_global_rules_open: bool,
   budget_group_dragging: Option<i64>,
   budget_group_drop_target: Option<i64>,
-  budget_history: Vec<crate::features::budget::MonthFlow>,
+  budget_history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
   budget_hovered_category: Option<i64>,
   budget_inspector: PaneDrag,
   budget_inspector_tab: budget::InspectorTab,
@@ -883,7 +884,7 @@ impl State {
     self.budget_group_drop_target
   }
 
-  pub(super) fn budget_history(&self) -> &[crate::features::budget::MonthFlow] {
+  pub(super) fn budget_history(&self) -> &[crate::features::wallet::budget_engine::MonthFlow] {
     &self.budget_history
   }
 
@@ -939,7 +940,7 @@ impl State {
   /// (outflows) and income (inflows), since rules match either. Drawn from the
   /// in-memory journal + market ledger (the loaded-and-paginated rows), mirroring
   /// the scope of the uncategorized-count surface.
-  pub(super) fn budget_match_targets(&self) -> Vec<crate::features::budget::MatchTarget> {
+  pub(super) fn budget_match_targets(&self) -> Vec<crate::features::wallet::budget_engine::MatchTarget> {
     self
       .journal
       .iter()
@@ -1339,7 +1340,8 @@ fn load_budget(
   Task::perform(
     async move {
       let view = budget::load(&db, budget_scope, &month).await;
-      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      let history =
+        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
       (view, history)
     },
     move |(view, history)| {
@@ -1375,8 +1377,8 @@ fn load_budget_drill(state: &State, db: &Database, filter: BudgetFilter) -> Task
   let db = db.clone();
   Task::perform(
     async move {
-      let scope_ids = crate::features::budget::scope_character_ids(&db, scope).await;
-      let corp_scope_ids = crate::features::budget::scope_corporation_ids(&db, scope).await;
+      let scope_ids = crate::features::wallet::budget_engine::scope_character_ids(&db, scope).await;
+      let corp_scope_ids = crate::features::wallet::budget_engine::scope_corporation_ids(&db, scope).await;
       let chips = loaders::load_budget_chips(&db, scope).await;
       let journal: Vec<JournalEntry> = loaders::load_all_journal(&db, &scope_ids, &corp_scope_ids)
         .await
@@ -1405,7 +1407,7 @@ fn reload_budget_review(state: &State, db: &Database) -> Task<Message> {
   let month = state.budget_month.clone();
   let db = db.clone();
   Task::perform(
-    async move { crate::features::budget::uncategorized_count_for_month(&db, scope, &month).await },
+    async move { crate::features::wallet::budget_engine::uncategorized_count_for_month(&db, scope, &month).await },
     Message::BudgetReviewCounted,
   )
 }
@@ -1695,7 +1697,7 @@ fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
   let active: Vec<crate::store::model::RuleCondition> = draft
     .conditions
     .iter()
-    .filter(|c| crate::features::budget::is_active_condition(c))
+    .filter(|c| crate::features::wallet::budget_engine::is_active_condition(c))
     .cloned()
     .collect();
   if active.is_empty() {
@@ -1792,9 +1794,9 @@ fn budget_effective_rule_name(state: &State, draft: &budget::RuleDraft) -> Strin
     match_mode: draft.match_mode,
     name: draft.name.clone(),
   };
-  let suggested = crate::features::budget::suggest_name(
+  let suggested = crate::features::wallet::budget_engine::suggest_name(
     &rule,
-    |token| Some(crate::features::budget::humanize_ref_type(token)),
+    |token| Some(crate::features::wallet::budget_engine::humanize_ref_type(token)),
     |key| budget_character_name(state, key),
   );
   if suggested.trim().is_empty() {
@@ -1938,7 +1940,8 @@ fn budget_add_category(state: &State, db: &Database, group_id: i64) -> Task<Mess
     async move {
       let new_id = budget::add_category(&db, group_id, position).await;
       let view = budget::load(&db, budget_scope, &month).await;
-      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      let history =
+        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
       (new_id, view, history)
     },
     move |(new_id, view, history)| {
@@ -2103,7 +2106,8 @@ where
     async move {
       mutate(db.clone(), budget_scope, month.clone()).await;
       let view = budget::load(&db, budget_scope, &month).await;
-      let history = crate::features::budget::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
+      let history =
+        crate::features::wallet::budget_engine::monthly_history(&db, budget_scope, &month, HISTORY_MONTHS).await;
       (view, history)
     },
     move |(view, history)| {
@@ -2343,7 +2347,7 @@ fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
   if let Some(draft) = state.budget_rule_editor.as_mut() {
     draft
       .conditions
-      .push(crate::features::budget::new_condition(RuleField::Party));
+      .push(crate::features::wallet::budget_engine::new_condition(RuleField::Party));
   }
   Task::none()
 }
@@ -2352,7 +2356,7 @@ fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
 /// the open select. Split off [`handle_budget_rule`].
 fn budget_rule_condition_field_changed(state: &mut State, index: usize, field: RuleField) -> Task<Message> {
   budget_mutate_condition(state, index, |condition| {
-    *condition = crate::features::budget::new_condition(field);
+    *condition = crate::features::wallet::budget_engine::new_condition(field);
   });
   budget_close_rule_select(state);
   Task::none()
@@ -2496,7 +2500,9 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
       match choice {
         Some(category_id) => {
           for (owner, kind, entry_id) in std::iter::once((owner, kind, entry_id)).chain(counterparts) {
-            let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
+            let _ =
+              crate::features::wallet::budget_engine::assign_entry(&db, scope, owner, kind, entry_id, category_id)
+                .await;
           }
         }
         None => {
@@ -2759,7 +2765,9 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
       for (owner, kind, entry_id) in targets {
         match choice {
           Some(category_id) => {
-            let _ = crate::features::budget::assign_entry(&db, scope, owner, kind, entry_id, category_id).await;
+            let _ =
+              crate::features::wallet::budget_engine::assign_entry(&db, scope, owner, kind, entry_id, category_id)
+                .await;
           }
           None => {
             let _ = crate::store::repo::budget::delete_event_assignments(&db, owner, kind, entry_id).await;
@@ -3806,7 +3814,7 @@ fn budget_drill_tab(drill: &BudgetDrill) -> Tab {
 /// needs a category. Market-transaction journal twins are excluded; their trade
 /// is reviewed and assigned from the Transactions table instead.
 fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
-  if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
+  if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
   let assigned = chips
@@ -3825,7 +3833,7 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
 /// uncategorized filter — an unassigned trade. Both buys and sells can be
 /// assigned to any category.
 fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
-  if crate::features::budget::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
+  if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
   }
   let assigned = chips
@@ -3838,7 +3846,7 @@ fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loade
 }
 
 fn humanize_ref_type(ref_type: &str) -> String {
-  crate::features::budget::humanize_ref_type(ref_type)
+  crate::features::wallet::budget_engine::humanize_ref_type(ref_type)
 }
 
 pub fn journal_type_glyph(entry: &JournalEntry) -> (&'static str, bool) {
@@ -4344,7 +4352,7 @@ mod tests {
       loaders::BudgetChips {
         envelopes: Vec::new(),
         meta: std::collections::HashMap::new(),
-        resolution: crate::features::budget::ResolutionContext {
+        resolution: crate::features::wallet::budget_engine::ResolutionContext {
           journal_overrides: key(journal),
           market_overrides: key(market),
           ref_overrides: std::collections::HashMap::new(),
@@ -4551,7 +4559,7 @@ mod tests {
       state.budget_chips = loaders::BudgetChips {
         envelopes: Vec::new(),
         meta: std::collections::HashMap::new(),
-        resolution: crate::features::budget::ResolutionContext {
+        resolution: crate::features::wallet::budget_engine::ResolutionContext {
           journal_overrides: std::collections::HashMap::new(),
           market_overrides,
           ref_overrides: std::collections::HashMap::new(),

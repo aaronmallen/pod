@@ -11,7 +11,7 @@ use super::{
   State, Tab, fmt_isk, header, side_filter::side_filter,
 };
 use crate::{
-  features::contract_detail,
+  features::wallet::contract_detail,
   store::{
     images::IconResolution,
     model::{BudgetEntryKind, BudgetOwner},

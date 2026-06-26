@@ -1,7 +1,7 @@
 use chrono::{Datelike, Utc};
 
 use crate::{
-  features::budget as math,
+  features::wallet::budget_engine as math,
   store::{
     Database,
     model::BudgetScope,
@@ -473,7 +473,7 @@ pub struct ReflectView {
   pub age: f64,
   pub age_delta: f64,
   pub assigned: f64,
-  pub history: Vec<crate::features::budget::MonthFlow>,
+  pub history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
   pub income: f64,
   pub prev_label: String,
   pub spend: f64,
@@ -522,7 +522,7 @@ impl ReflectView {
 /// `history` (oldest first, current month last). The stat band, spend rows, and
 /// target tally come from the current month's categories so they track Plan
 /// edits; the age-of-ISK figure and its delta come from the FIFO history.
-pub fn reflect(view: &BudgetView, history: Vec<crate::features::budget::MonthFlow>) -> ReflectView {
+pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_engine::MonthFlow>) -> ReflectView {
   let mut assigned = 0.0;
   let mut income = 0.0;
   let mut spend = 0.0;
@@ -2288,7 +2288,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::features::budget::MonthFlow;
+    use crate::features::wallet::budget_engine::MonthFlow;
 
     fn cat(id: i64, name: &str, assigned: f64, activity: f64, kind: TargetKind, amount: f64) -> Category {
       Category {

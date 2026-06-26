@@ -9,7 +9,7 @@ use super::{
   budget::{self, Category, CategoryDraft, Group, Mode, MoveDest, TargetKind, TargetState},
 };
 use crate::{
-  features::budget as engine,
+  features::wallet::budget_engine as engine,
   store::model::{MatchMode, Rule, RuleField, RuleOp},
   ui::{
     components::{anchored_dropdown::AnchoredDropdown, icon::Icon},

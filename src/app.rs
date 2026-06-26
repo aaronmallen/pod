@@ -26,11 +26,12 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, calendar, contract_detail, focus_search, industry, mail, registry, roster,
+    assets, calendar, focus_search, industry, mail, registry, roster,
     roster::{OwnedPilot, auth, character_detail, corporation_detail, killmail_detail},
     settings, skills,
     skills::{skill_plan_editor, skill_plan_manager, skills_compare},
     splash, wallet,
+    wallet::contract_detail,
   },
   mcp, notifications,
   services::{crash, images, telemetry, updater},

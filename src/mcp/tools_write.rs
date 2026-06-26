@@ -112,9 +112,10 @@ fn budget_assign_entry_tool() -> McpTool {
       let entry_kind = require_entry_kind(&args)?;
       let entry_id = require_i64(&args, "entry_id")?;
       let category_id = require_i64(&args, "category_id")?;
-      let assignment = features::budget::assign_entry(&db, BudgetScope::All, owner, entry_kind, entry_id, category_id)
-        .await
-        .map_err(internal)?;
+      let assignment =
+        features::wallet::budget_engine::assign_entry(&db, BudgetScope::All, owner, entry_kind, entry_id, category_id)
+          .await
+          .map_err(internal)?;
       match assignment {
         Some(row) => Ok(json!({ "category_id": row.category_id, "entry_id": row.entry_id, "id": row.id })),
         None => Err(ToolError::InvalidArguments(

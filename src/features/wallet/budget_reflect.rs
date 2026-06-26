@@ -11,7 +11,7 @@ use super::{
   budget::{self, BudgetRange, ReflectView, SpendRow, TargetTally},
 };
 use crate::{
-  features::budget::MonthFlow,
+  features::wallet::budget_engine::MonthFlow,
   ui::{
     components::{eyebrow::eyebrow_text, icon::Icon},
     style::{color, spacing, typography},

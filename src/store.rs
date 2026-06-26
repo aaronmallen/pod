@@ -12,6 +12,7 @@ pub mod fs_kind;
 pub mod images;
 pub mod killmail_slot;
 pub mod lease;
+mod migration_checksum_repair;
 pub mod model;
 pub mod reconcile;
 pub mod repo;
@@ -171,7 +172,15 @@ pub async fn open(path: &Path) -> Result<Database, Error> {
   let writer = connect_pool(path, WRITER_MAX_CONNECTIONS, WRITER_MIN_CONNECTIONS).await?;
   // Migrations are writes: run them on the writer connection before any reader connection opens,
   // so readers only ever see the fully-migrated schema.
-  sqlx::migrate!().run(&writer).await?;
+  let migrator = sqlx::migrate!();
+  // Before sqlx validates checksums, heal the CRLF↔LF migration-checksum drift that pre-0.6.7
+  // Windows builds recorded; otherwise that validation refuses to open the (intact) database.
+  // No-op on healthy databases and fresh installs. See `migration_checksum_repair`.
+  let healed = migration_checksum_repair::repair_crlf_checksums(&writer, &migrator).await?;
+  if healed > 0 {
+    tracing::info!(target: "pod::lifecycle", healed = healed as u64, "repaired CRLF migration checksums");
+  }
+  migrator.run(&writer).await?;
 
   let reader = connect_pool(path, READER_MAX_CONNECTIONS, READER_MIN_CONNECTIONS).await?;
 

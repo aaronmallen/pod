@@ -338,7 +338,6 @@ enum Message {
   Compose(window::Id, mail::Message),
   ConfirmTakeOver,
   Contract(window::Id, contract_detail::Message),
-  ClearNotifications,
   CloseNotificationsPanel,
   CorporationDetail(corporation_detail::Message),
   EngineStopped {
@@ -498,7 +497,6 @@ impl Message {
 
   fn notification_variant_name(&self) -> Option<&'static str> {
     Some(match self {
-      Message::ClearNotifications => "ClearNotifications",
       Message::CloseNotificationsPanel => "CloseNotificationsPanel",
       Message::MarkAllNotificationsRead => "MarkAllNotificationsRead",
       Message::Mcp(_) => "Mcp",
@@ -2246,25 +2244,18 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
 
   let body = notifications_tab_body(app, app.notifications_tab);
 
-  let footer_visible = match app.notifications_tab {
-    NotificationTab::New => !app.notifications.is_empty(),
-    NotificationTab::History => !app.notifications_history.is_empty(),
-  };
+  // Footer shows only the running count for the active tab (no controls): "N unread" on New,
+  // "N total" on History, matching notifications.jsx. It hides whenever the active tab renders no
+  // rows, mirroring the mockup's `shown.length > 0` guard.
   let mut children: Vec<Element<'_, Message>> = vec![header.into(), tabs, rule_line(), body];
-  if footer_visible {
+  if let Some(footer_label) = notifications_footer_label(app.notifications_tab, total, history_count) {
     children.push(rule_line());
     children.push(
-      Row::with_children(vec![
-        notifications_text_button("Clear all".to_owned(), true, Message::ClearNotifications).into(),
-        Space::new().width(Length::Fill).into(),
-        text(format!("{total} total"))
-          .font(typography::mono::REGULAR)
-          .size(typography::size::XS)
-          .style(typography::colored(color::text::tertiary()))
-          .into(),
-      ])
-      .align_y(Vertical::Center)
-      .into(),
+      text(footer_label)
+        .font(typography::mono::REGULAR)
+        .size(typography::size::XS)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
     );
   }
 
@@ -2311,26 +2302,15 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     .into()
 }
 
-fn notifications_text_button(label: String, enabled: bool, message: Message) -> button::Button<'static, Message> {
-  let color = if enabled {
-    color::text::secondary()
-  } else {
-    color::text::tertiary()
-  };
-  let button = button(
-    text(label)
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(move |_| text::Style {
-        color: Some(color),
-      }),
-  )
-  .padding(spacing::UNIT)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(iced::Color::TRANSPARENT)),
-    ..button::Style::default()
-  });
-  if enabled { button.on_press(message) } else { button }
+/// The notification panel footer is a single, control-free count line (notifications.jsx has no
+/// "Clear all" button): "N unread" on the New tab, "N total" on History. `total` is the active tab's
+/// count; `history_count` gates History visibility. Returns `None` when the active tab renders no
+/// rows, mirroring the mockup's `shown.length > 0` guard.
+fn notifications_footer_label(tab: NotificationTab, total: usize, history_count: usize) -> Option<String> {
+  match tab {
+    NotificationTab::New => (total > 0).then(|| format!("{total} unread")),
+    NotificationTab::History => (history_count > 0).then(|| format!("{total} total")),
+  }
 }
 
 fn mark_all_read_button<'a>(enabled: bool) -> button::Button<'a, Message> {
@@ -4062,7 +4042,6 @@ fn dispatch_feature(app: &mut App, message: Message) -> Result<Task<Message>, Bo
 
 fn dispatch_feature_aux(app: &mut App, message: Message) -> Result<Task<Message>, Box<Message>> {
   Ok(match message {
-    Message::ClearNotifications => handle_clear_notifications(app),
     Message::CloseNotificationsPanel => handle_close_notifications_panel(app),
     Message::MarkAllNotificationsRead => handle_mark_all_notifications_read(app),
     Message::Mcp(request) => handle_mcp(app, request),
@@ -5411,29 +5390,25 @@ fn handle_close_notifications_panel(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-fn handle_clear_notifications(app: &mut App) -> Task<Message> {
-  let Some(runtime) = app.runtime.as_ref() else {
-    return Task::none();
-  };
-  app.notifications.clear();
-  app.notifications_unread = 0;
-  let db = runtime.db.clone();
-  Task::perform(
-    async move { store::repo::notifications::clear_all(&db).await.is_ok() },
-    |_| Message::CloseNotificationsPanel,
-  )
-}
-
 fn handle_select_notification_tab(app: &mut App, tab: NotificationTab) -> Task<Message> {
   app.notifications_tab = tab;
   Task::none()
 }
 
 fn handle_mark_all_notifications_read(app: &mut App) -> Task<Message> {
+  // Stamp read_at on the cached rows (and zero the badge) before touching the DB, mirroring the
+  // single-row mark path. Without this the New tab — which filters on read_at.is_none() — keeps
+  // showing every row until a full refresh, even though the persisted state is read.
+  let stamped = app.now.to_rfc3339();
+  for notification in &mut app.notifications {
+    if notification.read_at().is_none() {
+      notification.read_at = Some(stamped.clone());
+    }
+  }
+  app.notifications_unread = 0;
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
-  app.notifications_unread = 0;
   let db = runtime.db.clone();
   Task::perform(
     async move {
@@ -12572,7 +12547,6 @@ mod tests {
     fn it_names_every_notification_and_panel_message() {
       let mcp = mcp::McpRequest::new("skill_plan_create".to_owned(), serde_json::Value::Null).0;
 
-      assert_eq!(Message::ClearNotifications.variant_name(), "ClearNotifications");
       assert_eq!(
         Message::CloseNotificationsPanel.variant_name(),
         "CloseNotificationsPanel"
@@ -12995,6 +12969,55 @@ mod tests {
     }
 
     #[test]
+    fn it_drops_read_rows_from_the_new_tab_after_mark_all_read() {
+      // The real handler must stamp read_at on the cached rows so the New tab (read_at.is_none())
+      // empties on the next render — not just update the DB. This is the regression the design fix
+      // targets: previously the badge zeroed but the rows lingered in New.
+      let mut app = ready_app();
+      app.notifications = vec![unread_notification(1), unread_notification(2)];
+      app.notifications_unread = 2;
+
+      let _ = handle_mark_all_notifications_read(&mut app);
+
+      assert!(
+        ids(&app.notifications, NotificationTab::New).is_empty(),
+        "every cached row is marked read, so the New tab is empty"
+      );
+      assert_eq!(
+        ids(&app.notifications, NotificationTab::History),
+        vec![1, 2],
+        "History still lists every notification after mark-all-read"
+      );
+      assert_eq!(app.notifications_unread, 0, "the unread badge clears");
+    }
+
+    #[test]
+    fn it_shows_a_count_only_footer_without_a_clear_all_control() {
+      // notifications.jsx has no "Clear all" button: the footer is a single count line, "N unread"
+      // on New and "N total" on History, and it hides when the active tab has nothing to show.
+      assert_eq!(
+        notifications_footer_label(NotificationTab::New, 3, 9),
+        Some("3 unread".to_owned()),
+        "the New footer reports the unread count"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::History, 12, 12),
+        Some("12 total".to_owned()),
+        "the History footer reports the loaded total"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::New, 0, 9),
+        None,
+        "the New footer hides when nothing is unread"
+      );
+      assert_eq!(
+        notifications_footer_label(NotificationTab::History, 0, 0),
+        None,
+        "the History footer hides when nothing is loaded"
+      );
+    }
+
+    #[test]
     fn it_renders_both_tabs_with_their_empty_states() {
       let mut app = ready_app();
       app.notifications = vec![read_notification(1)];
@@ -13369,7 +13392,6 @@ mod tests {
       let mut app = ready_app();
       let mcp = mcp::McpRequest::new("skill_plan_create".to_owned(), serde_json::Value::Null).0;
 
-      assert!(dispatch_feature_aux(&mut app, Message::ClearNotifications).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::CloseNotificationsPanel).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::MarkAllNotificationsRead).is_ok());
       assert!(dispatch_feature_aux(&mut app, Message::Mcp(mcp)).is_ok());

@@ -7824,6 +7824,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_bulk_menu_anchors_at_the_captured_cursor() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = journal_state();
+
+      // The cursor is tracked at the feature-root base (`shell` wraps it in a
+      // `mouse_area`), so the captured point lives in the overlay `Stack`'s
+      // coordinate space and the open menu must anchor at exactly that point —
+      // not offset by the header/tabs/hero above the inner table.
+      let cursor = iced::Point::new(312.0, 188.0);
+      state.ledger_cursor = Some(cursor);
+
+      let _ = update(
+        &mut state,
+        Message::LedgerRowRightPressed(BudgetEntryKind::Journal, BudgetOwner::Character(1), 1),
+        &db,
+      );
+
+      let (anchor, _picking) = state.ledger_menu_open().expect("the right press opens the menu");
+      assert_eq!(anchor, cursor, "the menu must anchor at the captured cursor");
+    }
+
+    #[tokio::test]
     async fn it_clears_the_selection_and_menu_after_a_bulk_assign() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = journal_state();

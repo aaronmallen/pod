@@ -68,7 +68,7 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-  let base = container(body)
+  let surface = container(body)
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {
@@ -76,13 +76,26 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  // On the selectable ledger tabs the feature-root base is wrapped in a
+  // cursor-tracking `mouse_area` so a right-click can anchor its bulk-assign menu
+  // at the pointer. `mouse_area`'s `on_move` reports the cursor relative to its own
+  // bounds, so tracking at the base (which shares the overlay `Stack`'s origin)
+  // yields coordinates in the same space the menu is laid out in. Tracking on the
+  // inner table instead would offset every anchor by the header/tabs/hero above it,
+  // collapsing the menu toward the feature-root top-left.
+  let base: Element<'_, Message> = if matches!(state.tab, Tab::Journal | Tab::Market) {
+    mouse_area(surface).on_move(Message::LedgerCursorMoved).into()
+  } else {
+    surface.into()
+  };
+
   // Always render through the overlay `Stack` with `base` pinned at child[0],
   // even when no menu is active (empty `layers`). The ledger scrollable lives
   // inside `base`; if it were sometimes the root container and sometimes child[0]
   // of a Stack, Iced would drop its internal scroll offset on the reshape and snap
   // the list to the top the moment a menu opened. Keeping `base` at a stable tree
   // position preserves the scroll offset across every open/close.
-  stable_overlay(base.into(), overlay_layers(state))
+  stable_overlay(base, overlay_layers(state))
 }
 
 /// The overlay layers to mount above the ledger, in z-order (bottom first). Empty
@@ -523,14 +536,11 @@ fn sign_control(state: &State) -> Element<'_, Message> {
 
 fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   match state.tab {
-    // Track the cursor over the selectable ledgers so a right-click can anchor the
-    // bulk-assign menu where the user clicked.
-    Tab::Journal => mouse_area(journal_table(state, now))
-      .on_move(Message::LedgerCursorMoved)
-      .into(),
-    Tab::Market => mouse_area(market_table(state, now))
-      .on_move(Message::LedgerCursorMoved)
-      .into(),
+    // The cursor is tracked at the feature-root base (see `shell`) so the
+    // bulk-assign menu anchors at the pointer in the overlay's coordinate space;
+    // these tables only render rows.
+    Tab::Journal => journal_table(state, now),
+    Tab::Market => market_table(state, now),
     Tab::Contracts => contracts_table(state, now),
     // The Budget and Wallets tabs take the dedicated full-width surface path in
     // `body`; these arms are unreachable from `center` but keep the match
@@ -2061,6 +2071,25 @@ mod tests {
       // child[0]'s tag is unchanged across open/close, so Iced preserves the
       // scrollable's internal offset and the list does not snap to the top.
       assert_eq!(closed_tag, open_tag);
+    }
+
+    #[test]
+    fn the_ledger_base_tracks_the_cursor_at_the_feature_root() {
+      // On a selectable ledger tab the feature-root base is a cursor-tracking
+      // `mouse_area` (so the menu anchors at the pointer in the overlay's space),
+      // whereas a non-selectable tab leaves the base a bare container. The two
+      // bases therefore carry different tree tags; if the journal base ever
+      // regressed to a plain container, the cursor would no longer be tracked at
+      // the feature root and the menu would collapse toward the top-left.
+      let mut wallets = populated_journal_state();
+      wallets.tab = Tab::Wallets;
+      let journal = populated_journal_state();
+
+      assert_ne!(
+        base_tag(&shell(&journal, now())),
+        base_tag(&shell(&wallets, now())),
+        "the journal base must be the cursor-tracking mouse_area, not a bare container"
+      );
     }
   }
 

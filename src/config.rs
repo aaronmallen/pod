@@ -542,6 +542,9 @@ pub struct Settings {
   #[serde(default)]
   storage: StorageConfig,
   #[getset(get = "pub", get_mut = "pub")]
+  #[serde(default, skip_serializing_if = "TelemetryConfig::is_default")]
+  telemetry: TelemetryConfig,
+  #[getset(get = "pub", get_mut = "pub")]
   #[serde(default, skip_serializing_if = "UiConfig::is_default")]
   ui: UiConfig,
 }
@@ -556,6 +559,7 @@ impl Default for Settings {
       mcp: McpConfig::default(),
       reprocessing_yield: default_reprocessing_yield(),
       storage: StorageConfig::default(),
+      telemetry: TelemetryConfig::default(),
       ui: UiConfig::default(),
     }
   }
@@ -632,6 +636,50 @@ impl Default for McpConfig {
       perms: McpPerms::default(),
       port: default_mcp_port(),
       token: String::new(),
+    }
+  }
+}
+
+/// Opt-out controls for anonymous telemetry, all streams on by default.
+///
+/// `enabled` is the master switch; the four per-stream toggles (`usage`, `performance`, `crashes`,
+/// `environment`) let a user keep telemetry on while silencing an individual stream. Every flag
+/// defaults to true, so a default install writes no `[telemetry]` block and opting out of anything
+/// persists the explicit `false`.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
+#[getset(set = "pub")]
+pub struct TelemetryConfig {
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  enabled: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  usage: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  performance: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  crashes: bool,
+  #[getset(get = "pub")]
+  #[serde(default = "default_true")]
+  environment: bool,
+}
+
+impl TelemetryConfig {
+  fn is_default(&self) -> bool {
+    *self == TelemetryConfig::default()
+  }
+}
+
+impl Default for TelemetryConfig {
+  fn default() -> Self {
+    Self {
+      enabled: true,
+      usage: true,
+      performance: true,
+      crashes: true,
+      environment: true,
     }
   }
 }
@@ -1704,6 +1752,110 @@ mod tests {
 
       assert!(token.starts_with("pod_mcp_"), "{token}");
       assert!(loaded.mcp().enabled());
+    }
+  }
+
+  mod telemetry_config {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_defaults_every_stream_on() {
+      let config = TelemetryConfig::default();
+
+      assert!(config.enabled());
+      assert!(config.usage());
+      assert!(config.performance());
+      assert!(config.crashes());
+      assert!(config.environment());
+    }
+
+    #[test]
+    fn the_table_is_omitted_from_the_file_while_default() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+
+      save_to(&path, &Settings::default()).unwrap();
+      let serialized = std::fs::read_to_string(&path).unwrap();
+
+      assert!(
+        !serialized.contains("[telemetry]"),
+        "a default telemetry config is skipped: {serialized}"
+      );
+    }
+
+    #[test]
+    fn it_round_trips_a_non_default_config_through_the_file() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      let mut settings = Settings::default();
+      settings.telemetry_mut().set_enabled(false);
+      settings.telemetry_mut().set_usage(false);
+      settings.telemetry_mut().set_crashes(false);
+
+      save_to(&path, &settings).unwrap();
+      let serialized = std::fs::read_to_string(&path).unwrap();
+      let loaded = load_from(&path).unwrap();
+
+      assert!(
+        serialized.contains("enabled = false"),
+        "opting out must persist the explicit false: {serialized}"
+      );
+      assert!(!loaded.telemetry().enabled());
+      assert!(!loaded.telemetry().usage());
+      assert!(!loaded.telemetry().crashes());
+      assert!(loaded.telemetry().performance());
+      assert!(loaded.telemetry().environment());
+    }
+
+    #[test]
+    fn a_legacy_config_without_the_table_loads_opted_in() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "eve_client_id = \"abc\"\n").unwrap();
+
+      let loaded = load_from(&path).unwrap();
+
+      assert!(loaded.telemetry().enabled());
+      assert!(loaded.telemetry().usage());
+      assert!(loaded.telemetry().performance());
+      assert!(loaded.telemetry().crashes());
+      assert!(loaded.telemetry().environment());
+    }
+
+    #[test]
+    fn a_partial_table_fills_missing_streams_as_on() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[telemetry]\nusage = false\n").unwrap();
+
+      let loaded = load_from(&path).unwrap();
+
+      assert!(!loaded.telemetry().usage());
+      assert!(loaded.telemetry().enabled());
+      assert!(loaded.telemetry().performance());
+      assert!(loaded.telemetry().crashes());
+      assert!(loaded.telemetry().environment());
+    }
+
+    #[test]
+    fn the_table_uses_a_flat_shape_with_no_nested_streams() {
+      let mut config = TelemetryConfig::default();
+      config.set_usage(false);
+
+      let toml = toml::to_string_pretty(&config).unwrap();
+
+      assert!(
+        !toml.contains("[streams]"),
+        "the streams must be flat fields, not a nested table: {toml}"
+      );
+      assert!(
+        toml.contains("usage = false"),
+        "a flat usage field must persist: {toml}"
+      );
+      let restored: TelemetryConfig = toml::from_str(&toml).unwrap();
+      assert_eq!(restored, config);
     }
   }
 

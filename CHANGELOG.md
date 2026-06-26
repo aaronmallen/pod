@@ -55,6 +55,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 - Marking a notification as read now removes it from the New list, matching the rest of the redesign.
 - Killmails no longer list characters who were not actually involved in the kill.
 - Budget assignments stay consistent across your characters and corporation after a wallet sync.
+- Creating a tag with a name that already exists (in any capitalization) now reuses the existing tag instead of making
+  a duplicate, which was most noticeable when tagging characters in the roster.
 
 ### Removed
 

@@ -157,7 +157,7 @@ fn up_to_date_label<'a, M>(state: &State) -> Element<'a, M>
 where
   M: 'a,
 {
-  let headline = mono_text("\u{2713} Up to date", color::status::ONLINE);
+  let headline = mono_text("Up to date", color::status::ONLINE);
   // The quiet last-sync time is a steady aside: it only appears once everything has truly settled,
   // so a routine mid-refresh never decorates the calm headline with a churning timestamp.
   match state.last_synced_secs {

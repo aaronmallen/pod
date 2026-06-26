@@ -7,6 +7,13 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.8]
+
+### Fixed
+
+- Pod now starts correctly on Windows — a recent update could leave some Windows installs unable to open with a
+  startup error, and Pod now repairs the affected data automatically on launch, with nothing lost.
+
 ## [0.6.7]
 
 ### Added
@@ -841,7 +848,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.7...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.8...HEAD
+[0.6.8]: https://github.com/aaronmallen/pod/compare/0.6.7...0.6.8
 [0.6.7]: https://github.com/aaronmallen/pod/compare/0.6.6...0.6.7
 [0.6.6]: https://github.com/aaronmallen/pod/compare/0.6.5...0.6.6
 [0.6.5]: https://github.com/aaronmallen/pod/compare/0.6.4...0.6.5

@@ -405,18 +405,16 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
     })
     .view();
 
-    let scroll = scrollable(list)
+    // The cursor is tracked at the feature-root base (see `shell`) so the right-click menu anchors at
+    // the pointer in the overlay's coordinate space; this scrollable only reports its scroll offset.
+    scrollable(list)
       .style(crate::ui::style::control::scrollbar)
       .width(Length::Fill)
       .height(Length::Fill)
       .on_scroll(|viewport| Message::InventoryScrolled {
         relative: viewport.relative_offset().y,
         absolute: viewport.absolute_offset().y,
-      });
-
-    // Track the cursor over the table so a right-click can anchor the context menu at the pointer.
-    iced::widget::mouse_area(scroll)
-      .on_move(Message::InventoryCursorMoved)
+      })
       .into()
   })
 }

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use iced::{
   Background, Element, Length, Padding,
-  widget::{Column, Row, Stack, container, scrollable},
+  widget::{Column, Row, container, scrollable},
 };
 
 use super::{
@@ -12,7 +12,7 @@ use crate::ui::{
   components::{
     add_tag_modal, backdrop, context_menu, forbidden,
     icon::Icon,
-    modal_overlay::modal_overlay,
+    modal_overlay::stable_overlay,
     positioned_dropdown::positioned_dropdown,
     resizable_pane::pane_handle,
     rule,
@@ -30,7 +30,7 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(Length::Fill);
 
-  let base = container(body)
+  let surface = container(body)
     .width(Length::Fill)
     .height(Length::Fill)
     .style(|_| container::Style {
@@ -38,17 +38,31 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       ..container::Style::default()
     });
 
+  // On the Inventory tab the feature-root base is wrapped in a cursor-tracking `mouse_area` so a
+  // right-click can anchor its context menu at the pointer: `mouse_area`'s `on_move` reports the
+  // cursor relative to its own bounds, so tracking at the base (which shares the overlay `Stack`'s
+  // origin) yields coordinates in the same space the menu is laid out in.
+  let base: Element<'_, Message> = if state.tab() == Tab::Inventory {
+    iced::widget::mouse_area(surface)
+      .on_move(Message::InventoryCursorMoved)
+      .into()
+  } else {
+    surface.into()
+  };
+
+  // Always render through the overlay `Stack` with `base` pinned at child[0], even when no overlay
+  // is active (empty `layers`). The inventory scrollable lives inside `base`; if it were sometimes
+  // the root container and sometimes child[0] of a `Stack`, Iced would drop its internal scroll
+  // offset on the reshape and snap the list to the top the moment a menu opened.
+  stable_overlay(base, overlay_layers(state))
+}
+
+/// The overlay layers to mount above the base, in z-order (bottom first). Empty when no
+/// menu/modal/popover is open, so `base` renders alone at child[0] of the `Stack`.
+fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
-
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::PickerToggled),
-      dropdown,
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::PickerToggled), dropdown];
   }
 
   if state.tab() == Tab::Inventory && state.inventory_help_open() {
@@ -66,33 +80,24 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       ..Padding::ZERO
     });
 
-    return Stack::with_children(vec![
-      base.into(),
-      backdrop::click_catcher(Message::InventoryHelpToggled),
-      popover.into(),
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into();
+    return vec![backdrop::click_catcher(Message::InventoryHelpToggled), popover.into()];
   }
 
   if state.tab() == Tab::Abyssals && state.abyssal_picker_open() {
-    return modal_overlay(
-      base.into(),
-      Some(Message::AbyssalPickerToggled),
+    return vec![
+      backdrop::backdrop(Message::AbyssalPickerToggled),
       abyssals::picker_modal(state),
-    );
+    ];
   }
 
   let stockpile_menu = (state.tab() == Tab::Stockpiles)
     .then(|| state.stockpile_context_menu())
     .flatten();
   if let Some(menu) = stockpile_menu {
-    return modal_overlay(
-      base.into(),
-      Some(Message::StockpileContextMenuClosed),
+    return vec![
+      backdrop::backdrop(Message::StockpileContextMenuClosed),
       stockpiles::context_menu_view(menu),
-    );
+    ];
   }
 
   if state.tab() == Tab::Inventory
@@ -100,9 +105,8 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   {
     let count = state.inventory_selection_count();
     let title = format!("{count} stack{}", if count == 1 { "" } else { "s" });
-    return modal_overlay(
-      base.into(),
-      Some(Message::InventoryMenuDismissed),
+    return vec![
+      backdrop::backdrop(Message::InventoryMenuDismissed),
       context_menu::context_menu(
         &title,
         vec![context_menu::Item::action(
@@ -111,16 +115,15 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
         )],
         anchor,
       ),
-    );
+    ];
   }
 
   if state.tab() == Tab::Inventory
     && let Some(modal) = state.asset_tag_modal()
   {
     let (assigned, assignable) = state.asset_tag_modal_partition();
-    return modal_overlay(
-      base.into(),
-      Some(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close)),
+    return vec![
+      backdrop::backdrop(Message::AssetTagModal(add_tag_modal::AddTagMessage::Close)),
       add_tag_modal::view(
         modal,
         state.asset_tag_modal_entity_name(),
@@ -128,25 +131,23 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
         assignable,
         Message::AssetTagModal,
       ),
-    );
+    ];
   }
 
   if state.tab() == Tab::Inventory && state.saved_filter_modal_open() {
-    return modal_overlay(
-      base.into(),
-      Some(Message::SaveFilterCancelled),
+    return vec![
+      backdrop::backdrop(Message::SaveFilterCancelled),
       tree::save_filter_modal(state),
-    );
+    ];
   }
 
   if state.tab() == Tab::Inventory
     && let Some(menu) = state.saved_filter_context_menu()
   {
-    return modal_overlay(
-      base.into(),
-      Some(Message::SavedFilterContextMenuClosed),
+    return vec![
+      backdrop::backdrop(Message::SavedFilterContextMenuClosed),
       tree::context_menu_view(menu),
-    );
+    ];
   }
 
   let multibuy_export = (state.tab() == Tab::Stockpiles)
@@ -154,14 +155,13 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     .flatten()
     .and_then(|id| state.stockpiles().iter().find(|card| card.id == id));
   if let Some(card) = multibuy_export {
-    return modal_overlay(
-      base.into(),
-      Some(Message::StockpileMultibuyExportClosed),
+    return vec![
+      backdrop::backdrop(Message::StockpileMultibuyExportClosed),
       stockpiles::multibuy_export_overlay(card, state.stockpile_multibuy_mode(), state.stockpile_multibuy_copied()),
-    );
+    ];
   }
 
-  base.into()
+  Vec::new()
 }
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {

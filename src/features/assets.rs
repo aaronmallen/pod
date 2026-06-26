@@ -1779,22 +1779,30 @@ fn selection_modal_name(state: &State, selected: &[i64]) -> String {
   }
 }
 
-/// Fans a closure across every selected stack, building one task per id and batching them, each
-/// followed by the shared tag reload. Used by the bulk modal so an assign/unassign applies to the
-/// whole selection (the modal's single `entity_id` only names one stack).
-fn fan_tag_write<F>(state: &State, db: &Database, write: F) -> Task<Message>
+/// Fans a closure across the target stacks, building one task per id and batching them, each
+/// followed by the shared tag reload. When a bulk modal is open the targets are the whole selection
+/// (`selection_tag_ids`); otherwise the write applies to just `entity_id` — the stack named by the
+/// message itself, as when a per-row tag chip's `×` unassigns directly without opening the modal.
+fn fan_tag_write<F>(state: &State, db: &Database, entity_id: i64, write: F) -> Task<Message>
 where
   F: Fn(Database, i64) -> Task<Message>,
 {
-  if state.selection_tag_ids.is_empty() {
-    return Task::none();
-  }
-  let tasks: Vec<Task<Message>> = state
-    .selection_tag_ids
-    .iter()
-    .map(|&item_id| write(db.clone(), item_id))
+  let tasks: Vec<Task<Message>> = tag_write_targets(state, entity_id)
+    .into_iter()
+    .map(|item_id| write(db.clone(), item_id))
     .collect();
   Task::batch(tasks)
+}
+
+/// The stacks a tag assign/unassign should apply to: the whole bulk selection when a modal has
+/// populated `selection_tag_ids`, otherwise just `entity_id` — the stack named by the message, as
+/// when a per-row chip's `×` unassigns directly without any modal open.
+fn tag_write_targets(state: &State, entity_id: i64) -> Vec<i64> {
+  if state.selection_tag_ids.is_empty() {
+    vec![entity_id]
+  } else {
+    state.selection_tag_ids.clone()
+  }
 }
 
 fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Database) -> Task<Message> {
@@ -1811,10 +1819,10 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       Task::none()
     }
     AddTagMessage::Assign {
+      entity_id,
       entity_type,
       tag_id,
-      ..
-    } => fan_tag_write(state, db, move |db, item_id| {
+    } => fan_tag_write(state, db, entity_id, move |db, item_id| {
       Task::perform(
         async move {
           infra::assign(&db, entity_type, item_id, tag_id).await.ok();
@@ -1824,10 +1832,10 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       )
     }),
     AddTagMessage::Unassign {
+      entity_id,
       entity_type,
       tag_id,
-      ..
-    } => fan_tag_write(state, db, move |db, item_id| {
+    } => fan_tag_write(state, db, entity_id, move |db, item_id| {
       Task::perform(
         async move {
           infra::unassign(&db, entity_type, item_id, tag_id).await.ok();
@@ -4826,6 +4834,64 @@ mod tests {
       }
     }
 
+    #[test]
+    fn a_chip_unassign_with_no_modal_open_targets_the_messages_own_stack() {
+      let state = seeded(&[10, 20, 30]);
+
+      // No modal open, so `selection_tag_ids` is empty: the unassign must target the chip's own stack.
+      assert_eq!(tag_write_targets(&state, 20), vec![20]);
+    }
+
+    #[test]
+    fn a_tag_write_with_a_populated_selection_fans_across_the_whole_selection() {
+      let mut state = seeded(&[10, 20, 30]);
+      state.selection_tag_ids = vec![10, 20, 30];
+
+      // With a bulk modal open the selection wins over the message's single stack.
+      assert_eq!(tag_write_targets(&state, 10), vec![10, 20, 30]);
+    }
+
+    #[tokio::test]
+    async fn a_chip_unassign_through_update_removes_the_tag_from_the_clicked_stack() {
+      let db = db().await;
+      let keep = seeded_tag(&db, "Keep").await;
+      for id in [10, 20] {
+        infra::assign(&db, ENTITY_TYPE_ASSET, id, keep.id()).await.unwrap();
+      }
+      let mut state = seeded(&[10, 20]);
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      // Driving the chip's `×` message through `update` with no modal open must not short-circuit:
+      // the prior bug returned `Task::none()` when `selection_tag_ids` was empty, so nothing happened.
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::Unassign {
+          entity_id: 20,
+          entity_type: ENTITY_TYPE_ASSET,
+          tag_id: keep.id(),
+        }),
+        &db,
+      );
+      assert!(
+        task.units() > 0,
+        "the chip unassign must produce a write task, not a no-op"
+      );
+
+      // Apply the unassign the task fans (mirrors the task's body) and reload to observe the effect.
+      infra::unassign(&db, ENTITY_TYPE_ASSET, 20, keep.id()).await.unwrap();
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      assert!(
+        state.asset_tags_for(20).is_empty(),
+        "the clicked stack should have its tag removed"
+      );
+      assert_eq!(
+        state.asset_tags_for(10).iter().map(|t| t.id()).collect::<Vec<_>>(),
+        vec![keep.id()],
+        "an untouched stack keeps its tag"
+      );
+    }
+
     #[tokio::test]
     async fn the_bulk_partition_uses_the_intersection_of_the_selection() {
       let db = db().await;
@@ -4881,6 +4947,30 @@ mod tests {
       state.inventory_menu = Some(iced::Point::new(10.0, 10.0));
 
       let _el: Element<'_, Message> = view(&state, Utc::now());
+    }
+
+    #[test]
+    fn opening_the_inventory_menu_keeps_the_base_at_a_stable_tree_position() {
+      use iced::advanced::widget::Tree;
+
+      // Iced matches a scrollable's internal offset by tree position + tag; if the base moved between
+      // the closed (root container) and open (Stack child[0]) shells, the list would snap to the top
+      // on right-click. The base must stay at child[0] with the same tag whether or not a menu is open.
+      let mut closed = seeded(&[1, 2]);
+      closed.tab = Tab::Inventory;
+      let closed_view = view(&closed, Utc::now());
+      let closed_tree = Tree::new(closed_view.as_widget());
+
+      let mut open = seeded(&[1, 2]);
+      open.tab = Tab::Inventory;
+      open
+        .inventory_selection
+        .apply(1, ClickKind::Plain, &open.inventory_order());
+      open.inventory_menu = Some(iced::Point::new(10.0, 10.0));
+      let open_view = view(&open, Utc::now());
+      let open_tree = Tree::new(open_view.as_widget());
+
+      assert_eq!(closed_tree.children[0].tag, open_tree.children[0].tag);
     }
   }
 }

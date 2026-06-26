@@ -777,5 +777,249 @@ mod tests {
         "equal-value regions resolve by name (Domain < The Forge) then id"
       );
     }
+
+    /// A station in a named, *sibling* constellation of The Forge so constellation-tier ordering is
+    /// observable. `value` controls Value rank; `constellation_id` the tie break.
+    fn other_constellation(
+      constellation_id: i64,
+      name: &str,
+      system_id: i64,
+      system_name: &str,
+      value: f64,
+    ) -> GeoLocation {
+      GeoLocation {
+        constellation_id: Some(constellation_id),
+        constellation_name: Some(name.to_owned()),
+        item_count: 1,
+        location_id: 60_000_900,
+        location_label: Some("Sibling Station".to_owned()),
+        location_type: "station".to_owned(),
+        region_id: Some(10_000_002),
+        region_name: Some("The Forge".to_owned()),
+        security_status: Some(0.8),
+        system_id: Some(system_id),
+        system_name: Some(system_name.to_owned()),
+        value,
+      }
+    }
+
+    #[test]
+    fn it_orders_constellations_within_a_region_by_both_modes() {
+      // Kimotoro (Jita) rolls up a far larger value than the sibling "Aaa Constellation".
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 1, 9_999.0),
+        other_constellation(20_000_001, "Aaa Constellation", 30_000_001, "Aaa System", 1.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Alpha);
+      assert_eq!(
+        tree.regions[0]
+          .constellations
+          .iter()
+          .map(|c| c.constellation_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Aaa Constellation", "Kimotoro"],
+        "Alpha orders constellations by name regardless of value"
+      );
+
+      tree.sort_by(GeoSort::Value);
+      assert_eq!(
+        tree.regions[0]
+          .constellations
+          .iter()
+          .map(|c| c.constellation_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Kimotoro", "Aaa Constellation"],
+        "Value orders constellations by rolled-up ISK descending"
+      );
+    }
+
+    #[test]
+    fn it_breaks_equal_value_constellation_ties_by_name_then_id() {
+      // Two constellations under The Forge with identical value; Value must fall back to name+id so
+      // the order is stable across renders.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
+        other_constellation(20_000_001, "Aaa Constellation", 30_000_001, "Aaa System", 100.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Value);
+
+      assert_eq!(
+        tree.regions[0]
+          .constellations
+          .iter()
+          .map(|c| c.constellation_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Aaa Constellation", "Kimotoro"],
+        "equal-value constellations resolve by name (Aaa < Kimotoro)"
+      );
+    }
+
+    /// A second system inside Kimotoro so system-tier ordering is observable without changing the
+    /// constellation. `value` controls Value rank; `system_id` the tie break.
+    fn other_system(system_id: i64, system_name: &str, location_id: i64, value: f64) -> GeoLocation {
+      GeoLocation {
+        constellation_id: Some(20_000_020),
+        constellation_name: Some("Kimotoro".to_owned()),
+        item_count: 1,
+        location_id,
+        location_label: Some("Other Station".to_owned()),
+        location_type: "station".to_owned(),
+        region_id: Some(10_000_002),
+        region_name: Some("The Forge".to_owned()),
+        security_status: Some(0.7),
+        system_id: Some(system_id),
+        system_name: Some(system_name.to_owned()),
+        value,
+      }
+    }
+
+    #[test]
+    fn it_orders_systems_within_a_constellation_by_both_modes() {
+      // Jita rolls up more value than the sibling "Aaa System" but sorts after it alphabetically.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 1, 9_999.0),
+        other_system(30_000_001, "Aaa System", 60_000_777, 1.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Alpha);
+      assert_eq!(
+        tree.regions[0].constellations[0]
+          .systems
+          .iter()
+          .map(|s| s.system_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Aaa System", "Jita"],
+        "Alpha orders systems by name regardless of value"
+      );
+
+      tree.sort_by(GeoSort::Value);
+      assert_eq!(
+        tree.regions[0].constellations[0]
+          .systems
+          .iter()
+          .map(|s| s.system_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Jita", "Aaa System"],
+        "Value orders systems by rolled-up ISK descending"
+      );
+    }
+
+    #[test]
+    fn it_breaks_equal_value_system_ties_by_name_then_id() {
+      // Two systems in Kimotoro with identical value; Value falls back to name then id.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
+        other_system(30_000_001, "Aaa System", 60_000_777, 100.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Value);
+
+      assert_eq!(
+        tree.regions[0].constellations[0]
+          .systems
+          .iter()
+          .map(|s| s.system_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Aaa System", "Jita"],
+        "equal-value systems resolve by name (Aaa < Jita)"
+      );
+    }
+
+    #[test]
+    fn it_breaks_equal_name_and_value_locations_by_id() {
+      // Two stations with the same label *and* value in the same system: only the location id can
+      // order them, exercising the final `.then(id.cmp)` tiebreak in both modes.
+      let rows = vec![
+        nested(60_000_050, "Twin Station", "station", 1, 100.0),
+        nested(60_000_049, "Twin Station", "station", 1, 100.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Alpha);
+      assert_eq!(
+        tree.regions[0].constellations[0].systems[0]
+          .locations
+          .iter()
+          .map(|l| l.location_id)
+          .collect::<Vec<_>>(),
+        [60_000_049, 60_000_050],
+        "Alpha breaks the equal-label tie by ascending id"
+      );
+
+      tree.sort_by(GeoSort::Value);
+      assert_eq!(
+        tree.regions[0].constellations[0].systems[0]
+          .locations
+          .iter()
+          .map(|l| l.location_id)
+          .collect::<Vec<_>>(),
+        [60_000_049, 60_000_050],
+        "Value breaks the equal-value, equal-label tie by ascending id"
+      );
+    }
+
+    /// A location that resolves to no region/constellation/system, so it lands in `orphans`.
+    fn orphan(location_id: i64, label: &str, value: f64) -> GeoLocation {
+      let mut row = nested(location_id, label, "structure", 1, value);
+      row.constellation_id = None;
+      row.constellation_name = None;
+      row.region_id = None;
+      row.region_name = None;
+      row.system_id = None;
+      row.system_name = None;
+      row
+    }
+
+    #[test]
+    fn it_orders_orphans_by_both_modes_and_breaks_label_ties_by_id() {
+      let rows = vec![
+        orphan(1_022_000_000_001, "Zzz Orphan", 10.0),
+        orphan(1_022_000_000_002, "Aaa Orphan", 1_000.0),
+        orphan(1_022_000_000_004, "Mid Orphan", 50.0),
+        orphan(1_022_000_000_003, "Mid Orphan", 50.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Alpha);
+      assert_eq!(
+        tree
+          .orphans
+          .iter()
+          .map(|o| (o.location_label.as_deref().unwrap(), o.location_id))
+          .collect::<Vec<_>>(),
+        [
+          ("Aaa Orphan", 1_022_000_000_002),
+          ("Mid Orphan", 1_022_000_000_003),
+          ("Mid Orphan", 1_022_000_000_004),
+          ("Zzz Orphan", 1_022_000_000_001),
+        ],
+        "Alpha orders orphans by label, breaking ties by ascending id"
+      );
+
+      tree.sort_by(GeoSort::Value);
+      assert_eq!(
+        tree.orphans.iter().map(|o| o.value).collect::<Vec<_>>(),
+        [1_000.0, 50.0, 50.0, 10.0],
+        "Value orders orphans by descending value"
+      );
+      // The two equal-value "Mid Orphan" entries resolve by label then ascending id.
+      let mids: Vec<i64> = tree
+        .orphans
+        .iter()
+        .filter(|o| o.location_label.as_deref() == Some("Mid Orphan"))
+        .map(|o| o.location_id)
+        .collect();
+      assert_eq!(
+        mids,
+        [1_022_000_000_003, 1_022_000_000_004],
+        "equal-value orphans resolve by ascending id"
+      );
+    }
   }
 }

@@ -1915,26 +1915,16 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       entity_type,
       tag_id,
     } => fan_tag_write(state, db, entity_id, move |db, item_id| {
-      Task::perform(
-        async move {
-          infra::assign(&db, entity_type, item_id, tag_id).await.ok();
-          reload_asset_tags(db).await
-        },
-        |message| message,
-      )
+      Task::perform(assign_then_reload(db, entity_type, item_id, tag_id), |message| message)
     }),
     AddTagMessage::Unassign {
       entity_id,
       entity_type,
       tag_id,
     } => fan_tag_write(state, db, entity_id, move |db, item_id| {
-      Task::perform(
-        async move {
-          infra::unassign(&db, entity_type, item_id, tag_id).await.ok();
-          reload_asset_tags(db).await
-        },
-        |message| message,
-      )
+      Task::perform(unassign_then_reload(db, entity_type, item_id, tag_id), |message| {
+        message
+      })
     }),
     AddTagMessage::CreateAndAssign {
       entity_type, ..
@@ -1964,25 +1954,50 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       let item_ids = state.selection_tag_ids.clone();
       let db = db.clone();
       Task::perform(
-        async move {
-          let tag_id = match existing {
-            Some(id) => Some(id),
-            None => infra::create_scoped(&db, &name, None, None, TAG_SCOPE_ASSET)
-              .await
-              .ok()
-              .map(|tag| tag.id()),
-          };
-          if let Some(tag_id) = tag_id {
-            for item_id in item_ids {
-              infra::assign(&db, entity_type, item_id, tag_id).await.ok();
-            }
-          }
-          reload_asset_tags(db).await
-        },
+        create_or_reuse_then_assign(db, name, existing, entity_type, item_ids),
         |message| message,
       )
     }
   }
+}
+
+/// Assign `tag_id` to one stack, then reload the asset-tag registry. The body of the modal's `Assign`
+/// arm, lifted into a named future so the write-then-reload path is directly testable.
+async fn assign_then_reload(db: Database, entity_type: &'static str, item_id: i64, tag_id: i64) -> Message {
+  infra::assign(&db, entity_type, item_id, tag_id).await.ok();
+  reload_asset_tags(db).await
+}
+
+/// Unassign `tag_id` from one stack, then reload the asset-tag registry. The body of the modal's
+/// `Unassign` arm, lifted into a named future so the write-then-reload path is directly testable.
+async fn unassign_then_reload(db: Database, entity_type: &'static str, item_id: i64, tag_id: i64) -> Message {
+  infra::unassign(&db, entity_type, item_id, tag_id).await.ok();
+  reload_asset_tags(db).await
+}
+
+/// Resolve the tag — reusing `existing` when set, otherwise creating it — then assign it to every
+/// stack in `item_ids`, and reload. The body of the modal's `CreateAndAssign` arm, lifted into a
+/// named future so the create/reuse-then-bulk-assign path is directly testable.
+async fn create_or_reuse_then_assign(
+  db: Database,
+  name: String,
+  existing: Option<i64>,
+  entity_type: &'static str,
+  item_ids: Vec<i64>,
+) -> Message {
+  let tag_id = match existing {
+    Some(id) => Some(id),
+    None => infra::create_scoped(&db, &name, None, None, TAG_SCOPE_ASSET)
+      .await
+      .ok()
+      .map(|tag| tag.id()),
+  };
+  if let Some(tag_id) = tag_id {
+    for item_id in item_ids {
+      infra::assign(&db, entity_type, item_id, tag_id).await.ok();
+    }
+  }
+  reload_asset_tags(db).await
 }
 
 /// Depth-first walk of the inventory order: a row, then any loaded children of an expanded container.
@@ -5066,6 +5081,344 @@ mod tests {
         ["Keep"]
       );
       assert_eq!(state.tag_memberships.get(&5001), Some(&vec![keep.id()]));
+    }
+
+    // Drives the modal through `update` so `apply_asset_tag_modal` executes each branch directly. The
+    // returned `Task`s are not run, so the assertions target the synchronous state transitions and the
+    // task shape (units) each arm produces.
+    fn open_modal(state: &mut State, db: &Database, item_id: i64) {
+      let _ = update(
+        state,
+        Message::OpenAssetTagModal {
+          item_id,
+        },
+        db,
+      );
+    }
+
+    #[tokio::test]
+    async fn input_changed_with_no_modal_open_is_a_no_op() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+
+      // No modal is open, so the `Some(modal)` guard is skipped and nothing is stored.
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::InputChanged("orphaned".to_owned())),
+        &db,
+      );
+
+      assert!(state.asset_tag_modal().is_none());
+      assert_eq!(task.units(), 0, "the no-modal input change produces no task");
+    }
+
+    #[tokio::test]
+    async fn assign_through_the_modal_fans_a_write_for_the_target() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = State::new(flags());
+      open_modal(&mut state, &db, 5001);
+
+      // The Assign arm fans `fan_tag_write` over the modal's single target, producing a write task.
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::Assign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+          tag_id: keep.id(),
+        }),
+        &db,
+      );
+
+      assert!(task.units() > 0, "the Assign arm must produce a write task");
+    }
+
+    #[tokio::test]
+    async fn unassign_through_the_modal_fans_a_write_for_the_target() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = State::new(flags());
+      open_modal(&mut state, &db, 5001);
+
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::Unassign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+          tag_id: keep.id(),
+        }),
+        &db,
+      );
+
+      assert!(task.units() > 0, "the Unassign arm must produce a write task");
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_with_a_blank_name_short_circuits() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      open_modal(&mut state, &db, 5001);
+      state.selection_tag_ids = vec![5001];
+      // Whitespace-only input trims to empty, so the `filter(!is_empty)` arm bails before any write.
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input = "   ".to_owned();
+      }
+
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::CreateAndAssign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+        }),
+        &db,
+      );
+
+      assert_eq!(task.units(), 0, "a blank name creates no tag and no task");
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_with_an_empty_selection_short_circuits() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      open_modal(&mut state, &db, 5001);
+      // A real name, but no stacks selected: the empty-selection guard returns before any write.
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input = "Keep".to_owned();
+      }
+      state.selection_tag_ids = Vec::new();
+
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::CreateAndAssign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+        }),
+        &db,
+      );
+
+      assert_eq!(task.units(), 0, "an empty selection creates no tag and no task");
+      assert_eq!(
+        state.asset_tag_modal().map(|m| m.input.as_str()),
+        Some("Keep"),
+        "the input is left untouched when the selection guard bails"
+      );
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_a_new_name_clears_the_input_and_fans_a_write() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      open_modal(&mut state, &db, 5001);
+      state.selection_tag_ids = vec![5001, 5002];
+      // A fresh name with no existing match takes the `None => create_scoped` branch and clears input.
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input = "Brand New".to_owned();
+      }
+
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::CreateAndAssign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+        }),
+        &db,
+      );
+
+      assert!(task.units() > 0, "creating a new tag fans a write task");
+      assert_eq!(
+        state.asset_tag_modal().map(|m| m.input.as_str()),
+        Some(""),
+        "the input is cleared once the create is dispatched"
+      );
+
+      // Run the dispatched create+assign (mirrors the task body), then reload to observe the effect.
+      let created = infra::create_scoped(&db, "Brand New", None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+      for id in [5001, 5002] {
+        infra::assign(&db, ENTITY_TYPE_ASSET, id, created.id()).await.unwrap();
+      }
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+      for id in [5001, 5002] {
+        assert_eq!(
+          state
+            .asset_tags_for(id)
+            .iter()
+            .map(|t| t.name().as_str())
+            .collect::<Vec<_>>(),
+          ["Brand New"],
+          "stack {id} carries the newly created tag"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_reuses_an_existing_tag_case_insensitively() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let keep = seeded_tag(&db, "Keep").await;
+      // Load the existing "Keep" tag into the registry so the reuse lookup can find it.
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+      open_modal(&mut state, &db, 5001);
+      state.selection_tag_ids = vec![5001];
+      // Different casing must still match the existing tag via `eq_ignore_ascii_case`, taking the
+      // `Some(id)` reuse branch rather than creating a duplicate.
+      if let Some(modal) = &mut state.add_tag_modal {
+        modal.input = "kEeP".to_owned();
+      }
+
+      let task = update(
+        &mut state,
+        Message::AssetTagModal(AddTagMessage::CreateAndAssign {
+          entity_id: 5001,
+          entity_type: ENTITY_TYPE_ASSET,
+        }),
+        &db,
+      );
+
+      assert!(task.units() > 0, "reusing an existing tag still fans a write task");
+      assert_eq!(
+        state.asset_tag_modal().map(|m| m.input.as_str()),
+        Some(""),
+        "the input is cleared on the reuse path too"
+      );
+
+      // Apply the reuse (assign the existing tag), reload, and confirm no duplicate tag was created.
+      infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+      assert_eq!(
+        state
+          .asset_tags
+          .iter()
+          .filter(|t| t.name().eq_ignore_ascii_case("keep"))
+          .count(),
+        1,
+        "the case-insensitive match reuses the single existing tag"
+      );
+      assert_eq!(
+        state.asset_tags_for(5001).iter().map(|t| t.id()).collect::<Vec<_>>(),
+        vec![keep.id()]
+      );
+    }
+
+    // The three named futures the modal arms dispatch. Awaiting them directly exercises the
+    // write-then-reload bodies (the work the returned `Task`s perform when iced polls them).
+
+    #[tokio::test]
+    async fn assign_then_reload_writes_the_membership_and_returns_a_reload() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = State::new(flags());
+
+      let message = assign_then_reload(db.clone(), ENTITY_TYPE_ASSET, 5001, keep.id()).await;
+      let _ = update(&mut state, message, &db);
+
+      assert_eq!(
+        state.asset_tags_for(5001).iter().map(|t| t.id()).collect::<Vec<_>>(),
+        vec![keep.id()],
+        "the assign future persists the membership before reloading"
+      );
+    }
+
+    #[tokio::test]
+    async fn unassign_then_reload_removes_the_membership_and_returns_a_reload() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      infra::assign(&db, ENTITY_TYPE_ASSET, 5001, keep.id()).await.unwrap();
+      let mut state = State::new(flags());
+
+      let message = unassign_then_reload(db.clone(), ENTITY_TYPE_ASSET, 5001, keep.id()).await;
+      let _ = update(&mut state, message, &db);
+
+      assert!(
+        state.asset_tags_for(5001).is_empty(),
+        "the unassign future removes the membership before reloading"
+      );
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_creates_a_new_tag_and_assigns_every_stack() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+
+      // existing is None, so the future takes the `create_scoped` branch, then bulk-assigns.
+      let message = create_or_reuse_then_assign(
+        db.clone(),
+        "Brand New".to_owned(),
+        None,
+        ENTITY_TYPE_ASSET,
+        vec![5001, 5002],
+      )
+      .await;
+      let _ = update(&mut state, message, &db);
+
+      assert_eq!(
+        state.asset_tags.iter().filter(|t| t.name() == "Brand New").count(),
+        1,
+        "exactly one tag is created"
+      );
+      for id in [5001, 5002] {
+        assert_eq!(
+          state
+            .asset_tags_for(id)
+            .iter()
+            .map(|t| t.name().as_str())
+            .collect::<Vec<_>>(),
+          ["Brand New"],
+          "stack {id} carries the created tag"
+        );
+      }
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_reuses_an_existing_tag_id_without_creating_a_duplicate() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = State::new(flags());
+
+      // existing is Some(id), so the future skips creation and assigns the supplied tag id.
+      let message = create_or_reuse_then_assign(
+        db.clone(),
+        "Keep".to_owned(),
+        Some(keep.id()),
+        ENTITY_TYPE_ASSET,
+        vec![5001],
+      )
+      .await;
+      let _ = update(&mut state, message, &db);
+
+      assert_eq!(
+        state.asset_tags.iter().filter(|t| t.name() == "Keep").count(),
+        1,
+        "no duplicate tag is created on the reuse path"
+      );
+      assert_eq!(
+        state.asset_tags_for(5001).iter().map(|t| t.id()).collect::<Vec<_>>(),
+        vec![keep.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn create_or_reuse_with_no_targets_still_reloads_cleanly() {
+      let db = crate::store::open_test().await.unwrap();
+      let keep = seeded_tag(&db, "Keep").await;
+      let mut state = State::new(flags());
+
+      // A resolvable tag but no item ids: the assign loop is skipped and the future just reloads.
+      let message = create_or_reuse_then_assign(
+        db.clone(),
+        "Keep".to_owned(),
+        Some(keep.id()),
+        ENTITY_TYPE_ASSET,
+        Vec::new(),
+      )
+      .await;
+      let _ = update(&mut state, message, &db);
+
+      assert!(
+        state.tag_memberships.is_empty() || state.tag_memberships.values().all(|ids| ids.is_empty()),
+        "no memberships are written when there are no target stacks"
+      );
     }
   }
 

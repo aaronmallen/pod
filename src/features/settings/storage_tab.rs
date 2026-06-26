@@ -350,177 +350,222 @@ fn finish_move(pending: PendingMove, state: &mut State, settings: &mut Settings)
 
 pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
-    Message::Browse(kind) => {
-      state.error = None;
-      let Some(to) = pick_folder(kind, settings) else {
-        return Outcome::None;
-      };
-      state.drafts.insert(kind, to.display().to_string());
-      apply_destination(state, kind, to, settings)
-    }
+    Message::Browse(kind) => browse(state, kind, settings),
     Message::CancelDataImport => {
       state.data_import_confirm = None;
       Outcome::None
     }
-    Message::CancelMove => {
-      if let Some(pending) = state.pending.take() {
-        sync_draft(state, pending.kind, settings);
-      }
-      Outcome::None
-    }
-    Message::ConfirmDataImport => {
-      let Some(pending) = state.data_import_confirm.take() else {
-        return Outcome::None;
-      };
-      state.error = None;
-      state.data_import_pending = true;
-      Outcome::ImportData {
-        path: pending.path,
-      }
-    }
-    Message::ConfirmMove => {
-      let Some(pending) = state.pending.take() else {
-        return Outcome::None;
-      };
-      let kind = pending.kind;
-      match finish_move(pending, state, settings) {
-        Ok(()) => {
-          sync_draft(state, kind, settings);
-          Outcome::Persist
-        }
-        Err(error) => {
-          state.error = Some(error);
-          Outcome::None
-        }
-      }
-    }
-    Message::DataExportFinished(result) => {
-      state.data_export_pending = false;
-      if let Err(error) = result {
-        state.error = Some(error);
-      }
-      Outcome::None
-    }
-    Message::DataImportFinished(result) => {
-      // The success path quits the app to re-seed from the restored database, so an Ok here only
-      // lands if the dialog was a no-op; either way the import is no longer in flight.
-      state.data_import_pending = false;
-      if let Err(error) = result {
-        state.error = Some(error);
-      }
-      Outcome::None
-    }
+    Message::CancelMove => cancel_move(state, settings),
+    Message::ConfirmDataImport => confirm_data_import(state),
+    Message::ConfirmMove => confirm_move(state, settings),
+    Message::DataExportFinished(result) => finish_data_export(state, result),
+    Message::DataImportFinished(result) => finish_data_import(state, result),
     Message::DismissError => {
       state.error = None;
       Outcome::None
     }
-    Message::ExportFinished(result) => {
-      state.export_pending = false;
-      if let Err(error) = result {
-        state.error = Some(error);
-      }
-      Outcome::None
-    }
-    Message::ExportLogs(preset) => {
-      state.error = None;
-      state.export_pending = true;
-      let (start, end) = log_export::range_for_preset(preset, Local::now());
-      Outcome::ExportLogs {
-        end,
-        start,
-      }
-    }
-    Message::LogLevelChanged(level) => {
-      state.error = None;
-      if settings.storage().log_level() == &level {
-        return Outcome::None;
-      }
-      settings.storage_mut().set_log_level(level);
-      Outcome::SetLogLevel(level)
-    }
+    Message::ExportFinished(result) => finish_export(state, result),
+    Message::ExportLogs(preset) => export_logs(state, preset),
+    Message::LogLevelChanged(level) => log_level_changed(state, level, settings),
     Message::PathEdited(kind, value) => {
       state.drafts.insert(kind, value);
       Outcome::None
     }
-    Message::PathSubmitted(kind) => {
-      state.error = None;
-      let draft = state.drafts.get(&kind).cloned().unwrap_or_default();
-      if draft.trim().is_empty() {
-        sync_draft(state, kind, settings);
-        return Outcome::None;
-      }
-      let outcome = apply_destination(state, kind, PathBuf::from(draft.trim()), settings);
-      if state.pending.is_none() && state.error.is_none() {
-        sync_draft(state, kind, settings);
-      }
-      outcome
-    }
+    Message::PathSubmitted(kind) => path_submitted(state, kind, settings),
     Message::ReleaseLock => Outcome::ReleaseLock,
     Message::RequestDataExport => {
       state.error = None;
       state.data_export_pending = true;
       Outcome::ExportData
     }
-    Message::RequestDataImport => {
-      state.error = None;
-      let Some(path) = pick_data_archive() else {
-        return Outcome::None;
-      };
-      // Read and version-guard the archive up front so the confirm modal exists only for a restorable
-      // archive — an incompatible or corrupt one is refused here and never offers a Replace action,
-      // and no data is touched until the user confirms.
-      match validate_archive(&path) {
-        Ok(pending) => {
-          state.data_import_confirm = Some(pending);
-          Outcome::None
-        }
-        Err(error) => {
-          state.error = Some(error);
-          Outcome::None
-        }
-      }
-    }
-    Message::ResetToDefault(kind) => {
-      state.error = None;
-      let to = kind.default_dir();
-      state.drafts.insert(kind, to.display().to_string());
-      apply_destination(state, kind, to, settings)
-    }
-    Message::RevealLogDir => {
-      state.error = None;
-      let dir = settings.storage().resolved_log_dir();
-      let _ = fs::create_dir_all(&dir);
-      if let Err(err) = open::that_detached(&dir) {
-        state.error = Some(format!("Couldn't open {}: {err}", dir.display()));
-      }
-      Outcome::None
-    }
-    Message::SkipMove => {
-      let Some(pending) = state.pending.take() else {
-        return Outcome::None;
-      };
-      let kind = pending.kind;
-      commit_override(pending.kind, pending.to, settings);
-      sync_draft(state, kind, settings);
-      Outcome::Persist
-    }
+    Message::RequestDataImport => request_data_import(state),
+    Message::ResetToDefault(kind) => reset_to_default(state, kind, settings),
+    Message::RevealLogDir => reveal_log_dir(state, settings),
+    Message::SkipMove => skip_move(state, settings),
     Message::SyncNow => Outcome::SyncNow,
     Message::SyncSuggestionDismissed => {
       state.sync_suggestion_dismissed = true;
       Outcome::None
     }
-    Message::SyncToggled(value) => {
-      let previous = settings.storage().clone();
-      settings.storage_mut().set_network(value);
-      // Toggling sync flips the storage mode in place (the configured path is unchanged), so the
-      // database must migrate to the new layout: seed a working copy + sidecar when turning on,
-      // consolidate it back into a single file when turning off.
-      state.migration = Some(MigrationRequest {
-        previous,
-      });
+    Message::SyncToggled(value) => sync_toggled(state, value, settings),
+  }
+}
+
+/// Opens a folder picker and applies the chosen destination for the path kind.
+fn browse(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
+  state.error = None;
+  let Some(to) = pick_folder(kind, settings) else {
+    return Outcome::None;
+  };
+  state.drafts.insert(kind, to.display().to_string());
+  apply_destination(state, kind, to, settings)
+}
+
+/// Dismisses a pending move and resyncs the draft to the live path.
+fn cancel_move(state: &mut State, settings: &mut Settings) -> Outcome {
+  if let Some(pending) = state.pending.take() {
+    sync_draft(state, pending.kind, settings);
+  }
+  Outcome::None
+}
+
+/// Confirms a validated archive import and requests the restore.
+fn confirm_data_import(state: &mut State) -> Outcome {
+  let Some(pending) = state.data_import_confirm.take() else {
+    return Outcome::None;
+  };
+  state.error = None;
+  state.data_import_pending = true;
+  Outcome::ImportData {
+    path: pending.path,
+  }
+}
+
+/// Commits a confirmed move, syncing the draft and surfacing any failure.
+fn confirm_move(state: &mut State, settings: &mut Settings) -> Outcome {
+  let Some(pending) = state.pending.take() else {
+    return Outcome::None;
+  };
+  let kind = pending.kind;
+  match finish_move(pending, state, settings) {
+    Ok(()) => {
+      sync_draft(state, kind, settings);
       Outcome::Persist
     }
+    Err(error) => {
+      state.error = Some(error);
+      Outcome::None
+    }
   }
+}
+
+/// Clears the in-flight data export and records any error.
+fn finish_data_export(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
+  state.data_export_pending = false;
+  if let Err(error) = result {
+    state.error = Some(error);
+  }
+  Outcome::None
+}
+
+/// Clears the in-flight data import and records any error.
+fn finish_data_import(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
+  // The success path quits the app to re-seed from the restored database, so an Ok here only
+  // lands if the dialog was a no-op; either way the import is no longer in flight.
+  state.data_import_pending = false;
+  if let Err(error) = result {
+    state.error = Some(error);
+  }
+  Outcome::None
+}
+
+/// Clears the in-flight log export and records any error.
+fn finish_export(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
+  state.export_pending = false;
+  if let Err(error) = result {
+    state.error = Some(error);
+  }
+  Outcome::None
+}
+
+/// Begins a log export for the requested preset range.
+fn export_logs(state: &mut State, preset: RangePreset) -> Outcome {
+  state.error = None;
+  state.export_pending = true;
+  let (start, end) = log_export::range_for_preset(preset, Local::now());
+  Outcome::ExportLogs {
+    end,
+    start,
+  }
+}
+
+/// Applies a new log level, ignoring a reselection of the active level.
+fn log_level_changed(state: &mut State, level: LogLevel, settings: &mut Settings) -> Outcome {
+  state.error = None;
+  if settings.storage().log_level() == &level {
+    return Outcome::None;
+  }
+  settings.storage_mut().set_log_level(level);
+  Outcome::SetLogLevel(level)
+}
+
+/// Applies a submitted path draft, resyncing when it resolves without a prompt.
+fn path_submitted(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
+  state.error = None;
+  let draft = state.drafts.get(&kind).cloned().unwrap_or_default();
+  if draft.trim().is_empty() {
+    sync_draft(state, kind, settings);
+    return Outcome::None;
+  }
+  let outcome = apply_destination(state, kind, PathBuf::from(draft.trim()), settings);
+  if state.pending.is_none() && state.error.is_none() {
+    sync_draft(state, kind, settings);
+  }
+  outcome
+}
+
+/// Picks an archive and stages a confirm modal only when it validates.
+fn request_data_import(state: &mut State) -> Outcome {
+  state.error = None;
+  let Some(path) = pick_data_archive() else {
+    return Outcome::None;
+  };
+  // Read and version-guard the archive up front so the confirm modal exists only for a restorable
+  // archive — an incompatible or corrupt one is refused here and never offers a Replace action,
+  // and no data is touched until the user confirms.
+  match validate_archive(&path) {
+    Ok(pending) => {
+      state.data_import_confirm = Some(pending);
+      Outcome::None
+    }
+    Err(error) => {
+      state.error = Some(error);
+      Outcome::None
+    }
+  }
+}
+
+/// Resets a path kind to its default directory and applies it.
+fn reset_to_default(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
+  state.error = None;
+  let to = kind.default_dir();
+  state.drafts.insert(kind, to.display().to_string());
+  apply_destination(state, kind, to, settings)
+}
+
+/// Opens the resolved log directory in the file manager.
+fn reveal_log_dir(state: &mut State, settings: &Settings) -> Outcome {
+  state.error = None;
+  let dir = settings.storage().resolved_log_dir();
+  let _ = fs::create_dir_all(&dir);
+  if let Err(err) = open::that_detached(&dir) {
+    state.error = Some(format!("Couldn't open {}: {err}", dir.display()));
+  }
+  Outcome::None
+}
+
+/// Repoints to the pending destination without moving the existing contents.
+fn skip_move(state: &mut State, settings: &mut Settings) -> Outcome {
+  let Some(pending) = state.pending.take() else {
+    return Outcome::None;
+  };
+  let kind = pending.kind;
+  commit_override(pending.kind, pending.to, settings);
+  sync_draft(state, kind, settings);
+  Outcome::Persist
+}
+
+/// Flips the sync/network mode and stages the layout migration.
+fn sync_toggled(state: &mut State, value: bool, settings: &mut Settings) -> Outcome {
+  let previous = settings.storage().clone();
+  settings.storage_mut().set_network(value);
+  // Toggling sync flips the storage mode in place (the configured path is unchanged), so the
+  // database must migrate to the new layout: seed a working copy + sidecar when turning on,
+  // consolidate it back into a single file when turning off.
+  state.migration = Some(MigrationRequest {
+    previous,
+  });
+  Outcome::Persist
 }
 
 fn apply_destination(state: &mut State, kind: PathKind, to: PathBuf, settings: &mut Settings) -> Outcome {

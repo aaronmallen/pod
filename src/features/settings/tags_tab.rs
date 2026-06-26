@@ -228,13 +228,6 @@ async fn load_tags(db: Database) -> Result<Loaded, String> {
 
 pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Message>) {
   let task = match message {
-    Message::AddTag => add_tag(&state.db, &mut state.entity, None),
-    Message::ColorHexChanged(draft) => color_hex_changed(&mut state.entity, draft),
-    Message::ColorHexSubmitted => color_hex_submitted(&state.db, &mut state.entity),
-    Message::ClearColor(tag_id) => {
-      state.entity.picker = None;
-      recolor(&state.db, &state.entity, tag_id, None)
-    }
     Message::ClosePicker => {
       state.entity.picker = None;
       state.asset.picker = None;
@@ -244,80 +237,103 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Messa
       state.cursor = Some(point);
       iced::Task::none()
     }
-    Message::DropDragged => drop_dragged(&state.db, &mut state.entity),
-    Message::EditCancelled => {
-      state.entity.editing = None;
-      iced::Task::none()
-    }
-    Message::EditCommitted => edit_committed(&state.db, &mut state.entity),
-    Message::EditDraftChanged(draft) => edit_draft_changed(&mut state.entity, draft),
-    Message::FilterChanged(query) => {
-      state.entity.query = query;
-      iced::Task::none()
-    }
-    Message::HoverTagSlot(index) => hover_tag_slot(&mut state.entity, index),
-    Message::LeaveTagSlot(index) => leave_tag_slot(&mut state.entity, index),
     Message::Loaded(result) => loaded(state, result),
-    Message::NewTagChanged(value) => {
-      state.entity.new_tag = value;
-      iced::Task::none()
-    }
-    Message::PickUpTag(tag_id) => pick_up_tag(&mut state.entity, tag_id),
-    Message::Recolor {
-      hex,
-      tag_id,
-    } => {
-      state.entity.picker = None;
-      recolor(&state.db, &state.entity, tag_id, Some(hex))
-    }
     Message::RegistrySelected(registry) => {
       state.active = registry;
       iced::Task::none()
     }
-    Message::RemoveTag(tag_id) => remove_tag(&state.db, &mut state.entity, tag_id),
     Message::Saved(result) => saved(state, result),
+    other => update_section_message(state, other),
+  };
+  (Outcome::None, task)
+}
+
+/// Dispatches the registry-scoped messages to the entity or asset section.
+fn update_section_message(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
+    Message::AddTag => add_tag(&state.db, &mut state.entity, None),
+    Message::ColorHexChanged(draft) => color_hex_changed(&mut state.entity, draft),
+    Message::ColorHexSubmitted => color_hex_submitted(&state.db, &mut state.entity),
+    Message::ClearColor(tag_id) => clear_color(&state.db, &mut state.entity, tag_id),
+    Message::DropDragged => drop_dragged(&state.db, &mut state.entity),
+    Message::EditCancelled => cancel_edit(&mut state.entity),
+    Message::EditCommitted => edit_committed(&state.db, &mut state.entity),
+    Message::EditDraftChanged(draft) => edit_draft_changed(&mut state.entity, draft),
+    Message::FilterChanged(query) => set_query(&mut state.entity, query),
+    Message::HoverTagSlot(index) => hover_tag_slot(&mut state.entity, index),
+    Message::LeaveTagSlot(index) => leave_tag_slot(&mut state.entity, index),
+    Message::NewTagChanged(value) => set_new_tag(&mut state.entity, value),
+    Message::PickUpTag(tag_id) => pick_up_tag(&mut state.entity, tag_id),
+    Message::Recolor {
+      hex,
+      tag_id,
+    } => apply_recolor(&state.db, &mut state.entity, tag_id, hex),
+    Message::RemoveTag(tag_id) => remove_tag(&state.db, &mut state.entity, tag_id),
     Message::SortSelected(mode) => sort_selected(&mut state.entity, mode),
     Message::StartEditing(tag_id) => start_editing(&mut state.entity, tag_id),
     Message::ToggleColorPicker(tag_id) => toggle_color_picker(&mut state.entity, state.cursor, tag_id),
+    other => update_asset_message(state, other),
+  }
+}
 
+/// Dispatches the asset-registry messages to the asset section.
+fn update_asset_message(state: &mut State, message: Message) -> iced::Task<Message> {
+  match message {
     Message::AssetAddTag => add_tag(&state.db, &mut state.asset, Some(TAG_SCOPE_ASSET)),
     Message::AssetColorHexChanged(draft) => color_hex_changed(&mut state.asset, draft),
     Message::AssetColorHexSubmitted => color_hex_submitted(&state.db, &mut state.asset),
-    Message::AssetClearColor(tag_id) => {
-      state.asset.picker = None;
-      recolor(&state.db, &state.asset, tag_id, None)
-    }
+    Message::AssetClearColor(tag_id) => clear_color(&state.db, &mut state.asset, tag_id),
     Message::AssetDropDragged => drop_dragged(&state.db, &mut state.asset),
-    Message::AssetEditCancelled => {
-      state.asset.editing = None;
-      iced::Task::none()
-    }
+    Message::AssetEditCancelled => cancel_edit(&mut state.asset),
     Message::AssetEditCommitted => edit_committed(&state.db, &mut state.asset),
     Message::AssetEditDraftChanged(draft) => edit_draft_changed(&mut state.asset, draft),
-    Message::AssetFilterChanged(query) => {
-      state.asset.query = query;
-      iced::Task::none()
-    }
+    Message::AssetFilterChanged(query) => set_query(&mut state.asset, query),
     Message::AssetHoverTagSlot(index) => hover_tag_slot(&mut state.asset, index),
     Message::AssetLeaveTagSlot(index) => leave_tag_slot(&mut state.asset, index),
-    Message::AssetNewTagChanged(value) => {
-      state.asset.new_tag = value;
-      iced::Task::none()
-    }
+    Message::AssetNewTagChanged(value) => set_new_tag(&mut state.asset, value),
     Message::AssetPickUpTag(tag_id) => pick_up_tag(&mut state.asset, tag_id),
     Message::AssetRecolor {
       hex,
       tag_id,
-    } => {
-      state.asset.picker = None;
-      recolor(&state.db, &state.asset, tag_id, Some(hex))
-    }
+    } => apply_recolor(&state.db, &mut state.asset, tag_id, hex),
     Message::AssetRemoveTag(tag_id) => remove_tag(&state.db, &mut state.asset, tag_id),
     Message::AssetSortSelected(mode) => sort_selected(&mut state.asset, mode),
     Message::AssetStartEditing(tag_id) => start_editing(&mut state.asset, tag_id),
     Message::AssetToggleColorPicker(tag_id) => toggle_color_picker(&mut state.asset, state.cursor, tag_id),
-  };
-  (Outcome::None, task)
+    // All registry-scoped variants are handled above; the parent dispatcher
+    // routes the remaining cross-cutting messages.
+    _ => iced::Task::none(),
+  }
+}
+
+/// Clears the picker and removes the color from the given tag.
+fn clear_color(db: &Option<Database>, section: &mut Section, tag_id: i64) -> iced::Task<Message> {
+  section.picker = None;
+  recolor(db, section, tag_id, None)
+}
+
+/// Clears the picker and applies a new color to the given tag.
+fn apply_recolor(db: &Option<Database>, section: &mut Section, tag_id: i64, hex: String) -> iced::Task<Message> {
+  section.picker = None;
+  recolor(db, section, tag_id, Some(hex))
+}
+
+/// Cancels the in-progress tag edit for the section.
+fn cancel_edit(section: &mut Section) -> iced::Task<Message> {
+  section.editing = None;
+  iced::Task::none()
+}
+
+/// Updates the filter query for the section.
+fn set_query(section: &mut Section, query: String) -> iced::Task<Message> {
+  section.query = query;
+  iced::Task::none()
+}
+
+/// Updates the new-tag draft for the section.
+fn set_new_tag(section: &mut Section, value: String) -> iced::Task<Message> {
+  section.new_tag = value;
+  iced::Task::none()
 }
 
 fn edit_draft_changed(section: &mut Section, draft: String) -> iced::Task<Message> {

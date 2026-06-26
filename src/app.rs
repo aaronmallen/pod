@@ -31,7 +31,7 @@ use crate::{
     skill_plan_manager, skills, skills_compare, splash, wallet,
   },
   mcp, notifications,
-  services::{images, updater},
+  services::{images, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
@@ -111,6 +111,10 @@ const RUNTIME_CHANNEL_BUFFER: usize = 64;
 const SCALE_MAX: u8 = 150;
 
 const SCALE_MIN: u8 = 85;
+
+/// Cadence of the periodic telemetry flush (spec §7.4). Each tick re-reads the
+/// live config, gates per-stream, and fires one fire-and-forget POST.
+const TELEMETRY_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 const TRASH_PURGE_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
 
@@ -264,6 +268,9 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
+  /// The fire-and-forget telemetry sender; `Some` only in builds where the ingest
+  /// endpoint was baked in ("telemetry built"), driving the flush tick + exit flush.
+  telemetry: Option<clients::telemetry::Sender>,
   /// Live bottom-right toasts (newest-surfaced notifications), capped at [`TOAST_CAP`]. Each entry
   /// tracks its own remaining lifetime and hover-pause state; the toast tick subscription ages them.
   toasts: Vec<ToastEntry>,
@@ -407,6 +414,7 @@ enum Message {
   SyncPulse,
   TakeOver,
   TakeOverResolved(TakeOverOutcome, Box<StoreReady>),
+  TelemetryFlushTick,
   TextInputFocused(iced::widget::Id),
   ToastDismissed(i64),
   ToastHover(i64, bool),
@@ -572,6 +580,7 @@ impl Message {
       Message::SyncPulse => "SyncPulse",
       Message::TakeOver => "TakeOver",
       Message::TakeOverResolved(..) => "TakeOverResolved",
+      Message::TelemetryFlushTick => "TelemetryFlushTick",
       Message::ToggleSyncPopover => "ToggleSyncPopover",
       _ => return None,
     })
@@ -956,6 +965,18 @@ fn boot() -> (App, Task<Message>) {
   let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);
 
+  // Stand up the process-global telemetry collector only when the ingest endpoint
+  // was baked in (release builds); everywhere else it stays a structural no-op.
+  // Built here, before `settings` is shadowed by the window settings below.
+  let telemetry = clients::telemetry::Endpoint::from_env()
+    .and_then(clients::telemetry::Sender::new)
+    .inspect(|_| {
+      telemetry::init(
+        &settings.storage().machine_id().clone().unwrap_or_default(),
+        *settings.telemetry(),
+      )
+    });
+
   auth::install();
   let settings = window::Settings {
     size: Size::new(spacing::layout::SPLASH_WIDTH, spacing::layout::SPLASH_HEIGHT),
@@ -1046,6 +1067,7 @@ fn boot() -> (App, Task<Message>) {
     sync_popover_open: false,
     sync_session: None,
     sync_tick: false,
+    telemetry,
     toasts: Vec::new(),
     ui_state: window_state::load(),
     updater: updater.clone(),
@@ -1452,9 +1474,30 @@ fn shutdown(app: &mut App) -> Task<Message> {
   let save_draft = save_open_compose(app);
   let checkpoint = shutdown_storage(app);
   stop_engines(app);
+  flush_telemetry_on_exit(app);
   save_draft
     .chain(checkpoint)
     .chain(Task::batch([iced::exit(), exit_process()]))
+}
+
+/// The periodic flush tick: hand the live buffer to the gated single flush. The
+/// gating (master + per-stream), assembly, and drain all happen inside
+/// [`telemetry::flush`]; nothing is sent when telemetry is structurally absent.
+fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
+  if let Some(sender) = app.telemetry.as_ref() {
+    telemetry::flush(sender);
+  }
+  Task::none()
+}
+
+/// The exit flush: one best-effort final [`telemetry::flush`] before the process
+/// exits. It is the same fire-and-forget path as the periodic tick (drain, gate,
+/// then spawn the POST), so it never janks quit; the chained `exit_process`
+/// backstop still guarantees the process leaves within its budget.
+fn flush_telemetry_on_exit(app: &App) {
+  if let Some(sender) = app.telemetry.as_ref() {
+    telemetry::flush(sender);
+  }
 }
 
 /// Flushes every open, non-empty compose window to Drafts before the storage checkpoint, so any draft
@@ -3071,6 +3114,9 @@ fn subscription(app: &App) -> Subscription<Message> {
   if !app.toasts.is_empty() {
     subs.push(iced::time::every(TOAST_TICK).map(|_| Message::ToastTick));
   }
+  if app.telemetry.is_some() {
+    subs.push(iced::time::every(TELEMETRY_FLUSH_INTERVAL).map(|_| Message::TelemetryFlushTick));
+  }
   subs.push(auth::subscription().map(Message::Auth));
   subs.push(auth::focus_subscription().map(|()| Message::FocusMainWindow));
   subs.push(mcp::bridge::subscription().map(Message::Mcp));
@@ -4121,6 +4167,7 @@ fn dispatch_window_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::Palette(msg) => handle_palette(app, msg),
     Message::Quit => shutdown(app),
     Message::Shortcut(chord) => handle_shortcut(app, chord),
+    Message::TelemetryFlushTick => handle_telemetry_flush_tick(app),
     Message::TextInputFocused(id) => handle_text_input_focused(app, id),
     Message::ToggleSyncPopover => handle_toggle_sync_popover(app),
     Message::UpdaterAction(action) => handle_updater_action(app, action),
@@ -7018,6 +7065,7 @@ mod tests {
       sync_popover_open: false,
       sync_session: None,
       sync_tick: false,
+      telemetry: None,
       toasts: Vec::new(),
       ui_state: UiState::default(),
       updater: None,

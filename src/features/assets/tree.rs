@@ -172,18 +172,27 @@ fn rule_divider<'a>() -> Element<'a, Message> {
     .into()
 }
 
+/// Labels of the action buttons rendered in the saved-filters section header.
+///
+/// The redundant "+ new" affordance was removed in favour of the "★ Save"
+/// button in the inventory filter bar, so the header currently exposes no
+/// actions. Kept as a pure helper so tests can assert this without trying to
+/// introspect the (opaque) iced widget tree.
+fn saved_filters_header_actions() -> Vec<&'static str> {
+  Vec::new()
+}
+
 fn saved_filters_section(state: &State) -> Element<'_, Message> {
-  let header = Row::with_children(vec![
+  let mut header_children: Vec<Element<'_, Message>> = vec![
     eyebrow("Saved filters", Some(color::text::secondary())),
     Space::new().width(Length::Fill).into(),
-    button(eyebrow("+ new", Some(color::accent::PLASMA)))
-      .padding(0)
-      .on_press(Message::SaveFilterOpened)
-      .style(|_, _| button::Style::default())
-      .into(),
-  ])
-  .width(Length::Fill)
-  .align_y(Vertical::Center);
+  ];
+  for label in saved_filters_header_actions() {
+    header_children.push(eyebrow(label, Some(color::accent::PLASMA)));
+  }
+  let header = Row::with_children(header_children)
+    .width(Length::Fill)
+    .align_y(Vertical::Center);
 
   let mut children: Vec<Element<'_, Message>> = vec![
     container(header)
@@ -1120,6 +1129,24 @@ mod tests {
     #[test]
     fn it_renders_a_disabled_modal_primary_button() {
       let _el: Element<'_, Message> = modal_primary_button("Save", false);
+    }
+
+    #[test]
+    fn it_renders_no_action_buttons_in_the_saved_filters_header() {
+      let actions = saved_filters_header_actions();
+
+      assert!(actions.is_empty(), "expected no header actions, got {actions:?}");
+      assert!(
+        !actions.iter().any(|label| label.eq_ignore_ascii_case("+ new")),
+        "the redundant '+ new' button must not appear in the saved-filters header",
+      );
+    }
+
+    #[test]
+    fn it_renders_the_saved_filters_section() {
+      let state = State::new(crate::config::FeatureFlags::default());
+
+      let _el: Element<'_, Message> = saved_filters_section(&state);
     }
 
     #[test]

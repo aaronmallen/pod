@@ -90,6 +90,12 @@ impl Database {
 /// `SQLITE_CONSTRAINT` code (19). sqlx surfaces it as a string via `DatabaseError::code`.
 const SQLITE_FOREIGN_KEY_CODE: &str = "787";
 
+/// SQLite extended result code for `SQLITE_CONSTRAINT_UNIQUE` (2067), distinct from the primary
+/// `SQLITE_CONSTRAINT` code (19). sqlx surfaces it as a string via `DatabaseError::code`.
+// Consumed by the tag find-or-create / rename call sites; exercised by unit tests until those wire up.
+#[allow(dead_code)]
+const SQLITE_UNIQUE_CODE: &str = "2067";
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
   #[error(
@@ -104,6 +110,8 @@ pub enum Error {
   Migration(#[from] sqlx::migrate::MigrateError),
   #[error("the reserved Unassigned squad cannot be created, renamed, or deleted")]
   ReservedSquad,
+  #[error("a tag named {name:?} already exists in this scope")]
+  TagNameTaken { name: String },
   #[error("database error: {0}")]
   Sqlx(#[from] sqlx::Error),
 }
@@ -130,6 +138,15 @@ impl Error {
       _ => false,
     }
   }
+
+  // Consumed by the tag find-or-create / rename UI; exercised by unit tests until that caller lands.
+  #[allow(dead_code)]
+  pub fn is_unique_violation(&self) -> bool {
+    match self {
+      Error::Sqlx(source) => is_unique_constraint(source),
+      _ => false,
+    }
+  }
 }
 
 pub(crate) fn is_foreign_key_constraint(error: &sqlx::Error) -> bool {
@@ -137,6 +154,15 @@ pub(crate) fn is_foreign_key_constraint(error: &sqlx::Error) -> bool {
     .as_database_error()
     .and_then(|db| db.code())
     .is_some_and(|code| code == SQLITE_FOREIGN_KEY_CODE)
+}
+
+// Companion to is_unique_violation; exercised by unit tests until a production caller lands.
+#[allow(dead_code)]
+pub(crate) fn is_unique_constraint(error: &sqlx::Error) -> bool {
+  error
+    .as_database_error()
+    .and_then(|db| db.code())
+    .is_some_and(|code| code == SQLITE_UNIQUE_CODE)
 }
 
 /// Opens a [`Database`] (reader pool + single writer connection) over one database file and runs
@@ -378,6 +404,38 @@ mod tests {
         "all handles share one writer connection, so a write through another handle cannot proceed concurrently"
       );
       drop(held);
+    }
+  }
+
+  mod is_unique_violation {
+    use super::*;
+
+    #[tokio::test]
+    async fn it_classifies_a_2067_as_a_unique_violation() {
+      let dir = tempdir().unwrap();
+      let path = dir.path().join("test.db");
+      let db = open(&path).await.unwrap();
+
+      // The migrated tags table carries uq_tags_scope_lower_name on (scope, lower(name)); inserting a
+      // case-insensitive duplicate within one scope raises SQLITE_CONSTRAINT_UNIQUE (extended code 2067).
+      sqlx::query("INSERT INTO tags (color, created_at, description, name, position, scope, updated_at) VALUES (NULL, 0, NULL, 'Roller', 0, 'asset', 0)")
+        .execute(db.writer())
+        .await
+        .unwrap();
+      let error: Error = sqlx::query("INSERT INTO tags (color, created_at, description, name, position, scope, updated_at) VALUES (NULL, 0, NULL, 'roller', 1, 'asset', 0)")
+        .execute(db.writer())
+        .await
+        .expect_err("a case-insensitive duplicate within one scope violates the unique index")
+        .into();
+
+      assert!(
+        error.is_unique_violation(),
+        "the 2067 is classified as a unique violation"
+      );
+      assert!(
+        !error.is_foreign_key_violation(),
+        "a unique violation is not a foreign-key violation"
+      );
     }
   }
 }

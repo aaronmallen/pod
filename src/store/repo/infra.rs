@@ -348,6 +348,20 @@ pub async fn create_scoped(
   color: Option<&str>,
   scope: &str,
 ) -> Result<Tag, Error> {
+  // Find-or-create: a same-scope tag whose name matches case-insensitively already satisfies the
+  // (scope, lower(name)) uniqueness invariant, so return it untouched instead of inserting a duplicate.
+  if let Some(existing) = sqlx::query_as::<_, Tag>(
+    "SELECT color, created_at, description, id, name, position, updated_at FROM tags \
+    WHERE scope = ? AND lower(name) = lower(?)",
+  )
+  .bind(scope)
+  .bind(name)
+  .fetch_optional(&db.0)
+  .await?
+  {
+    return Ok(existing);
+  }
+
   let now = Utc::now().timestamp();
   let tag = sqlx::query_as::<_, Tag>(
     "INSERT INTO tags (color, created_at, description, name, position, scope, updated_at) \
@@ -486,6 +500,24 @@ pub async fn update(
   description: Option<&str>,
   color: Option<&str>,
 ) -> Result<(), Error> {
+  // Reject a rename that would collide (case-insensitively) with a *different* tag in the same scope,
+  // writing nothing. The conflict is scoped to the row's own scope, so the same name may live in both
+  // the asset and entity scopes at once.
+  let conflict: Option<i64> = sqlx::query_scalar(
+    "SELECT 1 FROM tags WHERE scope = (SELECT scope FROM tags WHERE id = ?) \
+    AND lower(name) = lower(?) AND id <> ?",
+  )
+  .bind(id)
+  .bind(name)
+  .bind(id)
+  .fetch_optional(&db.0)
+  .await?;
+  if conflict.is_some() {
+    return Err(Error::TagNameTaken {
+      name: name.to_owned(),
+    });
+  }
+
   let now = Utc::now().timestamp();
   sqlx::query("UPDATE tags SET color = ?, description = ?, name = ?, updated_at = ? WHERE id = ?")
     .bind(color)
@@ -1727,6 +1759,42 @@ mod tag_tests {
       assert_eq!(first.description().as_deref(), Some("the first"));
       assert_eq!(first.color().as_deref(), Some("#3FB8DB"));
     }
+
+    #[tokio::test]
+    async fn it_finds_a_case_insensitive_match_within_the_same_scope_without_inserting() {
+      use crate::store::model::TAG_SCOPE_ASSET;
+
+      let db = store::open_test().await.unwrap();
+      let first = create_scoped(&db, "Roller", None, Some("#3FB8DB"), TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+
+      let second = create_scoped(&db, "roller", Some("ignored"), Some("#E07559"), TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+
+      // The existing row is returned untouched (original name/color), and no second row was inserted.
+      assert_eq!(second.id(), first.id());
+      assert_eq!(second.name(), "Roller");
+      assert_eq!(second.color().as_deref(), Some("#3FB8DB"));
+      assert_eq!(tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_the_same_name_in_each_scope_as_distinct_rows() {
+      use crate::store::model::{TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY};
+
+      let db = store::open_test().await.unwrap();
+
+      let asset = create_scoped(&db, "Roller", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      let entity = create_scoped(&db, "Roller", None, None, TAG_SCOPE_ENTITY)
+        .await
+        .unwrap();
+
+      assert_ne!(asset.id(), entity.id());
+      assert_eq!(tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap().len(), 1);
+      assert_eq!(tag_all_scoped(&db, TAG_SCOPE_ENTITY).await.unwrap().len(), 1);
+    }
   }
 
   mod delete {
@@ -1906,6 +1974,43 @@ mod tag_tests {
       assert_eq!(updated.name(), "New");
       assert_eq!(updated.description().as_deref(), Some("renamed"));
       assert_eq!(updated.color().as_deref(), Some("#E07559"));
+    }
+
+    #[tokio::test]
+    async fn it_rejects_a_rename_that_collides_case_insensitively_in_the_same_scope() {
+      use crate::store::model::TAG_SCOPE_ASSET;
+
+      let db = store::open_test().await.unwrap();
+      create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
+      let sell = create_scoped(&db, "Sell", Some("dispose"), Some("#E07559"), TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+
+      let error = update(&db, sell.id(), "keep", Some("changed"), Some("#3FB8DB"))
+        .await
+        .expect_err("renaming onto a sibling tag's name is rejected");
+
+      assert!(matches!(error, store::Error::TagNameTaken { .. }));
+      // Nothing was written: the row keeps its original name, description, and color.
+      let unchanged = tag_get(&db, sell.id()).await.unwrap().unwrap();
+      assert_eq!(unchanged.name(), "Sell");
+      assert_eq!(unchanged.description().as_deref(), Some("dispose"));
+      assert_eq!(unchanged.color().as_deref(), Some("#E07559"));
+    }
+
+    #[tokio::test]
+    async fn it_allows_a_rename_matching_a_tag_in_the_other_scope() {
+      use crate::store::model::{TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY};
+
+      let db = store::open_test().await.unwrap();
+      create_scoped(&db, "Roller", None, None, TAG_SCOPE_ENTITY)
+        .await
+        .unwrap();
+      let asset = create_scoped(&db, "Temp", None, None, TAG_SCOPE_ASSET).await.unwrap();
+
+      update(&db, asset.id(), "Roller", None, None).await.unwrap();
+
+      assert_eq!(tag_get(&db, asset.id()).await.unwrap().unwrap().name(), "Roller");
     }
   }
 }

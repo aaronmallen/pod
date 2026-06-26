@@ -167,6 +167,16 @@ progress past its expiry date is shown as expired.
 The Contracts tab pages by cursor in the same way as the other tabs and carries
 its own total count. A side filter lets you narrow to buy or sell contracts.
 
+The Contracts tab shares the same filter box as the Journal and Transactions
+tabs, the one labeled "Filter by ref, party, station". On contracts that box
+matches by contract ID, type, status, the parties (issuer, assignee, and
+acceptor), and the names of the items the contract carries. The match is a
+case-insensitive substring, so typing "rhea" finds a courier hauling a Rhea
+without you knowing the exact name, and the item names are resolved from the SDE
+across every item the contract holds. The search runs over the contracts already
+loaded into the tab, so paging further back widens what it can reach. Only item
+names are searchable this way, not their value or quantity.
+
 ![Contracts tab](/docs/img/wallet/contracts.png)
 
 ## Contract detail

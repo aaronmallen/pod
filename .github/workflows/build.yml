@@ -95,8 +95,8 @@ jobs:
       - name: Worker contract vitest
         working-directory: telemetry
         run: |-
-          npm ci
-          npm test
+          aube ci
+          aube test
   build:
     strategy:
       fail-fast: false

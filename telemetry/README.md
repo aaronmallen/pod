@@ -71,10 +71,10 @@ telemetry/
 provisions it for every contributor and CI — no `npx`, no global install.
 
 ```sh
-mise install            # provisions wrangler (and node)
-npm install             # installs typescript + vitest (dev deps)
-npm run typecheck       # tsc --noEmit
-npm test                # vitest run
+mise install            # provisions wrangler, aube (and node)
+aube install            # installs typescript + vitest (dev deps) → aube-lock.yaml
+aube run typecheck      # tsc --noEmit
+aube test               # vitest run
 ```
 
 ## Deploy runbook (maintainer, once)

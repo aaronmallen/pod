@@ -2,7 +2,7 @@
 title: Settings
 section: Reference
 order: 1
-description: Configure Pod from the Settings window. Covers Accessibility, Features, Storage, Tags, User Interface, and Industry, with per-category resets and an About tab covering version and license.
+description: Configure Pod from the Settings window across Accessibility, Features, Industry, MCP, Storage, Tags, Telemetry, and User Interface. Each category resets on its own, and an About tab carries the version and license.
 ---
 
 # Settings
@@ -14,11 +14,12 @@ viewing, so resetting Features leaves Storage untouched, and resetting
 Accessibility leaves your tags alone.
 
 A left pane lists the categories: Accessibility, Features, MCP, Storage, Tags,
-and User Interface. Industry appears in that list only when the Industry feature
-is turned on, between Features and MCP. About sits by itself at the bottom of the
-pane, fenced off from the working categories. Each category shows a small badge
-that summarizes its current state, so you can read the gist without opening the
-tab. The active category is marked with a plasma indicator bar.
+Telemetry, and User Interface. Industry appears in that list only when the
+Industry feature is turned on, between Features and MCP. About sits by itself at
+the bottom of the pane, fenced off from the working categories. Each category
+shows a small badge that summarizes its current state, so you can read the gist
+without opening the tab. The active category is marked with a plasma indicator
+bar.
 
 ## About
 
@@ -216,6 +217,28 @@ over the lease. Because taking over while another instance is mid-write can lose
 unsaved changes, Pod gates the take-over behind a confirmation before it breaks
 the lock.
 
+### Exporting and importing your data
+
+The Storage tab also moves your whole Pod between machines. "Export data"
+bundles the database and your settings into a single `.zip` you can archive or
+copy elsewhere. The archive holds a WAL-checkpointed `pod.db` snapshot, your
+`config.toml`, a machine-readable `manifest.json`, and a human-readable
+`MANIFEST.txt`. Pod suggests a name with a `pod-data-` prefix and the build
+timestamp, such as `pod-data-20260625T143000Z.zip`. The button reads
+"Preparing archive…" while the snapshot is taken and zipped.
+
+"Import data" restores a database and settings from a `.zip` you exported
+before. Pod reads and checks the archive first, so a corrupt one or one made by
+a newer major version of Pod is refused before anything is touched. A valid
+archive opens a "Replace this machine's data?" confirm modal. The modal shows
+where the archive came from and its Pod version, warns that the import replaces
+the current database, and notes that Pod backs up the current database first,
+then closes so you can reopen to apply. An archive from an older Pod is allowed
+and its data migrates forward on the next launch. On import Pod merges the
+archived `config.toml` into your settings rather than copying it over, so your
+local identity and storage paths stay as they are on this machine. This is
+separate from the log export below.
+
 ### Exporting logs
 
 Use the log export when you need to send diagnostics. The "Verbosity" control
@@ -229,16 +252,21 @@ written.
 
 ## Tags
 
-The Tags tab manages the custom labels you attach to characters, including each
-tag's color and order. The category badge counts how many tags have a color
-assigned.
+The Tags tab manages the custom labels you attach to things, with each tag's
+color and order. It holds two separate registries, switched by a tab strip at
+the top: "Tags" for the labels you put on characters, and "Asset tags" for the
+labels you put on assets. The two registries never mix; a name or color in one
+has nothing to do with the other. The asset registry ships empty, so any
+keep-or-sell labels you see are examples you would create yourself. The category
+badge counts how many tags have a color assigned, summed across both registries.
 
 ![The Tags tab with the tag list, color swatches, and sort controls](/docs/img/settings/tags.png)
 
-Create a tag by typing its name into the "Create a tag…" field and clicking
-"Add"; the Add button is active only when the field has text, and the field
-clears after you add the tag. Rename a tag by clicking its name in the list,
-which opens an inline editor; type the new name and press Enter or click away to
+The controls below work the same in either registry. Create a tag by typing its
+name into the "Create a tag…" field and clicking "Add"; the Add button is active
+only when the field has text, and the field clears after you add the tag. Rename
+a tag by clicking its name in the list, which opens an inline editor; type the
+new name and press Enter or click away to
 save. A name that duplicates an existing tag (ignoring case) is rejected and the
 rename is cancelled. Delete a tag with the × button at the end of its row.
 
@@ -254,6 +282,96 @@ uncolored tags last. A filter field narrows the list by name. You can drag a tag
 row to reorder it, but only in Manual sort with no filter active; otherwise the
 tab shows "Reorder disabled in sorted view" or "Reorder disabled while
 filtering".
+
+## Telemetry
+
+The Telemetry tab controls the anonymous, opt-out usage data Pod can send so the
+project knows what to build next and can catch crashes in the wild. The data is
+anonymous and never tied to you. The category badge reads "Sharing" when the
+master switch is on and "Off" when it is off; there is no middle reading, even
+when you have turned some streams off.
+
+![the telemetry tab with the master switch, stream toggles, and the live preview](/docs/img/settings/telemetry.png)
+
+The "Share anonymous usage data" master switch is on by default. Your choice is
+remembered and applies across every Pod window. Turn it off to opt out: nothing
+is collected, batched, or sent, and the four stream toggles below freeze. They
+keep their stored values while frozen, so flipping the master back on returns
+them to where you left them.
+
+Four data streams sit under the master switch, all on by default, and each one
+can be left out of every batch on its own. "Usage events" records which views
+you open and which feature toggles you flip, as names and counts only, never the
+contents of a view; the names are fixed route and feature tokens, never free
+text. "Performance metrics" records view load times, render and frame timing,
+and memory headroom. "Crash reports" records the stack trace and the surrounding
+log lines when Pod hits an unhandled error, with file paths stripped back to the
+app root. "Environment" records the operating system, its major version, the
+architecture, the display resolution, and your language locale.
+
+A "Never collected" list marks the hard boundary of what the pipeline can send.
+It holds whether telemetry is on or off, and it covers your character, corp, or
+alliance names; ESI tokens, API keys, or the MCP bearer token; wallet balances,
+transactions, or any ISK figure; mail subjects, bodies, or recipients; asset
+contents, fittings, or locations; and your IP address, which is dropped at
+ingest and never stored.
+
+A "What gets sent" panel shows the exact JSON batch Pod would post right now,
+and it updates as you flip the stream toggles. A disabled stream is left out of
+the object entirely rather than sent as an empty value. Toggling "Crash reports"
+does not change this preview: crash reports are buffered to disk and delivered
+on the next launch, never inside a live session batch, so they never appear in a
+session payload. With every stream on, the batch looks like this:
+
+```json
+{
+  "schema": 1,
+  "kind": "session",
+  "id": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "session": "s_1a2b3c4d",
+  "app": {
+    "version": "0.6.6",
+    "git_sha": "2364bc8c",
+    "build_date": "2026-06-20"
+  },
+  "sent_at": "2026-06-25T14:32:08Z",
+  "streams": {
+    "usage": {
+      "events": [
+        { "t": "2026-06-25T14:30:01Z", "kind": "view_open", "name": "wallet" },
+        {
+          "t": "2026-06-25T14:31:02Z",
+          "kind": "feature_toggle",
+          "name": "skills.plan_optimizer",
+          "on": true
+        }
+      ]
+    },
+    "performance": {
+      "views": [
+        { "name": "wallet", "load_ms": 142, "frame_p95_ms": 11 }
+      ],
+      "heap_mb": 84
+    },
+    "environment": {
+      "os": "macos",
+      "os_version": "15",
+      "arch": "aarch64",
+      "display": "2560x1440",
+      "locale": "en"
+    }
+  }
+}
+```
+
+The Pod version rides in the `app` block, so the "Environment" stream does not
+repeat it. The `id` is an anonymous sha256 install handle so repeat sessions
+group together; it names nothing about you. The tab shows it read-only on an
+"Install id" card. It is derived from this install rather than stored, so it
+cannot be reset and never lands on disk.
+
+"Reset to defaults" on this category restores all five toggles, the master and
+the four streams, back to on.
 
 ## User Interface
 

@@ -18,6 +18,7 @@ static LAYOUT_ICON: &[u8] = include_bytes!("../../assets/images/icons/layout.svg
 static LINK_ICON: &[u8] = include_bytes!("../../assets/images/icons/link.svg");
 static MARKET_ICON: &[u8] = include_bytes!("../../assets/images/icons/market.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../assets/images/icons/moon.svg");
+static PULSE_ICON: &[u8] = include_bytes!("../../assets/images/icons/pulse.svg");
 static SETTINGS_ICON: &[u8] = include_bytes!("../../assets/images/icons/settings.svg");
 static SKILLS_ICON: &[u8] = include_bytes!("../../assets/images/icons/skills.svg");
 static STAR_ICON: &[u8] = include_bytes!("../../assets/images/icons/star.svg");
@@ -255,6 +256,12 @@ static SECTIONS: &[Section] = &[
         icon: STAR_ICON,
         id: "tags",
         label: "Tags",
+        route: None,
+      },
+      SubSection {
+        icon: PULSE_ICON,
+        id: "telemetry",
+        label: "Telemetry",
         route: None,
       },
       SubSection {
@@ -563,6 +570,7 @@ mod tests {
           settings::Category::Mcp => Some("mcp"),
           settings::Category::Storage => Some("storage"),
           settings::Category::Tags => Some("tags"),
+          settings::Category::Telemetry => Some("telemetry"),
           settings::Category::Ui => Some("ui"),
         }
       }
@@ -574,6 +582,7 @@ mod tests {
         settings::Category::Mcp,
         settings::Category::Storage,
         settings::Category::Tags,
+        settings::Category::Telemetry,
         settings::Category::Ui,
         settings::Category::About,
       ];

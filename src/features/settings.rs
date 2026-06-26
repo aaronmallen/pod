@@ -7,6 +7,7 @@ pub mod log_export;
 pub mod mcp_tab;
 pub mod storage_tab;
 pub mod tags_tab;
+pub mod telemetry_tab;
 pub mod ui_tab;
 
 use chrono::{DateTime, Utc};
@@ -40,6 +41,7 @@ pub enum Category {
   Mcp,
   Storage,
   Tags,
+  Telemetry,
   Ui,
 }
 
@@ -53,6 +55,7 @@ impl Category {
       "mcp" => Some(Category::Mcp),
       "storage" => Some(Category::Storage),
       "tags" => Some(Category::Tags),
+      "telemetry" => Some(Category::Telemetry),
       "ui" => Some(Category::Ui),
       _ => None,
     }
@@ -69,6 +72,7 @@ impl Category {
     categories.push(Category::Mcp);
     categories.push(Category::Storage);
     categories.push(Category::Tags);
+    categories.push(Category::Telemetry);
     categories.push(Category::Ui);
     categories
   }
@@ -82,6 +86,7 @@ impl Category {
       Category::Mcp => "mcp",
       Category::Storage => "storage",
       Category::Tags => "tags",
+      Category::Telemetry => "telemetry",
       Category::Ui => "ui",
     }
   }
@@ -95,6 +100,7 @@ impl Category {
       Category::Mcp => "MCP",
       Category::Storage => "Storage",
       Category::Tags => "Tags",
+      Category::Telemetry => "Telemetry",
       Category::Ui => "User Interface",
     }
   }
@@ -111,6 +117,7 @@ impl Category {
       Category::Mcp => Icon::link(),
       Category::Storage => Icon::archive(),
       Category::Tags => Icon::star(),
+      Category::Telemetry => Icon::pulse(),
       Category::Ui => Icon::layout(),
     }
   }
@@ -127,6 +134,7 @@ pub enum Message {
   ResetToDefaults,
   Storage(storage_tab::Message),
   Tags(tags_tab::Message),
+  Telemetry(telemetry_tab::Message),
   Ui(ui_tab::Message),
 }
 
@@ -167,6 +175,7 @@ pub struct State {
   settings: Settings,
   storage: storage_tab::State,
   tags: tags_tab::State,
+  telemetry: telemetry_tab::State,
   ui: ui_tab::State,
 }
 
@@ -178,6 +187,7 @@ impl State {
     let mcp = mcp_tab::State::from_settings(&settings);
     let storage = storage_tab::State::from_settings(&settings);
     let tags = tags_tab::State::new(db.clone());
+    let telemetry = telemetry_tab::State::from_settings(&settings);
     let ui = ui_tab::State::from_settings(&settings);
     State {
       accessibility,
@@ -189,6 +199,7 @@ impl State {
       settings,
       storage,
       tags,
+      telemetry,
       ui,
     }
   }
@@ -275,6 +286,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       let (outcome, task) = tags_tab::update(&mut state.tags, msg);
       (outcome, task.map(Message::Tags))
     }
+    Message::Telemetry(msg) => (
+      telemetry_tab::update(&mut state.telemetry, msg, &mut state.settings),
+      Task::none(),
+    ),
     Message::Ui(msg) => (ui_tab::update(&mut state.ui, msg, &mut state.settings), Task::none()),
     Message::ResetToDefaults => {
       let active = state.active;
@@ -321,6 +336,10 @@ fn reset_active(state: &mut State) {
       state.mcp = mcp_tab::State::from_settings(&state.settings);
     }
     Category::Storage => *state.settings.storage_mut() = defaults.storage().clone(),
+    Category::Telemetry => {
+      *state.settings.telemetry_mut() = *defaults.telemetry();
+      state.telemetry = telemetry_tab::State::from_settings(&state.settings);
+    }
     Category::Ui => *state.settings.ui_mut() = defaults.ui().clone(),
     Category::Tags | Category::About => {}
   }
@@ -553,6 +572,7 @@ fn badge_for(state: &State, category: Category) -> String {
     Category::Mcp => mcp_tab::badge(&state.settings),
     Category::Storage => storage_tab::badge(&state.settings),
     Category::Tags => tags_tab::badge(&state.tags),
+    Category::Telemetry => telemetry_tab::badge(&state.settings),
     Category::Ui => ui_tab::badge(&state.settings),
   }
 }
@@ -577,6 +597,7 @@ fn active_panel(state: &State) -> Element<'_, Message> {
     Category::Mcp => mcp_tab::view(&state.mcp, &state.settings).map(Message::Mcp),
     Category::Storage => storage_tab::view(&state.storage, &state.settings).map(Message::Storage),
     Category::Tags => tags_tab::view(&state.tags, &state.settings).map(Message::Tags),
+    Category::Telemetry => telemetry_tab::view(&state.telemetry, &state.settings).map(Message::Telemetry),
     Category::Ui => ui_tab::view(&state.ui, &state.settings).map(Message::Ui),
   }
 }
@@ -628,6 +649,7 @@ mod tests {
       Category::Mcp,
       Category::Storage,
       Category::Tags,
+      Category::Telemetry,
       Category::Ui,
     ];
 
@@ -638,6 +660,7 @@ mod tests {
     assert_eq!(Category::Mcp.id(), "mcp");
     assert_eq!(Category::Storage.id(), "storage");
     assert_eq!(Category::Tags.id(), "tags");
+    assert_eq!(Category::Telemetry.id(), "telemetry");
     assert_eq!(Category::Ui.id(), "ui");
 
     for category in categories {
@@ -655,6 +678,7 @@ mod tests {
       Category::Mcp,
       Category::Storage,
       Category::Tags,
+      Category::Telemetry,
       Category::Ui,
     ];
 
@@ -765,6 +789,26 @@ mod tests {
     let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
 
     assert_eq!(outcome, Outcome::Persist);
+  }
+
+  #[tokio::test]
+  async fn reset_on_telemetry_restores_every_stream_to_on() {
+    let mut state = state().await;
+    state.settings.telemetry_mut().set_enabled(false);
+    state.settings.telemetry_mut().set_usage(false);
+    state.settings.telemetry_mut().set_performance(false);
+    state.settings.telemetry_mut().set_crashes(false);
+    state.settings.telemetry_mut().set_environment(false);
+    state.active = Category::Telemetry;
+
+    let (outcome, _task) = update(&mut state, Message::ResetToDefaults);
+
+    assert_eq!(outcome, Outcome::Persist);
+    assert!(*state.settings.telemetry().enabled());
+    assert!(*state.settings.telemetry().usage());
+    assert!(*state.settings.telemetry().performance());
+    assert!(*state.settings.telemetry().crashes());
+    assert!(*state.settings.telemetry().environment());
   }
 
   #[tokio::test]

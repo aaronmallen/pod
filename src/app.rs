@@ -28,7 +28,9 @@ use crate::{
   features::{
     assets, calendar, contract_detail, focus_search, industry, mail, registry, roster,
     roster::{OwnedPilot, auth, character_detail, corporation_detail, killmail_detail},
-    settings, skill_plan_editor, skill_plan_manager, skills, skills_compare, splash, wallet,
+    settings, skills,
+    skills::{skill_plan_editor, skill_plan_manager, skills_compare},
+    splash, wallet,
   },
   mcp, notifications,
   services::{crash, images, telemetry, updater},

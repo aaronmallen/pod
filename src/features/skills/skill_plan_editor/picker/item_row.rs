@@ -10,7 +10,7 @@ use crate::ui::style::{color, spacing, typography};
 const MASTERY_LABELS: [&str; 5] = ["I", "II", "III", "IV", "V"];
 const PROFICIENCY_LABELS: [&str; 4] = ["Basic", "Std", "Adv", "Elite"];
 
-pub(in crate::features::skill_plan_editor) fn ship_row<'a>(
+pub(in crate::features::skills::skill_plan_editor) fn ship_row<'a>(
   ship_id: i64,
   name: &'a str,
   selected_tier: u8,
@@ -31,7 +31,7 @@ pub(in crate::features::skill_plan_editor) fn ship_row<'a>(
   item_row(name, chips, Message::PickerShipSelected(ship_id, selected_tier))
 }
 
-pub(in crate::features::skill_plan_editor) fn cert_row<'a>(
+pub(in crate::features::skills::skill_plan_editor) fn cert_row<'a>(
   cert_id: i64,
   name: &'a str,
   selected_prof: usize,
@@ -51,7 +51,10 @@ pub(in crate::features::skill_plan_editor) fn cert_row<'a>(
   item_row(name, chips, Message::PickerCertSelected(cert_id, selected_prof))
 }
 
-pub(in crate::features::skill_plan_editor) fn module_row<'a>(module_id: i64, name: &'a str) -> Element<'a, Message> {
+pub(in crate::features::skills::skill_plan_editor) fn module_row<'a>(
+  module_id: i64,
+  name: &'a str,
+) -> Element<'a, Message> {
   item_row(name, Vec::new(), Message::PickerModuleSelected(module_id))
 }
 

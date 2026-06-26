@@ -10,7 +10,7 @@ use crate::ui::{
   style::{color, spacing, typography},
 };
 
-pub(in crate::features::skill_plan_editor) fn group_header(
+pub(in crate::features::skills::skill_plan_editor) fn group_header(
   id: i64,
   name: &str,
   trained_count: usize,

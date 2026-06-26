@@ -8,7 +8,7 @@ use crate::ui::{
 
 const TAB_HEIGHT: f32 = 40.0;
 
-pub(in crate::features::skill_plan_editor) fn tabs<'a>(active: PickerTab) -> Element<'a, Message> {
+pub(in crate::features::skills::skill_plan_editor) fn tabs<'a>(active: PickerTab) -> Element<'a, Message> {
   let tabs: Vec<Tab<'a, Message>> = PickerTab::ALL
     .iter()
     .map(|&tab| Tab {

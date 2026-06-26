@@ -21,13 +21,11 @@ use picker::PickerState;
 
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp_compact as fmt_sp};
 use crate::{
-  features::{
+  features::skills::{
+    browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
+    optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
+    plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
     skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
-    skills::{
-      browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
-      optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
-      plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
-    },
   },
   store::{
     Database,
@@ -3099,7 +3097,7 @@ mod tests {
     fn state_with_catalog() -> State {
       let mut state = State::new(42);
       state.picker = PickerState {
-        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
+        active_tab: crate::features::skills::skill_plan_editor::picker::PickerTab::Skills,
         catalog: Some(SkillCatalog {
           groups: vec![SkillCatalogGroup {
             id: 255,
@@ -3619,7 +3617,7 @@ mod tests {
     fn state_with_catalog(skills: Vec<SkillCatalogEntry>) -> State {
       let mut state = State::new(42);
       state.picker = PickerState {
-        active_tab: crate::features::skill_plan_editor::picker::PickerTab::Skills,
+        active_tab: crate::features::skills::skill_plan_editor::picker::PickerTab::Skills,
         catalog: Some(SkillCatalog {
           groups: vec![SkillCatalogGroup {
             id: 255,
@@ -3654,7 +3652,7 @@ mod tests {
     }
 
     fn state_with_items(skills: Vec<SkillCatalogEntry>) -> State {
-      use crate::features::skill_plan_editor::picker::{PickerCert, PickerShip};
+      use crate::features::skills::skill_plan_editor::picker::{PickerCert, PickerShip};
 
       let mut state = state_with_catalog(skills);
       state.picker.ships = Some(vec![PickerShip {
@@ -3700,7 +3698,7 @@ mod tests {
     #[tokio::test]
     async fn adding_a_module_adds_its_required_skills_as_auto() {
       let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
-      state.picker.modules = Some(vec![crate::features::skill_plan_editor::picker::PickerModule {
+      state.picker.modules = Some(vec![crate::features::skills::skill_plan_editor::picker::PickerModule {
         id: 12_058,
         name: "125mm Gatling AutoCannon".to_owned(),
         group_id: 55,
@@ -3750,7 +3748,7 @@ mod tests {
 
     #[tokio::test]
     async fn it_locks_only_the_expanded_prereqs_pulled_behind_a_mastery_skill() {
-      use crate::features::skill_plan_editor::picker::PickerShip;
+      use crate::features::skills::skill_plan_editor::picker::PickerShip;
 
       let mut state = state_with_catalog(vec![
         catalog_entry(3300, "Gunnery", 1, vec![]),
@@ -3783,7 +3781,7 @@ mod tests {
 
     #[test]
     fn it_renders_each_non_skills_tab_loading_and_loaded_without_panicking() {
-      use crate::features::skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip, PickerTab};
+      use crate::features::skills::skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip, PickerTab};
 
       let mut state = state_with_catalog(vec![catalog_entry(3300, "Gunnery", 1, vec![])]);
       state.picker_open = true;
@@ -3941,7 +3939,7 @@ mod tests {
       }
 
       fn ship_with_two_required_skills() -> State {
-        use crate::features::skill_plan_editor::picker::PickerShip;
+        use crate::features::skills::skill_plan_editor::picker::PickerShip;
 
         let mut state = state_with_catalog(vec![
           catalog_entry(3300, "Gunnery", 1, vec![]),
@@ -3960,7 +3958,7 @@ mod tests {
 
       #[tokio::test]
       async fn it_does_not_individually_remove_a_locked_prereq_row() {
-        use crate::features::skill_plan_editor::picker::PickerShip;
+        use crate::features::skills::skill_plan_editor::picker::PickerShip;
 
         let mut state = state_with_catalog(vec![
           catalog_entry(3300, "Gunnery", 1, vec![]),
@@ -3990,7 +3988,7 @@ mod tests {
 
       #[tokio::test]
       async fn it_keeps_other_masteries_when_removing_one_masterys_wish() {
-        use crate::features::skill_plan_editor::picker::PickerShip;
+        use crate::features::skills::skill_plan_editor::picker::PickerShip;
 
         let mut state = state_with_catalog(vec![
           catalog_entry(3300, "Gunnery", 1, vec![]),
@@ -4268,7 +4266,7 @@ mod tests {
 
   mod picker_tabs {
     use super::*;
-    use crate::features::skill_plan_editor::picker::PickerTab;
+    use crate::features::skills::skill_plan_editor::picker::PickerTab;
 
     #[tokio::test]
     async fn selecting_a_tab_switches_the_active_tab() {

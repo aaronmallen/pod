@@ -6,7 +6,7 @@ use crate::ui::{
   style::color,
 };
 
-pub(in crate::features::skill_plan_editor) fn search_bar<'a>(
+pub(in crate::features::skills::skill_plan_editor) fn search_bar<'a>(
   query: &'a str,
   placeholder: &'a str,
 ) -> Element<'a, Message> {

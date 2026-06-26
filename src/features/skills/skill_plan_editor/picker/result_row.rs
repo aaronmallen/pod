@@ -10,7 +10,7 @@ use crate::ui::style::{color, typography};
 const PIP_WIDTH: f32 = 12.0;
 const PIP_HEIGHT: f32 = 10.0;
 
-pub(in crate::features::skill_plan_editor) fn result_row<'a>(
+pub(in crate::features::skills::skill_plan_editor) fn result_row<'a>(
   skill_id: i64,
   name: &'a str,
   rank: u8,

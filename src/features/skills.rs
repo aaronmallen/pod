@@ -9,6 +9,9 @@ mod queue;
 mod queue_section;
 pub mod queue_timing;
 mod right_panel;
+pub mod skill_plan_editor;
+pub mod skill_plan_manager;
+pub mod skills_compare;
 mod training_hero;
 mod warning_strip;
 
@@ -31,7 +34,7 @@ pub use self::{
   queue::{QueueStatus, queue_status},
   right_panel::RightTab,
 };
-pub use crate::features::skill_plan_editor::Seed as EditorSeed;
+pub use crate::features::skills::skill_plan_editor::Seed as EditorSeed;
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp};
 use crate::{
   store::{

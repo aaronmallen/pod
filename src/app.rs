@@ -1003,6 +1003,46 @@ fn blank<'a>() -> Element<'a, Message> {
     .into()
 }
 
+/// Stands up the process-global telemetry collector, returning the live `Sender` only when an
+/// ingest endpoint was baked in (release builds); everywhere else it stays a structural no-op.
+///
+/// On the live-sender branch it initializes the global collector and fire-and-forgets any buffered
+/// crash records (spec mmmzstpq §8.4). With no baked endpoint it instead deletes any stale crash
+/// buffer so a dev build never accumulates an unread crash file. Must run before `boot` shadows
+/// `settings` with the window settings.
+fn init_telemetry(settings: &config::Settings) -> Option<clients::telemetry::Sender> {
+  let sender = clients::telemetry::Endpoint::from_env()
+    .and_then(clients::telemetry::Sender::new)
+    .inspect(|sender| {
+      telemetry::init(
+        &settings.storage().machine_id().clone().unwrap_or_default(),
+        *settings.telemetry(),
+      );
+      // The sender exists here only when an endpoint was baked in, so `has_endpoint` is true.
+      if let Some(buffer) = crash::buffer_path() {
+        crash::deliver(sender, &buffer, *settings.telemetry(), true);
+      }
+    });
+
+  if sender.is_none()
+    && let Some(buffer) = crash::buffer_path()
+  {
+    let _ = std::fs::remove_file(&buffer);
+  }
+
+  sender
+}
+
+/// Publishes the update-checker's state receiver into the process-global slot the rail later reads,
+/// when an updater handle exists and the lock is uncontended. A no-op without a handle.
+fn subscribe_updater(handle: Option<&updater::Handle>) {
+  if let Some(handle) = handle
+    && let Ok(mut guard) = UPDATER_RECEIVER.lock()
+  {
+    *guard = Some(handle.subscribe());
+  }
+}
+
 fn boot() -> (App, Task<Message>) {
   let settings = config::load().unwrap_or_default();
   let accessibility = *settings.accessibility();
@@ -1010,31 +1050,7 @@ fn boot() -> (App, Task<Message>) {
   let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);
 
-  // Stand up the process-global telemetry collector only when the ingest endpoint
-  // was baked in (release builds); everywhere else it stays a structural no-op.
-  // Built here, before `settings` is shadowed by the window settings below.
-  let telemetry = clients::telemetry::Endpoint::from_env()
-    .and_then(clients::telemetry::Sender::new)
-    .inspect(|sender| {
-      telemetry::init(
-        &settings.storage().machine_id().clone().unwrap_or_default(),
-        *settings.telemetry(),
-      );
-      // Crash next-launch delivery (spec mmmzstpq §8.4): fire-and-forget the
-      // buffered crash records. The sender exists here only when an endpoint was
-      // baked in, so `has_endpoint` is true on this branch.
-      if let Some(buffer) = crash::buffer_path() {
-        crash::deliver(sender, &buffer, *settings.telemetry(), true);
-      }
-    });
-
-  // Even with no baked endpoint (dev builds), proactively delete any stale crash
-  // buffer so a dev build never accumulates an unread crash file (§8.4).
-  if telemetry.is_none()
-    && let Some(buffer) = crash::buffer_path()
-  {
-    let _ = std::fs::remove_file(&buffer);
-  }
+  let telemetry = init_telemetry(&settings);
 
   auth::install();
   let settings = window::Settings {
@@ -1052,11 +1068,7 @@ fn boot() -> (App, Task<Message>) {
   registry.register(id, Window::Splash);
 
   let updater = updater::Config::from_env().map(updater::spawn);
-  if let Some(handle) = &updater
-    && let Ok(mut guard) = UPDATER_RECEIVER.lock()
-  {
-    *guard = Some(handle.subscribe());
-  }
+  subscribe_updater(updater.as_ref());
 
   let app = App {
     accessibility,
@@ -7348,6 +7360,29 @@ mod tests {
     }
   }
 
+  mod boot {
+    use super::*;
+
+    #[test]
+    fn init_telemetry_stays_a_no_op_without_a_baked_endpoint() {
+      // Tests carry no baked ingest endpoint, so `Endpoint::from_env` is `None` and the collector
+      // stays a structural no-op; the function still returns cleanly down its dev-build branch.
+      let settings = config::Settings::default();
+
+      assert!(
+        init_telemetry(&settings).is_none(),
+        "with no baked endpoint the telemetry sender is never built"
+      );
+    }
+
+    #[test]
+    fn subscribe_updater_is_a_no_op_without_a_handle() {
+      // No updater handle means nothing is published into the global receiver slot; the call must
+      // simply return without touching the lock's contents.
+      subscribe_updater(None);
+    }
+  }
+
   mod build_sync_esi {
     use super::*;
     use crate::store::{model::HttpCacheEntry, repo::infra};
@@ -9191,6 +9226,43 @@ mod tests {
       );
 
       assert!(app.settings.is_none());
+    }
+
+    #[tokio::test]
+    async fn handle_settings_mirrors_an_mcp_change_onto_the_runtime() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Mcp(settings::mcp_tab::Message::EnabledToggled(true)),
+      );
+
+      assert!(
+        *app.runtime.as_ref().unwrap().settings.mcp().enabled(),
+        "an MCP toggle is mirrored onto the runtime settings so the server reconciles live"
+      );
+      assert!(app.settings.is_some(), "an MCP change leaves the settings screen open");
+    }
+
+    #[tokio::test]
+    async fn handle_settings_requests_a_data_export_through_the_diagnostics() {
+      let runtime = test_runtime().await;
+      let mut app = test_app();
+      app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
+      app.runtime = Some(runtime);
+
+      let _ = handle_settings(
+        &mut app,
+        settings::Message::Storage(settings::storage_tab::Message::RequestDataExport),
+      );
+
+      assert!(
+        app.settings.is_some(),
+        "requesting a data export leaves the settings screen open and routes the export task"
+      );
     }
 
     #[test]
@@ -13969,6 +14041,96 @@ mod tests {
       );
 
       assert_eq!(window_title(&app, id), "Pod — New message");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_event_title_before_the_state_loads() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::CalendarEvent);
+
+      assert_eq!(window_title(&app, id), "Pod \u{2014} Event");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_compose_title_before_the_draft_loads() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::MailCompose);
+
+      assert_eq!(window_title(&app, id), "Pod — Compose Mail");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_contract_title_without_a_registered_detail() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Contract);
+
+      assert_eq!(window_title(&app, id), "Pod \u{2014} Contract");
+    }
+
+    #[test]
+    fn it_titles_a_killmail_window_from_its_loaded_state() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Killmail);
+      app.killmails.insert(
+        id,
+        killmail_detail::State::new(
+          killmail_detail::Source::Character {
+            character_id: 42,
+          },
+          100,
+        ),
+      );
+
+      assert_eq!(window_title(&app, id), "Pod — Killmail #100");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_killmail_title_without_a_registered_state() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Killmail);
+
+      assert_eq!(window_title(&app, id), "Pod — Killmail");
+    }
+
+    #[test]
+    fn it_titles_the_manage_plans_window() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::ManagePlans);
+
+      assert_eq!(window_title(&app, id), "Pod — Manage Skill Plans");
+    }
+
+    #[test]
+    fn it_titles_the_skill_plan_editor_window() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::SkillPlanEditor);
+
+      assert_eq!(window_title(&app, id), "Pod — Skill Plan Editor");
+    }
+
+    #[test]
+    fn it_titles_the_splash_window_with_the_bare_app_name() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::Splash);
+
+      assert_eq!(window_title(&app, id), "Pod");
+    }
+
+    #[test]
+    fn it_falls_back_to_a_generic_stockpile_editor_title_without_a_registered_editor() {
+      let mut app = test_app();
+      let id = window::Id::unique();
+      app.windows.register(id, Window::StockpileEditor);
+
+      assert_eq!(window_title(&app, id), "Pod \u{2014} Stockpile Editor");
     }
   }
 

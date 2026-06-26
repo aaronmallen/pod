@@ -24,6 +24,7 @@ markdownlint-cli2 = "latest"
 "npm:@colbymchenry/codegraph" = "latest"
 shfmt = "latest"
 taplo = "latest"
+wrangler = "latest"
 yamlfmt = "latest"
 yq = "latest"
 

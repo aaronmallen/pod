@@ -1,0 +1,19 @@
+{
+  "name": "pod-telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker + D1 ingest backend for pod anonymous opt-out telemetry (spec mmmzstpq §9).",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250601.0",
+    "@types/node": "^22.20.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0",
+    "wrangler": "^3.60.0"
+  }
+}

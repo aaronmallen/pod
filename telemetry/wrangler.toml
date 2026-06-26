@@ -1,0 +1,25 @@
+name = "pod-telemetry"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+workers_dev = false
+
+[[routes]]
+pattern = "pod.aaronmallen.dev/telemetry/*"
+zone_name = "aaronmallen.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pod-telemetry"
+database_id = "REPLACE_AFTER_d1_create"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["0 4 * * *"]
+
+[vars]
+# Parsed as an integer in index.ts via Number(env.SCHEMA_VERSION).
+SCHEMA_VERSION = "1"
+
+# Secrets (NEVER in this file):
+#   wrangler secret put POD_TELEMETRY_KEY    -- the active write-key
+#   wrangler secret put POD_TELEMETRY_KEYS   -- optional comma-separated rotation set (§9.6)

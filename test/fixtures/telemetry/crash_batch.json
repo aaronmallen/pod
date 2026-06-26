@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "kind": "crash",
+  "id": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "session": "s_9f2a1b3c",
+  "app": {
+    "version": "0.9.3",
+    "git_sha": "b241311d",
+    "build_date": "2026-06-18"
+  },
+  "sent_at": "2026-06-25T08:01:55Z",
+  "streams": {
+    "crashes": {
+      "reports": [
+        {
+          "crashed_at": "2026-06-24T22:14:03Z",
+          "message": "called `Option::unwrap()` on a `None` value",
+          "location": "src/features/wallet.rs:412",
+          "backtrace": [
+            "pod::features::wallet::reconcile",
+            "pod::app::update",
+            "iced_runtime::program::run"
+          ],
+          "context_log": [
+            "{\"level\":\"INFO\",\"target\":\"pod::nav\",\"message\":\"navigated\"}",
+            "{\"level\":\"INFO\",\"target\":\"pod::updater\",\"message\":\"checked for updates\"}"
+          ]
+        }
+      ]
+    }
+  }
+}

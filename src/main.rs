@@ -9,6 +9,7 @@ mod notifications;
 mod services;
 mod store;
 mod sync;
+mod telemetry_contract;
 mod ui;
 mod window_state;
 

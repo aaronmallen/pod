@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "kind": "session",
+  "id": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "session": "s_1a2b3c4d",
+  "app": {
+    "version": "0.9.4",
+    "git_sha": "2364bc8c",
+    "build_date": "2026-06-20"
+  },
+  "sent_at": "2026-06-25T14:32:08Z",
+  "streams": {
+    "usage": {
+      "events": [
+        {
+          "t": "2026-06-25T14:30:01Z",
+          "kind": "view_open",
+          "name": "wallet"
+        },
+        {
+          "t": "2026-06-25T14:31:02Z",
+          "kind": "feature_toggle",
+          "name": "skills.plan_optimizer",
+          "on": true
+        }
+      ]
+    },
+    "performance": {
+      "views": [
+        {
+          "name": "wallet",
+          "load_ms": 142,
+          "frame_p95_ms": 11
+        }
+      ],
+      "heap_mb": 84
+    },
+    "environment": {
+      "os": "macos",
+      "os_version": "15",
+      "arch": "aarch64",
+      "display": "2560x1440",
+      "locale": "en"
+    }
+  }
+}

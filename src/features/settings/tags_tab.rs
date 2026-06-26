@@ -14,7 +14,12 @@ use crate::{
   },
   ui::{
     components::{
-      backdrop, chip, color_picker, icon::Icon, modal_overlay::modal_overlay, rule, status, text_input::TextInput,
+      backdrop, chip, color_picker,
+      icon::Icon,
+      modal_overlay::modal_overlay,
+      rule, status,
+      tab_select::{Tab as SelectTab, TabLayout, tab_select_with},
+      text_input::TextInput,
     },
     style::{color, radius, spacing, typography},
   },
@@ -79,6 +84,7 @@ pub enum Message {
     hex: String,
     tag_id: i64,
   },
+  RegistrySelected(Registry),
   RemoveTag(i64),
   Saved(Result<(), String>),
   SortSelected(SortMode),
@@ -91,6 +97,15 @@ pub enum Message {
 pub struct Loaded {
   asset_tags: Vec<Tag>,
   tags: Vec<Tag>,
+}
+
+// Which registry the tabbed layout is currently showing. The two registries never mix, so the tab selector
+// swaps the whole body between them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Registry {
+  Asset,
+  #[default]
+  Entity,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -158,6 +173,7 @@ impl Section {
 
 #[derive(Debug, Default)]
 pub struct State {
+  active: Registry,
   asset: Section,
   cursor: Option<Point>,
   db: Option<Database>,
@@ -195,41 +211,11 @@ fn color_sort_key(tag: &Tag) -> (bool, String, String) {
   }
 }
 
-// The disposition vocabulary seeded into the asset-tag registry on first run. (name, color) — colored
-// entries get a default swatch; the rest seed uncolored.
-const ASSET_TAG_SEEDS: &[(&str, Option<&str>)] = &[
-  ("Keep", Some("#5BB97E")),
-  ("Sell", Some("#D9B252")),
-  ("Reprocess", Some("#3FB8DB")),
-  ("Reship", None),
-  ("Contract", None),
-  ("Hauling", None),
-  ("Loot", None),
-  ("Junk", Some("#E07559")),
-  ("Research", None),
-];
-
-// Seeds the asset-tag registry with the default disposition vocabulary exactly once. The persisted marker
-// means deleting a seeded default never resurrects it on the next launch.
-pub async fn seed_asset_tags(db: &Database) -> Result<(), crate::store::Error> {
-  if infra::is_tag_scope_seeded(db, TAG_SCOPE_ASSET).await? {
-    return Ok(());
-  }
-
-  for (name, color) in ASSET_TAG_SEEDS {
-    infra::create_scoped(db, name, None, *color, TAG_SCOPE_ASSET).await?;
-  }
-
-  infra::mark_tag_scope_seeded(db, TAG_SCOPE_ASSET).await?;
-  Ok(())
-}
-
 pub fn load(db: &Database) -> iced::Task<Message> {
   iced::Task::perform(load_tags(db.clone()), Message::Loaded)
 }
 
 async fn load_tags(db: Database) -> Result<Loaded, String> {
-  seed_asset_tags(&db).await.map_err(|err| err.to_string())?;
   let tags = infra::tag_all(&db).await.map_err(|err| err.to_string())?;
   let asset_tags = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET)
     .await
@@ -283,6 +269,10 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Messa
     } => {
       state.entity.picker = None;
       recolor(&state.db, &state.entity, tag_id, Some(hex))
+    }
+    Message::RegistrySelected(registry) => {
+      state.active = registry;
+      iced::Task::none()
     }
     Message::RemoveTag(tag_id) => remove_tag(&state.db, &mut state.entity, tag_id),
     Message::Saved(result) => saved(state, result),
@@ -655,23 +645,24 @@ const ASSET_MSGS: Msgs = Msgs {
 };
 
 pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Message> {
-  let sections = Column::with_children(vec![
-    section_block(
+  let active_block = match state.active {
+    Registry::Entity => section_block(
       &state.entity,
       &ENTITY_MSGS,
       "Tags",
       "Assign a color to any tag and it'll render that way everywhere it appears on a character card. \
         Drag rows to reorder; tags use their manual order on character cards.",
     ),
-    section_block(
+    Registry::Asset => section_block(
       &state.asset,
       &ASSET_MSGS,
       "Asset tags",
       "A separate vocabulary for tagging assets \u{2014} keep, sell, reprocess, and the rest. \
-        These never mix with the character tags above. Drag rows to reorder.",
+        These never mix with the character tags. Drag rows to reorder.",
     ),
-  ])
-  .width(Length::Fill);
+  };
+
+  let sections = Column::with_children(vec![registry_tabs(state), active_block]).width(Length::Fill);
 
   let scroll = scrollable(container(sections).width(Length::Fill).padding(Padding {
     top: 0.0,
@@ -686,9 +677,49 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
   let body = container(scroll).width(Length::Fill).height(Length::Fill);
   let base: Element<'a, Message> = mouse_area(body).on_move(Message::CursorMoved).into();
 
-  match open_picker(&state.entity, &ENTITY_MSGS).or_else(|| open_picker(&state.asset, &ASSET_MSGS)) {
+  let picker = match state.active {
+    Registry::Entity => open_picker(&state.entity, &ENTITY_MSGS),
+    Registry::Asset => open_picker(&state.asset, &ASSET_MSGS),
+  };
+  match picker {
     Some(popover) => modal_overlay(base, None, popover),
     None => base,
+  }
+}
+
+const TAB_STRIP_HEIGHT: f32 = 44.0;
+
+// The tab selector that swaps the body between the character/entity registry and the asset registry. The two
+// never mix, so only the active registry's section renders below.
+fn registry_tabs(state: &State) -> Element<'_, Message> {
+  let tabs = vec![
+    registry_tab("Tags", state.entity.tags.len(), Registry::Entity, state.active),
+    registry_tab("Asset tags", state.asset.tags.len(), Registry::Asset, state.active),
+  ];
+
+  let strip = container(tab_select_with(tabs, TabLayout::Start))
+    .width(Length::Fill)
+    .height(Length::Fixed(TAB_STRIP_HEIGHT))
+    .padding(Padding {
+      top: 0.0,
+      right: PANEL_SIDE_PADDING,
+      bottom: 0.0,
+      left: PANEL_SIDE_PADDING,
+    });
+
+  Column::with_children(vec![strip.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn registry_tab<'a>(label: &'a str, count: usize, registry: Registry, active: Registry) -> SelectTab<'a, Message> {
+  let selected = registry == active;
+  SelectTab {
+    count: count.to_string(),
+    icon: None,
+    label,
+    on_press: (!selected).then_some(Message::RegistrySelected(registry)),
+    selected,
   }
 }
 
@@ -1321,59 +1352,8 @@ mod tests {
   }
 
   #[tokio::test]
-  async fn seed_asset_tags_seeds_the_disposition_vocabulary_into_the_asset_scope() {
+  async fn load_returns_both_registries_without_seeding_the_asset_scope() {
     use crate::store::model::{TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY};
-
-    let db = store::open_test().await.unwrap();
-
-    seed_asset_tags(&db).await.unwrap();
-
-    let asset = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap();
-    assert_eq!(
-      asset.iter().map(|t| t.name().as_str()).collect::<Vec<_>>(),
-      [
-        "Keep",
-        "Sell",
-        "Reprocess",
-        "Reship",
-        "Contract",
-        "Hauling",
-        "Loot",
-        "Junk",
-        "Research"
-      ]
-    );
-    assert_eq!(asset[0].color().as_deref(), Some("#5BB97E"));
-    assert!(infra::tag_all_scoped(&db, TAG_SCOPE_ENTITY).await.unwrap().is_empty());
-  }
-
-  #[tokio::test]
-  async fn seed_asset_tags_is_idempotent_and_a_deleted_default_stays_deleted() {
-    use crate::store::model::TAG_SCOPE_ASSET;
-
-    let db = store::open_test().await.unwrap();
-    seed_asset_tags(&db).await.unwrap();
-    let keep = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET).await.unwrap()[0].id();
-    infra::tag_delete(&db, keep).await.unwrap();
-
-    seed_asset_tags(&db).await.unwrap();
-
-    let names = infra::tag_all_scoped(&db, TAG_SCOPE_ASSET)
-      .await
-      .unwrap()
-      .into_iter()
-      .map(|t| t.name().clone())
-      .collect::<Vec<_>>();
-    assert!(
-      !names.contains(&"Keep".to_owned()),
-      "a deleted default is not resurrected"
-    );
-    assert_eq!(names.len(), 8);
-  }
-
-  #[tokio::test]
-  async fn load_seeds_the_asset_scope_and_returns_both_registries() {
-    use crate::store::model::TAG_SCOPE_ENTITY;
 
     let db = store::open_test().await.unwrap();
     infra::create_scoped(&db, "Pilot", None, None, TAG_SCOPE_ENTITY)
@@ -1387,11 +1367,23 @@ mod tests {
       ["Pilot"],
       "the entity registry is returned untouched"
     );
-    assert_eq!(
-      payload.asset_tags.first().map(|t| t.name().as_str()),
-      Some("Keep"),
-      "loading the tab seeds and returns the asset registry"
+    assert!(
+      payload.asset_tags.is_empty(),
+      "the asset registry starts empty \u{2014} nothing is prepopulated"
     );
+    let _ = TAG_SCOPE_ASSET;
+  }
+
+  #[tokio::test]
+  async fn registry_selected_swaps_the_active_tab() {
+    let mut state = State::default();
+    assert_eq!(state.active, Registry::Entity, "the entity registry is shown first");
+
+    let _ = update(&mut state, Message::RegistrySelected(Registry::Asset));
+    assert_eq!(state.active, Registry::Asset);
+
+    let _ = update(&mut state, Message::RegistrySelected(Registry::Entity));
+    assert_eq!(state.active, Registry::Entity);
   }
 
   #[tokio::test]
@@ -1637,6 +1629,8 @@ mod tests {
       assert_eq!(outcome, Outcome::None);
     };
 
+    drive(&mut state, Message::RegistrySelected(Registry::Asset));
+    drive(&mut state, Message::RegistrySelected(Registry::Entity));
     drive(&mut state, Message::NewTagChanged("Three".to_owned()));
     drive(&mut state, Message::FilterChanged("on".to_owned()));
     drive(&mut state, Message::SortSelected(SortMode::Name));
@@ -1741,9 +1735,12 @@ mod tests {
     let asset_first = state.asset.tags[0].id();
     let _ = update(&mut state, Message::ToggleColorPicker(first));
     {
+      // The entity registry is the default active tab, so its picker renders here.
       let _el: Element<'_, Message> = view(&state, &settings);
     }
 
+    // Switch to the asset registry tab and open its picker so the asset branch renders too.
+    let _ = update(&mut state, Message::RegistrySelected(Registry::Asset));
     let _ = update(&mut state, Message::AssetToggleColorPicker(asset_first));
     let _el: Element<'_, Message> = view(&state, &settings);
   }

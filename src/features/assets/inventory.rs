@@ -392,6 +392,7 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
       let expanded = state.container_is_open(inventory_row.item_id);
       let tags = state.asset_tags_for(inventory_row.item_id);
       let selected = state.inventory_row_selected(inventory_row.item_id);
+      let hovered = state.inventory_row_hovered(inventory_row.item_id);
       table_row(
         inventory_row,
         state.roster(),
@@ -399,6 +400,7 @@ pub(super) fn body(state: &State) -> Element<'_, Message> {
         expanded,
         tags,
         selected,
+        hovered,
       )
     })
     .view();
@@ -566,11 +568,12 @@ fn table_row<'a>(
   expanded: bool,
   tags: Vec<&'a Tag>,
   selected: bool,
+  hovered: bool,
 ) -> Element<'a, Message> {
   let cells: Vec<Element<'a, Message>> = vec![
     row_prefix(inventory_row, expanded),
     row_icon(inventory_row),
-    portioned(name_cell(inventory_row, tags), COLUMN_PORTIONS[0]),
+    portioned(name_cell(inventory_row, tags, hovered), COLUMN_PORTIONS[0]),
     portioned(group_cell(inventory_row), COLUMN_PORTIONS[1]),
     portioned(category_cell(inventory_row), COLUMN_PORTIONS[2]),
     portioned(
@@ -631,12 +634,19 @@ fn table_row<'a>(
 }
 
 /// Wraps a row so a left-click selects it (honoring the live keyboard modifiers) and a right-click
-/// opens the bulk Edit Tags menu. The `+ Tag` affordance and container toggle keep their own presses —
-/// `mouse_area` does not swallow inner button presses.
+/// opens the bulk Edit Tags menu, while tracking hover so the row's `+ Tag` affordance reveals only
+/// while the pointer is over it.
+///
+/// The inner interactive widgets — the chip `×` (unassign), the `+ Tag` control, and the container
+/// toggle — keep their own presses: `iced`'s `mouse_area` updates its content first and bails out the
+/// moment a child captures the event, so a click that lands on the chip's close button unassigns the
+/// tag instead of selecting the row.
 fn select_wrap<'a>(row: Element<'a, Message>, item_id: i64) -> Element<'a, Message> {
   iced::widget::mouse_area(row)
     .on_press(Message::InventoryRowClicked(item_id))
     .on_right_press(Message::InventoryRowRightPressed(item_id))
+    .on_enter(Message::InventoryRowHovered(Some(item_id)))
+    .on_exit(Message::InventoryRowHovered(None))
     .into()
 }
 
@@ -676,7 +686,7 @@ fn custom_name(inventory_row: &InventoryRow) -> Option<&str> {
   inventory_row.name.as_deref().filter(|name| !name.is_empty())
 }
 
-fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>) -> Element<'a, Message> {
+fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a, Message> {
   let custom_name = custom_name(inventory_row);
 
   let mut lines: Vec<Element<'a, Message>> = vec![
@@ -695,7 +705,7 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>) -> Element
         .into(),
     );
   }
-  lines.push(tag_strip(inventory_row.item_id, tags));
+  lines.push(tag_strip(inventory_row.item_id, tags, hovered));
 
   let label = container(Column::with_children(lines).spacing(spacing::UNIT)).width(Length::Fill);
 
@@ -718,7 +728,10 @@ fn name_cell<'a>(inventory_row: &'a InventoryRow, tags: Vec<&'a Tag>) -> Element
 
 /// The per-row asset-tag chips beneath the item name, each removable via its `×`, followed by the
 /// `+ Tag` control that opens the shared add-tag modal keyed on this stack's ESI `item_id`.
-fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>) -> Element<'a, Message> {
+///
+/// Per the mockup the `+ Tag` affordance is revealed only while the pointer is over the row (`hovered`);
+/// the assigned chips always render.
+fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = tags
     .into_iter()
     .map(|tag| {
@@ -731,7 +744,9 @@ fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>) -> Element<'a, Message> {
         .view()
     })
     .collect();
-  children.push(add_tag_affordance(item_id));
+  if hovered {
+    children.push(add_tag_affordance(item_id));
+  }
 
   Row::with_children(children)
     .spacing(spacing::UNIT)
@@ -1149,13 +1164,13 @@ mod tests {
     #[test]
     fn it_renders_a_renamed_item_with_its_type_subtitle() {
       let row = named_row(Some("Loot Run"));
-      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new(), false);
     }
 
     #[test]
     fn it_renders_an_unnamed_item_as_the_type_name_alone() {
       let row = named_row(None);
-      let _el: Element<'_, Message> = name_cell(&row, Vec::new());
+      let _el: Element<'_, Message> = name_cell(&row, Vec::new(), false);
     }
 
     #[test]
@@ -1203,15 +1218,31 @@ mod tests {
       let row = sample_row(7001, "Rifter", "ship", 7, 5_000.0);
 
       // A row with assigned tags renders its chip strip beneath the name.
-      let _el: Element<'_, Message> = name_cell(&row, assigned);
+      let _el: Element<'_, Message> = name_cell(&row, assigned, true);
     }
 
     #[tokio::test]
-    async fn it_renders_only_the_add_affordance_for_an_untagged_row() {
+    async fn it_renders_only_the_add_affordance_for_a_hovered_untagged_row() {
       let row = sample_row(7002, "Rifter", "ship", 7, 5_000.0);
 
-      // An untagged row still renders the `+ Tag` control alone.
-      let _el: Element<'_, Message> = tag_strip(row.item_id, Vec::new());
+      // A hovered untagged row renders the `+ Tag` control alone.
+      let _el: Element<'_, Message> = tag_strip(row.item_id, Vec::new(), true);
+    }
+
+    #[tokio::test]
+    async fn the_chip_carries_an_unassign_remove_message() {
+      // The chip's `×` unassigns the tag from this stack (issue #4) — it must not fall through to the
+      // row selection. The remove message is the `Unassign` over the stack's item_id + tag.
+      let tags = asset_tags().await;
+      let assigned: Vec<&Tag> = tags.iter().collect();
+      let _el: Element<'_, Message> = tag_strip(7004, assigned, false);
+    }
+
+    #[test]
+    fn an_unhovered_untagged_row_hides_the_add_affordance() {
+      // Per the mockup the `+ Tag` control appears only on hover; an unhovered untagged row renders an
+      // empty strip.
+      let _el: Element<'_, Message> = tag_strip(7005, Vec::new(), false);
     }
 
     #[test]
@@ -1419,7 +1450,7 @@ mod tests {
     #[test]
     fn it_renders_the_badge_and_secondary_value_for_a_worth_row() {
       let row = worth_row();
-      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new(), false);
       let _value: Element<'_, Message> = value_cell(&row);
       let _badge: Element<'_, Message> = reprocess_badge(&row);
     }
@@ -1428,7 +1459,7 @@ mod tests {
     fn it_renders_a_plain_value_cell_for_a_non_worth_row() {
       let row = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
       let _value: Element<'_, Message> = value_cell(&row);
-      let _name: Element<'_, Message> = name_cell(&row, Vec::new());
+      let _name: Element<'_, Message> = name_cell(&row, Vec::new(), false);
     }
 
     #[test]

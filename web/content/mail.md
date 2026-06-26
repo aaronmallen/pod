@@ -21,6 +21,22 @@ You can resize the folder pane and the message list by dragging the handles betw
 pane opens at 240 pixels and the message list at 380 pixels. Both have a minimum width so they never
 collapse. Pod saves the widths you set and restores them the next time you open the window.
 
+### Message list
+
+Pod groups the message list under date-separator headers, newest first. The relative buckets come
+first: "Today", then "Yesterday", then "This Month" for the rest of the current calendar month. Older
+mail falls under per-month headers like "June 2026" and "December 2025".
+
+The relative buckets win over the calendar buckets. A message from yesterday that fell in the previous
+calendar month still shows under "Yesterday" rather than its month header, and the headers stay
+correct across year boundaries.
+
+Each row carries a time label that matches its bucket. Mail from today or yesterday shows a clock time
+like `09:07`. Older mail in the current year shows a short date like `Jun 18`, and mail from a prior
+year shows the year too, like `Dec 2 2025`.
+
+Search results use the same headers, so a search reads the same way as a folder.
+
 ## Folders
 
 The folder pane is split into two sections. At the top, **All Inboxes** combines the inboxes of every
@@ -100,7 +116,9 @@ permanently on EVE's side, Pod restores the message from a snapshot it took befo
 
 Start a new message and compose opens in its own detached window, separate from
 the main Pod window. You can move and resize it, and you can have more than one
-compose window open at once, so you can draft several messages in parallel.
+compose window open at once, so you can draft several messages in parallel. The
+window uses the OS-native title bar, which shows the subject once you type one
+and reads "New message" until then, so you can tell open composes apart.
 
 ![Compose window](/docs/img/mail/compose.png)
 

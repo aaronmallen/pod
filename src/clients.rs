@@ -8,6 +8,7 @@ pub mod eve_sso;
 pub mod http;
 pub mod muta_market;
 pub mod sde;
+pub mod telemetry;
 pub mod zkillboard;
 
 static USER_AGENT: LazyLock<String> = LazyLock::new(|| {

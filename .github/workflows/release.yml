@@ -103,6 +103,8 @@ jobs:
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+      POD_TELEMETRY_URL: https://pod.aaronmallen.dev/telemetry/v1/ingest
+      POD_TELEMETRY_KEY: ${{ secrets.POD_TELEMETRY_KEY }}
     steps:
       - uses: actions/checkout@v7
 
@@ -243,6 +245,8 @@ jobs:
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+      POD_TELEMETRY_URL: https://pod.aaronmallen.dev/telemetry/v1/ingest
+      POD_TELEMETRY_KEY: ${{ secrets.POD_TELEMETRY_KEY }}
     steps:
       - uses: actions/checkout@v7
 
@@ -322,6 +326,8 @@ jobs:
     env:
       PACKAGER_PUBLIC_KEY: ${{ secrets.PACKAGER_PUBLIC_KEY }}
       PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.PACKAGER_SIGN_PRIVATE_KEY }}
+      POD_TELEMETRY_URL: https://pod.aaronmallen.dev/telemetry/v1/ingest
+      POD_TELEMETRY_KEY: ${{ secrets.POD_TELEMETRY_KEY }}
     steps:
       - uses: actions/checkout@v7
 

@@ -15,5 +15,10 @@
     "typescript": "^5.9.3",
     "vitest": "^4.1.9",
     "wrangler": "^3.114.17"
+  },
+  "aube": {
+    "allowBuilds": {
+      "esbuild": true
+    }
   }
 }

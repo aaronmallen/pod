@@ -8,7 +8,7 @@ use super::{GeoNodeKey, GeoSelection, Message, Owner, Scope, State, fmt_count, f
 use crate::{
   store::{
     Database,
-    model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSystemNode, GeoTree},
+    model::asset_query::{GeoConstellationNode, GeoLocationNode, GeoRegionNode, GeoSort, GeoSystemNode, GeoTree},
     repo::assets,
   },
   ui::{
@@ -124,7 +124,9 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
         &format!("{} regions", fmt_count(tree.regions.len() as i64)),
         Some(color::text::tertiary()),
       ),
+      loc_sort_toggle(state.geo_sort()),
     ])
+    .spacing(spacing::SPACE_2)
     .width(Length::Fill)
     .align_y(Vertical::Center),
   )
@@ -159,6 +161,68 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
 
   // Track the cursor so a right-click on a saved-filter row can anchor its menu.
   mouse_area(column).on_move(Message::SidebarCursorMoved).into()
+}
+
+/// The Value / A–Z segmented toggle shown in the Locations header. The active
+/// option is highlighted in plasma; clicking the inactive one emits
+/// `LocSortSelected` to re-sort the tree.
+fn loc_sort_toggle<'a>(active: GeoSort) -> Element<'a, Message> {
+  let options = [(GeoSort::Value, "Value"), (GeoSort::Alpha, "A\u{2013}Z")];
+  let mut segments: Vec<Element<'a, Message>> = Vec::with_capacity(options.len());
+  for (mode, label) in options {
+    let selected = mode == active;
+    let text_color = if selected {
+      color::accent::PLASMA
+    } else {
+      color::text::tertiary()
+    };
+    segments.push(
+      button(
+        text(label)
+          .font(typography::mono::REGULAR)
+          .size(typography::size::XS)
+          .style(move |_| text::Style {
+            color: Some(text_color),
+          }),
+      )
+      .padding(Padding {
+        top: spacing::UNIT,
+        right: spacing::UNIT + 2.0,
+        bottom: spacing::UNIT,
+        left: spacing::UNIT + 2.0,
+      })
+      .on_press(Message::LocSortSelected(mode))
+      .style(move |_, status| {
+        let background = if selected {
+          Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12)))
+        } else if matches!(status, button::Status::Hovered) {
+          Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.04)))
+        } else {
+          None
+        };
+        button::Style {
+          background,
+          border: Border {
+            radius: 0.0.into(),
+            ..Border::default()
+          },
+          ..button::Style::default()
+        }
+      })
+      .into(),
+    );
+  }
+
+  container(Row::with_children(segments))
+    .style(|_| container::Style {
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.12),
+        width: 1.0,
+        radius: radius::SUBTLE.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn rule_divider<'a>() -> Element<'a, Message> {
@@ -1117,6 +1181,18 @@ mod tests {
       }
     }
 
+    /// A bare region with an explicit id and rolled-up value, used to assert
+    /// region-tier ordering under each sort mode.
+    fn region_with(region_id: i64, name: &str, value: f64) -> GeoRegionNode {
+      GeoRegionNode {
+        constellations: Vec::new(),
+        item_count: 1,
+        region_id,
+        region_name: name.to_owned(),
+        value,
+      }
+    }
+
     fn saved_filter(id: i64, name: &str, query: &str, category: Option<&str>) -> crate::store::model::SavedAssetFilter {
       crate::store::model::SavedAssetFilter {
         category: category.map(str::to_owned),
@@ -1211,6 +1287,70 @@ mod tests {
       });
 
       let _el: Element<'_, Message> = pane(&state);
+    }
+
+    /// "Aaa" has the lower value but the alphabetically-first name; "Zzz" is the
+    /// higher value. Each sort mode must rank them oppositely.
+    fn two_regions() -> GeoTree {
+      GeoTree {
+        orphans: Vec::new(),
+        regions: vec![
+          region_with(10_000_001, "Zzz Region", 9_000.0),
+          region_with(10_000_002, "Aaa Region", 1.0),
+        ],
+      }
+    }
+
+    #[tokio::test]
+    async fn it_orders_locations_alphabetically_when_a_to_z_is_picked() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.set_geo_tree_for_test(two_regions());
+
+      let _ = crate::features::assets::update(&mut state, Message::LocSortSelected(GeoSort::Alpha), &db);
+
+      assert_eq!(
+        state.geo_sort(),
+        GeoSort::Alpha,
+        "picking A\u{2013}Z makes Alpha the active mode"
+      );
+      assert_eq!(
+        state
+          .geo_tree()
+          .regions
+          .iter()
+          .map(|r| r.region_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Aaa Region", "Zzz Region"],
+        "A\u{2013}Z orders regions alphabetically regardless of value"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_orders_locations_by_descending_value_when_value_is_picked() {
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      state.set_geo_tree_for_test(two_regions());
+      // Flip to Alpha first so the Value pick is an observable change.
+      let _ = crate::features::assets::update(&mut state, Message::LocSortSelected(GeoSort::Alpha), &db);
+
+      let _ = crate::features::assets::update(&mut state, Message::LocSortSelected(GeoSort::Value), &db);
+
+      assert_eq!(
+        state.geo_sort(),
+        GeoSort::Value,
+        "picking Value makes Value the active mode"
+      );
+      assert_eq!(
+        state
+          .geo_tree()
+          .regions
+          .iter()
+          .map(|r| r.region_name.as_str())
+          .collect::<Vec<_>>(),
+        ["Zzz Region", "Aaa Region"],
+        "Value orders regions by rolled-up ISK descending"
+      );
     }
   }
 }

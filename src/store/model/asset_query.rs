@@ -133,6 +133,19 @@ pub struct GeoSystemNode {
   pub value: f64,
 }
 
+/// Ordering applied to every tier of the location tree.
+///
+/// `Value` ranks nodes by their rolled-up ISK descending (today's default);
+/// `Alpha` ranks them alphabetically by name. Both fall back to the node id as
+/// a deterministic tiebreaker so equal-value or equal-name nodes never reshuffle
+/// between renders.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GeoSort {
+  Alpha,
+  #[default]
+  Value,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GeoTree {
   pub orphans: Vec<GeoLocationNode>,
@@ -262,6 +275,69 @@ impl GeoTree {
       orphans,
       regions: region_nodes,
     }
+  }
+
+  /// Re-sorts every tier of the already-built tree in place to match `mode`.
+  ///
+  /// `from_locations` leaves each tier in `Alpha` order; this lets a toggle
+  /// re-order the cached tree without a DB round-trip. Both modes resolve ties
+  /// by id so equal-name / equal-value nodes keep a stable order between renders.
+  pub fn sort_by(&mut self, mode: GeoSort) {
+    for region in &mut self.regions {
+      for constellation in &mut region.constellations {
+        for system in &mut constellation.systems {
+          system.locations.sort_by(|a, b| match mode {
+            GeoSort::Alpha => a
+              .location_label
+              .cmp(&b.location_label)
+              .then(a.location_id.cmp(&b.location_id)),
+            GeoSort::Value => b
+              .value
+              .total_cmp(&a.value)
+              .then(a.location_label.cmp(&b.location_label))
+              .then(a.location_id.cmp(&b.location_id)),
+          });
+        }
+        constellation.systems.sort_by(|a, b| match mode {
+          GeoSort::Alpha => a.system_name.cmp(&b.system_name).then(a.system_id.cmp(&b.system_id)),
+          GeoSort::Value => b
+            .value
+            .total_cmp(&a.value)
+            .then(a.system_name.cmp(&b.system_name))
+            .then(a.system_id.cmp(&b.system_id)),
+        });
+      }
+      region.constellations.sort_by(|a, b| match mode {
+        GeoSort::Alpha => a
+          .constellation_name
+          .cmp(&b.constellation_name)
+          .then(a.constellation_id.cmp(&b.constellation_id)),
+        GeoSort::Value => b
+          .value
+          .total_cmp(&a.value)
+          .then(a.constellation_name.cmp(&b.constellation_name))
+          .then(a.constellation_id.cmp(&b.constellation_id)),
+      });
+    }
+    self.regions.sort_by(|a, b| match mode {
+      GeoSort::Alpha => a.region_name.cmp(&b.region_name).then(a.region_id.cmp(&b.region_id)),
+      GeoSort::Value => b
+        .value
+        .total_cmp(&a.value)
+        .then(a.region_name.cmp(&b.region_name))
+        .then(a.region_id.cmp(&b.region_id)),
+    });
+    self.orphans.sort_by(|a, b| match mode {
+      GeoSort::Alpha => a
+        .location_label
+        .cmp(&b.location_label)
+        .then(a.location_id.cmp(&b.location_id)),
+      GeoSort::Value => b
+        .value
+        .total_cmp(&a.value)
+        .then(a.location_label.cmp(&b.location_label))
+        .then(a.location_id.cmp(&b.location_id)),
+    });
   }
 }
 
@@ -593,6 +669,113 @@ mod tests {
     #[test]
     fn it_yields_an_empty_tree_for_no_rows() {
       assert_eq!(GeoTree::from_locations(&[]), GeoTree::default());
+    }
+
+    /// A second region (Domain → Throne Worlds → Amarr) so region-tier ordering
+    /// is observable. `value` controls the Value-mode rank, `region_id` the tie
+    /// break.
+    fn other_region(region_id: i64, name: &str, value: f64) -> GeoLocation {
+      GeoLocation {
+        constellation_id: Some(20_000_322),
+        constellation_name: Some("Throne Worlds".to_owned()),
+        item_count: 1,
+        location_id: 60_008_494,
+        location_label: Some("Amarr VIII".to_owned()),
+        location_type: "station".to_owned(),
+        region_id: Some(region_id),
+        region_name: Some(name.to_owned()),
+        security_status: Some(1.0),
+        system_id: Some(30_002_187),
+        system_name: Some("Amarr".to_owned()),
+        value,
+      }
+    }
+
+    #[test]
+    fn it_orders_regions_alphabetically_in_alpha_mode() {
+      // "The Forge" rolls up a far larger value than "Domain", yet Alpha ignores
+      // value and ranks "Domain" first by name.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 2, 9_999.0),
+        other_region(10_000_043, "Domain", 1.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Alpha);
+
+      assert_eq!(
+        tree.regions.iter().map(|r| r.region_name.as_str()).collect::<Vec<_>>(),
+        ["Domain", "The Forge"],
+        "Alpha orders regions by name regardless of value"
+      );
+    }
+
+    #[test]
+    fn it_orders_regions_by_descending_value_in_value_mode() {
+      // "The Forge" is the higher-value region but sorts after "Domain"
+      // alphabetically — Value must put it first.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 2, 9_999.0),
+        other_region(10_000_043, "Domain", 1.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Value);
+
+      assert_eq!(
+        tree.regions.iter().map(|r| r.region_name.as_str()).collect::<Vec<_>>(),
+        ["The Forge", "Domain"],
+        "Value orders regions by rolled-up ISK descending"
+      );
+    }
+
+    #[test]
+    fn it_orders_locations_within_a_system_by_descending_value_in_value_mode() {
+      // Two stations in Jita: the cheaper one sorts first alphabetically but must
+      // sort last by value.
+      let rows = vec![
+        nested(60_003_760, "Aaa Station", "station", 1, 10.0),
+        nested(60_000_001, "Zzz Station", "station", 1, 1_000.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Value);
+      let locations = &tree.regions[0].constellations[0].systems[0].locations;
+      assert_eq!(
+        locations.iter().map(|l| l.value).collect::<Vec<_>>(),
+        [1_000.0, 10.0],
+        "Value orders locations within a system by descending value"
+      );
+
+      tree.sort_by(GeoSort::Alpha);
+      let locations = &tree.regions[0].constellations[0].systems[0].locations;
+      assert_eq!(
+        locations
+          .iter()
+          .map(|l| l.location_label.as_deref().unwrap())
+          .collect::<Vec<_>>(),
+        ["Aaa Station", "Zzz Station"],
+        "Alpha orders locations within a system by label"
+      );
+    }
+
+    #[test]
+    fn it_breaks_equal_value_ties_by_id_deterministically() {
+      // Two regions with identical rolled-up value; Value mode must fall back to a
+      // stable name+id order so they never reshuffle between renders.
+      let rows = vec![
+        nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
+        other_region(10_000_043, "Domain", 100.0),
+      ];
+      let mut tree = GeoTree::from_locations(&rows);
+
+      tree.sort_by(GeoSort::Value);
+
+      assert_eq!(
+        tree.regions.iter().map(|r| r.region_id).collect::<Vec<_>>(),
+        [10_000_043, 10_000_002],
+        "equal-value regions resolve by name (Domain < The Forge) then id"
+      );
     }
   }
 }

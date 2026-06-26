@@ -40,7 +40,7 @@ use crate::{
     model::{
       ENTITY_TYPE_ASSET, OwnerType, SavedAssetFilter, StatTemplate, TAG_SCOPE_ASSET, Tag,
       asset_query::{
-        GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
+        GeoSort, GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
       },
     },
     repo::{assets, character, infra, org},
@@ -220,6 +220,9 @@ pub enum Message {
   FilterExamplePicked(&'static str),
   GeoNodeSelected(GeoSelection),
   GeoNodeToggled(GeoNodeKey),
+  /// The location-tree sort toggle picked a mode. Re-sorts the cached tree in
+  /// place and persists the choice; never reloads from the DB.
+  LocSortSelected(GeoSort),
   InventoryCursorMoved(iced::Point),
   InventoryHelpToggled,
   /// Tracks the live keyboard modifiers so a left-click on a row can resolve its
@@ -319,6 +322,15 @@ pub enum Message {
     loaded: Box<Loaded>,
   },
   TabSelected(Tab),
+  /// Records a persisted boolean UI flag in local state, then asks the app layer
+  /// to write it through to `UiState`. Mirrors the wallet feature's flow.
+  UiFlagSet(String, bool),
+  /// Emitted after `UiFlagSet` so the app layer can persist the flag. A no-op
+  /// inside the feature; the real write lives in the app-level assets handler
+  /// (mirrors `wallet::Message::UiFlagPersisted`, routed in `app.rs` to
+  /// `record_ui_flag`). The fields are read there, not within this feature.
+  #[allow(dead_code)]
+  UiFlagPersisted(String, bool),
 }
 
 impl Message {
@@ -449,8 +461,16 @@ pub struct State {
   tab: Tab,
   tag_memberships: HashMap<i64, Vec<i64>>,
   totals: InventoryTotals,
+  /// Persisted boolean UI preferences (e.g. the location-tree sort mode),
+  /// restored from `UiState.flags` and mirrored back on toggle. Mirrors the
+  /// wallet feature's `ui_flags` precedent.
+  ui_flags: std::collections::BTreeMap<String, bool>,
   values: values::ValueSummary,
 }
+
+/// `UiState.flags` key for the location-tree sort mode. `true` selects A–Z,
+/// `false` (the default) selects Value, preserving today's behaviour.
+const LOC_SORT_ALPHA_FLAG: &str = "assets.loc_sort_alpha";
 
 impl State {
   pub fn new(features: crate::config::FeatureFlags) -> Self {
@@ -506,6 +526,7 @@ impl State {
       tab: resolve_first_tab(&enabled_tabs),
       tag_memberships: HashMap::new(),
       totals: InventoryTotals::default(),
+      ui_flags: std::collections::BTreeMap::new(),
       values: values::ValueSummary::default(),
       nav: tracker::NavSeries::default(),
       stockpiles: Vec::new(),
@@ -535,7 +556,23 @@ impl State {
     self.sidebar = PaneDrag::from_store(ui, SIDEBAR_PANE_KEY, SIDEBAR_DEFAULT_WIDTH, host_width);
     self.abyssals_filter =
       PaneDrag::from_store(ui, ABYSSALS_FILTER_PANE_KEY, ABYSSALS_FILTER_DEFAULT_WIDTH, host_width);
+    self.ui_flags = ui.flags.clone();
     self
+  }
+
+  /// Generic persisted boolean accessor, mirroring the wallet feature's flow.
+  pub fn ui_flag(&self, key: &str, default: bool) -> bool {
+    self.ui_flags.get(key).copied().unwrap_or(default)
+  }
+
+  /// The active location-tree sort mode, derived from the persisted flag.
+  /// Defaults to `Value` (descending) on a fresh profile.
+  pub(super) fn geo_sort(&self) -> GeoSort {
+    if self.ui_flag(LOC_SORT_ALPHA_FLAG, false) {
+      GeoSort::Alpha
+    } else {
+      GeoSort::Value
+    }
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
@@ -1272,6 +1309,7 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_slider_edit_text = String::new();
   state.abyssal_stat_templates = Vec::new();
   state.geo_tree = geo_tree;
+  state.geo_tree.sort_by(state.geo_sort());
   prune_inventory_selection(state);
 }
 
@@ -1326,6 +1364,7 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   state.abyssals = abyssals.cards;
   state.abyssal_source_types = abyssals.source_types;
   state.geo_tree = geo_tree;
+  state.geo_tree.sort_by(state.geo_sort());
   let present: HashSet<i64> = state.inventory.iter().map(|row| row.item_id).collect();
   state.expanded_containers.retain(|id| present.contains(id));
   state.inventory_children.retain(|id, _| present.contains(id));
@@ -1375,7 +1414,11 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       ..
     } => update_pagination(state, message, db),
 
-    Message::GeoNodeSelected(_) | Message::GeoNodeToggled(_) => update_geo(state, message, db),
+    Message::GeoNodeSelected(_)
+    | Message::GeoNodeToggled(_)
+    | Message::LocSortSelected(_)
+    | Message::UiFlagSet(..)
+    | Message::UiFlagPersisted(..) => update_geo(state, message, db),
 
     Message::AssetTagModal(_)
     | Message::AssetTagsReloaded {
@@ -1583,6 +1626,25 @@ fn update_geo(state: &mut State, message: Message, db: &Database) -> Task<Messag
       }
       reload_filtered(state, db)
     }
+    Message::LocSortSelected(mode) => {
+      if state.geo_sort() == mode {
+        return Task::none();
+      }
+      // Record the mode locally and re-sort the already-loaded tree in place —
+      // collapse and selection state live elsewhere and are untouched — then ask
+      // the app layer to persist the flag.
+      let alpha = matches!(mode, GeoSort::Alpha);
+      state.ui_flags.insert(LOC_SORT_ALPHA_FLAG.to_owned(), alpha);
+      state.geo_tree.sort_by(mode);
+      Task::done(Message::UiFlagSet(LOC_SORT_ALPHA_FLAG.to_owned(), alpha))
+    }
+    Message::UiFlagSet(key, value) => {
+      state.ui_flags.insert(key.clone(), value);
+      Task::done(Message::UiFlagPersisted(key, value))
+    }
+    // The app-level assets handler records the flag into `UiState`; nothing to do
+    // here once local state already carries it.
+    Message::UiFlagPersisted(..) => Task::none(),
     _ => Task::none(),
   }
 }

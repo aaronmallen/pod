@@ -160,6 +160,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/journal.svg"))
   }
 
+  pub fn layout() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/layout.svg"))
+  }
+
   pub fn link() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/link.svg"))
   }
@@ -280,6 +284,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/send.svg"))
   }
 
+  pub fn settings() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/settings.svg"))
+  }
+
   pub fn skills() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/skills.svg"))
   }
@@ -338,6 +346,10 @@ impl Icon {
 
   pub fn upload() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/upload.svg"))
+  }
+
+  pub fn users() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/users.svg"))
   }
 
   pub fn values() -> Self {
@@ -400,6 +412,13 @@ mod tests {
     #[test]
     fn it_builds_a_sized_and_tinted_icon() {
       let _el: Element<'_, ()> = Icon::pencil().size(14.0).color(color::text::PRIMARY).render();
+    }
+
+    #[test]
+    fn it_builds_the_settings_category_icons() {
+      let _layout: Element<'_, ()> = Icon::layout().render();
+      let _settings: Element<'_, ()> = Icon::settings().render();
+      let _users: Element<'_, ()> = Icon::users().render();
     }
   }
 

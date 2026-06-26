@@ -20,12 +20,13 @@ use crate::{
   config::{self, Settings},
   store::Database,
   ui::{
-    components::{header, rule},
+    components::{header, icon::Icon, rule},
     style::{color, radius, spacing, typography},
   },
 };
 
 const CATEGORIES_PANE_WIDTH: f32 = 220.0;
+const CATEGORY_ICON_SIZE: f32 = 17.0;
 const INDICATOR_WIDTH: f32 = 2.0;
 const INDICATOR_INSET: f32 = 8.0;
 
@@ -95,6 +96,22 @@ impl Category {
       Category::Storage => "Storage",
       Category::Tags => "Tags",
       Category::Ui => "User Interface",
+    }
+  }
+
+  /// The rail-cascade glyph shown before each category label, mirroring the navigation rail so the
+  /// Settings sidebar reads consistently with the rest of the app. Driving this off the enum keeps a
+  /// future `Category` variant a single new arm.
+  fn icon(self) -> Icon {
+    match self {
+      Category::About => Icon::help(),
+      Category::Accessibility => Icon::users(),
+      Category::Features => Icon::settings(),
+      Category::Industry => Icon::industry(),
+      Category::Mcp => Icon::link(),
+      Category::Storage => Icon::archive(),
+      Category::Tags => Icon::star(),
+      Category::Ui => Icon::layout(),
     }
   }
 }
@@ -438,8 +455,14 @@ fn category_row(state: &State, category: Category, badge: String) -> Element<'_,
   } else {
     color::text::secondary()
   };
+  let icon_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
 
   let mut row_children: Vec<Element<'_, Message>> = vec![
+    category.icon().size(CATEGORY_ICON_SIZE).color(icon_color).render(),
     text(category.label())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -619,6 +642,32 @@ mod tests {
 
     for category in categories {
       assert_eq!(Category::from_id(category.id()), Some(category));
+    }
+  }
+
+  #[test]
+  fn every_category_renders_a_rail_cascade_icon() {
+    let categories = [
+      Category::About,
+      Category::Accessibility,
+      Category::Features,
+      Category::Industry,
+      Category::Mcp,
+      Category::Storage,
+      Category::Tags,
+      Category::Ui,
+    ];
+
+    for category in categories {
+      let _icon: Element<'_, Message> = category.icon().size(CATEGORY_ICON_SIZE).render();
+    }
+  }
+
+  #[tokio::test]
+  async fn category_rows_render_their_icon_before_the_label() {
+    let state = state().await;
+    for category in [Category::Accessibility, Category::Features, Category::About] {
+      let _row: Element<'_, Message> = category_row(&state, category, String::new());
     }
   }
 

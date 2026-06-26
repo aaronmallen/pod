@@ -2761,7 +2761,7 @@ mod tests {
         row(1, DayBucket::Today, true, false, false, &[]),
         row(2, DayBucket::Today, false, false, false, &["Fleet"]),
         row(3, DayBucket::Yesterday, false, true, false, &[]),
-        row(4, DayBucket::Earlier, false, false, true, &["Ops", "Fleet"]),
+        row(4, DayBucket::ThisMonth, false, false, true, &["Ops", "Fleet"]),
       ];
       state.unified_unread = 3;
       state.outbox_indicator = OutboxIndicator {

@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::{DateTime, Datelike, Duration, Timelike, Utc};
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
@@ -47,33 +47,58 @@ const AVATAR_SIZE: f32 = 36.0;
 
 const INDICATOR_ICON_SIZE: f32 = 14.0;
 
+/// A date-separator bucket in the message list.
+///
+/// Relative buckets (Today/Yesterday) always win over the calendar buckets so a
+/// "yesterday" mail that fell in the previous calendar month still groups under
+/// Yesterday rather than a month header. Everything else lands in the current
+/// calendar month ([`DayBucket::ThisMonth`]) or, for older mail, a per-month
+/// header carrying its own year so headers stay accurate across year boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DayBucket {
-  Earlier,
   Today,
   Yesterday,
+  ThisMonth,
+  Month { year: i32, month: u32 },
 }
 
 impl DayBucket {
-  fn label(self) -> &'static str {
+  fn label(self) -> String {
     match self {
-      DayBucket::Today => "Today",
-      DayBucket::Yesterday => "Yesterday",
-      DayBucket::Earlier => "Earlier this week",
+      DayBucket::Today => "Today".to_owned(),
+      DayBucket::Yesterday => "Yesterday".to_owned(),
+      DayBucket::ThisMonth => "This Month".to_owned(),
+      // `%B %Y` → "June 2026"; build a NaiveDate on the 1st of the month purely to format it.
+      DayBucket::Month {
+        year,
+        month,
+      } => chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .map(|d| d.format("%B %Y").to_string())
+        .unwrap_or_default(),
     }
   }
 
-  fn rank(self) -> u8 {
+  /// Sort key: Today < Yesterday < ThisMonth < older months, with older months
+  /// ordered most-recent-first (descending by year then month).
+  ///
+  /// Month variants are ranked by the negated year/month so a plain ascending
+  /// sort lists newer months ahead of older ones and spans year boundaries
+  /// correctly (e.g. January 2026 before December 2025).
+  fn rank(self) -> (u8, i64) {
     match self {
-      DayBucket::Today => 0,
-      DayBucket::Yesterday => 1,
-      DayBucket::Earlier => 2,
+      DayBucket::Today => (0, 0),
+      DayBucket::Yesterday => (1, 0),
+      DayBucket::ThisMonth => (2, 0),
+      DayBucket::Month {
+        year,
+        month,
+      } => (3, -(i64::from(year) * 12 + i64::from(month))),
     }
   }
 }
 
-// Hand-written so the chronological order (Today < Yesterday < Earlier) survives the alphabetical
-// variant declaration a derived `Ord` would otherwise key off.
+// Hand-written so the chronological order (Today < Yesterday < ThisMonth < older months,
+// descending) survives the alphabetical variant declaration a derived `Ord` would key off.
 impl Ord for DayBucket {
   fn cmp(&self, other: &Self) -> Ordering {
     self.rank().cmp(&other.rank())
@@ -144,7 +169,7 @@ pub(super) struct FirstPage {
 /// flat index space with the rows beneath them so the [`VirtualList`] windows over
 /// `[Header, Row, Row, Header, Row, …]` uniformly.
 enum ListItem<'a> {
-  Header(&'a str),
+  Header(String),
   Row(&'a MessageRow),
 }
 
@@ -375,7 +400,7 @@ async fn key_to_row(db: &Database, key: MailKey, now: DateTime<Utc>) -> MessageR
     sender_portrait,
     snippet,
     subject: subject_or_no_subject(&key.subject),
-    time: time_label(&key.timestamp),
+    time: time_label(&key.timestamp, now),
     timestamp: key.timestamp,
   }
 }
@@ -473,27 +498,50 @@ fn subject_or_no_subject(subject: &str) -> String {
 
 fn day_bucket(timestamp: &str, now: DateTime<Utc>) -> DayBucket {
   let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) else {
-    return DayBucket::Earlier;
+    // Unparseable timestamps land in the current month rather than vanish or crash.
+    return DayBucket::ThisMonth;
   };
   let ts = ts.with_timezone(&Utc);
   let today = now.date_naive();
   let day = ts.date_naive();
+
+  // Relative buckets win over calendar buckets: a "yesterday" mail in the previous
+  // calendar month still groups under Yesterday, not its month header.
   if day == today {
     DayBucket::Today
   } else if day == (now - Duration::days(1)).date_naive() {
     DayBucket::Yesterday
+  } else if day.year() == today.year() && day.month() == today.month() {
+    DayBucket::ThisMonth
   } else {
-    DayBucket::Earlier
+    DayBucket::Month {
+      year: day.year(),
+      month: day.month(),
+    }
   }
 }
 
-fn time_label(timestamp: &str) -> String {
-  match DateTime::parse_from_rfc3339(timestamp) {
-    Ok(ts) => {
-      let ts = ts.with_timezone(&Utc);
-      format!("{:02}:{:02}", ts.hour(), ts.minute())
-    }
-    Err(_) => timestamp.to_owned(),
+/// The per-row time label, tiered to match the row's [`DayBucket`]:
+/// `HH:MM` for Today/Yesterday, `Jun 18` for older mail in the current year, and
+/// `Dec 2 2025` for mail from a prior year. Both this and [`day_bucket`] are built
+/// from the same `now` so the tiers stay consistent.
+fn time_label(timestamp: &str, now: DateTime<Utc>) -> String {
+  let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) else {
+    return timestamp.to_owned();
+  };
+  let ts = ts.with_timezone(&Utc);
+  let today = now.date_naive();
+  let day = ts.date_naive();
+
+  let is_recent = day == today || day == (now - Duration::days(1)).date_naive();
+  if is_recent {
+    format!("{:02}:{:02}", ts.hour(), ts.minute())
+  } else if day.year() == today.year() {
+    // "%b %-d" → "Jun 18"
+    ts.format("%b %-d").to_string()
+  } else {
+    // "%b %-d %Y" → "Dec 2 2025"
+    ts.format("%b %-d %Y").to_string()
   }
 }
 
@@ -513,7 +561,7 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
         .viewport_height(viewport_height)
         .scroll_offset(offset);
       let windowed = VirtualList::new(config, |index| match &flat[index] {
-        ListItem::Header(label) => day_header(label),
+        ListItem::Header(label) => day_header(label.clone()),
         ListItem::Row(row) => message_row(row, state.selected() == Some(row.mail_id)),
       })
       .view();
@@ -662,20 +710,21 @@ fn flatten(state: &State) -> Vec<ListItem<'_>> {
 
 /// Interleave the day-bucketed rows into the flat index space.
 ///
-/// Each non-empty day bucket emits its header followed by its rows. Buckets are
-/// visited in fixed [`DayBucket`] order so the visual grouping matches the listing.
+/// Rows arrive already newest-first (timestamp DESC), so the distinct buckets are
+/// derived from that order rather than a fixed list — this lets arbitrary month
+/// headers (e.g. "June 2026", "May 2026", …) appear, newest-first, without
+/// enumerating every possible bucket. Each bucket emits its header once, followed
+/// by its rows.
 fn flatten_rows(rows: &[MessageRow]) -> Vec<ListItem<'_>> {
   let mut items = Vec::with_capacity(rows.len() + 3);
 
-  for bucket in [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier] {
-    let mut pushed_header = false;
-    for row in rows.iter().filter(|r| r.bucket == bucket) {
-      if !pushed_header {
-        items.push(ListItem::Header(bucket.label()));
-        pushed_header = true;
-      }
-      items.push(ListItem::Row(row));
+  let mut current: Option<DayBucket> = None;
+  for row in rows {
+    if current != Some(row.bucket) {
+      items.push(ListItem::Header(row.bucket.label()));
+      current = Some(row.bucket);
     }
+    items.push(ListItem::Row(row));
   }
 
   items
@@ -702,8 +751,8 @@ fn search_box(query: &str) -> Element<'_, Message> {
     .into()
 }
 
-fn day_header(label: &str) -> Element<'_, Message> {
-  container(section_header(label, None))
+fn day_header<'a>(label: String) -> Element<'a, Message> {
+  container(section_header(&label, None))
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3_5,
@@ -971,16 +1020,58 @@ mod tests {
       let rows = vec![
         row(1, DayBucket::Today, "a", "s", "x"),
         row(2, DayBucket::Today, "b", "s", "x"),
-        row(3, DayBucket::Earlier, "c", "s", "x"),
+        row(3, DayBucket::ThisMonth, "c", "s", "x"),
       ];
 
       let flat = flatten_rows(&rows);
 
       assert_eq!(
         shape(&flat),
-        ["#Today", "1", "2", "#Earlier this week", "3"],
+        ["#Today", "1", "2", "#This Month", "3"],
         "the empty Yesterday bucket contributes no header"
       );
+    }
+
+    #[test]
+    fn it_emits_an_ordered_month_header_per_distinct_calendar_month() {
+      // Rows arrive newest-first, so consecutive distinct buckets become headers in
+      // that order — including a year boundary (January 2026 before December 2025).
+      let rows = vec![
+        row(
+          1,
+          DayBucket::Month {
+            year: 2026,
+            month: 1,
+          },
+          "a",
+          "s",
+          "x",
+        ),
+        row(
+          2,
+          DayBucket::Month {
+            year: 2026,
+            month: 1,
+          },
+          "b",
+          "s",
+          "x",
+        ),
+        row(
+          3,
+          DayBucket::Month {
+            year: 2025,
+            month: 12,
+          },
+          "c",
+          "s",
+          "x",
+        ),
+      ];
+
+      let flat = flatten_rows(&rows);
+
+      assert_eq!(shape(&flat), ["#January 2026", "1", "2", "#December 2025", "3"],);
     }
 
     #[test]
@@ -999,13 +1090,48 @@ mod tests {
   }
 
   #[test]
-  fn it_buckets_by_calendar_day() {
+  fn it_buckets_by_calendar_day_and_month() {
     let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
 
     assert_eq!(day_bucket("2026-06-15T09:00:00Z", now), DayBucket::Today);
     assert_eq!(day_bucket("2026-06-14T23:00:00Z", now), DayBucket::Yesterday);
-    assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::Earlier);
-    assert_eq!(day_bucket("not-a-date", now), DayBucket::Earlier);
+    // Earlier in the current calendar month → This Month, not a month header.
+    assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::ThisMonth);
+    // An older month carries its own month + year.
+    assert_eq!(
+      day_bucket("2026-05-20T09:00:00Z", now),
+      DayBucket::Month {
+        year: 2026,
+        month: 5
+      }
+    );
+    assert_eq!(
+      day_bucket("2025-12-02T09:00:00Z", now),
+      DayBucket::Month {
+        year: 2025,
+        month: 12
+      }
+    );
+    // Unparseable timestamps fall back gracefully to the current month.
+    assert_eq!(day_bucket("not-a-date", now), DayBucket::ThisMonth);
+  }
+
+  #[test]
+  fn it_prefers_relative_buckets_over_calendar_buckets_across_a_month_boundary() {
+    // "Now" is the 1st of the month; yesterday is in the previous calendar month,
+    // but the row must still group under Yesterday, not a month header.
+    let now = Utc.with_ymd_and_hms(2026, 6, 1, 8, 0, 0).unwrap();
+
+    assert_eq!(day_bucket("2026-06-01T07:00:00Z", now), DayBucket::Today);
+    assert_eq!(day_bucket("2026-05-31T23:00:00Z", now), DayBucket::Yesterday);
+    // Two days back in the previous month is a month header, not This Month.
+    assert_eq!(
+      day_bucket("2026-05-30T09:00:00Z", now),
+      DayBucket::Month {
+        year: 2026,
+        month: 5
+      }
+    );
   }
 
   #[test]
@@ -1017,9 +1143,23 @@ mod tests {
   }
 
   #[test]
-  fn it_formats_the_clock_label() {
-    assert_eq!(time_label("2026-06-15T09:07:00Z"), "09:07");
-    assert_eq!(time_label("2026-06-15T22:45:00Z"), "22:45");
+  fn it_formats_the_clock_label_for_recent_mail() {
+    let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
+
+    // Today and yesterday keep HH:MM.
+    assert_eq!(time_label("2026-06-15T09:07:00Z", now), "09:07");
+    assert_eq!(time_label("2026-06-14T22:45:00Z", now), "22:45");
+  }
+
+  #[test]
+  fn it_formats_an_older_row_as_a_date_tier() {
+    let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
+
+    // Earlier in the current year → "Jun 18" style (no year).
+    assert_eq!(time_label("2026-06-18T09:07:00Z", now), "Jun 18");
+    assert_eq!(time_label("2026-05-02T09:07:00Z", now), "May 2");
+    // A prior year carries the year → "Dec 2 2025".
+    assert_eq!(time_label("2025-12-02T09:07:00Z", now), "Dec 2 2025");
   }
 
   #[test]
@@ -1030,12 +1170,44 @@ mod tests {
   #[test]
   fn it_orders_day_buckets_chronologically_with_today_first() {
     assert!(DayBucket::Today < DayBucket::Yesterday);
-    assert!(DayBucket::Yesterday < DayBucket::Earlier);
+    assert!(DayBucket::Yesterday < DayBucket::ThisMonth);
+    assert!(
+      DayBucket::ThisMonth
+        < DayBucket::Month {
+          year: 2026,
+          month: 5
+        }
+    );
 
-    let mut buckets = [DayBucket::Earlier, DayBucket::Today, DayBucket::Yesterday];
+    let mut buckets = [DayBucket::ThisMonth, DayBucket::Today, DayBucket::Yesterday];
     buckets.sort();
 
-    assert_eq!(buckets, [DayBucket::Today, DayBucket::Yesterday, DayBucket::Earlier]);
+    assert_eq!(buckets, [DayBucket::Today, DayBucket::Yesterday, DayBucket::ThisMonth]);
+  }
+
+  #[test]
+  fn it_orders_month_buckets_most_recent_first_across_a_year_boundary() {
+    let jan_2026 = DayBucket::Month {
+      year: 2026,
+      month: 1,
+    };
+    let dec_2025 = DayBucket::Month {
+      year: 2025,
+      month: 12,
+    };
+    let jun_2026 = DayBucket::Month {
+      year: 2026,
+      month: 6,
+    };
+
+    // Newer months sort ahead of older ones, spanning the year boundary correctly.
+    assert!(jun_2026 < jan_2026);
+    assert!(jan_2026 < dec_2025);
+
+    let mut buckets = [dec_2025, jun_2026, jan_2026];
+    buckets.sort();
+
+    assert_eq!(buckets, [jun_2026, jan_2026, dec_2025]);
   }
 
   #[test]

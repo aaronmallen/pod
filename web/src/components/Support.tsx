@@ -201,7 +201,7 @@ export function Support({ accent }: SupportProps) {
             color: T.muted,
           }}>
             <Icon name="check" size={12}/>
-            <span>No subscriptions · no ads · no trackers</span>
+            <span>No subscriptions · no ads · anonymous opt-out telemetry</span>
           </div>
         </div>
 

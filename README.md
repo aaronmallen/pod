@@ -44,7 +44,7 @@ Developers** corporation (`PODEV`). Every donation goes straight back into time 
 
 In-game: open your wallet, choose **Give ISK**, and paste **Pod Developers** as the recipient.
 
-No subscriptions, no ads, no trackers.
+No subscriptions, no ads. Telemetry is anonymous, opt-out, and never tied to you.
 
 ## Attribution
 

@@ -3594,6 +3594,7 @@ fn contract_matches(entry: &ContractEntry, side: Side, query: &str) -> bool {
       .acceptor
       .as_deref()
       .is_some_and(|name| name.to_lowercase().contains(query))
+    || entry.item_names.iter().any(|name| name.to_lowercase().contains(query))
 }
 
 fn journal_matches(entry: &JournalEntry, sign: SignFilter, query: &str) -> bool {
@@ -4116,6 +4117,7 @@ mod tests {
       issuer: Some("Issuer Pilot".to_owned()),
       issuer_id: 11_111,
       issuer_image: PartyImage::default(),
+      item_names: Vec::new(),
       status: status.to_owned(),
       value: Some(200.0),
       r#type: contract_type.to_owned(),
@@ -5015,6 +5017,25 @@ mod tests {
       assert!(super::contract_matches(&entry, Side::All, "assignee"));
       assert!(super::contract_matches(&entry, Side::All, "12345"));
       assert!(!super::contract_matches(&entry, Side::All, "courier"));
+    }
+
+    #[test]
+    fn it_matches_the_query_against_a_contained_item_name() {
+      let mut entry = contract_entry(1, false, "finished", "item_exchange");
+      entry.item_names = vec!["Rhea".to_owned(), "Tritanium".to_owned()];
+
+      // Case-insensitive substring on the item name surfaces the contract even
+      // when nothing in its type/status/parties matches.
+      assert!(super::contract_matches(&entry, Side::All, "rhea"));
+      assert!(super::contract_matches(&entry, Side::All, "trit"));
+    }
+
+    #[test]
+    fn it_excludes_a_contract_with_no_matching_item_or_title() {
+      let mut entry = contract_entry(1, false, "finished", "item_exchange");
+      entry.item_names = vec!["Tritanium".to_owned()];
+
+      assert!(!super::contract_matches(&entry, Side::All, "rhea"));
     }
   }
 

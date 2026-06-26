@@ -41,6 +41,10 @@ pub struct ContractEntry {
   pub issuer: Option<String>,
   pub issuer_id: i64,
   pub issuer_image: PartyImage,
+  /// Names of the items contained in this contract (resolved from the SDE via
+  /// `type_id`), so the search box can match a contract by what it carries — not
+  /// just its parties/type/status. Populated at page-load time.
+  pub item_names: Vec<String>,
   pub status: String,
   pub r#type: String,
   pub value: Option<f64>,
@@ -161,7 +165,10 @@ pub(super) fn party_image(store: &images::Store, id: i64) -> PartyImage {
   }
 }
 
-fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEntry {
+fn map_contract_row(
+  row: &crate::store::model::CharacterContract,
+  item_names: &HashMap<i64, Vec<String>>,
+) -> ContractEntry {
   let price = row.price();
   let store = images::default_store();
   ContractEntry {
@@ -180,13 +187,17 @@ fn map_contract_row(row: &crate::store::model::CharacterContract) -> ContractEnt
     issuer: row.issuer_name().clone(),
     issuer_id: row.issuer_id(),
     issuer_image: party_image(&store, row.issuer_id()),
+    item_names: item_names.get(&row.contract_id()).cloned().unwrap_or_default(),
     status: row.status().clone(),
     value: price.or_else(|| row.reward()),
     r#type: row.r#type().clone(),
   }
 }
 
-fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> ContractEntry {
+fn map_corp_contract_row(
+  row: &crate::store::model::CorporationContract,
+  item_names: &HashMap<i64, Vec<String>>,
+) -> ContractEntry {
   let price = row.price();
   let store = images::default_store();
   ContractEntry {
@@ -205,6 +216,7 @@ fn map_corp_contract_row(row: &crate::store::model::CorporationContract) -> Cont
     issuer: row.issuer_name().clone(),
     issuer_id: row.issuer_id(),
     issuer_image: party_image(&store, row.issuer_id()),
+    item_names: item_names.get(&row.contract_id()).cloned().unwrap_or_default(),
     status: row.status().clone(),
     value: price.or_else(|| row.reward()),
     r#type: row.r#type().clone(),
@@ -284,7 +296,8 @@ pub async fn load_contracts_page(
     let rows = finance::contracts_page(db, character_id, after, limit)
       .await
       .unwrap_or_default();
-    entries.extend(rows.iter().map(map_contract_row));
+    let item_names = finance::contract_item_names(db, character_id).await.unwrap_or_default();
+    entries.extend(rows.iter().map(|row| map_contract_row(row, &item_names)));
   }
   entries.sort_by(|a, b| {
     b.date_issued
@@ -306,7 +319,10 @@ pub async fn load_corp_contracts_page(
   let rows = finance::corporation_contracts_page(db, corporation_id, after, limit)
     .await
     .unwrap_or_default();
-  let entries: Vec<ContractEntry> = rows.iter().map(map_corp_contract_row).collect();
+  let item_names = finance::corporation_contract_item_names(db, corporation_id)
+    .await
+    .unwrap_or_default();
+  let entries: Vec<ContractEntry> = rows.iter().map(|row| map_corp_contract_row(row, &item_names)).collect();
   cache_contract_portraits(db, &entries).await;
   entries
 }
@@ -626,6 +642,7 @@ mod tests {
         issuer: None,
         issuer_id,
         issuer_image: PartyImage::default(),
+        item_names: Vec::new(),
         status: "outstanding".to_owned(),
         value: None,
         r#type: "item_exchange".to_owned(),
@@ -762,6 +779,7 @@ mod tests {
         issuer: None,
         issuer_id: 11,
         issuer_image: PartyImage::default(),
+        item_names: Vec::new(),
         status: status.to_owned(),
         value: None,
         r#type: "item_exchange".to_owned(),
@@ -1296,7 +1314,7 @@ mod tests {
 
     #[test]
     fn it_reads_a_priced_contract_as_a_sell() {
-      let entry = map_contract_row(&contract(Some(200.0), None));
+      let entry = map_contract_row(&contract(Some(200.0), None), &HashMap::new());
 
       assert!(!entry.is_buy);
       assert_eq!(entry.value, Some(200.0));
@@ -1306,12 +1324,20 @@ mod tests {
 
     #[test]
     fn it_reads_a_rewarded_or_unpriced_contract_as_a_buy() {
-      let courier = map_contract_row(&contract(None, Some(150.0)));
-      let want = map_contract_row(&contract(Some(0.0), None));
+      let courier = map_contract_row(&contract(None, Some(150.0)), &HashMap::new());
+      let want = map_contract_row(&contract(Some(0.0), None), &HashMap::new());
 
       assert!(courier.is_buy);
       assert_eq!(courier.value, Some(150.0));
       assert!(want.is_buy);
+    }
+
+    #[test]
+    fn it_attaches_the_contained_item_names_for_its_contract() {
+      let names = HashMap::from([(7, vec!["Rhea".to_owned()])]);
+      let entry = map_contract_row(&contract(Some(200.0), None), &names);
+
+      assert_eq!(entry.item_names, vec!["Rhea".to_owned()]);
     }
   }
 

@@ -400,6 +400,47 @@ pub async fn corporation_contract_items(
   Ok(rows)
 }
 
+/// Names of the items contained in each of a character's contracts, keyed by
+/// `contract_id`, so the Contracts search box can match a contract by what it
+/// carries. Names resolve from the bundled SDE `item_types` via `type_id` and
+/// span every contract regardless of status or `is_included` flag.
+pub async fn contract_item_names(
+  db: &Database,
+  character_id: i64,
+) -> Result<std::collections::HashMap<i64, Vec<String>>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String)>(
+    "SELECT ci.contract_id, it.name FROM character_contract_items ci \
+    JOIN item_types it ON it.id = ci.type_id WHERE ci.character_id = ?",
+  )
+  .bind(character_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(group_item_names(rows))
+}
+
+/// Corporation counterpart to [`contract_item_names`].
+pub async fn corporation_contract_item_names(
+  db: &Database,
+  corporation_id: i64,
+) -> Result<std::collections::HashMap<i64, Vec<String>>, Error> {
+  let rows = sqlx::query_as::<_, (i64, String)>(
+    "SELECT ci.contract_id, it.name FROM corporation_contract_items ci \
+    JOIN item_types it ON it.id = ci.type_id WHERE ci.corporation_id = ?",
+  )
+  .bind(corporation_id)
+  .fetch_all(&db.0)
+  .await?;
+  Ok(group_item_names(rows))
+}
+
+fn group_item_names(rows: Vec<(i64, String)>) -> std::collections::HashMap<i64, Vec<String>> {
+  let mut grouped: std::collections::HashMap<i64, Vec<String>> = std::collections::HashMap::new();
+  for (contract_id, name) in rows {
+    grouped.entry(contract_id).or_default().push(name);
+  }
+  grouped
+}
+
 pub async fn corporation_contracts(db: &Database, corporation_id: i64) -> Result<Vec<CorporationContract>, Error> {
   let rows = sqlx::query_as::<_, CorporationContract>(
     "SELECT acceptor_id, acceptor_name, assignee_id, assignee_name, availability, collateral, contract_id, \
@@ -4239,6 +4280,101 @@ mod contract_detail_tests {
 
       let result = super::corporation_contract_items(&db, 98_000_002, 1).await.unwrap();
       assert_eq!(result, vec![item(98_000_002, 1, 100)]);
+    }
+  }
+
+  mod contract_item_names {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn insert_item_type(db: &Database, id: i64, name: &str) {
+      sqlx::query("INSERT OR IGNORE INTO item_categories (id, name, published) VALUES (6, 'Ship', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT OR IGNORE INTO item_groups (id, category_id, name, published) VALUES (25, 6, 'Frigate', 1)")
+        .execute(&db.0)
+        .await
+        .unwrap();
+      sqlx::query("INSERT INTO item_types (id, group_id, description, name, published) VALUES (?, 25, '', ?, 1)")
+        .bind(id)
+        .bind(name)
+        .execute(&db.0)
+        .await
+        .unwrap();
+    }
+
+    fn char_item(
+      character_id: i64,
+      contract_id: i64,
+      record_id: i64,
+      type_id: i64,
+      is_included: bool,
+    ) -> CharacterContractItem {
+      CharacterContractItem {
+        character_id,
+        contract_id,
+        is_included,
+        is_singleton: true,
+        quantity: 1,
+        raw_quantity: None,
+        record_id,
+        type_id,
+        value_isk: 0.0,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_groups_resolved_item_names_by_contract_across_all_history() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_item_type(&db, 601, "Rhea").await;
+      insert_item_type(&db, 34, "Tritanium").await;
+
+      // Contract 1 (a finished/unloaded contract) carries a requested (is_included
+      // = false) Rhea; contract 2 carries Tritanium.
+      super::replace_contract_items_for_character(&db, 42, 1, &[char_item(42, 1, 100, 601, false)])
+        .await
+        .unwrap();
+      super::replace_contract_items_for_character(&db, 42, 2, &[char_item(42, 2, 200, 34, true)])
+        .await
+        .unwrap();
+
+      let names = super::contract_item_names(&db, 42).await.unwrap();
+
+      assert_eq!(names.get(&1).cloned().unwrap_or_default(), vec!["Rhea".to_owned()]);
+      assert_eq!(names.get(&2).cloned().unwrap_or_default(), vec!["Tritanium".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn corporation_variant_resolves_names_too() {
+      let db = store::open_test().await.unwrap();
+      seed_corporation(&db, 98_000_002).await;
+      insert_item_type(&db, 587, "Rifter").await;
+
+      super::replace_contract_items_for_corporation(
+        &db,
+        98_000_002,
+        1,
+        &[CorporationContractItem {
+          contract_id: 1,
+          corporation_id: 98_000_002,
+          is_included: false,
+          is_singleton: true,
+          quantity: 1,
+          raw_quantity: None,
+          record_id: 100,
+          type_id: 587,
+          value_isk: 0.0,
+        }],
+      )
+      .await
+      .unwrap();
+
+      let names = super::corporation_contract_item_names(&db, 98_000_002).await.unwrap();
+
+      assert_eq!(names.get(&1).cloned().unwrap_or_default(), vec!["Rifter".to_owned()]);
     }
   }
 

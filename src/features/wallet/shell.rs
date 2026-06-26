@@ -1866,6 +1866,7 @@ mod tests {
         issuer: Some("Issuer Pilot".to_owned()),
         issuer_id: 11_111,
         issuer_image: PartyImage::default(),
+        item_names: Vec::new(),
         status: status.to_owned(),
         value: Some(200.0),
         r#type: contract_type.to_owned(),

@@ -287,6 +287,56 @@ pub fn compute_plan(entries: &[PlanEntry], current_attrs: Attributes, options: &
   }
 }
 
+/// A single stored skill-plan step: train `skill_id` up to `to_level`.
+///
+/// Plans store one row per level (a skill trained to 3 is three rows), so a
+/// slice of these mirrors `skill_plan_entries` row-for-row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlanStep {
+  pub skill_id: i64,
+  pub to_level: u8,
+}
+
+/// Count the plan steps that still need training for a character.
+///
+/// This reuses [`compute_plan`]'s skip rule exactly: a step is "remaining" only
+/// when its `to_level` exceeds the running level for that skill, where the
+/// running level starts at the character's trained level and climbs as earlier
+/// steps in the plan schedule it higher. A step at or below that level is a
+/// skipped (already-trained) row and is not counted.
+///
+/// `trained` maps `skill_id` to the character's current trained level; skills
+/// absent from the map are treated as untrained (level 0). The result equals
+/// the editor's visible "Steps" stat for the same plan and character.
+pub fn remaining_steps(steps: &[PlanStep], trained: &std::collections::HashMap<i64, u8>) -> usize {
+  let mut scheduled: std::collections::HashMap<i64, u8> = std::collections::HashMap::new();
+  let mut remaining = 0;
+
+  for step in steps {
+    let trained_level = trained.get(&step.skill_id).copied().unwrap_or(0);
+    let prior_scheduled = scheduled.get(&step.skill_id).copied().unwrap_or(0);
+    let starting_level = trained_level.max(prior_scheduled);
+
+    if step.to_level > starting_level {
+      remaining += 1;
+    }
+    scheduled.insert(step.skill_id, starting_level.max(step.to_level));
+  }
+
+  remaining
+}
+
+/// Count the distinct skills a plan trains, deduplicated by `skill_id`.
+///
+/// A skill trained to level 5 occupies five stored steps but counts once.
+pub fn distinct_skills(steps: &[PlanStep]) -> usize {
+  steps
+    .iter()
+    .map(|step| step.skill_id)
+    .collect::<std::collections::HashSet<_>>()
+    .len()
+}
+
 pub fn bump_attr(base: Attributes, key: Attribute, delta: i32) -> Option<Attributes> {
   if delta != 1 && delta != -1 {
     return None;
@@ -1160,6 +1210,173 @@ mod tests {
       assert_eq!(weights.len(), 1);
       assert_eq!(plan_step_sp, weights[0].sp);
       assert_eq!(plan_step_sp, 156_000);
+    }
+  }
+
+  mod remaining_steps {
+    use std::collections::HashMap;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn step(skill_id: i64, to_level: u8) -> PlanStep {
+      PlanStep {
+        skill_id,
+        to_level,
+      }
+    }
+
+    fn five_levels(skill_id: i64) -> Vec<PlanStep> {
+      (1..=5).map(|level| step(skill_id, level)).collect()
+    }
+
+    #[test]
+    fn it_counts_every_step_for_a_brand_new_character() {
+      let steps = five_levels(3300);
+
+      assert_eq!(remaining_steps(&steps, &HashMap::new()), 5);
+    }
+
+    #[test]
+    fn it_excludes_already_trained_levels() {
+      let steps = five_levels(3300);
+      let trained = HashMap::from([(3300, 3)]);
+
+      assert_eq!(
+        remaining_steps(&steps, &trained),
+        2,
+        "levels 4 and 5 remain once the skill is trained to 3"
+      );
+    }
+
+    #[test]
+    fn it_yields_zero_for_a_fully_trained_plan() {
+      let steps = five_levels(3300);
+      let trained = HashMap::from([(3300, 5)]);
+
+      assert_eq!(remaining_steps(&steps, &trained), 0);
+    }
+
+    #[test]
+    fn it_climbs_the_running_level_across_in_plan_steps() {
+      // A skill listed twice (e.g. a prereq expansion that also appears as an
+      // explicit wish) must not double-count an already-scheduled level.
+      let steps = vec![step(3300, 1), step(3300, 2), step(3300, 2), step(3300, 3)];
+
+      assert_eq!(
+        remaining_steps(&steps, &HashMap::new()),
+        3,
+        "the duplicate level-2 step is already scheduled and does not recount"
+      );
+    }
+
+    #[test]
+    fn it_reflects_per_character_progress_for_the_same_plan() {
+      let steps = five_levels(3300);
+      let novice = HashMap::from([(3300, 1)]);
+      let veteran = HashMap::from([(3300, 4)]);
+
+      assert_ne!(
+        remaining_steps(&steps, &novice),
+        remaining_steps(&steps, &veteran),
+        "two characters with different trained levels see different remaining counts"
+      );
+      assert_eq!(remaining_steps(&steps, &novice), 4);
+      assert_eq!(remaining_steps(&steps, &veteran), 1);
+    }
+
+    #[test]
+    fn it_matches_the_editor_steps_count_for_identical_inputs() {
+      // The editor derives its visible "Steps" stat from compute_plan rows:
+      // `rows.filter(|r| !r.skipped).count()`. Feed both paths the same plan
+      // and trained levels; the remaining helper must equal that count.
+      let plan_steps = vec![
+        step(3300, 1),
+        step(3300, 2),
+        step(3300, 3),
+        step(3300, 4),
+        step(3300, 5),
+        step(3301, 1),
+        step(3301, 2),
+      ];
+      let trained = HashMap::from([(3300, 2), (3301, 1)]);
+
+      let plan_entries: Vec<PlanEntry> = plan_steps
+        .iter()
+        .map(|s| PlanEntry {
+          primary: Attribute::Perception,
+          rank: 1.0,
+          secondary: Attribute::Willpower,
+          skill_id: s.skill_id,
+          partial_sp_at_from: 0,
+          synced_trained_level: trained.get(&s.skill_id).copied().unwrap_or(0),
+          to_level: s.to_level,
+        })
+        .collect();
+      let editor_steps = compute_plan(&plan_entries, attrs(27, 21, 17, 17, 17), &PlanOptions::default(), 0.0)
+        .items
+        .iter()
+        .filter(|item| !item.skipped)
+        .count();
+
+      assert_eq!(remaining_steps(&plan_steps, &trained), editor_steps);
+      assert_eq!(editor_steps, 4, "levels 3,4,5 of 3300 plus level 2 of 3301");
+    }
+  }
+
+  mod distinct_skills {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn step(skill_id: i64, to_level: u8) -> PlanStep {
+      PlanStep {
+        skill_id,
+        to_level,
+      }
+    }
+
+    #[test]
+    fn it_dedupes_levels_of_the_same_skill() {
+      let steps = vec![step(3300, 1), step(3300, 2), step(3300, 3)];
+
+      assert_eq!(distinct_skills(&steps), 1, "three levels are one distinct skill");
+    }
+
+    #[test]
+    fn it_counts_each_distinct_skill_once() {
+      let steps = vec![
+        step(3300, 1),
+        step(3300, 2),
+        step(3301, 1),
+        step(3302, 1),
+        step(3302, 2),
+        step(3302, 3),
+      ];
+
+      assert_eq!(distinct_skills(&steps), 3);
+    }
+
+    #[test]
+    fn it_is_zero_for_an_empty_plan() {
+      assert_eq!(distinct_skills(&[]), 0);
+    }
+
+    #[test]
+    fn the_distinct_count_is_below_the_stored_slot_count_for_an_expanded_plan() {
+      // The bug being fixed: 6 stored slots collapse to 2 distinct skills.
+      let steps = vec![
+        step(3300, 1),
+        step(3300, 2),
+        step(3300, 3),
+        step(3301, 1),
+        step(3301, 2),
+        step(3301, 3),
+      ];
+
+      assert!(distinct_skills(&steps) < steps.len());
+      assert_eq!(distinct_skills(&steps), 2);
     }
   }
 

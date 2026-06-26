@@ -11,8 +11,8 @@ use crate::ui::{
 };
 
 pub fn plan_card<'a>(plan: &'a PlanRow, first: bool, confirm: bool) -> Element<'a, Message> {
-  let badge = badge(plan.entry_count);
-  let info = info_col(&plan.name, plan.entry_count, &plan.updated);
+  let badge = badge(plan.remaining_steps);
+  let info = info_col(&plan.name, plan.distinct_skills, &plan.updated);
   let actions: Element<'a, Message> = if confirm {
     confirm_row(plan.id)
   } else {
@@ -43,8 +43,9 @@ pub fn plan_card<'a>(plan: &'a PlanRow, first: bool, confirm: bool) -> Element<'
   }
 }
 
-fn info_col<'a>(name: &'a str, entry_count: usize, updated: &'a str) -> Element<'a, Message> {
-  let subtitle = format!("{} skills \u{00b7} {}", entry_count, updated);
+fn info_col<'a>(name: &'a str, distinct_skills: usize, updated: &'a str) -> Element<'a, Message> {
+  let noun = if distinct_skills == 1 { "skill" } else { "skills" };
+  let subtitle = format!("{} {} \u{00b7} {}", distinct_skills, noun, updated);
 
   Column::with_children(vec![
     text(name.to_owned())
@@ -67,8 +68,8 @@ fn info_col<'a>(name: &'a str, entry_count: usize, updated: &'a str) -> Element<
   .into()
 }
 
-fn badge<'a>(entry_count: usize) -> Element<'a, Message> {
-  chip(entry_count.to_string(), Some(color::accent::PLASMA))
+fn badge<'a>(remaining_steps: usize) -> Element<'a, Message> {
+  chip(remaining_steps.to_string(), Some(color::accent::PLASMA))
 }
 
 fn action_row<'a>(plan_id: i64) -> Element<'a, Message> {

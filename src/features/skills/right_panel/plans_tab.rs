@@ -11,6 +11,7 @@ use iced::{
 };
 
 use crate::{
+  features::skills::plan_math::{self, PlanStep},
   store::{Database, repo::skills},
   ui::{
     components::{
@@ -23,9 +24,10 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlanRow {
-  pub entry_count: usize,
+  pub distinct_skills: usize,
   pub id: i64,
   pub name: String,
+  pub remaining_steps: usize,
   pub updated: String,
 }
 
@@ -178,18 +180,36 @@ fn from_selected_footer<'a>(selection_count: usize) -> Element<'a, Message> {
 }
 
 async fn load_plans(db: Database, character_id: i64) -> Vec<PlanRow> {
+  use crate::store::repo::character;
+
   let plans = skills::for_character(&db, character_id).await.unwrap_or_default();
+
+  // Fetch the character's trained levels once for the whole loader so remaining
+  // counts reflect per-character progress without an N+1 over plans.
+  let trained: std::collections::HashMap<i64, u8> = character::skills(&db, character_id)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|skill| (skill.skill_id(), skill.trained_skill_level().clamp(0, 5) as u8))
+    .collect();
 
   let mut rows = Vec::with_capacity(plans.len());
   for plan in plans {
-    let entry_count = skills::entries(&db, plan.id())
+    let steps: Vec<PlanStep> = skills::entries(&db, plan.id())
       .await
-      .map(|entries| entries.len())
-      .unwrap_or(0);
+      .unwrap_or_default()
+      .into_iter()
+      .map(|entry| PlanStep {
+        skill_id: entry.skill_id(),
+        to_level: entry.to_level().clamp(0, 5) as u8,
+      })
+      .collect();
+
     rows.push(PlanRow {
-      entry_count,
+      distinct_skills: plan_math::distinct_skills(&steps),
       id: plan.id(),
       name: plan.name().to_owned(),
+      remaining_steps: plan_math::remaining_steps(&steps, &trained),
       updated: fmt_plan_date(plan.updated_at()),
     });
   }
@@ -215,11 +235,12 @@ fn fmt_plan_date(updated_at: &str) -> String {
 mod tests {
   use super::*;
 
-  fn row(id: i64, name: &str, entry_count: usize) -> PlanRow {
+  fn row(id: i64, name: &str, remaining_steps: usize) -> PlanRow {
     PlanRow {
-      entry_count,
+      distinct_skills: remaining_steps,
       id,
       name: name.to_owned(),
+      remaining_steps,
       updated: "2 Jun '26".to_owned(),
     }
   }

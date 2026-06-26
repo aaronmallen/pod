@@ -1,0 +1,16 @@
+# Normalize all text to LF on every platform. Golden test fixtures
+# (test/fixtures/telemetry/*.json) and worker sources are compared byte-for-byte
+# in cross-platform tests; CRLF on a Windows checkout breaks those assertions.
+* text=auto eol=lf
+
+# Binary types: never touch line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.zst binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

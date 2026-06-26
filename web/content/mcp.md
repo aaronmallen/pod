@@ -65,6 +65,19 @@ are an explicit opt-in:
 The permission badge reads "Local only" when no EVE-reaching tool is on, and
 counts the EVE effects you have enabled otherwise.
 
+## Tool arguments
+
+Every tool now advertises a typed JSON input schema, so a connected agent sees
+each tool's named arguments, their types, and which are required versus
+optional. A tool that takes no arguments advertises an empty schema; the rest
+declare exactly what they accept. For example, `get_skills` requires an integer
+`character_id`. Paginated reads take that `character_id` plus an optional
+zero-based `page` (default `0`) and an optional `limit` (default `50`, range
+`1` to `500`). `get_budget_view` takes an optional string `month` in `YYYY-MM`.
+`get_market_prices` takes an optional `type_ids`, an array of integers. Pod
+accepts numeric ids sent as strings, so an id serialized as `"123"` is read the
+same as `123`.
+
 ## Connecting an agent
 
 Pod's server is a plain Streamable-HTTP endpoint on localhost: a single

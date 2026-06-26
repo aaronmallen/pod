@@ -4314,6 +4314,10 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
     record_pane_ratio(app, key, ratio);
     return Task::none();
   }
+  if let assets::Message::UiFlagPersisted(key, value) = msg {
+    record_ui_flag(app, key, value);
+    return Task::none();
+  }
   if let assets::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }

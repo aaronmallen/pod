@@ -481,7 +481,7 @@ an empty state.
 For any ledger entry, the order is fixed: a manual per-entry pick wins; failing
 that, the highest-priority enabled rule whose conditions match files it; failing
 that, the entry stays in Ready to Assign. Rules are retroactive: adding a rule
-reclaims past entries it matches, not just new ones. With no rules in place, the
+reclaims past entries it matches as well as new ones. With no rules in place, the
 budget behaves exactly as the manual-only flow it replaces.
 
 ## Corporation wallets

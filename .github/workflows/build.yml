@@ -91,7 +91,7 @@ jobs:
         with:
           cache-shared-key: v0-rust
       - name: Rust contract conformance
-        run: cargo nextest run --all-features conformance::
+        run: "cargo nextest run --all-features conformance::"
       - name: Worker contract vitest
         working-directory: telemetry
         run: |-

@@ -9,14 +9,14 @@ import type { Envelope } from "./contract";
 
 const INSERT_EVENT = `INSERT INTO events
   (anon_id, session, schema, app_version, git_sha,
-   stream, event_kind, name, toggle_on,
-   load_ms, frame_p95_ms, heap_mb,
-   os, os_version, arch, display, locale, event_at)
+    stream, event_kind, name, toggle_on,
+    load_ms, frame_p95_ms, heap_mb,
+    os, os_version, arch, display, locale, event_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const INSERT_CRASH = `INSERT INTO crashes
   (anon_id, session, schema, app_version, git_sha,
-   message, location, backtrace, context_log, crashed_at)
+    message, location, backtrace, context_log, crashed_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**

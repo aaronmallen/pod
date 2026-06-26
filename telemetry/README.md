@@ -49,7 +49,7 @@ A daily cron (`0 4 * * *`) runs the `scheduled` handler, which
 
 ## Layout
 
-```
+```text
 telemetry/
   wrangler.toml             route + D1 binding + daily cron
   package.json  tsconfig.json
@@ -104,7 +104,8 @@ aube test               # vitest run
 
 9. `curl -I https://pod.aaronmallen.dev/` — still the marketing site (route
    isolation).
-10. `wrangler d1 execute pod-telemetry --remote --command "SELECT stream, os, arch FROM events ORDER BY id DESC LIMIT 1;"`.
+10. `wrangler d1 execute pod-telemetry --remote` with
+    `SELECT stream, os, arch FROM events ORDER BY id DESC LIMIT 1;`.
 
 ## Write-key rotation (§9.6)
 

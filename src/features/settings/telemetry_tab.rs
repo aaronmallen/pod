@@ -422,8 +422,7 @@ fn master_row(settings: &Settings) -> Element<'_, Message> {
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
   let desc = text(
-    "On by default. Turn it off to opt out completely \u{2014} your choice is remembered and applies across every \
-     Pod window.",
+    "On by default. Turn it off to opt out completely \u{2014} your choice is remembered and applies across every Pod window.",
   )
   .font(typography::body::REGULAR)
   .size(typography::size::SM)

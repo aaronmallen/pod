@@ -13,7 +13,7 @@ pub use session::{CorporationAdded, SignedIn};
 use crate::{
   clients::{esi, esi::scopes, eve_sso},
   config::{FeatureFlags, SubFeature},
-  features::registry,
+  features::shell::registry,
   services::corp_eligibility,
   store::Database,
   sync::Subject,

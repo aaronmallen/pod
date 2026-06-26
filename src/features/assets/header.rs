@@ -3,7 +3,7 @@ use iced::Element;
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_count, fmt_isk, fmt_volume};
 use crate::{
   config::Feature,
-  features::{registry, roster},
+  features::{roster, shell::registry},
   ui::{
     components::{
       header::{header as shared_header, header_divider, stat_block},

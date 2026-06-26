@@ -26,24 +26,29 @@ use crate::{
   clients::{self, esi, eve_image, eve_sso, http},
   config,
   features::{
-    assets, calendar, focus_search, industry, mail, registry, roster,
+    assets, calendar, industry, mail, roster,
     roster::{OwnedPilot, auth, character_detail, corporation_detail, killmail_detail},
-    settings, skills,
+    settings,
+    shell::{
+      command_palette::{
+        self, Action as PaletteAction, Command as PaletteCommand, Entity as PaletteEntity,
+        EntityKind as PaletteEntityKind,
+      },
+      focus_search, notifications, registry,
+      window_state::{self, UiState, WindowGeometry, coalesce::WriteCoalescer, validity},
+    },
+    skills,
     skills::{skill_plan_editor, skill_plan_manager, skills_compare},
     splash, wallet,
     wallet::contract_detail,
   },
-  mcp, notifications,
+  mcp,
   services::{crash, images, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
   ui::{
     components::{
       backdrop,
-      command_palette::{
-        self, Action as PaletteAction, Command as PaletteCommand, Entity as PaletteEntity,
-        EntityKind as PaletteEntityKind,
-      },
       esi_status::esi_status,
       eve_time::eve_time,
       notification_row::notification_row,
@@ -57,7 +62,6 @@ use crate::{
     },
     style::{color, control, radius, shadow, spacing, typography},
   },
-  window_state::{self, UiState, WindowGeometry, coalesce::WriteCoalescer, validity},
 };
 
 const CHIP_OPEN_TINT_ALPHA: f32 = 0.06;
@@ -7296,7 +7300,7 @@ mod tests {
         rail::Destination::Wallet,
       ];
       for destination in destinations {
-        let Some(section) = crate::features::nav_catalog::section(destination) else {
+        let Some(section) = crate::features::shell::nav_catalog::section(destination) else {
           continue;
         };
         for sub in section.sub_sections {
@@ -12478,7 +12482,7 @@ mod tests {
       assert_eq!(
         compare.action,
         command_palette::Action::NavTo(
-          *crate::features::nav_catalog::section(rail::Destination::Skills).expect("the Skills section"),
+          *crate::features::shell::nav_catalog::section(rail::Destination::Skills).expect("the Skills section"),
           Some("compare"),
         ),
       );
@@ -13399,7 +13403,7 @@ mod tests {
       let before = app.notifications_history_epoch;
 
       // A refresh whose newest row (id 2) differs from History's head (id 1) resets History.
-      let snapshot = crate::notifications::Snapshot {
+      let snapshot = crate::features::shell::notifications::Snapshot {
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
         unread: 1,
@@ -13426,7 +13430,7 @@ mod tests {
       let before = app.notifications_history_epoch;
 
       // The refresh's newest row matches History's head, so no reset is needed.
-      let snapshot = crate::notifications::Snapshot {
+      let snapshot = crate::features::shell::notifications::Snapshot {
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
         unread: 0,

@@ -107,7 +107,7 @@ pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
 
 pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
   let input = text_input("Search… try tag:pvp or status:docked", state.search_query())
-    .id(crate::features::focus_search::characters_search_id())
+    .id(crate::features::shell::focus_search::characters_search_id())
     .on_input(Message::SearchChanged)
     .size(typography::size::MD)
     .padding(0)

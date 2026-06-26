@@ -3,7 +3,7 @@ use iced::Element;
 use super::{Message, RosterPilot, Scope, State};
 use crate::{
   config::Feature,
-  features::{registry, roster},
+  features::{roster, shell::registry},
   ui::components::picker::{
     PickerGroup, TriggerPortrait, picker_character_row, picker_dropdown as picker_dropdown_panel, picker_trigger,
     trigger_identity,

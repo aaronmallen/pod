@@ -37,6 +37,7 @@ pub use self::{
 pub use crate::features::skills::skill_plan_editor::Seed as EditorSeed;
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp};
 use crate::{
+  features::shell::window_state::UiState,
   store::{
     Database, images,
     model::{CharacterSkillqueue, OwnerType},
@@ -50,7 +51,6 @@ use crate::{
     },
     style::{color, spacing, typography},
   },
-  window_state::UiState,
 };
 
 const LEFT_PANE_KEY: &str = "skills.left";

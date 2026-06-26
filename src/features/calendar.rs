@@ -489,7 +489,7 @@ async fn load_calendar(db: Database, scope: Scope, features: FeatureFlags) -> Lo
 }
 
 fn registry_scopes() -> &'static [&'static str] {
-  crate::features::registry::descriptor(crate::config::Feature::Calendar).scopes
+  crate::features::shell::registry::descriptor(crate::config::Feature::Calendar).scopes
 }
 
 #[cfg(test)]

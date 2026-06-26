@@ -22,12 +22,17 @@ pub struct PaneDrag {
 }
 
 impl PaneDrag {
-  pub fn from_store(state: &crate::window_state::UiState, key: &str, default_width: f32, host_width: f32) -> Self {
+  pub fn from_store(
+    state: &crate::features::shell::window_state::UiState,
+    key: &str,
+    default_width: f32,
+    host_width: f32,
+  ) -> Self {
     Self::from_store_with_min(state, key, default_width, MIN_PANE_WIDTH, host_width)
   }
 
   pub fn from_store_with_min(
-    state: &crate::window_state::UiState,
+    state: &crate::features::shell::window_state::UiState,
     key: &str,
     default_width: f32,
     min_width: f32,
@@ -337,7 +342,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::window_state::UiState;
+    use crate::features::shell::window_state::UiState;
 
     #[test]
     fn it_clamps_a_stored_width_below_the_minimum() {
@@ -481,7 +486,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::window_state::UiState;
+    use crate::features::shell::window_state::UiState;
 
     #[test]
     fn it_reconstructs_the_settled_width_from_the_keyed_store() {

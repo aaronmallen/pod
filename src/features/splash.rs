@@ -11,7 +11,7 @@ use iced::{
 };
 
 use crate::{
-  features::window_chrome,
+  features::shell::window_chrome,
   ui::{
     components::{eve_time::eve_time, status_bar::status_bar},
     style::{color, control, spacing, typography},

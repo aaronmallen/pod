@@ -11,9 +11,9 @@ use super::{
   },
 };
 use crate::{
+  features::shell::window_state::UiState,
   store::repo::industry::{self as industry_repo, PlanTree, PlanType},
   ui::components::resizable_pane::PaneDrag,
-  window_state::UiState,
 };
 
 pub const DETAIL_PANE_KEY: &str = "industry.planner.detail";
@@ -2118,7 +2118,7 @@ mod view {
     };
 
     let search = TextInput::new(planner.search_placeholder(), planner.search(), Message::SearchChanged)
-      .input_id(crate::features::focus_search::industry_search_id())
+      .input_id(crate::features::shell::focus_search::industry_search_id())
       .leading_icon(Icon::search().color(glyph_color))
       .background(color::surface::SUNKEN)
       .width(Length::Fill)
@@ -5591,7 +5591,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::window_state::UiState;
+    use crate::features::shell::window_state::UiState;
 
     const HOST: f32 = 1_200.0;
 

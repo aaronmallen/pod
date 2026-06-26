@@ -68,7 +68,7 @@ mod tests {
   use std::collections::BTreeMap;
 
   use super::*;
-  use crate::window_state::WindowGeometry;
+  use crate::features::shell::window_state::WindowGeometry;
 
   fn geometry(width: f32) -> UiState {
     UiState {

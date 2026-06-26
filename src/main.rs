@@ -5,14 +5,12 @@ mod clients;
 mod config;
 mod features;
 mod mcp;
-mod notifications;
 mod services;
 mod store;
 mod sync;
 mod telemetry;
 mod telemetry_contract;
 mod ui;
-mod window_state;
 
 fn main() -> iced::Result {
   if features::roster::auth::forward_or_claim() {

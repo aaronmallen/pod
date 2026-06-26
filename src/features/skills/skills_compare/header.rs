@@ -7,7 +7,7 @@ use iced::{
 use super::{HEADER_HEIGHT, Message, State};
 use crate::{
   config::Feature,
-  features::{registry, roster, skills::fmt_sp},
+  features::{roster, shell::registry, skills::fmt_sp},
   ui::{
     components::{
       avatar::Avatar,

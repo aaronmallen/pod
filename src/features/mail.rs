@@ -24,6 +24,7 @@ use self::{
   message_list::MessageRow,
 };
 use crate::{
+  features::shell::window_state::{self, UiState},
   store::{
     Database, images,
     model::{
@@ -40,7 +41,6 @@ use crate::{
     },
     load_epoch::LoadEpoch,
   },
-  window_state::{self, UiState},
 };
 
 pub const FOLDER_PANE_KEY: &str = "mail.folder";
@@ -405,7 +405,7 @@ impl State {
   pub(super) fn scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Character(id) = self.active;
     let pilot = self.roster.iter().find(|pilot| pilot.id == id)?;
-    let required = crate::features::registry::descriptor(crate::config::Feature::Mail).scopes;
+    let required = crate::features::shell::registry::descriptor(crate::config::Feature::Mail).scopes;
     let missing = crate::ui::components::forbidden::missing_scopes(pilot.granted_scopes.as_deref(), required);
     if missing.is_empty() {
       return None;
@@ -1486,7 +1486,7 @@ mod tests {
 
     #[test]
     fn it_does_not_gate_when_the_active_character_has_the_mail_scopes() {
-      let granted = crate::features::registry::descriptor(crate::config::Feature::Mail)
+      let granted = crate::features::shell::registry::descriptor(crate::config::Feature::Mail)
         .scopes
         .join(" ");
       let mut state = State::new(42);

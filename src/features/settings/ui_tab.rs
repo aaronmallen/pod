@@ -7,7 +7,7 @@ use iced::{
 use super::Outcome;
 use crate::{
   config::{CascadeMode, NavLocation, Settings},
-  features::registry,
+  features::shell::registry,
   ui::{
     components::{card, icon::Icon, rule},
     style::{color, radius, spacing, typography},

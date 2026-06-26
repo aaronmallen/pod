@@ -120,7 +120,7 @@ impl Tab {
   }
 
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
-    crate::features::registry::sub_descriptor(self.sub_feature())
+    crate::features::shell::registry::sub_descriptor(self.sub_feature())
       .scopes
       .iter()
       .copied()
@@ -330,7 +330,7 @@ impl State {
       .collect()
   }
 
-  pub fn with_restored_panes(mut self, ui: &crate::window_state::UiState) -> Self {
+  pub fn with_restored_panes(mut self, ui: &crate::features::shell::window_state::UiState) -> Self {
     self.planner = self.planner.with_restored_panes(ui);
     let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
     self.rail_pane = PaneDrag::from_store_with_min(

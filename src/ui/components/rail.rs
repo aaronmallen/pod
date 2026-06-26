@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   config::{CascadeMode, Feature, NavLocation},
-  features::{nav_catalog, registry},
+  features::shell::{nav_catalog, registry},
   ui::style::{color, radius, spacing, typography},
 };
 

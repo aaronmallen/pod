@@ -95,12 +95,12 @@ impl JobKind {
 
   #[allow(dead_code)]
   pub fn feature(self) -> Option<Feature> {
-    crate::features::registry::feature_for_job(self)
+    crate::features::shell::registry::feature_for_job(self)
   }
 
   /// The set of sub-features that own this job; empty for the feature-less maintenance jobs.
   pub fn owning_sub_features(self) -> Vec<SubFeature> {
-    crate::features::registry::sub_features_for_job(self)
+    crate::features::shell::registry::sub_features_for_job(self)
   }
 
   /// A job runs while ANY of its owning sub-features is enabled. A feature-less maintenance job (no

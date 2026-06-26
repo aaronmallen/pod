@@ -6,7 +6,7 @@ use iced::{
 
 use crate::{
   config::Feature,
-  features::nav_catalog,
+  features::shell::nav_catalog,
   ui::{
     components::backdrop,
     style::{color, radius, spacing, typography},

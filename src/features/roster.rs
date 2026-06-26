@@ -32,8 +32,8 @@ use iced::{
 use crate::{
   config::FeatureFlags,
   features::{
-    registry,
     roster::auth as auth_feature,
+    shell::registry,
     skills::{QueueStatus, queue_status},
   },
   store::{

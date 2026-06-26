@@ -34,7 +34,10 @@ pub use self::{
 };
 pub(crate) use crate::ui::format::{fmt_count, fmt_isk, fmt_volume};
 use crate::{
-  features::wallet::selection::{ClickKind, RowSelection},
+  features::{
+    shell::window_state::UiState,
+    wallet::selection::{ClickKind, RowSelection},
+  },
   store::{
     Database, images,
     model::{
@@ -53,7 +56,6 @@ use crate::{
     },
     load_epoch::LoadEpoch,
   },
-  window_state::UiState,
 };
 
 const INVENTORY_PAGE_SIZE: i64 = 200;
@@ -1113,7 +1115,7 @@ impl Tab {
   }
 
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
-    crate::features::registry::sub_descriptor(self.sub_feature())
+    crate::features::shell::registry::sub_descriptor(self.sub_feature())
       .scopes
       .iter()
       .copied()
@@ -4090,7 +4092,7 @@ mod tests {
 
     #[test]
     fn it_does_not_gate_a_character_with_the_asset_scopes() {
-      let granted = crate::features::registry::descriptor(crate::config::Feature::AssetTracking)
+      let granted = crate::features::shell::registry::descriptor(crate::config::Feature::AssetTracking)
         .scopes
         .join(" ");
       let mut granted_pilot = pilot(1);

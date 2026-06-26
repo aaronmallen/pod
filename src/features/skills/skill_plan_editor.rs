@@ -21,11 +21,14 @@ use picker::PickerState;
 
 pub(super) use crate::ui::format::{fmt_duration_padded as fmt_duration, fmt_sp_compact as fmt_sp};
 use crate::{
-  features::skills::{
-    browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
-    optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
-    plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
-    skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
+  features::{
+    shell::window_state::UiState,
+    skills::{
+      browse::{AttrKey, SkillCatalog, SkillCatalogEntry},
+      optimizer::{Attribute, Attributes, PairWeight, optimize_remap},
+      plan_math::{self, ExpandedEntry, PlanEntry, PlanOptions, PrereqCatalog, RemapPoint, Wish},
+      skill_plan_editor::picker::{PickerCert, PickerModule, PickerShip},
+    },
   },
   store::{
     Database,
@@ -36,7 +39,6 @@ use crate::{
     components::resizable_pane::{self, PaneDrag, pane_handle},
     style::spacing,
   },
-  window_state::UiState,
 };
 
 const REMAP_ATTR_ORDER: [Attribute; 5] = [

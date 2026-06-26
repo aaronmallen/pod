@@ -1,13 +1,10 @@
 pub mod assets;
 pub mod calendar;
-pub mod focus_search;
 pub mod industry;
 pub mod mail;
-pub mod nav_catalog;
-pub mod registry;
 pub mod roster;
 pub mod settings;
+pub mod shell;
 pub mod skills;
 pub mod splash;
 pub mod wallet;
-pub mod window_chrome;

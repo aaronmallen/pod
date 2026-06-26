@@ -15,7 +15,7 @@ use super::{Message, State};
 use crate::{
   clients::esi::scopes,
   config::Feature,
-  features::registry,
+  features::shell::registry,
   ui::{
     components::{
       forbidden, rule,

@@ -7,7 +7,6 @@ pub mod card;
 pub mod chip;
 pub mod clip;
 pub mod color_picker;
-pub mod command_palette;
 pub mod confirm_modal;
 pub mod context_menu;
 pub mod count_badge;

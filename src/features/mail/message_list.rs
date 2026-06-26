@@ -732,7 +732,7 @@ fn flatten_rows(rows: &[MessageRow]) -> Vec<ListItem<'_>> {
 
 fn search_box(query: &str) -> Element<'_, Message> {
   let field = TextInput::new("Search mail", query, Message::SearchChanged)
-    .input_id(crate::features::focus_search::mail_search_id())
+    .input_id(crate::features::shell::focus_search::mail_search_id())
     .leading_icon(Icon::search())
     .icon_size(16.0)
     .icon_spacing(spacing::SPACE_2_5)

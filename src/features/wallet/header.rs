@@ -4,7 +4,7 @@ use iced::Element;
 use super::{Message, RosterCorp, RosterPilot, Scope, State, fmt_isk};
 use crate::{
   config::Feature,
-  features::{registry, roster},
+  features::{roster, shell::registry},
   ui::{
     components::{
       header::{header as shared_header, header_divider, stat_block},

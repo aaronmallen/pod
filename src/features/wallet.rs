@@ -20,6 +20,7 @@ pub use self::{
 };
 pub(crate) use crate::ui::format::fmt_isk_opt as fmt_isk;
 use crate::{
+  features::shell::window_state,
   store::{
     Database, images,
     model::{
@@ -30,7 +31,6 @@ use crate::{
   },
   sync::JobKind,
   ui::components::resizable_pane::PaneDrag,
-  window_state,
 };
 
 /// The wallet-read roles whose holder grants the player visibility of a corp's
@@ -1228,7 +1228,7 @@ impl Tab {
   }
 
   pub(super) fn read_scopes(self) -> Vec<&'static str> {
-    crate::features::registry::sub_descriptor(self.sub_feature())
+    crate::features::shell::registry::sub_descriptor(self.sub_feature())
       .scopes
       .iter()
       .copied()
@@ -5871,7 +5871,7 @@ mod tests {
 
     #[test]
     fn it_does_not_gate_a_character_with_the_wallet_scopes() {
-      let granted = crate::features::registry::descriptor(crate::config::Feature::Wallet)
+      let granted = crate::features::shell::registry::descriptor(crate::config::Feature::Wallet)
         .scopes
         .join(" ");
       let mut granted_pilot = pilot(1, None);

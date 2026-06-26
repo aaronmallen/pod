@@ -8,7 +8,7 @@ use iced::{
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
 use crate::{
   config::Feature,
-  features::{registry, roster},
+  features::{roster, shell::registry},
   ui::{
     components::{
       header::{header as header_band, header_divider, stat_block},

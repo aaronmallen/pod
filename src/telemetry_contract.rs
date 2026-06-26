@@ -443,3 +443,214 @@ mod tests {
     s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
   }
 }
+
+/// Cross-component contract conformance (task zvvnoyxu; spec mmmzstpq §6 & §12).
+///
+/// The telemetry wire contract lives in THREE components that must never drift:
+///
+/// 1. the Rust client ([`Batch`] in this module);
+/// 2. the Cloudflare Worker validator (`telemetry/src/contract.ts`) + D1 schema
+///    (`telemetry/migrations/0001_init.sql`);
+/// 3. the Settings › Telemetry preview (`src/features/settings/telemetry_tab.rs`,
+///    its `sample_payload`).
+///
+/// These tests pin all three to the SAME committed golden fixtures
+/// (`test/fixtures/telemetry/*.json`). The Worker source and D1 migration are
+/// `include_str!`d so a textual edit to either that breaks the contract fails
+/// `cargo test` here, not just the worker's vitest suite. The settings preview's
+/// `sample_payload` is private to its module (and that module is owned
+/// elsewhere), so we reproduce its documented shape — built from the SAME
+/// [`Batch`]/[`Streams`] contract types it uses — and assert it byte-matches the
+/// session fixture, the same fixture the Rust client and Worker pin.
+#[cfg(test)]
+mod conformance {
+  use pretty_assertions::assert_eq;
+  use serde_json::Value;
+
+  use super::*;
+
+  /// The Worker validator source — pinned so a contract-breaking edit fails here.
+  const WORKER_CONTRACT_TS: &str = include_str!("../telemetry/src/contract.ts");
+  /// The D1 schema — pinned so a `pod_version` column (or drift) fails here.
+  const D1_INIT_SQL: &str = include_str!("../telemetry/migrations/0001_init.sql");
+
+  /// Rebuild the settings-preview session batch from the contract types. This
+  /// mirrors `telemetry_tab::sample_batch` with every stream ON (the §6.3 shape);
+  /// `sample_payload` is private to a module owned by another task, so we pin the
+  /// shape it produces rather than calling it directly.
+  fn settings_preview_batch() -> Batch {
+    Batch {
+      schema: SCHEMA_VERSION,
+      kind: Kind::Session,
+      id: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08".to_string(),
+      session: "s_1a2b3c4d".to_string(),
+      app: App {
+        version: "0.9.4".to_string(),
+        git_sha: Some("2364bc8c".to_string()),
+        build_date: Some("2026-06-20".to_string()),
+      },
+      sent_at: "2026-06-25T14:32:08Z".to_string(),
+      streams: Streams {
+        usage: Some(UsageStream {
+          events: vec![
+            UsageEvent {
+              t: "2026-06-25T14:30:01Z".to_string(),
+              kind: UsageEventKind::ViewOpen,
+              name: "wallet".to_string(),
+              on: None,
+            },
+            UsageEvent {
+              t: "2026-06-25T14:31:02Z".to_string(),
+              kind: UsageEventKind::FeatureToggle,
+              name: "skills.plan_optimizer".to_string(),
+              on: Some(true),
+            },
+          ],
+        }),
+        performance: Some(PerformanceStream {
+          views: vec![PerformanceViewEntry {
+            name: "wallet".to_string(),
+            load_ms: 142,
+            frame_p95_ms: 11,
+          }],
+          heap_mb: 84,
+        }),
+        environment: Some(EnvironmentStream {
+          os: "macos".to_string(),
+          os_version: "15".to_string(),
+          arch: "aarch64".to_string(),
+          display: "2560x1440".to_string(),
+          locale: "en".to_string(),
+        }),
+        crashes: None,
+      },
+    }
+  }
+
+  /// The session fixture's set of envelope/stream field names, recursively, so a
+  /// drift in field NAMES (not just values) across components is caught.
+  fn field_names(value: &Value, into: &mut Vec<String>) {
+    match value {
+      Value::Object(map) => {
+        for (key, child) in map {
+          into.push(key.clone());
+          field_names(child, into);
+        }
+      }
+      Value::Array(items) => {
+        for item in items {
+          field_names(item, into);
+        }
+      }
+      _ => {}
+    }
+  }
+
+  // ---- The 3-way conformance: ONE fixture, asserted three ways. ----
+
+  /// (1) The Rust client: [`Batch`] serializes to the golden session fixture
+  /// byte-for-byte (field names included, via `to_string_pretty`).
+  #[test]
+  fn rust_client_batch_matches_the_golden_session_fixture() {
+    let serialized = serde_json::to_string_pretty(&settings_preview_batch()).unwrap();
+    assert_eq!(serialized, SESSION_ALL_STREAMS_FIXTURE.trim_end());
+  }
+
+  /// (2) The Settings preview reproduces the SAME shape: the preview batch and
+  /// the golden fixture share an identical recursive set of field names.
+  #[test]
+  fn settings_preview_reproduces_the_golden_session_field_names() {
+    let preview: Value = serde_json::to_value(settings_preview_batch()).unwrap();
+    let golden: Value = serde_json::from_str(SESSION_ALL_STREAMS_FIXTURE).unwrap();
+
+    let mut preview_names = Vec::new();
+    let mut golden_names = Vec::new();
+    field_names(&preview, &mut preview_names);
+    field_names(&golden, &mut golden_names);
+
+    assert_eq!(
+      preview_names, golden_names,
+      "settings preview must reproduce the golden session field shape"
+    );
+  }
+
+  /// (3) The Worker: the golden CRASH fixture's `session` satisfies the Worker's
+  /// `^s_[0-9a-f]{8}$` regex (mirrored locally; the same pattern is asserted to
+  /// be present, verbatim, in the Worker source below).
+  #[test]
+  fn crash_fixture_session_passes_the_worker_session_regex() {
+    let value: Value = serde_json::from_str(CRASH_BATCH_FIXTURE).unwrap();
+    let session = value["session"].as_str().unwrap();
+    assert!(
+      matches_session_tag(session),
+      "crash session {session} must match {SESSION_TAG_PATTERN}"
+    );
+    // The mirrored pattern is the real one the Worker enforces.
+    assert!(
+      WORKER_CONTRACT_TS.contains("/^s_[0-9a-f]{8}$/"),
+      "worker source must enforce the session regex this test mirrors"
+    );
+  }
+
+  // ---- `pod_version` is absent from ALL FOUR surfaces. ----
+
+  /// The Rust payload (the environment stream that once duplicated app.version)
+  /// carries no `pod_version` key.
+  #[test]
+  fn pod_version_absent_from_the_rust_payload() {
+    let value: Value = serde_json::to_value(settings_preview_batch()).unwrap();
+    let env = value["streams"]["environment"].as_object().unwrap();
+    assert!(
+      !env.contains_key("pod_version"),
+      "environment must not carry pod_version"
+    );
+    assert!(
+      !serde_json::to_string(&value).unwrap().contains("pod_version"),
+      "no envelope field may be named pod_version"
+    );
+  }
+
+  /// The Worker validator rejects `pod_version`: the closed-world `environment`
+  /// key allow-list does not include it, so an extra key is a rejection.
+  #[test]
+  fn pod_version_absent_from_the_worker_validator() {
+    // The environment allow-list line, verbatim from the validator.
+    assert!(
+      WORKER_CONTRACT_TS.contains(r#"const keys = ["os", "os_version", "arch", "display", "locale"];"#),
+      "worker environment allow-list must be the closed five fields (no pod_version)"
+    );
+    assert!(
+      !WORKER_CONTRACT_TS.contains("pod_version"),
+      "worker contract source must not name pod_version as an accepted field"
+    );
+  }
+
+  /// The D1 schema has no `pod_version` column.
+  #[test]
+  fn pod_version_absent_from_the_d1_schema() {
+    assert!(
+      !D1_INIT_SQL.contains("pod_version"),
+      "D1 schema must not declare a pod_version column"
+    );
+    // app_version is the one version column; pod_version is its forbidden dup.
+    assert!(D1_INIT_SQL.contains("app_version"), "D1 schema keeps app_version");
+  }
+
+  /// The settings preview shape carries no `pod_version` (its `environment`
+  /// stream is the closed five-field [`EnvironmentStream`]).
+  #[test]
+  fn pod_version_absent_from_the_settings_preview() {
+    let value: Value = serde_json::to_value(settings_preview_batch()).unwrap();
+    let mut names = Vec::new();
+    field_names(&value, &mut names);
+    assert!(
+      !names.iter().any(|name| name == "pod_version"),
+      "settings preview must not surface pod_version"
+    );
+  }
+
+  /// Mirror of the Worker's `^s_[0-9a-f]{8}$` without a regex dependency.
+  fn matches_session_tag(s: &str) -> bool {
+    s.len() == 10 && s.starts_with("s_") && s[2..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+  }
+}

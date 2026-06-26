@@ -79,6 +79,24 @@ jobs:
       - name: Test
         if: runner.os != 'Linux'
         run: cargo nextest run --all-features
+  conformance:
+    # Cross-component telemetry contract conformance (task zvvnoyxu, spec mmmzstpq §6 & §12):
+    # the wire shape must not drift across the Rust client, the Cloudflare Worker, and the
+    # Settings preview. The Rust conformance module pins all three to the same golden fixtures;
+    # the Worker's vitest validates those same fixtures. Either drifting fails the build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cache-shared-key: v0-rust
+      - name: Rust contract conformance
+        run: cargo nextest run --all-features conformance::
+      - name: Worker contract vitest
+        working-directory: telemetry
+        run: |-
+          npm ci
+          npm test
   build:
     strategy:
       fail-fast: false

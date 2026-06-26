@@ -1775,6 +1775,12 @@ fn restore_active_grid_scroll(state: &State) -> Task<Message> {
 /// Signed pixels to move the grid this tick given the cursor's vertical position, or `None`
 /// when the cursor is away from both edges or the grid cannot scroll further that way.
 ///
+/// `cursor_y` is in the scrollable's **local** frame — `0.0` at its top edge, `view.height` at
+/// its bottom — because [`Message::DragMoved`] comes from a `mouse_area` wrapping the scrollable,
+/// and iced's `mouse_area::on_move` reports the cursor relative to the tracked widget's bounds.
+/// The edge zones are therefore `0.0..EDGE_ZONE` (top) and `height - EDGE_ZONE..height` (bottom);
+/// `view.top` (the scrollable's absolute window position) is intentionally not used here.
+///
 /// Proximity ramps from 0 at the inner edge of the hot zone to 1 at the viewport edge; speed
 /// ramps linearly between [`AUTO_SCROLL_MIN_SPEED`] and [`AUTO_SCROLL_MAX_SPEED`]. The result is
 /// clamped so the grid never scrolls past `0.0..=max_offset` (no overscroll/snap-back). A
@@ -1783,13 +1789,13 @@ fn auto_scroll_delta(cursor_y: f32, view: GridViewport) -> Option<f32> {
   if view.height <= 0.0 || view.max_offset <= 0.0 {
     return None;
   }
-  let bottom = view.top + view.height;
   let speed = |proximity: f32| AUTO_SCROLL_MIN_SPEED + (AUTO_SCROLL_MAX_SPEED - AUTO_SCROLL_MIN_SPEED) * proximity;
 
   // Distance past the top edge of the hot zone (cursor near the top scrolls the content up,
-  // i.e. toward a smaller offset); mirror for the bottom edge.
-  let from_top = view.top + AUTO_SCROLL_EDGE_ZONE - cursor_y;
-  let from_bottom = cursor_y - (bottom - AUTO_SCROLL_EDGE_ZONE);
+  // i.e. toward a smaller offset); mirror for the bottom edge. Both in the scrollable's local
+  // frame, so the top edge is at `0.0` and the bottom edge at `view.height`.
+  let from_top = AUTO_SCROLL_EDGE_ZONE - cursor_y;
+  let from_bottom = cursor_y - (view.height - AUTO_SCROLL_EDGE_ZONE);
 
   let delta = if from_top > 0.0 && from_top >= from_bottom {
     -speed((from_top / AUTO_SCROLL_EDGE_ZONE).clamp(0.0, 1.0))
@@ -6062,7 +6068,9 @@ mod tests {
 
     use super::*;
 
-    // A viewport whose top edge sits at `top`, 600px tall, with 1000px of headroom to scroll.
+    // A 600px-tall viewport whose top edge sits at `top` in absolute window pixels, with 1000px
+    // of headroom to scroll. `top` is preserved for realism but is *not* used by the edge math:
+    // `cursor_y` is local to the scrollable (0 at its top), so the top edge zone is always 0..72.
     fn view(top: f32, offset: f32) -> GridViewport {
       GridViewport {
         height: 600.0,
@@ -6131,11 +6139,52 @@ mod tests {
     }
 
     #[test]
-    fn it_honors_the_viewport_top_offset() {
-      // Viewport pushed 200px down the window: the top edge zone is 200..272, not 0..72.
-      assert!(auto_scroll_delta(210.0, view(200.0, 400.0)).unwrap() < 0.0);
-      // The same window-y, with the viewport at the origin, is mid-grid and must not scroll.
-      assert_eq!(auto_scroll_delta(210.0, view(0.0, 400.0)), None);
+    fn it_treats_the_cursor_as_local_to_the_scrollable() {
+      // `DragMoved` reports the cursor relative to the scrollable (0 at its top), so the edge
+      // zones are local — they do not shift with the scrollable's absolute window position.
+      // A cursor 10px below the scrollable's own top is in the top zone and scrolls up, no
+      // matter where the scrollable sits in the window.
+      assert!(auto_scroll_delta(10.0, view(0.0, 400.0)).unwrap() < 0.0);
+      assert!(auto_scroll_delta(10.0, view(200.0, 400.0)).unwrap() < 0.0);
+      assert_eq!(
+        auto_scroll_delta(10.0, view(0.0, 400.0)),
+        auto_scroll_delta(10.0, view(200.0, 400.0)),
+        "the absolute viewport top must not change the local edge math",
+      );
+
+      // A cursor parked mid-grid (300 of 600) is outside both local edge zones regardless of
+      // where the scrollable sits, so it never scrolls.
+      assert_eq!(auto_scroll_delta(300.0, view(200.0, 400.0)), None);
+    }
+
+    #[test]
+    fn it_drives_the_active_grid_offset_toward_the_held_edge() {
+      // End-to-end through the tick handler: a drag is active and the cursor is held in the
+      // bottom edge zone, so the active grid's persisted offset advances downward.
+      let mut state = State {
+        cursor: Some(iced::Point::new(40.0, 590.0)),
+        dragging: Some(Drag::Card(1)),
+        roster_scroll_offset: 400.0,
+        roster_viewport: view(0.0, 400.0),
+        ..State::default()
+      };
+
+      let _ = auto_scroll_active_grid(&mut state);
+      assert!(
+        state.roster_scroll_offset > 400.0,
+        "holding the cursor at the bottom edge must scroll the roster down: {}",
+        state.roster_scroll_offset,
+      );
+
+      // Cursor moved to dead center: a further tick is a no-op (no edge proximity).
+      let before = state.roster_scroll_offset;
+      state.roster_viewport.offset = before;
+      state.cursor = Some(iced::Point::new(40.0, 300.0));
+      let _ = auto_scroll_active_grid(&mut state);
+      assert_eq!(
+        state.roster_scroll_offset, before,
+        "a cursor away from both edges must not scroll",
+      );
     }
   }
 }

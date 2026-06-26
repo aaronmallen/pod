@@ -34,6 +34,11 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/bold.svg"))
   }
 
+  #[allow(dead_code)]
+  pub fn block() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/block.svg"))
+  }
+
   pub fn budget() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/budget.svg"))
   }
@@ -268,6 +273,11 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
   }
 
+  #[allow(dead_code)]
+  pub fn pulse() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/pulse.svg"))
+  }
+
   pub fn reply() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/reply.svg"))
   }
@@ -286,6 +296,11 @@ impl Icon {
 
   pub fn settings() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/settings.svg"))
+  }
+
+  #[allow(dead_code)]
+  pub fn shield() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/shield.svg"))
   }
 
   pub fn skills() -> Self {
@@ -419,6 +434,14 @@ mod tests {
       let _layout: Element<'_, ()> = Icon::layout().render();
       let _settings: Element<'_, ()> = Icon::settings().render();
       let _users: Element<'_, ()> = Icon::users().render();
+    }
+
+    #[test]
+    fn it_builds_the_telemetry_icons() {
+      let _block: Element<'_, ()> = Icon::block().render();
+      let _pulse: Element<'_, ()> = Icon::pulse().render();
+      let _shield: Element<'_, ()> = Icon::shield().render();
+      let _upload: Element<'_, ()> = Icon::upload().render();
     }
   }
 

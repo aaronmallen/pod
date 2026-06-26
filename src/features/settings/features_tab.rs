@@ -196,6 +196,18 @@ impl Group {
     }
   }
 
+  /// The stable telemetry token for this display group's master toggle (§8.1):
+  /// a fixed lowercase key, never user text. Free of spaces/slash/at/digits so
+  /// it satisfies the usage-token shape invariant.
+  pub fn telemetry_key(self) -> &'static str {
+    match self {
+      Group::Assets => "assets",
+      Group::Characters => "characters",
+      Group::Industry => "industry",
+      Group::Wallet => "wallet",
+    }
+  }
+
   /// The sub-features displayed under this group, in render order. Every [`SubFeature`] appears under
   /// exactly one group (asserted in tests), so the four groups partition the catalog.
   fn sub_features(self) -> &'static [SubFeature] {

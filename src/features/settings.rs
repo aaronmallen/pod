@@ -266,10 +266,18 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       state.active = category;
       (Outcome::None, Task::none())
     }
-    Message::Features(msg) => (
-      features_tab::update(&mut state.features, msg, &mut state.settings),
-      Task::none(),
-    ),
+    Message::Features(msg) => {
+      // usage feature_toggle (§8.1): record the persisted on/off keyed by a
+      // stable per-feature config token before dispatching. Only the actual
+      // toggle messages emit; the telemetry switches live in `TelemetryConfig`
+      // (not the feature flags), so they never route here. A no-op unless
+      // telemetry is built.
+      record_feature_toggle(&msg);
+      (
+        features_tab::update(&mut state.features, msg, &mut state.settings),
+        Task::none(),
+      )
+    }
     Message::Industry(msg) => (
       industry_tab::update(&mut state.industry, msg, &mut state.settings),
       Task::none(),
@@ -318,6 +326,34 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     config::save(&state.settings);
   }
   (outcome, task)
+}
+
+/// Record a `feature_toggle` usage event for an actual feature toggle, keyed by
+/// a stable per-feature config token (§8.1). Search/no-op feature messages emit
+/// nothing. The telemetry switches live in [`config::TelemetryConfig`], not the
+/// feature flags, so they never reach this path — inspecting/flipping telemetry
+/// emits no usage event (§7.6). A structural no-op unless telemetry is built.
+fn record_feature_toggle(message: &features_tab::Message) {
+  if let Some((token, on)) = feature_toggle_event(message) {
+    crate::services::telemetry::record_feature_toggle(token, on);
+  }
+}
+
+/// Derive the stable `(token, on)` for a feature-toggle message, or `None` for
+/// non-toggle feature messages (search). The token is a fixed per-feature config
+/// key (group key, or `group.sub` for a sub-feature), never user text. The
+/// telemetry switches are NOT feature flags, so they never produce a token here.
+fn feature_toggle_event(message: &features_tab::Message) -> Option<(String, bool)> {
+  use features_tab::Message;
+
+  use crate::services::telemetry::feature_token;
+
+  match message {
+    Message::GroupToggled(group, on) => Some((group.telemetry_key().to_owned(), *on)),
+    Message::SubToggled(sub, on) => Some((feature_token(sub.group().legacy_key(), Some(sub.key())), *on)),
+    Message::Toggled(feature, on) => Some((feature_token(feature.legacy_key(), None), *on)),
+    Message::SearchChanged(_) => None,
+  }
 }
 
 fn reset_active(state: &mut State) {
@@ -665,6 +701,40 @@ mod tests {
 
     for category in categories {
       assert_eq!(Category::from_id(category.id()), Some(category));
+    }
+  }
+
+  #[test]
+  fn feature_toggle_events_carry_a_stable_contract_shaped_token() {
+    use features_tab::Message;
+
+    use crate::services::telemetry::is_well_formed_token;
+
+    // A group master toggle keys off the group's stable token.
+    let (token, on) = feature_toggle_event(&Message::GroupToggled(features_tab::Group::Wallet, false)).unwrap();
+    assert_eq!(token, "wallet");
+    assert!(!on);
+
+    // A sub-feature toggle dots `group.sub`, matching the §6 contract examples.
+    let (token, on) = feature_toggle_event(&Message::SubToggled(config::SubFeature::Budget, true)).unwrap();
+    assert_eq!(token, "wallet.budget");
+    assert!(on);
+
+    // A single-Feature cascade keys off the group's legacy key.
+    let (token, _) = feature_toggle_event(&Message::Toggled(config::Feature::AssetTracking, true)).unwrap();
+    assert_eq!(token, "asset_tracking");
+
+    // Search emits nothing.
+    assert!(feature_toggle_event(&Message::SearchChanged("x".to_owned())).is_none());
+
+    // Every derivable token satisfies the usage-token shape invariant.
+    for sub in config::SubFeature::ALL {
+      let (token, _) = feature_toggle_event(&Message::SubToggled(sub, true)).unwrap();
+      assert!(is_well_formed_token(&token), "sub token `{token}` is malformed");
+    }
+    for feature in config::Feature::ALL {
+      let (token, _) = feature_toggle_event(&Message::Toggled(feature, true)).unwrap();
+      assert!(is_well_formed_token(&token), "feature token `{token}` is malformed");
     }
   }
 

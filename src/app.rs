@@ -754,6 +754,10 @@ fn navigate(app: &mut App, to: Route) {
     );
     return;
   }
+  // usage view_open (§8.1): only a real route change is counted (after the
+  // re-selection guard), keyed by the parameter-free `Route::name()` token so
+  // id-carrying variants never leak an id. A no-op unless telemetry is built.
+  telemetry::record_view_open(telemetry::route_token(to.name()));
   match to.character_id() {
     Some(character_id) => tracing::info!(
       target: "pod::nav",
@@ -1595,6 +1599,11 @@ fn record_window_geometry(app: &mut App, id: window::Id, geometry: WindowGeometr
   let Some(key) = window_key(app, id) else {
     return;
   };
+  // environment.display (§8.2): the primary window's logical size feeds the
+  // once-per-process environment stream. A no-op unless telemetry is built.
+  if matches!(app.windows.kind(id), Some(Window::Main)) {
+    telemetry::set_display(geometry.width as u32, geometry.height as u32);
+  }
   app.ui_state.windows.insert(key.to_owned(), geometry);
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
@@ -2659,6 +2668,10 @@ fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
 }
 
 fn route_view(app: &App) -> Element<'_, Message> {
+  // performance load_ms (§8.3): close the nav->first-paint timer the moment the
+  // just-navigated route first renders centrally. Keyed by the same token
+  // `navigate()` armed it with; a no-op for re-paints and unless telemetry is built.
+  telemetry::record_view_loaded(telemetry::route_token(app.route.name()));
   match app.route {
     Route::Assets => assets_route_view(app),
     Route::Calendar => calendar_route_view(app),
@@ -6246,6 +6259,13 @@ fn handle_nav_to(app: &mut App, destination: rail::Destination, sub_section: Opt
 // feature's own tab-selection handler to load the tab's data. The id is applied directly to state so
 // the tab is correct even before a runtime exists; the load handler is a no-op until one does.
 fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -> Task<Message> {
+  // usage sub_section (§8.1): central dispatcher, keyed by the parameter-free
+  // `{destination}.{id}` token from the static nav-catalog id. The Telemetry
+  // settings sub-section is excluded (§7.6) so inspecting telemetry never emits
+  // a usage event. A no-op unless telemetry is built.
+  if let Some(token) = sub_section_token(destination, id) {
+    telemetry::record_sub_section(token);
+  }
   match destination {
     rail::Destination::Assets => select_assets_sub_section(app, id),
     rail::Destination::Calendar => select_calendar_sub_section(app, id),
@@ -6257,6 +6277,34 @@ fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -
     // separate window the Skills view opens via OpenCompare, so reuse that handler here.
     rail::Destination::Skills => select_skills_sub_section(app, id),
     rail::Destination::Mail => Task::none(),
+  }
+}
+
+/// The stable `sub_section` usage token for a rail destination + nav-catalog id
+/// (§8.1), or `None` for excluded sub-sections that must emit no usage event
+/// (the Telemetry settings pane, §7.6). The destination token mirrors the
+/// lowercased `Route::name()` so it stays in lock-step with `view_open` tokens.
+fn sub_section_token(destination: rail::Destination, id: &str) -> Option<String> {
+  // Inspecting telemetry never emits telemetry (§7.6).
+  if matches!(destination, rail::Destination::Settings) && id == "telemetry" {
+    return None;
+  }
+  let destination = destination_token(destination);
+  Some(format!("{destination}.{id}"))
+}
+
+/// The stable, parameter-free token for a rail destination, lowercased to match
+/// the route tokens `view_open` emits.
+fn destination_token(destination: rail::Destination) -> &'static str {
+  match destination {
+    rail::Destination::Assets => "assets",
+    rail::Destination::Calendar => "calendar",
+    rail::Destination::Characters => "characters",
+    rail::Destination::Industry => "industry",
+    rail::Destination::Mail => "mail",
+    rail::Destination::Settings => "settings",
+    rail::Destination::Skills => "skills",
+    rail::Destination::Wallet => "wallet",
   }
 }
 
@@ -7177,6 +7225,92 @@ mod tests {
         sub: None,
       },
       title: "title".to_owned(),
+    }
+  }
+
+  mod telemetry_instrumentation {
+    use super::*;
+    use crate::services::telemetry;
+
+    /// Every route name as a `view_open` token. The same lowercased token feeds
+    /// `performance.views[].name`, so checking it once covers both.
+    const ROUTES: [Route; 10] = [
+      Route::Assets,
+      Route::Calendar,
+      Route::CharacterDetail(1),
+      Route::Characters,
+      Route::CorporationDetail(1),
+      Route::Industry,
+      Route::Mail,
+      Route::Settings,
+      Route::Skills(1),
+      Route::Wallet,
+    ];
+
+    /// The privacy AC (§8.1): every usage/sub_section token is free of spaces,
+    /// `/`, `@`, and digits, and casing is pinned (lowercased). Covers the whole
+    /// emitted token universe: route `view_open` tokens, the destination
+    /// prefixes of `sub_section` tokens, and every nav-catalog sub-section id
+    /// (the `{destination}.{id}` suffix).
+    #[test]
+    fn every_usage_token_is_free_of_spaces_slash_at_and_digits() {
+      for route in ROUTES {
+        let token = telemetry::route_token(route.name());
+        assert_eq!(token, token.to_ascii_lowercase(), "route tokens are lowercased");
+        assert!(
+          telemetry::is_well_formed_token(&token),
+          "route token `{token}` violates the shape invariant"
+        );
+      }
+
+      for destination in rail::Destination::REORDERABLE {
+        let token = destination_token(destination);
+        assert!(
+          telemetry::is_well_formed_token(token),
+          "destination token `{token}` violates the shape invariant"
+        );
+      }
+      // Settings is reachable as a sub_section destination but is not reorderable.
+      assert!(telemetry::is_well_formed_token(destination_token(
+        rail::Destination::Settings
+      )));
+
+      // Every catalog sub-section id, assembled into the real `{dest}.{id}` token.
+      let destinations = [
+        rail::Destination::Assets,
+        rail::Destination::Calendar,
+        rail::Destination::Characters,
+        rail::Destination::Industry,
+        rail::Destination::Mail,
+        rail::Destination::Settings,
+        rail::Destination::Skills,
+        rail::Destination::Wallet,
+      ];
+      for destination in destinations {
+        let Some(section) = crate::features::nav_catalog::section(destination) else {
+          continue;
+        };
+        for sub in section.sub_sections {
+          if let Some(token) = sub_section_token(destination, sub.id) {
+            assert!(
+              telemetry::is_well_formed_token(&token),
+              "sub_section token `{token}` violates the shape invariant"
+            );
+          }
+        }
+      }
+    }
+
+    /// §7.6: inspecting the Telemetry settings sub-section emits NO usage event,
+    /// so its token is excluded at the call site.
+    #[test]
+    fn the_telemetry_sub_section_is_excluded_from_usage() {
+      assert_eq!(sub_section_token(rail::Destination::Settings, "telemetry"), None);
+      // A neighbouring settings sub-section is still captured.
+      assert_eq!(
+        sub_section_token(rail::Destination::Settings, "features"),
+        Some("settings.features".to_owned())
+      );
     }
   }
 

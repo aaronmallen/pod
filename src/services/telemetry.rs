@@ -61,6 +61,14 @@ struct Buffers {
   config: TelemetryConfig,
   /// Whether the `environment` stream has already been emitted this process.
   environment_sent: bool,
+  /// The most recent primary-window logical size (`"WxH"`), captured via
+  /// [`set_display`]. `None` until the main window is sized; the environment
+  /// stream then falls back to the `"unknown"` sentinel.
+  display: Option<String>,
+  /// The in-flight nav->first-paint timer: the route token opened at the last
+  /// [`record_view_open`] plus the [`Instant`] it started. Closed by
+  /// [`record_view_loaded`] when that route first paints (§8.3 `load_ms`).
+  nav_started: Option<(String, std::time::Instant)>,
 }
 
 /// The process-global telemetry collector: identity fixed at [`init`], plus the
@@ -103,6 +111,16 @@ pub fn set_config(config: TelemetryConfig) {
   {
     buffers.config = config;
   }
+}
+
+/// Record the primary-window logical size so the once-per-process `environment`
+/// stream can report `display` as `"WxH"` (§8.2). Called from the main-window
+/// geometry path; a no-op when the subsystem is uninitialized or under
+/// `cfg(test)`. The latest size seen before the first flush wins.
+pub fn set_display(width: u32, height: u32) {
+  with_buffers(|buffers| {
+    buffers.display = Some(format!("{width}x{height}"));
+  });
 }
 
 /// Generate the per-process session tag: `"s_"` followed by exactly 8 lowercase
@@ -151,15 +169,42 @@ fn now_rfc3339() -> String {
 
 // ---- Capture: cheap, non-blocking, no Settings branch. ----------------------
 
-/// Record a view/route open at the central `navigate()` dispatcher.
+/// Record a view/route open at the central `navigate()` dispatcher. Also arms
+/// the nav->first-paint timer for this route (§8.3 `load_ms`), closed by the
+/// first [`record_view_loaded`] of the same route.
 pub fn record_view_open(name: impl Into<String>) {
   let name = name.into();
   with_buffers(|buffers| {
+    buffers.nav_started = Some((name.clone(), std::time::Instant::now()));
     buffers.usage.push(UsageEvent {
       t: now_rfc3339(),
       kind: UsageEventKind::ViewOpen,
       name,
       on: None,
+    });
+  });
+}
+
+/// Close the nav->first-paint timer for `name` when its route first paints,
+/// pushing a performance view entry with the elapsed `load_ms` (§8.3). A no-op
+/// when no timer is armed or the painting route differs from the one opened
+/// (so only the first paint of the just-navigated route is timed). `frame_p95`
+/// is left at 0 here (the redraw-delta approximation is a deferred follow-up).
+pub fn record_view_loaded(name: impl Into<String>) {
+  let name = name.into();
+  with_buffers(|buffers| {
+    let Some((opened, started)) = buffers.nav_started.as_ref() else {
+      return;
+    };
+    if *opened != name {
+      return;
+    }
+    let load_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+    buffers.nav_started = None;
+    buffers.views.push(PerformanceViewEntry {
+      name,
+      load_ms,
+      frame_p95_ms: 0,
     });
   });
 }
@@ -260,6 +305,7 @@ impl Collector {
     if emit_environment {
       buffers.environment_sent = true;
     }
+    let display = buffers.display.clone();
     drop(buffers);
 
     let usage = (*config.usage() && !usage_events.is_empty()).then_some(UsageStream {
@@ -269,7 +315,7 @@ impl Collector {
       views,
       heap_mb,
     });
-    let environment = emit_environment.then(environment_stream);
+    let environment = emit_environment.then(|| environment_stream(display.as_deref()));
 
     // Nothing enabled carried any data this window -- drain already happened.
     if usage.is_none() && performance.is_none() && environment.is_none() {
@@ -293,17 +339,126 @@ impl Collector {
   }
 }
 
-/// Assemble the closed-world environment stream (§6.1.1). `os` / `arch` come
-/// from `std::env::consts`; the host-probed fields are left as the `"unknown"`
-/// sentinel here (richer probing is out of scope for the collector).
-fn environment_stream() -> EnvironmentStream {
+/// Assemble the closed-world environment stream (§6.1.1, §8.2). `os` / `arch`
+/// come from `std::env::consts`; `os_version` (major only) and `locale`
+/// (language only) are probed cheaply per-platform; `display` is the
+/// primary-window logical size captured via [`set_display`]. Every
+/// unresolvable field collapses to the literal `"unknown"` sentinel (never
+/// omitted).
+fn environment_stream(display: Option<&str>) -> EnvironmentStream {
   EnvironmentStream {
     os: std::env::consts::OS.to_owned(),
-    os_version: UNKNOWN.to_owned(),
+    os_version: os_version_major().unwrap_or_else(|| UNKNOWN.to_owned()),
     arch: std::env::consts::ARCH.to_owned(),
-    display: UNKNOWN.to_owned(),
-    locale: UNKNOWN.to_owned(),
+    display: display.map(str::to_owned).unwrap_or_else(|| UNKNOWN.to_owned()),
+    locale: locale_language().unwrap_or_else(|| UNKNOWN.to_owned()),
   }
+}
+
+/// The major OS version, probed per-platform with one cheap subprocess /
+/// file read (runs once, on the first flush). `None` when unresolvable, so the
+/// caller substitutes the `"unknown"` sentinel.
+///
+/// macOS: `sw_vers -productVersion` (e.g. `15.5` -> `15`).
+/// Linux: `/etc/os-release` `VERSION_ID` (e.g. `22.04` -> `22`).
+/// Windows: `cmd /c ver` (e.g. `... [Version 10.0.19045.0]` -> `10`).
+fn os_version_major() -> Option<String> {
+  let raw = if cfg!(target_os = "macos") {
+    std::process::Command::new("sw_vers")
+      .arg("-productVersion")
+      .output()
+      .ok()
+      .filter(|out| out.status.success())
+      .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+  } else if cfg!(target_os = "windows") {
+    std::process::Command::new("cmd")
+      .args(["/c", "ver"])
+      .output()
+      .ok()
+      .filter(|out| out.status.success())
+      .and_then(|out| {
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.split_once("Version ").map(|(_, rest)| rest.trim().to_owned())
+      })
+  } else {
+    std::fs::read_to_string("/etc/os-release").ok().and_then(|contents| {
+      contents.lines().find_map(|line| {
+        line
+          .strip_prefix("VERSION_ID=")
+          .map(|value| value.trim_matches('"').to_owned())
+      })
+    })
+  }?;
+
+  major_component(&raw)
+}
+
+/// The leading numeric component of a dotted version string (`"15.5"` -> `"15"`),
+/// `None` when there is no leading digit run.
+fn major_component(version: &str) -> Option<String> {
+  let major: String = version.trim().chars().take_while(char::is_ascii_digit).collect();
+  (!major.is_empty()).then_some(major)
+}
+
+/// The language-only locale (region subtag dropped, §5.3): the first of
+/// `LC_ALL` / `LC_MESSAGES` / `LANG` that is set and non-empty, reduced to its
+/// language prefix (`"en_ZA.UTF-8"` -> `"en"`). `None` when none are set, so the
+/// caller substitutes the `"unknown"` sentinel.
+fn locale_language() -> Option<String> {
+  ["LC_ALL", "LC_MESSAGES", "LANG"]
+    .into_iter()
+    .find_map(|key| std::env::var(key).ok().filter(|value| !value.trim().is_empty()))
+    .and_then(|value| language_subtag(&value))
+}
+
+/// The bare language subtag of a POSIX/BCP47 locale token (`"en_ZA.UTF-8"` ->
+/// `"en"`, `"pt-BR"` -> `"pt"`), `None` when empty or the special `C`/`POSIX`
+/// locales (which carry no language).
+fn language_subtag(locale: &str) -> Option<String> {
+  let language: String = locale
+    .trim()
+    .chars()
+    .take_while(|&c| c.is_ascii_alphabetic())
+    .collect::<String>()
+    .to_ascii_lowercase();
+  match language.as_str() {
+    "" | "c" | "posix" => None,
+    _ => Some(language),
+  }
+}
+
+// ---- Stable usage tokens (§8.1): lowercase, no spaces/slash/at/digits. -------
+
+/// The stable, parameter-free usage token for a route, lowercased for
+/// consistency with the dotted `sub_section` tokens (§8.1). Pairs with
+/// [`crate::app`]'s `Route::name()` CamelCase constant so id-carrying variants
+/// never leak an id.
+pub fn route_token(name: &str) -> String {
+  name.to_ascii_lowercase()
+}
+
+/// The stable `feature_toggle` token: the feature/sub-feature config key,
+/// dotted as `group.sub` for a sub-feature so it matches the §6 contract
+/// examples (`wallet.budget`). The telemetry toggles themselves are NOT routed
+/// here (they live in `TelemetryConfig`, not the feature flags), so this never
+/// emits a telemetry token.
+pub fn feature_token(group_key: &str, sub_key: Option<&str>) -> String {
+  match sub_key {
+    Some(sub) => format!("{group_key}.{sub}"),
+    None => group_key.to_owned(),
+  }
+}
+
+/// Whether `token` satisfies the pinned usage/sub_section token shape (§8.1, the
+/// privacy AC): non-empty and free of spaces, `/`, `@`, and any digit. Casing is
+/// the caller's responsibility (every token capture lowercases). Shared with the
+/// `app` token-shape test so the route/sub_section/feature token universe is
+/// checked against one rule.
+pub fn is_well_formed_token(token: &str) -> bool {
+  !token.is_empty()
+    && !token
+      .chars()
+      .any(|c| c == ' ' || c == '/' || c == '@' || c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -548,5 +703,98 @@ mod tests {
     // No global collector in this isolated unit; set_config must not panic.
     set_config(config(false, false, false, false));
     assert!(COLLECTOR.get().is_none());
+  }
+
+  // ---- token helpers: stable, lowercase, contract-shaped. ----
+
+  #[test]
+  fn route_token_lowercases_the_camelcase_route_name() {
+    assert_eq!(route_token("CharacterDetail"), "characterdetail");
+    assert_eq!(route_token("Wallet"), "wallet");
+  }
+
+  #[test]
+  fn feature_token_dots_a_sub_feature_under_its_group() {
+    assert_eq!(feature_token("wallet", Some("budget")), "wallet.budget");
+    assert_eq!(feature_token("wallet", None), "wallet");
+  }
+
+  #[test]
+  fn is_well_formed_token_rejects_spaces_slash_at_and_digits() {
+    assert!(is_well_formed_token("wallet"));
+    assert!(is_well_formed_token("wallet.budget"));
+    assert!(is_well_formed_token("asset_tracking.inventory"));
+    assert!(!is_well_formed_token(""));
+    assert!(!is_well_formed_token("wallet budget"));
+    assert!(!is_well_formed_token("wallet/budget"));
+    assert!(!is_well_formed_token("wallet@budget"));
+    assert!(!is_well_formed_token("wallet2"));
+  }
+
+  // ---- environment probing: version/locale reduction is major/language-only. ----
+
+  #[test]
+  fn major_component_keeps_only_the_leading_digit_run() {
+    assert_eq!(major_component("15.5").as_deref(), Some("15"));
+    assert_eq!(major_component("22.04").as_deref(), Some("22"));
+    assert_eq!(major_component("10.0.19045").as_deref(), Some("10"));
+    assert_eq!(major_component("rolling"), None);
+    assert_eq!(major_component(""), None);
+  }
+
+  #[test]
+  fn language_subtag_drops_the_region_and_encoding() {
+    assert_eq!(language_subtag("en_ZA.UTF-8").as_deref(), Some("en"));
+    assert_eq!(language_subtag("pt-BR").as_deref(), Some("pt"));
+    assert_eq!(language_subtag("EN").as_deref(), Some("en"));
+    assert_eq!(language_subtag("C"), None);
+    assert_eq!(language_subtag("POSIX"), None);
+    assert_eq!(language_subtag(""), None);
+  }
+
+  #[test]
+  fn environment_stream_fills_os_arch_and_falls_back_to_unknown_for_a_missing_display() {
+    let env = environment_stream(None);
+    assert_eq!(env.os, std::env::consts::OS);
+    assert_eq!(env.arch, std::env::consts::ARCH);
+    assert_eq!(env.display, UNKNOWN);
+    // os_version / locale are best-effort: either a probed value or the sentinel,
+    // but never empty.
+    assert!(!env.os_version.is_empty());
+    assert!(!env.locale.is_empty());
+  }
+
+  #[test]
+  fn environment_stream_reports_the_captured_primary_window_size() {
+    let env = environment_stream(Some("2560x1440"));
+    assert_eq!(env.display, "2560x1440");
+  }
+
+  // ---- load_ms timer: opened by view_open, closed by the first matching paint. ----
+
+  #[test]
+  fn nav_timer_records_a_view_load_on_the_first_paint_of_the_opened_route() {
+    let collector = collector(config(true, true, true, true));
+    {
+      let mut buffers = collector.buffers.lock().unwrap();
+      buffers.nav_started = Some(("wallet".to_owned(), std::time::Instant::now()));
+    }
+    // Simulate record_view_loaded("wallet") closing the armed timer.
+    {
+      let mut buffers = collector.buffers.lock().unwrap();
+      let (opened, started) = buffers.nav_started.clone().unwrap();
+      assert_eq!(opened, "wallet");
+      let load_ms = started.elapsed().as_millis() as u64;
+      buffers.nav_started = None;
+      buffers.views.push(PerformanceViewEntry {
+        name: opened,
+        load_ms,
+        frame_p95_ms: 0,
+      });
+    }
+    let buffers = collector.buffers.lock().unwrap();
+    assert_eq!(buffers.views.len(), 1);
+    assert_eq!(buffers.views[0].name, "wallet");
+    assert!(buffers.nav_started.is_none(), "timer is consumed on close");
   }
 }

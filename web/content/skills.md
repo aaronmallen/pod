@@ -17,7 +17,9 @@ plans, not by editing the queue in Pod.
 The view splits into a left column and a right panel, with a draggable handle
 between them. Pick the active character from the dropdown in the header band at
 the top. The header also carries stat blocks for total SP, the queue, and the
-training finish time, plus a Compare button.
+training finish time, plus a "Manage Plans" button and a "Compare" button.
+"Manage Plans" sits to the left of "Compare." The queue stat reads "Empty" when
+nothing is training, whether the queue is empty or paused.
 
 ![The Skills three-pane layout with the training hero, queue, and right panel](/docs/img/skills/overview.png)
 
@@ -29,15 +31,20 @@ The left column stacks up to three cards:
   REMAINING. A second column shows percent complete, SP now and SP to go, the
   attribute pair driving the skill, and the SP rate. A thin progress bar runs
   across the top of the card.
-- A warning strip appears only when there is something to flag. If no skill is
-  training, it reads "Training inactive · no skill is currently training." If
-  less than 24 hours of training remains, it reads "Low queue · less than 24h of
-  training remains."
+- A warning strip appears only when there is something to flag. It covers three
+  variants. An empty queue reads "Training inactive · skill queue is empty." A
+  paused queue reads "Training paused · {N} skills queued," counting the skills
+  still waiting. A live queue with less than 24 hours left reads "Low queue ·
+  less than 24h of training remains."
 - The queue section lists the upcoming skills.
 
-When nothing is training, the hero switches to an idle card that reads "Training
-paused · queue empty" and "No skill is currently training," with the prompt
-"Apply a skill plan to start training."
+When nothing is training, the hero switches to an idle card, and it distinguishes
+an empty queue from a paused one. An empty queue reads "Training inactive · queue
+empty" and "No skill is currently training," with the prompt "Apply a skill plan
+to start training." A paused queue, where skills are still lined up but EVE has
+stopped training, reads "Training paused · {N} skills queued" and "Training is
+paused," with the prompt "Resume training in EVE to continue the queue." The
+count reads "1 skill" when exactly one skill is queued.
 
 If you have not added any characters yet, the whole view reads "Add a character
 to view skills."
@@ -171,23 +178,27 @@ local list of skills and target levels that you author and edit. It differs from
 the live queue: the queue is read-only and reflects EVE, while a plan is yours to
 reorder, edit, and reuse. Building a plan is how you decide what to train next.
 
-Each plan card shows a count of entries, the plan name, and a subtitle of
-`{N} skills · {date}`. The Open button opens the plan in the editor. The delete
-button arms an inline confirm row reading "Delete?" with Confirm and Cancel.
+Each plan card shows a blue chip, the plan name, and a subtitle of
+`{N} skills · {date}`. The chip is the number of steps still left to train for
+the active character, so the same plan shows a different number on a pilot who
+has already trained part of it. The subtitle counts the distinct skills in the
+plan, not its total steps, followed by the date it was last updated. The Open
+button opens the plan in the editor. The delete button arms an inline confirm
+row reading "Delete?" with Confirm and Cancel.
 
 When the character has no plans, the tab reads "No skill plans yet" with the
-prompt "Create your first plan to start optimizing your skill queue." The footer
-carries a "New plan" button and a "From queue" button that builds a plan from the
-whole current queue. When you have queue rows selected, a "From selected ▸ {count}"
-button appears as well. A "Manage plans" button opens the Manage Skill Plans
-window described next.
+prompt "Create your first plan to start optimizing your skill queue," and a
+single "New plan" button beside a "From queue" button that builds a plan from
+the whole current queue. When you have queue rows selected, a "From selected ▸
+{count}" button appears as well. The Manage Skill Plans window opens from the
+"Manage Plans" button in the header, not from this tab.
 
 ## Manage Skill Plans
 
 The Plans tab works one character at a time. To see and move plans across your
-whole roster at once, open the Manage Skill Plans window from the "Manage plans"
-button. It opens as its own detached window, separate from the main Pod window,
-so you can move and resize it.
+whole roster at once, open the Manage Skill Plans window from the "Manage Plans"
+button in the header. It opens as its own detached window, separate from the
+main Pod window, so you can move and resize it.
 
 The window is a master/detail layout. A character rail runs down the left, one
 row per pilot with a portrait, name, corp, and a count of how many plans they
@@ -211,7 +222,9 @@ another character.
 
 ## The plan editor
 
-The plan editor opens in its own three-column layout: a skill picker, the ordered
+The plan editor opens as its own detached window, alongside Manage Skill Plans
+and Compare, so you can move and resize it next to the main Pod window. It lays
+out in three columns: a skill picker, the ordered
 entry list, and a summary panel. The header carries a back arrow, an inline name
 field that defaults to "Untitled plan," a dot that lights up when there are
 unsaved changes, Import and Export menus, a button to show or hide the picker,
@@ -300,7 +313,8 @@ the imported skills to the end, with Cancel, Append, and Replace.
 
 ## Comparing characters
 
-The Compare button in the header opens a full-screen matrix that compares two or
+The "Compare" button in the header opens its own detached window, a matrix that
+compares two or
 more characters side by side. The header reads "Compare" with a pilot count, a
 row of pilot chips showing each portrait, name, and total SP, and an "+ ADD PILOT"
 button with a "Search pilots…" dropdown. You need at least two pilots, so the

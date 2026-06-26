@@ -35,9 +35,13 @@ as `X training · Y idle`. Idle counts the pilots whose skill queue is empty.
 ![Squads and the unassigned pool](/docs/img/characters/squads.png)
 
 Drag a card to move it. Pick it up with the left mouse button and drop it on
-another slot or another squad to reassign both its position and its squad. You
-can also drag a squad header bar to reorder squads; the target shows where the
-squad will drop.
+another slot or another squad to reassign both its position and its squad. While
+you drag, holding the card near the top or bottom edge of the grid auto-scrolls
+the roster in that direction, so you can reach a squad that is off-screen without
+letting go. The pull starts gently at the inner edge of the hot zone and speeds
+up the closer the card gets to the edge, and it stops at the top or bottom of the
+list. You can also drag a squad header bar to reorder squads; the target shows
+where the squad will drop.
 
 Right-click a squad header to open its menu. The entries are **Edit squad**,
 **Collapse** (or **Expand** when the squad is already collapsed), **Move pilots
@@ -58,11 +62,15 @@ the corporation ticker, any tags, and the training and ISK stats.
 ![Card anatomy](/docs/img/characters/card-anatomy.png)
 
 The **Training** section shows the active skill and its level in roman numerals
-with a progress bar and the remaining time. When the queue is empty the card
-shows **Skill queue empty** in danger red instead. The bottom row is split into
-**Location** on the left and **ISK** on the right; either shows a dash
-placeholder when the value is not known yet. If a sync is in trouble the card shows **Sync
-backing off** or **Sync failed**.
+with a progress bar and the remaining time. A paused queue, where skills are
+still lined up but EVE has stopped training, keeps the head skill, its roman
+level, and the progress bar, but greys the bar out and reads **Paused · N skills
+queued** in place of the remaining time. The count reads **1 skill** when exactly
+one skill is queued. When the queue is empty the card shows **Skill queue empty**
+in danger red instead, which is distinct from both the actively training and the
+paused states. The bottom row is split into **Location** on the left and **ISK**
+on the right; either shows a dash placeholder when the value is not known yet. If
+a sync is in trouble the card shows **Sync backing off** or **Sync failed**.
 
 ### Card menu
 

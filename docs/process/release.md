@@ -103,5 +103,6 @@ git push origin main --tags
 gh run rerun <run-id> --failed
 ```
 
+> [!TIP]
 > Driving the repo with jj instead of git? The equivalents are `jj bookmark` to advance `main`, `jj tag set <name> -r
 > <change-id>` to place the tag, and `jj git push && git push origin --tags` to publish. The process above is identical.

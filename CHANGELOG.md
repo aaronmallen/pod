@@ -7,6 +7,59 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.7]
+
+### Added
+
+- **Anonymous, opt-out usage data** — a new Telemetry section in Settings lets you share anonymous usage, performance,
+  crash, and environment data to help improve Pod. It is on by default with a master switch and a toggle per stream,
+  shows a "never collected" list and a live preview of exactly what would be sent, and uses a random id that is never
+  linked to you. Your IP is never recorded, and crash reports are stripped of personal details before they leave your
+  machine.
+- **Tag your items** — label inventory rows with your own tags, select several rows to tag them at once, filter the
+  inventory by `tag:`, and manage your asset tags from a new tab in Settings → Tags.
+- **Worth-reprocessing badge** — inventory rows worth more reprocessed than sold now show a warning badge and a
+  reprocessed-value line, so you can spot reprocessing opportunities at a glance.
+- **Sort the location tree** — the Assets location sidebar has a new A–Z / Value toggle (your choice is remembered), and
+  containers holding items that match your filter now expand automatically.
+- **Back up and move your data** — export everything to a single archive file from Settings → Storage and import it on
+  another machine. Importing backs up the current data first and refuses an archive from a newer version of Pod.
+- **Search contracts by their contents** — the Contracts filter now matches the names of items inside a contract, not
+  just the contract title and parties.
+- **Mail date separators** — the message list groups messages under Today, Yesterday, This Month, and month headers,
+  with a date on every row.
+
+### Changed
+
+- **Native windows** — the detached killmail, contract, mail compose, skill plan manager, and stockpile editor windows
+  now use your operating system's own title bar and controls, and multibuy import and calendar event details open in
+  their own windows too — you can have several calendar events open at once.
+- **Notifications** — the notification center now has New and History tabs with a "Mark all read" button; marking a
+  notification read removes it from New, History scrolls back through about 90 days, and toasts show a colored icon for
+  each kind of event.
+- **Calmer sync status** — the sync indicator leads with a plain status ("Up to date", "Catching up", or how many items
+  need attention), and the details popover spells out each row's state more clearly.
+- **Roster** — holding a dragged character card near the top or bottom edge now scrolls the roster, and a paused skill
+  queue is shown distinctly from an empty one on the card and the skills screen.
+- **Skill plans** — plan cards now show how many steps remain and how many distinct skills are involved, and a Manage
+  Plans button sits in the skills header next to Compare.
+- **Supercapitals and rarely-traded hulls** now show a reference price in your inventory and net worth instead of 0 ISK.
+- **Connect an AI agent** — the MCP settings tab gives honest, per-app setup guidance, and the built-in server now uses
+  the current Streamable-HTTP transport with typed inputs for every tool.
+
+### Fixed
+
+- Right-clicking a row in Assets, the wallet journal, or transactions now opens the menu at your cursor instead of the
+  top-left corner, and no longer jumps the list back to the top.
+- The wallet ledger keeps its place when the budget-assign menu opens, instead of scrolling to the top.
+- Marking a notification as read now removes it from the New list, matching the rest of the redesign.
+- Killmails no longer list characters who were not actually involved in the kill.
+- Budget assignments stay consistent across your characters and corporation after a wallet sync.
+
+### Removed
+
+- The "Clear all" button in the notification center — reading notifications or letting them age out keeps the list tidy.
+
 ## [0.6.6]
 
 ### Added
@@ -786,7 +839,8 @@ and this project adheres to [Semver versioning](https://semver.org/).
 
 Initial beta release
 
-[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.6...HEAD
+[Unreleased]: https://github.com/aaronmallen/pod/compare/0.6.7...HEAD
+[0.6.7]: https://github.com/aaronmallen/pod/compare/0.6.6...0.6.7
 [0.6.6]: https://github.com/aaronmallen/pod/compare/0.6.5...0.6.6
 [0.6.5]: https://github.com/aaronmallen/pod/compare/0.6.4...0.6.5
 [0.6.4]: https://github.com/aaronmallen/pod/compare/0.6.3...0.6.4

@@ -2559,6 +2559,10 @@ async fn apply_tag_write(db: &Database, write: TagWrite) -> Result<(), String> {
       entity_type,
       name,
     } => {
+      // Route create-and-assign through the repo's entity-scope find-or-create: `infra::create`
+      // delegates to `create_scoped(.., TAG_SCOPE_ENTITY)`, which returns the existing same-scope tag
+      // (matched case-insensitively, trimmed) instead of inserting a duplicate. Typing an existing roster
+      // tag name in any casing therefore reuses that tag rather than spawning a duplicate row.
       let created = infra::create(db, &name, None, None)
         .await
         .map_err(|err| err.to_string())?;
@@ -4543,7 +4547,7 @@ mod tests {
     use super::*;
     use crate::store::{
       self,
-      model::{Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      model::{Bloodline, Character, Corporation, Gender, OwnerType, Race, TAG_SCOPE_ASSET, TAG_SCOPE_ENTITY},
       repo::infra,
     };
 
@@ -5518,6 +5522,64 @@ mod tests {
 
       assert_eq!(names, vec!["Hauler".to_owned()]);
       assert!(all_tags(&state).iter().any(|tag| tag.name() == "Hauler"));
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_reuses_an_existing_entity_tag_case_insensitively() {
+      // The primary duplicate-tag fix: typing an existing roster tag name in a different casing must
+      // reuse that tag (via the repo's entity-scope find-or-create) and add no new row.
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      let existing = infra::create(&db, "Hauler", None, None).await.unwrap();
+      let before = infra::tag_all(&db).await.unwrap().len();
+
+      apply_tag_write(
+        &db,
+        TagWrite::CreateAndAssign {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          name: "hauler".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+
+      let after = infra::tag_all(&db).await.unwrap();
+      assert_eq!(after.len(), before, "no duplicate tag row was created");
+      let mut state = State::new();
+      let names = reload_tag_names(&mut state, &db, 1).await;
+      assert_eq!(names, vec!["Hauler".to_owned()]);
+      assert!(
+        after
+          .iter()
+          .any(|tag| tag.id() == existing.id() && tag.name() == "Hauler"),
+        "the existing tag was reused untouched",
+      );
+    }
+
+    #[tokio::test]
+    async fn a_roster_tag_and_an_asset_tag_of_the_same_name_coexist() {
+      // Scope separation: a "Roller" entity (roster) tag and a "Roller" asset tag are distinct rows.
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1, "Pilot").await;
+      apply_tag_write(
+        &db,
+        TagWrite::CreateAndAssign {
+          entity_id: 1,
+          entity_type: ENTITY_TYPE_CHARACTER,
+          name: "Roller".to_owned(),
+        },
+      )
+      .await
+      .unwrap();
+      let asset = infra::create_scoped(&db, "Roller", None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+
+      let entity = infra::tag_all_scoped(&db, TAG_SCOPE_ENTITY).await.unwrap();
+      assert_eq!(entity.len(), 1);
+      assert_eq!(entity[0].name(), "Roller");
+      assert_ne!(entity[0].id(), asset.id());
     }
 
     #[tokio::test]

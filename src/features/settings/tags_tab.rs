@@ -9,7 +9,7 @@ use crate::{
   config::Settings,
   store::{
     Database,
-    model::{TAG_SCOPE_ASSET, Tag},
+    model::{TAG_SCOPE_ASSET, Tag, normalize_tag_name},
     repo::infra,
   },
   ui::{
@@ -163,11 +163,13 @@ impl Section {
   }
 
   fn name_taken(&self, name: &str, except: Option<i64>) -> bool {
-    let needle = name.to_lowercase();
+    // Normalize exactly like the repo's find-or-create / rename guard (which keys on the store's
+    // `(scope, lower(name))`) so this in-memory check agrees with what the store will accept or reject.
+    let needle = normalize_tag_name(name);
     self
       .tags
       .iter()
-      .any(|tag| Some(tag.id()) != except && tag.name().to_lowercase() == needle)
+      .any(|tag| Some(tag.id()) != except && normalize_tag_name(tag.name()) == needle)
   }
 }
 
@@ -1563,6 +1565,33 @@ mod tests {
       "a duplicate rename leaves the name unchanged"
     );
     assert!(state.entity.editing.is_none());
+  }
+
+  #[tokio::test]
+  async fn name_taken_matches_the_repo_key_case_and_whitespace_insensitively() {
+    // The in-memory create/rename guard must agree with the store's `(scope, lower(name))` key:
+    // ASCII-case- and trim-insensitive. A padded, differently-cased re-entry of an existing name is
+    // "taken" (so add/rename no-ops instead of racing the store), while a genuinely new name is not.
+    let state = state_with(&["Main", "Alt"]).await;
+    let alt_id = state.entity.tags[1].id();
+
+    assert!(
+      state.entity.name_taken("  main  ", None),
+      "padded, lower-cased dup is taken"
+    );
+    assert!(
+      state.entity.name_taken("MAIN", None),
+      "ASCII case-only dup is taken (mirrors SQLite lower())"
+    );
+    assert!(
+      !state.entity.name_taken("Main", Some(state.entity.tags[0].id())),
+      "a tag never collides with itself on rename"
+    );
+    assert!(!state.entity.name_taken("Hauler", None), "a genuinely new name is free");
+    assert!(
+      !state.entity.name_taken("alt", Some(alt_id)),
+      "renaming a tag to its own casing is not blocked"
+    );
   }
 
   #[test]

@@ -255,5 +255,5 @@ pub use stockpile::Model as Stockpile;
 pub use stockpile_item::Model as StockpileItem;
 pub use structure::Model as Structure;
 pub use sync_ledger::Model as SyncLedger;
-pub use tag::Model as Tag;
+pub use tag::{Model as Tag, normalize_name as normalize_tag_name};
 pub use type_price_history::Model as TypePriceHistory;

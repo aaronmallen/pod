@@ -45,6 +45,7 @@ use crate::{
       asset_query::{
         GeoSort, GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
       },
+      normalize_tag_name,
     },
     repo::{assets, character, infra, org},
   },
@@ -1940,11 +1941,16 @@ fn apply_asset_tag_modal(state: &mut State, message: AddTagMessage, db: &Databas
       if state.selection_tag_ids.is_empty() {
         return Task::none();
       }
-      // Reuse an existing asset tag of the same name (case-insensitive) rather than creating a duplicate.
+      // Reuse an existing asset tag of the same name rather than creating a duplicate. This in-memory
+      // fast path keeps the UX snappy, but it MUST normalize names exactly like the repo's find-or-create
+      // (`normalize_tag_name`, which mirrors the store's `(scope, lower(name))` key) so it never diverges
+      // from what the store would do. The bespoke `eq_ignore_ascii_case` it replaces also folded ASCII
+      // case, but did not trim — so a padded re-entry of the same name could slip past it and duplicate.
+      let needle = normalize_tag_name(&name);
       let existing = state
         .asset_tags
         .iter()
-        .find(|tag| tag.name().eq_ignore_ascii_case(&name))
+        .find(|tag| normalize_tag_name(tag.name()) == needle)
         .map(Tag::id);
       if let Some(modal) = &mut state.add_tag_modal {
         modal.input.clear();
@@ -5261,7 +5267,7 @@ mod tests {
       let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
       open_modal(&mut state, &db, 5001);
       state.selection_tag_ids = vec![5001];
-      // Different casing must still match the existing tag via `eq_ignore_ascii_case`, taking the
+      // Different casing must still match the existing tag via `normalize_tag_name`, taking the
       // `Some(id)` reuse branch rather than creating a duplicate.
       if let Some(modal) = &mut state.add_tag_modal {
         modal.input = "kEeP".to_owned();
@@ -5298,6 +5304,39 @@ mod tests {
       assert_eq!(
         state.asset_tags_for(5001).iter().map(|t| t.id()).collect::<Vec<_>>(),
         vec![keep.id()]
+      );
+    }
+
+    #[tokio::test]
+    async fn create_and_assign_in_memory_guard_agrees_with_the_repo_on_unicode_case() {
+      // The in-memory fast path must stay in lock-step with the store. The store keys tags on SQLite's
+      // ASCII-only `lower()`, so "Étagère" and "étagère" are DISTINCT rows there. The guard (built on
+      // `normalize_tag_name`, which ASCII-folds to match) agrees: it does NOT treat the existing
+      // "Étagère" as a reuse target for "étagère", and the repo find-or-create likewise inserts a
+      // second row rather than reusing — no false dedup, no divergence between guard and store.
+      let db = crate::store::open_test().await.unwrap();
+      let mut state = State::new(flags());
+      let existing = seeded_tag(&db, "Étagère").await;
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+
+      let resolved = infra::create_scoped(&db, "étagère", None, None, TAG_SCOPE_ASSET)
+        .await
+        .unwrap();
+      assert_ne!(
+        resolved.id(),
+        existing.id(),
+        "the store keys on ASCII lower(), so the Unicode-case variant is a distinct row"
+      );
+
+      // The in-memory guard reaches the same verdict: no ASCII-equal match against the existing row.
+      let _ = update(&mut state, reload_asset_tags(db.clone()).await, &db);
+      let needle = normalize_tag_name("étagère");
+      assert!(
+        !state
+          .asset_tags
+          .iter()
+          .any(|t| normalize_tag_name(t.name()) == needle && t.id() == existing.id()),
+        "the guard does not falsely match the Unicode-case variant against the existing row"
       );
     }
 

@@ -47,6 +47,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0036] | Freshness-First Sync Status via Seed Events     | ![Active][badge-active] | 2026-06-23 |
 | [0037] | Notification History Keyset Pagination          | ![Active][badge-active] | 2026-06-23 |
 | [0038] | Data Export/Import Archive Format & Restore     | ![Active][badge-active] | 2026-06-23 |
+| [0039] | Anonymous Opt-Out Telemetry                     | ![Active][badge-active] | 2026-06-25 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -88,5 +89,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0036]: 0036-freshness-first-sync-status.md
 [0037]: 0037-notification-history-keyset-pagination-and-time-based-retention.md
 [0038]: 0038-data-export-import-archive-format-and-restore-strategy.md
+[0039]: 0039-anonymous-opt-out-telemetry.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

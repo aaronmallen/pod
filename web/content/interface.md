@@ -148,26 +148,33 @@ of text. The chip is Pod's at-a-glance summary of background syncing. Its dot co
 and wording change with the engine state. Click anywhere on the chip to open the
 sync popover described below; the chip tints faintly while the popover is open.
 
-The chip can show these states.
+The chip leads with freshness. It reads the whole queue and shows the state that
+needs the most attention first, so anything waiting or failing wins over a pass in
+progress, which in turn wins over a settled queue. The words stay calm; only the
+dot pulses during a routine refresh.
 
-- Idle. A green dot with `Synced` and a relative time such as `Synced · 2m ago`,
-  meaning everything is up to date and the last full pass finished a while ago. If
-  Pod has never completed a sync this session, the chip reads `Idle` instead.
-- Running. While a sync pass is in flight, the dot pulses in plasma and the text
-  reads `Syncing` with a thin progress bar and a `done/total` count of endpoints,
-  such as `Syncing 5/10`.
-- Attention. An amber dot with a count such as `2 pending` when some jobs are
-  blocked or waiting on a dependency. These are not failures; they usually mean a
-  missing scope or a job that has not had its prerequisites met yet.
-- Error. A red dot with a count such as `2 sync errors` (or `1 sync error`) when
-  one or more jobs failed or are backing off before a retry. Open the popover to
-  see which endpoint failed and why.
+- Up to date. A green dot with `Up to date`. Everything has settled. Once the
+  queue is fully settled, a quiet relative time joins the chip as a steady aside,
+  such as `Up to date · 2m ago`. A routine mid-refresh leaves the words alone and
+  never decorates them with a churning timestamp; the relative time appears only
+  after the last job lands.
+- Catching up. A plasma dot with `Catching up… N left`, where the count is the
+  number of jobs the engine has not reported on yet. The dot pulses in plasma
+  while a pass is in flight and rests in a muted plasma between ticks.
+- Needs attention. An amber dot with `N need attention` when some jobs are
+  waiting or blocked, such as a missing scope or a job whose prerequisites are not
+  met. The dot and text turn red when a job has persistently failed. Open the
+  popover to see which endpoint and why.
 - Read-only. An amber dot with `Read-only`. Another copy of Pod on your network
   holds the sync lease, so this instance reads the shared data but does not sync.
   When Pod knows the holder's hostname, the chip names the host that has it open.
   A `Take over` button appears next to the chip so you can claim the lease.
-- Stopped. A red dot with `Sync stopped` when the sync engine is not running. A
-  `Restart sync` button appears next to the chip to start it again.
+- Sync stopped. A red dot with `Sync stopped` when the sync engine is not running.
+  A `Restart sync` button appears next to the chip to start it again.
+
+The chip carries no percent or job counts; those live in the popover header. The
+running total it does carry is the `N left` count while catching up and the
+`N need attention` count when something is waiting or failing.
 
 Syncing is automatic. Pod polls your characters on a short cycle and you do not
 trigger it by hand. The `Take over` and `Restart sync` buttons are the only sync
@@ -212,19 +219,26 @@ a character's jobs together. The list scrolls when there are more jobs than fit.
 Each row carries a state, shown by its marker dot, its progress fill, and a glyph
 on the right.
 
-- Syncing. A plasma marker and the word `Syncing`; this job is fetching now.
-- Queued. A dim marker and the word `Queued`; this job is waiting its turn.
-- Done. A green marker, a check glyph, and a `Next in` countdown such as
-  `Next in 42m` showing when it will run again.
-- Empty. A green marker with `No data`; the job ran and there was nothing to fetch.
-- Attention. An amber marker. The sub-line explains why, for example a missing
-  scope or `Waiting on dependencies`.
-- Error. A red marker with an exclamation glyph. The sub-line carries the failure
-  reason, or `Backing off 30s` when the job is waiting before a retry.
+- Fresh. A green marker, a check glyph, and a `Next in` countdown such as
+  `Next in 42m` showing when it will run again. A `Fresh` row covers both a job
+  that fetched data and one that ran and found nothing; an empty result reads as a
+  benign `No data` sub-line.
+- Refreshing. A plasma marker and the word `Refreshing`; this job is fetching now.
+  A job backing off before a retry stays `Refreshing` too, and its sub-line reads
+  `Retrying in 30s`. A backoff is a calm self-healing state, not an error.
+- Catching up. A dim marker and the words `Catching up`; this job has not been
+  reported on yet and is waiting its turn. This replaces the old `Queued` row.
+- Failed. A red marker with an exclamation glyph. The sub-line carries the failure
+  reason. This is the persistent failure that the footer counts.
+- Blocked. An amber marker with `Waiting on dependencies`, or the reason the job
+  is held, such as a missing scope.
+- Needs re-authentication. An amber marker with `Needs re-authentication` when a
+  character's credential has to be renewed before the job can run.
 
 The footer summarizes the whole queue: a `done / total endpoints` count, a
-`· N retry pending` note in red when any job is retrying, and a reminder that Pod
-syncs automatically on its short cycle.
+`· N retry pending` note in red that counts only persistently failed jobs, and a
+reminder that Pod syncs automatically on its short cycle. A blocked or re-auth row
+is attention, not a retry, so it stays out of that count.
 
 ## Updates
 

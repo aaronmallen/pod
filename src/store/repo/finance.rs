@@ -952,7 +952,11 @@ pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) ->
 ///
 /// Keyed off `source`, not the stored price value: a row is in the set when it is absent, when it
 /// was previously filled by zKill (so a non-zero zKill `average_price` is still re-fetched and does
-/// not go permanently stale), or when ESI priced it to a resolved 0. Blueprint copies are excluded.
+/// not go permanently stale), when ESI priced it to a resolved 0, or when ESI priced it via a
+/// reference `adjusted_price` alone (no `average_price`). That last clause pulls supercapital hulls
+/// — which ESI exposes only a lowball reference price for, never a market `average_price` — into the
+/// zKill currentPrice path so they value at their real worth instead of the reference figure.
+/// Blueprint copies are excluded. A type ESI ever priced with a real `average_price` stays out.
 pub async fn market_prices_zkill_gap_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   let rows = sqlx::query_scalar::<_, i64>(
     "WITH held AS ( \
@@ -965,6 +969,7 @@ pub async fn market_prices_zkill_gap_type_ids(db: &Database) -> Result<Vec<i64>,
       WHERE mp.type_id IS NULL \
         OR mp.source = 'zkill' \
         OR (mp.source = 'esi' AND COALESCE(mp.adjusted_price, mp.average_price, 0) = 0) \
+        OR (mp.source = 'esi' AND mp.average_price IS NULL AND mp.adjusted_price IS NOT NULL) \
       ORDER BY held.type_id",
   )
   .fetch_all(&db.0)
@@ -2826,9 +2831,9 @@ mod market_tests {
       seed_character(&db, 42).await;
       // 100: absent from market_prices -> in the gap set
       insert_char_asset(&db, 1, 100, None).await;
-      // 200: priced by ESI non-zero -> excluded
+      // 200: market-traded, ESI average_price present -> excluded
       insert_char_asset(&db, 2, 200, None).await;
-      market_prices_upsert_many(&db, &[MarketPrice::esi(200, Some(5.0), None)])
+      market_prices_upsert_many(&db, &[MarketPrice::esi(200, Some(5.0), Some(7.0))])
         .await
         .unwrap();
       // 300: ESI row but resolved price 0 -> in the gap set
@@ -2843,10 +2848,30 @@ mod market_tests {
         .unwrap();
       // 500: blueprint copy -> excluded
       insert_char_asset(&db, 5, 500, Some(1)).await;
+      // 600: supercapital — ESI adjusted_price only, no average_price -> in the gap set
+      insert_char_asset(&db, 6, 600, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::esi(600, Some(1_000.0), None)])
+        .await
+        .unwrap();
 
       let gaps = market_prices_zkill_gap_type_ids(&db).await.unwrap();
 
-      assert_eq!(gaps, vec![100, 300, 400]);
+      assert_eq!(gaps, vec![100, 300, 400, 600]);
+    }
+
+    #[tokio::test]
+    async fn it_excludes_a_market_traded_type_with_an_esi_average_price() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      // ESI carried both an adjusted and an average price -> market-traded, stays out of the gap set
+      insert_char_asset(&db, 1, 700, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::esi(700, Some(1_000.0), Some(2_000.0))])
+        .await
+        .unwrap();
+
+      let gaps = market_prices_zkill_gap_type_ids(&db).await.unwrap();
+
+      assert!(gaps.is_empty());
     }
   }
 }

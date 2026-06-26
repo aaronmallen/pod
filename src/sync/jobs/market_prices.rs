@@ -42,13 +42,16 @@ async fn fill_gaps_from_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> u
   }
 
   if filled.is_empty() {
+    tracing::info!(gap_types = 0, "market_prices: filled zKill gap types");
     return 0;
   }
+  let count = filled.len();
   if let Err(error) = finance::market_prices_upsert_many(ctx.db, &filled).await {
     tracing::warn!("market_prices: failed to upsert zKill gap prices: {error}");
     return 0;
   }
-  filled.len()
+  tracing::info!(gap_types = count, "market_prices: filled zKill gap types");
+  count
 }
 
 #[cfg(test)]
@@ -264,11 +267,50 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_never_fetches_a_type_esi_already_priced_non_zero() {
+    async fn it_fills_an_esi_adjusted_only_super_from_zkill_current_price() {
+      // A supercapital: ESI returns a lowball adjusted_price but no average_price. It must be pulled
+      // into the gap set and overwritten with the zKill currentPrice as a source='zkill' row.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
-        serde_json::json!([{ "adjusted_price": 9.0, "type_id": 34 }]),
+        serde_json::json!([{ "adjusted_price": 1_000.0, "type_id": 23_773 }]),
+      )
+      .await;
+      let zkill_server = MockServer::start().await;
+      mount_zkill_price(
+        &zkill_server,
+        23_773,
+        r#"{"typeID": 23773, "currentPrice": 90000000000.0}"#,
+      )
+      .await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 23_773, 0).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 23_773);
+      assert_eq!(row.source(), "zkill");
+      assert_eq!(row.average_price(), Some(90_000_000_000.0));
+      assert_eq!(row.adjusted_price(), None);
+    }
+
+    #[tokio::test]
+    async fn it_never_fetches_a_market_traded_type_esi_priced_with_an_average() {
+      // A market-traded type carries an ESI average_price, so it must stay out of the gap set and
+      // keep its ESI row untouched even though zKill would return a price for it.
+      let esi_server = MockServer::start().await;
+      mount_prices(
+        &esi_server,
+        serde_json::json!([{ "adjusted_price": 9.0, "average_price": 10.0, "type_id": 34 }]),
       )
       .await;
       let zkill_server = MockServer::start().await;
@@ -290,6 +332,7 @@ mod tests {
       let row = find(&rows, 34);
       assert_eq!(row.source(), "esi");
       assert_eq!(row.adjusted_price(), Some(9.0));
+      assert_eq!(row.average_price(), Some(10.0));
     }
 
     #[tokio::test]

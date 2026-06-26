@@ -164,8 +164,14 @@ pub struct Loaded {
   abyssals: abyssals::AbyssalsData,
   asset_tags: Vec<Tag>,
   corporations: Vec<RosterCorp>,
+  /// Container ids on the path to a filter match, to auto-expand so nested matches are revealed.
+  /// Empty when no filter is active. Ordered shallow-to-deep so apply seeds parents before children.
+  expand_containers: Vec<i64>,
   geo_tree: GeoTree,
   inventory: Vec<InventoryRow>,
+  /// Pre-loaded children of each `expand_containers` entry, keyed by container `item_id`. Seeds the
+  /// lazy children cache so the auto-expanded ancestor chain renders without a round of fetches.
+  inventory_children: HashMap<i64, Vec<InventoryRow>>,
   nav: tracker::NavSeries,
   roster: Vec<RosterPilot>,
   saved_filters: Vec<SavedAssetFilter>,
@@ -1270,8 +1276,10 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   let Loaded {
     asset_tags,
     corporations,
+    expand_containers,
     geo_tree,
     inventory,
+    inventory_children,
     roster,
     saved_filters,
     tag_memberships,
@@ -1290,8 +1298,11 @@ fn apply_loaded(state: &mut State, loaded: Loaded) {
   state.inventory_has_more = inventory.len() as i64 == INVENTORY_PAGE_SIZE;
   state.inventory = inventory;
   state.inventory_loading = false;
-  state.expanded_containers.clear();
-  state.inventory_children.clear();
+  // Seed the filter-driven auto-expansion. With no filter active both are empty, so this collapses
+  // back to normal browse (clearing any prior filter expansions); with a filter active it reveals
+  // the ancestor chain holding each nested match.
+  state.expanded_containers = expand_containers.into_iter().collect();
+  state.inventory_children = inventory_children;
   state.roster = roster;
   state.totals = totals;
   state.values = values;
@@ -1332,8 +1343,10 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   let Loaded {
     asset_tags,
     corporations,
+    expand_containers,
     geo_tree,
     inventory,
+    inventory_children,
     roster,
     saved_filters,
     tag_memberships,
@@ -1365,7 +1378,22 @@ fn merge_loaded(state: &mut State, loaded: Loaded) {
   state.abyssal_source_types = abyssals.source_types;
   state.geo_tree = geo_tree;
   state.geo_tree.sort_by(state.geo_sort());
-  let present: HashSet<i64> = state.inventory.iter().map(|row| row.item_id).collect();
+  // Fold the filter-driven auto-expansion into the preserved manual expansions so a sync reload
+  // keeps nested matches revealed, then drop any expansion whose container row is no longer present.
+  for container_id in expand_containers {
+    state.expanded_containers.insert(container_id);
+  }
+  for (container_id, children) in inventory_children {
+    state.inventory_children.insert(container_id, children);
+  }
+  // A container is "present" if its row appears anywhere in the live tree — top-level or as a loaded
+  // child of an expanded ancestor — so nested ancestors in an auto-expanded chain are not pruned.
+  let present: HashSet<i64> = state
+    .inventory
+    .iter()
+    .chain(state.inventory_children.values().flatten())
+    .map(|row| row.item_id)
+    .collect();
   state.expanded_containers.retain(|id| present.contains(id));
   state.inventory_children.retain(|id, _| present.contains(id));
   prune_inventory_selection(state);
@@ -2449,9 +2477,14 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
   let roster = load_roster(&db).await;
   let corporations = load_corporations(&db).await;
 
-  let (totals, inventory) = match resolve_scope_owner(scope, &roster, &corporations) {
+  let ScopeLoad {
+    totals,
+    inventory,
+    expand_containers,
+    inventory_children,
+  } = match resolve_scope_owner(scope, &roster, &corporations) {
     Some(owner) => load_scope(&db, &owner, &view).await,
-    None => (InventoryTotals::default(), Vec::new()),
+    None => ScopeLoad::default(),
   };
   let geo_tree = tree::load_geo_tree(&db, scope, &roster, &corporations).await;
   let values = values::summarize(&inventory, totals.value, &roster, &corporations);
@@ -2465,8 +2498,10 @@ async fn load_assets(db: Database, scope: Scope, view: InventoryView) -> Loaded 
   Loaded {
     asset_tags,
     corporations,
+    expand_containers,
     geo_tree,
     inventory,
+    inventory_children,
     roster,
     saved_filters,
     tag_memberships,
@@ -2489,7 +2524,19 @@ async fn reload_asset_tags(db: Database) -> Message {
   }
 }
 
-async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (InventoryTotals, Vec<InventoryRow>) {
+/// The per-scope inventory load: the filtered page plus, when a filter is active, the ancestor
+/// containers that hold nested matches (so they can be auto-expanded to reveal those matches).
+#[derive(Default)]
+struct ScopeLoad {
+  /// Container ids on the path to a match, shallow-to-deep. Empty when no filter is active.
+  expand_containers: Vec<i64>,
+  inventory: Vec<InventoryRow>,
+  /// Pre-loaded children of each `expand_containers` entry, keyed by container `item_id`.
+  inventory_children: HashMap<i64, Vec<InventoryRow>>,
+  totals: InventoryTotals,
+}
+
+async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> ScopeLoad {
   let me_id = match owner {
     Owner::Character(id) => Some(*id),
     Owner::Combined {
@@ -2508,7 +2555,7 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
     sort: view.sort,
   };
 
-  match owner {
+  let (totals, mut inventory) = match owner {
     Owner::Character(id) => {
       let totals = assets::inventory_totals_for_character(db, *id, &view.filter, &view.location_ids, me_id)
         .await
@@ -2546,6 +2593,166 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> (Inve
         .unwrap_or_default();
       (totals, inventory)
     }
+  };
+
+  // No filter ⇒ normal browse; nothing nested to surface, so skip the ancestor work entirely.
+  if view.filter.trim().is_empty() {
+    return ScopeLoad {
+      expand_containers: Vec::new(),
+      inventory,
+      inventory_children: HashMap::new(),
+      totals,
+    };
+  }
+
+  let (expand_containers, inventory_children, injected_roots) =
+    load_match_ancestors(db, owner, &view.filter, me_id).await;
+
+  // The filtered page query only returns top-level matching rows (container_id IS NULL), so a
+  // top-level ancestor container that does not itself match was dropped. Inject those root rows back
+  // in so the chain has a visible parent to hang under, deduping against rows already present.
+  let present: HashSet<i64> = inventory.iter().map(|row| row.item_id).collect();
+  for row in injected_roots {
+    if !present.contains(&row.item_id) {
+      inventory.push(row);
+    }
+  }
+
+  ScopeLoad {
+    expand_containers,
+    inventory,
+    inventory_children,
+    totals,
+  }
+}
+
+/// Computes the ancestor-container expansion for an active filter: the ordered set of container ids
+/// on the path to any match, their pre-loaded children, and the top-level ancestor rows to inject
+/// back into the page (the rows the filtered query dropped because they do not match themselves).
+async fn load_match_ancestors(
+  db: &Database,
+  owner: &Owner,
+  filter: &str,
+  me_id: Option<i64>,
+) -> (Vec<i64>, HashMap<i64, Vec<InventoryRow>>, Vec<InventoryRow>) {
+  let reproc_yield = crate::config::reprocessing_yield_or_default();
+
+  let ancestors = match owner {
+    Owner::Character(id) => assets::ancestors_of_match_for_character(db, *id, filter, me_id)
+      .await
+      .unwrap_or_default(),
+    Owner::Combined {
+      character_ids,
+      corporation_ids,
+    } => {
+      let mut ancestors = assets::ancestors_of_match_for_characters(db, character_ids, filter, me_id)
+        .await
+        .unwrap_or_default();
+      for corporation_id in corporation_ids {
+        ancestors.extend(
+          assets::ancestors_of_match_for_corporation(db, *corporation_id, filter, me_id)
+            .await
+            .unwrap_or_default(),
+        );
+      }
+      ancestors.sort_unstable();
+      ancestors.dedup();
+      ancestors
+    }
+    Owner::Corporation(id) => assets::ancestors_of_match_for_corporation(db, *id, filter, me_id)
+      .await
+      .unwrap_or_default(),
+  };
+
+  if ancestors.is_empty() {
+    return (Vec::new(), HashMap::new(), Vec::new());
+  }
+
+  // Fetch the ancestor rows themselves (ignoring the filter) so we can both inject the top-level
+  // ones into the page and order the expansion shallow-to-deep.
+  let ancestor_rows = rows_by_item_id(db, owner, &ancestors, reproc_yield).await;
+  let injected_roots: Vec<InventoryRow> = ancestor_rows
+    .iter()
+    .filter(|row| row.container_id.is_none())
+    .cloned()
+    .collect();
+
+  // Load every ancestor's full (unfiltered) children so the chain renders in place. A child that is
+  // itself an ancestor is the next link down; non-matching siblings come along too (accepted).
+  let mut inventory_children = HashMap::with_capacity(ancestors.len());
+  for &container_id in &ancestors {
+    let children = load_container_children_for_owner(db, owner, container_id, reproc_yield).await;
+    inventory_children.insert(container_id, children);
+  }
+
+  // Order expansion shallow-to-deep by container_id chain depth so a parent is always seeded before
+  // its descendants; a row's depth field is authoritative for nesting order.
+  let depth_of: HashMap<i64, i64> = ancestor_rows.iter().map(|row| (row.item_id, row.depth)).collect();
+  let mut expand_containers = ancestors;
+  expand_containers.sort_by_key(|id| depth_of.get(id).copied().unwrap_or(0));
+
+  (expand_containers, inventory_children, injected_roots)
+}
+
+/// Fetches inventory rows for an explicit `item_id` set within a scope, ignoring any filter.
+async fn rows_by_item_id(db: &Database, owner: &Owner, item_ids: &[i64], reproc_yield: f64) -> Vec<InventoryRow> {
+  match owner {
+    Owner::Character(id) => assets::rows_by_item_id_for_character(db, *id, item_ids, reproc_yield)
+      .await
+      .unwrap_or_default(),
+    Owner::Combined {
+      character_ids,
+      corporation_ids,
+    } => {
+      let mut rows = assets::rows_by_item_id_for_characters(db, character_ids, item_ids, reproc_yield)
+        .await
+        .unwrap_or_default();
+      for corporation_id in corporation_ids {
+        rows.extend(
+          assets::rows_by_item_id_for_corporation(db, *corporation_id, item_ids, reproc_yield)
+            .await
+            .unwrap_or_default(),
+        );
+      }
+      rows
+    }
+    Owner::Corporation(id) => assets::rows_by_item_id_for_corporation(db, *id, item_ids, reproc_yield)
+      .await
+      .unwrap_or_default(),
+  }
+}
+
+/// Fetches a container's full children for a scope, ignoring any filter (mirrors `load_container_children`
+/// but keyed on a resolved `Owner` so the ancestor loader can reuse it).
+async fn load_container_children_for_owner(
+  db: &Database,
+  owner: &Owner,
+  container_id: i64,
+  reproc_yield: f64,
+) -> Vec<InventoryRow> {
+  match owner {
+    Owner::Character(id) => assets::children_render_for_character(db, *id, container_id, reproc_yield)
+      .await
+      .unwrap_or_default(),
+    Owner::Combined {
+      character_ids,
+      corporation_ids,
+    } => {
+      let mut children = assets::children_render_for_characters(db, character_ids, container_id, reproc_yield)
+        .await
+        .unwrap_or_default();
+      for corporation_id in corporation_ids {
+        children.extend(
+          assets::children_render_for_corporation(db, *corporation_id, container_id, reproc_yield)
+            .await
+            .unwrap_or_default(),
+        );
+      }
+      children
+    }
+    Owner::Corporation(id) => assets::children_render_for_corporation(db, *id, container_id, reproc_yield)
+      .await
+      .unwrap_or_default(),
   }
 }
 
@@ -2969,6 +3176,200 @@ mod tests {
 
       assert!(loaded.roster.is_empty());
       assert_eq!(loaded.totals, InventoryTotals::default());
+    }
+  }
+
+  /// Production-path coverage for the filter auto-expand: a filtered load runs through the real
+  /// `load_assets` -> `load_scope` -> `load_match_ancestors` chain, and the resulting `Loaded` drives
+  /// `apply_loaded`/`merge_loaded` exactly as it would in the app.
+  mod filter_expansion {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{
+      model::{Alliance, Bloodline, Character, CharacterAsset, Corporation, Gender, ItemCategory, ItemGroup, Race},
+      repo::{
+        character::insert_with_org,
+        sde::{upsert_item_category, upsert_item_group},
+      },
+    };
+
+    const PILOT: i64 = 42;
+
+    async fn seed_pilot(db: &Database) {
+      let corp_id = 90_000_001;
+      let alliance_id = 99_000_001;
+      let alliance = Alliance::new(alliance_id, corp_id, PILOT, "2003-01-01", "Test Alliance", "TST");
+      let race = Race::new(2, alliance_id, "A race.", "Caldari");
+      let mut corp = Corporation::new(corp_id, "Test Corp", "TSC");
+      corp.set_ceo_id(PILOT);
+      corp.set_creator_id(PILOT);
+      corp.set_member_count(1);
+      corp.set_tax_rate(0.0);
+      let bloodline = Bloodline::new(1, corp_id, 2, 3, "A bloodline.", 4, 5, "Civire", 4, 4);
+      let character = Character::new(PILOT, 1, corp_id, 2, "2003-05-12", Gender::Male, "Pilot");
+      insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
+        .await
+        .unwrap();
+    }
+
+    async fn seed_item_type(db: &Database, type_id: i64, name: &str, group_id: i64, group_name: &str, cat: &str) {
+      let category = ItemCategory {
+        id: group_id * 10,
+        icon_id: None,
+        name: cat.to_owned(),
+        published: true,
+      };
+      let group = ItemGroup {
+        category_id: category.id(),
+        icon_id: None,
+        id: group_id,
+        name: group_name.to_owned(),
+        published: true,
+      };
+      upsert_item_category(db, &category).await.unwrap();
+      upsert_item_group(db, &group).await.unwrap();
+      sqlx::query(
+        "INSERT INTO item_types (id, group_id, description, name, published, icon_id, packaged_volume, volume) \
+        VALUES (?, ?, ?, ?, 1, ?, 2.5, 27289.0)",
+      )
+      .bind(type_id)
+      .bind(group_id)
+      .bind("Test item")
+      .bind(name)
+      .bind(type_id + 1000)
+      .execute(db.writer())
+      .await
+      .unwrap();
+    }
+
+    fn asset(item_id: i64, container_id: Option<i64>, type_id: i64, is_container: bool, depth: i64) -> CharacterAsset {
+      CharacterAsset {
+        character_id: PILOT,
+        container_id,
+        depth,
+        is_active_ship: false,
+        is_blueprint_copy: None,
+        is_container,
+        is_singleton: false,
+        item_id,
+        location_flag: "Hangar".to_owned(),
+        location_id: 60_003_760,
+        location_type: "station".to_owned(),
+        name: None,
+        quantity: 1,
+        type_id,
+      }
+    }
+
+    /// Seeds a character whose holdings are:
+    ///   - container 100 (root) -> container 101 (sub) -> Tritanium 102 (the nested match)
+    ///   - container 200 (root) -> Rifter 201 (a ship; never matches `category:material`)
+    ///
+    /// Neither root container matches `category:material`, so the filtered page query drops both.
+    async fn seed_nested_holdings(db: &Database) {
+      seed_pilot(db).await;
+      seed_item_type(db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let holdings = [
+        asset(100, None, 587, true, 0),
+        asset(101, Some(100), 587, true, 1),
+        asset(102, Some(101), 24, false, 2),
+        asset(200, None, 587, true, 0),
+        asset(201, Some(200), 587, false, 1),
+      ];
+      assets::replace_for_character(db, PILOT, &holdings).await.unwrap();
+    }
+
+    fn filtered_view() -> InventoryView {
+      InventoryView {
+        filter: "category:material".to_owned(),
+        ..InventoryView::default()
+      }
+    }
+
+    #[tokio::test]
+    async fn it_auto_expands_the_ancestor_chain_holding_a_nested_match() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_nested_holdings(&db).await;
+
+      let loaded = load_assets(db, Scope::Character(PILOT), filtered_view()).await;
+
+      // The whole path to the deep match is expanded, shallow-to-deep.
+      assert_eq!(loaded.expand_containers, [100, 101]);
+      // The dropped top-level ancestor row was injected back into the page so the chain has a parent.
+      assert!(
+        loaded.inventory.iter().any(|row| row.item_id == 100),
+        "the root ancestor row is re-injected into the page"
+      );
+      // The nested match is reachable: container 101 is a loaded child of 100, and the match 102 is a
+      // loaded child of 101.
+      let sub_in_root = loaded.inventory_children[&100].iter().any(|row| row.item_id == 101);
+      let match_in_sub = loaded.inventory_children[&101].iter().any(|row| row.item_id == 102);
+      assert!(sub_in_root, "the sub-container is a loaded child of the root");
+      assert!(match_in_sub, "the match is a loaded child of the sub-container");
+    }
+
+    #[tokio::test]
+    async fn it_leaves_a_container_without_a_match_collapsed() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_nested_holdings(&db).await;
+
+      let loaded = load_assets(db, Scope::Character(PILOT), filtered_view()).await;
+
+      // Container 200 holds only a ship, so it must not be auto-expanded or its children pre-loaded.
+      assert!(
+        !loaded.expand_containers.contains(&200),
+        "a container with no matching descendant stays collapsed"
+      );
+      assert!(!loaded.inventory_children.contains_key(&200));
+    }
+
+    #[tokio::test]
+    async fn it_seeds_state_expansion_from_a_filtered_load() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_nested_holdings(&db).await;
+      let loaded = load_assets(db, Scope::Character(PILOT), filtered_view()).await;
+
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      apply_loaded(&mut state, loaded);
+
+      assert!(state.container_is_open(100), "the root ancestor is auto-expanded");
+      assert!(state.container_is_open(101), "the sub-container is auto-expanded");
+      assert!(
+        !state.container_is_open(200),
+        "the non-matching container stays collapsed"
+      );
+      assert_eq!(
+        state
+          .container_children_of(101)
+          .map(|rows| rows.iter().any(|row| row.item_id == 102)),
+        Some(true),
+        "the nested match is reachable under its auto-expanded parent"
+      );
+    }
+
+    #[tokio::test]
+    async fn it_resets_expansion_when_the_filter_clears() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_nested_holdings(&db).await;
+
+      // First load with a filter active, seeding filter-driven expansions.
+      let filtered = load_assets(db.clone(), Scope::Character(PILOT), filtered_view()).await;
+      let mut state = State::new(crate::config::FeatureFlags::default());
+      apply_loaded(&mut state, filtered);
+      assert!(state.container_is_open(100), "the filter expanded the ancestor chain");
+
+      // Clearing the filter reloads with no expansion set; apply must collapse back to normal browse.
+      let unfiltered = load_assets(db, Scope::Character(PILOT), InventoryView::default()).await;
+      assert!(unfiltered.expand_containers.is_empty());
+      apply_loaded(&mut state, unfiltered);
+
+      assert!(
+        !state.container_is_open(100),
+        "clearing the filter collapses the auto-expansion"
+      );
+      assert!(!state.container_is_open(101));
     }
   }
 

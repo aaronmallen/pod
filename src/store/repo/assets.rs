@@ -1452,8 +1452,6 @@ pub async fn node_rollup_for_corporation(
   .await
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn ancestors_of_match_for_character(
   db: &Database,
   character_id: i64,
@@ -1463,8 +1461,6 @@ pub async fn ancestors_of_match_for_character(
   ancestors_of_match(db, "character_assets", "character_id", &[character_id], filter, me_id).await
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn ancestors_of_match_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -1477,8 +1473,6 @@ pub async fn ancestors_of_match_for_characters(
   ancestors_of_match(db, "character_assets", "character_id", character_ids, filter, me_id).await
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn ancestors_of_match_for_corporation(
   db: &Database,
   corporation_id: i64,
@@ -1517,6 +1511,95 @@ async fn children_render(
 
   let rows = builder.build_query_as::<InventoryRowSql>().fetch_all(&db.0).await?;
   Ok(rows.into_iter().map(InventoryRowSql::into_row).collect())
+}
+
+/// Renders full inventory rows for an explicit set of `item_id`s, regardless of the active filter.
+///
+/// Mirrors `children_render` but keys on `a.item_id IN (...)` instead of `a.container_id = ?`.
+/// Used to recover the ancestor-container rows that a filtered page query drops (a container row
+/// fails the filter itself), so they can be injected back into the list and auto-expanded to reveal
+/// the matches nested inside them.
+async fn rows_by_item_id(
+  db: &Database,
+  table: &'static str,
+  owner_column: &'static str,
+  owner_ids: &[i64],
+  item_ids: &[i64],
+  reproc_yield: f64,
+) -> Result<Vec<InventoryRow>, Error> {
+  if item_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  let select_head = inventory_select_head(table, owner_column, reproc_yield);
+
+  let mut builder = QueryBuilder::<Sqlite>::new(select_head);
+  push_owner_predicate(&mut builder, owner_ids);
+  builder.push(" AND a.item_id IN (");
+  let mut separated = builder.separated(", ");
+  for item_id in item_ids {
+    separated.push_bind(*item_id);
+  }
+  builder.push(") ORDER BY a.item_id");
+
+  let rows = builder.build_query_as::<InventoryRowSql>().fetch_all(&db.0).await?;
+  Ok(rows.into_iter().map(InventoryRowSql::into_row).collect())
+}
+
+pub async fn rows_by_item_id_for_character(
+  db: &Database,
+  character_id: i64,
+  item_ids: &[i64],
+  reproc_yield: f64,
+) -> Result<Vec<InventoryRow>, Error> {
+  rows_by_item_id(
+    db,
+    "character_assets",
+    "character_id",
+    &[character_id],
+    item_ids,
+    reproc_yield,
+  )
+  .await
+}
+
+pub async fn rows_by_item_id_for_characters(
+  db: &Database,
+  character_ids: &[i64],
+  item_ids: &[i64],
+  reproc_yield: f64,
+) -> Result<Vec<InventoryRow>, Error> {
+  if character_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  rows_by_item_id(
+    db,
+    "character_assets",
+    "character_id",
+    character_ids,
+    item_ids,
+    reproc_yield,
+  )
+  .await
+}
+
+pub async fn rows_by_item_id_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  item_ids: &[i64],
+  reproc_yield: f64,
+) -> Result<Vec<InventoryRow>, Error> {
+  if !corp_scope_visible(db, corporation_id).await? {
+    return Ok(Vec::new());
+  }
+  rows_by_item_id(
+    db,
+    "corporation_assets",
+    "corporation_id",
+    &[corporation_id],
+    item_ids,
+    reproc_yield,
+  )
+  .await
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
@@ -1566,8 +1649,6 @@ async fn node_rollup(
   })
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 async fn ancestors_of_match(
   db: &Database,
   table: &'static str,
@@ -2089,8 +2170,6 @@ fn node_rollup_sql(table: &str, owner_column: &str) -> (&'static str, &'static s
   }
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 fn ancestors_of_match_sql(table: &str, owner_column: &str) -> (&'static str, &'static str) {
   match (table, owner_column) {
     ("character_assets", "character_id") => (ANCESTORS_ANCHOR_CHARACTER, ANCESTORS_RECURSE_CHARACTER),

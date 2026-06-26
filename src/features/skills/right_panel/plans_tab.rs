@@ -6,7 +6,7 @@ pub mod plan_card;
 
 use iced::{
   Element, Length, Padding,
-  alignment::Vertical,
+  alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, container},
 };
 
@@ -104,9 +104,15 @@ pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
   }
 
   if state.plans.is_empty() {
-    return Column::with_children(vec![empty_state::empty_state(), footer(selection_count)])
-      .width(Length::Fill)
-      .into();
+    // The empty-state component already renders its own centered "New plan" /
+    // "From queue" pair, so the full footer (which renders the same pair) is
+    // omitted here to avoid duplicate buttons. Only the "From selected"
+    // affordance is surfaced, and only when a selection exists.
+    let mut children: Vec<Element<'_, Message>> = vec![empty_state::empty_state()];
+    if shows_empty_state_from_selected(selection_count) {
+      children.push(from_selected_footer(selection_count));
+    }
+    return Column::with_children(children).width(Length::Fill).into();
   }
 
   let cards: Vec<Element<'_, Message>> = state
@@ -139,6 +145,28 @@ fn footer<'a>(selection_count: usize) -> Element<'a, Message> {
   }
 
   container(Row::with_children(row).align_y(Vertical::Center))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3,
+      right: spacing::SPACE_3,
+    })
+    .into()
+}
+
+/// Whether the empty state should surface the "From selected" affordance.
+///
+/// The empty state never renders the duplicate "New plan" / "From queue" pair
+/// (the empty-state component already provides them), so the only conditional
+/// footer button is "From selected", shown when a skill selection exists.
+fn shows_empty_state_from_selected(selection_count: usize) -> bool {
+  selection_count > 0
+}
+
+fn from_selected_footer<'a>(selection_count: usize) -> Element<'a, Message> {
+  container(from_selected_button::from_selected_button(selection_count))
+    .align_x(Horizontal::Center)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
@@ -257,6 +285,25 @@ mod tests {
     }
   }
 
+  mod shows_empty_state_from_selected {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_hides_the_from_selected_footer_without_a_selection() {
+      // No selection => only the empty-state component renders, so its centered
+      // "New plan" / "From queue" pair is the *only* button pair (no duplicate
+      // footer pair).
+      assert_eq!(shows_empty_state_from_selected(0), false);
+    }
+
+    #[test]
+    fn it_shows_the_from_selected_footer_with_a_selection() {
+      assert_eq!(shows_empty_state_from_selected(3), true);
+    }
+  }
+
   mod view {
     use super::*;
 
@@ -271,10 +318,14 @@ mod tests {
     }
 
     #[test]
-    fn it_renders_the_empty_state_when_loaded_with_no_plans() {
+    fn it_renders_the_empty_state_without_the_duplicate_footer_when_loaded_with_no_plans() {
       let mut state = State::new();
       state.loaded = true;
 
+      // With no selection the empty state omits the footer entirely, so the
+      // "New plan" / "From queue" pair appears exactly once (in the empty-state
+      // component itself).
+      assert!(!shows_empty_state_from_selected(0));
       let _el: Element<'_, Message> = view(&state, 0);
     }
 

@@ -7698,9 +7698,9 @@ mod asset_tests {
     }
 
     async fn seed_materials(db: &Database, type_id: i64, materials: &[(i64, i64)]) {
-      let rows: Vec<sde::TypeMaterial> = materials
+      let rows: Vec<crate::store::model::TypeMaterial> = materials
         .iter()
-        .map(|&(material_type_id, quantity)| sde::TypeMaterial {
+        .map(|&(material_type_id, quantity)| crate::store::model::TypeMaterial {
           material_type_id,
           quantity,
           type_id,

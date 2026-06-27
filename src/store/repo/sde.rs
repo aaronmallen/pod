@@ -1,12 +1,12 @@
 use chrono::Utc;
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
   model::{
-    AgentType, Bloodline, Constellation, DogmaAttribute, Faction, InaccessibleStructure, ItemCategory, ItemGroup,
-    ItemType, MarketGroup, Moon, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType, Race, Region, SolarSystem,
-    Station, Structure,
+    AgentType, Bloodline, CatalogType, Constellation, DogmaAttribute, Faction, ImplantTimeBonus, InaccessibleStructure,
+    ItemCategory, ItemGroup, ItemType, MarketGroup, Moon, NpcAgent, NpcAgentSkill, NpcCorporationDivision, OwnerType,
+    Race, Region, SolarSystem, Station, Structure, TypeMaterial,
   },
 };
 
@@ -14,34 +14,6 @@ const SELECT_COLUMNS: &str = "attribute_id, default_value, description, display_
   published, stackable, unit_id";
 
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
-
-/// An `item_types` row joined to group and category names in one scan; LEFT JOIN ensures types with no group
-/// still appear with blank group/category strings rather than being silently excluded.
-#[derive(Clone, Debug, FromRow, PartialEq)]
-pub struct CatalogType {
-  pub category_name: String,
-  pub group_name: String,
-  pub id: i64,
-  pub name: String,
-  pub packaged_volume: Option<f64>,
-  pub volume: Option<f64>,
-}
-
-/// One `(type_id, attribute_id, value)` time-bonus row extracted from an item's `dogma_attributes` JSON blob,
-/// where `value` is the raw SDE percent (negative for a reduction).
-#[derive(Clone, Debug, FromRow, PartialEq)]
-pub struct ImplantTimeBonus {
-  pub attribute_id: i64,
-  pub type_id: i64,
-  pub value: f64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
-pub struct TypeMaterial {
-  pub material_type_id: i64,
-  pub quantity: i64,
-  pub type_id: i64,
-}
 
 pub async fn get_bloodline(db: &Database, id: i64) -> Result<Option<Bloodline>, Error> {
   let row = sqlx::query_as::<_, Bloodline>(

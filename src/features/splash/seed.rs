@@ -15,7 +15,7 @@ use crate::{
       AbyssalModuleStat, AgentType, Bloodline, Certificate, CertificateSkill, Constellation,
       DogmaAttribute as DogmaAttributeMeta, Faction, ItemCategory, ItemGroup, ItemType, MarketGroup, Moon, NpcAgent,
       NpcAgentSkill, NpcCorporationDivision, Race, Region, SeedCorporation, ShipMastery, SkillMetadata, SolarSystem,
-      Station,
+      Station, TypeMaterial,
     },
     repo::{assets, org, sde, skills},
   },
@@ -1302,11 +1302,11 @@ async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMeta
   tx.commit().await.map_err(|e| e.to_string())
 }
 
-fn build_type_material_rows(entries: HashMap<i64, SdeTypeMaterialEntry>) -> Vec<sde::TypeMaterial> {
-  let mut rows: Vec<sde::TypeMaterial> = Vec::new();
+fn build_type_material_rows(entries: HashMap<i64, SdeTypeMaterialEntry>) -> Vec<TypeMaterial> {
+  let mut rows: Vec<TypeMaterial> = Vec::new();
   for (type_id, entry) in entries {
     for material in entry.materials {
-      rows.push(sde::TypeMaterial {
+      rows.push(TypeMaterial {
         material_type_id: material.material_type_id,
         quantity: material.quantity,
         type_id,
@@ -1519,12 +1519,12 @@ mod tests {
       assert_eq!(
         rows,
         vec![
-          sde::TypeMaterial {
+          TypeMaterial {
             material_type_id: 34,
             quantity: 175,
             type_id: 18,
           },
-          sde::TypeMaterial {
+          TypeMaterial {
             material_type_id: 36,
             quantity: 70,
             type_id: 18,

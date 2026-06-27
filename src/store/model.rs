@@ -20,6 +20,7 @@ mod budget_ref_type_map;
 mod budget_rule;
 mod budget_scope;
 mod budget_target;
+mod catalog_type;
 mod certificate;
 mod certificate_skill;
 mod character;
@@ -90,6 +91,7 @@ mod entity_tag;
 mod facility;
 mod faction;
 mod http_cache_entry;
+mod implant_time_bonus;
 mod inaccessible_structure;
 mod industry_cost_index;
 mod industry_plan;
@@ -135,6 +137,7 @@ mod stockpile_item;
 mod structure;
 mod sync_ledger;
 mod tag;
+mod type_material;
 mod type_price_history;
 
 pub use abyssal_item::{AbyssalCursor, Model as AbyssalItem};
@@ -158,6 +161,7 @@ pub use budget_rule::{MatchMode, NewRule, Rule, RuleCondition, RuleField, RuleOp
 pub(crate) use budget_rule::{RuleConditionRow, RuleRow};
 pub use budget_scope::BudgetScope;
 pub use budget_target::{Model as BudgetTarget, TargetInput};
+pub use catalog_type::CatalogType;
 pub use certificate::Model as Certificate;
 pub use certificate_skill::Model as CertificateSkill;
 // Gender is re-exported only for test fixtures (`Character::new(.., Gender::Male, ..)`); no production reader yet.
@@ -227,6 +231,7 @@ pub use entity_tag::{
 pub use facility::Model as Facility;
 pub use faction::Model as Faction;
 pub use http_cache_entry::Model as HttpCacheEntry;
+pub use implant_time_bonus::ImplantTimeBonus;
 pub use inaccessible_structure::Model as InaccessibleStructure;
 pub use industry_cost_index::Model as IndustryCostIndex;
 pub use industry_plan::{Model as IndustryPlan, PlanSegment, PlanTree, PlanType};
@@ -273,4 +278,5 @@ pub use stockpile_item::Model as StockpileItem;
 pub use structure::Model as Structure;
 pub use sync_ledger::Model as SyncLedger;
 pub use tag::{Model as Tag, normalize_name as normalize_tag_name};
+pub use type_material::TypeMaterial;
 pub use type_price_history::Model as TypePriceHistory;

@@ -150,6 +150,7 @@ async fn classify(
       tracing::warn!(id = row.id(), delay_secs, %error, "outbox ESI write transiently failed; rescheduled");
       emit(Event::OutboxRetrying {
         id: row.id(),
+        #[cfg(test)]
         retry_secs: u64::try_from(delay_secs).unwrap_or(0),
       });
       Outcome::Rescheduled {

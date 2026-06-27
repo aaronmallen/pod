@@ -55,7 +55,7 @@ impl EntityKind {
     }
   }
 
-  #[allow(dead_code)] // glyph-shape helper exercised only by unit tests
+  #[cfg(test)]
   pub fn is_round(self) -> bool {
     matches!(self, Self::Character)
   }
@@ -302,13 +302,12 @@ impl<'a, M: Clone + 'static> SingleSelect<'a, M> {
     }
   }
 
-  #[allow(dead_code)] // component API surface; exercised only by unit tests
   pub fn exclude(mut self, names: &'a [String]) -> Self {
     self.exclude = names;
     self
   }
 
-  #[allow(dead_code)] // component API surface; exercised only by unit tests
+  #[cfg(test)]
   pub fn open(mut self, open: bool) -> Self {
     self.open = open;
     self

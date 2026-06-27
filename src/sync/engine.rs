@@ -369,6 +369,7 @@ impl Engine {
     let now = Instant::now();
     match command {
       Command::Discover => self.discover().await,
+      #[cfg(test)]
       Command::Drain => self.drain_at = now,
       Command::Enroll(subject) => self.enroll_subject(subject, now).await,
       Command::RunNow(subject) => self.schedule.run_now(subject, now),
@@ -777,6 +778,7 @@ async fn supervise_loop<F>(
               breaker.reset();
               tracing::info!(target: "pod::lifecycle", "restarting the sync engine on request after giving up");
               let _ = events.try_send(Event::Restarted {
+                #[cfg(test)]
                 attempt: 0,
               });
             }
@@ -803,6 +805,7 @@ async fn supervise_loop<F>(
             }
           }
           let _ = events.try_send(Event::Restarted {
+            #[cfg(test)]
             attempt: plan.attempt,
           });
         }

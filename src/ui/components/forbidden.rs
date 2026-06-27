@@ -107,7 +107,7 @@ pub fn forbidden<'a, M: Clone + 'static>(
   .into()
 }
 
-#[allow(dead_code)] // helper exercised only by unit tests
+#[cfg(test)]
 pub fn is_scope_missing(granted: Option<&str>, required: &[&str]) -> bool {
   !missing_scopes(granted, required).is_empty()
 }

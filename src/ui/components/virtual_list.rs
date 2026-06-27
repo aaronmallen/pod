@@ -143,7 +143,7 @@ impl VirtualListConfig {
     self
   }
 
-  #[allow(dead_code)] // overscan override drives windowing unit tests
+  #[cfg(test)]
   pub fn overscan(mut self, overscan: usize) -> Self {
     self.overscan = overscan;
     self
@@ -242,7 +242,7 @@ pub struct WindowRange {
 }
 
 impl WindowRange {
-  #[allow(dead_code)] // paired with len(); asserted by the empty-window unit test
+  #[cfg(test)]
   pub fn is_empty(&self) -> bool {
     self.first_row >= self.end_row
   }

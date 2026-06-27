@@ -70,8 +70,7 @@ impl OutboxStatus {
     self.count(OutboxPhase::Failed)
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   pub fn last_error(&self, id: i64) -> Option<&str> {
     self
       .rows
@@ -85,10 +84,12 @@ impl OutboxStatus {
   }
 
   fn set(&mut self, id: i64, phase: OutboxPhase, last_error: Option<String>) {
+    let _ = &last_error;
     self.rows.insert(
       id,
       OutboxRow {
         phase,
+        #[cfg(test)]
         last_error,
       },
     );
@@ -231,8 +232,7 @@ enum OutboxPhase {
 
 #[derive(Clone, Debug)]
 struct OutboxRow {
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   last_error: Option<String>,
   phase: OutboxPhase,
 }

@@ -13,6 +13,7 @@ impl KindHandler for RespondHandler {
     OutboxKind::CalendarRespond
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = RespondPayload::parse(payload)?;

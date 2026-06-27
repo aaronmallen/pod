@@ -1,12 +1,14 @@
 use iced::{
   Element, Length,
-  alignment::{Horizontal, Vertical},
-  widget::{Row, Space, container, text},
+  alignment::Vertical,
+  widget::{Row, Space, text},
 };
+#[cfg(test)]
+use iced::{alignment::Horizontal, widget::container};
 
 use crate::ui::style::{color, typography};
 
-#[allow(dead_code)] // helper exercised only by unit tests
+#[cfg(test)]
 pub fn column_headers<'a, M: 'a>(columns: &[(&str, bool)]) -> Element<'a, M> {
   let cells: Vec<Element<'a, M>> = columns
     .iter()
@@ -49,6 +51,7 @@ pub fn section_header<'a, M: 'a>(label: &str, right: Option<&str>) -> Element<'a
     .into()
 }
 
+#[cfg(test)]
 fn column_cell<'a, M: 'a>(label: &str, right: bool) -> Element<'a, M> {
   let cell = text(label.to_uppercase())
     .font(typography::mono::REGULAR)

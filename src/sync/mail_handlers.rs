@@ -1,17 +1,15 @@
 use serde::Deserialize;
 
 use super::outbox::{HandlerFuture, KindHandler, OutboxKind, Registry};
+#[cfg(test)]
+use crate::store::model::CharacterMailLabel;
 use crate::{
   clients::{
     self, esi,
     esi::models::character::{CreateMailLabelRequest, MarkReadRequest, SendMailRecipient, SendMailRequest},
     eve_sso::Grant,
   },
-  store::{
-    Database,
-    model::{CharacterMailLabel, MailSnapshot},
-    repo::mail,
-  },
+  store::{Database, model::MailSnapshot, repo::mail},
 };
 
 struct DeleteHandler;
@@ -21,6 +19,7 @@ impl KindHandler for DeleteHandler {
     OutboxKind::MailDelete
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let snapshot = parse_snapshot(payload)?;
@@ -111,6 +110,7 @@ impl KindHandler for SendHandler {
     OutboxKind::MailSend
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, _db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       SendPayload::parse(payload)?;
@@ -167,7 +167,6 @@ impl SendPayload {
 struct SendRecipient {
   #[serde(default)]
   id: Option<i64>,
-  #[allow(dead_code)]
   name: String,
   #[serde(default)]
   recipient_type: Option<String>,
@@ -180,6 +179,7 @@ impl KindHandler for SetReadHandler {
     OutboxKind::MailSetRead
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = SetReadPayload::parse(payload)?;
@@ -234,6 +234,7 @@ impl KindHandler for CreateLabelHandler {
     OutboxKind::MailCreateLabel
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = CreateLabelPayload::parse(payload)?;
@@ -298,6 +299,7 @@ impl KindHandler for DeleteLabelHandler {
     OutboxKind::MailDeleteLabel
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = DeleteLabelPayload::parse(payload)?;
@@ -326,8 +328,7 @@ impl KindHandler for DeleteLabelHandler {
 
 #[derive(Debug, Deserialize)]
 struct DeleteLabelPayload {
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   character_id: i64,
   label_id: i64,
 }
@@ -365,6 +366,7 @@ impl KindHandler for SetLabelsHandler {
     OutboxKind::MailSetLabels
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = SetLabelsPayload::parse(payload)?;

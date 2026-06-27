@@ -52,7 +52,7 @@ where
   .into()
 }
 
-#[allow(dead_code)] // meter variant exercised only by unit tests
+#[cfg(test)]
 pub fn single_ended<'a, M>(fraction: f32, fill: Color, height: f32) -> Element<'a, M>
 where
   M: 'a,

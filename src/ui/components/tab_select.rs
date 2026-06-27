@@ -18,8 +18,6 @@ const UNDERLINE_HEIGHT: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TabLayout {
-  #[allow(dead_code)] // layout variant exercised only by unit tests
-  Centered,
   Fill,
   #[default]
   Start,
@@ -28,14 +26,13 @@ pub enum TabLayout {
 impl TabLayout {
   fn align_x(self) -> Horizontal {
     match self {
-      TabLayout::Centered => Horizontal::Center,
       TabLayout::Fill | TabLayout::Start => Horizontal::Left,
     }
   }
 
   fn cell_width(self) -> Length {
     match self {
-      TabLayout::Centered | TabLayout::Fill => Length::Fill,
+      TabLayout::Fill => Length::Fill,
       TabLayout::Start => Length::Shrink,
     }
   }
@@ -198,12 +195,6 @@ mod tests {
   }
 
   #[test]
-  fn it_centers_and_fills_for_the_centered_layout() {
-    assert_eq!(TabLayout::Centered.align_x(), Horizontal::Center);
-    assert_eq!(TabLayout::Centered.cell_width(), Length::Fill);
-  }
-
-  #[test]
   fn it_defaults_to_the_start_layout() {
     assert_eq!(TabLayout::default(), TabLayout::Start);
   }
@@ -218,14 +209,6 @@ mod tests {
   fn it_keeps_the_start_layout_left_aligned_and_intrinsic_width() {
     assert_eq!(TabLayout::Start.align_x(), Horizontal::Left);
     assert_eq!(TabLayout::Start.cell_width(), Length::Shrink);
-  }
-
-  #[test]
-  fn it_renders_a_centered_tab_select() {
-    let _el: Element<'_, ()> = tab_select_with(
-      vec![characters_tab(true, None), characters_tab(false, Some(()))],
-      TabLayout::Centered,
-    );
   }
 
   #[test]

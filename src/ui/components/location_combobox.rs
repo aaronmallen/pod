@@ -62,9 +62,7 @@ impl LocationSearch {
     self.highlight
   }
 
-  // Keyboard-navigation surface for hosts that wire arrow-key handling onto the popover input; the
-  // stockpile editor drives selection by mouse, so these stay available but unused there.
-  #[allow(dead_code)] // keyboard-nav API exercised only by unit tests
+  #[cfg(test)]
   pub fn highlight_next(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;
@@ -77,7 +75,7 @@ impl LocationSearch {
     });
   }
 
-  #[allow(dead_code)] // keyboard-nav API exercised only by unit tests
+  #[cfg(test)]
   pub fn highlight_prev(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;

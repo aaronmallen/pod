@@ -13,6 +13,7 @@ impl KindHandler for AddHandler {
     OutboxKind::ContactAdd
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = AddPayload::parse(payload)?;
@@ -71,6 +72,7 @@ impl KindHandler for EditHandler {
     OutboxKind::ContactEdit
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = EditPayload::parse(payload)?;
@@ -129,6 +131,7 @@ impl KindHandler for RemoveHandler {
     OutboxKind::ContactRemove
   }
 
+  #[cfg(test)]
   fn apply<'a>(&'a self, db: &'a Database, payload: &'a str) -> HandlerFuture<'a, Result<(), clients::Error>> {
     Box::pin(async move {
       let p = RemovePayload::parse(payload)?;

@@ -34,54 +34,41 @@ pub const LABEL_COLORS: [&str; 18] = [
 
 pub struct Preset {
   pub hex: &'static str,
-  #[allow(dead_code)] // swatch metadata read only by unit tests
-  pub name: &'static str,
 }
 
 pub const PALETTE: &[Preset] = &[
   Preset {
     hex: "#3FB8DB",
-    name: "Plasma",
   },
   Preset {
     hex: "#5BB97E",
-    name: "Jade",
   },
   Preset {
     hex: "#D9B252",
-    name: "Gold",
   },
   Preset {
     hex: "#E07559",
-    name: "Ember",
   },
   Preset {
     hex: "#E08AA5",
-    name: "Coral",
   },
   Preset {
     hex: "#C07AD9",
-    name: "Orchid",
   },
   Preset {
     hex: "#8A8FD9",
-    name: "Violet",
   },
   Preset {
     hex: "#5BC9BC",
-    name: "Cyan",
   },
   Preset {
     hex: "#A8C97A",
-    name: "Lime",
   },
   Preset {
     hex: "#C97A5B",
-    name: "Rust",
   },
   Preset {
     hex: "#8A95A6",
-    name: "Slate",
   },
 ];
 
@@ -601,21 +588,14 @@ mod tests {
     #[test]
     fn every_preset_hex_parses_to_a_color() {
       for preset in PALETTE {
-        assert!(
-          hex_to_color(preset.hex).is_some(),
-          "preset {} ({}) should parse",
-          preset.name,
-          preset.hex
-        );
+        assert!(hex_to_color(preset.hex).is_some(), "preset {} should parse", preset.hex);
       }
     }
 
     #[test]
     fn it_holds_the_eleven_design_presets_plasma_first_slate_last() {
       assert_eq!(PALETTE.len(), 11);
-      assert_eq!(PALETTE[0].name, "Plasma");
       assert_eq!(PALETTE[0].hex, "#3FB8DB");
-      assert_eq!(PALETTE[10].name, "Slate");
       assert_eq!(PALETTE[10].hex, "#8A95A6");
     }
   }

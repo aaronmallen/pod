@@ -48,11 +48,6 @@ impl FreshnessSummary {
   pub fn is_up_to_date(&self) -> bool {
     self.attention == 0 && self.catching_up == 0 && self.refreshing == 0
   }
-
-  #[allow(dead_code)]
-  pub fn settled(&self) -> usize {
-    self.fresh + self.attention
-  }
 }
 
 pub fn freshness_of(status: &SyncStatus, key: &JobKey) -> Freshness {

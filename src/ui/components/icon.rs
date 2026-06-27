@@ -34,7 +34,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/bold.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn block() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/block.svg"))
   }
@@ -59,12 +58,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/chevron.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn chevron_down() -> Self {
     Self::chevron()
   }
 
-  #[allow(dead_code)]
   pub fn chevron_up() -> Self {
     Self::chevron().rotation(Radians(PI))
   }
@@ -273,7 +270,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/plus.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn pulse() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/pulse.svg"))
   }
@@ -298,7 +294,6 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/settings.svg"))
   }
 
-  #[allow(dead_code)]
   pub fn shield() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/shield.svg"))
   }

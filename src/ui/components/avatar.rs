@@ -61,7 +61,7 @@ impl Avatar {
     self
   }
 
-  #[allow(dead_code)] // component API surface; exercised only by unit tests
+  #[cfg(test)]
   pub fn status_dot(mut self, color: Color) -> Self {
     self.status_dot = Some(color);
     self

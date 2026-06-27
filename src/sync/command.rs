@@ -4,8 +4,7 @@ use crate::config::FeatureFlags;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
   Discover,
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   Drain,
   Enroll(Subject),
   RunNow(Subject),

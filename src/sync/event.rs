@@ -9,8 +9,6 @@ pub enum Event {
   },
   BackingOff {
     key: JobKey,
-    // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-    #[allow(dead_code)]
     retry_secs: u64,
   },
   Failed {
@@ -37,13 +35,11 @@ pub enum Event {
   },
   OutboxRetrying {
     id: i64,
-    // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-    #[allow(dead_code)]
+    #[cfg(test)]
     retry_secs: u64,
   },
   Restarted {
-    // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-    #[allow(dead_code)]
+    #[cfg(test)]
     attempt: u32,
   },
   Scheduled {

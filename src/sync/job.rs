@@ -95,7 +95,8 @@ impl JobKind {
       .collect()
   }
 
-  #[allow(dead_code)]
+  // Job-to-feature roll-up kept live for `registry::feature_for_job`; awaiting a UI consumer.
+  #[expect(dead_code)]
   pub fn feature(self) -> Option<Feature> {
     crate::features::shell::registry::feature_for_job(self)
   }

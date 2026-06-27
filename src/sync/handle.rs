@@ -21,8 +21,7 @@ impl Handle {
     let _ = self.commands.send(Command::Discover);
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   pub fn drain(&self) {
     let _ = self.commands.send(Command::Drain);
   }

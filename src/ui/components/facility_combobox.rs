@@ -63,7 +63,7 @@ impl FacilitySearch {
     self.searching = false;
   }
 
-  #[allow(dead_code)] // search-generation accessor exercised only by unit tests
+  #[cfg(test)]
   pub fn generation(&self) -> u64 {
     self.generation
   }
@@ -72,7 +72,7 @@ impl FacilitySearch {
     self.highlight
   }
 
-  #[allow(dead_code)] // keyboard-nav API exercised only by unit tests
+  #[cfg(test)]
   pub fn highlight_next(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;
@@ -85,7 +85,7 @@ impl FacilitySearch {
     });
   }
 
-  #[allow(dead_code)] // keyboard-nav API exercised only by unit tests
+  #[cfg(test)]
   pub fn highlight_prev(&mut self) {
     if self.results.is_empty() {
       self.highlight = None;
@@ -97,7 +97,7 @@ impl FacilitySearch {
     });
   }
 
-  #[allow(dead_code)] // keyboard-nav API exercised only by unit tests
+  #[cfg(test)]
   pub fn highlighted(&self) -> Option<&FacilityRef> {
     self.highlight.and_then(|index| self.results.get(index))
   }

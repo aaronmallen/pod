@@ -46,8 +46,6 @@ impl Language {
   }
 
   /// The display label, in the language's own script, for the selector UI.
-  // Reached by the settings selector (sibling task); unused until that UI lands.
-  #[allow(dead_code)]
   pub fn native_label(self) -> &'static str {
     match self {
       Language::De => "Deutsch",
@@ -78,8 +76,6 @@ impl Language {
   }
 
   /// The English display label for the selector UI.
-  // Reached by the settings selector (sibling task); unused until that UI lands.
-  #[allow(dead_code)]
   pub fn label(self) -> &'static str {
     match self {
       Language::De => "German",
@@ -95,8 +91,6 @@ impl Language {
   }
 
   /// The SDE localization key. `EnUs` collapses to `en` because the SDE ships no US-English column.
-  // SDE selection is a sibling task; only the tests read this today.
-  #[allow(dead_code)]
   pub fn sde_code(self) -> &'static str {
     match self {
       Language::De => "de",

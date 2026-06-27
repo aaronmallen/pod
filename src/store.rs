@@ -93,8 +93,6 @@ const SQLITE_FOREIGN_KEY_CODE: &str = "787";
 
 /// SQLite extended result code for `SQLITE_CONSTRAINT_UNIQUE` (2067), distinct from the primary
 /// `SQLITE_CONSTRAINT` code (19). sqlx surfaces it as a string via `DatabaseError::code`.
-// Consumed by the tag find-or-create / rename call sites; exercised by unit tests until those wire up.
-#[allow(dead_code)]
 const SQLITE_UNIQUE_CODE: &str = "2067";
 
 #[derive(Debug, thiserror::Error)]
@@ -141,7 +139,7 @@ impl Error {
   }
 
   // Consumed by the tag find-or-create / rename UI; exercised by unit tests until that caller lands.
-  #[allow(dead_code)]
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn is_unique_violation(&self) -> bool {
     match self {
       Error::Sqlx(source) => is_unique_constraint(source),
@@ -157,8 +155,6 @@ pub(crate) fn is_foreign_key_constraint(error: &sqlx::Error) -> bool {
     .is_some_and(|code| code == SQLITE_FOREIGN_KEY_CODE)
 }
 
-// Companion to is_unique_violation; exercised by unit tests until a production caller lands.
-#[allow(dead_code)]
 pub(crate) fn is_unique_constraint(error: &sqlx::Error) -> bool {
   error
     .as_database_error()

@@ -545,12 +545,6 @@ mod tests {
 
   // --- §5.5 context_log allow-list ---------------------------------------
 
-  fn line(target: &str, extra: &str) -> String {
-    format!(
-      "{{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"INFO\",\"target\":\"{target}\",\"fields\":{{\"message\":\"hi\"{extra}}}}}"
-    )
-  }
-
   #[test]
   fn keeps_only_allowlisted_targets() {
     let lines = vec![

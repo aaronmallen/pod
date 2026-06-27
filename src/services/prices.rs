@@ -30,6 +30,7 @@ fn point(type_id: i64, date: &str, price: f64) -> TypePriceHistory {
   }
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn refresh(db: &Database, esi: &esi::Client, type_ids: &[i64]) -> usize {
   let today = Utc::now().date_naive();
   let date = today.format("%Y-%m-%d").to_string();

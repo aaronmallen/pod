@@ -85,10 +85,9 @@ pub struct FocusTracker {
 }
 
 impl FocusTracker {
-  // Test-only accessor: the focus-probe and Ctrl/Cmd+K wiring tests assert against the exact focused
-  // Id. Production code only needs the boolean `is_text_input_focused`, so this stays test-scoped and
-  // earns an `allow` (an `expect` would go unfulfilled in the test build, where it is used).
-  #[allow(dead_code)]
+  // Test-only accessor: the focus-probe and Ctrl/Cmd+K wiring tests assert the exact focused Id;
+  // production code only needs the boolean `is_text_input_focused`.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn focused_id(&self) -> Option<&Id> {
     self.focused.as_ref()
   }

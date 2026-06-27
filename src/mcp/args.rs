@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde_json::{Value, json};
 
 use crate::mcp::tool::ToolError;
@@ -98,10 +96,14 @@ impl ArgSpec {
     }
   }
 
+  // Accessors used by the tool-spec assertions; exercised only by the mcp tests today.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn name(&self) -> &'static str {
     self.name
   }
 
+  // Accessors used by the tool-spec assertions; exercised only by the mcp tests today.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn ty(&self) -> ArgType {
     self.ty
   }

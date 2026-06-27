@@ -23,8 +23,8 @@ pub struct Item {
   pub flag: i64,
   /// Nested cargo contents; accepted so the recursive shape deserializes cleanly, but never used for valuation.
   #[serde(default)]
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Read only by this module's tests; production never consumes this nested DTO field.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub items: Vec<Item>,
   #[serde(default)]
   pub quantity_destroyed: Option<i64>,

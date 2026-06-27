@@ -55,8 +55,8 @@ pub struct CalendarEventDetail {
   pub date: Option<String>,
   #[serde(default)]
   pub duration: Option<i32>,
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a calendar consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub event_id: i64,
   #[serde(default)]
   pub importance: Option<i32>,
@@ -97,8 +97,8 @@ pub struct CharacterInfo {
 #[derive(Debug, Deserialize)]
 pub struct CharacterSkills {
   pub skills: Vec<Skill>,
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a skills consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub total_sp: i64,
   #[serde(default)]
   pub unallocated_sp: Option<i64>,
@@ -267,8 +267,8 @@ pub struct MailLabel {
   #[serde(default)]
   pub name: Option<String>,
   #[serde(default)]
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a mail consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub unread_count: Option<i64>,
 }
 
@@ -277,8 +277,8 @@ pub struct MailLabels {
   #[serde(default)]
   pub labels: Vec<MailLabel>,
   #[serde(default)]
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a mail consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub total_unread_count: Option<i64>,
 }
 
@@ -306,8 +306,8 @@ pub struct MarketOrder {
   pub issued: String,
   pub location_id: i64,
   #[serde(default)]
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a market-orders consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub min_volume: Option<i64>,
   pub order_id: i64,
   pub price: f64,

@@ -12,12 +12,6 @@
 //! [`crate::telemetry_contract`]; this module reuses [`Batch`] verbatim and adds
 //! only identity derivation, endpoint resolution, and the reqwest sender.
 
-// Transport surface consumed by the §7.4 collector / flush loop
-// (`src/services/telemetry.rs`), which lands in a sibling task. These items are
-// exercised by this module's own tests but have no production reader yet, so the
-// unused warnings are expected until that wiring lands.
-#![allow(dead_code)]
-
 use std::{sync::Arc, time::Duration};
 
 use sha2::{Digest, Sha256};

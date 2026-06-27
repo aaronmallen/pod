@@ -5,5 +5,4 @@
 //! the never-collected boundary on crash content and buffered log lines before
 //! anything is allowed to leave the process.
 
-#[allow(dead_code)]
 pub mod pii;

@@ -298,8 +298,6 @@ impl SubFeature {
     SubFeature::Wallets,
   ];
 
-  // Sub-feature -> group roll-up consumed by sibling tasks B/C; today only the tests use it.
-  #[allow(dead_code)]
   pub fn group(self) -> Feature {
     match self {
       SubFeature::Abyssals
@@ -384,7 +382,7 @@ impl FeatureFlags {
 
   // The per-group roll-up's scope/shell consumers land in sibling tasks B/C, so today this is
   // exercised only by this module's tests.
-  #[allow(dead_code)]
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn enabled_sub_features_of(&self, feature: Feature) -> Vec<SubFeature> {
     feature
       .sub_features()

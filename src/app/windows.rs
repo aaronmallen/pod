@@ -5,7 +5,6 @@ use iced::window;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
   // Registered by the foundation task; first constructed by the Calendar-detail conversion task.
-  #[allow(dead_code)]
   CalendarEvent,
   Compare,
   Contract,
@@ -18,7 +17,6 @@ pub enum Window {
   Splash,
   StockpileEditor,
   // Registered by the foundation task; first constructed by the Stockpile-Import conversion task.
-  #[allow(dead_code)]
   StockpileImport,
 }
 
@@ -44,13 +42,11 @@ impl Window {
 // The id-keyed per-window state map ships ahead of its first instantiation: the Killmail pilot and the
 // Contract/Stockpile/Mail child windows, none of which exist yet, each hold one `WindowStates<S>` so
 // duplicates of a kind coexist.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct WindowStates<S> {
   states: HashMap<window::Id, S>,
 }
 
-#[allow(dead_code)]
 impl<S> WindowStates<S> {
   pub fn get(&self, id: window::Id) -> Option<&S> {
     self.states.get(&id)
@@ -64,6 +60,8 @@ impl<S> WindowStates<S> {
     self.states.insert(id, state);
   }
 
+  // Exercised by this module's WindowStates tests; the detached child windows that read it are unbuilt.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn is_empty(&self) -> bool {
     self.states.is_empty()
   }
@@ -72,6 +70,8 @@ impl<S> WindowStates<S> {
     self.states.iter().map(|(id, state)| (*id, state))
   }
 
+  // Exercised by this module's WindowStates tests; the detached child windows that read it are unbuilt.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn len(&self) -> usize {
     self.states.len()
   }
@@ -81,7 +81,6 @@ impl<S> WindowStates<S> {
   }
 }
 
-#[allow(dead_code)]
 impl<S> Default for WindowStates<S> {
   fn default() -> Self {
     Self {
@@ -104,8 +103,9 @@ impl Windows {
     self.ids.keys().copied()
   }
 
-  // Consumed by the not-yet-built detached child windows to enumerate every open instance of a kind.
-  #[allow(dead_code)]
+  // Consumed by the not-yet-built detached child windows to enumerate every open instance of a kind;
+  // exercised by this module's tests today.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn ids_for(&self, window: Window) -> impl Iterator<Item = window::Id> + '_ {
     self
       .ids

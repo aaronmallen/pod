@@ -53,16 +53,21 @@ impl Client {
 
 // Complete catalog of the EVE image-server `size=` values; not every size is wired into production yet
 // (S32/S128/S1024 are currently exercised only by tests or reserved), so the catalog stays whole.
-#[allow(dead_code)]
 // Rule-4 exception: variants stay ordered by ascending pixel size rather than alphabetically because each
 // discriminant is the literal EVE image-server `size=` value (used via `size as u16`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Size {
+  // Reserved catalog value, exercised only by tests today.
+  #[cfg_attr(not(test), expect(dead_code))]
   S32 = 32,
   S64 = 64,
+  // Reserved catalog value, exercised only by tests today.
+  #[cfg_attr(not(test), expect(dead_code))]
   S128 = 128,
   S256 = 256,
   S512 = 512,
+  // Reserved catalog value; never constructed yet but kept so the size catalog stays whole.
+  #[expect(dead_code)]
   S1024 = 1024,
 }
 

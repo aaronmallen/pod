@@ -92,8 +92,8 @@ pub struct Position {
 
 #[derive(Debug, Deserialize)]
 pub struct Region {
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a region consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub constellations: Vec<i64>,
   #[serde(default)]
   pub description: Option<String>,

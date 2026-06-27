@@ -25,24 +25,22 @@
 //!   app, sent_at, streams), and the fixtures are pretty-printed (two-space
 //!   indent) so a `serde_json::to_string_pretty` round-trip is byte-stable.
 
-// Foundation contract types consumed by downstream phase-2/3 tasks (the Rust
-// sender, the settings preview, the crash buffer). They are exercised by this
-// module's own golden tests but have no production reader yet, so the unused
-// warnings here are expected until those tasks land.
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 
 /// The §6.3 golden session envelope (all streams ON), verbatim.
 ///
 /// Shared with the TypeScript Worker tests via the same path
 /// (`tests/fixtures/telemetry/session_all_streams.json`).
+// Golden fixture pinned by the contract tests; no production reader yet.
+#[cfg_attr(not(test), expect(dead_code))]
 pub const SESSION_ALL_STREAMS_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/session_all_streams.json");
 
 /// The §6.4 golden crash envelope, verbatim.
 ///
 /// Shared with the TypeScript Worker tests via the same path
 /// (`tests/fixtures/telemetry/crash_batch.json`).
+// Golden fixture pinned by the contract tests; no production reader yet.
+#[cfg_attr(not(test), expect(dead_code))]
 pub const CRASH_BATCH_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/crash_batch.json");
 
 /// The integer contract version baked into every envelope (`schema`). The Worker
@@ -51,9 +49,13 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// The Worker's session-tag regex, mirrored for client-side conformance tests:
 /// `^s_[0-9a-f]{8}$`. A crash envelope's `session` MUST satisfy it (§6.4).
+// Conformance regex asserted by the contract tests; no production reader yet.
+#[cfg_attr(not(test), expect(dead_code))]
 pub const SESSION_TAG_PATTERN: &str = r"^s_[0-9a-f]{8}$";
 
 /// The Worker's anon-id regex (`^[0-9a-f]{64}$`): lowercase sha256 hex (§6.1).
+// Conformance regex asserted by the contract tests; no production reader yet.
+#[cfg_attr(not(test), expect(dead_code))]
 pub const ANON_ID_PATTERN: &str = r"^[0-9a-f]{64}$";
 
 /// The batch kind discriminator. A POST is exactly one envelope of one kind.

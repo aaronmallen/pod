@@ -19,12 +19,6 @@
 //! The wire shape is the frozen [`crate::telemetry_contract`]; this module
 //! reuses [`Batch`] verbatim and only buffers, gates, and assembles.
 
-// Capture surface consumed by per-feature hook sites and the app flush wiring.
-// Some `record_*` helpers / setters have no production caller in this task (the
-// capture-site and settings-persist tasks land them), so the unused warnings are
-// expected until that wiring arrives.
-#![allow(dead_code)]
-
 use std::sync::{Mutex, OnceLock};
 
 use rand::Rng;
@@ -105,6 +99,8 @@ pub fn init(machine_id: &str, config: TelemetryConfig) {
 /// Refresh the live [`TelemetryConfig`] snapshot the next [`flush`] will gate
 /// on. Called from the settings persist path so a mid-session opt-out is honored
 /// on the very next flush (including the exit flush). A no-op if uninitialized.
+// Capture surface awaiting the settings-persist wiring; exercised by this module's tests today.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn set_config(config: TelemetryConfig) {
   if let Some(collector) = COLLECTOR.get()
     && let Ok(mut buffers) = collector.buffers.lock()
@@ -236,6 +232,8 @@ pub fn record_sub_section(name: impl Into<String>) {
 }
 
 /// Record a view's nav->first-paint time and frame-time p95, in milliseconds.
+// Capture surface awaiting the per-view perf hook sites; exercised by this module's tests today.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn record_view_load(name: impl Into<String>, load_ms: u64, frame_p95_ms: u64) {
   let name = name.into();
   with_buffers(|buffers| {
@@ -248,6 +246,8 @@ pub fn record_view_load(name: impl Into<String>, load_ms: u64, frame_p95_ms: u64
 }
 
 /// Record a live-heap snapshot (MiB); the largest seen this window is sent.
+// Capture surface awaiting the frame hook site; exercised by this module's tests today.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn record_frame(heap_mb: u64) {
   with_buffers(|buffers| {
     buffers.heap_mb = buffers.heap_mb.max(heap_mb);
@@ -486,6 +486,8 @@ pub fn feature_token(group_key: &str, sub_key: Option<&str>) -> String {
 /// the caller's responsibility (every token capture lowercases). Shared with the
 /// `app` token-shape test so the route/sub_section/feature token universe is
 /// checked against one rule.
+// Token-shape guard shared with the app/settings token-shape tests; no production caller yet.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn is_well_formed_token(token: &str) -> bool {
   !token.is_empty()
     && !token

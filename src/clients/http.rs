@@ -56,9 +56,6 @@ impl Cache {
     }
   }
 
-  // Reached only through Client::cache_db (a test-support seam), so dead in the lib build but live
-  // under tests; #[expect] would be unfulfilled there.
-  #[allow(dead_code)]
   pub(crate) fn db(&self) -> &store::Database {
     &self.db
   }
@@ -259,9 +256,8 @@ impl Client {
     self.cache.flush().await
   }
 
-  // Test-support accessor: the app-level cache-population test reads the cache database through this
-  // seam. Dead in the lib build but used by tests, so #[expect] would be unfulfilled there.
-  #[allow(dead_code)]
+  // Test-support seam: the app-level cache-population test reads the cache database through this.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub(crate) fn cache_db(&self) -> &store::Database {
     self.cache.db()
   }

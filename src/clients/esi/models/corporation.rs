@@ -23,8 +23,8 @@ pub struct CorporationDivisionName {
 #[derive(Debug, Deserialize)]
 pub struct CorporationDivisions {
   #[serde(default)]
-  // Read only by tests; production never consumes this DTO field, so #[expect] is unfulfilled there.
-  #[allow(dead_code)]
+  // Deserialized off the ESI payload; read only by this module's tests until a divisions consumer lands.
+  #[cfg_attr(not(test), expect(dead_code))]
   pub hangar: Vec<CorporationDivisionName>,
   #[serde(default)]
   pub wallet: Vec<CorporationDivisionName>,

@@ -18,7 +18,6 @@ use crate::{config::McpPerms, mcp::args::ArgSpec, store::Database};
 /// A1 ships only the `Read` smoke tool; the mutating variants are the requirement labels the
 /// write/mail tool specs (kqyllswo, quqlxuvw) attach to their tools, so today only the gate's
 /// `match` arms and this module's tests construct them.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Permission {
   DeleteMail,
@@ -100,7 +99,6 @@ impl McpTool {
 
   /// Attaches the declarative argument list that becomes this tool's advertised JSON Schema. Tools
   /// that omit this call advertise empty properties.
-  #[allow(dead_code)]
   pub fn with_args(mut self, args: impl IntoIterator<Item = ArgSpec>) -> Self {
     self.args = args.into_iter().collect();
     self

@@ -98,7 +98,7 @@ impl Server {
 
   // Consumed by the Settings MCP tab (tylunpsl) to surface whether the listener is live; today only
   // this module's tests rely on the underlying state.
-  #[allow(dead_code)]
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn is_running(&self) -> bool {
     self.running.is_some()
   }

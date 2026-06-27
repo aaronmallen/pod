@@ -46,6 +46,7 @@ impl Config {
 
 #[derive(Clone, Debug)]
 pub struct Handle {
+  checks: watch::Receiver<u64>,
   commands: mpsc::Sender<Command>,
   state: watch::Receiver<State>,
 }
@@ -55,8 +56,6 @@ impl Handle {
     let _ = self.commands.try_send(Command::Apply);
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
   pub fn check(&self) {
     let _ = self.commands.try_send(Command::Check);
   }
@@ -72,6 +71,12 @@ impl Handle {
   #[expect(dead_code)]
   pub fn state(&self) -> State {
     self.state.borrow().clone()
+  }
+
+  // Counts completed checks so a fast "no update" can be told apart from the
+  // pre-check Idle default without waiting out the preflight timeout.
+  pub fn subscribe_checks(&self) -> watch::Receiver<u64> {
+    self.checks.clone()
   }
 
   pub fn subscribe(&self) -> watch::Receiver<State> {
@@ -98,8 +103,6 @@ pub enum State {
 }
 
 impl State {
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
   pub fn version(&self) -> Option<&str> {
     match self {
       State::UpdateAvailable {
@@ -128,6 +131,7 @@ enum Command {
 }
 
 struct Engine {
+  checks: watch::Sender<u64>,
   config: Config,
   pending: Option<Update>,
   state: watch::Sender<State>,
@@ -211,6 +215,7 @@ impl Engine {
     let config = self.config.clone().into_updater_config();
     let result = tokio::task::spawn_blocking(move || check_update(current, config)).await;
     self.apply_check_result(result);
+    self.checks.send_modify(|count| *count += 1);
   }
 
   fn restart(&self) {
@@ -252,14 +257,17 @@ fn restart_process() {
 
 pub fn spawn(config: Config) -> Handle {
   let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
+  let (checks_tx, checks_rx) = watch::channel(0);
   let (state_tx, state_rx) = watch::channel(State::Idle);
   let engine = Engine {
+    checks: checks_tx,
     config,
     pending: None,
     state: state_tx,
   };
   tokio::spawn(engine.run(command_rx));
   Handle {
+    checks: checks_rx,
     commands: command_tx,
     state: state_rx,
   }
@@ -273,8 +281,10 @@ mod tests {
   use super::*;
 
   fn engine() -> (Engine, watch::Receiver<State>) {
+    let (checks_tx, _checks_rx) = watch::channel(0);
     let (state_tx, state_rx) = watch::channel(State::Idle);
     let engine = Engine {
+      checks: checks_tx,
       config: Config {
         endpoints: vec![Url::parse("https://example.invalid/latest.json").unwrap()],
         pubkey: "test-key".to_owned(),
@@ -320,10 +330,30 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn check_completion_counter_advances_once_the_check_resolves() {
+    let handle = spawn(Config {
+      endpoints: vec![Url::parse("http://127.0.0.1:1/latest.json").unwrap()],
+      pubkey: "untrusted".to_owned(),
+    });
+    let mut checks = handle.subscribe_checks();
+    handle.check();
+    let count = tokio::time::timeout(Duration::from_secs(30), async {
+      checks.changed().await.unwrap();
+      *checks.borrow_and_update()
+    })
+    .await
+    .expect("a completed check must bump the counter");
+
+    assert!(count >= 1, "completed check should advance the counter, got {count}");
+  }
+
+  #[tokio::test]
   async fn handle_commands_do_not_panic_when_task_is_gone() {
     let (command_tx, command_rx) = mpsc::channel(COMMAND_BUFFER);
+    let (_checks_tx, checks_rx) = watch::channel(0);
     let (_state_tx, state_rx) = watch::channel(State::Idle);
     let handle = Handle {
+      checks: checks_rx,
       commands: command_tx,
       state: state_rx,
     };
@@ -357,8 +387,10 @@ mod tests {
   #[tokio::test]
   async fn shutdown_sends_the_loop_breaking_command() {
     let (commands, mut rx) = mpsc::channel(4);
+    let (_checks_tx, checks) = watch::channel(0);
     let (_state_tx, state) = watch::channel(State::Idle);
     let handle = Handle {
+      checks,
       commands,
       state,
     };

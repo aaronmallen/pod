@@ -23,9 +23,9 @@ const STAGE_PADDING: f32 = 56.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  // The update-preflight variants have no production constructor yet: the app
-  // layer that emits them lands with the boot-wiring and preflight-logic tasks.
-  // The state machine and its tests already drive them.
+  // BeginChecking and DownloadProgress have no production constructor yet: the
+  // app layer that emits them lands with the boot-wiring task. The state machine
+  // and its tests already drive them.
   #[allow(dead_code)]
   BeginChecking,
   #[allow(dead_code)]
@@ -42,11 +42,8 @@ pub enum Message {
   },
   Tick,
   Update,
-  #[allow(dead_code)]
   UpdateAvailable(String),
-  #[allow(dead_code)]
   UpdateFailed(String),
-  #[allow(dead_code)]
   UpdateNotAvailable,
 }
 

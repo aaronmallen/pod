@@ -39,7 +39,7 @@ pub async fn certificate_all(db: &Database) -> Result<Vec<Certificate>, Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn by_ids(db: &Database, ids: &[i64]) -> Result<Vec<Certificate>, Error> {
   if ids.is_empty() {
     return Ok(Vec::new());
@@ -115,7 +115,7 @@ pub async fn certificate_upsert_many(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn mastery_all(db: &Database) -> Result<Vec<ShipMastery>, Error> {
   let rows = sqlx::query_as::<_, ShipMastery>(
     "SELECT certificate_id, ship_type_id, tier FROM ship_masteries ORDER BY ship_type_id, tier, certificate_id",
@@ -442,7 +442,6 @@ pub async fn entries(db: &Database, plan_id: i64) -> Result<Vec<SkillPlanEntry>,
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn insert_entry(db: &Database, plan_id: i64, skill_id: i64, to_level: i64) -> Result<SkillPlanEntry, Error> {
   let entry = sqlx::query_as::<_, SkillPlanEntry>(
     "INSERT INTO skill_plan_entries (plan_id, skill_id, to_level, position) \
@@ -459,7 +458,6 @@ pub async fn insert_entry(db: &Database, plan_id: i64, skill_id: i64, to_level: 
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn remove_entry(db: &Database, id: i64) -> Result<(), Error> {
   let Some(plan_id) = sqlx::query_scalar::<_, i64>("SELECT plan_id FROM skill_plan_entries WHERE id = ?")
     .bind(id)
@@ -524,7 +522,6 @@ pub async fn replace_entries(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 async fn densify(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, plan_id: i64) -> Result<(), Error> {
   let ids = sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_entries WHERE plan_id = ? ORDER BY position, id")
     .bind(plan_id)
@@ -586,7 +583,7 @@ pub async fn upsert_remap_point(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn remove_remap_point(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM skill_plan_remap_points WHERE id = ?")
     .bind(id)
@@ -596,7 +593,6 @@ pub async fn remove_remap_point(db: &Database, id: i64) -> Result<(), Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn reanchor_remap_points(db: &Database, plan_id: i64, entry_id: i64) -> Result<(), Error> {
   let dependents =
     sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id = ?")
@@ -722,7 +718,6 @@ pub async fn replace_cert_proficiencies(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 async fn slot_is_occupied(
   tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
   plan_id: i64,

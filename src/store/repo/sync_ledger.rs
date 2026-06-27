@@ -6,7 +6,7 @@ use crate::store::{
 };
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all(db: &Database) -> Result<Vec<SyncLedger>, Error> {
   let rows = sqlx::query_as::<_, SyncLedger>(
     "SELECT kind, last_attempt_at, last_reason, last_success_at, next_eligible_at, outcome, rows_touched, \
@@ -50,7 +50,7 @@ pub async fn for_subject(db: &Database, subject_type: OwnerType, subject_id: i64
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get(
   db: &Database,
   subject_type: OwnerType,

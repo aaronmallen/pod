@@ -48,7 +48,6 @@ pub struct HistoryCursor {
 
 // In-app notification storage substrate (epic zyrmyrlk, spec A). Constructed/read by the detectors
 // (spec B) and the center/toast UI (specs C/D); exercised only by unit tests until those land.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewNotification {
   pub body: String,
@@ -59,7 +58,6 @@ pub struct NewNotification {
   pub title: String,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, CopyGetters, Debug, Getters, PartialEq)]
 pub struct Notification {
   #[getset(get = "pub")]
@@ -82,7 +80,6 @@ pub struct Notification {
   pub title: String,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NotificationDestination {
   Assets,
@@ -94,7 +91,6 @@ pub enum NotificationDestination {
   Wallet,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NotificationKind {
   Calendar,
@@ -107,14 +103,12 @@ pub enum NotificationKind {
   WalletGap,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NotificationOwner {
   Character(i64),
   Corporation(i64),
 }
 
-#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct NotificationTarget {
   pub character: Option<i64>,
@@ -138,7 +132,6 @@ pub(crate) struct NotificationRow {
   pub title: String,
 }
 
-#[allow(dead_code)]
 impl HistoryCursor {
   // The cursor positioned just after the last row of a page, or None when the page was empty (no
   // further rows to request).
@@ -150,7 +143,6 @@ impl HistoryCursor {
   }
 }
 
-#[allow(dead_code)]
 impl NotificationDestination {
   pub fn as_str(self) -> &'static str {
     match self {
@@ -180,7 +172,6 @@ impl NotificationDestination {
   }
 }
 
-#[allow(dead_code)]
 impl NotificationKind {
   pub fn as_str(self) -> &'static str {
     match self {
@@ -212,7 +203,6 @@ impl NotificationKind {
   }
 }
 
-#[allow(dead_code)]
 impl NotificationOwner {
   pub fn from_key(owner_type: &str, owner_id: i64) -> Option<Self> {
     match owner_type {
@@ -236,7 +226,6 @@ impl NotificationOwner {
   }
 }
 
-#[allow(dead_code)]
 impl NotificationRow {
   pub(crate) fn into_notification(self) -> Option<Notification> {
     Some(Notification {

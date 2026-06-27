@@ -7,7 +7,6 @@ use crate::store::{
 
 #[derive(Clone, Debug, PartialEq)]
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub struct CharacterContacts {
   pub contacts: Vec<CharacterContact>,
   /// Per-contact entity avatar, keyed by `contact_id`: a character portrait, corporation logo, or alliance logo
@@ -21,14 +20,13 @@ impl CharacterContacts {
   /// resolves each page's avatars itself, so this whole-set accessor survives only for the view-model tests and
   /// any future whole-set consumer.
   // Public store API exercised by unit tests; not yet wired into a production call site.
-  #[allow(dead_code)]
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn image(&self, contact_id: i64) -> Option<&ImageState> {
     self.images.get(&contact_id)
   }
 
   /// Builds the view from raw rows, resolving each contact's avatar against the image cache.
   // Public store API exercised by unit tests; not yet wired into a production call site.
-  #[allow(dead_code)]
   pub fn resolved(store: &Store, contacts: Vec<CharacterContact>, labels: Vec<CharacterContactLabel>) -> Self {
     let images = contacts
       .iter()

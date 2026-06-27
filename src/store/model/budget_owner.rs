@@ -4,7 +4,6 @@ const OWNER_KIND_CORPORATION: &str = "corporation";
 
 // Owner-aware budget assignment identity (child B); constructed by the Budget feature layer when it
 // resolves a ledger row's owner, and exercised only by unit tests until the chip/derivation wire it.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BudgetOwner {
   Character(i64),
@@ -12,7 +11,6 @@ pub enum BudgetOwner {
 }
 
 impl BudgetOwner {
-  #[allow(dead_code)]
   pub fn from_key(owner_kind: &str, owner_id: i64) -> Option<Self> {
     match owner_kind {
       OWNER_KIND_CHARACTER => Some(BudgetOwner::Character(owner_id)),

@@ -117,7 +117,7 @@ pub async fn get_corporation(db: &Database, id: i64) -> Result<Option<Corporatio
 // exists, exactly as sync::structure_resolution::resolve_owner_corporation does for the reference
 // CEO. See the deferred FK on migrations/0003_create_orgs.sql.
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn insert_corporation_with_org(
   db: &Database,
   corp: &Corporation,
@@ -444,7 +444,7 @@ pub async fn upsert_many_seed_corporations(db: &Database, corporations: &[SeedCo
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_alliances(db: &Database) -> Result<Vec<Alliance>, Error> {
   let rows = sqlx::query_as::<_, Alliance>(
     "SELECT creator_corporation_id, creator_id, date_founded, executor_corporation_id, \
@@ -467,7 +467,7 @@ pub async fn get_alliance(db: &Database, id: i64) -> Result<Option<Alliance>, Er
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn insert_alliance_with_org(
   db: &Database,
   alliance: &Alliance,
@@ -1084,7 +1084,6 @@ pub async fn corporation_killmails_page(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMemberRole>, Error> {
   let rows = sqlx::query_as::<_, CorporationMemberRole>(
     "SELECT character_id, corporation_id, role FROM corporation_member_roles \

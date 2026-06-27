@@ -349,7 +349,7 @@ async fn commit_with_org_context(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn insert_with_org(
   db: &Database,
   char: &Character,
@@ -484,7 +484,7 @@ pub async fn insert_with_org(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert(db: &Database, char: &Character) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO characters \
@@ -888,7 +888,7 @@ pub async fn all_states(db: &Database) -> Result<Vec<CharacterState>, Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn telemetry(db: &Database, character_id: i64) -> Result<Option<CharacterTelemetry>, Error> {
   let row = sqlx::query_as::<_, CharacterTelemetry>(
     "SELECT character_id, online, ship_item_id, ship_name, ship_type_id, solar_system_id, \
@@ -1200,7 +1200,7 @@ pub async fn replace_labels_for_character(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterContacts, Error> {
   let contacts = sqlx::query_as::<_, CharacterContact>(
     "SELECT character_id, contact_id, contact_name, contact_type, is_blocked, is_watched, label_ids, standing \
@@ -1616,7 +1616,7 @@ pub async fn notifications(db: &Database, character_id: i64) -> Result<Vec<Chara
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_squads(db: &Database) -> Result<Vec<Squad>, Error> {
   let rows = sqlx::query_as::<_, Squad>(
     "SELECT color, created_at, description, id, name, position, updated_at FROM squads ORDER BY position",
@@ -1770,7 +1770,7 @@ pub async fn unassign(db: &Database, character_id: i64) -> Result<(), Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn unassigned_id(db: &Database) -> Result<Option<i64>, Error> {
   Ok(by_name(db, RESERVED_UNASSIGNED_NAME).await?.map(|squad| squad.id()))
 }
@@ -1869,7 +1869,7 @@ pub async fn replace_standings_for_character(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn standings(db: &Database, character_id: i64) -> Result<Vec<CharacterStanding>, Error> {
   let rows = sqlx::query_as::<_, CharacterStanding>(
     "SELECT character_id, from_id, from_name, from_type, standing FROM character_standings \

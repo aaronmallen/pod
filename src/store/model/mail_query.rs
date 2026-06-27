@@ -15,7 +15,7 @@ impl MailCursor {
   }
 
   // Public store API exercised by unit tests; not yet wired into a production call site.
-  #[allow(dead_code)]
+  #[cfg_attr(not(test), expect(dead_code))]
   pub fn after(header: &CharacterMail) -> Self {
     Self {
       mail_id: header.mail_id(),

@@ -25,9 +25,6 @@ pub use event::Event;
 pub use freshness::{Freshness, FreshnessSummary, freshness_of};
 pub use handle::Handle;
 pub use job::{JobKey, JobKind};
-// The boot-time language-switch re-sync hook is consumed by the app's LanguageChanged restart flow
-// (sibling task wzkmsqyk); it reads as unused until that wiring lands.
-#[allow(unused_imports)]
 pub use language_refresh::{Refresh, refresh_for_language_switch};
 // Outcome is re-exported only for test fixtures (`outcome: sync::Outcome::synced()`); no production reader yet.
 #[allow(unused_imports)]

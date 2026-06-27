@@ -7,10 +7,6 @@ use crate::{
   store::{Database, Error, repo::sync_ledger},
 };
 
-// The whole boot-time hook is consumed by the app's LanguageChanged restart flow (sibling task
-// wzkmsqyk); it reads as unused until that wiring lands. The allow on the entry point keeps the
-// helpers it calls reachable, so only the enum and the entry point need annotating.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Refresh {
   NoSwitch,
@@ -31,7 +27,6 @@ fn language_dependent_kind_tokens() -> Vec<String> {
 // genuine first run (no marker) it records the configured language without expiring anything. This is
 // the boot-time hook ADR-0041 sections 3 and 4 describe; it runs before the engine's first discovery
 // pass so the expired jobs present as never-attempted and fire on the first scheduling pass.
-#[allow(dead_code)]
 pub async fn refresh_for_language_switch(
   db: &Database,
   configured: Language,

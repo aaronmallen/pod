@@ -1474,9 +1474,6 @@ fn write_stored_sde_version(path: &Path, version: &str) {
   std::fs::write(path, version).ok();
 }
 
-// Resolves the synced-language marker path; consumed by the app's boot wiring (sibling task
-// wzkmsqyk), so it reads as unused until that lands, mirroring the SDE-version marker path helper.
-#[allow(dead_code)]
 pub fn synced_language_path() -> Option<PathBuf> {
   Some(dir_spec::state_home()?.join("pod").join("synced_language"))
 }

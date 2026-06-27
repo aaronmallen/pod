@@ -719,6 +719,12 @@ impl std::fmt::Debug for StoreReady {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LanguageChangeAction {
+  Ignore,
+  Relaunch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SyncNowOutcome {
   Failed,
   Reconciled { mark: Option<SystemTime>, pulled: bool },
@@ -1369,6 +1375,7 @@ fn build_runtime(ready: StoreReady) -> Task<Message> {
 }
 
 async fn run_build_runtime(ready: StoreReady, mut tx: Tx) {
+  apply_language_refresh(&ready).await;
   match build_runtime_inner(ready) {
     Ok((runtime, events)) => {
       let _ = tx.send(Message::Ready(runtime)).await;
@@ -1377,6 +1384,31 @@ async fn run_build_runtime(ready: StoreReady, mut tx: Tx) {
     Err(error) => {
       tracing::error!(target: "pod::lifecycle", %error, "building the runtime failed");
       let _ = tx.send(Message::InitFailed(error)).await;
+    }
+  }
+}
+
+// Runs the boot-time language-switch re-sync (ADR-0041 sections 3 and 4) after the SDE re-seed has
+// landed and before the engine's first discovery pass, so the expired language-dependent jobs present
+// as never-attempted and re-fetch under the new `?language=`. A read-only opener holds no lease, so it
+// must not write the ledger; it is skipped there and the writer that owns the lease applies it.
+async fn apply_language_refresh(ready: &StoreReady) {
+  if ready.lease.is_some() {
+    return;
+  }
+  let Some(marker) = splash::seed::synced_language_path() else {
+    return;
+  };
+  let configured = ready.settings.accessibility().language();
+  match sync::refresh_for_language_switch(&ready.sync_db, configured, &marker).await {
+    Ok(sync::Refresh::Switched {
+      expired,
+    }) => {
+      tracing::info!(target: "pod::sync", %configured, expired, "language switch detected; expired language-dependent jobs");
+    }
+    Ok(sync::Refresh::NoSwitch) => {}
+    Err(error) => {
+      tracing::warn!(target: "pod::sync", %error, "language-switch re-sync failed; leaving the marker for the next boot");
     }
   }
 }
@@ -4764,6 +4796,7 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       query,
     } => return Task::batch(vec![task, settings_facility_search(app, activity, generation, query)]),
     settings::Outcome::IndustryPin(pin) => return Task::batch(vec![task, settings_facility_pin(app, pin)]),
+    settings::Outcome::LanguageChanged(language) => return apply_language_change(app, language, task),
     _ => {}
   }
 
@@ -4772,6 +4805,33 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
   }
   let updated = state.settings().clone();
   propagate_feature_change(app, updated, task)
+}
+
+// Applies a confirmed language change. Unlike scale and high-contrast, which apply live through
+// AccessibilityChanged + refresh_all_windows, a language change is committed at the next boot: the new
+// language is already persisted to config by `settings::update`, so relaunching lets the splash
+// re-seed the SDE (the language is folded into composite_version) and the boot-time hook expire the
+// language-dependent jobs, bringing the app up fully in the new language. See ADR-0041 section 6.
+fn apply_language_change(app: &mut App, language: crate::i18n::Language, task: Task<Message>) -> Task<Message> {
+  match language_change_action(app, language) {
+    LanguageChangeAction::Relaunch => {
+      tracing::info!(target: "pod::lifecycle", %language, "language change confirmed; relaunching to re-seed and re-sync");
+      restart();
+      task
+    }
+    LanguageChangeAction::Ignore => task,
+  }
+}
+
+fn language_change_action(app: &App, language: crate::i18n::Language) -> LanguageChangeAction {
+  // A confirmed change to the already-running language is a no-op: nothing to re-seed or re-sync, and a
+  // needless restart would be a hostile surprise. The accessibility tab already guards same-language
+  // selections, so this is a defensive second gate at the apply boundary.
+  if app.accessibility.language() == language {
+    LanguageChangeAction::Ignore
+  } else {
+    LanguageChangeAction::Relaunch
+  }
 }
 
 /// Pushes a just-changed feature set out to the runtime sync engine and every open feature screen
@@ -10284,6 +10344,32 @@ mod tests {
       let guard = init_tracing(dir.path(), config::LogLevel::default());
 
       assert!(guard.is_some(), "a writable log dir yields a worker guard");
+    }
+  }
+
+  mod language_change_action {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::i18n::Language;
+
+    #[test]
+    fn it_relaunches_when_the_language_actually_changes() {
+      let mut app = test_app();
+      app.accessibility.set_language(Language::En);
+
+      assert_eq!(
+        language_change_action(&app, Language::Fr),
+        LanguageChangeAction::Relaunch
+      );
+    }
+
+    #[test]
+    fn it_ignores_a_confirmed_change_to_the_running_language() {
+      let mut app = test_app();
+      app.accessibility.set_language(Language::De);
+
+      assert_eq!(language_change_action(&app, Language::De), LanguageChangeAction::Ignore);
     }
   }
 

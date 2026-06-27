@@ -21,507 +21,507 @@ static MODAL_LAYOUT: &[&[ModalSection]] = &[
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Stasis Webifier",
+          label: "assets.abyssals.module.stasis_webifier",
           type_id: 47702,
         },
         ModalRow::Single {
-          label: "Warp Scrambler",
+          label: "assets.abyssals.module.warp_scrambler",
           type_id: 47732,
         },
         ModalRow::Single {
-          label: "Warp Disruptor",
+          label: "assets.abyssals.module.warp_disruptor",
           type_id: 47736,
         },
         ModalRow::Single {
-          label: "Heavy Warp Scrambler",
+          label: "assets.abyssals.module.heavy_warp_scrambler",
           type_id: 56303,
         },
         ModalRow::Single {
-          label: "Heavy Warp Disruptor",
+          label: "assets.abyssals.module.heavy_warp_disruptor",
           type_id: 56304,
         },
       ],
-      title: "Electronic Warfare",
+      title: "assets.abyssals.group.electronic_warfare",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Magnetic Field Stabilizer",
+          label: "assets.abyssals.module.magnetic_field_stabilizer",
           type_id: 49722,
         },
         ModalRow::Single {
-          label: "Heat Sink",
+          label: "assets.abyssals.module.heat_sink",
           type_id: 49726,
         },
         ModalRow::Single {
-          label: "Gyrostabilizer",
+          label: "assets.abyssals.module.gyrostabilizer",
           type_id: 49730,
         },
         ModalRow::Single {
-          label: "Entropic Radiation Sink",
+          label: "assets.abyssals.module.entropic_radiation_sink",
           type_id: 49734,
         },
         ModalRow::Single {
-          label: "Ballistic Control System",
+          label: "assets.abyssals.module.ballistic_control_system",
           type_id: 49738,
         },
         ModalRow::Single {
-          label: "Drone Damage Amplifier",
+          label: "assets.abyssals.module.drone_damage_amplifier",
           type_id: 60482,
         },
         ModalRow::Single {
-          label: "Siege Module",
+          label: "assets.abyssals.module.siege_module",
           type_id: 56313,
         },
         ModalRow::Single {
-          label: "Vorton Tuning System",
+          label: "assets.abyssals.module.vorton_tuning_system",
           type_id: 78621,
         },
         ModalRow::Single {
-          label: "Fighter Support Unit",
+          label: "assets.abyssals.module.fighter_support_unit",
           type_id: 60483,
         },
       ],
-      title: "Weapon Upgrades",
+      title: "assets.abyssals.group.weapon_upgrades",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Mining Laser",
+          label: "assets.abyssals.module.mining_laser",
           type_id: 90460,
         },
         ModalRow::Single {
-          label: "Deep Core Mining Laser",
+          label: "assets.abyssals.module.deep_core_mining_laser",
           type_id: 90483,
         },
         ModalRow::Single {
-          label: "Modulated Deep Core Miner",
+          label: "assets.abyssals.module.modulated_deep_core_miner",
           type_id: 90474,
         },
       ],
-      title: "Mining Lasers",
+      title: "assets.abyssals.group.mining_lasers",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Strip Miner",
+          label: "assets.abyssals.module.strip_miner",
           type_id: 90493,
         },
         ModalRow::Single {
-          label: "Deep Core Strip Miner",
+          label: "assets.abyssals.module.deep_core_strip_miner",
           type_id: 90498,
         },
         ModalRow::Single {
-          label: "Modulated Strip Miner",
+          label: "assets.abyssals.module.modulated_strip_miner",
           type_id: 90467,
         },
         ModalRow::Single {
-          label: "Modulated Deep Core Strip Miner",
+          label: "assets.abyssals.module.modulated_deep_core_strip_miner",
           type_id: 90487,
         },
       ],
-      title: "Strip Miners",
+      title: "assets.abyssals.group.strip_miners",
     },
   ],
   &[
     ModalSection {
       rows: &[
         ModalRow::Family {
-          name: "Shield Booster",
+          name: "assets.abyssals.module.shield_booster",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47781,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47785,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47789,
             },
             ModalEntry {
-              label: "X-Large",
+              label: "assets.abyssals.variant.x_large",
               type_id: 47793,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56309,
             },
           ],
         },
         ModalRow::Family {
-          name: "Ancillary Shield Booster",
+          name: "assets.abyssals.module.ancillary_shield_booster",
           variants: &[
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47836,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47838,
             },
             ModalEntry {
-              label: "X-Large",
+              label: "assets.abyssals.variant.x_large",
               type_id: 47840,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56310,
             },
           ],
         },
         ModalRow::Family {
-          name: "Shield Extender",
+          name: "assets.abyssals.module.shield_extender",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47800,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47804,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47808,
             },
           ],
         },
       ],
-      title: "Shield",
+      title: "assets.abyssals.group.shield",
     },
     ModalSection {
       rows: &[
         ModalRow::Family {
-          name: "Armor Repairer",
+          name: "assets.abyssals.module.armor_repairer",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47769,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47773,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47777,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56307,
             },
           ],
         },
         ModalRow::Family {
-          name: "Ancillary Armor Repairer",
+          name: "assets.abyssals.module.ancillary_armor_repairer",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47842,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47844,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47846,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56308,
             },
           ],
         },
         ModalRow::Family {
-          name: "Armor Plates",
+          name: "assets.abyssals.module.armor_plates",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47812,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47817,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 47820,
             },
           ],
         },
       ],
-      title: "Armor",
+      title: "assets.abyssals.group.armor",
     },
     ModalSection {
       rows: &[
         ModalRow::Family {
-          name: "Afterburner",
+          name: "assets.abyssals.module.afterburner",
           variants: &[
             ModalEntry {
-              label: "1MN",
+              label: "assets.abyssals.variant.mn_1",
               type_id: 47749,
             },
             ModalEntry {
-              label: "10MN",
+              label: "assets.abyssals.variant.mn_10",
               type_id: 47753,
             },
             ModalEntry {
-              label: "100MN",
+              label: "assets.abyssals.variant.mn_100",
               type_id: 47757,
             },
             ModalEntry {
-              label: "10000MN",
+              label: "assets.abyssals.variant.mn_10000",
               type_id: 56305,
             },
           ],
         },
         ModalRow::Family {
-          name: "Microwarpdrive",
+          name: "assets.abyssals.module.microwarpdrive",
           variants: &[
             ModalEntry {
-              label: "5MN",
+              label: "assets.abyssals.variant.mn_5",
               type_id: 47740,
             },
             ModalEntry {
-              label: "50MN",
+              label: "assets.abyssals.variant.mn_50",
               type_id: 47408,
             },
             ModalEntry {
-              label: "500MN",
+              label: "assets.abyssals.variant.mn_500",
               type_id: 47745,
             },
             ModalEntry {
-              label: "50000MN",
+              label: "assets.abyssals.variant.mn_50000",
               type_id: 56306,
             },
           ],
         },
       ],
-      title: "Propulsion",
+      title: "assets.abyssals.group.propulsion",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Ice Mining Laser",
+          label: "assets.abyssals.module.ice_mining_laser",
           type_id: 90502,
         },
         ModalRow::Single {
-          label: "Ice Harvester",
+          label: "assets.abyssals.module.ice_harvester",
           type_id: 90524,
         },
       ],
-      title: "Ice Mining",
+      title: "assets.abyssals.group.ice_mining",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Gas Cloud Scoop",
+          label: "assets.abyssals.module.gas_cloud_scoop",
           type_id: 90529,
         },
         ModalRow::Single {
-          label: "Gas Cloud Harvester",
+          label: "assets.abyssals.module.gas_cloud_harvester",
           type_id: 90593,
         },
       ],
-      title: "Gas Harvesting",
+      title: "assets.abyssals.group.gas_harvesting",
     },
   ],
   &[
     ModalSection {
       rows: &[
         ModalRow::Family {
-          name: "Energy Neutralizer",
+          name: "assets.abyssals.module.energy_neutralizer",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 47824,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 47828,
             },
             ModalEntry {
-              label: "Heavy",
+              label: "assets.abyssals.variant.heavy",
               type_id: 47832,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56312,
             },
           ],
         },
         ModalRow::Family {
-          name: "Energy Nosferatu",
+          name: "assets.abyssals.module.energy_nosferatu",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 48419,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 48423,
             },
             ModalEntry {
-              label: "Heavy",
+              label: "assets.abyssals.variant.heavy",
               type_id: 48427,
             },
             ModalEntry {
-              label: "Capital",
+              label: "assets.abyssals.variant.capital",
               type_id: 56311,
             },
           ],
         },
         ModalRow::Family {
-          name: "Cap Battery",
+          name: "assets.abyssals.module.cap_battery",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 48431,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 48435,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 48439,
             },
           ],
         },
       ],
-      title: "Engineering",
+      title: "assets.abyssals.group.engineering",
     },
     ModalSection {
       rows: &[
         ModalRow::Family {
-          name: "Damage Control",
+          name: "assets.abyssals.module.damage_control",
           variants: &[
             ModalEntry {
-              label: "Regular",
+              label: "assets.abyssals.variant.regular",
               type_id: 52227,
             },
             ModalEntry {
-              label: "Assault",
+              label: "assets.abyssals.variant.assault",
               type_id: 52230,
             },
           ],
         },
         ModalRow::Family {
-          name: "EMP Smartbomb",
+          name: "assets.abyssals.module.emp_smartbomb",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 84442,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 84438,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 84434,
             },
           ],
         },
         ModalRow::Family {
-          name: "Graviton Smartbomb",
+          name: "assets.abyssals.module.graviton_smartbomb",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 84444,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 84440,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 84436,
             },
           ],
         },
         ModalRow::Family {
-          name: "Plasma Smartbomb",
+          name: "assets.abyssals.module.plasma_smartbomb",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 84443,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 84439,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 84435,
             },
           ],
         },
         ModalRow::Family {
-          name: "Proton Smartbomb",
+          name: "assets.abyssals.module.proton_smartbomb",
           variants: &[
             ModalEntry {
-              label: "Small",
+              label: "assets.abyssals.variant.small",
               type_id: 84445,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 84441,
             },
             ModalEntry {
-              label: "Large",
+              label: "assets.abyssals.variant.large",
               type_id: 84437,
             },
           ],
         },
         ModalRow::Family {
-          name: "Combat Drone",
+          name: "assets.abyssals.module.combat_drone",
           variants: &[
             ModalEntry {
-              label: "Light",
+              label: "assets.abyssals.variant.light",
               type_id: 60478,
             },
             ModalEntry {
-              label: "Medium",
+              label: "assets.abyssals.variant.medium",
               type_id: 60479,
             },
             ModalEntry {
-              label: "Heavy",
+              label: "assets.abyssals.variant.heavy",
               type_id: 60480,
             },
             ModalEntry {
-              label: "Sentry",
+              label: "assets.abyssals.variant.sentry",
               type_id: 60481,
             },
           ],
         },
       ],
-      title: "Miscellaneous",
+      title: "assets.abyssals.group.miscellaneous",
     },
     ModalSection {
       rows: &[
         ModalRow::Single {
-          label: "Mining Drone",
+          label: "assets.abyssals.module.mining_drone",
           type_id: 90614,
         },
         ModalRow::Single {
-          label: "Ice Harvesting Drone",
+          label: "assets.abyssals.module.ice_harvesting_drone",
           type_id: 90618,
         },
         ModalRow::Single {
-          label: "'Excavator' Mining Drone",
+          label: "assets.abyssals.module.excavator_mining_drone",
           type_id: 90621,
         },
         ModalRow::Single {
-          label: "'Excavator' Ice Harvesting Drone",
+          label: "assets.abyssals.module.excavator_ice_harvesting_drone",
           type_id: 90622,
         },
       ],
-      title: "Mining Drones",
+      title: "assets.abyssals.group.mining_drones",
     },
   ],
 ];
@@ -609,14 +609,14 @@ pub(in crate::features::assets) fn modal_selected_label(type_id: i64) -> Option<
           ModalRow::Single {
             label,
             type_id: tid,
-          } if *tid == type_id => return Some((*label).to_owned()),
+          } if *tid == type_id => return Some(t!(*label).into_owned()),
           ModalRow::Family {
             name,
             variants,
           } => {
             for variant in *variants {
               if variant.type_id == type_id {
-                return Some(format!("{name} ({})", variant.label));
+                return Some(format!("{} ({})", t!(*name), t!(variant.label)));
               }
             }
           }
@@ -781,7 +781,7 @@ fn modal_column(sections: &'static [ModalSection], selected: Option<i64>) -> Ele
 
 fn modal_section(section: &'static ModalSection, selected: Option<i64>) -> Element<'static, Message> {
   let title = Column::with_children(vec![
-    text(section.title)
+    text(t!(section.title).into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -832,7 +832,7 @@ fn single_row(label: &'static str, type_id: i64, selected: bool) -> Element<'sta
   };
 
   button(
-    text(label)
+    text(t!(label).into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(move |_| text::Style {
@@ -879,7 +879,7 @@ fn family_row(name: &'static str, variants: &'static [ModalEntry], selected: Opt
 
   container(
     Column::with_children(vec![
-      text(name)
+      text(t!(name).into_owned())
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(|_| text::Style {
@@ -926,7 +926,7 @@ fn variant_chip(label: &'static str, type_id: i64, selected: bool) -> Element<'s
   };
 
   button(
-    text(label)
+    text(t!(label).into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(move |_| text::Style {

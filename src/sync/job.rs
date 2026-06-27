@@ -116,6 +116,52 @@ impl JobKind {
     !self.applies_to(Subject::Character(0)) && !self.applies_to(Subject::Corporation(0))
   }
 
+  // Consumed by the forced re-sync on a language switch (sibling task nlwrsvyt's expire_kinds);
+  // remove the allow once that wiring lands.
+  #[allow(dead_code)]
+  pub fn is_language_dependent(self) -> bool {
+    // Exhaustive on purpose: a new JobKind must consciously pick a side. See ADR-0041 section 1 for
+    // why these jobs (and not the language-invariant universe/names path) carry localized text.
+    match self {
+      Self::AssetSync
+      | Self::CharacterClones
+      | Self::CharacterContacts
+      | Self::CharacterContracts
+      | Self::CharacterKillmails
+      | Self::CharacterProfile
+      | Self::CharacterSkills
+      | Self::CharacterStandings
+      | Self::CharacterTelemetry
+      | Self::CorporationContacts
+      | Self::CorporationContracts
+      | Self::CorporationKillmails
+      | Self::CorporationProfile
+      | Self::CorporationStandings
+      | Self::CorporationStructures => true,
+      Self::BudgetAssignmentReconcile
+      | Self::CharacterAbyssals
+      | Self::CharacterBlueprints
+      | Self::CharacterCalendar
+      | Self::CharacterIndustryJobs
+      | Self::CharacterMail
+      | Self::CharacterMarketOrders
+      | Self::CharacterNotifications
+      | Self::CharacterWallet
+      | Self::CorporationAbyssals
+      | Self::CorporationBlueprints
+      | Self::CorporationIndustryJobs
+      | Self::CorporationMiningExtractions
+      | Self::CorporationWallet
+      | Self::IndustryCostIndices
+      | Self::KillmailDetailBackfill
+      | Self::KillmailReconcile
+      | Self::MarketPrices
+      | Self::NetWorthSnapshot
+      | Self::TokenAudit
+      | Self::WalletJournalReconcile => false,
+    }
+  }
+
   pub fn on_success_triggers(self) -> &'static [JobKind] {
     match self {
       Self::AssetSync => &[
@@ -464,6 +510,73 @@ mod tests {
         assert!(!JobKind::AssetSync.is_global());
         assert!(!JobKind::CharacterAbyssals.is_global());
         assert!(!JobKind::CorporationWallet.is_global());
+      }
+    }
+
+    mod is_language_dependent {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      const LANGUAGE_DEPENDENT: [JobKind; 15] = [
+        JobKind::AssetSync,
+        JobKind::CharacterClones,
+        JobKind::CharacterContacts,
+        JobKind::CharacterContracts,
+        JobKind::CharacterKillmails,
+        JobKind::CharacterProfile,
+        JobKind::CharacterSkills,
+        JobKind::CharacterStandings,
+        JobKind::CharacterTelemetry,
+        JobKind::CorporationContacts,
+        JobKind::CorporationContracts,
+        JobKind::CorporationKillmails,
+        JobKind::CorporationProfile,
+        JobKind::CorporationStandings,
+        JobKind::CorporationStructures,
+      ];
+
+      #[test]
+      fn it_classifies_every_kind() {
+        for kind in JobKind::ALL.iter().copied() {
+          let expected = LANGUAGE_DEPENDENT.contains(&kind);
+
+          assert_eq!(
+            kind.is_language_dependent(),
+            expected,
+            "{kind:?} language-dependence must match its ADR-0041 section 1 membership"
+          );
+        }
+      }
+
+      #[test]
+      fn it_excludes_language_invariant_jobs() {
+        assert!(
+          !JobKind::MarketPrices.is_language_dependent(),
+          "prices are numeric and carry no localized text"
+        );
+        assert!(
+          !JobKind::NetWorthSnapshot.is_language_dependent(),
+          "the snapshot is numeric and carries no localized text"
+        );
+        assert!(
+          !JobKind::CharacterWallet.is_language_dependent(),
+          "wallet amounts are language-neutral"
+        );
+        assert!(
+          !JobKind::CharacterMail.is_language_dependent(),
+          "mail bodies are user-authored, never ESI-localized"
+        );
+      }
+
+      #[test]
+      fn it_marks_the_resolver_backed_jobs_as_language_dependent() {
+        for kind in LANGUAGE_DEPENDENT {
+          assert!(
+            kind.is_language_dependent(),
+            "{kind:?} persists localized reference text and must re-sync on a language switch"
+          );
+        }
       }
     }
 

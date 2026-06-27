@@ -221,7 +221,13 @@ pub enum Message {
   Selected(i64),
   SnoozeCalendarBack,
   // Constructed only by handler-routing tests; the set-time arm is wired but not yet triggered from the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Set-time dispatch arm is wired; awaiting the snooze-calendar UI to emit it."
+    )
+  )]
   SnoozeCalendarChip(u32, u32),
   SnoozeCalendarConfirmed,
   SnoozeCalendarDaySelected(i32, u32, u32),

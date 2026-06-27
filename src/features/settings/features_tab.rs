@@ -144,10 +144,15 @@ pub enum Message {
   // Cascade a single top-level config Feature on or off. The Features tab no longer renders a
   // per-Feature master (the display now groups by `Group`), so this variant is currently dispatched
   // only by the settings tests that exercise the shared single-Feature cascade handled in `update`.
-  // It is retained — and `allow`ed rather than removed — as the canonical entry point for that path,
-  // matched alongside the group/sub toggles in app.rs' feature-change predicate. An `expect` would go
-  // unfulfilled in the test build, where the variant is constructed.
-  #[allow(dead_code)]
+  // It is retained as the canonical entry point for that path, matched alongside the group/sub toggles in
+  // app.rs' feature-change predicate and handled in `update`; only tests construct it until the UI does.
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Canonical single-Feature cascade entry point; awaiting a UI that constructs it."
+    )
+  )]
   Toggled(Feature, bool),
 }
 

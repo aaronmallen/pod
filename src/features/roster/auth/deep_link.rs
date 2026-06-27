@@ -2,7 +2,13 @@
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(
+  target_os = "macos",
+  expect(
+    dead_code,
+    reason = "Single-instance forwarding is a Linux/Windows-only path; unused on macOS."
+  )
+)]
 mod single_instance;
 #[cfg(target_os = "windows")]
 mod windows;
@@ -19,7 +25,6 @@ static PENDING: Mutex<Option<String>> = Mutex::new(None);
 
 static SENDER: Mutex<Option<Sender>> = Mutex::new(None);
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 #[derive(Debug, Eq, PartialEq)]
 enum Claim {
   Forwarded,
@@ -47,7 +52,6 @@ pub fn deliver(url: String) {
   }
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn deliver_focus() {
   tracing::debug!("received deep-link focus ping");
   if let Ok(mut guard) = FOCUS_SENDER.lock()
@@ -57,7 +61,13 @@ pub fn deliver_focus() {
   }
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(
+  all(target_os = "macos", not(test)),
+  expect(
+    dead_code,
+    reason = "Pending-url stash feeds the Linux/Windows claim path; unused on macOS outside tests."
+  )
+)]
 pub fn set_pending(url: String) {
   if let Ok(mut guard) = PENDING.lock() {
     *guard = Some(url);
@@ -135,7 +145,13 @@ fn breadcrumb(url: Option<&str>, claim: &Claim) {
   let _ = file.flush();
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(
+  all(target_os = "macos", not(test)),
+  expect(
+    dead_code,
+    reason = "Launch breadcrumb logs the Linux/Windows claim outcome; unused on macOS outside tests."
+  )
+)]
 fn breadcrumb_message(url: Option<&str>, claim: &Claim) -> String {
   match (claim, url) {
     (Claim::Forwarded, Some(url)) => {
@@ -159,7 +175,13 @@ fn breadcrumb_message(url: Option<&str>, claim: &Claim) -> String {
   }
 }
 
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+#[cfg_attr(
+  all(target_os = "macos", not(test)),
+  expect(
+    dead_code,
+    reason = "Claim resolution drives the Linux/Windows single-instance path; unused on macOS outside tests."
+  )
+)]
 fn resolve_claim(
   url: Option<String>,
   forward: impl FnOnce(&str) -> bool,

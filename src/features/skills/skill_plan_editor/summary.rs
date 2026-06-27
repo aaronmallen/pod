@@ -42,7 +42,13 @@ pub(super) struct SummaryData {
   pub character_total_sp: u64,
   pub current_base_sec: f64,
   // Read only by tests asserting installed implants shorten the plan training time; not yet surfaced in the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Computed for the plan summary; awaiting the UI surface that reads it."
+    )
+  )]
   pub current_sec: f64,
   pub group_sec: HashMap<String, f64>,
   pub implant_effect: ImplantEffect,

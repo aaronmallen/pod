@@ -73,7 +73,10 @@ pub struct SkillCatalog {
 #[derive(Clone, Debug)]
 pub struct SkillCatalogEntry {
   // Group identity loaded from the SDE alongside group_name; retained for grouping logic, not yet read.
-  #[allow(dead_code)]
+  #[expect(
+    dead_code,
+    reason = "Loaded from the SDE for grouping logic; awaiting the consumer that reads it."
+  )]
   pub group_id: i64,
   pub group_name: String,
   pub name: String,

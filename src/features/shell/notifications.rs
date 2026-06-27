@@ -147,7 +147,6 @@ async fn resolve_owner_names(
 /// Resolves a display name ("who") per distinct owner across an arbitrary slice of notifications, so a
 /// UI labelling freshly-paged History rows can fill the "who" line without a second DB round-trip.
 /// Each owner is looked up once even when many notifications share it.
-#[allow(dead_code)]
 pub async fn resolve_names(db: &Database, notifications: &[Notification]) -> HashMap<NotificationOwner, String> {
   let mut names = HashMap::new();
   resolve_into(db, notifications, &mut names).await;

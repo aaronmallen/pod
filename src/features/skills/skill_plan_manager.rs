@@ -142,7 +142,7 @@ impl State {
     }
   }
 
-  #[cfg_attr(not(test), allow(dead_code))]
+  #[cfg(test)]
   pub fn selected(&self) -> Option<i64> {
     self.selected
   }

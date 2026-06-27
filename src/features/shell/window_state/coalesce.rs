@@ -22,8 +22,7 @@ impl WriteCoalescer {
     }
   }
 
-  // Exercised only by unit tests / forward-looking sync surface; no production reader yet.
-  #[allow(dead_code)]
+  #[cfg(test)]
   pub fn has_pending(&self) -> bool {
     self.pending.is_some()
   }

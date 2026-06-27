@@ -22,19 +22,15 @@ use crate::features::settings::log_export::Diagnostics;
 
 /// Archive layout version. Bump when the set of entries or the manifest schema changes so the
 /// import side can refuse archives it does not understand.
-#[allow(dead_code)]
 pub const ARCHIVE_VERSION: u32 = 1;
 
 /// Entry name for the self-contained database snapshot inside the archive.
-#[allow(dead_code)]
 pub const DATABASE_NAME: &str = "pod.db";
 
 /// Entry name for the bundled config file inside the archive.
-#[allow(dead_code)]
 pub const CONFIG_NAME: &str = "config.toml";
 
 /// Entry name for the machine-parseable manifest inside the archive.
-#[allow(dead_code)]
 pub const MANIFEST_JSON_NAME: &str = "manifest.json";
 
 /// Entry name for the human-readable manifest inside the archive.
@@ -79,7 +75,6 @@ impl Manifest {
 }
 
 /// Storage-path summary captured into the manifest so an archive records where it came from.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StoragePaths {
   pub cache_dir: String,
@@ -100,7 +95,6 @@ impl From<&Diagnostics> for StoragePaths {
 }
 
 /// Per-entry stats recorded in the manifest.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IncludedFile {
   pub bytes: u64,
@@ -117,7 +111,6 @@ pub struct IncludedFile {
 ///
 /// A `String` error keeps this consistent with the UI seam
 /// (`ExportFinished(Result<Option<PathBuf>, String>)`).
-#[allow(dead_code)]
 pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diagnostics) -> Result<Vec<u8>, String> {
   let db_bytes = std::fs::read(db_snapshot)
     .map_err(|err| t!("settings.data_export.error_read_db_snapshot", error => err).into_owned())?;
@@ -156,7 +149,6 @@ pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diag
 }
 
 /// Suggested file name for a saved data archive, bracketed by the build timestamp.
-#[allow(dead_code)]
 pub fn default_file_name(now: DateTime<Utc>) -> String {
   format!("pod-data-{}.zip", now.format("%Y%m%dT%H%M%SZ"))
 }

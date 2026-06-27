@@ -156,7 +156,10 @@ pub enum Message {
   EntryPriorityCycled(i64),
   EntryRemoved(i64),
   // Payload unread: the variant is the fn-pointer constructor for the save-file dialog future, whose path result is intentionally ignored.
-  #[allow(dead_code)]
+  #[expect(
+    dead_code,
+    reason = "Variant is a fn-pointer constructor; the dialog-future path result is intentionally ignored."
+  )]
   ExportFilePicked(Option<PathBuf>),
   ExportRequested,
   ExportToClipboard,
@@ -194,7 +197,10 @@ pub enum Message {
   RemapInserted(Option<i64>),
   RemapRemoved(i64),
   // Payload unread: the variant is the fn-pointer constructor for the reorder-persist future, whose result is intentionally ignored.
-  #[allow(dead_code)]
+  #[expect(
+    dead_code,
+    reason = "Variant is a fn-pointer constructor; the reorder-persist future result is intentionally ignored."
+  )]
   Reordered(Result<(), String>),
   SaveRequested,
   Saved(Result<i64, String>),

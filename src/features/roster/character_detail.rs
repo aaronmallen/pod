@@ -262,7 +262,10 @@ impl Message {
 pub struct PickerPilot {
   pub corp: String,
   // Plumbed through for the picker re-auth UX; loaded but not yet read by the picker view.
-  #[allow(dead_code)]
+  #[expect(
+    dead_code,
+    reason = "Loaded for the picker re-auth UX; awaiting the picker view to read it."
+  )]
   pub granted_scopes: Option<String>,
   pub id: i64,
   pub name: String,

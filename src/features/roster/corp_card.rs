@@ -35,7 +35,7 @@ pub struct CorpCardModel {
   pub corporation_id: i64,
   /// Stored credential scopes for this corporation, plumbed through for the corp re-auth UX
   /// task to consume (e.g. to drive a re-authorize affordance). Not yet read here.
-  #[allow(dead_code)]
+  #[expect(dead_code, reason = "Loaded for the corp re-auth UX; awaiting that task to read it.")]
   pub granted_scopes: Option<String>,
   pub hq: Option<String>,
   pub logo: images::ImageState,

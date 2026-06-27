@@ -37,7 +37,13 @@ pub struct Loaded {
 #[derive(Clone, Debug)]
 pub enum Message {
   // Constructed only by handler-routing tests; the close arm is wired but not yet triggered from the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Close dispatch arm is wired; awaiting the compare UI to emit it."
+    )
+  )]
   CloseRequested,
   DataLoaded(Box<Loaded>),
   GroupToggled(i64),

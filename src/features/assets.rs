@@ -208,7 +208,13 @@ pub enum Message {
   AbyssalStatMaxChanged(i64, f64),
   AbyssalStatMinChanged(i64, f64),
   // Constructed only by handler-routing tests; the real range-update arm is wired but not yet triggered from the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Range-update dispatch arm is wired; awaiting the abyssal UI to emit it."
+    )
+  )]
   AbyssalStatRangeChanged(i64, SliderEndpoint, f64),
   AbyssalStatTemplatesLoaded(Vec<StatTemplate>),
   AbyssalTypeModalClosed,
@@ -339,7 +345,6 @@ pub enum Message {
   /// inside the feature; the real write lives in the app-level assets handler
   /// (mirrors `wallet::Message::UiFlagPersisted`, routed in `app.rs` to
   /// `record_ui_flag`). The fields are read there, not within this feature.
-  #[allow(dead_code)]
   UiFlagPersisted(String, bool),
 }
 

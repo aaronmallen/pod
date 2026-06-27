@@ -139,7 +139,10 @@ impl BuildPlan {
   }
 
   // Exercised by planner unit tests as the foundation for the not-yet-wired build planner; kept until consumed by production.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+  )]
   pub fn collect_builds(&self) -> Vec<SubBuild> {
     let mut out = Vec::new();
     self.root.collect_into(self.runs, &[], 0, &mut out);
@@ -202,7 +205,10 @@ impl BuildPlan {
   }
 
   // Planner scaffolding awaiting UI wiring; production currently calls needed_blueprints_from directly.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+  )]
   pub fn needed_blueprints(&self) -> Vec<NeededBlueprint> {
     needed_blueprints_from(&self.merged_build_order())
   }
@@ -258,7 +264,6 @@ impl BuildPlan {
 
 /// Lookups a pure breakdown expansion needs, decoupled from the live planner state so
 /// [`expand_to_raw`] can be exercised without any database or UI.
-#[allow(dead_code)] // Pure-breakdown scaffolding exercised by tests; awaiting planner UI wiring.
 pub trait BuildableLookup<C> {
   /// The buildable input materials of `type_id` (raw, non-producible materials are omitted), in the order
   /// they should be inserted as children.
@@ -605,15 +610,25 @@ pub fn runs_for(needed_qty: i64, output_per_run: i64) -> i64 {
 /// facts through `lookup`. Existing children are kept (and themselves expanded) rather than replaced, so an
 /// in-progress tree deepens instead of resetting. Manufacturing and reaction nodes are treated alike — both
 /// surface buildable inputs through [`BuildableLookup::buildable_inputs`].
-#[allow(dead_code)] // Pure-breakdown scaffolding exercised by tests; awaiting planner UI wiring.
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+)]
 pub fn expand_to_raw<C, L>(children: &mut BTreeMap<i64, C>, type_id: i64, lookup: &L)
+where
+  L: BuildableLookup<C>,
+{
+  expand_to_raw_into(children, type_id, lookup);
+}
+
+fn expand_to_raw_into<C, L>(children: &mut BTreeMap<i64, C>, type_id: i64, lookup: &L)
 where
   L: BuildableLookup<C>,
 {
   for mat in lookup.buildable_inputs(type_id) {
     let child = children.entry(mat).or_insert_with(|| lookup.fresh_child(mat));
     let grandchildren = lookup.children_of(child);
-    expand_to_raw(grandchildren, mat, lookup);
+    expand_to_raw_into(grandchildren, mat, lookup);
   }
 }
 

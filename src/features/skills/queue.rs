@@ -475,16 +475,18 @@ pub enum QueueStatus {
   Empty,
 }
 
-#[allow(dead_code)]
 impl QueueStatus {
+  #[cfg(test)]
   pub fn is_training(self) -> bool {
     matches!(self, QueueStatus::Training)
   }
 
+  #[cfg(test)]
   pub fn is_paused(self) -> bool {
     matches!(self, QueueStatus::Paused { .. })
   }
 
+  #[cfg(test)]
   pub fn is_empty(self) -> bool {
     matches!(self, QueueStatus::Empty)
   }

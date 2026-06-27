@@ -54,7 +54,6 @@ pub const SCC_SURCHARGE_RATE: f64 = 0.04;
 const TILE_ICON_SIZE: Size = Size::S64;
 
 // Planner data-loading API: built and unit-tested as the foundation for the not-yet-wired build planner; kept until the planner UI consumes it.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlueprintRecipe {
   pub activity_id: i64,
@@ -140,7 +139,6 @@ pub struct ImplantTimeBonuses {
 }
 
 // See BlueprintRecipe: tested planner data scaffolding awaiting UI wiring.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OwnedBlueprint {
   pub in_scope: bool,
@@ -378,20 +376,23 @@ impl StaticCatalog {
 }
 
 // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
-#[allow(dead_code)]
+#[expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")]
 pub async fn average_price(db: &Database, type_id: i64) -> Option<f64> {
   prices(db).await.get(&type_id).copied()
 }
 
 // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
-#[allow(dead_code)]
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+)]
 pub async fn best_owned_blueprint(db: &Database, blueprint_type_id: i64, scope: Scope) -> Option<OwnedBlueprint> {
   let owned = owned_blueprints(db, blueprint_type_id, scope).await;
   rank_best_owned(owned)
 }
 
 // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
-#[allow(dead_code)]
+#[expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")]
 pub async fn build_time(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Option<(i64, i64)> {
   blueprints::activity_meta(db, blueprint_type_id, activity_id)
     .await
@@ -425,7 +426,10 @@ pub async fn facilities(db: &Database) -> Vec<Facility> {
 }
 
 // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
-#[allow(dead_code)]
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+)]
 pub async fn materials_for(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Vec<Material> {
   blueprints::materials_for_activity(db, blueprint_type_id, activity_id)
     .await
@@ -436,7 +440,10 @@ pub async fn materials_for(db: &Database, blueprint_type_id: i64, activity_id: i
 }
 
 // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
-#[allow(dead_code)]
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+)]
 pub async fn output_per_run(db: &Database, blueprint_type_id: i64, activity_id: i64) -> Option<i64> {
   blueprints::output_per_run(db, blueprint_type_id, activity_id)
     .await
@@ -557,7 +564,10 @@ pub async fn prices(db: &Database) -> HashMap<i64, f64> {
 
 /// Resolves the blueprint that produces `product_type_id` and the activity it is built by, preferring manufacturing
 /// (activity 1) over a reaction (activity 11) when a product is reachable both ways.
-#[allow(dead_code)] // Tested planner data scaffolding awaiting UI wiring (see BlueprintRecipe).
+#[cfg_attr(
+  not(test),
+  expect(dead_code, reason = "Foundation for the not-yet-wired build planner UI.")
+)]
 pub async fn reverse_lookup(db: &Database, product_type_id: i64) -> Option<BlueprintRecipe> {
   if let Some(recipe) = recipe_for_activity(db, product_type_id, MANUFACTURING_ACTIVITY_ID).await {
     return Some(recipe);

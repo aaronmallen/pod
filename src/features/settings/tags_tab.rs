@@ -46,7 +46,13 @@ pub enum Message {
   AssetColorHexSubmitted,
   AssetDropDragged,
   // Constructed only by handler-routing tests; the cancel-edit arm is wired but not yet triggered from the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Cancel-edit dispatch arm is wired; awaiting the tags UI to emit it."
+    )
+  )]
   AssetEditCancelled,
   AssetEditCommitted,
   AssetEditDraftChanged(String),
@@ -70,7 +76,13 @@ pub enum Message {
   CursorMoved(Point),
   DropDragged,
   // Constructed only by handler-routing tests; the cancel-edit arm is wired but not yet triggered from the UI.
-  #[allow(dead_code)]
+  #[cfg_attr(
+    not(test),
+    expect(
+      dead_code,
+      reason = "Cancel-edit dispatch arm is wired; awaiting the tags UI to emit it."
+    )
+  )]
   EditCancelled,
   EditCommitted,
   EditDraftChanged(String),

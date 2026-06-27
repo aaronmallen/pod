@@ -63,7 +63,6 @@ pub enum Message {
   Features(features_tab::Message),
   // The Features sub-step model derives its rail counts from the live feature flags the
   // per-group step tasks will own; this is the seam they dispatch when a flag flips.
-  #[allow(dead_code)]
   JumpTo(usize),
   Next,
   // Selecting a language re-renders the whole wizard in that language on the next frame, before any

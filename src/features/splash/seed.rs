@@ -474,7 +474,7 @@ async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<
 
   let latest_build = client.latest_build_version().await;
   let seeded = sde::is_seeded(db).await.unwrap_or(false);
-  if should_skip_download(latest_build.as_deref(), sde_version_path().as_deref(), seeded) {
+  if should_skip_download(latest_build.as_deref(), sde_version_path().as_deref(), seeded, language) {
     tracing::info!(target: "pod::sde", build = latest_build.as_deref(), "SDE already current; skipping full download");
     return Ok(());
   }
@@ -491,12 +491,17 @@ fn configured_language() -> Language {
     .unwrap_or_default()
 }
 
-fn should_skip_download(latest_build: Option<&str>, marker_path: Option<&Path>, seeded: bool) -> bool {
+fn should_skip_download(
+  latest_build: Option<&str>,
+  marker_path: Option<&Path>,
+  seeded: bool,
+  language: Language,
+) -> bool {
   let Some(build) = latest_build else {
     return false;
   };
 
-  seeded && sde_is_current(marker_path, Some(&composite_version(build)))
+  seeded && sde_is_current(marker_path, Some(&composite_version(build, language)))
 }
 
 async fn seed_if_stale(
@@ -517,7 +522,7 @@ async fn seed_if_stale_at(
   marker_path: Option<&Path>,
   language: Language,
 ) -> Result<(), String> {
-  let composite = build_version.map(composite_version);
+  let composite = build_version.map(|build| composite_version(build, language));
   if sde_is_current(marker_path, composite.as_deref()) {
     backfill_dogma_attributes(db, tx, root, language).await?;
     return Ok(());
@@ -1443,12 +1448,13 @@ fn roman_numeral(value: i32) -> String {
   result
 }
 
-fn composite_version(sde_build: &str) -> String {
+fn composite_version(sde_build: &str, language: Language) -> String {
   format!(
-    "{}+pod-{}+seed-{}",
+    "{}+pod-{}+seed-{}+lang-{}",
     sde_build,
     env!("CARGO_PKG_VERSION"),
-    SEED_FORMAT_REVISION
+    SEED_FORMAT_REVISION,
+    language.sde_code()
   )
 }
 
@@ -1963,24 +1969,48 @@ mod tests {
 
     #[test]
     fn it_differs_when_sde_build_differs() {
-      let a = composite_version("20240101.1");
-      let b = composite_version("20240102.1");
+      let a = composite_version("20240101.1", Language::En);
+      let b = composite_version("20240102.1", Language::En);
 
       assert_ne!(a, b);
     }
 
     #[test]
-    fn it_embeds_the_sde_build_pod_version_and_seed_revision() {
-      let result = composite_version("20240101.1");
+    fn it_embeds_the_sde_build_pod_version_seed_revision_and_language() {
+      let result = composite_version("20240101.1", Language::Fr);
 
       assert_eq!(
         result,
         format!(
-          "20240101.1+pod-{}+seed-{}",
+          "20240101.1+pod-{}+seed-{}+lang-fr",
           env!("CARGO_PKG_VERSION"),
           SEED_FORMAT_REVISION
         )
       );
+    }
+
+    #[test]
+    fn it_differs_across_languages() {
+      let en = composite_version("20240101.1", Language::En);
+      let fr = composite_version("20240101.1", Language::Fr);
+
+      assert_ne!(en, fr);
+    }
+
+    #[test]
+    fn it_is_stable_for_the_same_language() {
+      let first = composite_version("20240101.1", Language::Ja);
+      let second = composite_version("20240101.1", Language::Ja);
+
+      assert_eq!(first, second);
+    }
+
+    #[test]
+    fn it_collapses_en_us_to_en() {
+      let en = composite_version("20240101.1", Language::En);
+      let en_us = composite_version("20240101.1", Language::EnUs);
+
+      assert_eq!(en, en_us);
     }
   }
 
@@ -2233,7 +2263,7 @@ mod tests {
     fn it_reports_current_when_the_marker_matches_the_composite() {
       let tmp = tempfile::tempdir().unwrap();
       let marker = tmp.path().join("sde_version");
-      let composite = composite_version("20240101.1");
+      let composite = composite_version("20240101.1", Language::En);
       write_stored_sde_version(&marker, &composite);
 
       assert!(sde_is_current(Some(&marker), Some(&composite)));
@@ -2243,7 +2273,7 @@ mod tests {
     fn it_reports_stale_for_a_versionless_build() {
       let tmp = tempfile::tempdir().unwrap();
       let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::En));
 
       assert!(!sde_is_current(Some(&marker), None));
     }
@@ -2252,9 +2282,24 @@ mod tests {
     fn it_reports_stale_when_the_marker_differs() {
       let tmp = tempfile::tempdir().unwrap();
       let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::En));
 
-      assert!(!sde_is_current(Some(&marker), Some(&composite_version("20240102.1"))));
+      assert!(!sde_is_current(
+        Some(&marker),
+        Some(&composite_version("20240102.1", Language::En))
+      ));
+    }
+
+    #[test]
+    fn it_reports_stale_when_only_the_language_differs() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("sde_version");
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::En));
+
+      assert!(!sde_is_current(
+        Some(&marker),
+        Some(&composite_version("20240101.1", Language::Fr))
+      ));
     }
 
     #[test]
@@ -2262,7 +2307,10 @@ mod tests {
       let tmp = tempfile::tempdir().unwrap();
       let marker = tmp.path().join("sde_version");
 
-      assert!(!sde_is_current(Some(&marker), Some("20240101.1+pod-0.5.0+seed-2")));
+      assert!(!sde_is_current(
+        Some(&marker),
+        Some("20240101.1+pod-0.5.0+seed-2+lang-en")
+      ));
     }
   }
 
@@ -2518,7 +2566,7 @@ mod tests {
       let tmp = tempfile::tempdir().unwrap();
       write_full_fixture(tmp.path()).await;
       let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::EnUs));
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
@@ -2558,7 +2606,7 @@ mod tests {
       let tmp = tempfile::tempdir().unwrap();
       write_full_fixture(tmp.path()).await;
       let marker = tmp.path().join("sde_version");
-      write_stored_sde_version(&marker, &composite_version("20240101.1"));
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::EnUs));
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
@@ -2574,6 +2622,33 @@ mod tests {
       .unwrap();
 
       assert!(sde::get_race(&db, 1).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn seed_if_stale_re_seeds_when_only_the_language_changes() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_full_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+      write_stored_sde_version(&marker, &composite_version("20240101.1", Language::En));
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
+
+      seed_if_stale_at(
+        &db,
+        &mut tx,
+        tmp.path(),
+        Some("20240101.1"),
+        Some(&marker),
+        Language::Fr,
+      )
+      .await
+      .unwrap();
+
+      assert!(sde::get_race(&db, 1).await.unwrap().is_some());
+      assert_eq!(
+        read_stored_sde_version(&marker),
+        Some(composite_version("20240101.1", Language::Fr))
+      );
     }
 
     #[tokio::test]
@@ -2595,7 +2670,10 @@ mod tests {
       .await
       .unwrap();
 
-      assert_eq!(read_stored_sde_version(&marker), Some(composite_version("20240101.1")));
+      assert_eq!(
+        read_stored_sde_version(&marker),
+        Some(composite_version("20240101.1", Language::EnUs))
+      );
       assert!(sde::get_race(&db, 1).await.unwrap().is_some());
     }
   }
@@ -3444,36 +3522,45 @@ mod tests {
     fn it_downloads_when_only_the_build_matches_a_stale_composite() {
       let dir = tempfile::tempdir().unwrap();
       let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, "12345+pod-0.0.0+seed-0").unwrap();
+      std::fs::write(&marker, "12345+pod-0.0.0+seed-0+lang-en").unwrap();
 
-      assert!(!should_skip_download(Some("12345"), Some(&marker), true));
+      assert!(!should_skip_download(Some("12345"), Some(&marker), true, Language::En));
     }
 
     #[test]
     fn it_downloads_when_the_database_is_not_yet_seeded() {
       let dir = tempfile::tempdir().unwrap();
       let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
+      std::fs::write(&marker, composite_version("12345", Language::En)).unwrap();
 
-      assert!(!should_skip_download(Some("12345"), Some(&marker), false));
+      assert!(!should_skip_download(Some("12345"), Some(&marker), false, Language::En));
     }
 
     #[test]
     fn it_downloads_when_the_probe_returns_nothing() {
       let dir = tempfile::tempdir().unwrap();
       let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
+      std::fs::write(&marker, composite_version("12345", Language::En)).unwrap();
 
-      assert!(!should_skip_download(None, Some(&marker), true));
+      assert!(!should_skip_download(None, Some(&marker), true, Language::En));
+    }
+
+    #[test]
+    fn it_downloads_when_only_the_language_changed() {
+      let dir = tempfile::tempdir().unwrap();
+      let marker = dir.path().join("sde_version");
+      std::fs::write(&marker, composite_version("12345", Language::En)).unwrap();
+
+      assert!(!should_skip_download(Some("12345"), Some(&marker), true, Language::Fr));
     }
 
     #[test]
     fn it_skips_when_the_marker_matches_the_current_composite() {
       let dir = tempfile::tempdir().unwrap();
       let marker = dir.path().join("sde_version");
-      std::fs::write(&marker, composite_version("12345")).unwrap();
+      std::fs::write(&marker, composite_version("12345", Language::En)).unwrap();
 
-      assert!(should_skip_download(Some("12345"), Some(&marker), true));
+      assert!(should_skip_download(Some("12345"), Some(&marker), true, Language::En));
     }
   }
 }

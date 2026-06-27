@@ -37,13 +37,38 @@ impl PickerTab {
   ];
 
   pub(super) fn label(self) -> &'static str {
-    match self {
-      PickerTab::Certs => "Certs",
-      PickerTab::Modules => "Modules",
-      PickerTab::Ships => "Ships",
-      PickerTab::Skills => "Skills",
-    }
+    let resolved = match self {
+      PickerTab::Certs => t!("skills.editor_picker.tab_certs"),
+      PickerTab::Modules => t!("skills.editor_picker.tab_modules"),
+      PickerTab::Ships => t!("skills.editor_picker.tab_ships"),
+      PickerTab::Skills => t!("skills.editor_picker.tab_skills"),
+    };
+    intern_tab_label(&resolved)
   }
+}
+
+/// Interns a resolved tab label as a `'static` string.
+///
+/// [`Tab::label`](crate::ui::components::tab_select::Tab) borrows for the
+/// lifetime of the rendered element, but `t!` yields an owned, locale-dependent
+/// value. Each distinct resolved label is interned once so the borrow stays
+/// valid for the program lifetime; the pool is bounded by the four tabs times
+/// the installed locales.
+fn intern_tab_label(value: &str) -> &'static str {
+  use std::{
+    collections::HashSet,
+    sync::{Mutex, OnceLock},
+  };
+
+  static POOL: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+  let pool = POOL.get_or_init(|| Mutex::new(HashSet::new()));
+  let mut guard = pool.lock().expect("tab label pool poisoned");
+  if let Some(existing) = guard.get(value) {
+    return existing;
+  }
+  let leaked: &'static str = Box::leak(value.to_owned().into_boxed_str());
+  guard.insert(leaked);
+  leaked
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,7 +115,7 @@ pub(super) struct PickerState {
 pub(super) fn picker<'a>(state: &'a PickerState, planned: &HashMap<i64, u8>) -> Element<'a, Message> {
   let body: Element<'a, Message> = match state.active_tab {
     PickerTab::Skills => match state.catalog.as_ref() {
-      None => empty_state::empty_state("Loading skills\u{2026}"),
+      None => empty_state::empty_state(t!("skills.editor_picker.loading_skills").into_owned()),
       Some(catalog) => skills_tab(catalog, state, planned),
     },
     PickerTab::Ships => ships_tab(state),
@@ -133,7 +158,10 @@ fn skills_tab_items<'a>(
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
 
-  let mut items = vec![search_bar_item(&state.query, "Search skills\u{2026}")];
+  let mut items = vec![search_bar_item(
+    &state.query,
+    t!("skills.editor_picker.search_skills").into_owned(),
+  )];
 
   let mut any_visible = false;
   for group in &catalog.groups {
@@ -182,7 +210,9 @@ fn skills_tab_items<'a>(
   }
 
   if !any_visible {
-    items.push(empty_state::empty_state("No skills match your search"));
+    items.push(empty_state::empty_state(
+      t!("skills.editor_picker.no_skills_match").into_owned(),
+    ));
   }
 
   items
@@ -190,7 +220,7 @@ fn skills_tab_items<'a>(
 
 fn ships_tab(state: &PickerState) -> Element<'_, Message> {
   let Some(ships) = state.ships.as_ref() else {
-    return empty_state::empty_state("Loading ships\u{2026}");
+    return empty_state::empty_state(t!("skills.editor_picker.loading_ships").into_owned());
   };
 
   scrollable_list(ships_tab_items(ships, state))
@@ -199,7 +229,10 @@ fn ships_tab(state: &PickerState) -> Element<'_, Message> {
 fn ships_tab_items<'a>(ships: &'a [PickerShip], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
-  let mut items = vec![search_bar_item(&state.query, "Search ships\u{2026}")];
+  let mut items = vec![search_bar_item(
+    &state.query,
+    t!("skills.editor_picker.search_ships").into_owned(),
+  )];
 
   let groups = group_by_item_group(
     ships,
@@ -208,7 +241,9 @@ fn ships_tab_items<'a>(ships: &'a [PickerShip], state: &'a PickerState) -> Vec<E
     searching,
   );
   if groups.is_empty() {
-    items.push(empty_state::empty_state("No ships match your search"));
+    items.push(empty_state::empty_state(
+      t!("skills.editor_picker.no_ships_match").into_owned(),
+    ));
     return items;
   }
 
@@ -228,7 +263,7 @@ fn ships_tab_items<'a>(ships: &'a [PickerShip], state: &'a PickerState) -> Vec<E
 
 fn modules_tab(state: &PickerState) -> Element<'_, Message> {
   let Some(modules) = state.modules.as_ref() else {
-    return empty_state::empty_state("Loading modules\u{2026}");
+    return empty_state::empty_state(t!("skills.editor_picker.loading_modules").into_owned());
   };
 
   scrollable_list(modules_tab_items(modules, state))
@@ -237,7 +272,10 @@ fn modules_tab(state: &PickerState) -> Element<'_, Message> {
 fn modules_tab_items<'a>(modules: &'a [PickerModule], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
-  let mut items = vec![search_bar_item(&state.query, "Search modules\u{2026}")];
+  let mut items = vec![search_bar_item(
+    &state.query,
+    t!("skills.editor_picker.search_modules").into_owned(),
+  )];
 
   let groups = group_by_item_group(
     modules,
@@ -246,7 +284,9 @@ fn modules_tab_items<'a>(modules: &'a [PickerModule], state: &'a PickerState) ->
     searching,
   );
   if groups.is_empty() {
-    items.push(empty_state::empty_state("No modules match your search"));
+    items.push(empty_state::empty_state(
+      t!("skills.editor_picker.no_modules_match").into_owned(),
+    ));
     return items;
   }
 
@@ -265,7 +305,7 @@ fn modules_tab_items<'a>(modules: &'a [PickerModule], state: &'a PickerState) ->
 
 fn certs_tab(state: &PickerState) -> Element<'_, Message> {
   let Some(certs) = state.certs.as_ref() else {
-    return empty_state::empty_state("Loading certificates\u{2026}");
+    return empty_state::empty_state(t!("skills.editor_picker.loading_certificates").into_owned());
   };
 
   scrollable_list(certs_tab_items(certs, state))
@@ -274,7 +314,10 @@ fn certs_tab(state: &PickerState) -> Element<'_, Message> {
 fn certs_tab_items<'a>(certs: &'a [PickerCert], state: &'a PickerState) -> Vec<Element<'a, Message>> {
   let query = state.query.trim().to_lowercase();
   let searching = !query.is_empty();
-  let mut items = vec![search_bar_item(&state.query, "Search certificates\u{2026}")];
+  let mut items = vec![search_bar_item(
+    &state.query,
+    t!("skills.editor_picker.search_certificates").into_owned(),
+  )];
 
   let mut any_visible = false;
   for cert in certs {
@@ -287,13 +330,15 @@ fn certs_tab_items<'a>(certs: &'a [PickerCert], state: &'a PickerState) -> Vec<E
   }
 
   if !any_visible {
-    items.push(empty_state::empty_state("No certificates match your search"));
+    items.push(empty_state::empty_state(
+      t!("skills.editor_picker.no_certificates_match").into_owned(),
+    ));
   }
 
   items
 }
 
-fn search_bar_item<'a>(query: &'a str, placeholder: &'a str) -> Element<'a, Message> {
+fn search_bar_item<'a>(query: &'a str, placeholder: String) -> Element<'a, Message> {
   container(search_bar::search_bar(query, placeholder))
     .padding(Padding {
       top: spacing::SPACE_3,

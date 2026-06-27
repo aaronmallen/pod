@@ -36,8 +36,8 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
     character_picker(state),
     header_divider(),
     stat_block(
-      "Total skill points",
-      format!("{} SP", fmt_sp(total_sp)),
+      &t!("skills.header.total_sp_label"),
+      t!("skills.header.sp_value", sp => fmt_sp(total_sp)).into_owned(),
       color::text::PRIMARY,
       None,
     ),
@@ -53,8 +53,8 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
   if let Some(seconds) = remaining.filter(|secs| *secs > 0) {
     right.push(Space::new().width(Length::Fixed(spacing::SPACE_3)).into());
     right.push(stat_block(
-      "Queue completes",
-      format!("{} EVE", fmt_eta(now, seconds)),
+      &t!("skills.header.queue_completes_label"),
+      t!("skills.header.eve_value", eta => fmt_eta(now, seconds)).into_owned(),
       color::text::PRIMARY,
       None,
     ));
@@ -66,7 +66,7 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
 fn manage_plans_button<'a>() -> Element<'a, Message> {
   let label = Row::with_children(vec![
     Icon::plans().size(16.0).color(color::text::secondary()).render(),
-    text("Manage Plans")
+    text(t!("skills.header.manage_plans"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -108,7 +108,7 @@ fn manage_plans_button<'a>() -> Element<'a, Message> {
 fn compare_button<'a>() -> Element<'a, Message> {
   let label = Row::with_children(vec![
     Icon::compare().size(16.0).color(color::text::secondary()).render(),
-    text("Compare")
+    text(t!("skills.header.compare"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -180,7 +180,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 }
 
 fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
-  let total_sp: Element<'_, Message> = text(format!("{} SP", fmt_sp(pilot.total_sp)))
+  let total_sp: Element<'_, Message> = text(t!("skills.header.sp_value", sp => fmt_sp(pilot.total_sp)))
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
@@ -204,17 +204,22 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
 }
 
 fn queue_stat<'a>(len: usize, remaining: Option<i64>) -> Element<'a, Message> {
-  let noun = if len == 1 { "skill" } else { "skills" };
+  let noun = if len == 1 {
+    t!("skills.header.skill")
+  } else {
+    t!("skills.header.skills")
+  };
   let value = match remaining {
     Some(seconds) if seconds > 0 => fmt_duration(seconds),
-    _ => "Empty".to_owned(),
+    _ => t!("skills.header.empty").into_owned(),
   };
   let value_color = if is_low_queue(len, remaining) {
     color::status::DANGER
   } else {
     color::text::PRIMARY
   };
-  stat_block(&format!("Queue · {len} {noun}"), value, value_color, None)
+  let label = t!("skills.header.queue_label", count => len, noun => noun);
+  stat_block(&label, value, value_color, None)
 }
 
 fn is_low_queue(len: usize, remaining: Option<i64>) -> bool {

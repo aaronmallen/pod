@@ -30,7 +30,7 @@ pub(super) fn right_col<'a>(
 
   Column::with_children(vec![
     readout(
-      "Progress",
+      &t!("skills.hero.progress"),
       text(format!("{pct}%"))
         .font(typography::mono::MEDIUM)
         .size(typography::size::LG)
@@ -38,15 +38,15 @@ pub(super) fn right_col<'a>(
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      Some(format!("{} / {} SP", group_thousands(sp_now), group_thousands(sp_to))),
+      Some(t!("skills.hero.sp_ratio", now => group_thousands(sp_now), to => group_thousands(sp_to)).into_owned()),
     ),
     readout(
-      "Attributes",
+      &t!("skills.hero.attributes"),
       attrs.into(),
-      Some(format!("{sp_per_min} SP/min \u{b7} {}K/day", sp_per_day / 1_000)),
+      Some(t!("skills.hero.sp_rate", per_min => sp_per_min, per_day => sp_per_day / 1_000).into_owned()),
     ),
     readout(
-      "Completes at",
+      &t!("skills.hero.completes_at"),
       text(fmt_eta(now, remaining_secs))
         .font(typography::mono::MEDIUM)
         .size(typography::size::LG)
@@ -54,7 +54,7 @@ pub(super) fn right_col<'a>(
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      Some("EVE Time".to_owned()),
+      Some(t!("skills.hero.eve_time").into_owned()),
     ),
   ])
   .spacing(spacing::SPACE_3_5)
@@ -63,7 +63,7 @@ pub(super) fn right_col<'a>(
 }
 
 pub(in crate::features::skills) fn readout<'a>(
-  label: &'static str,
+  label: &str,
   primary: Element<'a, Message>,
   secondary: Option<String>,
 ) -> Element<'a, Message> {
@@ -135,7 +135,7 @@ pub(in crate::features::skills) fn attr_chip<'a>(attr: Attr, primary: bool) -> E
 
 pub(in crate::features::skills) fn rank_badge<'a>(rank: u8) -> Element<'a, Message> {
   container(
-    text(format!("\u{d7}{rank}"))
+    text(t!("skills.hero.rank", rank => rank))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

@@ -146,9 +146,9 @@ fn attr_bar<'a, Message: 'a>(row: AttrRow, accent: iced::Color) -> Element<'a, M
 
 fn role_badge<'a, Message: 'a>(role: Role) -> Option<Element<'a, Message>> {
   let label = match role {
-    Role::Primary => "PRIMARY",
-    Role::Secondary => "SECONDARY",
+    Role::Primary => t!("skills.panel_attributes.role_primary"),
+    Role::Secondary => t!("skills.panel_attributes.role_secondary"),
     Role::None => return None,
   };
-  Some(eyebrow(label, Some(color::accent::PLASMA)))
+  Some(eyebrow(&label, Some(color::accent::PLASMA)))
 }

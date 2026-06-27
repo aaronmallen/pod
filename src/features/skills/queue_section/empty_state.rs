@@ -14,15 +14,15 @@ const QUEUE_SIDE_MARGIN: f32 = 28.0;
 
 pub(super) fn empty_state<'a>() -> Element<'a, Message> {
   let body = Column::with_children(vec![
-    eyebrow("Queue \u{b7} 0 skills", Some(color::text::secondary())),
-    text("Empty queue")
+    eyebrow(&t!("skills.queue_empty.eyebrow"), Some(color::text::secondary())),
+    text(t!("skills.queue_empty.title"))
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("Apply a skill plan to start training.")
+    text(t!("skills.queue_empty.body"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {

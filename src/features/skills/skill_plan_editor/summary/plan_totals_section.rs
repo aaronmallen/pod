@@ -13,7 +13,11 @@ pub(super) fn plan_totals_section(
   steps: usize,
   now: DateTime<Utc>,
 ) -> Element<'static, Message> {
-  let completion = format!("Completes {}", super::super::fmt_eta(now, total_sec as i64));
+  let completion = t!(
+    "skills.summary_totals.completes",
+    eta => super::super::fmt_eta(now, total_sec as i64)
+  )
+  .into_owned();
 
   let col = column(vec![
     text(fmt_time_short(total_sec))
@@ -32,7 +36,7 @@ pub(super) fn plan_totals_section(
       })
       .into(),
     Space::new().height(4.0).into(),
-    text(format!("{steps} steps"))
+    text(t!("skills.summary_totals.steps", count => steps))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

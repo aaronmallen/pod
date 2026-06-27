@@ -47,10 +47,7 @@ fn bar_label_row(label: String, time_str: String) -> Element<'static, Message> {
   .into()
 }
 
-pub(super) fn time_chart_section(
-  title: &'static str,
-  rows: Vec<Element<'static, Message>>,
-) -> Element<'static, Message> {
+pub(super) fn time_chart_section(title: &str, rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
   container(
     column(vec![
       container(section_label(title))

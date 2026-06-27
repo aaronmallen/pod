@@ -27,5 +27,5 @@ pub(super) fn time_by_pair_section(pair_sec: &HashMap<String, f64>) -> Element<'
     })
     .collect();
 
-  time_chart_section("TIME BY ATTRIBUTE PAIR", rows)
+  time_chart_section(&t!("skills.summary_time.by_attribute_pair"), rows)
 }

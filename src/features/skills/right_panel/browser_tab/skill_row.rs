@@ -126,11 +126,19 @@ fn mini_pips<'a>(level: u8) -> Element<'a, Message> {
 }
 
 fn prereq_chip<'a>(name: &str, level: u8) -> Element<'a, Message> {
-  badge(format!("req \u{00b7} {} {}", name, roman(level)), Some(WARNING))
+  let level = roman(level);
+  badge(
+    t!("skills.panel_browser.prereq_chip", name => name, level => level).into_owned(),
+    Some(WARNING),
+  )
 }
 
 fn queued_marker<'a>(delta: u8) -> Element<'a, Message> {
-  badge(format!("+{delta} queued"), Some(color::accent::PLASMA))
+  let count = delta.to_string();
+  badge(
+    t!("skills.panel_browser.queued_marker", count => count).into_owned(),
+    Some(color::accent::PLASMA),
+  )
 }
 
 fn roman(level: u8) -> &'static str {

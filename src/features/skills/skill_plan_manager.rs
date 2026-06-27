@@ -287,18 +287,33 @@ fn window_body(state: &State) -> Element<'_, Message> {
 fn header(state: &State) -> Element<'_, Message> {
   let total = state.roster.plan_total();
   let characters = state.roster.entries.len();
-  let plan_word = if total == 1 { "plan" } else { "plans" };
-  let char_word = if characters == 1 { "character" } else { "characters" };
+  let plan_word = if total == 1 {
+    t!("skills.manager.plan_singular")
+  } else {
+    t!("skills.manager.plan_plural")
+  };
+  let char_word = if characters == 1 {
+    t!("skills.manager.character_singular")
+  } else {
+    t!("skills.manager.character_plural")
+  };
+  let summary = t!(
+    "skills.manager.header_summary",
+    plan_count => total,
+    plan_word => plan_word,
+    char_count => characters,
+    char_word => char_word
+  );
 
   let info = Column::with_children(vec![
-    text("Manage skill plans")
+    text(t!("skills.manager.title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG + 2.0)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!("{total} {plan_word} across {characters} {char_word}"))
+    text(summary.into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -313,14 +328,17 @@ fn header(state: &State) -> Element<'_, Message> {
 
 fn rail(state: &State) -> Element<'_, Message> {
   let mut items: Vec<Element<'_, Message>> = vec![
-    container(eyebrow_text("Characters", Some(color::text::tertiary())))
-      .padding(Padding {
-        top: spacing::SPACE_3,
-        right: spacing::SPACE_3_5,
-        bottom: spacing::SPACE_2,
-        left: spacing::SPACE_3_5,
-      })
-      .into(),
+    container(eyebrow_text(
+      t!("skills.manager.characters").as_ref(),
+      Some(color::text::tertiary()),
+    ))
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3_5,
+    })
+    .into(),
   ];
   for entry in &state.roster.entries {
     items.push(rail_item(entry, state.selected == Some(entry.character_id)));
@@ -413,7 +431,7 @@ fn rail_item(entry: &RosterEntry, active: bool) -> Element<'_, Message> {
 fn detail(state: &State) -> Element<'_, Message> {
   let Some(entry) = state.selected_entry() else {
     return container(
-      text("No characters")
+      text(t!("skills.manager.no_characters").into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -499,14 +517,14 @@ fn detail_plans<'a>(state: &'a State, entry: &'a RosterEntry) -> Element<'a, Mes
   if entry.plans.is_empty() {
     return container(
       Column::with_children(vec![
-        text(format!("No plans for {}", first_name(&entry.name)))
+        text(t!("skills.manager.no_plans_for", name => first_name(&entry.name)).into_owned())
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
             color: Some(color::text::secondary()),
           })
           .into(),
-        text("Create one with \u{201c}New plan\u{201d}, or copy a plan here from another character.")
+        text(t!("skills.manager.no_plans_hint").into_owned())
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(|_| text::Style {
@@ -555,8 +573,18 @@ fn plan_card<'a>(
   targets: &[&RosterEntry],
 ) -> Element<'a, Message> {
   let count = plan.entry_count;
-  let skill_word = if count == 1 { "skill" } else { "skills" };
-  let meta = format!("{count} {skill_word} \u{00b7} edited {}", plan.edited);
+  let skill_word = if count == 1 {
+    t!("skills.manager.skill_singular")
+  } else {
+    t!("skills.manager.skill_plural")
+  };
+  let meta = t!(
+    "skills.manager.plan_meta",
+    skill_count => count,
+    skill_word => skill_word,
+    edited => plan.edited
+  )
+  .into_owned();
 
   let info = Column::with_children(vec![
     text(plan.name.clone())
@@ -579,15 +607,18 @@ fn plan_card<'a>(
 
   let actions: Element<'a, Message> = if confirming_delete {
     Row::with_children(vec![
-      text("Delete?")
+      text(t!("skills.manager.delete_confirm").into_owned())
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
           color: Some(color::status::DANGER),
         })
         .into(),
-      ghost_button("Cancel", Message::CancelDelete),
-      danger_button("Delete", Message::ConfirmDelete(plan.id)),
+      ghost_button(t!("skills.manager.cancel").into_owned(), Message::CancelDelete),
+      danger_button(
+        t!("skills.manager.delete").into_owned(),
+        Message::ConfirmDelete(plan.id),
+      ),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center)
@@ -595,7 +626,7 @@ fn plan_card<'a>(
   } else {
     Row::with_children(vec![
       ghost_button(
-        "Open",
+        t!("skills.manager.open").into_owned(),
         Message::OpenPlan {
           character_id,
           plan_id: plan.id,
@@ -639,14 +670,17 @@ fn plan_card<'a>(
 
 fn copy_menu<'a>(plan_id: i64, targets: &[&RosterEntry]) -> Element<'a, Message> {
   let mut items: Vec<Element<'a, Message>> = vec![
-    container(eyebrow_text("Copy to character", Some(color::text::tertiary())))
-      .padding(Padding {
-        top: spacing::SPACE_2,
-        right: spacing::SPACE_3,
-        bottom: spacing::SPACE_2,
-        left: spacing::SPACE_3,
-      })
-      .into(),
+    container(eyebrow_text(
+      t!("skills.manager.copy_to_character").as_ref(),
+      Some(color::text::tertiary()),
+    ))
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+    })
+    .into(),
   ];
   for target in targets {
     items.push(copy_menu_item(plan_id, target));
@@ -720,7 +754,7 @@ fn copy_menu_item<'a>(plan_id: i64, target: &RosterEntry) -> Element<'a, Message
 
 fn new_plan_button<'a>(character_id: i64) -> Element<'a, Message> {
   button(
-    text("New plan")
+    text(t!("skills.manager.new_plan").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -754,9 +788,9 @@ fn new_plan_button<'a>(character_id: i64) -> Element<'a, Message> {
   .into()
 }
 
-fn ghost_button<'a>(label: &str, message: Message) -> Element<'a, Message> {
+fn ghost_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   button(
-    text(label.to_owned())
+    text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -798,7 +832,7 @@ fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'
   };
   let label = button(
     Row::with_children(vec![
-      text("Copy to")
+      text(t!("skills.manager.copy_to").into_owned())
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(move |_| copy_button_label_style(enabled))
@@ -858,9 +892,9 @@ fn copy_button_style(enabled: bool, menu_open: bool, status: button::Status) -> 
   }
 }
 
-fn danger_button<'a>(label: &str, message: Message) -> Element<'a, Message> {
+fn danger_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   button(
-    text(label.to_owned())
+    text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -980,13 +1014,13 @@ pub fn relative_time(iso: &str) -> String {
     .unwrap_or(0);
   let diff = now - ts;
   if diff < 60 {
-    "just now".to_owned()
+    t!("skills.manager.time_just_now").into_owned()
   } else if diff < 3600 {
-    format!("{}m ago", diff / 60)
+    t!("skills.manager.time_minutes_ago", count => diff / 60).into_owned()
   } else if diff < 86_400 {
-    format!("{}h ago", diff / 3600)
+    t!("skills.manager.time_hours_ago", count => diff / 3600).into_owned()
   } else {
-    format!("{}d ago", diff / 86_400)
+    t!("skills.manager.time_days_ago", count => diff / 86_400).into_owned()
   }
 }
 
@@ -1256,6 +1290,7 @@ mod tests {
 
     #[test]
     fn it_buckets_a_parseable_timestamp_into_a_relative_label() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let label = relative_time("2000-01-01T00:00:00Z");
 
       assert!(label.ends_with("d ago"), "expected a days-ago bucket, got {label}");

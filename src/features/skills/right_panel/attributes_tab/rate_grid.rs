@@ -3,7 +3,7 @@ use iced::{
   widget::{Column, Row, container, text},
 };
 
-use super::{PAIR_LABELS, attribute_short, card, group_thousands_u64};
+use super::{attribute_short, card, group_thousands_u64, pair_label};
 use crate::{
   features::skills::attributes::PairRate,
   ui::{
@@ -16,8 +16,8 @@ pub fn rate_grid<'a, Message: 'a>(matrix: &[PairRate; 6]) -> Element<'a, Message
   let mut grid_rows: Vec<Element<'a, Message>> = Vec::with_capacity(3);
   for pair in (0..matrix.len()).step_by(2) {
     let mut cells: Vec<Element<'a, Message>> = Vec::with_capacity(2);
-    for index in pair..(pair + 2).min(matrix.len()) {
-      cells.push(rate_cell(matrix[index], PAIR_LABELS[index]));
+    for (index, cell) in matrix.iter().enumerate().take((pair + 2).min(matrix.len())).skip(pair) {
+      cells.push(rate_cell(*cell, &pair_label(index)));
     }
     grid_rows.push(
       Row::with_children(cells)
@@ -29,7 +29,7 @@ pub fn rate_grid<'a, Message: 'a>(matrix: &[PairRate; 6]) -> Element<'a, Message
 
   let body = Column::with_children({
     let mut children: Vec<Element<'a, Message>> = vec![eyebrow(
-      "Training rate by attribute pair",
+      &t!("skills.panel_attributes.rate_grid_title"),
       Some(color::text::secondary()),
     )];
     children.extend(grid_rows);
@@ -75,11 +75,14 @@ fn rate_cell<'a, Message: 'a>(cell: PairRate, label: &str) -> Element<'a, Messag
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!(
-      "SP/hr · {}+{}",
-      attribute_short(cell.primary),
-      attribute_short(cell.secondary)
-    ))
+    text(
+      t!(
+        "skills.panel_attributes.rate_pair",
+        primary => attribute_short(cell.primary),
+        secondary => attribute_short(cell.secondary)
+      )
+      .into_owned(),
+    )
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {

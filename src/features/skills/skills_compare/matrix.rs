@@ -106,7 +106,7 @@ fn group_cell<'a>(state: &State, pilot_id: i64, summary: Option<GroupModel>, lea
   };
 
   let counts = Row::with_children(vec![
-    text(format!("{}\u{00d7}V", summary.at_v))
+    text(t!("skills.compare_matrix.at_v", count => summary.at_v))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .width(Length::Fill)
@@ -275,7 +275,7 @@ fn label_skill(skill: &SkillCatalogEntry) -> Element<'_, Message> {
         color: Some(color::text::secondary()),
       })
       .into(),
-    text(format!("\u{00d7}{}", skill.rank))
+    text(t!("skills.compare_matrix.rank", rank => skill.rank))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {

@@ -116,7 +116,7 @@ fn completes_col<'a>(
   now: DateTime<Utc>,
 ) -> Element<'a, Message> {
   let offset_label = if display_index == 0 {
-    "Next".to_owned()
+    t!("skills.queue.next").into_owned()
   } else {
     format!("+{}", fmt_dur_short(item.cum_start_secs.round() as i64))
   };
@@ -137,7 +137,7 @@ fn completes_col<'a>(
 
 fn skill_col<'a>(item: &'a ComputedQueueItem) -> Element<'a, Message> {
   let display_name = if item.skill_name.is_empty() {
-    "Unknown skill".to_owned()
+    t!("skills.queue.unknown_skill").into_owned()
   } else {
     item.skill_name.clone()
   };
@@ -192,7 +192,7 @@ fn sp_col<'a>(sp_needed: u64) -> Element<'a, Message> {
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      text("SP")
+      text(t!("skills.queue.sp"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {

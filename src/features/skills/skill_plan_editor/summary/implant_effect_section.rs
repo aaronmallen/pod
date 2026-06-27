@@ -28,9 +28,9 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
   let saved = (effect.without_sec - effect.with_sec).max(0.0);
 
   let comparison = row(vec![
-    figure_column("WITHOUT", effect.without_sec, false),
+    figure_column(&t!("skills.summary_implant.without"), effect.without_sec, false),
     Space::new().width(8.0).into(),
-    figure_column("WITH IMPLANTS", effect.with_sec, true),
+    figure_column(&t!("skills.summary_implant.with_implants"), effect.with_sec, true),
   ])
   .width(Length::Fill);
 
@@ -43,7 +43,7 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
     .collect();
 
   let mut items: Vec<Element<'static, Message>> = vec![
-    section_label("IMPLANT EFFECT"),
+    section_label(&t!("skills.summary_implant.heading")),
     Space::new().height(spacing::SPACE_3).into(),
     comparison.into(),
     Space::new().height(spacing::SPACE_3).into(),
@@ -66,7 +66,7 @@ pub(super) fn implant_effect_section(effect: &ImplantEffect) -> Element<'static,
     .into()
 }
 
-fn figure_column(title: &'static str, sec: f64, highlight: bool) -> Element<'static, Message> {
+fn figure_column(title: &str, sec: f64, highlight: bool) -> Element<'static, Message> {
   let (bg, border_color, value_color) = if highlight {
     (
       color::with_alpha(color::accent::PLASMA, 0.08),
@@ -81,7 +81,7 @@ fn figure_column(title: &'static str, sec: f64, highlight: bool) -> Element<'sta
     )
   };
 
-  let header = text(title)
+  let header = text(title.to_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(move |_| text::Style {
@@ -121,9 +121,9 @@ fn figure_column(title: &'static str, sec: f64, highlight: bool) -> Element<'sta
 
 fn savings_callout(saved: f64) -> Element<'static, Message> {
   let label = if saved > 0.0 {
-    format!("Implants save {}", fmt_time_long(saved))
+    t!("skills.summary_implant.implants_save", time => fmt_time_long(saved)).into_owned()
   } else {
-    "No training-time effect".to_owned()
+    t!("skills.summary_implant.no_effect").into_owned()
   };
 
   let (bg, border_color, label_color): (Color, Color, Color) = if saved > 0.0 {

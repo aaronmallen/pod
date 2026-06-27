@@ -97,7 +97,7 @@ fn entry_rows<'a>(
   let start_remaps = remaps_anchored(remaps, None);
   let mut start_has_remap = false;
   for remap in start_remaps {
-    children.push(remap_divider(remap, "Applied at start of plan"));
+    children.push(remap_divider(remap, &t!("skills.editor_remap.applied_at_start")));
     children.push(rule::horizontal());
     start_has_remap = true;
   }
@@ -129,9 +129,9 @@ fn entry_rows<'a>(
     let mut has_remap = false;
     for remap in after {
       let label = if last_number == 0 {
-        "Applied at start of plan".to_owned()
+        t!("skills.editor_remap.applied_at_start").into_owned()
       } else {
-        format!("After step {last_number}")
+        t!("skills.editor_remap.after_step", step => last_number).into_owned()
       };
       children.push(remap_divider(remap, &label));
       children.push(rule::horizontal());
@@ -199,15 +199,32 @@ fn col_header<'a>(sort: Sort) -> Element<'a, Message> {
       Space::new().width(spacing::SPACE_2).into(),
       Space::new().width(spacing::SPACE_3).into(),
       Space::new().width(spacing::SPACE_2).into(),
-      header_label("Skill").width(Length::Fill).into(),
-      sort_header("Pri", SortColumn::Primary, ATTR_COL_WIDTH, sort),
-      sort_header("Sec", SortColumn::Secondary, ATTR_COL_WIDTH, sort),
-      container(header_label("SP"))
+      header_label(t!("skills.editor.col_skill").into_owned())
+        .width(Length::Fill)
+        .into(),
+      sort_header(
+        t!("skills.editor.col_primary").into_owned(),
+        SortColumn::Primary,
+        ATTR_COL_WIDTH,
+        sort,
+      ),
+      sort_header(
+        t!("skills.editor.col_secondary").into_owned(),
+        SortColumn::Secondary,
+        ATTR_COL_WIDTH,
+        sort,
+      ),
+      container(header_label(t!("skills.editor.col_sp").into_owned()))
         .width(Length::Fixed(SP_COL_WIDTH))
         .align_x(Horizontal::Right)
         .into(),
       Space::new().width(spacing::SPACE_2).into(),
-      sort_header("Time / Cumul.", SortColumn::Time, TIME_COL_WIDTH, sort),
+      sort_header(
+        t!("skills.editor.col_time").into_owned(),
+        SortColumn::Time,
+        TIME_COL_WIDTH,
+        sort,
+      ),
       Space::new().width(spacing::SPACE_2).into(),
       Space::new().width(ACTIONS_COL_WIDTH).into(),
       Space::new().width(spacing::SPACE_3).into(),
@@ -237,7 +254,7 @@ fn col_header<'a>(sort: Sort) -> Element<'a, Message> {
   .into()
 }
 
-fn sort_header<'a>(label: &'a str, column: SortColumn, width: f32, sort: Sort) -> Element<'a, Message> {
+fn sort_header<'a>(label: String, column: SortColumn, width: f32, sort: Sort) -> Element<'a, Message> {
   let active = sort.is_active(column);
   let label_color = if active {
     color::accent::PLASMA
@@ -246,7 +263,7 @@ fn sort_header<'a>(label: &'a str, column: SortColumn, width: f32, sort: Sort) -
   };
 
   let mut children: Vec<Element<'a, Message>> = vec![
-    text(label.to_owned())
+    text(label)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(move |_| text::Style {
@@ -291,8 +308,8 @@ fn sort_header<'a>(label: &'a str, column: SortColumn, width: f32, sort: Sort) -
   .into()
 }
 
-fn header_label(label: &str) -> text::Text<'_> {
-  text(label.to_owned())
+fn header_label<'a>(label: String) -> text::Text<'a> {
+  text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {

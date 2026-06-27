@@ -102,7 +102,11 @@ pub fn update(state: &mut State, message: Message, db: &Database, character_id: 
 
 pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
   if !state.loaded {
-    return load_state_view(LoadStateView::Loading("Loading plans\u{2026}"));
+    // `LoadStateView::Loading` borrows its message for the returned element's lifetime, so the
+    // resolved string must outlive this function; cache it once to hand a `&'static str`.
+    static LOADING_MESSAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let loading = LOADING_MESSAGE.get_or_init(|| t!("skills.panel_plans.loading").into_owned());
+    return load_state_view(LoadStateView::Loading(loading));
   }
 
   if state.plans.is_empty() {

@@ -24,14 +24,14 @@ const REMOVE_GLYPH: &str = "\u{00d7}";
 
 pub(super) fn header(state: &State) -> Element<'_, Message> {
   let title = Column::with_children(vec![
-    text("Compare")
+    text(t!("skills.compare_header.compare"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
         color: Some(color::text::secondary()),
       })
       .into(),
-    text(format!("{} pilots", state.pilot_count()))
+    text(t!("skills.compare_header.pilots", count => state.pilot_count()))
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
@@ -94,7 +94,7 @@ fn add_pilot(state: &State) -> Element<'_, Message> {
           color: Some(color::text::secondary()),
         })
         .into(),
-      text("ADD PILOT")
+      text(t!("skills.compare_header.add_pilot"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
@@ -146,7 +146,7 @@ fn chip(state: &State, pilot_id: i64) -> Element<'_, Message> {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!("{} SP", fmt_sp(total_sp as i64)))
+    text(t!("skills.compare_header.sp_value", sp => fmt_sp(total_sp as i64)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -197,14 +197,15 @@ fn divider<'a>() -> Element<'a, Message> {
 }
 
 pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
-  let search = TextInput::new(
-    "Search pilots\u{2026}",
-    state.picker_query(),
-    Message::PickerQueryChanged,
-  )
-  .leading_icon(Icon::search())
-  .background(color::surface::SUNKEN)
-  .render();
+  // `TextInput` borrows its placeholder for the returned element's lifetime, so the resolved string
+  // must outlive this function; cache it once to hand the widget a `&'static str`.
+  static SEARCH_PLACEHOLDER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  let placeholder = SEARCH_PLACEHOLDER.get_or_init(|| t!("skills.compare_header.search_placeholder").into_owned());
+
+  let search = TextInput::new(placeholder, state.picker_query(), Message::PickerQueryChanged)
+    .leading_icon(Icon::search())
+    .background(color::surface::SUNKEN)
+    .render();
 
   let mut rows: Vec<Element<'_, Message>> =
     vec![container(search).width(Length::Fill).padding(spacing::SPACE_2_5).into()];
@@ -226,7 +227,7 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No matches")
+    text(t!("skills.compare_header.no_matches"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -248,7 +249,7 @@ fn pilot_row(state: &State, pilot_id: i64) -> Element<'_, Message> {
   let name = state.pilot_name(pilot_id).to_owned();
 
   let trailing: Option<Element<'_, Message>> = state.model(pilot_id).map(|model| {
-    text(format!("{} SP", fmt_sp(model.total_sp as i64)))
+    text(t!("skills.compare_header.sp_value", sp => fmt_sp(model.total_sp as i64)))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

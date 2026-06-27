@@ -22,8 +22,20 @@ pub(super) const ATTR_ORDER: [Attribute; 5] = [
   Attribute::Memory,
   Attribute::Charisma,
 ];
-pub(super) const PAIR_LABELS: [&str; 6] = ["Combat", "Engineering", "Drones", "Navigation", "Trade", "Social"];
 pub(super) const WARNING: iced::Color = color::status::WARNING;
+
+/// Localized label for the attribute-pair category at the given grid index (Combat, Engineering, …).
+pub(super) fn pair_label(index: usize) -> String {
+  match index {
+    0 => t!("skills.panel_attributes.pair_combat"),
+    1 => t!("skills.panel_attributes.pair_engineering"),
+    2 => t!("skills.panel_attributes.pair_drones"),
+    3 => t!("skills.panel_attributes.pair_navigation"),
+    4 => t!("skills.panel_attributes.pair_trade"),
+    _ => t!("skills.panel_attributes.pair_social"),
+  }
+  .into_owned()
+}
 
 pub fn view<'a, Message: 'a>(model: Option<&'a AttrTabModel>, now: DateTime<Utc>) -> Element<'a, Message> {
   let Some(model) = model else {
@@ -77,7 +89,7 @@ fn effective_of(model: &AttrTabModel) -> Attributes {
 
 fn awaiting_state<'a, Message: 'a>() -> Element<'a, Message> {
   container(
-    text("Neural attributes will appear once synced.")
+    text(t!("skills.panel_attributes.awaiting"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -115,24 +127,26 @@ pub(super) fn card<'a, Message: 'a>(
     .into()
 }
 
-pub(super) fn attribute_label(attribute: Attribute) -> &'static str {
+pub(super) fn attribute_label(attribute: Attribute) -> String {
   match attribute {
-    Attribute::Charisma => "Charisma",
-    Attribute::Intelligence => "Intelligence",
-    Attribute::Memory => "Memory",
-    Attribute::Perception => "Perception",
-    Attribute::Willpower => "Willpower",
+    Attribute::Charisma => t!("skills.panel_attributes.attr_charisma"),
+    Attribute::Intelligence => t!("skills.panel_attributes.attr_intelligence"),
+    Attribute::Memory => t!("skills.panel_attributes.attr_memory"),
+    Attribute::Perception => t!("skills.panel_attributes.attr_perception"),
+    Attribute::Willpower => t!("skills.panel_attributes.attr_willpower"),
   }
+  .into_owned()
 }
 
-pub(super) fn attribute_short(attribute: Attribute) -> &'static str {
+pub(super) fn attribute_short(attribute: Attribute) -> String {
   match attribute {
-    Attribute::Charisma => "Cha",
-    Attribute::Intelligence => "Int",
-    Attribute::Memory => "Mem",
-    Attribute::Perception => "Per",
-    Attribute::Willpower => "Wil",
+    Attribute::Charisma => t!("skills.panel_attributes.attr_short_charisma"),
+    Attribute::Intelligence => t!("skills.panel_attributes.attr_short_intelligence"),
+    Attribute::Memory => t!("skills.panel_attributes.attr_short_memory"),
+    Attribute::Perception => t!("skills.panel_attributes.attr_short_perception"),
+    Attribute::Willpower => t!("skills.panel_attributes.attr_short_willpower"),
   }
+  .into_owned()
 }
 
 pub(super) fn value_of(attributes: Attributes, attribute: Attribute) -> u32 {

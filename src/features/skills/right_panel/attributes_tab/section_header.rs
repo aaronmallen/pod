@@ -22,9 +22,13 @@ pub fn section_header<'a, Message: 'a>(base: Attributes) -> Element<'a, Message>
   .into_iter()
   .sum();
 
+  let total = total.to_string();
   Column::with_children(vec![
-    eyebrow("Neural attributes", Some(color::text::secondary())),
-    text(format!("{total} pts allocated · base"))
+    eyebrow(
+      &t!("skills.panel_attributes.section_title"),
+      Some(color::text::secondary()),
+    ),
+    text(t!("skills.panel_attributes.section_summary", total => total).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

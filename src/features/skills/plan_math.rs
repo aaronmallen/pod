@@ -103,7 +103,7 @@ pub fn remap_availability(
 
   let count = u32::from(annual_available) + bonus;
   let reason = if count == 0 {
-    format!("No neural remaps available. Next remap accrues in {cooldown_days_remaining} days.")
+    t!("skills.plan_math.no_remaps_available", count => cooldown_days_remaining).into_owned()
   } else {
     String::new()
   };
@@ -1138,6 +1138,7 @@ mod tests {
 
     #[test]
     fn it_yields_zero_with_a_non_empty_reason_when_on_cooldown_and_no_bonus() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let availability = remap_availability(0, Some("2026-04-01T12:00:00Z"), Some("2026-08-30T12:00:00Z"), now());
 
       assert_eq!(availability.count, 0);

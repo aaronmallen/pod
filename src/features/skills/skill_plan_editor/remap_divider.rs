@@ -72,7 +72,7 @@ fn index_mark<'a>() -> Element<'a, Message> {
 
 fn title_block<'a>(label: &str) -> Element<'a, Message> {
   column(vec![
-    eyebrow("NEURAL REMAP", Some(color::accent::PLASMA)),
+    eyebrow(&t!("skills.editor_remap.neural_remap"), Some(color::accent::PLASMA)),
     Space::new().height(2.0).into(),
     text(label.to_owned())
       .font(typography::body::REGULAR)

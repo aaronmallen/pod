@@ -20,13 +20,13 @@ pub(super) fn stats_strip<'a>(steps: usize, total_sp: u64, total_sec: f64, now: 
 
   container(
     row(vec![
-      cell("Steps", &steps.to_string()),
+      cell(&t!("skills.editor_stats.steps"), &steps.to_string()),
       Space::new().width(spacing::SPACE_6).into(),
-      cell("Total SP", &fmt_sp(total_sp)),
+      cell(&t!("skills.editor_stats.total_sp"), &fmt_sp(total_sp)),
       Space::new().width(spacing::SPACE_6).into(),
-      cell("Training time", &fmt_duration(total_secs)),
+      cell(&t!("skills.editor_stats.training_time"), &fmt_duration(total_secs)),
       Space::new().width(spacing::SPACE_6).into(),
-      cell("Completes", &fmt_eta(now, total_secs)),
+      cell(&t!("skills.editor_stats.completes"), &fmt_eta(now, total_secs)),
     ])
     .align_y(Vertical::Center)
     .padding(Padding {

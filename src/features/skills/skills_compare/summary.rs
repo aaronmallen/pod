@@ -40,12 +40,18 @@ pub(super) fn summary(state: &State) -> Element<'_, Message> {
 
   let body = Column::with_children(vec![
     heads_row(state),
-    stat_row(state, "Total SP", &total_sp, |value| {
-      format!("{} SP", fmt_sp(value as i64))
+    stat_row(state, &t!("skills.compare_summary.total_sp"), &total_sp, |value| {
+      t!("skills.compare_summary.sp_value", sp => fmt_sp(value as i64)).into_owned()
     }),
-    stat_row(state, "Skills at V", &at_v, |value| (value as i64).to_string()),
-    stat_row(state, "Skills at IV+", &at_iv, |value| (value as i64).to_string()),
-    stat_row(state, "Skills trained", &trained, |value| (value as i64).to_string()),
+    stat_row(state, &t!("skills.compare_summary.skills_at_v"), &at_v, |value| {
+      (value as i64).to_string()
+    }),
+    stat_row(state, &t!("skills.compare_summary.skills_at_iv"), &at_iv, |value| {
+      (value as i64).to_string()
+    }),
+    stat_row(state, &t!("skills.compare_summary.skills_trained"), &trained, |value| {
+      (value as i64).to_string()
+    }),
   ])
   .width(Length::Fill);
 

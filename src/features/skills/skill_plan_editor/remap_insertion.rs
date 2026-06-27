@@ -24,7 +24,10 @@ pub(super) fn insertion_gap<'a>(after_entry_id: Option<i64>, gap_key: i64, hover
 }
 
 fn pill_button<'a>(after_entry_id: Option<i64>) -> Element<'a, Message> {
-  let pill = badge("+ REMAP HERE", Some(color::accent::PLASMA));
+  let pill = badge(
+    t!("skills.editor_remap.remap_here").into_owned(),
+    Some(color::accent::PLASMA),
+  );
 
   button(container(pill).width(Length::Fill).align_x(Horizontal::Center))
     .padding(Padding {

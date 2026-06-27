@@ -34,12 +34,12 @@ pub(super) fn attr_optimization_section(
   remap_reason: &str,
 ) -> Element<'static, Message> {
   let mut items: Vec<Element<'static, Message>> = vec![
-    section_label("ATTRIBUTE OPTIMIZATION"),
+    section_label(&t!("skills.summary_attr.heading")),
     Space::new().height(spacing::SPACE_3).into(),
   ];
 
   if recommendation.is_current {
-    items.push(attr_column("CURRENT", base_attrs, false));
+    items.push(attr_column(&t!("skills.summary_attr.current"), base_attrs, false));
     items.push(Space::new().height(spacing::SPACE_3).into());
     items.push(already_optimal_callout());
   } else {
@@ -64,16 +64,16 @@ pub(super) fn attr_optimization_section(
 
 fn dual_columns(current: Attributes, proposed: Attributes) -> Element<'static, Message> {
   row(vec![
-    attr_column("CURRENT", current, false),
+    attr_column(&t!("skills.summary_attr.current"), current, false),
     Space::new().width(8.0).into(),
-    attr_column("PROPOSED", proposed, true),
+    attr_column(&t!("skills.summary_attr.proposed"), proposed, true),
   ])
   .width(Length::Fill)
   .into()
 }
 
-fn attr_column(title: &'static str, attrs: Attributes, highlight: bool) -> Element<'static, Message> {
-  let header = text(title)
+fn attr_column(title: &str, attrs: Attributes, highlight: bool) -> Element<'static, Message> {
+  let header = text(title.to_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(move |_| text::Style {
@@ -157,7 +157,7 @@ fn attr_value_row(key: AttrKey, value: u32, highlight: bool) -> Element<'static,
 
 fn already_optimal_callout() -> Element<'static, Message> {
   callout(
-    "Already optimal".to_owned(),
+    t!("skills.summary_attr.already_optimal").into_owned(),
     color::with_alpha(color::status::ONLINE, 0.08),
     color::with_alpha(color::status::ONLINE, 0.30),
     color::status::ONLINE,
@@ -204,9 +204,15 @@ fn callout(label: String, bg: Color, border_color: Color, label_color: Color) ->
 
 fn remap_status_row(remap_availability: u32, remap_reason: &str) -> Element<'static, Message> {
   let (dot_color, status_text) = if remap_availability > 0 {
-    (color::status::ONLINE, "Remap available now".to_owned())
+    (
+      color::status::ONLINE,
+      t!("skills.summary_attr.remap_available").into_owned(),
+    )
   } else if remap_reason.is_empty() {
-    (color::text::tertiary(), "No remap available".to_owned())
+    (
+      color::text::tertiary(),
+      t!("skills.summary_attr.no_remap_available").into_owned(),
+    )
   } else {
     (color::text::tertiary(), remap_reason.to_owned())
   };

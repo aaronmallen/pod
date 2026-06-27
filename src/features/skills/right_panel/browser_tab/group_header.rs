@@ -40,12 +40,18 @@ pub fn group_header(group: &GroupRow, open: bool) -> Element<'_, Message> {
       color: Some(color::text::PRIMARY),
     });
 
-  let summary = text(format!(
-    "{}/{} \u{00b7} {} SP",
-    group.trained_count,
-    group.total_skills,
-    fmt_group_sp(group.total_sp)
-  ))
+  let trained = group.trained_count.to_string();
+  let total = group.total_skills.to_string();
+  let sp = fmt_group_sp(group.total_sp);
+  let summary = text(
+    t!(
+      "skills.panel_browser.group_summary",
+      trained => trained,
+      total => total,
+      sp => sp
+    )
+    .into_owned(),
+  )
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
   .style(|_| text::Style {

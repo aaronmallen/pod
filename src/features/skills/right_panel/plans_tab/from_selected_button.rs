@@ -12,7 +12,7 @@ use crate::ui::{
 
 pub fn from_selected_button<'a>(count: usize) -> Element<'a, Message> {
   let label = Row::with_children(vec![
-    text("From selected")
+    text(t!("skills.panel_plans.from_selected"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {

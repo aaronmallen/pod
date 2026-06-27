@@ -204,13 +204,11 @@ pub enum QueueWarning {
 impl QueueWarning {
   pub fn message(self) -> String {
     match self {
-      QueueWarning::Empty => "Training inactive \u{b7} skill queue is empty".to_owned(),
-      QueueWarning::LowQueue => "Low queue \u{b7} less than 24h of training remains".to_owned(),
+      QueueWarning::Empty => t!("skills.warning.empty").into_owned(),
+      QueueWarning::LowQueue => t!("skills.warning.low_queue").into_owned(),
       QueueWarning::Paused {
         queued,
-      } => {
-        format!("Training paused \u{b7} {queued} {} queued", skill_word(queued))
-      }
+      } => t!("skills.warning.paused", count => queued, noun => skill_word(queued)).into_owned(),
     }
   }
 }
@@ -1332,6 +1330,7 @@ mod tests {
 
     #[test]
     fn it_pluralizes_the_paused_skill_count() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       assert_eq!(
         QueueWarning::Paused {
           queued: 1,
@@ -1350,6 +1349,7 @@ mod tests {
 
     #[test]
     fn it_describes_an_empty_queue_distinctly_from_paused() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       assert_eq!(
         QueueWarning::Empty.message(),
         "Training inactive \u{b7} skill queue is empty"

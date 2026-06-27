@@ -14,13 +14,13 @@ pub fn fmt_dur_short(seconds: i64) -> String {
   let secs = seconds % MINUTE;
 
   if days > 0 {
-    format!("{days}d")
+    t!("skills.format.days", n => days).into_owned()
   } else if hours > 0 {
-    format!("{hours}h")
+    t!("skills.format.hours", n => hours).into_owned()
   } else if minutes > 0 {
-    format!("{minutes}m")
+    t!("skills.format.minutes", n => minutes).into_owned()
   } else {
-    format!("{secs}s")
+    t!("skills.format.seconds", n => secs).into_owned()
   }
 }
 
@@ -44,6 +44,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+    use crate::i18n::{Language, set_locale};
 
     #[test]
     fn it_renders_an_em_dash_for_zero_or_negative() {
@@ -53,21 +54,25 @@ mod tests {
 
     #[test]
     fn it_renders_bare_seconds_below_a_minute() {
+      set_locale(Language::En);
       assert_eq!(fmt_dur_short(30), "30s");
     }
 
     #[test]
     fn it_renders_only_days_when_days_are_present() {
+      set_locale(Language::En);
       assert_eq!(fmt_dur_short(3 * DAY + 4 * HOUR + 9 * MINUTE), "3d");
     }
 
     #[test]
     fn it_renders_only_hours_below_a_day() {
+      set_locale(Language::En);
       assert_eq!(fmt_dur_short(2 * HOUR + 5 * MINUTE), "2h");
     }
 
     #[test]
     fn it_renders_only_minutes_below_an_hour() {
+      set_locale(Language::En);
       assert_eq!(fmt_dur_short(7 * MINUTE + 12), "7m");
     }
   }

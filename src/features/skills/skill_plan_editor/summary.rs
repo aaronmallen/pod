@@ -124,7 +124,7 @@ pub(super) fn fmt_time_short(sec: f64) -> String {
   }
 }
 
-pub(super) fn section_label<'a>(title: &'a str) -> Element<'a, Message> {
+pub(super) fn section_label(title: &str) -> Element<'static, Message> {
   eyebrow(title, None)
 }
 

@@ -10,7 +10,7 @@ use crate::ui::style::{color, spacing, typography};
 pub fn empty_state<'a>() -> Element<'a, Message> {
   container(
     Column::with_children(vec![
-      text("No skill plans yet")
+      text(t!("skills.panel_plans.empty_title"))
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -18,7 +18,7 @@ pub fn empty_state<'a>() -> Element<'a, Message> {
         })
         .into(),
       Space::new().height(Length::Fixed(spacing::UNIT)).into(),
-      text("Create your first plan to start optimizing your skill queue.")
+      text(t!("skills.panel_plans.empty_body"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {

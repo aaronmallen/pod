@@ -50,16 +50,30 @@ impl<'a> Panel<'a> {
     } else {
       String::new()
     };
+    // Tab labels are borrowed for the strip's lifetime, so the resolved strings must outlive this
+    // method; cache each once to hand `tab_select_with` `&'static str`s.
+    static BROWSE_LABEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static ATTRIBUTES_LABEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    static PLANS_LABEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let browse_label = BROWSE_LABEL.get_or_init(|| t!("skills.panel.tab_browse").into_owned());
+    let attributes_label = ATTRIBUTES_LABEL.get_or_init(|| t!("skills.panel.tab_attributes").into_owned());
+    let plans_label = PLANS_LABEL.get_or_init(|| t!("skills.panel.tab_plans").into_owned());
+
     let strip = container(tab_select_with(
       vec![
-        tab("Browse", self.tab == RightTab::Browse, RightTab::Browse, String::new()),
         tab(
-          "Attributes",
+          browse_label,
+          self.tab == RightTab::Browse,
+          RightTab::Browse,
+          String::new(),
+        ),
+        tab(
+          attributes_label,
           self.tab == RightTab::Attributes,
           RightTab::Attributes,
           String::new(),
         ),
-        tab("Plans", self.tab == RightTab::Plans, RightTab::Plans, plans_count),
+        tab(plans_label, self.tab == RightTab::Plans, RightTab::Plans, plans_count),
       ],
       TabLayout::Fill,
     ))

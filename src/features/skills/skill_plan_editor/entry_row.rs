@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Space, button, column, container, mouse_area, row, text},
+  widget::{Space, button, column, container, mouse_area, row, text, text_input},
 };
 
 use super::{
@@ -11,7 +11,7 @@ use super::{
 use crate::{
   features::skills::{browse::AttrKey, queue_timing::roman},
   ui::{
-    components::{badge::badge, status, text_input::TextInput},
+    components::{badge::badge, status},
     style::{color, spacing, typography},
   },
 };
@@ -145,7 +145,10 @@ fn skill_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
 
   if entry.is_auto {
     name_items.push(Space::new().width(spacing::SPACE_2).into());
-    name_items.push(badge("prereq", Some(color::status::ONLINE)));
+    name_items.push(badge(
+      t!("skills.editor.prereq_badge").into_owned(),
+      Some(color::status::ONLINE),
+    ));
   }
 
   let name_row = row(name_items).align_y(Vertical::Center);
@@ -190,7 +193,7 @@ fn sp_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      text("SP")
+      text(t!("skills.editor.sp_unit"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
@@ -217,7 +220,7 @@ fn time_col<'a>(entry: &'a ComputedRow) -> Element<'a, Message> {
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      text(format!("cum {}", fmt_dur_short(entry.cumulative_sec)))
+      text(t!("skills.editor.cumulative_time", time => fmt_dur_short(entry.cumulative_sec)))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
@@ -359,11 +362,15 @@ fn drag_handle<'a>(id: i64, is_dragging: bool) -> Element<'a, Message> {
 }
 
 fn note_editor<'a>(note: &'a str, id: i64) -> Element<'a, Message> {
+  let placeholder = t!("skills.editor.note_placeholder");
   container(
-    TextInput::new("Add a note…", note, move |value| Message::EntryNoteChanged(id, value))
-      .font_size(12.0)
-      .padding(6.0)
-      .render(),
+    text_input(&placeholder, note)
+      .on_input(move |value| Message::EntryNoteChanged(id, value))
+      .font(typography::body::REGULAR)
+      .size(12.0)
+      .padding(Padding::from(6.0))
+      .width(Length::Fill)
+      .style(crate::ui::components::text_input::style()),
   )
   .padding(Padding {
     top: 0.0,

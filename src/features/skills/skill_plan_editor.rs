@@ -49,8 +49,19 @@ const REMAP_ATTR_ORDER: [Attribute; 5] = [
   Attribute::Charisma,
 ];
 
-const MONTHS: [&str; 12] = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+const MONTH_KEYS: [&str; 12] = [
+  "skills.plan.month_jan",
+  "skills.plan.month_feb",
+  "skills.plan.month_mar",
+  "skills.plan.month_apr",
+  "skills.plan.month_may",
+  "skills.plan.month_jun",
+  "skills.plan.month_jul",
+  "skills.plan.month_aug",
+  "skills.plan.month_sep",
+  "skills.plan.month_oct",
+  "skills.plan.month_nov",
+  "skills.plan.month_dec",
 ];
 const EDITOR_HOST_WIDTH: f32 = 900.0;
 const PICKER_WIDTH: f32 = 340.0;
@@ -656,7 +667,7 @@ impl State {
         continue;
       }
       let group = if row.group_name.is_empty() {
-        "Other".to_owned()
+        t!("skills.plan.group_other").into_owned()
       } else {
         row.group_name.clone()
       };
@@ -913,9 +924,10 @@ fn stage_import(state: &mut State, raw: &str) {
 async fn read_from_file_dialog() -> Option<String> {
   #[cfg(not(test))]
   {
+    let plan_filter = t!("skills.plan.file_filter_plan");
     let handle = rfd::AsyncFileDialog::new()
-      .set_title("Import skill plan")
-      .add_filter("Plan", &["json", "txt"])
+      .set_title(t!("skills.plan.import_dialog_title").into_owned())
+      .add_filter(&*plan_filter, &["json", "txt"])
       .pick_file()
       .await?;
     Some(String::from_utf8_lossy(&handle.read().await).into_owned())
@@ -929,10 +941,11 @@ async fn read_from_file_dialog() -> Option<String> {
 async fn save_to_file_dialog(default_name: String, contents: String) -> Option<PathBuf> {
   #[cfg(not(test))]
   {
+    let json_filter = t!("skills.plan.file_filter_json");
     let handle = rfd::AsyncFileDialog::new()
-      .set_title("Export skill plan")
+      .set_title(t!("skills.plan.export_dialog_title").into_owned())
       .set_file_name(default_name)
-      .add_filter("JSON", &["json"])
+      .add_filter(&*json_filter, &["json"])
       .save_file()
       .await?;
     let path = handle.path().to_path_buf();
@@ -1424,7 +1437,7 @@ fn save(state: &State, db: &Database) -> Task<Message> {
   let character_id = state.character_id;
   let name = state.name.trim().to_owned();
   let name = if name.is_empty() {
-    "Untitled plan".to_owned()
+    t!("skills.plan.untitled").into_owned()
   } else {
     name
   };
@@ -1645,7 +1658,7 @@ async fn async_load(db: Database, character_id: i64, seed: Seed, now: DateTime<U
   };
 
   let draft_name = match &seed {
-    Seed::FromQueueSelection(_) => Some("Plan from selection".to_owned()),
+    Seed::FromQueueSelection(_) => Some(t!("skills.plan.draft_from_selection").into_owned()),
     Seed::Existing(_) | Seed::FromQueue | Seed::New => None,
   };
 
@@ -1789,7 +1802,7 @@ async fn resolve_entry_meta(db: &Database, catalog: &SkillCatalog, skill_id: i64
     .ok()
     .flatten()
     .map(|t| t.name().to_owned())
-    .unwrap_or_else(|| format!("Skill {skill_id}"));
+    .unwrap_or_else(|| t!("skills.plan.skill_fallback", id => skill_id).into_owned());
 
   EntryMeta {
     group_name: group_name_for(catalog, skill_id),
@@ -2166,7 +2179,8 @@ fn serialize_plan_text(state: &State) -> String {
 
 fn export_file_name(state: &State) -> String {
   let trimmed = state.name.trim();
-  let base = if trimmed.is_empty() { "skill-plan" } else { trimmed };
+  let fallback = t!("skills.plan.export_file_base");
+  let base = if trimmed.is_empty() { fallback.as_ref() } else { trimmed };
   format!("{base}.json")
 }
 
@@ -2325,7 +2339,7 @@ fn upsert_imported_entry(
       1,
       AttrKey::Perception,
       AttrKey::Memory,
-      format!("Skill {skill_id}"),
+      t!("skills.plan.skill_fallback", id => skill_id).into_owned(),
       String::new(),
     ),
   };
@@ -2365,7 +2379,7 @@ fn edit_entry_from_expanded(state: &mut State, expanded: ExpandedEntry) -> EditE
       1,
       AttrKey::Perception,
       AttrKey::Memory,
-      format!("Skill {}", expanded.skill_id),
+      t!("skills.plan.skill_fallback", id => expanded.skill_id).into_owned(),
       String::new(),
     ),
   };
@@ -2459,11 +2473,19 @@ fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   }
   let eta = now + Duration::seconds(seconds_from_now);
   let day = eta.day();
-  let month = MONTHS[(eta.month() - 1) as usize];
+  let month = t!(MONTH_KEYS[(eta.month() - 1) as usize]);
   let year = eta.year();
-  let hour = eta.hour();
-  let minute = eta.minute();
-  format!("{day} {month} {year} · {hour:02}:{minute:02}")
+  let hour = format!("{:02}", eta.hour());
+  let minute = format!("{:02}", eta.minute());
+  t!(
+    "skills.plan.eta",
+    day => day,
+    month => month,
+    year => year,
+    hour => hour,
+    minute => minute
+  )
+  .into_owned()
 }
 
 #[cfg(test)]
@@ -2737,6 +2759,7 @@ mod tests {
         .await
         .unwrap();
 
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let mut state = State::new(42);
       let _ = update(
         &mut state,
@@ -3046,6 +3069,7 @@ mod tests {
 
     #[test]
     fn it_formats_the_instant_with_the_year() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       assert_eq!(fmt_eta(now(), 2 * 3_600 + 30 * 60), "1 Jun 2026 · 14:30");
     }
 
@@ -3056,6 +3080,7 @@ mod tests {
 
     #[test]
     fn it_rolls_into_a_later_year() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       assert!(fmt_eta(now(), 250 * 86_400).ends_with("2027 · 12:00"));
     }
   }

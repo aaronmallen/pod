@@ -64,10 +64,10 @@ fn totals_bar<'a>(total_n: usize, total_secs: f64, now: DateTime<Utc>) -> Row<'a
 
   Row::with_children(vec![
     eyebrow(
-      &format!("Total \u{b7} {total_n} skills"),
+      &t!("skills.queue_footer.total", count => total_n),
       Some(color::text::secondary()),
     ),
-    text("\u{21e7} / \u{2318}-click to select")
+    text(t!("skills.queue_footer.select_hint"))
       .font(typography::body::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -82,7 +82,7 @@ fn totals_bar<'a>(total_n: usize, total_secs: f64, now: DateTime<Utc>) -> Row<'a
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!("finishes {} EVE", fmt_eta(now, total_secs)))
+    text(t!("skills.queue_footer.finishes", eta => fmt_eta(now, total_secs)))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -109,7 +109,7 @@ fn selection_bar<'a>(count: usize) -> Row<'a, Message> {
 
   Row::with_children(vec![
     glow_dot.into(),
-    text(format!("{count} selected"))
+    text(t!("skills.queue_footer.selected", count => count))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -126,7 +126,7 @@ fn selection_bar<'a>(count: usize) -> Row<'a, Message> {
 
 fn clear_button<'a>() -> Element<'a, Message> {
   button(
-    text("Clear")
+    text(t!("skills.queue_footer.clear"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -162,7 +162,7 @@ fn clear_button<'a>() -> Element<'a, Message> {
 
 fn create_button<'a>(count: usize) -> Element<'a, Message> {
   let label = Row::with_children(vec![
-    text("Create plan")
+    text(t!("skills.queue_footer.create_plan"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {

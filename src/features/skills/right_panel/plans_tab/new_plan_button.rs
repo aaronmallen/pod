@@ -8,7 +8,7 @@ use crate::ui::style::{color, radius, spacing, typography};
 
 pub fn new_plan_button<'a>() -> Element<'a, Message> {
   button(
-    text("New plan")
+    text(t!("skills.panel_plans.new_plan"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {

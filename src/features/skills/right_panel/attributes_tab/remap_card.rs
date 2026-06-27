@@ -19,26 +19,38 @@ use crate::{
 const SUCCESS: iced::Color = color::status::ONLINE;
 
 pub fn remap_cta<'a, Message: 'a>(bonus_remaps: i64, days: RemapDays) -> Element<'a, Message> {
-  let last = days
-    .last_remap_days
-    .map_or_else(|| "no prior remap".to_owned(), |d| format!("last remap {d}d ago"));
+  let last = days.last_remap_days.map_or_else(
+    || t!("skills.panel_attributes.remap_last_none").into_owned(),
+    |d| {
+      let days = d.to_string();
+      t!("skills.panel_attributes.remap_last_ago", days => days).into_owned()
+    },
+  );
   let cooldown = match days.cooldown_days {
-    Some(0) | None => "available now".to_owned(),
-    Some(d) => format!("cooldown {d}d"),
+    Some(0) | None => t!("skills.panel_attributes.remap_cooldown_available").into_owned(),
+    Some(d) => {
+      let days = d.to_string();
+      t!("skills.panel_attributes.remap_cooldown_days", days => days).into_owned()
+    }
   };
   let bonus = bonus_remaps.max(0);
-  let noun = if bonus == 1 { "remap" } else { "remaps" };
+  let bonus_count = bonus.to_string();
+  let bonus_key = if bonus == 1 {
+    "skills.panel_attributes.remap_bonus_one"
+  } else {
+    "skills.panel_attributes.remap_bonus_other"
+  };
 
   let copy = Column::with_children(vec![
-    eyebrow("Neural remap", Some(color::accent::PLASMA)),
-    text(format!("{bonus} bonus {noun} available"))
+    eyebrow(&t!("skills.panel_attributes.remap_title"), Some(color::accent::PLASMA)),
+    text(t!(bonus_key, count => bonus_count).into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!("{last} · annual {cooldown}"))
+    text(t!("skills.panel_attributes.remap_status", last => last, cooldown => cooldown).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -60,13 +72,13 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
   let rec = &model.recommendation;
 
   let mut children: Vec<Element<'a, Message>> = vec![eyebrow(
-    "Fastest remap for your current queue",
+    &t!("skills.panel_attributes.recommendation_title"),
     Some(color::accent::PLASMA),
   )];
 
   if rec.is_current {
     children.push(
-      text("Already optimal. No remap improves your current queue.")
+      text(t!("skills.panel_attributes.recommendation_optimal"))
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -76,23 +88,22 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
     );
   } else {
     children.push(distribution_line(rec.base));
+    let duration = fmt_duration(rec.total_sec.round() as i64);
     children.push(
-      text(format!(
-        "Queue completes in {}",
-        fmt_duration(rec.total_sec.round() as i64)
-      ))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      })
-      .into(),
+      text(t!("skills.panel_attributes.recommendation_completes", duration => duration).into_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::SM)
+        .style(|_| text::Style {
+          color: Some(color::text::PRIMARY),
+        })
+        .into(),
     );
     if model.current_total_sec.is_finite() && rec.total_sec.is_finite() {
       let saved = (model.current_total_sec - rec.total_sec).round() as i64;
       if saved > 0 {
+        let duration = fmt_duration(saved);
         children.push(
-          text(format!("Saves {} vs current", fmt_duration(saved)))
+          text(t!("skills.panel_attributes.recommendation_saves", duration => duration).into_owned())
             .font(typography::mono::MEDIUM)
             .size(typography::size::SM)
             .style(|_| text::Style {
@@ -106,7 +117,7 @@ pub fn recommendation_card<'a, Message: 'a>(model: &AttrTabModel) -> Element<'a,
 
   if rec.current_out_of_spec {
     children.push(
-      text("Your current attributes are out of spec; suggestion shown is the fastest legal allocation.")
+      text(t!("skills.panel_attributes.recommendation_out_of_spec"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {

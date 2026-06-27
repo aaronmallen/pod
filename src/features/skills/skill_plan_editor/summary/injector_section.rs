@@ -29,9 +29,9 @@ pub(super) fn injector_section(estimate: InjectorEstimate, remaining_plan_sp: u6
   ])
   .width(Length::Fill);
 
-  let caption = text(format!(
-    "To inject the remaining {} at your current total SP band.",
-    fmt_sp(remaining_plan_sp)
+  let caption = text(t!(
+    "skills.summary_injector.caption",
+    sp => fmt_sp(remaining_plan_sp)
   ))
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
@@ -41,7 +41,7 @@ pub(super) fn injector_section(estimate: InjectorEstimate, remaining_plan_sp: u6
 
   container(
     column(vec![
-      section_label("SKILL INJECTORS"),
+      section_label(&t!("skills.summary_injector.heading")),
       Space::new().height(spacing::SPACE_3).into(),
       pills.into(),
       Space::new().height(6.0).into(),
@@ -101,10 +101,15 @@ fn injector_pill(is_large: bool, count: u64, yield_per: u64) -> Element<'static,
   ])
   .align_y(Vertical::Bottom);
 
-  let label = text(format!(
-    "{} \u{00b7} {} SP ea.",
-    if is_large { "LARGE" } else { "SMALL" },
-    fmt_sp_short(yield_per)
+  let size = if is_large {
+    t!("skills.summary_injector.large")
+  } else {
+    t!("skills.summary_injector.small")
+  };
+  let label = text(t!(
+    "skills.summary_injector.pill_label",
+    size => size,
+    sp => fmt_sp_short(yield_per)
   ))
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)

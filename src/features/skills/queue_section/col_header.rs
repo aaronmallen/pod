@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use iced::{
   Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -16,15 +18,17 @@ const SP_WIDTH: f32 = 80.0;
 
 pub(super) fn col_header<'a>() -> Element<'a, Message> {
   let labels = Row::with_children(vec![
-    container(label("Completes"))
+    container(label(t!("skills.queue.col_completes")))
       .width(Length::Fixed(COMPLETES_WIDTH))
       .into(),
-    container(label("Skill")).width(Length::Fill).into(),
-    container(label("SP"))
+    container(label(t!("skills.queue.col_skill")))
+      .width(Length::Fill)
+      .into(),
+    container(label(t!("skills.queue.col_sp")))
       .width(Length::Fixed(SP_WIDTH))
       .align_x(Horizontal::Right)
       .into(),
-    container(label("Duration"))
+    container(label(t!("skills.queue.col_duration")))
       .width(Length::Fixed(DURATION_WIDTH))
       .align_x(Horizontal::Right)
       .into(),
@@ -44,7 +48,7 @@ pub(super) fn col_header<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn label<'a>(text_value: &'static str) -> Element<'a, Message> {
+fn label<'a>(text_value: Cow<'a, str>) -> Element<'a, Message> {
   text(text_value)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)

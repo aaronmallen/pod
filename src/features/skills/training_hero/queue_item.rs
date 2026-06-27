@@ -23,7 +23,10 @@ pub(super) fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: Dat
   let pct = (item.progress * 100.0).round() as i64;
 
   let header = Row::with_children(vec![
-    eyebrow("Currently training", Some(color::accent::PLASMA)),
+    eyebrow(
+      &t!("skills.hero_active.currently_training"),
+      Some(color::accent::PLASMA),
+    ),
     eyebrow_text(&item.group_name, Some(color::text::secondary())).into(),
   ])
   .spacing(spacing::SPACE_2_5)
@@ -64,7 +67,7 @@ pub(super) fn queue_item<'a>(item: &'a ComputedQueueItem, sp_rate: f64, now: Dat
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("REMAINING")
+    text(t!("skills.hero_active.remaining"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

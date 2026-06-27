@@ -8,7 +8,16 @@ use super::super::Message;
 use crate::ui::style::{color, spacing, typography};
 
 const MASTERY_LABELS: [&str; 5] = ["I", "II", "III", "IV", "V"];
-const PROFICIENCY_LABELS: [&str; 4] = ["Basic", "Std", "Adv", "Elite"];
+
+fn proficiency_label(idx: usize) -> String {
+  match idx {
+    0 => t!("skills.editor_picker.proficiency_basic"),
+    1 => t!("skills.editor_picker.proficiency_std"),
+    2 => t!("skills.editor_picker.proficiency_adv"),
+    _ => t!("skills.editor_picker.proficiency_elite"),
+  }
+  .into_owned()
+}
 
 pub(in crate::features::skills::skill_plan_editor) fn ship_row<'a>(
   ship_id: i64,
@@ -21,7 +30,7 @@ pub(in crate::features::skills::skill_plan_editor) fn ship_row<'a>(
     .map(|(idx, label)| {
       let tier = (idx + 1) as u8;
       chip(
-        label,
+        (*label).to_owned(),
         tier == selected_tier,
         Message::PickerShipMasteryChanged(ship_id, tier),
       )
@@ -36,12 +45,10 @@ pub(in crate::features::skills::skill_plan_editor) fn cert_row<'a>(
   name: &'a str,
   selected_prof: usize,
 ) -> Element<'a, Message> {
-  let chips: Vec<Element<'a, Message>> = PROFICIENCY_LABELS
-    .iter()
-    .enumerate()
-    .map(|(idx, label)| {
+  let chips: Vec<Element<'a, Message>> = (0..4)
+    .map(|idx| {
       chip(
-        label,
+        proficiency_label(idx),
         idx == selected_prof,
         Message::PickerCertProficiencyChanged(cert_id, idx),
       )
@@ -89,7 +96,7 @@ fn item_row<'a>(name: &'a str, chips: Vec<Element<'a, Message>>, add: Message) -
 
 fn add_button<'a>(on_press: Message) -> Element<'a, Message> {
   button(
-    text("Add")
+    text(t!("skills.editor_picker.add"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -119,7 +126,7 @@ fn add_button<'a>(on_press: Message) -> Element<'a, Message> {
   .into()
 }
 
-fn chip<'a>(label: &'a str, active: bool, on_press: Message) -> Element<'a, Message> {
+fn chip<'a>(label: String, active: bool, on_press: Message) -> Element<'a, Message> {
   let (text_color, border_color, fill): (Color, Color, Option<Background>) = if active {
     (
       color::accent::PLASMA,

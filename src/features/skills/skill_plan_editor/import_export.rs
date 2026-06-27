@@ -326,16 +326,25 @@ pub(super) fn overlay<'a>(panel: &IoPanel) -> Element<'a, Message> {
       Horizontal::Right,
       export_trigger_offset(),
       vec![
-        ("To clipboard", Message::ExportToClipboard),
-        ("To file\u{2026}", Message::ExportToFile),
+        (
+          t!("skills.import_export.to_clipboard").into_owned(),
+          Message::ExportToClipboard,
+        ),
+        (t!("skills.import_export.to_file").into_owned(), Message::ExportToFile),
       ],
     ),
     IoPanel::Import => dropdown_overlay(
       Horizontal::Right,
       import_trigger_offset(),
       vec![
-        ("From clipboard", Message::ImportFromClipboard),
-        ("From file\u{2026}", Message::ImportFromFile),
+        (
+          t!("skills.import_export.from_clipboard").into_owned(),
+          Message::ImportFromClipboard,
+        ),
+        (
+          t!("skills.import_export.from_file").into_owned(),
+          Message::ImportFromFile,
+        ),
       ],
     ),
     IoPanel::ImportPrompt => prompt_overlay(),
@@ -350,11 +359,7 @@ fn import_trigger_offset() -> f32 {
   export_trigger_offset() + DROPDOWN_WIDTH + spacing::SPACE_2 * 3.0
 }
 
-fn dropdown_overlay<'a>(
-  align: Horizontal,
-  right_pad: f32,
-  items: Vec<(&'static str, Message)>,
-) -> Element<'a, Message> {
+fn dropdown_overlay<'a>(align: Horizontal, right_pad: f32, items: Vec<(String, Message)>) -> Element<'a, Message> {
   let menu = column(
     items
       .into_iter()
@@ -398,37 +403,33 @@ fn dropdown_overlay<'a>(
   .into()
 }
 
-fn menu_item<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
-  button(
-    text(label.to_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .on_press(on_press)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
-      }
-      _ => None,
-    },
-    border: Border::default(),
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  })
-  .into()
+fn menu_item<'a>(label: String, on_press: Message) -> Element<'a, Message> {
+  button(text(label).font(typography::body::REGULAR).size(typography::size::SM))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: 8.0,
+      bottom: 8.0,
+      left: 14.0,
+      right: 14.0,
+    })
+    .on_press(on_press)
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => {
+          Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
+        }
+        _ => None,
+      },
+      border: Border::default(),
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
 }
 
 fn prompt_overlay<'a>() -> Element<'a, Message> {
   let body = column(vec![
-    text("Import plan")
+    text(t!("skills.import_export.import_plan"))
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
@@ -436,7 +437,7 @@ fn prompt_overlay<'a>() -> Element<'a, Message> {
       })
       .into(),
     Space::new().height(spacing::SPACE_2).into(),
-    text("Replace the current plan, or append the imported skills to the end?")
+    text(t!("skills.import_export.import_prompt"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -445,11 +446,11 @@ fn prompt_overlay<'a>() -> Element<'a, Message> {
       .into(),
     Space::new().height(spacing::SPACE_6).into(),
     row(vec![
-      ghost_btn("Cancel", Message::IoDismissed),
+      ghost_btn(t!("skills.import_export.cancel").into_owned(), Message::IoDismissed),
       Space::new().width(Length::Fill).into(),
-      ghost_btn("Append", Message::ImportAppend),
+      ghost_btn(t!("skills.import_export.append").into_owned(), Message::ImportAppend),
       Space::new().width(spacing::SPACE_2).into(),
-      primary_btn("Replace", Message::ImportReplace),
+      primary_btn(t!("skills.import_export.replace").into_owned(), Message::ImportReplace),
     ])
     .align_y(Vertical::Center)
     .into(),
@@ -481,39 +482,35 @@ fn prompt_overlay<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn ghost_btn<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
-  button(
-    text(label.to_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD),
-  )
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 12.0,
-    right: 12.0,
-  })
-  .on_press(on_press)
-  .style(|_, status| button::Style {
-    background: match status {
-      button::Status::Hovered | button::Status::Pressed => {
-        Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
-      }
-      _ => None,
-    },
-    border: Border {
-      radius: radius::CONTROL.into(),
-      ..Border::default()
-    },
-    text_color: color::text::secondary(),
-    ..button::Style::default()
-  })
-  .into()
+fn ghost_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
+  button(text(label).font(typography::body::REGULAR).size(typography::size::MD))
+    .padding(Padding {
+      top: 8.0,
+      bottom: 8.0,
+      left: 12.0,
+      right: 12.0,
+    })
+    .on_press(on_press)
+    .style(|_, status| button::Style {
+      background: match status {
+        button::Status::Hovered | button::Status::Pressed => {
+          Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
+        }
+        _ => None,
+      },
+      border: Border {
+        radius: radius::CONTROL.into(),
+        ..Border::default()
+      },
+      text_color: color::text::secondary(),
+      ..button::Style::default()
+    })
+    .into()
 }
 
-fn primary_btn<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
+fn primary_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
   button(
-    text(label.to_owned())
+    text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {

@@ -8,7 +8,7 @@ use crate::ui::style::{color, radius, spacing, typography};
 
 pub fn from_queue_button<'a>() -> Element<'a, Message> {
   button(
-    text("From queue")
+    text(t!("skills.panel_plans.from_queue"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

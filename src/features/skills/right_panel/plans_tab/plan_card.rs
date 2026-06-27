@@ -44,8 +44,13 @@ pub fn plan_card<'a>(plan: &'a PlanRow, first: bool, confirm: bool) -> Element<'
 }
 
 fn info_col<'a>(name: &'a str, distinct_skills: usize, updated: &'a str) -> Element<'a, Message> {
-  let noun = if distinct_skills == 1 { "skill" } else { "skills" };
-  let subtitle = format!("{} {} \u{00b7} {}", distinct_skills, noun, updated);
+  let count = distinct_skills.to_string();
+  let key = if distinct_skills == 1 {
+    "skills.panel_plans.card_subtitle_one"
+  } else {
+    "skills.panel_plans.card_subtitle_other"
+  };
+  let subtitle = t!(key, count => count, updated => updated).into_owned();
 
   Column::with_children(vec![
     text(name.to_owned())
@@ -84,7 +89,7 @@ fn action_row<'a>(plan_id: i64) -> Element<'a, Message> {
 
 fn confirm_row<'a>(plan_id: i64) -> Element<'a, Message> {
   Row::with_children(vec![
-    text("Delete?")
+    text(t!("skills.panel_plans.delete_prompt"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -102,7 +107,7 @@ fn confirm_row<'a>(plan_id: i64) -> Element<'a, Message> {
 
 fn open_btn<'a>(plan_id: i64) -> Element<'a, Message> {
   button(
-    text("Open")
+    text(t!("skills.panel_plans.open"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -182,7 +187,7 @@ fn delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
 
 fn confirm_delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
   button(
-    text("Confirm")
+    text(t!("skills.panel_plans.confirm"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -214,7 +219,7 @@ fn confirm_delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
 
 fn cancel_delete_btn<'a>() -> Element<'a, Message> {
   button(
-    text("Cancel")
+    text(t!("skills.panel_plans.cancel"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

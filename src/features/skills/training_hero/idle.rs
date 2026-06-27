@@ -23,20 +23,20 @@ pub(super) fn idle<'a>(status: QueueStatus) -> Element<'a, Message> {
     QueueStatus::Paused {
       queued,
     } => (
-      format!("Training paused \u{b7} {queued} {} queued", skill_word(queued)),
-      "Training is paused".to_owned(),
+      t!("skills.hero_idle.paused_eyebrow", count => queued, noun => skill_word(queued)).into_owned(),
+      t!("skills.hero_idle.paused_headline").into_owned(),
     ),
     _ => (
-      "Training inactive \u{b7} queue empty".to_owned(),
-      "No skill is currently training".to_owned(),
+      t!("skills.hero_idle.inactive_eyebrow").into_owned(),
+      t!("skills.hero_idle.inactive_headline").into_owned(),
     ),
   };
 
   let supporting = match status {
     QueueStatus::Paused {
       ..
-    } => "Resume training in EVE to continue the queue.",
-    _ => "Apply a skill plan to start training.",
+    } => t!("skills.hero_idle.paused_supporting"),
+    _ => t!("skills.hero_idle.inactive_supporting"),
   };
 
   let icon = container(

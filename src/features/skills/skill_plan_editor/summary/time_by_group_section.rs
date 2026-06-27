@@ -29,5 +29,5 @@ pub(super) fn time_by_group_section(group_sec: &HashMap<String, f64>) -> Element
     })
     .collect();
 
-  time_chart_section("TIME BY SKILL GROUP", rows)
+  time_chart_section(&t!("skills.summary_time.by_skill_group"), rows)
 }

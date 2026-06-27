@@ -13,7 +13,11 @@ use crate::ui::{
 const HEADER_HEIGHT: f32 = 52.0;
 
 pub(super) fn header<'a>(plan_name: &'a str, dirty: bool, picker_open: bool) -> Element<'a, Message> {
-  let picker_label = if picker_open { "Hide picker" } else { "Add skills" };
+  let picker_label = if picker_open {
+    t!("skills.editor_header.hide_picker")
+  } else {
+    t!("skills.editor_header.add_skills")
+  };
 
   let header_row = row(vec![
     close_btn(),
@@ -21,11 +25,11 @@ pub(super) fn header<'a>(plan_name: &'a str, dirty: bool, picker_open: bool) -> 
     name_input(plan_name),
     dirty_dot(dirty),
     Space::new().width(Length::Fill).into(),
-    inert_trigger("Import", Message::ImportRequested),
+    inert_trigger(t!("skills.editor_header.import").into_owned(), Message::ImportRequested),
     Space::new().width(spacing::SPACE_2).into(),
-    inert_trigger("Export", Message::ExportRequested),
+    inert_trigger(t!("skills.editor_header.export").into_owned(), Message::ExportRequested),
     Space::new().width(spacing::SPACE_2).into(),
-    ghost_btn(picker_label, Message::PickerToggled),
+    ghost_btn(picker_label.into_owned(), Message::PickerToggled),
     Space::new().width(spacing::SPACE_2).into(),
     save_btn(dirty),
   ])
@@ -89,7 +93,7 @@ fn dirty_dot<'a>(dirty: bool) -> Element<'a, Message> {
   }
 }
 
-fn ghost_btn<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
+fn ghost_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
   button(text(label).font(typography::body::REGULAR).size(13.0))
     .padding(Padding {
       top: 8.0,
@@ -119,7 +123,7 @@ fn hover_bg(status: button::Status) -> Option<Background> {
   }
 }
 
-fn inert_trigger<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> {
+fn inert_trigger<'a>(label: String, on_press: Message) -> Element<'a, Message> {
   button(
     row(vec![
       text(label).font(typography::body::REGULAR).size(13.0).into(),
@@ -156,7 +160,8 @@ fn inert_trigger<'a>(label: &'a str, on_press: Message) -> Element<'a, Message> 
 }
 
 fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
-  text_input("Untitled plan", plan_name)
+  let placeholder = t!("skills.editor_header.name_placeholder");
+  text_input(&placeholder, plan_name)
     .on_input(Message::NameChanged)
     .padding(Padding {
       top: 6.0,
@@ -189,7 +194,7 @@ fn save_btn<'a>(dirty: bool) -> Element<'a, Message> {
   };
 
   button(
-    text("Save")
+    text(t!("skills.editor_header.save"))
       .font(typography::body::MEDIUM)
       .size(13.0)
       .style(move |_| text::Style {

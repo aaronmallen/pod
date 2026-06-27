@@ -1,6 +1,12 @@
 [wizard.body]
 placeholder = "This step is being assembled."
 
+[wizard.features]
+disable_all = "Disable all"
+enable_all = "Enable all"
+eyebrow = "Features · %{current} of %{total}"
+on_count = "%{on}/%{total} on"
+
 [wizard.language]
 card_label = "%{label}"
 eyebrow = "Language"

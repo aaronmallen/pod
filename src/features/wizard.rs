@@ -6,7 +6,7 @@ use iced::{
 
 use crate::{
   config::Settings,
-  features::settings::features_tab::Group,
+  features::settings::{features_tab, features_tab::Group},
   i18n::Language,
   ui::{
     components::{
@@ -28,6 +28,10 @@ const RAIL_WIDTH: f32 = 300.0;
 #[derive(Clone, Debug)]
 pub enum Message {
   Back,
+  // A per-group Features step toggle. The wizard routes this through the settings Features tab's own
+  // `update` over the draft `Settings.features`, dropping its persist outcome (config is written once
+  // at Finish), so the wizard and the settings tab mutate the same flag model.
+  Features(features_tab::Message),
   // The Features sub-step model derives its rail counts from the live feature flags the
   // per-group step tasks will own; this is the seam they dispatch when a flag flips.
   #[allow(dead_code)]
@@ -107,6 +111,9 @@ impl Phase {
 #[derive(Debug)]
 pub struct State {
   current: usize,
+  // The settings Features tab's own transient state (its search query), reused so the wizard's
+  // per-group Features steps render the identical toggle rows over the same flag model.
+  features: features_tab::State,
   // The in-progress language drives the rendered locale before any config write (ADR-0041 keeps the
   // committed locale fixed mid-session). The language grid reads/writes this through
   // `Message::SelectLanguage`; the app applies the locale so the next frame renders in it.
@@ -173,6 +180,7 @@ impl Default for State {
     let settings = Settings::default();
     State {
       current: 0,
+      features: features_tab::State::from_settings(&settings),
       pending_language: settings.accessibility().language(),
       settings,
       steps: steps(),
@@ -193,6 +201,12 @@ pub fn update(state: &mut State, message: Message) {
   match message {
     Message::Back => {
       state.current = state.current.saturating_sub(1);
+    }
+    Message::Features(message) => {
+      // Route through the settings Features tab's own update so the catalog, cascade rules, and
+      // dependency locking stay in one place. The persist outcome is dropped: the wizard writes the
+      // whole draft once at Finish rather than after each toggle.
+      let _ = features_tab::update(&mut state.features, message, &mut state.settings);
     }
     Message::JumpTo(index) => {
       if index < state.steps.len() && state.reachable(state.steps[index].phase()) {
@@ -462,9 +476,10 @@ fn content(state: &State) -> Element<'_, Message> {
 // render the shared placeholder until their sibling tasks fill them in.
 fn step_body(state: &State) -> Element<'_, Message> {
   match state.current_step() {
+    Step::Features(group) => features_body(state, group),
     Step::Language => language_body(state),
     Step::Welcome => welcome_body(),
-    Step::Features(_) | Step::Finish | Step::Storage => step_placeholder(),
+    Step::Finish | Step::Storage => step_placeholder(),
   }
 }
 
@@ -857,6 +872,85 @@ fn language_note<'a>(selected: Language) -> Element<'a, Message> {
     .into()
 }
 
+// One Features sub-step: the group's title under a `Features · N of M` eyebrow, an on-count and an
+// Enable-all/Disable-all bulk control on the right, then the settings Features tab's own toggle rows
+// for that group (mapped into the wizard's message space). The rows mutate the shared draft flags.
+fn features_body(state: &State, group: Group) -> Element<'_, Message> {
+  let settings = &state.settings;
+  let (on, total) = group.enabled_over_total(settings);
+  let all_on = on == total;
+
+  let position = features_position(group);
+  let group_total = Group::ALL.len();
+
+  let count = text(t!("wizard.features.on_count", on => on, total => total).into_owned())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::secondary()));
+
+  let bulk_label = if all_on {
+    t!("wizard.features.disable_all").into_owned()
+  } else {
+    t!("wizard.features.enable_all").into_owned()
+  };
+  let bulk = button(
+    text(bulk_label)
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::Features(features_tab::Message::GroupToggled(group, !all_on)))
+  .style(control::ghost_button);
+
+  let right = Row::with_children(vec![count.into(), bulk.into()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3_5);
+
+  let header = step_header(
+    t!(
+      "wizard.features.eyebrow",
+      current => position + 1,
+      total => group_total
+    )
+    .into_owned(),
+    group.title().to_owned(),
+    None,
+    Some(right.into()),
+  );
+
+  let rows = container(features_tab::group_rows(group, settings).map(Message::Features))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: 0.0,
+      bottom: 0.0,
+      left: 0.0,
+    });
+
+  let list = Column::with_children(vec![rule::horizontal(), rows.into()]).width(Length::Fill);
+
+  let column = Column::with_children(vec![
+    container(header)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6 + 6.0,
+        left: 0.0,
+      })
+      .into(),
+    list.into(),
+  ])
+  .width(Length::Fill);
+
+  container(column).max_width(LANGUAGE_GRID_MAX_WIDTH).into()
+}
+
+// The zero-based position of a display group among the Features sub-steps, used for the
+// `Features · N of M` sub-progress in the step header.
+fn features_position(group: Group) -> usize {
+  Group::ALL.iter().position(|&candidate| candidate == group).unwrap_or(0)
+}
+
 fn footer(state: &State) -> Element<'_, Message> {
   let mut back = button(footer_label(t!("wizard.footer.back").into_owned()))
     .padding(control::padding())
@@ -1238,6 +1332,62 @@ mod tests {
       update(&mut state, Message::SelectLanguage(Language::Ko));
 
       let _el: Element<'_, Message> = language_body(&state);
+    }
+
+    #[test]
+    fn it_renders_each_features_group_body() {
+      let state = state();
+
+      for group in Group::ALL {
+        let _el: Element<'_, Message> = features_body(&state, group);
+      }
+    }
+  }
+
+  mod features {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::config::SubFeature;
+
+    #[test]
+    fn a_group_toggle_off_clears_that_groups_flags_in_the_shared_draft() {
+      let mut state = state();
+      let (on, total) = Group::Wallet.enabled_over_total(state.settings());
+      assert_eq!(on, total);
+
+      update(
+        &mut state,
+        Message::Features(features_tab::Message::GroupToggled(Group::Wallet, false)),
+      );
+
+      let (on, _) = Group::Wallet.enabled_over_total(state.settings());
+      assert_eq!(on, 0);
+    }
+
+    #[test]
+    fn a_child_toggle_flips_only_that_flag_and_leaves_the_step_unchanged() {
+      let mut state = state();
+      let before = state.current_step();
+
+      update(
+        &mut state,
+        Message::Features(features_tab::Message::SubToggled(SubFeature::Mail, false)),
+      );
+
+      assert!(!state.settings().features().is_sub_enabled(SubFeature::Mail));
+      assert_eq!(
+        state.current_step(),
+        before,
+        "a feature toggle does not advance the step"
+      );
+    }
+
+    #[test]
+    fn the_features_position_orders_the_groups_as_listed() {
+      for (index, group) in Group::ALL.into_iter().enumerate() {
+        assert_eq!(features_position(group), index);
+      }
     }
   }
 }

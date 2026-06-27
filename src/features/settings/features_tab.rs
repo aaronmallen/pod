@@ -187,7 +187,18 @@ impl Group {
   // (`src/features/wizard.rs`); the settings tab and the wizard share the same group catalog.
   pub const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
 
-  fn title(self) -> &'static str {
+  /// The count of this group's displayed children that are currently enabled, over the group's total
+  /// child count. Shared with the first-run wizard's per-group Features step header.
+  pub fn enabled_over_total(self, settings: &Settings) -> (usize, usize) {
+    let subs = self.sub_features();
+    let flags = settings.features();
+    let enabled = subs.iter().filter(|&&sub| flags.is_sub_enabled(sub)).count();
+    (enabled, subs.len())
+  }
+
+  // Made `pub` so the first-run wizard's per-group Features step can title each sub-step with the same
+  // display-group label the settings tab uses.
+  pub fn title(self) -> &'static str {
     match self {
       Group::Assets => "Assets",
       Group::Characters => "Characters",
@@ -433,6 +444,20 @@ fn feature_list<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
+}
+
+/// Renders one display group's feature toggle rows (no master header), reusing the same catalog,
+/// dependency locking, and toggle widgets the settings tab draws. The first-run wizard's per-group
+/// Features step frames these rows under its own step header and bulk control, so the wizard and the
+/// settings tab show byte-identical feature rows over the same `Settings.features`.
+pub fn group_rows<'a>(group: Group, settings: &'a Settings) -> Element<'a, Message> {
+  let rows: Vec<Element<'a, Message>> = group
+    .sub_features()
+    .iter()
+    .map(|&sub| child_row(entry(sub), settings))
+    .collect();
+
+  Column::with_children(rows).width(Length::Fill).into()
 }
 
 fn group_block<'a>(group: Group, state: &'a State, settings: &'a Settings) -> Option<Element<'a, Message>> {

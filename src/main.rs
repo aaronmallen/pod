@@ -4,6 +4,7 @@ mod app;
 mod clients;
 mod config;
 mod features;
+mod i18n;
 mod mcp;
 mod services;
 mod store;

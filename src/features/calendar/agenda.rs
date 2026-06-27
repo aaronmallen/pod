@@ -137,11 +137,15 @@ fn day_group<'a>(
     .spacing(spacing::UNIT)
     .into(),
     Space::new().width(Length::Fill).into(),
-    text(format!("{count} {}", if count == 1 { "event" } else { "events" }))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
+    text(if count == 1 {
+      t!("calendar.agenda.event_count_one", count => count)
+    } else {
+      t!("calendar.agenda.event_count_other", count => count)
+    })
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::tertiary()))
+    .into(),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
@@ -191,7 +195,7 @@ fn details<'a>(state: &'a State, event: &'a CalendarEvent, owner: OwnerType) -> 
       .color(color::text::secondary())
       .size(12.0)
       .render::<Message>(),
-    text(format!("{} \u{00B7} {}", event.owner_name, owner.label()))
+    text(t!("calendar.agenda.owner_line", owner => event.owner_name, kind => owner.label()))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -244,7 +248,7 @@ fn dot<'a>(fill: iced::Color) -> Element<'a, Message> {
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No upcoming events.")
+    text(t!("calendar.agenda.empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),
@@ -276,7 +280,7 @@ fn month(day: DateTime<Utc>) -> &'static str {
 
 fn pod_tag<'a>() -> Element<'a, Message> {
   container(
-    text("POD")
+    text(t!("calendar.agenda.pod_tag"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::status::ONLINE)),
@@ -391,7 +395,7 @@ fn time_column<'a>(event: &'a CalendarEvent, local_time: bool) -> Element<'a, Me
 
   if event.is_all_day() {
     lines.push(
-      text("All day")
+      text(t!("calendar.agenda.all_day"))
         .font(typography::mono::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY))

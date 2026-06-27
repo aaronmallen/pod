@@ -52,7 +52,7 @@ fn all_day_row<'a>(
 ) -> Element<'a, Message> {
   let mut cells: Vec<Element<'a, Message>> = vec![
     container(
-      text("ALL DAY")
+      text(t!("calendar.shell.all_day"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),

@@ -54,30 +54,32 @@ impl OwnerType {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      OwnerType::Alliance => "Alliance",
-      OwnerType::Character => "Personal",
-      OwnerType::Corporation => "Corporation",
-      OwnerType::EveServer => "EVE Server",
-      OwnerType::Faction => "Faction",
-      OwnerType::Pod => "Pod \u{00B7} derived",
+      OwnerType::Alliance => t!("calendar.owner.alliance"),
+      OwnerType::Character => t!("calendar.owner.character"),
+      OwnerType::Corporation => t!("calendar.owner.corporation"),
+      OwnerType::EveServer => t!("calendar.owner.eve_server"),
+      OwnerType::Faction => t!("calendar.owner.faction"),
+      OwnerType::Pod => t!("calendar.owner.pod"),
     }
+    .into_owned()
   }
 
   pub fn respondable(self) -> bool {
     matches!(self, OwnerType::Alliance | OwnerType::Corporation | OwnerType::Faction)
   }
 
-  pub fn short_label(self) -> &'static str {
+  pub fn short_label(self) -> String {
     match self {
-      OwnerType::Alliance => "Alliance",
-      OwnerType::Character => "Personal",
-      OwnerType::Corporation => "Corp",
-      OwnerType::EveServer => "EVE",
-      OwnerType::Faction => "Faction",
-      OwnerType::Pod => "Pod",
+      OwnerType::Alliance => t!("calendar.owner_short.alliance"),
+      OwnerType::Character => t!("calendar.owner_short.character"),
+      OwnerType::Corporation => t!("calendar.owner_short.corporation"),
+      OwnerType::EveServer => t!("calendar.owner_short.eve_server"),
+      OwnerType::Faction => t!("calendar.owner_short.faction"),
+      OwnerType::Pod => t!("calendar.owner_short.pod"),
     }
+    .into_owned()
   }
 }
 
@@ -117,22 +119,24 @@ impl Response {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Response::Accepted => "Accepted",
-      Response::Declined => "Declined",
-      Response::NotResponded => "No reply",
-      Response::Tentative => "Tentative",
+      Response::Accepted => t!("calendar.response.accepted"),
+      Response::Declined => t!("calendar.response.declined"),
+      Response::NotResponded => t!("calendar.response.not_responded"),
+      Response::Tentative => t!("calendar.response.tentative"),
     }
+    .into_owned()
   }
 
-  pub fn pill_label(self) -> &'static str {
+  pub fn pill_label(self) -> String {
     match self {
-      Response::Accepted => "Going",
-      Response::Declined => "Can't",
-      Response::NotResponded => "No reply",
-      Response::Tentative => "Maybe",
+      Response::Accepted => t!("calendar.response_pill.accepted"),
+      Response::Declined => t!("calendar.response_pill.declined"),
+      Response::NotResponded => t!("calendar.response_pill.not_responded"),
+      Response::Tentative => t!("calendar.response_pill.tentative"),
     }
+    .into_owned()
   }
 }
 

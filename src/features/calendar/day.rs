@@ -62,7 +62,7 @@ fn all_day_strip<'a>(state: &'a State, items: &[&'a CalendarEvent]) -> Option<El
 
   let strip = Row::with_children(vec![
     container(
-      text("ALL DAY")
+      text(t!("calendar.shell.all_day"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),

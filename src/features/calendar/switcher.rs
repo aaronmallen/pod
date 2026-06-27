@@ -27,7 +27,7 @@ pub(super) fn trigger(state: &State) -> Element<'_, Message> {
 
 pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
   let mut items: Vec<Element<'_, Message>> = vec![picker_row(
-    format!("All Pilots \u{00B7} {} calendars", state.roster().len()),
+    t!("calendar.switcher.all_pilots_count", count => state.roster().len()).into_owned(),
     matches!(state.active(), Scope::All),
     Message::ScopeSelected(Scope::All),
   )];
@@ -40,7 +40,7 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
   );
 
   picker_dropdown_panel(vec![PickerGroup {
-    title: Some("Calendar source".to_owned()),
+    title: Some(t!("calendar.switcher.source").into_owned()),
     items,
   }])
 }
@@ -88,12 +88,12 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
           path: pilot.portrait.path(),
         }),
       ),
-      None => trigger_identity("Calendar".to_owned(), String::new(), None),
+      None => trigger_identity(t!("calendar.switcher.fallback").into_owned(), String::new(), None),
     },
     _ => trigger_badge_identity(
       Icon::calendar(),
-      "All Pilots".to_owned(),
-      format!("{} calendars combined", state.roster().len()),
+      t!("calendar.switcher.all_pilots").into_owned(),
+      t!("calendar.switcher.combined", count => state.roster().len()).into_owned(),
     ),
   }
 }

@@ -292,14 +292,14 @@ fn contract_overlay(contract: &CharacterContract) -> Option<CalendarEvent> {
     .clone()
     .or_else(|| contract.issuer_name().clone())
   {
-    Some(party) => format!("Contract to {party} lapses. Relist or let it expire."),
-    None => "Relist or let it expire.".to_owned(),
+    Some(party) => t!("calendar.overlay.contract_body", party => party).into_owned(),
+    None => t!("calendar.overlay.contract_body_generic").into_owned(),
   };
   Some(overlay_event(
     contract.character_id(),
     synthetic_id(SOURCE_CONTRACT, contract.contract_id()),
     SOURCE_CONTRACT,
-    format!("Contract expires \u{2014} {label}"),
+    t!("calendar.overlay.contract_title", label => label).into_owned(),
     body,
     expires,
   ))
@@ -335,15 +335,15 @@ fn extraction_overlays(extraction: &CorporationMiningExtraction) -> Vec<Calendar
   let moon = extraction
     .moon_name()
     .clone()
-    .unwrap_or_else(|| format!("Moon {}", extraction.moon_id()));
+    .unwrap_or_else(|| t!("calendar.overlay.moon_fallback", id => extraction.moon_id()).into_owned());
   let mut events = Vec::new();
   if let Some(arrival) = extraction.chunk_arrival_time().clone() {
     events.push(overlay_event(
       extraction.corporation_id(),
       synthetic_id(SOURCE_EXTRACTION_ARRIVAL, extraction.structure_id()),
       SOURCE_EXTRACTION,
-      format!("{moon} \u{2014} chunk arrival"),
-      "Mining chunk arrives and is ready to fracture.".to_owned(),
+      t!("calendar.overlay.extraction_arrival_title", moon => moon).into_owned(),
+      t!("calendar.overlay.extraction_arrival_body").into_owned(),
       arrival,
     ));
   }
@@ -352,8 +352,8 @@ fn extraction_overlays(extraction: &CorporationMiningExtraction) -> Vec<Calendar
       extraction.corporation_id(),
       synthetic_id(SOURCE_EXTRACTION_DECAY, extraction.structure_id()),
       SOURCE_EXTRACTION,
-      format!("{moon} \u{2014} fracture"),
-      "Chunk fractures naturally if not detonated first.".to_owned(),
+      t!("calendar.overlay.extraction_decay_title", moon => moon).into_owned(),
+      t!("calendar.overlay.extraction_decay_body").into_owned(),
       decay,
     ));
   }
@@ -375,7 +375,7 @@ fn group_thousands(value: i64) -> String {
 
 fn humanize(value: &str) -> String {
   if value.is_empty() {
-    return "Contract".to_owned();
+    return t!("calendar.overlay.contract_fallback").into_owned();
   }
   value
     .split('_')
@@ -404,19 +404,28 @@ async fn industry_overlay(db: &Database, names: &mut TypeNames, job: IndustryJob
     },
   };
   let verb = industry_verb(job.status, job.completed_date, job.pause_date);
-  let title = format!(
-    "{label} \u{00D7}{} {verb} \u{2014} {}",
-    group_thousands(job.runs),
-    activity.label()
-  );
+  let title = t!(
+    "calendar.overlay.industry_title",
+    label => label,
+    runs => group_thousands(job.runs),
+    verb => verb,
+    activity => activity.label()
+  )
+  .into_owned();
   let body = match job.cost {
-    Some(cost) => format!(
-      "{} job, {} run(s). Cost {} ISK.",
-      activity.label(),
-      group_thousands(job.runs),
-      group_thousands(cost.round() as i64)
-    ),
-    None => format!("{} job, {} run(s).", activity.label(), group_thousands(job.runs)),
+    Some(cost) => t!(
+      "calendar.overlay.industry_body_cost",
+      activity => activity.label(),
+      runs => group_thousands(job.runs),
+      cost => group_thousands(cost.round() as i64)
+    )
+    .into_owned(),
+    None => t!(
+      "calendar.overlay.industry_body",
+      activity => activity.label(),
+      runs => group_thousands(job.runs)
+    )
+    .into_owned(),
   };
   Some(overlay_event(
     job.character_id,
@@ -428,15 +437,16 @@ async fn industry_overlay(db: &Database, names: &mut TypeNames, job: IndustryJob
   ))
 }
 
-fn industry_verb(status: &str, completed_date: Option<&str>, pause_date: Option<&str>) -> &'static str {
+fn industry_verb(status: &str, completed_date: Option<&str>, pause_date: Option<&str>) -> String {
   match status {
-    "delivered" | "ready" => "delivered",
-    "cancelled" | "reverted" => "cancelled",
-    "paused" => "paused",
-    _ if completed_date.is_some() => "delivered",
-    _ if pause_date.is_some() => "paused",
-    _ => "completes",
+    "delivered" | "ready" => t!("calendar.overlay.verb.delivered"),
+    "cancelled" | "reverted" => t!("calendar.overlay.verb.cancelled"),
+    "paused" => t!("calendar.overlay.verb.paused"),
+    _ if completed_date.is_some() => t!("calendar.overlay.verb.delivered"),
+    _ if pause_date.is_some() => t!("calendar.overlay.verb.paused"),
+    _ => t!("calendar.overlay.verb.completes"),
   }
+  .into_owned()
 }
 
 async fn market_overlay(db: &Database, names: &mut TypeNames, order: &MarketOrder) -> Option<CalendarEvent> {
@@ -450,18 +460,25 @@ async fn market_overlay(db: &Database, names: &mut TypeNames, order: &MarketOrde
   let item = names
     .resolve(db, order.type_id())
     .await
-    .unwrap_or_else(|| format!("Type {}", order.type_id()));
-  let side = if order.is_buy_order() { "Buy" } else { "Sell" };
-  let title = format!(
-    "{side} order expires \u{2014} {item} \u{00D7}{}",
-    group_thousands(order.volume_remain())
-  );
+    .unwrap_or_else(|| t!("calendar.overlay.type_fallback", id => order.type_id()).into_owned());
+  let side = if order.is_buy_order() {
+    t!("calendar.overlay.market_side_buy")
+  } else {
+    t!("calendar.overlay.market_side_sell")
+  };
+  let title = t!(
+    "calendar.overlay.market_title",
+    side => side,
+    item => item,
+    volume => group_thousands(order.volume_remain())
+  )
+  .into_owned();
   Some(overlay_event(
     order.character_id(),
     synthetic_id(SOURCE_MARKET, order.order_id()),
     SOURCE_MARKET,
     title,
-    "Relist or reprice before the order lapses.".to_owned(),
+    t!("calendar.overlay.market_body").into_owned(),
     expires,
   ))
 }
@@ -480,7 +497,7 @@ fn overlay_event(
     duration_minutes: 0,
     event_id,
     importance: 0,
-    owner_name: "Pod".to_owned(),
+    owner_name: t!("calendar.overlay.owner_name").into_owned(),
     owner_type: OVERLAY_OWNER.to_owned(),
     response: Response::NotResponded.as_esi().to_owned(),
     source: Some(source.to_owned()),
@@ -494,17 +511,17 @@ async fn skill_overlay(db: &Database, names: &mut TypeNames, entry: &CharacterSk
   let skill = names
     .resolve(db, entry.skill_id())
     .await
-    .unwrap_or_else(|| format!("Skill {}", entry.skill_id()));
+    .unwrap_or_else(|| t!("calendar.overlay.skill_fallback", id => entry.skill_id()).into_owned());
   let level = roman(entry.finished_level());
   let body = match entry.level_end_sp() {
-    Some(sp) => format!("Queue entry finishes training. +{} SP.", group_thousands(sp)),
-    None => "Queue entry finishes training.".to_owned(),
+    Some(sp) => t!("calendar.overlay.skill_body_sp", sp => group_thousands(sp)).into_owned(),
+    None => t!("calendar.overlay.skill_body").into_owned(),
   };
   Some(overlay_event(
     entry.character_id(),
     synthetic_id(SOURCE_SKILL, entry.skill_id()),
     SOURCE_SKILL,
-    format!("{skill} {level} completes"),
+    t!("calendar.overlay.skill_title", skill => skill, level => level).into_owned(),
     body,
     finish,
   ))

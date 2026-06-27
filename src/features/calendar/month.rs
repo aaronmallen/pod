@@ -256,7 +256,7 @@ fn dots<'a>(state: &'a State, items: &[&'a CalendarEvent]) -> Element<'a, Messag
 }
 
 fn more_label<'a>(count: usize) -> Element<'a, Message> {
-  text(format!("+{count} more"))
+  text(t!("calendar.month.more", count => count))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()))

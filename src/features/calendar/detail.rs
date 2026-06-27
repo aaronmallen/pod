@@ -84,7 +84,7 @@ fn attendees_section<'a>(att: &AttendeeTally) -> Element<'a, EventMessage> {
     tally_cell(Icon::tilde(), att.tentative, color::status::WARNING),
     tally_cell(Icon::cross(), att.declined, color::status::DANGER),
     Space::new().width(Length::Fill).into(),
-    text(format!("{replied} / {} replied", att.invited))
+    text(t!("calendar.detail.replied", replied => replied, invited => att.invited))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary()))
@@ -93,12 +93,16 @@ fn attendees_section<'a>(att: &AttendeeTally) -> Element<'a, EventMessage> {
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center);
 
-  Column::with_children(vec![eyebrow("Attendees"), rsvp_bar(att), summary.into()])
-    .spacing(spacing::SPACE_2)
-    .into()
+  Column::with_children(vec![
+    eyebrow(t!("calendar.detail.attendees").into_owned()),
+    rsvp_bar(att),
+    summary.into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .into()
 }
 
-fn badge<'a>(label: &str, tint: iced::Color) -> Element<'a, EventMessage> {
+fn badge<'a>(label: String, tint: iced::Color) -> Element<'a, EventMessage> {
   container(
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
@@ -135,7 +139,7 @@ fn date_label(start: DateTime<Utc>) -> String {
   format!("{}, {} {}", long_weekday(start), long_month(start), start.day())
 }
 
-fn eyebrow<'a>(label: &str) -> Element<'a, EventMessage> {
+fn eyebrow<'a>(label: String) -> Element<'a, EventMessage> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -167,10 +171,13 @@ fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> 
       .into(),
   ];
   if event.importance >= 1 {
-    badges.push(badge("Important", color::status::DANGER));
+    badges.push(badge(
+      t!("calendar.detail.important").into_owned(),
+      color::status::DANGER,
+    ));
   }
   if event.owner_type == "pod" {
-    badges.push(badge("Pod", color::status::ONLINE));
+    badges.push(badge(t!("calendar.detail.pod").into_owned(), color::status::ONLINE));
   }
 
   let title_block = Column::with_children(vec![
@@ -233,26 +240,34 @@ fn meta_grid(window: &EventWindow) -> Element<'_, EventMessage> {
   let mut rows: Vec<Element<'_, EventMessage>> = Vec::new();
 
   let when = when_value(event, window.local_time, &chrono::Local);
-  rows.push(meta_row(Icon::clock(), "When", when));
+  rows.push(meta_row(Icon::clock(), t!("calendar.detail.when").into_owned(), when));
 
   if let Some(start) = event.start() {
-    rows.push(meta_row(Icon::calendar(), "Date", date_label(start)));
+    rows.push(meta_row(
+      Icon::calendar(),
+      t!("calendar.detail.date").into_owned(),
+      date_label(start),
+    ));
   }
 
   rows.push(meta_row(
     owner.icon(),
-    "Owner",
-    format!("{} \u{00B7} {}", event.owner_name, owner.label()),
+    t!("calendar.detail.owner").into_owned(),
+    t!("calendar.detail.owner_value", owner => event.owner_name, kind => owner.label()).into_owned(),
   ));
 
   if let Some(pilot) = window.pilot_name.as_deref() {
-    rows.push(meta_row(Icon::characters(), "Calendar", pilot.to_owned()));
+    rows.push(meta_row(
+      Icon::characters(),
+      t!("calendar.detail.pilot").into_owned(),
+      pilot.to_owned(),
+    ));
   }
 
   Column::with_children(rows).spacing(spacing::SPACE_2).into()
 }
 
-fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, EventMessage> {
+fn meta_row<'a>(icon: Icon, label: String, value: String) -> Element<'a, EventMessage> {
   Row::with_children(vec![
     container(
       Row::with_children(vec![
@@ -282,16 +297,16 @@ fn meta_row<'a>(icon: Icon, label: &str, value: String) -> Element<'a, EventMess
 fn provenance<'a>(event: &'a CalendarEvent, owner: OwnerType) -> Element<'a, EventMessage> {
   let line = if owner == OwnerType::Pod {
     match event.source.as_deref() {
-      Some(source) => {
-        format!("Pod-derived overlay \u{00B7} {source} \u{2014} not an ESI calendar event.")
-      }
-      None => "Pod-derived overlay \u{2014} not an ESI calendar event.".to_owned(),
+      Some(source) => t!("calendar.detail.provenance_pod_source", source => source).into_owned(),
+      None => t!("calendar.detail.provenance_pod").into_owned(),
     }
   } else {
-    format!(
-      "ESI \u{00B7} GET /characters/{}/calendar/{}",
-      event.character_id, event.event_id
+    t!(
+      "calendar.detail.provenance_esi",
+      character => event.character_id,
+      event => event.event_id
     )
+    .into_owned()
   };
 
   container(
@@ -363,9 +378,12 @@ fn respond_section<'a>(event: &'a CalendarEvent) -> Element<'a, EventMessage> {
   ])
   .spacing(spacing::SPACE_2);
 
-  Column::with_children(vec![eyebrow("Your response"), buttons.into()])
-    .spacing(spacing::SPACE_2)
-    .into()
+  Column::with_children(vec![
+    eyebrow(t!("calendar.detail.your_response").into_owned()),
+    buttons.into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .into()
 }
 
 fn response_icon(response: Response) -> Icon {
@@ -447,17 +465,19 @@ where
   Tz::Offset: std::fmt::Display,
 {
   if event.is_all_day() {
-    return "All day \u{00B7} EVE".to_owned();
+    return t!("calendar.detail.when_all_day").into_owned();
   }
   let Some(start) = event.start() else {
-    return "Unknown".to_owned();
+    return t!("calendar.detail.when_unknown").into_owned();
   };
   let base = match event.end() {
-    Some(end) if end != start => format!("{} \u{2013} {} EVE", fmt_eve(start), fmt_eve(end)),
-    _ => format!("{} EVE", fmt_eve(start)),
+    Some(end) if end != start => {
+      t!("calendar.detail.when_range", start => fmt_eve(start), end => fmt_eve(end)).into_owned()
+    }
+    _ => t!("calendar.detail.when_single", start => fmt_eve(start)).into_owned(),
   };
   if local_time {
-    format!("{base} \u{00B7} {}", fmt_local(start, tz))
+    t!("calendar.detail.when_local", base => base, local => fmt_local(start, tz)).into_owned()
   } else {
     base
   }

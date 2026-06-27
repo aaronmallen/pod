@@ -72,14 +72,15 @@ impl View {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      View::Agenda => "Agenda",
-      View::Day => "Day",
-      View::Month => "Month",
-      View::Week => "Week",
-      View::Year => "Year",
+      View::Agenda => t!("calendar.view.agenda"),
+      View::Day => t!("calendar.view.day"),
+      View::Month => t!("calendar.view.month"),
+      View::Week => t!("calendar.view.week"),
+      View::Year => t!("calendar.view.year"),
     }
+    .into_owned()
   }
 }
 

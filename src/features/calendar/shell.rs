@@ -99,9 +99,9 @@ fn auth_banner<'a>(state: &'a State) -> Option<Element<'a, Message>> {
     .collect::<Vec<_>>()
     .join(", ");
   let message = if unauthorized.len() == 1 {
-    format!("{names}'s calendar isn't authorized and is hidden from the combined view.")
+    t!("calendar.shell.unauthorized_one", name => names).into_owned()
   } else {
-    format!("{} pilots' calendars aren't authorized: {names}.", unauthorized.len())
+    t!("calendar.shell.unauthorized_many", count => unauthorized.len(), names => names).into_owned()
   };
   let target = unauthorized[0].id;
 
@@ -167,21 +167,20 @@ fn content<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
 /// summary on the right. Mirrors the design's black status strip (kept out of the header itself).
 fn legend_bar<'a>(state: &'a State) -> Element<'a, Message> {
   let scope_label = if state.tweaks().color_by_pilot() {
-    "Pilots"
+    t!("calendar.legend.pilots").into_owned()
   } else {
-    "Owner"
+    t!("calendar.legend.owner").into_owned()
   };
   let count = state.visible_events().len();
-  let summary = if state.tweaks().local_time() {
-    format!(
-      "{count} {} \u{00B7} times in EVE + local",
-      if count == 1 { "event" } else { "events" }
-    )
+  let events = if count == 1 {
+    t!("calendar.legend.event_count_one", count => count)
   } else {
-    format!(
-      "{count} {} \u{00B7} times in EVE",
-      if count == 1 { "event" } else { "events" }
-    )
+    t!("calendar.legend.event_count_other", count => count)
+  };
+  let summary = if state.tweaks().local_time() {
+    t!("calendar.legend.summary_local", events => events).into_owned()
+  } else {
+    t!("calendar.legend.summary_eve", events => events).into_owned()
   };
 
   let band = Row::with_children(vec![
@@ -230,7 +229,7 @@ fn date_nav<'a>(state: &'a State) -> Element<'a, Message> {
   };
 
   let today = button(
-    text("TODAY")
+    text(t!("calendar.nav.today"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary())),
@@ -367,12 +366,12 @@ fn nav_period(state: &State) -> (String, Option<String>) {
   let cursor = state.cursor();
   match state.view() {
     View::Agenda => (
-      "Agenda".to_owned(),
-      Some(format!("From {} {}", short_month(cursor), cursor.day())),
+      t!("calendar.nav.agenda_title").into_owned(),
+      Some(t!("calendar.nav.agenda_subtitle", month => short_month(cursor), day => cursor.day()).into_owned()),
     ),
     View::Day => (
       format!("{}, {} {}", long_weekday(cursor), long_month(cursor), cursor.day()),
-      Some(format!("{} \u{00B7} EVE / UTC", cursor.year())),
+      Some(t!("calendar.nav.day_subtitle", year => cursor.year()).into_owned()),
     ),
     View::Week => {
       let dates = grid::week_dates(cursor, state.tweaks().week_start(), state.tweaks().show_weekends());
@@ -389,10 +388,16 @@ fn nav_period(state: &State) -> (String, Option<String>) {
           last.day()
         )
       };
-      (span, Some(format!("{} \u{00B7} Week", first.year())))
+      (
+        span,
+        Some(t!("calendar.nav.week_subtitle", year => first.year()).into_owned()),
+      )
     }
     View::Month => (format!("{} {}", long_month(cursor), cursor.year()), None),
-    View::Year => (cursor.year().to_string(), Some("Year".to_owned())),
+    View::Year => (
+      cursor.year().to_string(),
+      Some(t!("calendar.nav.year_subtitle").into_owned()),
+    ),
   }
 }
 
@@ -418,7 +423,7 @@ fn long_weekday(day: DateTime<Utc>) -> &'static str {
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
   button(
-    text("Re-authenticate")
+    text(t!("calendar.shell.reauthenticate"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::status::WARNING)),
@@ -460,7 +465,7 @@ fn type_legend<'a>(state: &'a State) -> Element<'a, Message> {
   } else {
     palette::TYPE_LEGEND_ORDER
       .into_iter()
-      .map(|owner: OwnerType| legend_item(owner.color(), owner.short_label()))
+      .map(|owner: OwnerType| legend_item(owner.color(), &owner.short_label()))
       .collect()
   };
 
@@ -485,7 +490,7 @@ fn view_segmented<'a>(state: &'a State) -> Element<'a, Message> {
     .into_iter()
     .map(|view| {
       segment_button(
-        view.label().to_owned(),
+        view.label(),
         state.view() == view,
         Padding {
           top: spacing::SPACE_2,

@@ -23,12 +23,7 @@ const STAGE_PADDING: f32 = 56.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
-  // BeginChecking and DownloadProgress have no production constructor yet: the
-  // app layer that emits them lands with the boot-wiring task. The state machine
-  // and its tests already drive them.
-  #[allow(dead_code)]
   BeginChecking,
-  #[allow(dead_code)]
   DownloadProgress(f32),
   DragWindow,
   ExpandComplete,
@@ -36,10 +31,7 @@ pub enum Message {
   Later,
   LoadingComplete,
   Retry,
-  StepChanged {
-    label: String,
-    progress: f32,
-  },
+  StepChanged { label: String, progress: f32 },
   Tick,
   Update,
   UpdateAvailable(String),

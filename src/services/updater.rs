@@ -274,6 +274,18 @@ pub fn spawn(config: Config) -> Handle {
 }
 
 #[cfg(test)]
+pub(crate) fn detached_handle() -> Handle {
+  let (command_tx, _command_rx) = mpsc::channel(COMMAND_BUFFER);
+  let (_checks_tx, checks_rx) = watch::channel(0);
+  let (_state_tx, state_rx) = watch::channel(State::Idle);
+  Handle {
+    checks: checks_rx,
+    commands: command_tx,
+    state: state_rx,
+  }
+}
+
+#[cfg(test)]
 mod tests {
   use pretty_assertions::assert_eq;
   use tokio::sync::{mpsc, watch};

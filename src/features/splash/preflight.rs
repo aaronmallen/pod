@@ -45,9 +45,6 @@ impl Outcome {
   }
 }
 
-// The boot-ordering task is the first production caller; until it lands this
-// entry point (and the resolver/updater surface it drives) has no consumer.
-#[allow(dead_code)]
 pub fn check(handle: &updater::Handle) -> Task<Message> {
   let mut state = handle.subscribe();
   let mut checks = handle.subscribe_checks();

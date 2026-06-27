@@ -1070,7 +1070,7 @@ fn boot() -> (App, Task<Message>) {
   let updater = updater::Config::from_env().map(updater::spawn);
   subscribe_updater(updater.as_ref());
 
-  let app = App {
+  let mut app = App {
     accessibility,
     assets: None,
     auth: auth::State::default(),
@@ -1147,9 +1147,50 @@ fn boot() -> (App, Task<Message>) {
     wallet: None,
     windows: registry,
   };
-  let task = Task::batch([open_task.map(Message::WindowOpened), open_store()]);
+  let boot = start_boot(&mut app);
+  let task = Task::batch([open_task.map(Message::WindowOpened), boot]);
 
   (app, task)
+}
+
+/// Kicks off startup. When an updater handle exists the splash runs the update preflight FIRST (it
+/// enters `CheckingUpdate` and queries the updater), so a bricked release can be updated past before
+/// any store-open/seed work runs; the preflight always resolves within `preflight::TIMEOUT` and the
+/// fall-through paths start the boot via `begin_boot`. Without an updater (dev/unsigned builds) there
+/// is nothing to resolve `CheckingUpdate`, so it skips the preflight and opens the store immediately.
+fn start_boot(app: &mut App) -> Task<Message> {
+  match app.updater.clone() {
+    Some(handle) => {
+      if let Some(state) = app.splash.as_mut() {
+        let _ = splash::update(state, splash::Message::BeginChecking);
+      }
+      splash::preflight::check(&handle).map(Message::Splash)
+    }
+    None => open_store(),
+  }
+}
+
+/// The single boot fall-through: once the preflight resolves (no update, check error, timeout, the
+/// user chose Later, or an update download/install error), this moves the splash out of the preflight
+/// into `Loading` and starts the store-open/seed chain. Guarding on the preflight phase makes it a
+/// no-op when the same resolution arrives twice (the preflight watch and the global updater receiver
+/// can both observe one `Error`), so the store opens exactly once.
+fn begin_boot(app: &mut App) -> Task<Message> {
+  let proceed = match app.splash.as_mut() {
+    Some(state)
+      if matches!(
+        state.phase,
+        splash::Phase::CheckingUpdate | splash::Phase::Update | splash::Phase::Updating
+      ) =>
+    {
+      state.phase = splash::Phase::Loading;
+      state.step_label = "Starting up\u{2026}".to_string();
+      true
+    }
+    _ => false,
+  };
+
+  if proceed { open_store() } else { Task::none() }
 }
 
 fn open_store() -> Task<Message> {
@@ -5834,9 +5875,69 @@ fn handle_updater_dismiss_toast(app: &mut App) -> Task<Message> {
 fn handle_updater_state_changed(app: &mut App, state: updater::State) -> Task<Message> {
   if state != app.updater_state {
     app.updater_toast_dismissed = false;
-    app.updater_state = state;
+    app.updater_state = state.clone();
+  }
+  // While the splash is still running the preflight, the same updater states drive the splash phases
+  // (the post-boot banner/toast above is for the running app and stays unchanged). The preflight watch
+  // already maps `CheckingUpdate` resolutions, so here we mainly carry the `Updating` flow — download
+  // progress and the restart — and guarantee an `Error` never strands the splash.
+  if app.splash.is_some() {
+    return drive_splash_preflight(app, &state);
   }
   Task::none()
+}
+
+/// Maps a live updater state onto the splash while it is in the update preflight. `UpdateAvailable`
+/// during `CheckingUpdate` shows the prompt; `Downloading`/`ReadyToRestart` during `Updating` advance
+/// the progress and trigger the restart; any `Error` falls through to boot so the splash never hangs.
+fn drive_splash_preflight(app: &mut App, state: &updater::State) -> Task<Message> {
+  let phase = match app.splash.as_ref() {
+    Some(splash) => &splash.phase,
+    None => return Task::none(),
+  };
+
+  match state {
+    updater::State::UpdateAvailable {
+      version,
+    } if *phase == splash::Phase::CheckingUpdate => {
+      // The update view uses the design's wider 760x484 layout, so grow the splash window only when an
+      // update is actually offered; the loader keeps the compact SPLASH size.
+      let resize = match app.windows.id_for(Window::Splash) {
+        Some(id) => window::resize(
+          id,
+          Size::new(
+            spacing::layout::SPLASH_UPDATE_WIDTH,
+            spacing::layout::SPLASH_UPDATE_HEIGHT,
+          ),
+        ),
+        None => Task::none(),
+      };
+      let advance = match app.splash.as_mut() {
+        Some(splash) => splash::update(splash, splash::Message::UpdateAvailable(version.clone())).map(Message::Splash),
+        None => Task::none(),
+      };
+      Task::batch([advance, resize])
+    }
+    updater::State::Downloading {
+      ..
+    } if *phase == splash::Phase::Updating => match app.splash.as_mut() {
+      Some(splash) => splash::update(splash, splash::Message::DownloadProgress(0.5)).map(Message::Splash),
+      None => Task::none(),
+    },
+    updater::State::ReadyToRestart {
+      ..
+    } if *phase == splash::Phase::Updating => {
+      let progress = match app.splash.as_mut() {
+        Some(splash) => splash::update(splash, splash::Message::DownloadProgress(1.0)).map(Message::Splash),
+        None => Task::none(),
+      };
+      Task::batch([progress, handle_updater_action(app, updater_banner::Action::Restart)])
+    }
+    updater::State::Error {
+      ..
+    } if matches!(*phase, splash::Phase::CheckingUpdate | splash::Phase::Updating) => begin_boot(app),
+    _ => Task::none(),
+  }
 }
 
 fn handle_wallet(app: &mut App, msg: wallet::Message) -> Task<Message> {
@@ -6924,21 +7025,30 @@ fn seed_progress_target(step: u32) -> f32 {
 }
 
 fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
-  if matches!(message, splash::Message::DragWindow) {
-    return match app.windows.id_for(Window::Splash) {
+  match message {
+    splash::Message::DragWindow => match app.windows.id_for(Window::Splash) {
       Some(id) => window::drag(id),
       None => Task::none(),
-    };
-  }
-  if matches!(message, splash::Message::ExpandComplete) {
-    return transition_to_main(app);
-  }
-  if matches!(message, splash::Message::Retry) {
-    return retry_seed(app);
-  }
-  match app.splash.as_mut() {
-    Some(state) => splash::update(state, message).map(Message::Splash),
-    None => Task::none(),
+    },
+    splash::Message::ExpandComplete => transition_to_main(app),
+    splash::Message::Retry => retry_seed(app),
+    // The preflight resolved with no update, a check error, or its timeout — fall through to boot.
+    splash::Message::UpdateNotAvailable | splash::Message::UpdateFailed(_) => begin_boot(app),
+    // The user chose to skip the offered update — fall through to boot.
+    splash::Message::Later => begin_boot(app),
+    // The user chose to install the update: move the splash into `Updating` and drive the updater.
+    // Download/install progress and the eventual restart land via `handle_updater_state_changed`.
+    splash::Message::Update => {
+      let advance = match app.splash.as_mut() {
+        Some(state) => splash::update(state, splash::Message::Update).map(Message::Splash),
+        None => Task::none(),
+      };
+      Task::batch([advance, handle_updater_action(app, updater_banner::Action::Apply)])
+    }
+    other => match app.splash.as_mut() {
+      Some(state) => splash::update(state, other).map(Message::Splash),
+      None => Task::none(),
+    },
   }
 }
 
@@ -7380,6 +7490,225 @@ mod tests {
       // No updater handle means nothing is published into the global receiver slot; the call must
       // simply return without touching the lock's contents.
       subscribe_updater(None);
+    }
+  }
+
+  mod boot_ordering {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn splash_app() -> App {
+      let mut app = test_app();
+      app.splash = Some(splash::State::default());
+      app
+    }
+
+    fn phase(app: &App) -> &splash::Phase {
+      &app.splash.as_ref().expect("splash present").phase
+    }
+
+    #[test]
+    fn start_boot_runs_the_preflight_first_when_an_updater_is_present() {
+      let mut app = splash_app();
+      app.updater = Some(updater::detached_handle());
+
+      let _ = start_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::CheckingUpdate,
+        "an updater handle makes the splash check for an update before any boot work"
+      );
+      assert!(
+        app.store_ready.is_none(),
+        "no store-open work runs while the preflight is in flight"
+      );
+    }
+
+    #[tokio::test]
+    async fn start_boot_skips_straight_to_loading_without_an_updater() {
+      let mut app = splash_app();
+      assert!(app.updater.is_none());
+
+      let _ = start_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "with no updater the splash skips the preflight and boots immediately"
+      );
+    }
+
+    #[tokio::test]
+    async fn begin_boot_moves_a_checking_splash_into_loading() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = begin_boot(&mut app);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[test]
+    fn begin_boot_is_a_no_op_once_the_splash_has_left_the_preflight() {
+      let mut app = splash_app();
+
+      let _ = begin_boot(&mut app);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "a duplicate fall-through after boot already started leaves the splash untouched"
+      );
+    }
+
+    #[tokio::test]
+    async fn later_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Update;
+
+      let _ = update_splash(&mut app, splash::Message::Later);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading, "Later falls through to boot");
+    }
+
+    #[tokio::test]
+    async fn no_update_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateNotAvailable);
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[tokio::test]
+    async fn a_check_failure_during_the_preflight_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateFailed("check boom".to_owned()));
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "a failed preflight check never strands the splash"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_install_failure_during_updating_proceeds_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = update_splash(&mut app, splash::Message::UpdateFailed("install boom".to_owned()));
+
+      assert_eq!(phase(&app), &splash::Phase::Loading);
+    }
+
+    #[test]
+    fn choosing_update_moves_into_updating() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Update;
+
+      let _ = update_splash(&mut app, splash::Message::Update);
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Updating,
+        "choosing the update applies it and shows download progress"
+      );
+    }
+
+    #[test]
+    fn an_available_update_during_the_preflight_shows_the_prompt() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(phase(&app), &splash::Phase::Update);
+      assert_eq!(app.splash.as_ref().unwrap().update_version.as_deref(), Some("9.9.9"));
+    }
+
+    #[test]
+    fn downloading_advances_the_update_progress() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::Downloading {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(app.splash.as_ref().unwrap().update_progress, 0.5);
+    }
+
+    #[test]
+    fn ready_to_restart_fills_the_progress_bar() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Updating;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::ReadyToRestart {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        app.splash.as_ref().unwrap().update_progress,
+        1.0,
+        "a ready install fills the bar and triggers the restart"
+      );
+    }
+
+    #[tokio::test]
+    async fn an_updater_error_during_the_preflight_falls_through_to_boot() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::CheckingUpdate;
+
+      let _ = handle_updater_state_changed(
+        &mut app,
+        updater::State::Error {
+          message: "network down".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "an updater error while checking never strands the splash"
+      );
+    }
+
+    #[test]
+    fn updater_state_changes_leave_the_running_app_untouched() {
+      let mut app = test_app();
+      assert!(app.splash.is_none());
+
+      let _ = handle_updater_state_changed(
+        &mut app,
+        updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        app.updater_state,
+        updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned()
+        },
+        "with no splash the handler keeps its existing running-app banner/toast behaviour"
+      );
     }
   }
 

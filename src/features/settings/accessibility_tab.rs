@@ -73,6 +73,7 @@ const TIERS: [Tier; 3] = [
 #[derive(Clone, Copy, Debug)]
 pub enum Message {
   HighContrastToggled(bool),
+  LanguageChangeCanceled,
   LanguageChanged(Language),
   LanguagePickerToggled,
   LanguageRestartConfirmed,
@@ -119,6 +120,12 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
     Message::HighContrastToggled(enabled) => {
       settings.accessibility_mut().set_high_contrast(enabled);
       Outcome::AccessibilityChanged
+    }
+    // Backing out of a pending switch: drop the pending selection so the panel reverts to the running
+    // language with no persist and no restart. Harmless when nothing is pending.
+    Message::LanguageChangeCanceled => {
+      state.pending_language = None;
+      Outcome::None
     }
     // Picking a language never applies live: it parks a pending selection so the panel can surface the
     // restart confirmation. Re-picking the running language clears the pending state (a no-op). The
@@ -649,7 +656,11 @@ fn language_confirm_row(pending: Language) -> Element<'static, Message> {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let row = Row::with_children(vec![identity.into(), language_apply_button()])
+  let actions = Row::with_children(vec![language_cancel_button(), language_apply_button()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5);
+
+  let row = Row::with_children(vec![identity.into(), actions.into()])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_3_5)
     .width(Length::Fill);
@@ -692,6 +703,34 @@ fn language_apply_button() -> Element<'static, Message> {
     background: Some(Background::Color(color::status::WARNING)),
     border: Border {
       color: color::status::WARNING,
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..button::Style::default()
+  })
+  .into()
+}
+
+// The escape hatch from a pending switch: a quiet secondary button that drops the pending selection
+// and reverts to the running language without persisting or restarting.
+fn language_cancel_button() -> Element<'static, Message> {
+  let label = text(super::i18n::tr_static("settings.accessibility.language_cancel"))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  button(container(label).padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3_5,
+  }))
+  .padding(0)
+  .on_press(Message::LanguageChangeCanceled)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(iced::Color::TRANSPARENT)),
+    border: Border {
+      color: color::rule(),
       width: 1.0,
       radius: radius::CONTROL.into(),
     },
@@ -1371,6 +1410,31 @@ mod tests {
 
       assert_eq!(outcome, Outcome::LanguageChanged(Language::De));
       assert_eq!(settings.accessibility().language(), Language::De);
+      assert!(state.pending_language.is_none());
+    }
+
+    #[test]
+    fn canceling_a_pending_switch_reverts_to_the_running_language_without_persisting() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+      let running = settings.accessibility().language();
+      update(&mut state, Message::LanguageChanged(Language::De), &mut settings);
+
+      let outcome = update(&mut state, Message::LanguageChangeCanceled, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending_language.is_none());
+      assert_eq!(settings.accessibility().language(), running);
+    }
+
+    #[test]
+    fn canceling_without_a_pending_switch_is_a_no_op() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LanguageChangeCanceled, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
       assert!(state.pending_language.is_none());
     }
 

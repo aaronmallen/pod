@@ -418,21 +418,35 @@ fn major_component(version: &str) -> Option<String> {
   (!major.is_empty()).then_some(major)
 }
 
-/// The language-only locale (region subtag dropped, §5.3): the first of
-/// `LC_ALL` / `LC_MESSAGES` / `LANG` that is set and non-empty, reduced to its
-/// language prefix (`"en_ZA.UTF-8"` -> `"en"`). `None` when none are set, so the
-/// caller substitutes the `"unknown"` sentinel.
+/// The language-only locale (region subtag dropped, §5.3): the raw OS locale
+/// reduced to its language prefix (`"en_ZA.UTF-8"` -> `"en"`). `None` when the
+/// host has no resolvable locale, so the caller substitutes the `"unknown"`
+/// sentinel.
 fn locale_language() -> Option<String> {
-  ["LC_ALL", "LC_MESSAGES", "LANG"]
+  raw_locale().as_deref().and_then(normalize_locale)
+}
+
+/// The raw, un-normalized OS locale token: `sys_locale::get_locale()` first
+/// (GUI-safe — macOS reads `CFLocaleCopyPreferredLanguages`, Windows reads
+/// `GetUserPreferredUILanguages`, neither needing shell env vars), then the
+/// POSIX `LC_ALL` / `LC_MESSAGES` / `LANG` env fallback. Empty / whitespace-only
+/// values are treated as unresolved. `None` when nothing resolves.
+fn raw_locale() -> Option<String> {
+  sys_locale::get_locale()
     .into_iter()
-    .find_map(|key| std::env::var(key).ok().filter(|value| !value.trim().is_empty()))
-    .and_then(|value| language_subtag(&value))
+    .chain(
+      ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .filter_map(|key| std::env::var(key).ok()),
+    )
+    .find(|value| !value.trim().is_empty())
 }
 
 /// The bare language subtag of a POSIX/BCP47 locale token (`"en_ZA.UTF-8"` ->
 /// `"en"`, `"pt-BR"` -> `"pt"`), `None` when empty or the special `C`/`POSIX`
-/// locales (which carry no language).
-fn language_subtag(locale: &str) -> Option<String> {
+/// locales (which carry no language — sys-locale's unix path can pass `C`/`POSIX`
+/// through unchanged).
+fn normalize_locale(locale: &str) -> Option<String> {
   let language: String = locale
     .trim()
     .chars()
@@ -824,13 +838,41 @@ mod tests {
   }
 
   #[test]
-  fn language_subtag_drops_the_region_and_encoding() {
-    assert_eq!(language_subtag("en_ZA.UTF-8").as_deref(), Some("en"));
-    assert_eq!(language_subtag("pt-BR").as_deref(), Some("pt"));
-    assert_eq!(language_subtag("EN").as_deref(), Some("en"));
-    assert_eq!(language_subtag("C"), None);
-    assert_eq!(language_subtag("POSIX"), None);
-    assert_eq!(language_subtag(""), None);
+  fn normalize_locale_drops_the_region_and_encoding() {
+    assert_eq!(normalize_locale("en-US").as_deref(), Some("en"));
+    assert_eq!(normalize_locale("en_US.UTF-8").as_deref(), Some("en"));
+    assert_eq!(normalize_locale("pt_BR.UTF-8").as_deref(), Some("pt"));
+    assert_eq!(normalize_locale("pt-BR").as_deref(), Some("pt"));
+    assert_eq!(normalize_locale("zh-Hans-CN").as_deref(), Some("zh"));
+    assert_eq!(normalize_locale("fr-CA").as_deref(), Some("fr"));
+    assert_eq!(normalize_locale("haw").as_deref(), Some("haw"));
+    assert_eq!(normalize_locale("haw-US").as_deref(), Some("haw"));
+    assert_eq!(normalize_locale("EN").as_deref(), Some("en"));
+    assert_eq!(normalize_locale("En-us").as_deref(), Some("en"));
+    assert_eq!(normalize_locale("  en-US  ").as_deref(), Some("en"));
+    // `C` / `POSIX` carry no language; sys-locale's unix path can pass these
+    // through unchanged, so the guard must reject them.
+    assert_eq!(normalize_locale("C"), None);
+    assert_eq!(normalize_locale("POSIX"), None);
+    assert_eq!(normalize_locale(""), None);
+  }
+
+  #[test]
+  fn locale_language_probes_the_live_host_without_panicking() {
+    // Drives the real sys-locale / env resolution on the test host. Best-effort:
+    // either `None` or a non-empty, lowercase, separator-free subtag, never a
+    // specific value, never a panic. Mirrors the os_version_major probe test.
+    if let Some(language) = locale_language() {
+      assert!(!language.is_empty());
+      assert!(
+        language.chars().all(|c| c.is_ascii_lowercase()),
+        "subtag is lowercase ascii alpha: {language}"
+      );
+      assert!(
+        !language.contains(['-', '_', '.']),
+        "subtag is separator-free: {language}"
+      );
+    }
   }
 
   #[test]

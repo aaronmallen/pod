@@ -3834,6 +3834,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.11.0",
  "sqlx",
+ "sys-locale",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",

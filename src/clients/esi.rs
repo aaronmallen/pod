@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::clients::{self, eve_sso::Grant, http};
+use crate::{
+  clients::{self, eve_sso::Grant, http},
+  i18n::Language,
+};
 
 pub mod alliance;
 pub mod bloodlines;
@@ -26,6 +29,7 @@ const COMPATIBILITY_DATE: &str = "2026-06-08";
 
 pub struct ClientBuilder {
   http: Arc<http::Client>,
+  language: Language,
   user_agent: String,
 }
 
@@ -37,7 +41,16 @@ impl ClientBuilder {
     Ok(Client {
       base_url: BASE_URL.to_owned(),
       http: self.http,
+      language: self.language,
     })
+  }
+
+  // Consumed by the app.rs ESI construction sites (build_runtime_inner, build_sync_esi) in a sibling
+  // i18n task; dead until that wiring lands, so the builder API can exist independently of its callers.
+  #[allow(dead_code)]
+  pub fn language(mut self, language: Language) -> Self {
+    self.language = language;
+    self
   }
 
   pub fn user_agent(mut self, agent: impl Into<String>) -> Self {
@@ -48,6 +61,7 @@ impl ClientBuilder {
   pub fn new(http: Arc<http::Client>) -> Self {
     Self {
       http,
+      language: Language::default(),
       user_agent: String::new(),
     }
   }
@@ -56,6 +70,7 @@ impl ClientBuilder {
 pub struct Client {
   base_url: String,
   http: Arc<http::Client>,
+  language: Language,
 }
 
 impl Client {
@@ -68,6 +83,16 @@ impl Client {
     Self {
       base_url: base_url.into(),
       http,
+      language: Language::default(),
+    }
+  }
+
+  #[cfg(test)]
+  pub fn with_base_url_and_language(http: Arc<http::Client>, base_url: impl Into<String>, language: Language) -> Self {
+    Self {
+      base_url: base_url.into(),
+      http,
+      language,
     }
   }
 
@@ -132,11 +157,13 @@ impl Client {
   }
 
   pub async fn delete_empty(&self, url: &str, token: &str) -> Result<(), clients::Error> {
-    self.http.delete_empty(url, token, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self.http.delete_empty(&url, token, Some(COMPATIBILITY_DATE)).await
   }
 
   pub async fn get_json<T: DeserializeOwned>(&self, url: &str, token: Option<&str>) -> Result<T, clients::Error> {
-    self.http.get_json(url, token, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self.http.get_json(&url, token, Some(COMPATIBILITY_DATE)).await
   }
 
   pub async fn get_json_paginated<T: DeserializeOwned + Send + 'static>(
@@ -144,7 +171,11 @@ impl Client {
     url: &str,
     token: Option<&str>,
   ) -> Result<Vec<T>, clients::Error> {
-    self.http.get_json_paginated(url, token, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self
+      .http
+      .get_json_paginated(&url, token, Some(COMPATIBILITY_DATE))
+      .await
   }
 
   pub async fn post_json<B: Serialize, T: DeserializeOwned>(
@@ -153,7 +184,8 @@ impl Client {
     body: &B,
     token: &str,
   ) -> Result<T, clients::Error> {
-    self.http.post_json(url, body, token, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self.http.post_json(&url, body, token, Some(COMPATIBILITY_DATE)).await
   }
 
   pub async fn post_json_anon<B: Serialize, T: DeserializeOwned>(
@@ -161,11 +193,22 @@ impl Client {
     url: &str,
     body: &B,
   ) -> Result<T, clients::Error> {
-    self.http.post_json_anon(url, body, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self.http.post_json_anon(&url, body, Some(COMPATIBILITY_DATE)).await
   }
 
   pub async fn put_empty<B: Serialize>(&self, url: &str, body: &B, token: &str) -> Result<(), clients::Error> {
-    self.http.put_empty(url, body, token, Some(COMPATIBILITY_DATE)).await
+    let url = self.with_language(url)?;
+    self.http.put_empty(&url, body, token, Some(COMPATIBILITY_DATE)).await
+  }
+
+  fn with_language(&self, url: &str) -> Result<String, clients::Error> {
+    let mut parsed =
+      reqwest::Url::parse(url).map_err(|e| clients::Error::Internal(format!("invalid esi url {url}: {e}")))?;
+    parsed
+      .query_pairs_mut()
+      .append_pair("language", self.language.esi_code());
+    Ok(parsed.into())
   }
 }
 
@@ -202,6 +245,83 @@ mod tests {
         let result = Client::builder(http).user_agent("Pod/1.0").build();
 
         assert!(result.is_ok());
+      }
+    }
+
+    mod with_language {
+      use pretty_assertions::assert_eq;
+      use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path, query_param},
+      };
+
+      use super::*;
+
+      #[tokio::test]
+      async fn it_appends_the_configured_language_code() {
+        let http = make_http().await;
+        let client = Client::with_base_url_and_language(http, "https://esi.evetech.net", Language::Fr);
+
+        let url = client
+          .with_language("https://esi.evetech.net/universe/types/34/")
+          .unwrap();
+
+        assert_eq!(url, "https://esi.evetech.net/universe/types/34/?language=fr");
+      }
+
+      #[tokio::test]
+      async fn it_merges_with_an_existing_query_string_without_a_double_question_mark() {
+        let http = make_http().await;
+        let client = Client::with_base_url_and_language(http, "https://esi.evetech.net", Language::Ja);
+
+        let url = client
+          .with_language("https://esi.evetech.net/characters/42/search/?categories=character&search=Solo")
+          .unwrap();
+
+        assert_eq!(
+          url,
+          "https://esi.evetech.net/characters/42/search/?categories=character&search=Solo&language=ja"
+        );
+      }
+
+      #[tokio::test]
+      async fn it_sends_en_us_explicitly_for_the_default_language() {
+        let http = make_http().await;
+        let client = Client::with_base_url_and_language(http, "https://esi.evetech.net", Language::default());
+
+        let url = client
+          .with_language("https://esi.evetech.net/universe/types/34/")
+          .unwrap();
+
+        assert_eq!(url, "https://esi.evetech.net/universe/types/34/?language=en-us");
+      }
+
+      #[tokio::test]
+      async fn it_varies_the_url_keyed_cache_by_language() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .and(query_param("language", "en-us"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[1]".to_vec(), "application/json"))
+          .mount(&server)
+          .await;
+        Mock::given(method("GET"))
+          .and(path("/resource"))
+          .and(query_param("language", "de"))
+          .respond_with(ResponseTemplate::new(200).set_body_raw(b"[2]".to_vec(), "application/json"))
+          .mount(&server)
+          .await;
+        let db = store::open_test().await.unwrap();
+        let http = http::Client::builder(http::Cache::new(db)).build();
+        let en = Client::with_base_url_and_language(Arc::clone(&http), server.uri(), Language::EnUs);
+        let de = Client::with_base_url_and_language(http, server.uri(), Language::De);
+        let url = format!("{}/resource", server.uri());
+
+        let en_body: Vec<i32> = en.get_json(&url, None).await.unwrap();
+        let de_body: Vec<i32> = de.get_json(&url, None).await.unwrap();
+
+        assert_eq!(en_body, vec![1]);
+        assert_eq!(de_body, vec![2]);
       }
     }
   }

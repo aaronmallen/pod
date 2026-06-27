@@ -199,7 +199,7 @@ pub(super) fn panel(state: &State) -> Element<'_, Message> {
 
 pub(super) fn placeholder() -> Element<'static, Message> {
   container(
-    text("Pick a module type to filter by its rolled stats.")
+    text(t!("assets.abyssals.stat_ranges_placeholder").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

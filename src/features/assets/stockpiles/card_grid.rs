@@ -51,22 +51,22 @@ fn empty_state<'a>() -> Element<'a, Message> {
       .color(color::text::tertiary())
       .size(EMPTY_ICON_SIZE)
       .render(),
-    text("No stockpile targets yet")
+    text(t!("assets.stockpiles.empty_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("Set target quantities for the items you want to keep on hand, and Pod tracks how close you are across every character and location.")
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .width(Length::Fixed(EMPTY_COPY_WIDTH))
-    .align_x(Horizontal::Center)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    })
-    .into(),
+    text(t!("assets.stockpiles.empty_description").into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .width(Length::Fixed(EMPTY_COPY_WIDTH))
+      .align_x(Horizontal::Center)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
     Row::with_children(vec![new_button(), import_button()])
       .spacing(spacing::SPACE_2_5)
       .into(),
@@ -96,18 +96,21 @@ fn empty_state<'a>() -> Element<'a, Message> {
 
 fn header<'a>(ready: usize, short: usize) -> Element<'a, Message> {
   Row::with_children(vec![
-    text("Stockpile targets")
+    text(t!("assets.stockpiles.targets_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text(format!(
-      "{} READY \u{b7} {} SHORT",
-      fmt_count(ready as i64),
-      fmt_count(short as i64)
-    ))
+    text(
+      t!(
+        "assets.stockpiles.ready_short_summary",
+        ready => fmt_count(ready as i64),
+        short => fmt_count(short as i64)
+      )
+      .into_owned(),
+    )
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -125,7 +128,7 @@ fn header<'a>(ready: usize, short: usize) -> Element<'a, Message> {
 
 fn import_button<'a>() -> Element<'a, Message> {
   button(
-    text("Import multibuy")
+    text(t!("assets.stockpiles.import_multibuy").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -153,7 +156,7 @@ fn import_button<'a>() -> Element<'a, Message> {
 
 fn new_button<'a>() -> Element<'a, Message> {
   button(
-    text("+ New stockpile")
+    text(t!("assets.stockpiles.new_stockpile_button").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

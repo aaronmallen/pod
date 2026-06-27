@@ -123,7 +123,7 @@ fn header(card_data: &AbyssalCard) -> Element<'_, Message> {
 
 fn price_widget(card_data: &AbyssalCard) -> Element<'static, Message> {
   if card_data.estimate.is_none() && card_data.price_unavailable {
-    return text("Price unavailable")
+    return text(t!("assets.abyssals.price_unavailable").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {

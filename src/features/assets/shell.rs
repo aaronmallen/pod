@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use chrono::{DateTime, Utc};
 use iced::{
   Background, Element, Length, Padding,
@@ -104,13 +106,17 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
     && let Some(anchor) = state.inventory_menu()
   {
     let count = state.inventory_selection_count();
-    let title = format!("{count} stack{}", if count == 1 { "" } else { "s" });
+    let title = if count == 1 {
+      t!("assets.inventory.stack_count_one", count => count).into_owned()
+    } else {
+      t!("assets.inventory.stack_count_other", count => count).into_owned()
+    };
     return vec![
       backdrop::backdrop(Message::InventoryMenuDismissed),
       context_menu::context_menu(
         &title,
         vec![context_menu::Item::action(
-          "Edit Tags\u{2026}",
+          t!("assets.inventory.edit_tags"),
           Message::OpenSelectionTagModal,
         )],
         anchor,
@@ -166,9 +172,10 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
 
 fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if let Some((id, name, missing)) = state.tab_scope_gate() {
+    let noun = tab_noun(state.tab());
     return Column::with_children(vec![
       tab_strip(state),
-      forbidden::forbidden(tab_noun(state.tab()), name, &missing, Message::ReauthRequested(id)),
+      forbidden::forbidden(noun, name, &missing, Message::ReauthRequested(id)),
     ])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -194,14 +201,14 @@ fn tab_strip(state: &State) -> Element<'_, Message> {
     .enabled_tabs()
     .iter()
     .map(|&t| {
-      let (label, count) = match t {
-        Tab::Inventory => ("Inventory", fmt_count(state.inventory_total())),
-        Tab::Abyssals => ("Abyssals", fmt_count(state.abyssal_total())),
-        Tab::Stockpiles => ("Stockpiles", tab_count(state.stockpiles().len())),
-        Tab::Values => ("Values", values_count(state)),
-        Tab::Tracker => ("Tracker", String::new()),
+      let count = match t {
+        Tab::Inventory => fmt_count(state.inventory_total()),
+        Tab::Abyssals => fmt_count(state.abyssal_total()),
+        Tab::Stockpiles => tab_count(state.stockpiles().len()),
+        Tab::Values => values_count(state),
+        Tab::Tracker => String::new(),
       };
-      tab(state, t, label, count)
+      tab(state, t, tab_noun(t), count)
     })
     .collect::<Vec<_>>();
 
@@ -242,12 +249,17 @@ fn tab_icon(tab: Tab) -> Icon {
 }
 
 fn tab_noun(tab: Tab) -> &'static str {
+  static ABYSSALS: OnceLock<String> = OnceLock::new();
+  static INVENTORY: OnceLock<String> = OnceLock::new();
+  static STOCKPILES: OnceLock<String> = OnceLock::new();
+  static TRACKER: OnceLock<String> = OnceLock::new();
+  static VALUES: OnceLock<String> = OnceLock::new();
   match tab {
-    Tab::Abyssals => "Abyssals",
-    Tab::Inventory => "Inventory",
-    Tab::Stockpiles => "Stockpiles",
-    Tab::Tracker => "Tracker",
-    Tab::Values => "Values",
+    Tab::Abyssals => ABYSSALS.get_or_init(|| t!("assets.tabs.abyssals").into_owned()),
+    Tab::Inventory => INVENTORY.get_or_init(|| t!("assets.tabs.inventory").into_owned()),
+    Tab::Stockpiles => STOCKPILES.get_or_init(|| t!("assets.tabs.stockpiles").into_owned()),
+    Tab::Tracker => TRACKER.get_or_init(|| t!("assets.tabs.tracker").into_owned()),
+    Tab::Values => VALUES.get_or_init(|| t!("assets.tabs.values").into_owned()),
   }
 }
 

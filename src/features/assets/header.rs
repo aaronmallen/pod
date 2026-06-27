@@ -23,13 +23,33 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
   let left: Vec<Element<'_, Message>> = vec![
     scope_picker(state),
     header_divider(),
-    stat_block("Asset value", fmt_isk(totals.value), color::text::PRIMARY, None),
+    stat_block(
+      &t!("assets.header.asset_value"),
+      fmt_isk(totals.value),
+      color::text::PRIMARY,
+      None,
+    ),
     header_divider(),
-    stat_block("Volume", fmt_volume(totals.volume), color::text::PRIMARY, None),
+    stat_block(
+      &t!("assets.header.volume"),
+      fmt_volume(totals.volume),
+      color::text::PRIMARY,
+      None,
+    ),
     header_divider(),
-    stat_block("Items", fmt_count(totals.items), color::text::PRIMARY, None),
+    stat_block(
+      &t!("assets.header.items"),
+      fmt_count(totals.items),
+      color::text::PRIMARY,
+      None,
+    ),
     header_divider(),
-    stat_block("Locations", fmt_count(totals.locations), color::text::PRIMARY, None),
+    stat_block(
+      &t!("assets.header.locations"),
+      fmt_count(totals.locations),
+      color::text::PRIMARY,
+      None,
+    ),
   ];
 
   shared_header(left, vec![])
@@ -43,8 +63,8 @@ fn trigger(state: &State) -> Element<'_, Message> {
   match state.active() {
     Scope::All => trigger_badge_identity(
       Icon::assets(),
-      "All Assets",
-      format!("{} characters", state.roster.len()),
+      t!("assets.scope.all_assets"),
+      t!("assets.scope.character_count", count => state.roster.len()),
     ),
     Scope::Character(id) => match state.roster.iter().find(|pilot| pilot.id == id) {
       Some(pilot) => trigger_identity(
@@ -56,7 +76,7 @@ fn trigger(state: &State) -> Element<'_, Message> {
           path: pilot.portrait.path(),
         }),
       ),
-      None => trigger_identity("Character", String::new(), None),
+      None => trigger_identity(t!("assets.scope.character"), String::new(), None),
     },
     Scope::Corporation(id) => match state.corporations.iter().find(|corp| corp.id == id) {
       Some(corp) => trigger_identity(
@@ -68,7 +88,7 @@ fn trigger(state: &State) -> Element<'_, Message> {
           path: corp.logo.path(),
         }),
       ),
-      None => trigger_identity("Corporation", String::new(), None),
+      None => trigger_identity(t!("assets.scope.corporation"), String::new(), None),
     },
   }
 }
@@ -79,7 +99,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
   groups.push(PickerGroup {
     title: None,
     items: vec![picker_row(
-      "All Assets",
+      t!("assets.scope.all_assets"),
       state.active() == Scope::All,
       Message::ScopeSelected(Scope::All),
     )],
@@ -87,7 +107,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 
   if !state.roster.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Characters".to_owned()),
+      title: Some(t!("assets.scope.characters").into_owned()),
       items: state
         .roster
         .iter()
@@ -98,7 +118,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 
   if !state.corporations.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Corporations".to_owned()),
+      title: Some(t!("assets.scope.corporations").into_owned()),
       items: state
         .corporations
         .iter()

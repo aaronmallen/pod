@@ -54,13 +54,13 @@ impl LocationTier {
     matches!(self, Self::Station | Self::Structure | Self::System)
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Self::Constellation => "CONST",
-      Self::Region => "REGION",
-      Self::Station => "STATION",
-      Self::Structure => "STRUCTURE",
-      Self::System => "SYSTEM",
+      Self::Constellation => t!("assets.location_tier.constellation").into_owned(),
+      Self::Region => t!("assets.location_tier.region").into_owned(),
+      Self::Station => t!("assets.location_tier.station").into_owned(),
+      Self::Structure => t!("assets.location_tier.structure").into_owned(),
+      Self::System => t!("assets.location_tier.system").into_owned(),
     }
   }
 }

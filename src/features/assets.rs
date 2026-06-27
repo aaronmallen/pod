@@ -109,18 +109,18 @@ impl Category {
     Category::Commodity,
   ];
 
-  pub(super) fn label(self) -> &'static str {
+  pub(super) fn label(self) -> String {
     match self {
-      Category::All => "All",
-      Category::Blueprint => "Blueprints",
-      Category::Book => "Skill Books",
-      Category::Charge => "Charges",
-      Category::Commodity => "Commodities",
-      Category::Drone => "Drones",
-      Category::Implant => "Implants",
-      Category::Material => "Materials",
-      Category::Module => "Modules",
-      Category::Ship => "Ships",
+      Category::All => t!("assets.category.all").into_owned(),
+      Category::Blueprint => t!("assets.category.blueprints").into_owned(),
+      Category::Book => t!("assets.category.skill_books").into_owned(),
+      Category::Charge => t!("assets.category.charges").into_owned(),
+      Category::Commodity => t!("assets.category.commodities").into_owned(),
+      Category::Drone => t!("assets.category.drones").into_owned(),
+      Category::Implant => t!("assets.category.implants").into_owned(),
+      Category::Material => t!("assets.category.materials").into_owned(),
+      Category::Module => t!("assets.category.modules").into_owned(),
+      Category::Ship => t!("assets.category.ships").into_owned(),
     }
   }
 
@@ -717,7 +717,7 @@ impl State {
           .unwrap_or(&row.type_name)
           .to_owned()
       })
-      .unwrap_or_else(|| format!("Item {item_id}"))
+      .unwrap_or_else(|| t!("assets.inventory.item_fallback", id => item_id).into_owned())
   }
 
   /// The assigned/assignable partition for the open modal's targets.
@@ -1869,7 +1869,7 @@ fn update_asset_tags(state: &mut State, message: Message, db: &Database) -> Task
 fn selection_modal_name(state: &State, selected: &[i64]) -> String {
   match selected {
     [only] => state.resolve_item_name(*only),
-    many => format!("{} stacks", many.len()),
+    many => t!("assets.inventory.selection_stacks", count => many.len()).into_owned(),
   }
 }
 
@@ -2959,7 +2959,7 @@ pub(super) fn owner_label(owner_id: i64, roster: &[RosterPilot], corporations: &
         .find(|corp| corp.id == owner_id)
         .map(|corp| corp.name.clone())
     })
-    .unwrap_or_else(|| format!("Owner {}", fmt_count(owner_id)))
+    .unwrap_or_else(|| t!("assets.inventory.owner_fallback", id => fmt_count(owner_id)).into_owned())
 }
 
 #[cfg(test)]

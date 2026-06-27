@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -118,10 +120,10 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
   let tree = state.geo_tree();
   let header = container(
     Row::with_children(vec![
-      eyebrow("Locations", Some(color::text::secondary())),
+      eyebrow(&t!("assets.tree.locations"), Some(color::text::secondary())),
       Space::new().width(Length::Fill).into(),
       eyebrow(
-        &format!("{} regions", fmt_count(tree.regions.len() as i64)),
+        &t!("assets.tree.region_count", count => fmt_count(tree.regions.len() as i64)),
         Some(color::text::tertiary()),
       ),
       loc_sort_toggle(state.geo_sort()),
@@ -167,7 +169,10 @@ pub(super) fn pane(state: &State) -> Element<'_, Message> {
 /// option is highlighted in plasma; clicking the inactive one emits
 /// `LocSortSelected` to re-sort the tree.
 fn loc_sort_toggle<'a>(active: GeoSort) -> Element<'a, Message> {
-  let options = [(GeoSort::Value, "Value"), (GeoSort::Alpha, "A\u{2013}Z")];
+  let options = [
+    (GeoSort::Value, t!("assets.tree.sort_value").into_owned()),
+    (GeoSort::Alpha, t!("assets.tree.sort_alpha").into_owned()),
+  ];
   let mut segments: Vec<Element<'a, Message>> = Vec::with_capacity(options.len());
   for (mode, label) in options {
     let selected = mode == active;
@@ -248,7 +253,7 @@ fn saved_filters_header_actions() -> Vec<&'static str> {
 
 fn saved_filters_section(state: &State) -> Element<'_, Message> {
   let mut header_children: Vec<Element<'_, Message>> = vec![
-    eyebrow("Saved filters", Some(color::text::secondary())),
+    eyebrow(&t!("assets.tree.saved_filters"), Some(color::text::secondary())),
     Space::new().width(Length::Fill).into(),
   ];
   for label in saved_filters_header_actions() {
@@ -386,7 +391,7 @@ fn saved_filter_hint(filter: &crate::store::model::SavedAssetFilter) -> String {
   }
   match filter.category() {
     Some(category) => category.clone(),
-    None => "all assets".to_owned(),
+    None => t!("assets.tree.all_assets_hint").into_owned(),
   }
 }
 
@@ -459,13 +464,14 @@ fn push_system<'a>(state: &State, rows: &mut Vec<Element<'a, Message>>, system: 
 }
 
 fn location_row<'a>(state: &State, location: &'a GeoLocationNode, depth: usize) -> Element<'a, Message> {
-  let label = location.location_label.as_deref().unwrap_or("Unknown location");
+  let unknown = t!("assets.tree.unknown_location").into_owned();
+  let label = location.location_label.clone().unwrap_or(unknown);
   let selection = GeoSelection::Location(location.location_id);
   node_row(RowSpec {
     depth,
     tier: Tier::Station,
     caret: None,
-    name: label,
+    name: &label,
     metric: (location.value > 0.0).then(|| fmt_isk(location.value)),
     sec: None,
     selected: state.geo_selected() == selection,
@@ -474,11 +480,12 @@ fn location_row<'a>(state: &State, location: &'a GeoLocationNode, depth: usize) 
 }
 
 fn all_assets_row<'a>(selected: bool) -> Element<'a, Message> {
+  let name = t!("assets.tree.all_assets").into_owned();
   node_row(RowSpec {
     depth: 0,
     tier: Tier::All,
     caret: None,
-    name: "All assets",
+    name: &name,
     metric: None,
     sec: None,
     selected,
@@ -542,7 +549,7 @@ fn sec_pill<'a>(sec: f64) -> Element<'a, Message> {
     .into()
 }
 
-fn node_row(spec: RowSpec<'_>) -> Element<'_, Message> {
+fn node_row<'a>(spec: RowSpec<'_>) -> Element<'a, Message> {
   let RowSpec {
     depth,
     tier,
@@ -679,7 +686,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
       ..container::Style::default()
     })
     .into(),
-    text("Save filter")
+    text(t!("assets.tree.save_filter_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
@@ -694,9 +701,9 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
   .width(Length::Fill);
 
   let name_field = Column::with_children(vec![
-    eyebrow("Filter name", Some(color::text::secondary())),
+    eyebrow(&t!("assets.tree.filter_name"), Some(color::text::secondary())),
     TextInput::new(
-      "e.g. Jita modules",
+      save_filter_name_placeholder(),
       state.saved_filter_draft_name(),
       Message::SaveFilterNameChanged,
     )
@@ -712,7 +719,7 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
   if !capture.is_empty() {
     body_children.push(
       Column::with_children(vec![
-        eyebrow("Captures", Some(color::text::secondary())),
+        eyebrow(&t!("assets.tree.captures"), Some(color::text::secondary())),
         container(
           text(capture)
             .font(typography::mono::REGULAR)
@@ -751,8 +758,8 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
 
   let footer = Row::with_children(vec![
     Space::new().width(Length::Fill).into(),
-    modal_secondary_button("Cancel", Message::SaveFilterCancelled),
-    modal_primary_button("Save filter", valid),
+    modal_secondary_button(t!("assets.tree.cancel").into_owned(), Message::SaveFilterCancelled),
+    modal_primary_button(t!("assets.tree.save_filter_title").into_owned(), valid),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center)
@@ -788,8 +795,16 @@ pub(super) fn save_filter_modal(state: &State) -> Element<'_, Message> {
 }
 
 pub(super) fn context_menu_view(menu: &super::SavedFilterContextMenu) -> Element<'_, Message> {
-  let items = vec![Item::danger("Delete", Message::SavedFilterDeleted(menu.id))];
+  let items = vec![Item::danger(
+    t!("assets.tree.delete"),
+    Message::SavedFilterDeleted(menu.id),
+  )];
   context_menu::context_menu(&menu.name, items, menu.anchor)
+}
+
+fn save_filter_name_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.tree.filter_name_placeholder").into_owned())
 }
 
 fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
@@ -836,7 +851,7 @@ fn modal_close_button<'a>() -> Element<'a, Message> {
   .into()
 }
 
-fn modal_secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+fn modal_secondary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   button(
     text(label)
       .font(typography::body::MEDIUM)
@@ -866,7 +881,7 @@ fn modal_secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, M
   .into()
 }
 
-fn modal_primary_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Message> {
+fn modal_primary_button<'a>(label: String, enabled: bool) -> Element<'a, Message> {
   let label_color = if enabled {
     color::surface::BASE
   } else {
@@ -1204,7 +1219,7 @@ mod tests {
 
     #[test]
     fn it_renders_a_disabled_modal_primary_button() {
-      let _el: Element<'_, Message> = modal_primary_button("Save", false);
+      let _el: Element<'_, Message> = modal_primary_button("Save".to_owned(), false);
     }
 
     #[test]
@@ -1255,7 +1270,7 @@ mod tests {
 
     #[test]
     fn it_renders_an_enabled_modal_primary_button() {
-      let _el: Element<'_, Message> = modal_primary_button("Save", true);
+      let _el: Element<'_, Message> = modal_primary_button("Save".to_owned(), true);
     }
 
     #[tokio::test]

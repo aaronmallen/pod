@@ -7,7 +7,7 @@ mod stat_row;
 mod tier_badge;
 mod type_icon_tile;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::OnceLock};
 
 use iced::{Element, Length, Padding, widget::container};
 
@@ -428,11 +428,21 @@ pub(super) fn body<'a>(cards: Vec<&'a AbyssalCard>, any_owned: bool, scroll_offs
 
 fn empty_state<'a>(any_owned: bool) -> Element<'a, Message> {
   let label = if any_owned {
-    "No abyssal modules match the active filters."
+    empty_filtered_message()
   } else {
-    "No abyssal modules synced yet."
+    empty_unsynced_message()
   };
   shared_empty_state(label).render()
+}
+
+fn empty_filtered_message() -> &'static str {
+  static MESSAGE: OnceLock<String> = OnceLock::new();
+  MESSAGE.get_or_init(|| t!("assets.abyssals.empty_filtered").into_owned())
+}
+
+fn empty_unsynced_message() -> &'static str {
+  static MESSAGE: OnceLock<String> = OnceLock::new();
+  MESSAGE.get_or_init(|| t!("assets.abyssals.empty_unsynced").into_owned())
 }
 
 #[cfg(test)]

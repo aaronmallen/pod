@@ -99,7 +99,7 @@ fn readout(item: &StockpileItemLine, ok: bool) -> Element<'_, Message> {
   let mut children: Vec<Element<'_, Message>> = vec![figures.into()];
   if !ok {
     children.push(
-      text(format!("need {}", fmt_count(item.target - item.have)))
+      text(t!("assets.stockpiles.item_need", count => fmt_count(item.target - item.have)).into_owned())
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {

@@ -101,10 +101,14 @@ fn items<'a>(model: &'a StockpileCard, expanded: bool) -> Element<'a, Message> {
 
   let hidden = total - show;
   if hidden > 0 {
-    let suffix = if hidden == 1 { "" } else { "s" };
-    rows.push(expand_toggle(model.id, format!("+ {hidden} more item{suffix}")));
+    let label = if hidden == 1 {
+      t!("assets.stockpiles.more_items_one", count => hidden).into_owned()
+    } else {
+      t!("assets.stockpiles.more_items_other", count => hidden).into_owned()
+    };
+    rows.push(expand_toggle(model.id, label));
   } else if expanded && total > ITEM_LIMIT {
-    rows.push(expand_toggle(model.id, "\u{2212} Collapse".to_owned()));
+    rows.push(expand_toggle(model.id, t!("assets.stockpiles.collapse").into_owned()));
   }
 
   container(Column::with_children(rows).width(Length::Fill))
@@ -121,8 +125,14 @@ fn items<'a>(model: &'a StockpileCard, expanded: bool) -> Element<'a, Message> {
 fn location_caption(model: &StockpileCard) -> (String, iced::Color) {
   match (&model.location_name, model.location_id) {
     (Some(name), _) => (name.to_uppercase(), color::text::secondary()),
-    (None, Some(_)) => ("Unknown location".to_uppercase(), color::text::tertiary()),
-    (None, None) => ("Any location".to_uppercase(), color::text::tertiary()),
+    (None, Some(_)) => (
+      t!("assets.stockpiles.unknown_location").to_uppercase(),
+      color::text::tertiary(),
+    ),
+    (None, None) => (
+      t!("assets.stockpiles.any_location").to_uppercase(),
+      color::text::tertiary(),
+    ),
   }
 }
 
@@ -133,7 +143,7 @@ fn location_line(model: &StockpileCard) -> Element<'_, Message> {
     eyebrow(&caption, Some(caption_color)),
     Space::new().width(Length::Fill).into(),
     eyebrow(
-      &format!("est {} ISK", fmt_isk(model.target_isk)),
+      &t!("assets.stockpiles.est_isk", amount => fmt_isk(model.target_isk)),
       Some(color::text::tertiary()),
     ),
   ])
@@ -195,25 +205,27 @@ fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
     .filter(|q| !q.is_empty())?;
 
   let pilots = model.scope_pilots;
-  let pill = container(eyebrow(
-    &format!("\u{25d1} {pilots} pilot{}", if pilots == 1 { "" } else { "s" }),
-    Some(color::accent::PLASMA),
-  ))
-  .padding(Padding {
-    top: spacing::UNIT,
-    bottom: spacing::UNIT,
-    left: spacing::SPACE_2,
-    right: spacing::SPACE_2,
-  })
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.28),
-      radius: 999.0.into(),
-      width: 1.0,
-    },
-    ..container::Style::default()
-  });
+  let pilot_label = if pilots == 1 {
+    t!("assets.stockpiles.card_pilot_count_one", count => pilots).into_owned()
+  } else {
+    t!("assets.stockpiles.card_pilot_count_other", count => pilots).into_owned()
+  };
+  let pill = container(eyebrow(&pilot_label, Some(color::accent::PLASMA)))
+    .padding(Padding {
+      top: spacing::UNIT,
+      bottom: spacing::UNIT,
+      left: spacing::SPACE_2,
+      right: spacing::SPACE_2,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.08))),
+      border: Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        radius: 999.0.into(),
+        width: 1.0,
+      },
+      ..container::Style::default()
+    });
 
   Some(
     Row::with_children(vec![
@@ -235,14 +247,17 @@ fn scope_chip(model: &StockpileCard) -> Option<Element<'_, Message>> {
 }
 
 fn multibuy_button<'a>(id: i64) -> Element<'a, Message> {
-  button(eyebrow_text("Multibuy \u{2192}", Some(color::accent::PLASMA)))
-    .padding(Padding::ZERO)
-    .on_press(Message::StockpileMultibuyExportOpened(id))
-    .style(|_, _| button::Style {
-      background: None,
-      ..button::Style::default()
-    })
-    .into()
+  button(eyebrow_text(
+    &t!("assets.stockpiles.multibuy"),
+    Some(color::accent::PLASMA),
+  ))
+  .padding(Padding::ZERO)
+  .on_press(Message::StockpileMultibuyExportOpened(id))
+  .style(|_, _| button::Style {
+    background: None,
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn overflow_button<'a>(id: i64) -> Element<'a, Message> {
@@ -270,16 +285,19 @@ fn overflow_button<'a>(id: i64) -> Element<'a, Message> {
 fn status_strip<'a>(model: &'a StockpileCard, ready: bool) -> Element<'a, Message> {
   let (content, tint): (Element<'a, Message>, iced::Color) = if ready {
     (
-      eyebrow("\u{2713} Ready to ship", Some(color::status::ONLINE)),
+      eyebrow(&t!("assets.stockpiles.ready_to_ship"), Some(color::status::ONLINE)),
       color::with_alpha(color::status::ONLINE, 0.06),
     )
   } else {
     let short = model.short_items();
     let row = Row::with_children(vec![
-      eyebrow(&format!("{short} short"), Some(color::status::DANGER)),
+      eyebrow(
+        &t!("assets.stockpiles.short_count", count => short),
+        Some(color::status::DANGER),
+      ),
       eyebrow("\u{b7}", Some(color::text::tertiary())),
       eyebrow(
-        &format!("{} ISK to fill", fmt_isk(model.fill_isk)),
+        &t!("assets.stockpiles.isk_to_fill", amount => fmt_isk(model.fill_isk)),
         Some(color::text::secondary()),
       ),
       Space::new().width(Length::Fill).into(),

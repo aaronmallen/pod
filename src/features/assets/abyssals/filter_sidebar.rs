@@ -30,7 +30,7 @@ pub(in crate::features::assets) fn rail(state: &State) -> Element<'_, Message> {
 
 fn header(active: bool) -> Element<'static, Message> {
   let mut items: Vec<Element<'static, Message>> = vec![
-    container(eyebrow("Filters", Some(color::text::tertiary())))
+    container(eyebrow(&t!("assets.abyssals.filters"), Some(color::text::tertiary())))
       .width(Length::Fill)
       .into(),
   ];
@@ -51,7 +51,7 @@ fn header(active: bool) -> Element<'static, Message> {
 
 fn reset_button() -> Element<'static, Message> {
   button(
-    text("Reset")
+    text(t!("assets.abyssals.reset").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -76,11 +76,14 @@ fn module_type_section(filters: &Filters) -> Element<'static, Message> {
   let selected = filters.source_type_id;
   let mut items: Vec<Element<'static, Message>> = vec![picker_trigger(selected.is_some())];
   if let Some(type_id) = selected {
-    let name = modal_selected_label(type_id).unwrap_or_else(|| "Unknown".to_owned());
+    let name = modal_selected_label(type_id).unwrap_or_else(|| t!("assets.abyssals.module_unknown").into_owned());
     items.push(Space::new().height(spacing::SPACE_2_5).into());
     items.push(selected_chip(name));
   }
-  section("Module Type", Column::with_children(items).width(Length::Fill).into())
+  section(
+    &t!("assets.abyssals.module_type"),
+    Column::with_children(items).width(Length::Fill).into(),
+  )
 }
 
 fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
@@ -89,14 +92,14 @@ fn picker_trigger(has_filter: bool) -> Element<'static, Message> {
       color::with_alpha(color::accent::PLASMA, 0.35),
       color::text::PRIMARY,
       color::accent::PLASMA,
-      "Edit module filter",
+      t!("assets.abyssals.edit_module_filter").into_owned(),
     )
   } else {
     (
       color::with_alpha(color::text::PRIMARY, 0.12),
       color::text::secondary(),
       color::text::tertiary(),
-      "Filter by module type",
+      t!("assets.abyssals.filter_by_module_type").into_owned(),
     )
   };
   let background = has_filter.then(|| Background::Color(color::with_alpha(color::accent::PLASMA, 0.1)));
@@ -198,7 +201,7 @@ fn stat_ranges_section(state: &State) -> Element<'_, Message> {
   } else {
     stat_ranges::placeholder()
   };
-  section("Stat ranges", panel)
+  section(&t!("assets.abyssals.stat_ranges"), panel)
 }
 
 fn section<'a>(label: &str, content: Element<'a, Message>) -> Element<'a, Message> {

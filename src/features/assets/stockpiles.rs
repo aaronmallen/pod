@@ -4,7 +4,7 @@ mod item_row;
 
 use std::{
   collections::{HashMap, HashSet},
-  sync::Arc,
+  sync::{Arc, OnceLock},
 };
 
 use iced::{
@@ -133,7 +133,10 @@ impl StockpileCard {
     Some(LocationRef {
       context: None,
       id,
-      name: self.location_name.clone().unwrap_or_else(|| format!("Location {id}")),
+      name: self
+        .location_name
+        .clone()
+        .unwrap_or_else(|| t!("assets.stockpiles.location_fallback", id => id).into_owned()),
       security_status: None,
       tier: LocationTier::from_id(id),
     })
@@ -606,7 +609,8 @@ pub(super) async fn load_cards(db: &Database) -> Vec<StockpileCard> {
 
 pub(super) async fn save(db: &Database, editor: &Editor) {
   let name = editor.name.trim();
-  let name = if name.is_empty() { "Untitled stockpile" } else { name };
+  let fallback = t!("assets.stockpiles.untitled");
+  let name = if name.is_empty() { fallback.as_ref() } else { name };
   let scope = editor.character_scope();
   let location_id = editor.location.as_ref().map(|location| location.id);
   let items = editor.parsed_items();
@@ -720,7 +724,7 @@ async fn type_name_of(db: &Database, type_id: i64) -> String {
     .ok()
     .flatten()
     .map(|item_type| item_type.name().to_owned())
-    .unwrap_or_else(|| format!("Type {type_id}"))
+    .unwrap_or_else(|| t!("assets.stockpiles.type_fallback", id => type_id).into_owned())
 }
 
 pub(super) fn body<'a>(cards: &'a [StockpileCard], expanded: &HashSet<i64>) -> Element<'a, Message> {
@@ -817,14 +821,14 @@ fn modal_footer<'a>(left: Option<Element<'a, Message>>, actions: Vec<Element<'a,
   )
 }
 
-fn modal_header<'a>(title: &'a str, subtitle: &'a str, close: Message) -> Element<'a, Message> {
+fn modal_header<'a>(title: String, subtitle: String, close: Message) -> Element<'a, Message> {
   let titles = Column::with_children(vec![
     text(title)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    eyebrow(subtitle, Some(color::text::secondary())),
+    eyebrow(&subtitle, Some(color::text::secondary())),
   ])
   .spacing(spacing::UNIT)
   .width(Length::Fill);
@@ -878,7 +882,7 @@ fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     .into()
 }
 
-fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+fn secondary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   button(
     text(label)
       .font(typography::body::MEDIUM)
@@ -909,11 +913,11 @@ fn secondary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message
 
 /// The window title for a detached editor: distinguishes New from Edit so two open editors are
 /// tellable apart in the OS window list and the custom title bar.
-pub fn window_title(editor: &Editor) -> &'static str {
+pub fn window_title(editor: &Editor) -> String {
   if editor.is_editing() {
-    "Edit stockpile"
+    t!("assets.stockpiles.edit_stockpile").into_owned()
   } else {
-    "New stockpile"
+    t!("assets.stockpiles.new_stockpile").into_owned()
   }
 }
 
@@ -923,31 +927,49 @@ pub fn window_title(editor: &Editor) -> &'static str {
 /// the app's `StockpileEditor(id, _)` channel.
 pub fn view(editor: &Editor) -> Element<'_, Message> {
   let (title, subtitle, save_label) = if editor.is_editing() {
-    ("Edit stockpile", "Adjust this target pile", "Save changes")
+    (
+      t!("assets.stockpiles.edit_stockpile").into_owned(),
+      t!("assets.stockpiles.edit_subtitle").into_owned(),
+      t!("assets.stockpiles.save_changes").into_owned(),
+    )
   } else {
-    ("New stockpile", "Define a target pile", "Create stockpile")
+    (
+      t!("assets.stockpiles.new_stockpile").into_owned(),
+      t!("assets.stockpiles.new_subtitle").into_owned(),
+      t!("assets.stockpiles.create_stockpile").into_owned(),
+    )
   };
 
   let name_field = Column::with_children(vec![
-    field_label("Name"),
-    TextInput::new("Stockpile name", editor.name(), Message::StockpileEditorNameChanged)
-      .font_size(typography::size::MD)
-      .padding(spacing::SPACE_2)
-      .render(),
+    field_label(&t!("assets.stockpiles.name")),
+    TextInput::new(
+      editor_name_placeholder(),
+      editor.name(),
+      Message::StockpileEditorNameChanged,
+    )
+    .font_size(typography::size::MD)
+    .padding(spacing::SPACE_2)
+    .render(),
   ])
   .spacing(spacing::UNIT + 1.0)
   .width(Length::Fill);
 
-  let location_field = Column::with_children(vec![field_label("Location"), location_picker(editor)])
-    .spacing(spacing::UNIT + 1.0)
-    .width(Length::Fill);
+  let location_field = Column::with_children(vec![
+    field_label(&t!("assets.stockpiles.location")),
+    location_picker(editor),
+  ])
+  .spacing(spacing::UNIT + 1.0)
+  .width(Length::Fill);
 
   let scope_field = Column::with_children(vec![
     rule::horizontal(),
-    Column::with_children(vec![field_label("Character scope"), scope_picker(editor)])
-      .spacing(spacing::UNIT + 1.0)
-      .width(Length::Fill)
-      .into(),
+    Column::with_children(vec![
+      field_label(&t!("assets.stockpiles.character_scope")),
+      scope_picker(editor),
+    ])
+    .spacing(spacing::UNIT + 1.0)
+    .width(Length::Fill)
+    .into(),
   ])
   .spacing(spacing::SPACE_3_5)
   .width(Length::Fill);
@@ -957,10 +979,15 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
     .width(Length::Fill);
 
   let resolved = editor.items().len();
+  let type_count = if resolved == 1 {
+    t!("assets.stockpiles.type_count_one", count => resolved).into_owned()
+  } else {
+    t!("assets.stockpiles.type_count_other", count => resolved).into_owned()
+  };
   let items_header = Row::with_children(vec![
-    field_label("Items"),
+    field_label(&t!("assets.stockpiles.items")),
     Space::new().width(Length::Fill).into(),
-    text(format!("{resolved} type{}", if resolved == 1 { "" } else { "s" }))
+    text(type_count)
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
@@ -974,7 +1001,7 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
   item_children.push(items_header.into());
   if editor.items().is_empty() {
     item_children.push(
-      text("No items yet \u{2014} search below to add some.")
+      text(t!("assets.stockpiles.no_items").into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::tertiary()))
@@ -1014,7 +1041,10 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
   let footer = modal_footer(
     error,
     vec![
-      secondary_button("Cancel", Message::StockpileEditorClosed),
+      secondary_button(
+        t!("assets.stockpiles.cancel").into_owned(),
+        Message::StockpileEditorClosed,
+      ),
       primary_button(save_label, Message::StockpileEditorSaved),
     ],
   );
@@ -1039,14 +1069,14 @@ pub fn view(editor: &Editor) -> Element<'_, Message> {
 /// title bar) stacked over a subtitle eyebrow, rendered with the shared [`header::header`] band used
 /// by the other detached windows. Replaces the former modal title section now that the OS frame owns
 /// the chrome.
-fn window_header<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
+fn window_header<'a>(title: String, subtitle: String) -> Element<'a, Message> {
   let titles = Column::with_children(vec![
     text(title)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    eyebrow(subtitle, Some(color::text::secondary())),
+    eyebrow(&subtitle, Some(color::text::secondary())),
   ])
   .spacing(spacing::UNIT);
 
@@ -1062,7 +1092,7 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
       .style(typography::colored(color::text::PRIMARY))
       .width(Length::Fill)
       .into(),
-    TextInput::new("Qty", &item.target, move |value| {
+    TextInput::new(item_qty_placeholder(), &item.target, move |value| {
       Message::StockpileEditorItemTargetChanged(index, value)
     })
     .font_size(typography::size::SM)
@@ -1104,7 +1134,7 @@ fn editor_item_row(index: usize, item: &EditorItem) -> Element<'_, Message> {
 /// opening it never grows the modal.
 fn item_search_field(editor: &Editor) -> Element<'_, Message> {
   let search = editor.item_search();
-  let field = TextInput::new("Add item \u{2014} search name\u{2026}", &search.query, |value| {
+  let field = TextInput::new(item_search_placeholder(), &search.query, |value| {
     Message::StockpileEditorItemSearchChanged(value)
   })
   .font_size(typography::size::SM)
@@ -1129,14 +1159,14 @@ fn item_search_field(editor: &Editor) -> Element<'_, Message> {
 /// floats directly below the trigger, width-matched, so opening it never resizes the modal panel.
 fn location_picker(editor: &Editor) -> Element<'_, Message> {
   let trigger = LocationCombobox::new()
-    .placeholder("Select a location")
+    .placeholder(location_select_placeholder())
     .selection(editor.location().cloned())
     .on_toggle(Message::StockpileEditorLocationToggled)
     .trigger();
 
   let popover = editor.location_open().then(|| {
     LocationCombobox::new()
-      .placeholder("Search region, system, station\u{2026}")
+      .placeholder(location_search_placeholder())
       .query(editor.location_query())
       .results(editor.location_results().to_vec())
       .highlight(editor.location_highlight())
@@ -1156,7 +1186,7 @@ fn location_picker(editor: &Editor) -> Element<'_, Message> {
 
 fn scope_picker(editor: &Editor) -> Element<'_, Message> {
   let field = TextInput::new(
-    "All characters \u{2014} try tag:pvp, corp:cobalt, status:docked",
+    scope_query_placeholder(),
     editor.scope_query(),
     Message::StockpileEditorScopeChanged,
   )
@@ -1180,12 +1210,23 @@ fn scope_preview(editor: &Editor) -> Element<'_, Message> {
   let count = pilots.len();
 
   let (summary, summary_color) = if !scoped {
-    (format!("All {count} pilots"), color::accent::PLASMA)
+    (
+      t!("assets.stockpiles.scope_all_pilots", count => count).into_owned(),
+      color::accent::PLASMA,
+    )
   } else if count == 0 {
-    ("0 pilots".to_owned(), color::status::DANGER)
+    (
+      t!("assets.stockpiles.scope_no_pilots").into_owned(),
+      color::status::DANGER,
+    )
+  } else if count == 1 {
+    (
+      t!("assets.stockpiles.scope_pilot_count_one", count => count).into_owned(),
+      color::accent::PLASMA,
+    )
   } else {
     (
-      format!("{count} pilot{}", if count == 1 { "" } else { "s" }),
+      t!("assets.stockpiles.scope_pilot_count_other", count => count).into_owned(),
       color::accent::PLASMA,
     )
   };
@@ -1196,16 +1237,18 @@ fn scope_preview(editor: &Editor) -> Element<'_, Message> {
     .push(eyebrow(&summary, Some(summary_color)));
   if count > 0 {
     let corps = editor.scope_corps();
+    let corp_label = if corps == 1 {
+      t!("assets.stockpiles.scope_corp_count_one", count => corps).into_owned()
+    } else {
+      t!("assets.stockpiles.scope_corp_count_other", count => corps).into_owned()
+    };
     header = header
       .push(eyebrow("\u{b7}", Some(color::text::tertiary())))
-      .push(eyebrow(
-        &format!("{corps} corp{}", if corps == 1 { "" } else { "s" }),
-        Some(color::text::secondary()),
-      ));
+      .push(eyebrow(&corp_label, Some(color::text::secondary())));
   }
 
   let body: Element<'_, Message> = if scoped && count == 0 {
-    text("No characters match this filter \u{2014} the stockpile would track nothing.")
+    text(t!("assets.stockpiles.scope_no_match").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -1306,7 +1349,7 @@ fn suggestions<'a>(
 
   let mut column = Column::new().width(Length::Fill);
   if results.is_empty() {
-    column = column.push(suggestion_status("Searching\u{2026}"));
+    column = column.push(suggestion_status(&t!("assets.stockpiles.searching")));
   } else {
     for (id, name) in results.iter().take(MAX_SUGGESTIONS) {
       column = column.push(suggestion_row(*id, name, with_icon, &make_msg));
@@ -1394,8 +1437,8 @@ fn type_icon_for_id<'a>(type_id: i64) -> Element<'a, Message> {
 
 /// The window title for the detached Import-Multibuy window. Single-instance, so it is a constant
 /// (unlike the New/Edit-aware editor title).
-pub fn import_window_title() -> &'static str {
-  "Import multibuy"
+pub fn import_window_title() -> String {
+  t!("assets.stockpiles.import_multibuy").into_owned()
 }
 
 /// Renders the import panel as the body of a detached native-chrome window. Like the editor, the OS
@@ -1413,26 +1456,36 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
   let lines = card.multibuy_lines(mode);
   let units: u64 = lines.iter().map(|(_, qty)| qty).sum();
 
+  let summary = if lines.len() == 1 {
+    t!(
+      "assets.stockpiles.multibuy_summary_one",
+      lines => fmt_count(lines.len() as i64),
+      units => fmt_count(units as i64),
+    )
+    .into_owned()
+  } else {
+    t!(
+      "assets.stockpiles.multibuy_summary_other",
+      lines => fmt_count(lines.len() as i64),
+      units => fmt_count(units as i64),
+    )
+    .into_owned()
+  };
   let controls = Row::with_children(vec![
     multibuy_mode_toggle(mode),
     Space::new().width(Length::Fill).into(),
-    text(format!(
-      "{} {} \u{b7} {} units",
-      fmt_count(lines.len() as i64),
-      if lines.len() == 1 { "line" } else { "lines" },
-      fmt_count(units as i64),
-    ))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS)
-    .style(typography::colored(color::text::tertiary()))
-    .into(),
+    text(summary)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
   ])
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
   let preview: Element<'_, Message> = if lines.is_empty() {
     container(
-      text("Nothing remaining \u{2014} this stockpile is fully stocked.")
+      text(t!("assets.stockpiles.multibuy_nothing_remaining").into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::status::ONLINE)),
@@ -1456,7 +1509,10 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
   let footer = modal_footer(
     Some(multibuy_footer(card.multibuy_value(mode))),
     vec![
-      secondary_button("Close", Message::StockpileMultibuyExportClosed),
+      secondary_button(
+        t!("assets.stockpiles.close").into_owned(),
+        Message::StockpileMultibuyExportClosed,
+      ),
       multibuy_copy_button(card.id, copied, !lines.is_empty()),
     ],
   );
@@ -1464,7 +1520,11 @@ pub(super) fn multibuy_export_overlay(card: &StockpileCard, mode: MultibuyMode, 
   modal_overlay(modal_panel(
     EXPORT_MODAL_WIDTH,
     vec![
-      modal_header("Export to Multibuy", &card.name, Message::StockpileMultibuyExportClosed),
+      modal_header(
+        t!("assets.stockpiles.export_to_multibuy").into_owned(),
+        card.name.clone(),
+        Message::StockpileMultibuyExportClosed,
+      ),
       rule::horizontal(),
       content,
       rule::horizontal(),
@@ -1534,12 +1594,12 @@ fn multibuy_preview<'a>(lines: &[(String, u64)]) -> Element<'a, Message> {
 
 fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
   Column::with_children(vec![
-    text("est. value (ESI avg)")
+    text(t!("assets.stockpiles.est_value").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
       .into(),
-    text(format!("{} ISK", fmt_isk(value)))
+    text(t!("assets.stockpiles.isk_amount", amount => fmt_isk(value)).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::PRIMARY))
@@ -1550,7 +1610,7 @@ fn multibuy_footer<'a>(value: f64) -> Element<'a, Message> {
 }
 
 fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
-  let segment = |label: &'a str, value: MultibuyMode| {
+  let segment = |label: String, value: MultibuyMode| {
     let active = value == mode;
     button(
       text(label)
@@ -1575,8 +1635,14 @@ fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
 
   container(
     Row::with_children(vec![
-      segment("Target", MultibuyMode::Target),
-      segment("Remaining", MultibuyMode::Remaining),
+      segment(
+        t!("assets.stockpiles.multibuy_target").into_owned(),
+        MultibuyMode::Target,
+      ),
+      segment(
+        t!("assets.stockpiles.multibuy_remaining").into_owned(),
+        MultibuyMode::Remaining,
+      ),
     ])
     .spacing(0.0),
   )
@@ -1592,7 +1658,11 @@ fn multibuy_mode_toggle<'a>(mode: MultibuyMode) -> Element<'a, Message> {
 }
 
 fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Element<'a, Message> {
-  let label = if copied { "Copied!" } else { "Copy" };
+  let label = if copied {
+    t!("assets.stockpiles.copied").into_owned()
+  } else {
+    t!("assets.stockpiles.copy").into_owned()
+  };
   let tint = if enabled {
     color::accent::PLASMA
   } else {
@@ -1634,7 +1704,7 @@ fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Elemen
 
 fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
   let field = text_editor(panel.content())
-    .placeholder("Paste multibuy text here\u{2026}")
+    .placeholder(multibuy_paste_placeholder())
     .on_action(Message::StockpileImportTextChanged)
     .padding(spacing::SPACE_2_5)
     .size(typography::size::SM)
@@ -1649,20 +1719,22 @@ fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
   };
 
   import_shell_body(
-    "Import multibuy",
-    "Paste an in-game multibuy or inventory list",
-    "Paste a multibuy list \u{2014} one item per line (Name<tab>qty, Name qty, Name xN, or bare Name). Names resolve against EVE.",
+    t!("assets.stockpiles.import_multibuy").into_owned(),
+    t!("assets.stockpiles.import_paste_subtitle").into_owned(),
+    t!("assets.stockpiles.import_paste_hint").into_owned(),
     field.into(),
-    "Resolve",
+    t!("assets.stockpiles.resolve").into_owned(),
     action,
   )
 }
 
 fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
-  let mut matched_rows: Vec<Element<'_, Message>> =
-    vec![section_label(&format!("Matched ({})", resolution.matched.len()))];
+  let mut matched_rows: Vec<Element<'_, Message>> = vec![section_label(&t!(
+    "assets.stockpiles.import_matched",
+    count => resolution.matched.len()
+  ))];
   if resolution.matched.is_empty() {
-    matched_rows.push(muted_text("No items matched."));
+    matched_rows.push(muted_text(&t!("assets.stockpiles.import_no_match")));
   } else {
     for item in &resolution.matched {
       matched_rows.push(
@@ -1688,7 +1760,10 @@ fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
   let mut children = matched_rows;
   if !resolution.unmatched.is_empty() {
     children.push(Space::new().height(spacing::SPACE_2).into());
-    children.push(section_label(&format!("Ignored ({})", resolution.unmatched.len())));
+    children.push(section_label(&t!(
+      "assets.stockpiles.import_ignored",
+      count => resolution.unmatched.len()
+    )));
     for line in &resolution.unmatched {
       children.push(muted_text(line));
     }
@@ -1708,11 +1783,11 @@ fn import_preview(resolution: &MultibuyResolution) -> Element<'_, Message> {
   let confirm = (!resolution.matched.is_empty()).then_some(Message::StockpileImportConfirmed);
 
   import_shell_body(
-    "Review import",
-    "Confirm the matched items",
-    "Matched items will prefill the editor. Nothing is saved until you set a name and hit Save.",
+    t!("assets.stockpiles.import_review").into_owned(),
+    t!("assets.stockpiles.import_review_subtitle").into_owned(),
+    t!("assets.stockpiles.import_review_hint").into_owned(),
     body.into(),
-    "Add to stockpile",
+    t!("assets.stockpiles.add_to_stockpile").into_owned(),
     confirm,
   )
 }
@@ -1734,21 +1809,21 @@ fn muted_text<'a>(value: &str) -> Element<'a, Message> {
 }
 
 fn import_shell_body<'a>(
-  title: &'a str,
-  subtitle: &'a str,
-  hint: &'a str,
+  title: String,
+  subtitle: String,
+  hint: String,
   field: Element<'a, Message>,
-  action_label: &'a str,
+  action_label: String,
   action_msg: Option<Message>,
 ) -> Element<'a, Message> {
-  let mut action = primary_button_owned(action_label.to_owned());
+  let mut action = primary_button_owned(action_label);
   if let Some(msg) = action_msg {
     action = action.on_press(msg);
   }
 
   let content = modal_section(
     Column::with_children(vec![
-      text(hint.to_owned())
+      text(hint)
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -1763,7 +1838,10 @@ fn import_shell_body<'a>(
   let footer = modal_footer(
     None,
     vec![
-      secondary_button("Cancel", Message::StockpileImportClosed),
+      secondary_button(
+        t!("assets.stockpiles.cancel").into_owned(),
+        Message::StockpileImportClosed,
+      ),
       action.into(),
     ],
   );
@@ -1825,7 +1903,7 @@ fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_ed
   }
 }
 
-fn primary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> {
+fn primary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
   button(
     text(label)
       .font(typography::body::MEDIUM)
@@ -1851,12 +1929,47 @@ fn primary_button<'a>(label: &'a str, message: Message) -> Element<'a, Message> 
   .into()
 }
 
-fn field_label<'a>(label: &'a str) -> Element<'a, Message> {
+fn field_label<'a>(label: &str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::secondary()))
     .into()
+}
+
+fn editor_name_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.name_placeholder").into_owned())
+}
+
+fn item_qty_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.qty_placeholder").into_owned())
+}
+
+fn item_search_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.item_search_placeholder").into_owned())
+}
+
+fn location_search_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.location_search_placeholder").into_owned())
+}
+
+fn location_select_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.location_select_placeholder").into_owned())
+}
+
+fn multibuy_paste_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.multibuy_paste_placeholder").into_owned())
+}
+
+fn scope_query_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.stockpiles.scope_placeholder").into_owned())
 }
 
 #[cfg(test)]

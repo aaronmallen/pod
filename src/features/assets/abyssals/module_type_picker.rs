@@ -633,11 +633,11 @@ pub(in crate::features::assets) fn modal_selected_label(type_id: i64) -> Option<
 fn header(selected: Option<i64>) -> Element<'static, Message> {
   let subtitle = selected
     .and_then(modal_selected_label)
-    .unwrap_or_else(|| "Pick a module type".to_owned());
+    .unwrap_or_else(|| t!("assets.abyssals.picker_subtitle").into_owned());
 
   let mut items: Vec<Element<'static, Message>> = vec![
     Column::with_children(vec![
-      text("Filter by module type")
+      text(t!("assets.abyssals.picker_title").into_owned())
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -660,7 +660,7 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
   if selected.is_some() {
     items.push(
       button(
-        text("Clear")
+        text(t!("assets.abyssals.picker_clear").into_owned())
           .font(typography::body::REGULAR)
           .size(typography::size::SM)
           .style(|_| text::Style {
@@ -718,7 +718,7 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
 fn footer() -> Element<'static, Message> {
   container(
     Row::with_children(vec![
-      text("esc \u{00b7} close")
+      text(t!("assets.abyssals.picker_esc_close").into_owned())
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
@@ -727,7 +727,7 @@ fn footer() -> Element<'static, Message> {
         .width(Length::Fill)
         .into(),
       button(
-        text("Done")
+        text(t!("assets.abyssals.picker_done").into_owned())
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(|_| text::Style {

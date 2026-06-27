@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::OnceLock};
 
 use iced::{
   Background, Border, Element, Length, Padding,
@@ -208,15 +208,16 @@ pub(super) fn body(summary: &ValueSummary) -> Element<'_, Message> {
 }
 
 fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
-  let mut header_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Owner", Horizontal::Left)];
+  let mut header_cells: Vec<Element<'_, Message>> =
+    vec![matrix_label_cell(&t!("assets.values.owner"), Horizontal::Left)];
   for location in &summary.matrix_locations {
     let label = location
       .label
       .clone()
-      .unwrap_or_else(|| format!("Loc {}", location.location_id));
+      .unwrap_or_else(|| t!("assets.values.location_fallback", id => location.location_id).into_owned());
     header_cells.push(matrix_label_cell(&label, Horizontal::Right));
   }
-  header_cells.push(matrix_label_cell("Total", Horizontal::Right));
+  header_cells.push(matrix_label_cell(&t!("assets.values.total"), Horizontal::Right));
 
   let mut rows: Vec<Element<'_, Message>> = vec![
     container(Row::with_children(header_cells).spacing(spacing::SPACE_3))
@@ -274,7 +275,8 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
     );
   }
 
-  let mut footer_cells: Vec<Element<'_, Message>> = vec![matrix_label_cell("Column total", Horizontal::Left)];
+  let mut footer_cells: Vec<Element<'_, Message>> =
+    vec![matrix_label_cell(&t!("assets.values.column_total"), Horizontal::Left)];
   for location in &summary.matrix_locations {
     let column_total: f64 = summary
       .matrix_rows
@@ -300,7 +302,7 @@ fn matrix_card(summary: &ValueSummary) -> Element<'_, Message> {
   );
 
   card(
-    "Value \u{b7} owner \u{d7} location",
+    t!("assets.values.matrix_title").into_owned(),
     Column::with_children(rows).width(Length::Fill).into(),
   )
 }
@@ -421,7 +423,7 @@ fn category_card(summary: &ValueSummary) -> Element<'_, Message> {
   }
 
   card(
-    "By category",
+    t!("assets.values.by_category").into_owned(),
     Column::with_children(rows)
       .spacing(spacing::SPACE_2)
       .width(Length::Fill)
@@ -476,7 +478,7 @@ fn top_items_card(summary: &ValueSummary) -> Element<'_, Message> {
   }
 
   card(
-    "Top items by value",
+    t!("assets.values.top_items").into_owned(),
     Column::with_children(rows)
       .spacing(spacing::SPACE_2)
       .width(Length::Fill)
@@ -496,7 +498,7 @@ fn top_item_icon<'a>(type_icon: &IconResolution) -> Element<'a, Message> {
   icon_tile(content, TOP_ITEM_ICON)
 }
 
-fn card<'a>(title: &'a str, body: Element<'a, Message>) -> Element<'a, Message> {
+fn card<'a>(title: String, body: Element<'a, Message>) -> Element<'a, Message> {
   let heading = text(title)
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
@@ -513,7 +515,9 @@ fn card<'a>(title: &'a str, body: Element<'a, Message>) -> Element<'a, Message> 
 }
 
 fn empty_state<'a>() -> Element<'a, Message> {
-  shared_empty_state("No valued assets in this scope.").render()
+  static MESSAGE: OnceLock<String> = OnceLock::new();
+  let message = MESSAGE.get_or_init(|| t!("assets.values.empty").into_owned());
+  shared_empty_state(message).render()
 }
 
 #[cfg(test)]

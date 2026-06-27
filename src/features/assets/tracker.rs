@@ -162,22 +162,32 @@ fn stat_tiles(series: &NavSeries) -> Element<'_, Message> {
   let change_sub = format!("{}{:.2}%", if pct >= 0.0 { "+" } else { "" }, pct);
 
   Row::with_children(vec![
-    stat_tile("Current", fmt_isk(current), None, color::text::PRIMARY),
-    stat_tile("90-day change", change_value, Some(change_sub), change_color),
     stat_tile(
-      "High",
+      t!("assets.tracker.current").into_owned(),
+      fmt_isk(current),
+      None,
+      color::text::PRIMARY,
+    ),
+    stat_tile(
+      t!("assets.tracker.change").into_owned(),
+      change_value,
+      Some(change_sub),
+      change_color,
+    ),
+    stat_tile(
+      t!("assets.tracker.high").into_owned(),
       fmt_isk(series.high().unwrap_or(0.0)),
       None,
       color::text::secondary(),
     ),
     stat_tile(
-      "Low",
+      t!("assets.tracker.low").into_owned(),
       fmt_isk(series.low().unwrap_or(0.0)),
       None,
       color::text::secondary(),
     ),
     stat_tile(
-      "30d avg",
+      t!("assets.tracker.thirty_day_avg").into_owned(),
       fmt_isk(series.thirty_day_avg().unwrap_or(0.0)),
       None,
       color::text::secondary(),
@@ -188,7 +198,7 @@ fn stat_tiles(series: &NavSeries) -> Element<'_, Message> {
   .into()
 }
 
-fn stat_tile<'a>(label: &'a str, value: String, sub: Option<String>, value_color: Color) -> Element<'a, Message> {
+fn stat_tile<'a>(label: String, value: String, sub: Option<String>, value_color: Color) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
@@ -234,14 +244,14 @@ fn stat_tile<'a>(label: &'a str, value: String, sub: Option<String>, value_color
 
 fn chart_card(series: &NavSeries, hover: Option<f32>, now: DateTime<Utc>) -> Element<'_, Message> {
   let heading = Row::with_children(vec![
-    text("Net asset value \u{b7} 90 days")
+    text(t!("assets.tracker.chart_title").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("DAILY SNAPSHOT")
+    text(t!("assets.tracker.daily_snapshot").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -294,7 +304,7 @@ fn chart_card(series: &NavSeries, hover: Option<f32>, now: DateTime<Utc>) -> Ele
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No net-worth history yet \u{2014} snapshots accrue daily.")
+    text(t!("assets.tracker.empty").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {

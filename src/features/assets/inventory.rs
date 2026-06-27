@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -185,9 +187,13 @@ fn search_field(state: &State) -> Element<'_, Message> {
 
   if !state.search().trim().is_empty() {
     let count = state.inventory().len() as i64;
-    let suffix = if count == 1 { "match" } else { "matches" };
+    let label = if count == 1 {
+      t!("assets.inventory.match_count_one", count => fmt_count(count)).into_owned()
+    } else {
+      t!("assets.inventory.match_count_other", count => fmt_count(count)).into_owned()
+    };
     right.push(
-      text(format!("{} {suffix}", fmt_count(count)))
+      text(label)
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::text::tertiary()))
@@ -201,16 +207,17 @@ fn search_field(state: &State) -> Element<'_, Message> {
     .spacing(spacing::SPACE_2_5)
     .align_y(Vertical::Center);
 
-  TextInput::new(
-    "Filter assets\u{2026}  try  name:Rifter  or  category:ship",
-    state.search(),
-    Message::SearchChanged,
-  )
-  .input_id(crate::features::shell::focus_search::assets_search_id())
-  .leading_icon(Icon::search())
-  .on_submit(Message::SearchSubmitted)
-  .trailing(trailing.into())
-  .render()
+  TextInput::new(search_placeholder(), state.search(), Message::SearchChanged)
+    .input_id(crate::features::shell::focus_search::assets_search_id())
+    .leading_icon(Icon::search())
+    .on_submit(Message::SearchSubmitted)
+    .trailing(trailing.into())
+    .render()
+}
+
+fn search_placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("assets.inventory.search_placeholder").into_owned())
 }
 
 fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
@@ -226,7 +233,7 @@ fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
       .size(typography::size::SM)
       .style(typography::colored(glyph_color))
       .into(),
-    text("Save")
+    text(t!("assets.inventory.save").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(label_color))
@@ -309,11 +316,16 @@ fn totals_summary(state: &State) -> Element<'_, Message> {
   // user sees what a bulk Edit Tags will act on; otherwise it shows the whole loaded page.
   let (label, count, value, volume) = if state.inventory_selection_count() > 0 {
     let (value, volume) = state.inventory_selection_totals();
-    ("Selected", state.inventory_selection_count() as i64, value, volume)
+    (
+      t!("assets.inventory.summary_selected").into_owned(),
+      state.inventory_selection_count() as i64,
+      value,
+      volume,
+    )
   } else {
     let rows = state.inventory();
     (
-      "Rows",
+      t!("assets.inventory.summary_rows").into_owned(),
       rows.len() as i64,
       rows.iter().map(|r| r.value).sum(),
       rows.iter().map(|r| r.row_volume).sum(),
@@ -322,9 +334,9 @@ fn totals_summary(state: &State) -> Element<'_, Message> {
 
   container(
     Row::with_children(vec![
-      summary_stat(label, fmt_count(count)),
-      summary_stat("Value", fmt_isk(value)),
-      summary_stat("Volume", fmt_volume(volume)),
+      summary_stat(&label, fmt_count(count)),
+      summary_stat(&t!("assets.inventory.summary_value"), fmt_isk(value)),
+      summary_stat(&t!("assets.inventory.summary_volume"), fmt_volume(volume)),
     ])
     .spacing(spacing::SPACE_6)
     .align_y(Vertical::Center),
@@ -347,7 +359,7 @@ fn totals_summary(state: &State) -> Element<'_, Message> {
   .into()
 }
 
-fn summary_stat<'a>(label: &'a str, value: String) -> Element<'a, Message> {
+fn summary_stat<'a>(label: &str, value: String) -> Element<'a, Message> {
   Column::with_children(vec![
     eyebrow(label, Some(color::text::secondary())),
     text(value)
@@ -368,11 +380,12 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
 pub(super) fn body(state: &State) -> Element<'_, Message> {
   let rows = state.inventory();
   if rows.is_empty() {
-    return empty_state(if state.search().trim().is_empty() {
-      "No assets in this scope."
+    let message = if state.search().trim().is_empty() {
+      empty_scope_message()
     } else {
-      "No assets match the current filters."
-    });
+      empty_filtered_message()
+    };
+    return empty_state(message);
   }
 
   // Flatten the inventory (with any expanded containers' children spliced inline)
@@ -445,15 +458,47 @@ fn push_row<'a>(state: &'a State, out: &mut Vec<&'a InventoryRow>, inventory_row
 }
 
 fn column_header<'a>(sort: SortColumn, dir: SortDirection) -> Element<'a, Message> {
-  let columns: [(&str, Option<SortColumn>, bool); 8] = [
-    ("Item", Some(SortColumn::Name), false),
-    ("Group", Some(SortColumn::Group), false),
-    ("Category", Some(SortColumn::Category), false),
-    ("Qty", Some(SortColumn::Quantity), true),
-    ("Volume", Some(SortColumn::Volume), true),
-    ("Unit", Some(SortColumn::UnitPrice), true),
-    ("Value", Some(SortColumn::Value), true),
-    ("Owner", Some(SortColumn::Owner), false),
+  let columns: [(String, Option<SortColumn>, bool); 8] = [
+    (
+      t!("assets.inventory.column_item").into_owned(),
+      Some(SortColumn::Name),
+      false,
+    ),
+    (
+      t!("assets.inventory.column_group").into_owned(),
+      Some(SortColumn::Group),
+      false,
+    ),
+    (
+      t!("assets.inventory.column_category").into_owned(),
+      Some(SortColumn::Category),
+      false,
+    ),
+    (
+      t!("assets.inventory.column_qty").into_owned(),
+      Some(SortColumn::Quantity),
+      true,
+    ),
+    (
+      t!("assets.inventory.column_volume").into_owned(),
+      Some(SortColumn::Volume),
+      true,
+    ),
+    (
+      t!("assets.inventory.column_unit").into_owned(),
+      Some(SortColumn::UnitPrice),
+      true,
+    ),
+    (
+      t!("assets.inventory.column_value").into_owned(),
+      Some(SortColumn::Value),
+      true,
+    ),
+    (
+      t!("assets.inventory.column_owner").into_owned(),
+      Some(SortColumn::Owner),
+      false,
+    ),
   ];
 
   let mut cells: Vec<Element<'a, Message>> =
@@ -461,7 +506,10 @@ fn column_header<'a>(sort: SortColumn, dir: SortDirection) -> Element<'a, Messag
   for ((label, column, right), &portion) in columns.into_iter().zip(COLUMN_PORTIONS.iter()) {
     cells.push(portioned(header_cell(label, column, right, sort, dir), portion));
   }
-  cells.push(portioned(plain_header("Location"), COLUMN_PORTIONS[8]));
+  cells.push(portioned(
+    plain_header(t!("assets.inventory.column_location").into_owned()),
+    COLUMN_PORTIONS[8],
+  ));
 
   container(
     Row::with_children(cells)
@@ -497,7 +545,7 @@ fn portioned<'a>(cell: Element<'a, Message>, portion: u16) -> Element<'a, Messag
   container(cell).width(Length::FillPortion(portion)).into()
 }
 
-fn plain_header<'a>(label: &'a str) -> Element<'a, Message> {
+fn plain_header<'a>(label: String) -> Element<'a, Message> {
   container(
     text(label.to_uppercase())
       .font(typography::mono::REGULAR)
@@ -510,7 +558,7 @@ fn plain_header<'a>(label: &'a str) -> Element<'a, Message> {
 }
 
 fn header_cell<'a>(
-  label: &'a str,
+  label: String,
   column: Option<SortColumn>,
   right: bool,
   sort: SortColumn,
@@ -752,7 +800,7 @@ fn tag_strip<'a>(item_id: i64, tags: Vec<&'a Tag>, hovered: bool) -> Element<'a,
 
 fn add_tag_affordance<'a>(item_id: i64) -> Element<'a, Message> {
   button(
-    text("+ Tag")
+    text(t!("assets.inventory.add_tag").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::secondary())),
@@ -775,12 +823,15 @@ fn add_tag_affordance<'a>(item_id: i64) -> Element<'a, Message> {
 }
 
 fn active_ship_badge<'a>() -> Element<'a, Message> {
-  badge("ACTIVE", Some(color::accent::PLASMA))
+  badge(t!("assets.inventory.active_badge"), Some(color::accent::PLASMA))
 }
 
 /// A `↻ Reprocess` badge, wrapped in a hover tooltip explaining the reproc gain.
 fn reprocess_badge<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
-  reproc_tooltip(badge("\u{21bb} Reprocess", Some(color::status::WARNING)), inventory_row)
+  reproc_tooltip(
+    badge(t!("assets.inventory.reprocess_badge"), Some(color::status::WARNING)),
+    inventory_row,
+  )
 }
 
 fn category_cell<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
@@ -791,7 +842,7 @@ fn category_label(category: &str) -> String {
   let mut chars = category.chars();
   match chars.next() {
     Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-    None => "Other".to_owned(),
+    None => t!("assets.inventory.category_other").into_owned(),
   }
 }
 
@@ -887,12 +938,13 @@ fn reproc_tooltip_text(inventory_row: &InventoryRow) -> String {
   } else {
     0
   };
-  format!(
-    "Reprocesses to {}/unit \u{2014} {}% above its {}/unit sell price. Worth refining rather than selling.",
-    fmt_isk(per_unit_reproc),
-    gain_pct,
-    fmt_isk(inventory_row.unit_price),
+  t!(
+    "assets.inventory.reprocess_tooltip",
+    reproc_price => fmt_isk(per_unit_reproc),
+    gain_pct => gain_pct,
+    sell_price => fmt_isk(inventory_row.unit_price),
   )
+  .into_owned()
 }
 
 fn numeric_cell<'a>(value: String, text_color: iced::Color) -> Element<'a, Message> {
@@ -949,13 +1001,23 @@ fn owner_cell<'a>(owner_id: i64, roster: &[RosterPilot], corporations: &[RosterC
   .into()
 }
 
-fn empty_state<'a>(message: &'a str) -> Element<'a, Message> {
+fn empty_state<'a>(message: &'static str) -> Element<'a, Message> {
   shared_empty_state(message).render()
 }
 
+fn empty_filtered_message() -> &'static str {
+  static MESSAGE: OnceLock<String> = OnceLock::new();
+  MESSAGE.get_or_init(|| t!("assets.inventory.empty_filtered").into_owned())
+}
+
+fn empty_scope_message() -> &'static str {
+  static MESSAGE: OnceLock<String> = OnceLock::new();
+  MESSAGE.get_or_init(|| t!("assets.inventory.empty_scope").into_owned())
+}
+
 pub(super) fn help_popover<'a>() -> Element<'a, Message> {
-  let mut sections: Vec<Element<'a, Message>> = vec![help_section_label("Examples")];
-  for &(query, note) in &FILTER_HELP_EXAMPLES {
+  let mut sections: Vec<Element<'a, Message>> = vec![help_section_label(&t!("assets.inventory.help_examples"))];
+  for (&(query, _), note) in FILTER_HELP_EXAMPLES.iter().zip(filter_help_example_notes()) {
     sections.push(example_row(query, note));
   }
   sections.push(
@@ -968,8 +1030,8 @@ pub(super) fn help_popover<'a>() -> Element<'a, Message> {
       })
       .into(),
   );
-  sections.push(help_section_label("Available keys"));
-  for &(key, alias, desc) in &FILTER_HELP_KEYS {
+  sections.push(help_section_label(&t!("assets.inventory.help_keys")));
+  for (&(key, alias, _), desc) in FILTER_HELP_KEYS.iter().zip(filter_help_key_descriptions()) {
     sections.push(key_row(key, alias, desc));
   }
 
@@ -993,7 +1055,34 @@ pub(super) fn help_popover<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn help_section_label<'a>(label: &'a str) -> Element<'a, Message> {
+fn filter_help_example_notes() -> Vec<String> {
+  vec![
+    t!("assets.inventory.help_example_all_ships").into_owned(),
+    t!("assets.inventory.help_example_in_forge").into_owned(),
+    t!("assets.inventory.help_example_name_contains").into_owned(),
+    t!("assets.inventory.help_example_ships_not_rifters").into_owned(),
+    t!("assets.inventory.help_example_stacks_in_jita").into_owned(),
+    t!("assets.inventory.help_example_my_modules").into_owned(),
+    t!("assets.inventory.help_example_tagged_sell").into_owned(),
+  ]
+}
+
+fn filter_help_key_descriptions() -> Vec<String> {
+  vec![
+    t!("assets.inventory.help_key_name").into_owned(),
+    t!("assets.inventory.help_key_group").into_owned(),
+    t!("assets.inventory.help_key_category").into_owned(),
+    t!("assets.inventory.help_key_region").into_owned(),
+    t!("assets.inventory.help_key_constellation").into_owned(),
+    t!("assets.inventory.help_key_system").into_owned(),
+    t!("assets.inventory.help_key_location").into_owned(),
+    t!("assets.inventory.help_key_owner").into_owned(),
+    t!("assets.inventory.help_key_tag").into_owned(),
+    t!("assets.inventory.help_key_type").into_owned(),
+  ]
+}
+
+fn help_section_label<'a>(label: &str) -> Element<'a, Message> {
   container(eyebrow(label, Some(color::text::tertiary())))
     .padding(Padding {
       top: spacing::UNIT,
@@ -1004,7 +1093,7 @@ fn help_section_label<'a>(label: &'a str) -> Element<'a, Message> {
     .into()
 }
 
-fn example_row<'a>(query: &'static str, note: &'static str) -> Element<'a, Message> {
+fn example_row<'a>(query: &'static str, note: String) -> Element<'a, Message> {
   button(
     Row::with_children(vec![code_chip(query, true), note_text(note)])
       .spacing(spacing::SPACE_2_5)
@@ -1022,7 +1111,7 @@ fn example_row<'a>(query: &'static str, note: &'static str) -> Element<'a, Messa
   .into()
 }
 
-fn key_row<'a>(key: &'static str, alias: &'static str, desc: &'static str) -> Element<'a, Message> {
+fn key_row<'a>(key: &'static str, alias: &'static str, desc: String) -> Element<'a, Message> {
   let mut chips: Vec<Element<'a, Message>> = vec![code_chip(key, false)];
   if !alias.is_empty() {
     chips.push(code_chip(alias, false));
@@ -1090,7 +1179,7 @@ fn code_chip<'a>(label: &'static str, accent: bool) -> Element<'a, Message> {
   .into()
 }
 
-fn note_text<'a>(note: &'static str) -> Element<'a, Message> {
+fn note_text<'a>(note: String) -> Element<'a, Message> {
   container(
     text(note)
       .font(typography::body::REGULAR)
@@ -1402,8 +1491,13 @@ mod tests {
     fn it_renders_the_column_header_in_both_sort_directions() {
       let _ascending: Element<'_, Message> = column_header(SortColumn::Name, SortDirection::Ascending);
       let _descending: Element<'_, Message> = column_header(SortColumn::Value, SortDirection::Descending);
-      let _unsortable: Element<'_, Message> =
-        header_cell("Location", None, false, SortColumn::Name, SortDirection::Ascending);
+      let _unsortable: Element<'_, Message> = header_cell(
+        "Location".to_owned(),
+        None,
+        false,
+        SortColumn::Name,
+        SortDirection::Ascending,
+      );
     }
 
     #[test]

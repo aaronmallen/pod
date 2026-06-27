@@ -2,6 +2,7 @@ pub mod about_tab;
 pub mod accessibility_tab;
 pub mod data_export;
 pub mod features_tab;
+mod i18n;
 pub mod industry_tab;
 pub mod log_export;
 pub mod mcp_tab;
@@ -93,15 +94,15 @@ impl Category {
 
   fn label(self) -> &'static str {
     match self {
-      Category::About => "About",
-      Category::Accessibility => "Accessibility",
-      Category::Features => "Features",
-      Category::Industry => "Industry",
-      Category::Mcp => "MCP",
-      Category::Storage => "Storage",
-      Category::Tags => "Tags",
-      Category::Telemetry => "Telemetry",
-      Category::Ui => "User Interface",
+      Category::About => i18n::tr_static("settings.shell.category_about"),
+      Category::Accessibility => i18n::tr_static("settings.shell.category_accessibility"),
+      Category::Features => i18n::tr_static("settings.shell.category_features"),
+      Category::Industry => i18n::tr_static("settings.shell.category_industry"),
+      Category::Mcp => i18n::tr_static("settings.shell.category_mcp"),
+      Category::Storage => i18n::tr_static("settings.shell.category_storage"),
+      Category::Tags => i18n::tr_static("settings.shell.category_tags"),
+      Category::Telemetry => i18n::tr_static("settings.shell.category_telemetry"),
+      Category::Ui => i18n::tr_static("settings.shell.category_ui"),
     }
   }
 
@@ -393,13 +394,13 @@ pub fn view(state: &State) -> Element<'_, Message> {
 }
 
 fn header<'a>() -> Element<'a, Message> {
-  let eyebrow = text("Pod \u{00b7} Preferences")
+  let eyebrow = text(t!("settings.shell.eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
       color: Some(color::text::secondary()),
     });
-  let title = text("Settings")
+  let title = text(t!("settings.shell.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(|_| text::Style {
@@ -408,7 +409,7 @@ fn header<'a>() -> Element<'a, Message> {
   let identity = Column::with_children(vec![eyebrow.into(), title.into()]).spacing(spacing::UNIT);
 
   let reset = button(
-    text("Reset to defaults")
+    text(t!("settings.shell.reset_to_defaults"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD),
   )
@@ -441,7 +442,7 @@ fn header<'a>() -> Element<'a, Message> {
 
 fn categories_pane(state: &State) -> Element<'_, Message> {
   let heading = container(
-    text("Categories")
+    text(t!("settings.shell.categories"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {

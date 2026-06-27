@@ -25,34 +25,32 @@ static COPY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/copy.svg"
 
 const EFFECT_TOOLS: [Tool; 3] = [
   Tool {
-    desc: "Agents may compose and send EVE-mail from your characters through ESI.",
+    desc: "settings.mcp.tool_send_mail_desc",
     id: Perm::SendMail,
-    title: "Allow agents to send mail",
+    title: "settings.mcp.tool_send_mail_title",
   },
   Tool {
-    desc: "Agents may permanently delete messages from your EVE-mail.",
+    desc: "settings.mcp.tool_delete_mail_desc",
     id: Perm::DeleteMail,
-    title: "Allow agents to delete mail",
+    title: "settings.mcp.tool_delete_mail_title",
   },
   Tool {
-    desc: "Agents may create, rename, delete, and reassign your mail labels.",
+    desc: "settings.mcp.tool_manage_labels_desc",
     id: Perm::ManageLabels,
-    title: "Allow agents to manage labels",
+    title: "settings.mcp.tool_manage_labels_title",
   },
 ];
 
 const SAFE_TOOLS: [Tool; 2] = [
   Tool {
-    desc: "Let agents see characters, wallet, ledger, market, contracts, skills, industry & planner, \
-      assets, mail, and prices. Read-only \u{2014} nothing is written and nothing leaves Pod.",
+    desc: "settings.mcp.tool_read_desc",
     id: Perm::Read,
-    title: "Read tools",
+    title: "settings.mcp.tool_read_title",
   },
   Tool {
-    desc: "Let agents assign budgets, build skill plans, and configure the industry planner. These \
-      write only to Pod\u{2019}s local database \u{2014} zero EVE blast radius.",
+    desc: "settings.mcp.tool_local_write_desc",
     id: Perm::LocalWrite,
-    title: "Local write tools",
+    title: "settings.mcp.tool_local_write_title",
   },
 ];
 
@@ -118,30 +116,30 @@ impl ConnectAgent {
     match self {
       ConnectAgent::Claude => AgentMeta {
         file: "claude_desktop_config.json",
-        needs: "Needs Node.js \u{00b7} fully quit & relaunch Claude after editing.",
+        needs: "settings.mcp.claude_needs",
         name: "Claude",
-        path: "Settings \u{203a} Developer \u{203a} Edit Config",
+        path: "settings.mcp.claude_path",
         support: Support::Connectable {
           via: "mcp-remote stdio bridge",
         },
       },
       ConnectAgent::ChatGpt => AgentMeta {
         file: "~/.codex/config.toml",
-        needs: "Verify-first against the compliant server.",
+        needs: "settings.mcp.chatgpt_needs",
         name: "ChatGPT",
-        path: "OpenAI Codex CLI config",
+        path: "settings.mcp.chatgpt_path",
         support: Support::NativeUnsupported {
-          note: "The ChatGPT desktop app cannot connect to a local server. Use the OpenAI Codex CLI instead.",
+          note: "settings.mcp.chatgpt_note",
           use_instead: "OpenAI Codex CLI",
         },
       },
       ConnectAgent::Gemini => AgentMeta {
         file: "~/.gemini/antigravity/mcp_config.json",
-        needs: "Native entry \u{2014} no bridge required.",
+        needs: "settings.mcp.gemini_needs",
         name: "Gemini",
-        path: "or GUI: MCP Servers \u{203a} Manage",
+        path: "settings.mcp.gemini_path",
         support: Support::NativeUnsupported {
-          note: "The consumer Gemini app has no custom-MCP support. Use Antigravity instead.",
+          note: "settings.mcp.gemini_note",
           use_instead: "Antigravity",
         },
       },
@@ -258,7 +256,7 @@ pub fn badge(settings: &Settings) -> String {
   if *settings.mcp().enabled() {
     format!(":{}", settings.mcp().port())
   } else {
-    "Off".to_owned()
+    t!("settings.mcp.badge_off").into_owned()
   }
 }
 
@@ -323,18 +321,14 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
 }
 
 fn panel_header(settings: &Settings) -> Element<'_, Message> {
-  let title = text("MCP Server")
+  let title = text(t!("settings.mcp.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Run an embedded Model Context Protocol server so AI agents \u{2014} Claude, ChatGPT, Gemini \
-      \u{2014} can automate Pod on your behalf. It stays off until you turn it on, binds to localhost \
-      only, and exposes nothing without your token.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.mcp.blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -359,37 +353,39 @@ fn panel_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Messa
   let on = *settings.mcp().enabled();
 
   let server_head = section_head(
-    "Server",
-    "The master switch. Everything below is inert until the server is running.",
-    if on { "Listening" } else { "Stopped" }.to_owned(),
+    "settings.mcp.server_head_label",
+    "settings.mcp.server_head_note",
+    if on {
+      t!("settings.mcp.server_chip_listening")
+    } else {
+      t!("settings.mcp.server_chip_stopped")
+    }
+    .into_owned(),
     on,
   );
   let server_card = server_card(state, settings);
   let bind_note = bind_note();
 
   let auth_head = section_head(
-    "Authentication",
-    "Agents authenticate with a bearer token. Paste it into your agent\u{2019}s config \u{2014} treat \
-      it like a password.",
-    "Bearer".to_owned(),
+    "settings.mcp.auth_head_label",
+    "settings.mcp.auth_head_note",
+    t!("settings.mcp.auth_chip_bearer").into_owned(),
     false,
   );
   let auth = gated(on, auth_section(state, settings));
 
   let perm_head = section_head(
-    "Permissions",
-    "What connected agents are allowed to do. A disabled tool returns a permission-denied error to the \
-      agent.",
+    "settings.mcp.perm_head_label",
+    "settings.mcp.perm_head_note",
     perm_counter_label(settings),
     effects_on(settings) > 0,
   );
   let perms = gated(on, perm_section(settings));
 
   let connect_head = section_head(
-    "Connect an agent",
-    "Pick your agent, drop Pod into its MCP config, then restart it \u{2014} Pod\u{2019}s tools get \
-      discovered automatically.",
-    "Config".to_owned(),
+    "settings.mcp.connect_head_label",
+    "settings.mcp.connect_head_note",
+    t!("settings.mcp.connect_chip_config").into_owned(),
     false,
   );
   let connect = gated(on, connect_section(state, settings));
@@ -438,13 +434,13 @@ fn auth_section<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
 
   let head = container(
     Row::with_children(vec![
-      text("Bearer token")
+      text(t!("settings.mcp.bearer_token_label"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::secondary()))
         .into(),
       Space::new().width(Length::Fill).into(),
-      text("Read-only")
+      text(t!("settings.mcp.read_only_label"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary()))
@@ -466,10 +462,14 @@ fn auth_section<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .style(typography::colored(color::text::PRIMARY))
     .width(Length::Fill);
   let reveal = ghost_text_button(
-    if state.token_revealed { "Hide" } else { "Show" },
+    if state.token_revealed {
+      super::i18n::tr_static("settings.mcp.token_hide")
+    } else {
+      super::i18n::tr_static("settings.mcp.token_show")
+    },
     Message::ToggleTokenReveal,
   );
-  let copy = primary_copy_button("Copy token", Message::CopyToken);
+  let copy = primary_copy_button(super::i18n::tr_static("settings.mcp.copy_token"), Message::CopyToken);
 
   let value_row = container(
     Row::with_children(vec![value.into(), reveal, copy])
@@ -490,14 +490,11 @@ fn auth_section<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
   .max_width(CARD_MAX_WIDTH)
   .style(sunken_card_style);
 
-  let reset = ghost_text_button("Reset token", Message::ResetToken);
-  let reset_note = text(
-    "Generates a new token and immediately invalidates the old one. Any connected agent stops working \
-      until you re-paste the new token into its config.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let reset = ghost_text_button(super::i18n::tr_static("settings.mcp.reset_token"), Message::ResetToken);
+  let reset_note = text(t!("settings.mcp.reset_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   let reset_row = container(
     Row::with_children(vec![reset, reset_note.into()])
       .align_y(Vertical::Center)
@@ -512,13 +509,10 @@ fn auth_section<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
 }
 
 fn bind_note<'a>() -> Element<'a, Message> {
-  let note = text(format!(
-    "The bind address is fixed to {BIND_ADDRESS} \u{2014} localhost only, never reachable from another \
-      machine. Only the port is configurable."
-  ))
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let note = text(t!("settings.mcp.bind_note", address => BIND_ADDRESS))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
 
   container(note).max_width(CARD_MAX_WIDTH).into()
 }
@@ -533,18 +527,14 @@ fn connect_section<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, 
   let path_row = agent_path_row(meta);
   let card = snippet_card(meta, snippet);
 
-  let placeholder_note =
-    text("<token> is filled in with your real bearer token when you hit Copy config \u{2014} paste and go.")
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary()));
-  let log_note = text(
-    "Everything an agent does is recorded to Pod\u{2019}s normal logs \u{2014} review them under Settings \
-      \u{203a} Storage.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::tertiary()));
+  let placeholder_note = text(t!("settings.mcp.placeholder_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+  let log_note = text(t!("settings.mcp.log_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::tertiary()));
 
   Column::with_children(vec![
     container(tabs).max_width(CARD_MAX_WIDTH).into(),
@@ -620,19 +610,27 @@ fn support_callout(meta: AgentMeta) -> Element<'static, Message> {
       via,
     } => (
       color::status::ONLINE,
-      "Connectable".to_owned(),
-      format!(
-        "{}\u{2019}s native chat app connects to Pod through the {via}. {}",
-        meta.name, meta.needs
-      ),
+      t!("settings.mcp.callout_connectable_eyebrow").into_owned(),
+      t!(
+        "settings.mcp.callout_connectable_body",
+        name => meta.name,
+        via => via,
+        needs => super::i18n::tr_static(meta.needs)
+      )
+      .into_owned(),
     ),
     Support::NativeUnsupported {
       note,
       use_instead,
     } => (
       color::status::WARNING,
-      format!("Native app not supported \u{2014} use {use_instead}"),
-      format!("{note} {}", meta.needs),
+      t!("settings.mcp.callout_unsupported_eyebrow", tool => use_instead).into_owned(),
+      t!(
+        "settings.mcp.callout_unsupported_body",
+        note => super::i18n::tr_static(note),
+        needs => super::i18n::tr_static(meta.needs)
+      )
+      .into_owned(),
     ),
   };
 
@@ -671,11 +669,11 @@ fn support_callout(meta: AgentMeta) -> Element<'static, Message> {
 }
 
 fn agent_path_row(meta: AgentMeta) -> Element<'static, Message> {
-  let label = text("Open")
+  let label = text(t!("settings.mcp.open_label"))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
-  let value = text(meta.path)
+  let value = text(super::i18n::tr_static(meta.path))
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -721,7 +719,7 @@ fn snippet_card(meta: AgentMeta, snippet: String) -> Element<'static, Message> {
         .into(),
       lang_badge.into(),
       Space::new().width(Length::Fill).into(),
-      primary_copy_button("Copy config", Message::CopyConfig),
+      primary_copy_button(super::i18n::tr_static("settings.mcp.copy_config"), Message::CopyConfig),
     ])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2_5),
@@ -770,27 +768,27 @@ fn gated(active: bool, content: Element<'_, Message>) -> Element<'_, Message> {
 
 fn perm_counter_label(settings: &Settings) -> String {
   match effects_on(settings) {
-    0 => "Local only".to_owned(),
-    1 => "1 EVE effect on".to_owned(),
-    count => format!("{count} EVE effects on"),
+    0 => t!("settings.mcp.perm_counter_local_only").into_owned(),
+    1 => t!("settings.mcp.perm_counter_one").into_owned(),
+    count => t!("settings.mcp.perm_counter_many", count => count).into_owned(),
   }
 }
 
 fn perm_row(tool: Tool, on: bool) -> Element<'static, Message> {
-  let heading = text(tool.title)
+  let heading = text(super::i18n::tr_static(tool.title))
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
   let mut title_children: Vec<Element<'static, Message>> = vec![heading.into()];
   if matches!(tool.id, Perm::DeleteMail | Perm::ManageLabels | Perm::SendMail) {
     title_children.push(perm_tag("EVE"));
-    title_children.push(perm_tag("WRITE"));
+    title_children.push(perm_tag(super::i18n::tr_static("settings.mcp.tag_write")));
   }
   let title = Row::with_children(title_children)
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2);
 
-  let desc = text(tool.desc)
+  let desc = text(super::i18n::tr_static(tool.desc))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -817,23 +815,26 @@ fn perm_row(tool: Tool, on: bool) -> Element<'static, Message> {
 }
 
 fn perm_section(settings: &Settings) -> Element<'_, Message> {
-  let mut safe_rows: Vec<Element<'_, Message>> = vec![group_label("Safe \u{00b7} local only", color::status::ONLINE)];
+  let mut safe_rows: Vec<Element<'_, Message>> = vec![group_label(
+    super::i18n::tr_static("settings.mcp.group_safe"),
+    color::status::ONLINE,
+  )];
   for tool in SAFE_TOOLS {
     safe_rows.push(perm_row(tool, tool.id.is_on(settings)));
   }
   let safe = Column::with_children(safe_rows).width(Length::Fill);
 
-  let mut effect_rows: Vec<Element<'_, Message>> = vec![group_label("Real EVE effects", color::status::WARNING)];
+  let mut effect_rows: Vec<Element<'_, Message>> = vec![group_label(
+    super::i18n::tr_static("settings.mcp.group_effects"),
+    color::status::WARNING,
+  )];
   for tool in EFFECT_TOOLS {
     effect_rows.push(perm_row(tool, tool.id.is_on(settings)));
   }
-  let warn_note = text(
-    "These let an agent change things in EVE for real, through ESI. Leave a tool off and any agent call \
-      to it is refused with a permission-denied error.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let warn_note = text(t!("settings.mcp.warn_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   effect_rows.push(warn_note.into());
   let effects = container(Column::with_children(effect_rows).width(Length::Fill))
     .width(Length::Fill)
@@ -941,11 +942,11 @@ fn primary_copy_button(label: &'static str, message: Message) -> Element<'static
 }
 
 fn section_head(label: &'static str, note: &'static str, chip: String, lit: bool) -> Element<'static, Message> {
-  let micro = text(label)
+  let micro = text(super::i18n::tr_static(label))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::accent::PLASMA));
-  let detail = text(note)
+  let detail = text(super::i18n::tr_static(note))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -998,9 +999,9 @@ fn server_badge(settings: &Settings) -> Element<'_, Message> {
       ..container::Style::default()
     });
   let label_text = if on {
-    format!("On \u{00b7} :{}", settings.mcp().port())
+    t!("settings.mcp.server_badge_on", port => settings.mcp().port()).into_owned()
   } else {
-    "Off".to_owned()
+    t!("settings.mcp.server_badge_off").into_owned()
   };
   let label = text(label_text)
     .font(typography::mono::REGULAR)
@@ -1033,17 +1034,14 @@ fn server_badge(settings: &Settings) -> Element<'_, Message> {
 fn server_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   let on = *settings.mcp().enabled();
 
-  let heading = text("Enable MCP server")
+  let heading = text(t!("settings.mcp.enable_heading"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Opens a localhost port for connected agents. Turn this off any time to instantly cut every \
-      agent\u{2019}s access.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.mcp.enable_blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![heading.into(), blurb.into()])
     .spacing(spacing::SPACE_2)
     .width(Length::Fill);
@@ -1076,20 +1074,18 @@ fn server_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
       },
       ..container::Style::default()
     });
-  let status_caption = text("Status")
+  let status_caption = text(t!("settings.mcp.status_caption"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
   let status_value = if on {
-    text(format!(
-      "Running \u{00b7} http://{BIND_ADDRESS}:{}/mcp",
-      settings.mcp().port()
-    ))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::MD)
-    .style(typography::colored(color::accent::PLASMA))
+    let url = format!("http://{BIND_ADDRESS}:{}/mcp", settings.mcp().port());
+    text(t!("settings.mcp.status_running", url => url).into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::accent::PLASMA))
   } else {
-    text("Stopped \u{00b7} no port open")
+    text(t!("settings.mcp.status_stopped"))
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -1113,7 +1109,7 @@ fn server_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
     left: spacing::SPACE_4_5,
   });
 
-  let port_caption = text("Port")
+  let port_caption = text(t!("settings.mcp.port_caption"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));

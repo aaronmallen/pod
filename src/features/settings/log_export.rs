@@ -32,12 +32,13 @@ pub enum RangePreset {
 
 impl RangePreset {
   pub fn label(self) -> &'static str {
-    match self {
-      RangePreset::Last24Hours => "Last 24h",
-      RangePreset::Last7Days => "Last 7 days",
-      RangePreset::LastHour => "Last hour",
-      RangePreset::Today => "Today",
-    }
+    let key = match self {
+      RangePreset::Last24Hours => "settings.log_export.last_24h",
+      RangePreset::Last7Days => "settings.log_export.last_7_days",
+      RangePreset::LastHour => "settings.log_export.last_hour",
+      RangePreset::Today => "settings.log_export.today",
+    };
+    super::i18n::tr_static(key)
   }
 }
 
@@ -72,20 +73,22 @@ pub fn build_zip(
     for file in &selected {
       zip
         .start_file(&file.name, options)
-        .map_err(|err| format!("Couldn't add {}: {err}", file.name))?;
+        .map_err(|err| t!("settings.log_export.error_add_file", name => file.name, error => err).into_owned())?;
       let summary = stream_lines(&mut zip, file, start, end)?;
       included.push(summary);
     }
 
     zip
       .start_file(MANIFEST_NAME, options)
-      .map_err(|err| format!("Couldn't add manifest: {err}"))?;
+      .map_err(|err| t!("settings.log_export.error_add_manifest", error => err).into_owned())?;
     let manifest = render_manifest(start, end, diagnostics, &included);
     zip
       .write_all(manifest.as_bytes())
-      .map_err(|err| format!("Couldn't write manifest: {err}"))?;
+      .map_err(|err| t!("settings.log_export.error_write_manifest", error => err).into_owned())?;
 
-    zip.finish().map_err(|err| format!("Couldn't finalize bundle: {err}"))?;
+    zip
+      .finish()
+      .map_err(|err| t!("settings.log_export.error_finalize", error => err).into_owned())?;
   }
   Ok(buf)
 }
@@ -198,13 +201,15 @@ fn stream_lines<W: Write + std::io::Seek>(
   start: DateTime<Utc>,
   end: DateTime<Utc>,
 ) -> Result<IncludedFile, String> {
-  let handle = std::fs::File::open(&file.path).map_err(|err| format!("Couldn't read {}: {err}", file.name))?;
+  let handle = std::fs::File::open(&file.path)
+    .map_err(|err| t!("settings.log_export.error_read_file", name => file.name, error => err).into_owned())?;
   let reader = BufReader::new(handle);
 
   let mut lines = 0;
   let mut bytes = 0;
   for line in reader.lines() {
-    let line = line.map_err(|err| format!("Couldn't read {}: {err}", file.name))?;
+    let line =
+      line.map_err(|err| t!("settings.log_export.error_read_file", name => file.name, error => err).into_owned())?;
     if file.boundary {
       // On a boundary day, drop lines outside the range — and any line whose timestamp won't parse.
       match line_timestamp(&line) {
@@ -215,7 +220,7 @@ fn stream_lines<W: Write + std::io::Seek>(
     zip
       .write_all(line.as_bytes())
       .and_then(|()| zip.write_all(b"\n"))
-      .map_err(|err| format!("Couldn't write {}: {err}", file.name))?;
+      .map_err(|err| t!("settings.log_export.error_write_file", name => file.name, error => err).into_owned())?;
     lines += 1;
     bytes += line.len() as u64 + 1;
   }

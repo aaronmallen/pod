@@ -29,16 +29,16 @@ const REACTION_ACTIVITY_ID: i64 = 11;
 
 const ACTIVITIES: [Activity; 2] = [
   Activity {
-    blurb: "Pre-selects this facility when you install a manufacturing job from the planner.",
+    blurb_key: "settings.industry.manufacturing_blurb",
     id: MANUFACTURING_ACTIVITY_ID,
-    name: "Manufacturing",
-    placeholder: "Ask each install",
+    name_key: "settings.industry.manufacturing_name",
+    placeholder_key: "settings.industry.ask_each_install",
   },
   Activity {
-    blurb: "Pre-selects this facility when you install a reaction job from the planner.",
+    blurb_key: "settings.industry.reactions_blurb",
     id: REACTION_ACTIVITY_ID,
-    name: "Reactions",
-    placeholder: "Ask each install",
+    name_key: "settings.industry.reactions_name",
+    placeholder_key: "settings.industry.ask_each_install",
   },
 ];
 
@@ -96,10 +96,10 @@ impl State {
 
 #[derive(Clone, Copy, Debug)]
 struct Activity {
-  blurb: &'static str,
+  blurb_key: &'static str,
   id: i64,
-  name: &'static str,
-  placeholder: &'static str,
+  name_key: &'static str,
+  placeholder_key: &'static str,
 }
 
 #[derive(Debug, Default)]
@@ -220,17 +220,14 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
 }
 
 fn panel_header<'a>() -> Element<'a, Message> {
-  let title = text("Industry")
+  let title = text(t!("settings.industry.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Set a default install structure per activity. Pod pre-selects it in the planner \u{2014} or leave \
-      it on \u{201c}Ask each install\u{201d} to choose every time.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.industry.blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -274,11 +271,11 @@ fn panel_body(state: &State) -> Element<'_, Message> {
 }
 
 fn activity_section(picker: &Picker, activity: Activity) -> Element<'_, Message> {
-  let micro = text(activity.name)
+  let micro = text(super::i18n::tr_static(activity.name_key))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::accent::PLASMA));
-  let detail = text(activity.blurb)
+  let detail = text(super::i18n::tr_static(activity.blurb_key))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -288,7 +285,7 @@ fn activity_section(picker: &Picker, activity: Activity) -> Element<'_, Message>
 
   let id = activity.id;
   let trigger = FacilityCombobox::new()
-    .placeholder(activity.placeholder)
+    .placeholder(super::i18n::tr_static(activity.placeholder_key))
     .selection(picker.selection.clone())
     .on_toggle(Message::PickerToggled {
       activity: id,

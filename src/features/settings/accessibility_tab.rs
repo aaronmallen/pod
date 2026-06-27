@@ -21,51 +21,50 @@ const SCALE_MIN: u8 = 85;
 
 const PRESETS: [Preset; 5] = [
   Preset {
-    label: "XS",
+    label_key: "settings.accessibility.preset_xs",
     pct: 85,
   },
   Preset {
-    label: "S",
+    label_key: "settings.accessibility.preset_s",
     pct: 92,
   },
   Preset {
-    label: "M",
+    label_key: "settings.accessibility.preset_m",
     pct: 100,
   },
   Preset {
-    label: "L",
+    label_key: "settings.accessibility.preset_l",
     pct: 125,
   },
   Preset {
-    label: "XL",
+    label_key: "settings.accessibility.preset_xl",
     pct: 150,
   },
 ];
 
-const PREVIEW_SAMPLE: &str = "The quick brown fox";
 const TIER_COLUMN_WIDTH: f32 = 168.0;
 
 const TIERS: [Tier; 3] = [
   Tier {
     hc: color::text::secondary_hc,
-    name: "Secondary",
+    name_key: "settings.accessibility.tier_secondary_name",
     off: color::text::secondary_off,
     target: "Lc 75",
-    usage: "Body, labels, descriptions",
+    usage_key: "settings.accessibility.tier_secondary_usage",
   },
   Tier {
     hc: color::text::tertiary_hc,
-    name: "Tertiary",
+    name_key: "settings.accessibility.tier_tertiary_name",
     off: color::text::tertiary_off,
     target: "Lc 60",
-    usage: "Meta, captions, hints",
+    usage_key: "settings.accessibility.tier_tertiary_usage",
   },
   Tier {
     hc: color::text::dim_hc,
-    name: "Dim",
+    name_key: "settings.accessibility.tier_dim_name",
     off: color::text::dim_off,
     target: "Lc 45",
-    usage: "Disabled, placeholder marks",
+    usage_key: "settings.accessibility.tier_dim_usage",
   },
 ];
 
@@ -86,17 +85,17 @@ impl State {
 
 #[derive(Clone, Copy, Debug)]
 struct Preset {
-  label: &'static str,
+  label_key: &'static str,
   pct: u8,
 }
 
 #[derive(Clone, Copy)]
 struct Tier {
   hc: fn() -> iced::Color,
-  name: &'static str,
+  name_key: &'static str,
   off: fn() -> iced::Color,
   target: &'static str,
-  usage: &'static str,
+  usage_key: &'static str,
 }
 
 fn clamp_scale(scale: u8) -> u8 {
@@ -122,15 +121,15 @@ pub fn update(_state: &mut State, message: Message, settings: &mut Settings) -> 
 
 pub fn badge(settings: &Settings) -> String {
   let scale = clamp_scale(*settings.accessibility().scale());
-  let mut badge = if preset_for(scale).is_some() {
-    format!("{scale}%")
-  } else {
-    format!("{scale}% \u{00b7} custom")
+  let is_preset = preset_for(scale).is_some();
+  let high_contrast = *settings.accessibility().high_contrast();
+  let key = match (is_preset, high_contrast) {
+    (true, false) => "settings.accessibility.badge_preset",
+    (true, true) => "settings.accessibility.badge_preset_hc",
+    (false, false) => "settings.accessibility.badge_custom",
+    (false, true) => "settings.accessibility.badge_custom_hc",
   };
-  if *settings.accessibility().high_contrast() {
-    badge.push_str(" \u{00b7} HC");
-  }
-  badge
+  t!(key, scale => scale).into_owned()
 }
 
 pub fn view<'a>(_state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
@@ -144,17 +143,14 @@ pub fn view<'a>(_state: &'a State, settings: &'a Settings) -> Element<'a, Messag
 }
 
 fn panel_header<'a>() -> Element<'a, Message> {
-  let title = text("Accessibility")
+  let title = text(t!("settings.accessibility.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Make Pod easier to read. Interface scale applies live across every window \u{2014} no restart \
-      needed.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.accessibility.blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -176,18 +172,22 @@ fn panel_body(settings: &Settings) -> Element<'_, Message> {
   let high_contrast = *settings.accessibility().high_contrast();
 
   let section = section_head(
-    "Interface scale",
-    "Scales layout and text together. M (100%) is the default; the range spans 85% to 150%.",
-    "Applies live \u{00b7} all windows",
+    super::i18n::tr_static("settings.accessibility.scale_section_label"),
+    super::i18n::tr_static("settings.accessibility.scale_section_note"),
+    super::i18n::tr_static("settings.accessibility.scale_section_chip"),
   );
   let presets = scale_presets(scale);
   let readout = scale_readout(scale);
   let fine = fine_scale(scale);
 
   let contrast_head = section_head(
-    "Contrast",
-    "One alternate palette behind a single toggle. Targets: Lc 75 body, Lc 60 secondary.",
-    if high_contrast { "On" } else { "Off" },
+    super::i18n::tr_static("settings.accessibility.contrast_section_label"),
+    super::i18n::tr_static("settings.accessibility.contrast_section_note"),
+    if high_contrast {
+      super::i18n::tr_static("settings.accessibility.contrast_chip_on")
+    } else {
+      super::i18n::tr_static("settings.accessibility.contrast_chip_off")
+    },
   );
   let contrast_toggle = contrast_toggle_row(high_contrast);
   let contrast_preview = contrast_preview(high_contrast);
@@ -290,21 +290,17 @@ fn live_chip(label: &str) -> Element<'_, Message> {
 }
 
 fn contrast_toggle_row(high_contrast: bool) -> Element<'static, Message> {
-  let heading = text("High contrast")
+  let heading = text(t!("settings.accessibility.high_contrast_heading").into_owned())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
   let title = Row::with_children(vec![heading.into(), apca_tag()])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2_5);
-  let blurb = text(
-    "Swaps the three secondary text tiers \u{2014} secondary, tertiary, and dim \u{2014} from \
-      reduced-opacity overlays to solid, tuned values, and firms up surface borders. Primary text \
-      and the dark theme are unchanged.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.accessibility.high_contrast_blurb").into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::SPACE_2)
     .width(Length::Fill);
@@ -320,7 +316,7 @@ fn contrast_toggle_row(high_contrast: bool) -> Element<'static, Message> {
 }
 
 fn apca_tag() -> Element<'static, Message> {
-  let label = text("APCA")
+  let label = text(t!("settings.accessibility.apca_tag").into_owned())
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS)
     .style(typography::colored(color::accent::PLASMA));
@@ -385,7 +381,7 @@ fn preview_header_row() -> Element<'static, Message> {
   };
 
   let tier = container(
-    text("Tier")
+    text(t!("settings.accessibility.preview_col_tier").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary())),
@@ -394,9 +390,21 @@ fn preview_header_row() -> Element<'static, Message> {
 
   let row = Row::with_children(vec![
     tier.into(),
-    heading("Today", Horizontal::Left).into(),
-    heading("High contrast", Horizontal::Left).into(),
-    heading("APCA", Horizontal::Right).into(),
+    heading(
+      super::i18n::tr_static("settings.accessibility.preview_col_today"),
+      Horizontal::Left,
+    )
+    .into(),
+    heading(
+      super::i18n::tr_static("settings.accessibility.preview_col_high_contrast"),
+      Horizontal::Left,
+    )
+    .into(),
+    heading(
+      super::i18n::tr_static("settings.accessibility.preview_col_apca"),
+      Horizontal::Right,
+    )
+    .into(),
   ])
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_3)
@@ -418,11 +426,11 @@ fn preview_header_row() -> Element<'static, Message> {
 }
 
 fn preview_tier_row(tier: Tier, high_contrast: bool) -> Element<'static, Message> {
-  let name = text(tier.name)
+  let name = text(super::i18n::tr_static(tier.name_key))
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let usage = text(tier.usage)
+  let usage = text(super::i18n::tr_static(tier.usage_key))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -430,14 +438,14 @@ fn preview_tier_row(tier: Tier, high_contrast: bool) -> Element<'static, Message
     .width(Length::Fixed(TIER_COLUMN_WIDTH));
 
   let today = container(
-    text(PREVIEW_SAMPLE)
+    text(super::i18n::tr_static("settings.accessibility.preview_sample"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored((tier.off)())),
   )
   .width(Length::Fill);
   let hc = container(
-    text(PREVIEW_SAMPLE)
+    text(super::i18n::tr_static("settings.accessibility.preview_sample"))
       .font(if high_contrast {
         typography::body::MEDIUM
       } else {
@@ -493,7 +501,7 @@ fn preview_tier_row(tier: Tier, high_contrast: bool) -> Element<'static, Message
 }
 
 fn preview_swatch_row(high_contrast: bool) -> Element<'static, Message> {
-  let caption = text("Surface edges")
+  let caption = text(t!("settings.accessibility.preview_surface_edges").into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
@@ -577,11 +585,11 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
     color::text::secondary()
   };
 
-  let label = text(preset.label)
+  let label = text(super::i18n::tr_static(preset.label_key))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(label_color));
-  let pct = text(format!("{}%", preset.pct))
+  let pct = text(t!("settings.accessibility.percent", scale => preset.pct).into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(pct_color));
@@ -594,7 +602,7 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
       color::text::tertiary()
     };
     stack.push(
-      text("Default")
+      text(t!("settings.accessibility.preset_default").into_owned())
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(default_color))
@@ -642,15 +650,17 @@ fn preset_cell(preset: Preset, active: bool) -> Element<'static, Message> {
 
 fn scale_readout(scale: u8) -> Element<'static, Message> {
   let caption = match preset_for(scale) {
-    Some(preset) => format!("{} preset", preset.label),
-    None => "custom (between steps)".to_owned(),
+    Some(preset) => {
+      t!("settings.accessibility.readout_preset", label => super::i18n::tr_static(preset.label_key)).into_owned()
+    }
+    None => t!("settings.accessibility.readout_custom").into_owned(),
   };
 
-  let now = text("Now:")
+  let now = text(t!("settings.accessibility.readout_now").into_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::tertiary()));
-  let value = text(format!("{scale}%"))
+  let value = text(t!("settings.accessibility.percent", scale => scale).into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
@@ -673,11 +683,11 @@ fn scale_readout(scale: u8) -> Element<'static, Message> {
 fn fine_scale(scale: u8) -> Element<'static, Message> {
   let preset = preset_for(scale);
 
-  let heading = text("Fine scale")
+  let heading = text(t!("settings.accessibility.fine_scale_heading").into_owned())
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let hint = text("Land between presets \u{00b7} 1% steps")
+  let hint = text(t!("settings.accessibility.fine_scale_hint").into_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -685,7 +695,7 @@ fn fine_scale(scale: u8) -> Element<'static, Message> {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let value = text(format!("{scale}%"))
+  let value = text(t!("settings.accessibility.percent", scale => scale).into_owned())
     .font(typography::mono::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
@@ -695,8 +705,10 @@ fn fine_scale(scale: u8) -> Element<'static, Message> {
     color::status::WARNING
   };
   let caption = text(match preset {
-    Some(preset) => format!("{} preset", preset.label),
-    None => "Custom".to_owned(),
+    Some(preset) => {
+      t!("settings.accessibility.readout_preset", label => super::i18n::tr_static(preset.label_key)).into_owned()
+    }
+    None => t!("settings.accessibility.fine_scale_custom").into_owned(),
   })
   .font(typography::mono::REGULAR)
   .size(typography::size::XS)
@@ -769,7 +781,7 @@ fn tick_mark(preset: Preset, active: bool) -> Element<'static, Message> {
       })),
       ..container::Style::default()
     });
-  let label = text(preset.label)
+  let label = text(super::i18n::tr_static(preset.label_key))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(if active {
@@ -803,6 +815,7 @@ mod tests {
 
     #[test]
     fn it_appends_an_hc_suffix_when_high_contrast_is_on() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_high_contrast(true);
 
@@ -811,6 +824,7 @@ mod tests {
 
     #[test]
     fn it_appends_the_hc_suffix_after_a_custom_scale() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(112);
       settings.accessibility_mut().set_high_contrast(true);
@@ -820,6 +834,7 @@ mod tests {
 
     #[test]
     fn it_marks_a_non_preset_value_as_custom() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(112);
 
@@ -828,6 +843,7 @@ mod tests {
 
     #[test]
     fn it_reports_a_bare_percentage_for_a_preset_value() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(125);
 
@@ -836,6 +852,8 @@ mod tests {
 
     #[test]
     fn it_reports_the_default_scale_as_a_preset() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
+
       assert_eq!(badge(&Settings::default()), "100%");
     }
   }
@@ -848,7 +866,10 @@ mod tests {
     #[test]
     fn it_matches_each_preset_percentage() {
       for preset in PRESETS {
-        assert_eq!(super::preset_for(preset.pct).map(|p| p.label), Some(preset.label));
+        assert_eq!(
+          super::preset_for(preset.pct).map(|p| p.label_key),
+          Some(preset.label_key)
+        );
       }
     }
 

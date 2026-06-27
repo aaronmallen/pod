@@ -14,8 +14,6 @@ const PANEL_SIDE_PADDING: f32 = 36.0;
 const NOTICE_MAX_WIDTH: f32 = 620.0;
 const SUPPORT_BLURB_MAX_WIDTH: f32 = 620.0;
 
-const SUPPORT_BLURB: &str = "Pod is free and open source, built in my spare time. If it's useful to you, \
-  consider supporting its development.";
 const SUPPORT_URL: &str = "https://pod.aaronmallen.dev/#support";
 const WEBSITE_LABEL: &str = "pod.aaronmallen.dev";
 const WEBSITE_URL: &str = "https://pod.aaronmallen.dev";
@@ -25,19 +23,15 @@ const BUILD_DATE: &str = env!("POD_BUILD_DATE");
 const GIT_SHA: &str = env!("POD_GIT_SHA");
 
 /// The EVE Online Developer License trademark/attribution notice, required on a user-visible
-/// surface. Defined once here as the single source of truth for the in-app "About" tab.
-pub const TRADEMARK_NOTICE: &str = "EVE Online and the EVE logo are the registered trademarks of \
-  Fenris Creations (formerly CCP hf.). All rights reserved worldwide. All other trademarks are the \
-  property of their respective owners. EVE Online, the EVE logo, EVE and all associated logos and \
-  designs are the intellectual property of Fenris Creations. All artwork, screenshots, characters, \
-  vehicles, storylines, world facts or other recognizable features of the intellectual property \
-  relating to these trademarks are likewise the intellectual property of Fenris Creations. Fenris \
-  Creations has granted permission to Pod to use EVE Online and all associated logos and designs \
-  for promotional and information purposes but does not endorse, and is not in any way affiliated \
-  with, Pod. Fenris Creations is in no way responsible for the content on or functioning of this \
-  program, nor can it be liable for any damage arising from the use of this program.";
+/// surface. Resolved once from the active locale as the single source of truth for the in-app
+/// "About" tab.
+pub fn trademark_notice() -> &'static str {
+  super::i18n::tr_static("settings.about.trademark_notice")
+}
 
-pub const TRADEMARK_COPYRIGHT: &str = "\u{00a9} Fenris Creations. All rights reserved.";
+pub fn trademark_copyright() -> &'static str {
+  super::i18n::tr_static("settings.about.trademark_copyright")
+}
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -75,11 +69,11 @@ pub fn view<'a>() -> Element<'a, Message> {
 }
 
 fn panel_header<'a>() -> Element<'a, Message> {
-  let title = text("About")
+  let title = text(t!("settings.about.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text("Pod's identity and the EVE Online Developer License trademark notice.")
+  let blurb = text(t!("settings.about.blurb"))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::secondary()));
@@ -100,11 +94,11 @@ fn panel_header<'a>() -> Element<'a, Message> {
 }
 
 fn body<'a>() -> Element<'a, Message> {
-  let name = text("Pod")
+  let name = text(t!("settings.about.app_name"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let version = text(format!("v{VERSION}"))
+  let version = text(t!("settings.about.version", version => VERSION))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -112,12 +106,12 @@ fn body<'a>() -> Element<'a, Message> {
     .align_y(Vertical::Bottom)
     .spacing(spacing::SPACE_2);
 
-  let build_info = text(format!("Build {GIT_SHA} \u{00b7} {BUILD_DATE}"))
+  let build_info = text(t!("settings.about.build", sha => GIT_SHA, date => BUILD_DATE))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::tertiary()));
 
-  let license = text("MIT License")
+  let license = text(t!("settings.about.license"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::tertiary()));
@@ -132,14 +126,14 @@ fn body<'a>() -> Element<'a, Message> {
   .width(Length::Fill);
 
   let notice = container(
-    text(TRADEMARK_NOTICE)
+    text(trademark_notice())
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary())),
   )
   .max_width(NOTICE_MAX_WIDTH);
 
-  let copyright = text(TRADEMARK_COPYRIGHT)
+  let copyright = text(trademark_copyright())
     .font(typography::body::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::tertiary()));
@@ -172,13 +166,13 @@ fn body<'a>() -> Element<'a, Message> {
 }
 
 fn support_section<'a>() -> Element<'a, Message> {
-  let heading = text("Support Pod")
+  let heading = text(t!("settings.about.support_heading"))
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
 
   let blurb = container(
-    text(SUPPORT_BLURB)
+    text(t!("settings.about.support_blurb"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary())),
@@ -197,7 +191,7 @@ fn support_link<'a>() -> Element<'a, Message> {
       .size(typography::size::MD)
       .color(color::accent::PLASMA)
       .render(),
-    text("Support Pod")
+    text(t!("settings.about.support_link"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::accent::PLASMA))
@@ -244,9 +238,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_defines_the_shared_trademark_constants() {
-      assert!(TRADEMARK_NOTICE.contains("Fenris Creations"));
-      assert!(TRADEMARK_COPYRIGHT.contains("Fenris Creations"));
+    fn it_resolves_the_shared_trademark_strings() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
+
+      assert!(trademark_notice().contains("Fenris Creations"));
+      assert!(trademark_copyright().contains("Fenris Creations"));
     }
   }
 

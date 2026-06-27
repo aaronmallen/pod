@@ -159,8 +159,8 @@ fn swap(settings: &mut Settings, a: usize, b: usize) -> Outcome {
 
 pub fn badge(settings: &Settings) -> String {
   match settings.ui().nav_location() {
-    NavLocation::Left => "Left".to_owned(),
-    NavLocation::Right => "Right".to_owned(),
+    NavLocation::Left => t!("settings.ui.nav_location_left").into_owned(),
+    NavLocation::Right => t!("settings.ui.nav_location_right").into_owned(),
   }
 }
 
@@ -185,17 +185,14 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
 }
 
 fn header<'a>() -> Element<'a, Message> {
-  let title = text("User Interface")
+  let title = text(t!("settings.ui.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Choose which side the navigation rail sits on and the order its icons appear in. Changes apply \
-      live across every Pod view.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.ui.blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -214,22 +211,22 @@ fn header<'a>() -> Element<'a, Message> {
 
 fn body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   let side_head = section_head(
-    "Rail side",
-    "Which edge of the workspace the navigation rail is docked to.",
-    live_chip("Applies live \u{00b7} all views"),
+    super::i18n::tr_static("settings.ui.rail_side_label"),
+    super::i18n::tr_static("settings.ui.rail_side_note"),
+    live_chip(super::i18n::tr_static("settings.ui.applies_live")),
   );
   let side_cards = side_cards(settings);
 
   let cascade_head = section_head(
-    "Rail cascade",
-    "How a view\u{2019}s sub-sections surface from the rail. Flyout pops them on hover; off keeps a plain rail.",
-    live_chip("Applies live \u{00b7} all views"),
+    super::i18n::tr_static("settings.ui.rail_cascade_label"),
+    super::i18n::tr_static("settings.ui.rail_cascade_note"),
+    live_chip(super::i18n::tr_static("settings.ui.applies_live")),
   );
   let cascade_cards = cascade_cards(settings);
 
   let order_head = section_head(
-    "Icon order",
-    "Drag a row \u{2014} or use the arrows \u{2014} to reorder the rail. Settings stays pinned at the end.",
+    super::i18n::tr_static("settings.ui.icon_order_label"),
+    super::i18n::tr_static("settings.ui.icon_order_note"),
     reset_button(settings),
   );
   let order_list = order_list(state, settings);
@@ -322,10 +319,13 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
     .width(Length::Fill)
     .height(Length::Fixed(PREVIEW_HEIGHT));
 
-  let label = text(match side {
-    NavLocation::Left => "Left",
-    NavLocation::Right => "Right",
-  })
+  let label = text(
+    match side {
+      NavLocation::Left => t!("settings.ui.nav_location_left"),
+      NavLocation::Right => t!("settings.ui.nav_location_right"),
+    }
+    .into_owned(),
+  )
   .font(typography::body::MEDIUM)
   .size(typography::size::MD)
   .style(typography::colored(if selected {
@@ -410,9 +410,9 @@ fn cascade_card<'a>(mode: CascadeMode, selected: bool) -> Element<'a, Message> {
 
 fn cascade_note(mode: CascadeMode) -> &'static str {
   match mode {
-    CascadeMode::Flyout => "Hover pops sub-sections out",
-    CascadeMode::None => "Plain rail, no cascade",
-    CascadeMode::SubRail => "A pinned second column",
+    CascadeMode::Flyout => super::i18n::tr_static("settings.ui.cascade_note_flyout"),
+    CascadeMode::None => super::i18n::tr_static("settings.ui.cascade_note_none"),
+    CascadeMode::SubRail => super::i18n::tr_static("settings.ui.cascade_note_sub_rail"),
   }
 }
 
@@ -550,7 +550,7 @@ fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
 
 fn reset_button(settings: &Settings) -> Element<'_, Message> {
   let enabled = !is_default_order(settings);
-  let label = text("Reset order")
+  let label = text(t!("settings.ui.reset_order"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(if enabled {

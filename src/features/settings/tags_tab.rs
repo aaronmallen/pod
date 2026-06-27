@@ -121,9 +121,9 @@ impl SortMode {
 
   fn label(self) -> &'static str {
     match self {
-      SortMode::Manual => "Manual",
-      SortMode::Name => "A to Z",
-      SortMode::Color => "Color",
+      SortMode::Manual => super::i18n::tr_static("settings.tags.sort_manual"),
+      SortMode::Name => super::i18n::tr_static("settings.tags.sort_name"),
+      SortMode::Color => super::i18n::tr_static("settings.tags.sort_color"),
     }
   }
 }
@@ -667,16 +667,14 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
     Registry::Entity => section_block(
       &state.entity,
       &ENTITY_MSGS,
-      "Tags",
-      "Assign a color to any tag and it'll render that way everywhere it appears on a character card. \
-        Drag rows to reorder; tags use their manual order on character cards.",
+      super::i18n::tr_static("settings.tags.entity_title"),
+      super::i18n::tr_static("settings.tags.entity_blurb"),
     ),
     Registry::Asset => section_block(
       &state.asset,
       &ASSET_MSGS,
-      "Asset tags",
-      "A separate vocabulary for tagging assets \u{2014} keep, sell, reprocess, and the rest. \
-        These never mix with the character tags. Drag rows to reorder.",
+      super::i18n::tr_static("settings.tags.asset_title"),
+      super::i18n::tr_static("settings.tags.asset_blurb"),
     ),
   };
 
@@ -711,8 +709,18 @@ const TAB_STRIP_HEIGHT: f32 = 44.0;
 // never mix, so only the active registry's section renders below.
 fn registry_tabs(state: &State) -> Element<'_, Message> {
   let tabs = vec![
-    registry_tab("Tags", state.entity.tags.len(), Registry::Entity, state.active),
-    registry_tab("Asset tags", state.asset.tags.len(), Registry::Asset, state.active),
+    registry_tab(
+      super::i18n::tr_static("settings.tags.entity_title"),
+      state.entity.tags.len(),
+      Registry::Entity,
+      state.active,
+    ),
+    registry_tab(
+      super::i18n::tr_static("settings.tags.asset_title"),
+      state.asset.tags.len(),
+      Registry::Asset,
+      state.active,
+    ),
   ];
 
   let strip = container(tab_select_with(tabs, TabLayout::Start))
@@ -792,14 +800,17 @@ fn create_row<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> 
         .size(typography::size::MD)
         .style(typography::colored(color::accent::PLASMA))
         .into(),
-      text_input("Create a tag\u{2026}", &section.new_tag)
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .padding(Padding::ZERO)
-        .on_input(msgs.new_tag_changed)
-        .on_submit((msgs.add_tag)())
-        .style(plain_input_style)
-        .into(),
+      text_input(
+        super::i18n::tr_static("settings.tags.create_placeholder"),
+        &section.new_tag,
+      )
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .padding(Padding::ZERO)
+      .on_input(msgs.new_tag_changed)
+      .on_submit((msgs.add_tag)())
+      .style(plain_input_style)
+      .into(),
     ])
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center),
@@ -815,7 +826,7 @@ fn create_row<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> 
   .style(sunken_well_style);
 
   let add = button(
-    text("Add")
+    text(t!("settings.tags.add"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(if can_add {
@@ -887,27 +898,39 @@ fn sort_selector<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Messag
 }
 
 fn filter_field<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> {
-  TextInput::new("Filter\u{2026}", &section.query, msgs.filter_changed)
-    .leading_icon(Icon::search())
-    .background(color::surface::SUNKEN)
-    .font_size(typography::size::MD)
-    .width(Length::Fixed(180.0))
-    .render()
+  TextInput::new(
+    super::i18n::tr_static("settings.tags.filter_placeholder"),
+    &section.query,
+    msgs.filter_changed,
+  )
+  .leading_icon(Icon::search())
+  .background(color::surface::SUNKEN)
+  .font_size(typography::size::MD)
+  .width(Length::Fixed(180.0))
+  .render()
 }
 
 fn meta_strip(section: &Section) -> Element<'_, Message> {
   let colored = section.tags.iter().filter(|t| t.color().is_some()).count();
   let mut children: Vec<Element<'_, Message>> = vec![
-    meta_count(section.tags.len(), "TAGS", color::text::secondary()),
+    meta_count(
+      section.tags.len(),
+      super::i18n::tr_static("settings.tags.meta_tags"),
+      color::text::secondary(),
+    ),
     dot(),
-    meta_count(colored, "COLORED", color::accent::PLASMA),
+    meta_count(
+      colored,
+      super::i18n::tr_static("settings.tags.meta_colored"),
+      color::accent::PLASMA,
+    ),
   ];
 
   if !section.draggable() {
     let hint = if section.query.trim().is_empty() {
-      "Reorder disabled in sorted view"
+      super::i18n::tr_static("settings.tags.reorder_disabled_sorted")
     } else {
-      "Reorder disabled while filtering"
+      super::i18n::tr_static("settings.tags.reorder_disabled_filtering")
     };
     children.push(dot());
     children.push(
@@ -951,9 +974,9 @@ fn list<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> {
   let visible = section.visible();
   let body: Element<'a, Message> = if visible.is_empty() {
     let copy = if section.query.trim().is_empty() {
-      "No tags yet. Create one above.".to_owned()
+      t!("settings.tags.empty").into_owned()
     } else {
-      format!("No tags match \u{201C}{}\u{201D}.", section.query.trim())
+      t!("settings.tags.empty_filtered", query => section.query.trim()).into_owned()
     };
     container(
       text(copy)

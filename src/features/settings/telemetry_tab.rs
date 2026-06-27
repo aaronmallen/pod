@@ -41,48 +41,45 @@ use crate::{
 
 const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
-const PANEL_BLURB: &str = "Pod can send anonymous, aggregate usage data so we know what to build next and can catch \
-  crashes in the wild. It is entirely optional \u{2014} flip the switch off and nothing leaves your machine, ever. \
-  No account, no profile, no names.";
 const PREVIEW_MAX_WIDTH: f32 = 660.0;
 const SAMPLE_SESSION: &str = "s_1a2b3c4d";
 const SAMPLE_SENT_AT: &str = "2026-06-25T14:32:08Z";
 
 /// The four toggleable streams, in render order. Each maps to a
-/// [`crate::config::TelemetryConfig`] flag and a row of explanatory copy.
+/// [`crate::config::TelemetryConfig`] flag and a row of explanatory copy. The
+/// `title`/`desc` fields are i18n keys, resolved to localized text at render.
 const STREAMS: [Stream; 4] = [
   Stream {
     id: StreamId::Usage,
-    title: "Usage events",
-    desc: "Which views you open and which feature toggles you flip \u{2014} names and counts only, never the \
-      contents of any view.",
+    title: "settings.telemetry.stream_usage_title",
+    desc: "settings.telemetry.stream_usage_desc",
   },
   Stream {
     id: StreamId::Performance,
-    title: "Performance metrics",
-    desc: "View load times, render timing, and memory headroom. Helps us find and fix the slow paths.",
+    title: "settings.telemetry.stream_performance_title",
+    desc: "settings.telemetry.stream_performance_desc",
   },
   Stream {
     id: StreamId::Crashes,
-    title: "Crash reports",
-    desc: "Stack traces and the surrounding log lines when Pod hits an unhandled error. Paths are stripped to \
-      the app root.",
+    title: "settings.telemetry.stream_crashes_title",
+    desc: "settings.telemetry.stream_crashes_desc",
   },
   Stream {
     id: StreamId::Environment,
-    title: "Environment",
-    desc: "Operating system, Pod version, display resolution, and locale \u{2014} the spread we test against.",
+    title: "settings.telemetry.stream_environment_title",
+    desc: "settings.telemetry.stream_environment_desc",
   },
 ];
 
 /// The hard trust boundary: data the pipeline can never transmit, on or off.
+/// These are i18n keys, resolved to localized text at render.
 const NEVER_COLLECTED: [&str; 6] = [
-  "Character, corp, or alliance names",
-  "ESI tokens, API keys, or the MCP bearer token",
-  "Wallet balances, transactions, or any ISK figure",
-  "Mail subjects, bodies, or recipients",
-  "Asset contents, fittings, or locations",
-  "Your IP address \u{2014} dropped at ingest, never stored",
+  "settings.telemetry.never_names",
+  "settings.telemetry.never_tokens",
+  "settings.telemetry.never_isk",
+  "settings.telemetry.never_mail",
+  "settings.telemetry.never_assets",
+  "settings.telemetry.never_ip",
 ];
 
 /// One toggleable telemetry stream.
@@ -118,8 +115,10 @@ impl StreamId {
 }
 
 struct Stream {
+  /// i18n key for the stream's description copy.
   desc: &'static str,
   id: StreamId,
+  /// i18n key for the stream's title.
   title: &'static str,
 }
 
@@ -162,9 +161,9 @@ pub fn update(_state: &mut State, message: Message, settings: &mut Settings) -> 
 /// The rail badge: a live `Sharing` / `Off` indicator off the master switch.
 pub fn badge(settings: &Settings) -> String {
   if *settings.telemetry().enabled() {
-    "Sharing".to_owned()
+    t!("settings.telemetry.status_sharing").into_owned()
   } else {
-    "Off".to_owned()
+    t!("settings.telemetry.status_off").into_owned()
   }
 }
 
@@ -249,11 +248,11 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
 }
 
 fn panel_header(settings: &Settings) -> Element<'_, Message> {
-  let title = text("Telemetry")
+  let title = text(t!("settings.telemetry.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(PANEL_BLURB)
+  let blurb = text(t!("settings.telemetry.panel_blurb"))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::secondary()));
@@ -281,9 +280,15 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
 fn share_badge(settings: &Settings) -> Element<'_, Message> {
   let on = *settings.telemetry().enabled();
   let (fg, label) = if on {
-    (color::status::ONLINE, "Sharing")
+    (
+      color::status::ONLINE,
+      super::i18n::tr_static("settings.telemetry.status_sharing"),
+    )
   } else {
-    (color::text::secondary(), "Off")
+    (
+      color::text::secondary(),
+      super::i18n::tr_static("settings.telemetry.status_off"),
+    )
   };
 
   let dot = container(iced::widget::Space::new())
@@ -330,14 +335,14 @@ fn scroll_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
 
   let mut children: Vec<Element<'a, Message>> = vec![
     section_head(
-      "Sharing",
-      "The master switch. With it off, nothing is collected, batched, or sent \u{2014} the streams below go inert.",
+      super::i18n::tr_static("settings.telemetry.section_sharing"),
+      super::i18n::tr_static("settings.telemetry.section_sharing_note"),
       Some(Icon::pulse()),
     ),
     master_row(settings),
     section_head(
-      "Data streams",
-      "Fine-tune exactly what gets sent. Turn off any single stream and it is excluded from every batch \u{2014} the sample below updates to match.",
+      super::i18n::tr_static("settings.telemetry.section_streams"),
+      super::i18n::tr_static("settings.telemetry.section_streams_note"),
       None,
     ),
   ];
@@ -345,20 +350,20 @@ fn scroll_body<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
     children.push(stream_row(stream, on, settings));
   }
   children.push(section_head(
-    "Never collected",
-    "The hard boundary of what the pipeline can transmit. These hold whether telemetry is on or off.",
+    super::i18n::tr_static("settings.telemetry.section_never_collected"),
+    super::i18n::tr_static("settings.telemetry.section_never_collected_note"),
     Some(Icon::shield()),
   ));
   children.push(never_collected_card());
   children.push(section_head(
-    "What gets sent",
-    "The exact JSON batch Pod would post right now, reflecting your stream choices above. Nothing more, nothing hidden.",
+    super::i18n::tr_static("settings.telemetry.section_what_gets_sent"),
+    super::i18n::tr_static("settings.telemetry.section_what_gets_sent_note"),
     Some(Icon::upload()),
   ));
   children.push(sample_card(state, settings));
   children.push(section_head(
-    "Anonymous identifier",
-    "A content-free sha256 handle so repeat sessions group together. It names nothing about you, and it cannot be reset \u{2014} it is derived from this install, never stored.",
+    super::i18n::tr_static("settings.telemetry.section_anonymous_identifier"),
+    super::i18n::tr_static("settings.telemetry.section_anonymous_identifier_note"),
     Some(Icon::block()),
   ));
   children.push(id_card(state));
@@ -417,16 +422,14 @@ fn section_head<'a>(label: &'a str, note: &'a str, glyph: Option<Icon>) -> Eleme
 
 fn master_row(settings: &Settings) -> Element<'_, Message> {
   let on = *settings.telemetry().enabled();
-  let title = text("Share anonymous usage data")
+  let title = text(t!("settings.telemetry.master_title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let desc = text(
-    "On by default. Turn it off to opt out completely \u{2014} your choice is remembered and applies across every Pod window.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let desc = text(t!("settings.telemetry.master_desc"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   let labels = Column::with_children(vec![
     title.into(),
     container(desc).max_width(DESCRIPTION_MAX_WIDTH).into(),
@@ -466,11 +469,11 @@ fn master_row(settings: &Settings) -> Element<'_, Message> {
 
 fn stream_row<'a>(stream: &'a Stream, master_on: bool, settings: &'a Settings) -> Element<'a, Message> {
   let on = stream.id.is_on(settings);
-  let title = text(stream.title)
+  let title = text(super::i18n::tr_static(stream.title))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let desc = text(stream.desc)
+  let desc = text(super::i18n::tr_static(stream.desc))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
@@ -508,7 +511,7 @@ fn never_collected_card<'a>() -> Element<'a, Message> {
   let rows: Vec<Element<'a, Message>> = NEVER_COLLECTED
     .iter()
     .map(|item| {
-      let label = text(*item)
+      let label = text(super::i18n::tr_static(item))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY));
@@ -544,7 +547,7 @@ fn never_collected_card<'a>() -> Element<'a, Message> {
 
 fn sample_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   let on = *settings.telemetry().enabled();
-  let eyebrow = text("POST \u{00b7} sample batch")
+  let eyebrow = text(t!("settings.telemetry.sample_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::secondary()));
@@ -576,7 +579,7 @@ fn sample_card<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mess
 }
 
 fn id_card(state: &State) -> Element<'_, Message> {
-  let eyebrow = text("Install id")
+  let eyebrow = text(t!("settings.telemetry.id_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::secondary()));
@@ -584,12 +587,10 @@ fn id_card(state: &State) -> Element<'_, Message> {
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let note = text(
-    "Read-only. This handle is derived from your install \u{2014} it cannot be reset and is never stored on disk.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let note = text(t!("settings.telemetry.id_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
 
   let body = Column::with_children(vec![
     eyebrow.into(),
@@ -629,11 +630,15 @@ mod tests {
 
     #[test]
     fn it_reads_sharing_when_enabled() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
+
       assert_eq!(badge(&Settings::default()), "Sharing");
     }
 
     #[test]
     fn it_reads_off_when_the_master_is_disabled() {
+      crate::i18n::set_locale(crate::i18n::Language::En);
+
       let mut settings = Settings::default();
       settings.telemetry_mut().set_enabled(false);
 

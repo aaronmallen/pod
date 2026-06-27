@@ -15,8 +15,6 @@ use crate::{
 
 const CHILD_INDENT: f32 = spacing::SPACE_6;
 const DESCRIPTION_MAX_WIDTH: f32 = 560.0;
-const PANEL_BLURB: &str = "Toggle individual Pod capabilities on or off. Changes apply live across every window and your \
-  linked characters \u{2014} no restart.";
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const SEARCH_MAX_WIDTH: f32 = 480.0;
 
@@ -341,11 +339,11 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
 }
 
 fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
-  let title = text("Features")
+  let title = text(t!("settings.features.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(PANEL_BLURB)
+  let blurb = text(t!("settings.features.panel_blurb"))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::secondary()));
@@ -395,12 +393,16 @@ fn panel_header<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
 }
 
 fn search_well(state: &State) -> Element<'_, Message> {
-  let input = TextInput::new("Filter features\u{2026}", &state.query, Message::SearchChanged)
-    .input_id(crate::features::shell::focus_search::settings_search_id())
-    .leading_icon(Icon::search())
-    .background(color::surface::SUNKEN)
-    .font_size(typography::size::MD)
-    .render();
+  let input = TextInput::new(
+    super::i18n::tr_static("settings.features.search_placeholder"),
+    &state.query,
+    Message::SearchChanged,
+  )
+  .input_id(crate::features::shell::focus_search::settings_search_id())
+  .leading_icon(Icon::search())
+  .background(color::surface::SUNKEN)
+  .font_size(typography::size::MD)
+  .render();
 
   container(input).width(Length::Fill).max_width(SEARCH_MAX_WIDTH).into()
 }
@@ -494,9 +496,9 @@ fn master_row<'a>(group: Group, state: GroupState) -> Element<'a, Message> {
 
 fn master_status(group: GroupState) -> &'static str {
   match group {
-    GroupState::Empty => "Off",
-    GroupState::Full => "On",
-    GroupState::Partial => "Some on",
+    GroupState::Empty => super::i18n::tr_static("settings.features.status_off"),
+    GroupState::Full => super::i18n::tr_static("settings.features.status_on"),
+    GroupState::Partial => super::i18n::tr_static("settings.features.status_partial"),
   }
 }
 
@@ -519,7 +521,7 @@ fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Mess
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
   let description = text(if locked {
-    "Enable Journal or Market Transactions to use Budget."
+    super::i18n::tr_static("settings.features.budget_locked")
   } else {
     entry.description
   })
@@ -555,7 +557,7 @@ fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Mess
 }
 
 fn no_matches(query: &str) -> Element<'_, Message> {
-  empty_state::empty_state("No features match this search.")
+  empty_state::empty_state(super::i18n::tr_static("settings.features.empty_title"))
     .subtitle(query)
     .render()
 }
@@ -957,12 +959,15 @@ mod tests {
 
   #[test]
   fn the_panel_blurb_describes_live_behavior_not_a_restart() {
+    crate::i18n::set_locale(crate::i18n::Language::En);
+    let blurb = crate::features::settings::i18n::tr_static("settings.features.panel_blurb");
+
     assert!(
-      PANEL_BLURB.contains("live") && PANEL_BLURB.contains("no restart"),
+      blurb.contains("live") && blurb.contains("no restart"),
       "the features blurb must reflect the live toggle behavior"
     );
     assert!(
-      !PANEL_BLURB.contains("next restart"),
+      !blurb.contains("next restart"),
       "the stale 'applies on next restart' copy must be gone"
     );
   }

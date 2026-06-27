@@ -76,20 +76,17 @@ impl PathKind {
 
   fn description(self) -> &'static str {
     match self {
-      PathKind::Cache => "Portraits, item icons, and other ESI image cache. Safe to clear; rebuilt on demand.",
-      PathKind::Database => {
-        "The canonical SQLite database holding character cache, mail bodies, market snapshots, and skill \
-          plans. Point this at a shared volume to use the same data across machines."
-      }
-      PathKind::Log => "Rolling structured logs from the daemon and UI. Rotated daily; retains 5 daily files.",
+      PathKind::Cache => super::i18n::tr_static("settings.storage.cache_description"),
+      PathKind::Database => super::i18n::tr_static("settings.storage.database_description"),
+      PathKind::Log => super::i18n::tr_static("settings.storage.log_description"),
     }
   }
 
   fn label(self) -> &'static str {
     match self {
-      PathKind::Cache => "Pod Cache",
-      PathKind::Database => "Shared data location",
-      PathKind::Log => "Pod Logs",
+      PathKind::Cache => super::i18n::tr_static("settings.storage.cache_label"),
+      PathKind::Database => super::i18n::tr_static("settings.storage.database_label"),
+      PathKind::Log => super::i18n::tr_static("settings.storage.log_label"),
     }
   }
 
@@ -301,12 +298,14 @@ fn begin_change(kind: PathKind, to: PathBuf, settings: &mut Settings) -> Result<
   match decide(&from, &to) {
     Decision::NoChange => Ok(None),
     Decision::Repoint => {
-      ensure_writable(&to).map_err(|error| format!("Can't use {}: {error}", to.display()))?;
+      ensure_writable(&to)
+        .map_err(|error| t!("settings.storage.error_cant_use", path => to.display(), error => error).into_owned())?;
       commit_override(kind, to, settings);
       Ok(None)
     }
     Decision::Confirm => {
-      ensure_writable(&to).map_err(|error| format!("Can't use {}: {error}", to.display()))?;
+      ensure_writable(&to)
+        .map_err(|error| t!("settings.storage.error_cant_use", path => to.display(), error => error).into_owned())?;
       Ok(Some(PendingMove {
         kind,
         from,
@@ -338,11 +337,13 @@ fn finish_move(pending: PendingMove, state: &mut State, settings: &mut Settings)
   }
 
   relocate(&pending.from, &pending.to).map_err(|error| {
-    format!(
-      "Couldn't move {} → {}: {error}",
-      pending.from.display(),
-      pending.to.display()
+    t!(
+      "settings.storage.error_move_failed",
+      from => pending.from.display(),
+      to => pending.to.display(),
+      error => error
     )
+    .into_owned()
   })?;
   commit_override(pending.kind, pending.to, settings);
   Ok(())
@@ -539,7 +540,7 @@ fn reveal_log_dir(state: &mut State, settings: &Settings) -> Outcome {
   let dir = settings.storage().resolved_log_dir();
   let _ = fs::create_dir_all(&dir);
   if let Err(err) = open::that_detached(&dir) {
-    state.error = Some(format!("Couldn't open {}: {err}", dir.display()));
+    state.error = Some(t!("settings.storage.error_open_failed", path => dir.display(), error => err).into_owned());
   }
   Outcome::None
 }
@@ -589,8 +590,8 @@ fn pick_data_archive() -> Option<PathBuf> {
   #[cfg(not(test))]
   {
     rfd::FileDialog::new()
-      .set_title("Import data")
-      .add_filter("Zip archive", &["zip"])
+      .set_title(t!("settings.storage.import_data").into_owned())
+      .add_filter(t!("settings.storage.archive_filter").into_owned(), &["zip"])
       .pick_file()
   }
   #[cfg(test)]
@@ -603,13 +604,17 @@ fn pick_data_archive() -> Option<PathBuf> {
 /// modal renders. A missing/corrupt archive or a newer-major (incompatible) one is rejected with a
 /// clear message so the destructive confirm action is never offered for an archive Pod can't restore.
 fn validate_archive(path: &Path) -> Result<PendingImport, String> {
-  let bytes = fs::read(path).map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
+  let bytes = fs::read(path)
+    .map_err(|err| t!("settings.storage.error_read_failed", path => path.display(), error => err).into_owned())?;
   let parsed = data_export::read_archive(&bytes)?;
   if parsed.verdict == VersionVerdict::Incompatible {
-    return Err(format!(
-      "This archive was made by a newer Pod ({}); it can't be restored into this build.",
-      parsed.manifest.pod_version
-    ));
+    return Err(
+      t!(
+        "settings.storage.error_archive_newer",
+        version => parsed.manifest.pod_version
+      )
+      .into_owned(),
+    );
   }
   Ok(PendingImport {
     path: path.to_path_buf(),
@@ -619,7 +624,8 @@ fn validate_archive(path: &Path) -> Result<PendingImport, String> {
 }
 
 fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
-  let mut dialog = rfd::FileDialog::new().set_title(format!("Select {} folder", kind.label()));
+  let mut dialog =
+    rfd::FileDialog::new().set_title(t!("settings.storage.pick_folder_title", name => kind.label()).into_owned());
   let start = kind.resolved_dir(settings);
   if start.is_dir() {
     dialog = dialog.set_directory(&start);
@@ -634,9 +640,9 @@ pub fn badge(settings: &Settings) -> String {
     .filter(|override_| override_.is_some())
     .count();
   if customized == 0 {
-    "default".to_owned()
+    t!("settings.storage.badge_default").into_owned()
   } else {
-    format!("{customized} custom")
+    t!("settings.storage.badge_custom", count => customized).into_owned()
   }
 }
 
@@ -659,18 +665,14 @@ pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message
 }
 
 fn panel_header(settings: &Settings) -> Element<'_, Message> {
-  let title = text("Storage")
+  let title = text(t!("settings.storage.title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let blurb = text(
-    "Where Pod keeps its files on disk. Paths follow platform conventions by default. Change them \
-      to put Pod's data on a different volume or share it between installs. The daemon picks up \
-      changes on next launch.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let blurb = text(t!("settings.storage.blurb"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
   let identity = Column::with_children(vec![title.into(), blurb.into()])
     .spacing(spacing::UNIT)
     .width(Length::Fill);
@@ -699,10 +701,10 @@ fn customized_badge(settings: &Settings) -> Element<'_, Message> {
   let (dot_color, label) = if custom > 0 {
     (
       color::accent::PLASMA,
-      format!("{custom} of {} customized", PathKind::ALL.len()),
+      t!("settings.storage.customized_count", count => custom, total => PathKind::ALL.len()).into_owned(),
     )
   } else {
-    (color::status::ONLINE, "All defaults".to_owned())
+    (color::status::ONLINE, t!("settings.storage.all_defaults").into_owned())
   };
 
   Row::with_children(vec![
@@ -792,7 +794,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   .max_width(DESCRIPTION_MAX_WIDTH);
 
   let value = state.drafts.get(&kind).map(String::as_str).unwrap_or_default();
-  let field = text_input("Enter a folder path\u{2026}", value)
+  let field = text_input(super::i18n::tr_static("settings.storage.path_placeholder"), value)
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .padding(Padding {
@@ -807,7 +809,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     .style(path_input_style);
 
   let browse = button(
-    text("Browse\u{2026}")
+    text(t!("settings.storage.browse"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -816,7 +818,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   .style(control::ghost_button);
 
   let mut reset = button(
-    text("Default")
+    text(t!("settings.storage.default_button"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD),
   )
@@ -829,7 +831,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   let mut control_children: Vec<Element<'_, Message>> = vec![field.into(), browse.into()];
   if kind == PathKind::Log {
     let reveal = button(
-      text("Reveal\u{2026}")
+      text(t!("settings.storage.reveal"))
         .font(typography::body::MEDIUM)
         .size(typography::size::MD),
     )
@@ -849,7 +851,7 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
   let export_row: Option<Element<'_, Message>> = (kind == PathKind::Log).then(|| log_export_row(state));
 
   let footnote = Row::with_children(vec![
-    text("default")
+    text(t!("settings.storage.default_label"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::tertiary()))
@@ -899,7 +901,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
   ];
 
   let mut children: Vec<Element<'_, Message>> = vec![
-    text("Export logs")
+    text(t!("settings.storage.export_logs"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -922,7 +924,7 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
 
   if state.export_pending {
     children.push(
-      text("Exporting\u{2026}")
+      text(t!("settings.storage.exporting"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::tertiary()))
@@ -937,20 +939,19 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
 }
 
 fn data_export_row(state: &State) -> Element<'_, Message> {
-  let label = text("Export data")
+  let label = text(t!("settings.storage.export_data"))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
     .style(typography::colored(color::text::PRIMARY));
-  let explanation =
-    text("Bundle the database and your settings into a single .zip you can archive or move to another machine.")
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary()));
+  let explanation = text(t!("settings.storage.export_data_description"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
 
   let mut copy: Vec<Element<'_, Message>> = vec![label.into(), explanation.into()];
   if state.data_export_pending {
     copy.push(
-      text("Exporting\u{2026}")
+      text(t!("settings.storage.exporting"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::tertiary()))
@@ -964,9 +965,9 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
   let mut control = button(action_button_label(
     (!state.data_export_pending).then(Icon::archive),
     if state.data_export_pending {
-      "Preparing archive\u{2026}"
+      super::i18n::tr_static("settings.storage.preparing_archive")
     } else {
-      "Export data\u{2026}"
+      super::i18n::tr_static("settings.storage.export_data_action")
     },
     color::accent::PLASMA,
   ))
@@ -1035,22 +1036,19 @@ fn accent_ghost_button(_theme: &iced::Theme, status: button::Status) -> button::
 }
 
 fn data_import_row(state: &State) -> Element<'_, Message> {
-  let label = text("Import data")
+  let label = text(t!("settings.storage.import_data"))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
     .style(typography::colored(color::text::PRIMARY));
-  let explanation = text(
-    "Restore the database and settings from a previously exported .zip. This replaces the current \
-      data and reopens Pod to apply.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(typography::colored(color::text::secondary()));
+  let explanation = text(t!("settings.storage.import_data_description"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
 
   let mut copy: Vec<Element<'_, Message>> = vec![label.into(), explanation.into()];
   if state.data_import_pending {
     copy.push(
-      text("Restoring\u{2026}")
+      text(t!("settings.storage.restoring"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::tertiary()))
@@ -1064,9 +1062,9 @@ fn data_import_row(state: &State) -> Element<'_, Message> {
   let mut control = button(action_button_label(
     (!state.data_import_pending).then(Icon::upload),
     if state.data_import_pending {
-      "Restoring\u{2026}"
+      super::i18n::tr_static("settings.storage.restoring")
     } else {
-      "Import data\u{2026}"
+      super::i18n::tr_static("settings.storage.import_data_action")
     },
     color::text::PRIMARY,
   ))
@@ -1136,7 +1134,7 @@ fn log_level_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Message> {
 
 fn log_level_row<'a>(active: LogLevel) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
-    text("Verbosity")
+    text(t!("settings.storage.verbosity"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -1155,7 +1153,7 @@ fn log_level_row<'a>(active: LogLevel) -> Element<'a, Message> {
 
 fn custom_badge<'a>() -> Element<'a, Message> {
   container(
-    text("custom")
+    text(t!("settings.storage.custom"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::accent::PLASMA)),
@@ -1211,19 +1209,16 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
       ..container::Style::default()
     });
 
-  let label = text("Sync this location across machines")
+  let label = text(t!("settings.storage.sync_label"))
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
 
   let explanation = container(
-    text(
-      "Pod keeps a fast local working copy of the database and syncs it to the shared location, so \
-        the same data follows you between machines.",
-    )
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary())),
+    text(t!("settings.storage.sync_description"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
   )
   .max_width(580.0);
 
@@ -1260,15 +1255,14 @@ fn sync_toggle_row<'a>(checked: bool) -> Element<'a, Message> {
 fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
   let working_copy = settings.storage().resolved_working_copy_path();
 
-  let label = text("Local working copy")
+  let label = text(t!("settings.storage.working_copy_label"))
     .font(typography::body::MEDIUM)
     .size(typography::size::SM)
     .style(typography::colored(color::text::PRIMARY));
-  let explanation =
-    text("Read-only. The live database runs here on local disk; the share never drives the DB over the wire.")
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary()));
+  let explanation = text(t!("settings.storage.working_copy_description"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
   let path = text(working_copy.display().to_string())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
@@ -1294,16 +1288,19 @@ fn working_copy_row(settings: &Settings) -> Element<'_, Message> {
 
 fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
   let (dot_color, summary) = match &status.holder {
-    Some(machine) => (color::status::DANGER, format!("Currently open on {machine}")),
+    Some(machine) => (
+      color::status::DANGER,
+      t!("settings.storage.sync_open_on", machine => machine).into_owned(),
+    ),
     None => match status.last_synced {
       Some(at) => {
         let secs = (Utc::now() - at).num_seconds().max(0) as u64;
         (
           color::status::ONLINE,
-          format!("Last synced {}", status::format_since(secs)),
+          t!("settings.storage.last_synced", since => status::format_since(secs)).into_owned(),
         )
       }
-      None => (color::text::tertiary(), "Not synced yet".to_owned()),
+      None => (color::text::tertiary(), t!("settings.storage.not_synced").into_owned()),
     },
   };
 
@@ -1320,7 +1317,7 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
   .width(Length::Fill);
 
   let sync_now = button(
-    text("Sync now")
+    text(t!("settings.storage.sync_now"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -1329,7 +1326,7 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
   .style(control::ghost_button);
 
   let release = button(
-    text("Release lock")
+    text(t!("settings.storage.release_lock"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -1354,14 +1351,14 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
 }
 
 fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
-  let copy = text("This looks like a network share \u{2014} enable syncing across machines.")
+  let copy = text(t!("settings.storage.sync_suggestion"))
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::accent::PLASMA))
     .width(Length::Fill);
 
   let dismiss = button(
-    text("Dismiss")
+    text(t!("settings.storage.dismiss"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM),
   )
@@ -1401,7 +1398,7 @@ fn error_banner(message: &str) -> Element<'_, Message> {
     .width(Length::Fill);
 
   let dismiss = button(
-    text("Dismiss")
+    text(t!("settings.storage.dismiss"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM),
   )
@@ -1434,24 +1431,24 @@ fn error_banner(message: &str) -> Element<'_, Message> {
 }
 
 fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
-  let eyebrow = text("Relocate store")
+  let eyebrow = text(t!("settings.storage.relocate_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::accent::PLASMA));
-  let title = text(format!("Move {} to the new folder?", pending.kind.label()))
+  let title = text(t!("settings.storage.relocate_title", name => pending.kind.label()).into_owned())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let body = text(
-    "Pod can move the existing files to the new location, or just repoint here and leave the old \
-      files where they are. The change applies on the next launch.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let body = text(t!("settings.storage.relocate_body"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
 
-  let from_to =
-    Column::with_children(vec![path_line("from", &pending.from), path_line("to", &pending.to)]).spacing(spacing::UNIT);
+  let from_to = Column::with_children(vec![
+    path_line(super::i18n::tr_static("settings.storage.path_from"), &pending.from),
+    path_line(super::i18n::tr_static("settings.storage.path_to"), &pending.to),
+  ])
+  .spacing(spacing::UNIT);
 
   let header = container(
     Column::with_children(vec![eyebrow.into(), title.into(), body.into(), from_to.into()]).spacing(spacing::SPACE_2),
@@ -1464,12 +1461,16 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
     left: spacing::SPACE_6,
   });
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(Message::CancelMove)
-    .style(control::ghost_button);
+  let cancel = button(
+    text(t!("settings.storage.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::CancelMove)
+  .style(control::ghost_button);
   let skip = button(
-    text("Skip \u{2014} repoint only")
+    text(t!("settings.storage.relocate_skip"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -1477,7 +1478,7 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
   .on_press(Message::SkipMove)
   .style(control::ghost_button);
   let move_button = button(
-    text("Move files")
+    text(t!("settings.storage.relocate_confirm"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -1529,25 +1530,25 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
 }
 
 fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
-  let eyebrow = text("Restore data")
+  let eyebrow = text(t!("settings.storage.restore_eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::status::DANGER));
-  let title = text("Replace this machine's data?")
+  let title = text(t!("settings.storage.restore_title"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(typography::colored(color::text::PRIMARY));
-  let body = text(
-    "Importing replaces the current database with the archive's. Pod backs up the current database \
-      first, then closes so you can reopen to apply. This can't be undone in place.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::MD)
-  .style(typography::colored(color::text::secondary()));
+  let body = text(t!("settings.storage.restore_body"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()));
 
-  let mut details: Vec<Element<'_, Message>> = vec![path_line("from", &pending.path)];
+  let mut details: Vec<Element<'_, Message>> = vec![path_line(
+    super::i18n::tr_static("settings.storage.path_from"),
+    &pending.path,
+  )];
   details.push(
-    text(format!("Archive Pod version: {}", pending.pod_version))
+    text(t!("settings.storage.archive_version", version => pending.pod_version).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::PRIMARY))
@@ -1555,7 +1556,7 @@ fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
   );
   if pending.verdict == VersionVerdict::WillMigrate {
     details.push(
-      text("This archive is from an older Pod; its data migrates forward on next launch.")
+      text(t!("settings.storage.restore_migrate_note"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::status::WARNING))
@@ -1575,12 +1576,16 @@ fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
     left: spacing::SPACE_6,
   });
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(Message::CancelDataImport)
-    .style(control::ghost_button);
+  let cancel = button(
+    text(t!("settings.storage.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::CancelDataImport)
+  .style(control::ghost_button);
   let replace = button(
-    text("Replace data")
+    text(t!("settings.storage.restore_confirm"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )

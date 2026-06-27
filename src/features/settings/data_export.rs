@@ -119,7 +119,8 @@ pub struct IncludedFile {
 /// (`ExportFinished(Result<Option<PathBuf>, String>)`).
 #[allow(dead_code)]
 pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diagnostics) -> Result<Vec<u8>, String> {
-  let db_bytes = std::fs::read(db_snapshot).map_err(|err| format!("Couldn't read database snapshot: {err}"))?;
+  let db_bytes = std::fs::read(db_snapshot)
+    .map_err(|err| t!("settings.data_export.error_read_db_snapshot", error => err).into_owned())?;
 
   let files = vec![
     IncludedFile {
@@ -132,8 +133,9 @@ pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diag
     },
   ];
   let manifest = Manifest::new(Utc::now(), diagnostics, files);
-  let manifest_json =
-    serde_json::to_vec_pretty(&manifest).map_err(|err| format!("Couldn't render manifest.json: {err}"))?;
+  let manifest_json = serde_json::to_vec_pretty(&manifest).map_err(|err| {
+    t!("settings.data_export.error_render_manifest", name => MANIFEST_JSON_NAME, error => err).into_owned()
+  })?;
   let manifest_txt = render_manifest(&manifest);
 
   let mut buf = Vec::new();
@@ -148,7 +150,7 @@ pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diag
 
     zip
       .finish()
-      .map_err(|err| format!("Couldn't finalize archive: {err}"))?;
+      .map_err(|err| t!("settings.data_export.error_finalize_archive", error => err).into_owned())?;
   }
   Ok(buf)
 }
@@ -196,7 +198,8 @@ pub struct ParsedArchive {
 /// applied. The returned `verdict` reflects ADR-0038's policy: an older/equal archive restores
 /// (migrations run forward), a newer-major archive is `Incompatible` and the import must refuse.
 pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
-  let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|err| format!("Couldn't open archive: {err}"))?;
+  let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+    .map_err(|err| t!("settings.data_export.error_open_archive", error => err).into_owned())?;
 
   let mut database: Option<Vec<u8>> = None;
   let mut config: Option<Vec<u8>> = None;
@@ -205,7 +208,7 @@ pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
   for index in 0..archive.len() {
     let mut entry = archive
       .by_index(index)
-      .map_err(|err| format!("Couldn't read archive entry: {err}"))?;
+      .map_err(|err| t!("settings.data_export.error_read_entry", error => err).into_owned())?;
     let name = entry.name().to_owned();
     let slot = match name.as_str() {
       DATABASE_NAME => &mut database,
@@ -216,16 +219,20 @@ pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
     let mut contents = Vec::new();
     entry
       .read_to_end(&mut contents)
-      .map_err(|err| format!("Couldn't read {name} from archive: {err}"))?;
+      .map_err(|err| t!("settings.data_export.error_read_named_entry", name => name, error => err).into_owned())?;
     *slot = Some(contents);
   }
 
-  let manifest_json = manifest_json.ok_or_else(|| format!("Archive is missing {MANIFEST_JSON_NAME}"))?;
-  let database = database.ok_or_else(|| format!("Archive is missing {DATABASE_NAME}"))?;
-  let config = config.ok_or_else(|| format!("Archive is missing {CONFIG_NAME}"))?;
+  let manifest_json = manifest_json
+    .ok_or_else(|| t!("settings.data_export.error_missing_entry", name => MANIFEST_JSON_NAME).into_owned())?;
+  let database =
+    database.ok_or_else(|| t!("settings.data_export.error_missing_entry", name => DATABASE_NAME).into_owned())?;
+  let config =
+    config.ok_or_else(|| t!("settings.data_export.error_missing_entry", name => CONFIG_NAME).into_owned())?;
 
-  let manifest: Manifest =
-    serde_json::from_slice(&manifest_json).map_err(|err| format!("Couldn't parse {MANIFEST_JSON_NAME}: {err}"))?;
+  let manifest: Manifest = serde_json::from_slice(&manifest_json).map_err(|err| {
+    t!("settings.data_export.error_parse_manifest", name => MANIFEST_JSON_NAME, error => err).into_owned()
+  })?;
 
   let verdict = version_verdict(&manifest.pod_version)?;
 
@@ -245,10 +252,11 @@ pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
 fn version_verdict(archive_version: &str) -> Result<VersionVerdict, String> {
   use cargo_packager_updater::semver::Version;
 
-  let archive = Version::parse(archive_version)
-    .map_err(|err| format!("Archive Pod version '{archive_version}' is not valid semver: {err}"))?;
+  let archive = Version::parse(archive_version).map_err(|err| {
+    t!("settings.data_export.error_archive_version_invalid", version => archive_version, error => err).into_owned()
+  })?;
   let current = Version::parse(env!("CARGO_PKG_VERSION"))
-    .map_err(|err| format!("This build's version is not valid semver: {err}"))?;
+    .map_err(|err| t!("settings.data_export.error_build_version_invalid", error => err).into_owned())?;
 
   if archive.major > current.major {
     Ok(VersionVerdict::Incompatible)
@@ -267,10 +275,10 @@ fn write_entry<W: Write + std::io::Seek>(
 ) -> Result<(), String> {
   zip
     .start_file(name, options)
-    .map_err(|err| format!("Couldn't add {name}: {err}"))?;
+    .map_err(|err| t!("settings.data_export.error_add_entry", name => name, error => err).into_owned())?;
   zip
     .write_all(bytes)
-    .map_err(|err| format!("Couldn't write {name}: {err}"))
+    .map_err(|err| t!("settings.data_export.error_write_entry", name => name, error => err).into_owned())
 }
 
 fn render_manifest(manifest: &Manifest) -> String {
@@ -548,7 +556,10 @@ mod tests {
 
       let result = read_archive(&bytes);
 
-      assert_eq!(result.unwrap_err(), format!("Archive is missing {DATABASE_NAME}"));
+      assert_eq!(
+        result.unwrap_err(),
+        t!("settings.data_export.error_missing_entry", name => DATABASE_NAME).into_owned()
+      );
     }
 
     #[test]
@@ -557,7 +568,10 @@ mod tests {
 
       let result = read_archive(&bytes);
 
-      assert_eq!(result.unwrap_err(), format!("Archive is missing {MANIFEST_JSON_NAME}"));
+      assert_eq!(
+        result.unwrap_err(),
+        t!("settings.data_export.error_missing_entry", name => MANIFEST_JSON_NAME).into_owned()
+      );
     }
 
     #[test]
@@ -569,7 +583,10 @@ mod tests {
 
       let result = read_archive(&bytes);
 
-      assert_eq!(result.unwrap_err(), format!("Archive is missing {CONFIG_NAME}"));
+      assert_eq!(
+        result.unwrap_err(),
+        t!("settings.data_export.error_missing_entry", name => CONFIG_NAME).into_owned()
+      );
     }
 
     #[test]
@@ -582,14 +599,14 @@ mod tests {
 
       let result = read_archive(&bytes);
 
-      assert!(result.unwrap_err().contains("Couldn't parse"));
+      assert!(result.is_err(), "a corrupt manifest is rejected");
     }
 
     #[test]
     fn it_rejects_bytes_that_are_not_a_zip() {
       let result = read_archive(b"definitely not a zip archive");
 
-      assert!(result.unwrap_err().contains("Couldn't open archive"));
+      assert!(result.is_err(), "non-zip bytes are rejected");
     }
   }
 }

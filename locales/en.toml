@@ -1794,18 +1794,30 @@ skill_fallback = "Skill"
 skill_title = "%{skill} finished"
 
 [shell.notifications]
+empty_history_subtitle = "No past notifications"
+empty_history_title = "Nothing here yet"
+empty_new_subtitle = "No new events"
+empty_new_title = "You’re all caught up"
 footer_total = "%{count} total"
 footer_unread = "%{count} unread"
 mark_all_read = "Mark all read"
+tab_history = "History"
+tab_new = "New"
 title = "Notifications"
+
+[shell.sde]
+stale_banner = "Static data refresh failed — showing the last cached reference data."
 
 [shell.status]
 mutations = "MUTATIONS"
+restart_sync = "Restart sync"
 starting_up = "Starting up…"
 
 [shell.takeover]
 confirm = "%{hostname} was last active %{last_active}. Taking over overwrites any unsaved changes it still has open. Continue?"
 read_only = "Open on %{hostname} — close it there, or take over."
+take_over = "Take over"
+take_over_anyway = "Take over anyway"
 
 [shell.window]
 app = "Pod"

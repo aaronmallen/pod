@@ -1210,7 +1210,7 @@ fn begin_boot(app: &mut App) -> Task<Message> {
       ) =>
     {
       state.phase = splash::Phase::Loading;
-      state.step_label = "Starting up\u{2026}".to_string();
+      state.step_label = t!("splash.status.starting_up").into_owned();
       true
     }
     _ => false,
@@ -2563,19 +2563,26 @@ fn mark_all_read_button<'a>(enabled: bool) -> button::Button<'a, Message> {
   }
 }
 
+fn static_text(value: std::borrow::Cow<'static, str>) -> &'static str {
+  match value {
+    std::borrow::Cow::Borrowed(text) => text,
+    std::borrow::Cow::Owned(text) => Box::leak(text.into_boxed_str()),
+  }
+}
+
 fn notifications_tab_strip<'a>(active: NotificationTab, new_count: usize, total: usize) -> Element<'a, Message> {
   let tabs = vec![
     Tab {
       count: new_count.to_string(),
       icon: None,
-      label: "New",
+      label: static_text(t!("shell.notifications.tab_new")),
       on_press: (active != NotificationTab::New).then_some(Message::SelectNotificationTab(NotificationTab::New)),
       selected: active == NotificationTab::New,
     },
     Tab {
       count: total.to_string(),
       icon: None,
-      label: "History",
+      label: static_text(t!("shell.notifications.tab_history")),
       on_press: (active != NotificationTab::History)
         .then_some(Message::SelectNotificationTab(NotificationTab::History)),
       selected: active == NotificationTab::History,
@@ -2605,7 +2612,10 @@ fn notifications_new_body(app: &App) -> Element<'_, Message> {
     .collect();
 
   if rows.is_empty() {
-    return notifications_empty_state("You\u{2019}re all caught up", "No new events");
+    return notifications_empty_state(
+      t!("shell.notifications.empty_new_title").into_owned(),
+      t!("shell.notifications.empty_new_subtitle").into_owned(),
+    );
   }
 
   scrollable(
@@ -2622,7 +2632,10 @@ fn notifications_new_body(app: &App) -> Element<'_, Message> {
 /// is in flight and an older page may exist.
 fn notifications_history_body(app: &App) -> Element<'_, Message> {
   if app.notifications_history.is_empty() {
-    return notifications_empty_state("Nothing here yet", "No past notifications");
+    return notifications_empty_state(
+      t!("shell.notifications.empty_history_title").into_owned(),
+      t!("shell.notifications.empty_history_subtitle").into_owned(),
+    );
   }
 
   let rows = &app.notifications_history;
@@ -2660,7 +2673,7 @@ fn notification_history_row<'a>(app: &'a App, notification: &'a store::model::No
   )
 }
 
-fn notifications_empty_state<'a>(title: &'a str, subtitle: &'a str) -> Element<'a, Message> {
+fn notifications_empty_state(title: String, subtitle: String) -> Element<'static, Message> {
   container(
     Column::with_children(vec![
       text(title)
@@ -2739,7 +2752,7 @@ fn palette_overlay(state: &command_palette::State, entries: Vec<command_palette:
 }
 
 fn sde_stale_banner<'a>() -> Element<'a, Message> {
-  let label = text("Static data refresh failed \u{2014} showing the last cached reference data.")
+  let label = text(t!("shell.sde.stale_banner").into_owned())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
@@ -2765,17 +2778,21 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
   let (message, actions): (String, Element<'static, Message>) = if confirming {
     let last_active = status::format_since((now - holder.last_active).num_seconds().max(0) as u64);
     let confirm = button(
-      text("Take over anyway")
+      text(t!("shell.takeover.take_over_anyway").into_owned())
         .font(typography::body::MEDIUM)
         .size(typography::size::SM),
     )
     .padding(control::padding())
     .on_press(Message::ConfirmTakeOver)
     .style(control::danger_button);
-    let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
-      .padding(control::padding())
-      .on_press(Message::CancelTakeOver)
-      .style(control::ghost_button);
+    let cancel = button(
+      text(t!("common.cancel").into_owned())
+        .font(typography::body::MEDIUM)
+        .size(typography::size::SM),
+    )
+    .padding(control::padding())
+    .on_press(Message::CancelTakeOver)
+    .style(control::ghost_button);
     (
       read_only_confirm_label(&holder.hostname, &last_active),
       Row::new()
@@ -2787,7 +2804,7 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
     )
   } else {
     let action = button(
-      text("Take over")
+      text(t!("shell.takeover.take_over").into_owned())
         .font(typography::body::MEDIUM)
         .size(typography::size::SM),
     )
@@ -3012,10 +3029,10 @@ fn status_affordance(state: &EngineState) -> Option<Element<'static, Message>> {
   let (label, message) = match state {
     EngineState::Stopped {
       ..
-    } => ("Restart sync", Message::RestartSync),
+    } => (t!("shell.status.restart_sync").into_owned(), Message::RestartSync),
     EngineState::ReadOnly {
       ..
-    } => ("Take over", Message::TakeOver),
+    } => (t!("shell.takeover.take_over").into_owned(), Message::TakeOver),
     EngineState::Idle | EngineState::Running => return None,
   };
   let action = button(text(label).font(typography::body::MEDIUM).size(typography::size::XS))
@@ -5063,7 +5080,7 @@ async fn save_log_bundle(default_name: String, bytes: Vec<u8>) -> Result<Option<
   #[cfg(not(test))]
   {
     let Some(handle) = rfd::AsyncFileDialog::new()
-      .set_title("Export logs")
+      .set_title(t!("settings.shell.export_logs").into_owned())
       .set_file_name(default_name)
       .add_filter("Zip archive", &["zip"])
       .save_file()
@@ -5134,7 +5151,7 @@ async fn save_data_archive(default_name: String, bytes: Vec<u8>) -> Result<Optio
   #[cfg(not(test))]
   {
     let Some(handle) = rfd::AsyncFileDialog::new()
-      .set_title("Export data")
+      .set_title(t!("settings.shell.export_data").into_owned())
       .set_file_name(default_name)
       .add_filter("Zip archive", &["zip"])
       .save_file()

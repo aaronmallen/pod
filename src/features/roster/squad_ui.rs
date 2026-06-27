@@ -24,13 +24,12 @@ const FOOTER_PAD_X: f32 = 16.0;
 const FOOTER_PAD_Y: f32 = 12.0;
 const INPUT_PAD_X: f32 = 12.0;
 const INPUT_PAD_Y: f32 = 10.0;
-const UNTITLED: &str = "Untitled squad";
 
 pub(super) fn new_squad_button<'a>() -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       text("+").size(typography::size::MD).into(),
-      text("New squad")
+      text(t!("roster.actions.new_squad"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .into(),
@@ -101,11 +100,15 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   });
 
   let trimmed = creator.name.trim();
-  let title = if trimmed.is_empty() { UNTITLED } else { trimmed };
-  let eyebrow = if creator.editing.is_some() {
-    "Edit squad"
+  let title = if trimmed.is_empty() {
+    t!("roster.squad.untitled").into_owned()
   } else {
-    "New squad"
+    trimmed.to_owned()
+  };
+  let eyebrow = if creator.editing.is_some() {
+    t!("roster.actions.edit_squad")
+  } else {
+    t!("roster.actions.new_squad")
   };
 
   let titles = Column::with_children(vec![
@@ -116,7 +119,7 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
         color: Some(color::accent::PLASMA),
       })
       .into(),
-    text(title.to_owned())
+    text(title)
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(|_| text::Style {
@@ -145,14 +148,14 @@ fn header<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
 fn body<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   let fields = Column::with_children(vec![
     field(
-      "Name",
-      "e.g. Home Defense Fleet",
+      t!("roster.squad.name_label").into_owned(),
+      t!("roster.squad.name_placeholder").into_owned(),
       &creator.name,
       Message::SquadCreatorNameChanged,
     ),
     field(
-      "Description",
-      "What's this squad for?",
+      t!("roster.squad.description_label").into_owned(),
+      t!("roster.squad.description_placeholder").into_owned(),
       &creator.description,
       Message::SquadCreatorDescriptionChanged,
     ),
@@ -173,12 +176,12 @@ fn body<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
 }
 
 fn field<'a>(
-  label: &'a str,
-  placeholder: &'a str,
+  label: String,
+  placeholder: String,
   value: &'a str,
   on_input: impl Fn(String) -> Message + 'a,
 ) -> Element<'a, Message> {
-  let input = text_input(placeholder, value)
+  let input = text_input(&placeholder, value)
     .size(typography::size::MD)
     .padding(Padding {
       top: INPUT_PAD_Y,
@@ -207,7 +210,7 @@ fn field<'a>(
 
 fn color_field<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
-    text("Color")
+    text(t!("roster.squad.color_label"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -237,15 +240,19 @@ fn color_field<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
 fn footer<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   let can_save = !creator.name.trim().is_empty();
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
-    .padding(control::padding())
-    .on_press(Message::CloseSquadCreator)
-    .style(control::ghost_button);
+  let cancel = button(
+    text(t!("roster.actions.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM),
+  )
+  .padding(control::padding())
+  .on_press(Message::CloseSquadCreator)
+  .style(control::ghost_button);
 
   let primary_label = if creator.editing.is_some() {
-    "Save changes"
+    t!("roster.squad.save_changes")
   } else {
-    "Create squad"
+    t!("roster.squad.create_squad")
   };
   let create = button(
     text(primary_label)

@@ -6,6 +6,8 @@ pub(super) mod notifications;
 mod shared;
 pub(crate) mod standings;
 
+use std::sync::LazyLock;
+
 use iced::{
   Element, Length, Padding,
   widget::{Column, container, responsive, scrollable},
@@ -51,12 +53,21 @@ impl Tab {
   }
 
   fn label(self) -> &'static str {
+    static LABELS: LazyLock<[String; 5]> = LazyLock::new(|| {
+      [
+        t!("roster.tabs.clones").into_owned(),
+        t!("roster.tabs.contacts").into_owned(),
+        t!("roster.tabs.killlog").into_owned(),
+        t!("roster.tabs.notifications").into_owned(),
+        t!("roster.tabs.standings").into_owned(),
+      ]
+    });
     match self {
-      Tab::Clones => "Clones",
-      Tab::Contacts => "Contacts",
-      Tab::Killlog => "Kill Log",
-      Tab::Notifications => "Notifications",
-      Tab::Standings => "Standings",
+      Tab::Clones => LABELS[0].as_str(),
+      Tab::Contacts => LABELS[1].as_str(),
+      Tab::Killlog => LABELS[2].as_str(),
+      Tab::Notifications => LABELS[3].as_str(),
+      Tab::Standings => LABELS[4].as_str(),
     }
   }
 

@@ -115,7 +115,7 @@ struct SquadStats {
 pub(super) fn body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
   if let Some(error) = load_error(state) {
     return centered(message_text(
-      format!("Couldn't load characters: {error}"),
+      t!("roster.search.load_failed", error => error).into_owned(),
       color::status::DANGER,
     ));
   }
@@ -229,7 +229,7 @@ fn squad_section<'a>(
   if !collapsed {
     let body: Element<'a, Message> = if group.cards.is_empty() {
       empty_drop(
-        &format!("No pilots in {} yet. Drag a pilot here to assign them.", group.name),
+        &t!("roster.empty.no_pilots_in_squad", squad => group.name),
         group.squad_id,
         drag,
       )
@@ -381,7 +381,12 @@ fn squad_name_block<'a>(group: &'a SquadGroup) -> Element<'a, Message> {
     .style(|_| text::Style {
       color: Some(color::text::PRIMARY),
     });
-  let pilots = text(format!("{count} {}", if count == 1 { "pilot" } else { "pilots" }))
+  let pilots_key = if count == 1 {
+    "roster.squad.pilots_one"
+  } else {
+    "roster.squad.pilots_other"
+  };
+  let pilots = text(t!(pilots_key, count => count))
     .font(typography::mono::MEDIUM)
     .size(typography::size::SM)
     .style(move |_| text::Style {
@@ -425,21 +430,24 @@ fn squad_stats<'a>(cards: &'a [CardModel]) -> Element<'a, Message> {
 
   Row::with_children(vec![
     bar_stat(
-      "Combined ISK",
+      t!("roster.squad.combined_isk").into_owned(),
       bar_stat_value(format_isk(Some(stats.combined_isk)), color::text::PRIMARY),
     ),
     bar_stat(
-      "Combined SP",
+      t!("roster.squad.combined_sp").into_owned(),
       bar_stat_value(format_sp(Some(stats.combined_sp)), color::text::PRIMARY),
     ),
-    bar_stat("Readiness", readiness(stats.training, stats.idle)),
+    bar_stat(
+      t!("roster.squad.readiness").into_owned(),
+      readiness(stats.training, stats.idle),
+    ),
   ])
   .align_y(Vertical::Center)
   .into()
 }
 
-fn bar_stat<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
-  let label = eyebrow(label, Some(color::text::tertiary()));
+fn bar_stat<'a>(label: String, value: Element<'a, Message>) -> Element<'a, Message> {
+  let label = eyebrow(&label, Some(color::text::tertiary()));
 
   let body = container(Column::with_children(vec![label, value]).spacing(spacing::UNIT)).padding(Padding {
     left: BAR_STAT_PAD_X,
@@ -463,14 +471,20 @@ fn bar_stat_value<'a>(value: String, fill: Color) -> Element<'a, Message> {
 }
 
 fn readiness<'a>(training: usize, idle: usize) -> Element<'a, Message> {
-  let trained = bar_stat_value(format!("{training} training"), color::text::PRIMARY);
+  let trained = bar_stat_value(
+    t!("roster.squad.training_count", count => training).into_owned(),
+    color::text::PRIMARY,
+  );
   if idle == 0 {
     return trained;
   }
 
   Row::with_children(vec![
     trained,
-    bar_stat_value(format!(" · {idle} idle"), color::status::DANGER),
+    bar_stat_value(
+      t!("roster.squad.idle_count", count => idle).into_owned(),
+      color::status::DANGER,
+    ),
   ])
   .align_y(Vertical::Center)
   .into()
@@ -551,7 +565,11 @@ fn unassigned_section<'a>(
 ) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = Vec::with_capacity(2);
   if show_header {
-    children.push(header_row("Unassigned", cards.len(), color::text::tertiary()));
+    children.push(header_row(
+      t!("roster.squad.unassigned").into_owned(),
+      cards.len(),
+      color::text::tertiary(),
+    ));
   }
   children.push(grid(cards, squad_id, sync, drag));
 
@@ -572,7 +590,7 @@ fn drop_cell<'a>(inner: Element<'a, Message>, target: DropTarget, dragging: bool
     .into()
 }
 
-fn header_row<'a>(label: &'a str, count: usize, count_color: Color) -> Element<'a, Message> {
+fn header_row<'a>(label: String, count: usize, count_color: Color) -> Element<'a, Message> {
   let label = text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
@@ -710,8 +728,14 @@ fn filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message
         .on_scroll(|viewport| Message::FilteredScrolled(GridViewport::from_viewport(&viewport)));
       mouse_area(scroll).on_move(Message::DragMoved).into()
     }
-    Some(Filtered::Error(error)) => centered(message_text(format!("Search failed: {error}"), color::status::DANGER)),
-    Some(Filtered::Loading) | None => centered(message_text("Searching…".to_owned(), color::text::secondary())),
+    Some(Filtered::Error(error)) => centered(message_text(
+      t!("roster.search.search_failed", error => error).into_owned(),
+      color::status::DANGER,
+    )),
+    Some(Filtered::Loading) | None => centered(message_text(
+      t!("roster.search.searching").into_owned(),
+      color::text::secondary(),
+    )),
   }
 }
 
@@ -749,8 +773,11 @@ fn no_matches<'a>() -> Element<'a, Message> {
           color: Some(color::text::tertiary()),
         })
         .into(),
-      message_text("No capsuleers match".to_owned(), color::text::PRIMARY),
-      text("Try a different search or clear filters")
+      message_text(
+        t!("roster.empty.no_capsuleers_match").into_owned(),
+        color::text::PRIMARY,
+      ),
+      text(t!("roster.empty.no_match_hint"))
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {
@@ -758,7 +785,7 @@ fn no_matches<'a>() -> Element<'a, Message> {
         })
         .into(),
       button(
-        text("Clear filters")
+        text(t!("roster.actions.clear_filters"))
           .font(typography::body::REGULAR)
           .size(typography::size::SM),
       )
@@ -776,8 +803,8 @@ fn no_matches<'a>() -> Element<'a, Message> {
 fn empty_state<'a>() -> Element<'a, Message> {
   centered(
     Column::with_children(vec![
-      message_text("No characters yet".to_owned(), color::text::PRIMARY),
-      text("Add a character to start syncing.")
+      message_text(t!("roster.empty.no_characters").into_owned(), color::text::PRIMARY),
+      text(t!("roster.empty.add_character_hint"))
         .font(typography::mono::REGULAR)
         .size(typography::size::SM)
         .style(|_| text::Style {

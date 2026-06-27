@@ -13,14 +13,14 @@ const TAB_GAP: f32 = 28.0;
 const TAB_LABEL_GAP: f32 = 10.0;
 const UNDERLINE_HEIGHT: f32 = 2.0;
 
-pub struct Tab<'a, M> {
+pub struct Tab<M> {
   pub count: String,
-  pub label: &'a str,
+  pub label: String,
   pub on_press: Option<M>,
   pub selected: bool,
 }
 
-pub fn roster_tabs<'a, M>(tabs: Vec<Tab<'a, M>>) -> Element<'a, M>
+pub fn roster_tabs<'a, M>(tabs: Vec<Tab<M>>) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
@@ -31,7 +31,7 @@ where
     .into()
 }
 
-fn tab<'a, M>(descriptor: Tab<'a, M>) -> Element<'a, M>
+fn tab<'a, M>(descriptor: Tab<M>) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
@@ -54,7 +54,7 @@ where
   };
 
   let content = Row::with_children(vec![
-    text(label.to_owned())
+    text(label)
       .font(typography::body::MEDIUM)
       .size(LABEL_SIZE)
       .style(move |_| text::Style {
@@ -125,10 +125,10 @@ where
 mod tests {
   use super::*;
 
-  fn characters_tab(selected: bool, on_press: Option<()>) -> Tab<'static, ()> {
+  fn characters_tab(selected: bool, on_press: Option<()>) -> Tab<()> {
     Tab {
       count: "12".to_owned(),
-      label: "Characters",
+      label: "Characters".to_owned(),
       on_press,
       selected,
     }

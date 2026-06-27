@@ -149,8 +149,10 @@ impl State {
 
   pub fn title(&self) -> String {
     match &self.detail {
-      Some(detail) => format!("{} \u{2014} #{}", detail.ship_name, detail.killmail_id),
-      None => format!("Killmail #{}", self.killmail_id),
+      Some(detail) => {
+        t!("roster.killmail.title_named", ship => detail.ship_name, id => detail.killmail_id).into_owned()
+      }
+      None => t!("roster.killmail.title_loading", id => self.killmail_id).into_owned(),
     }
   }
 }
@@ -179,7 +181,7 @@ pub fn view<M: 'static>(state: &State) -> Element<'_, M> {
 fn window_body<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
   let body: Element<'a, M> = match detail {
     None => container(
-      text("Loading killmail\u{2026}")
+      text(t!("roster.killmail.loading"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -240,13 +242,13 @@ pub fn relative_time(iso: &str) -> String {
     .unwrap_or(0);
   let diff = now - ts;
   if diff < 60 {
-    "just now".to_owned()
+    t!("roster.killmail.just_now").into_owned()
   } else if diff < 3600 {
-    format!("{}m ago", diff / 60)
+    t!("roster.killmail.minutes_ago", n => diff / 60).into_owned()
   } else if diff < 86_400 {
-    format!("{}h ago", diff / 3600)
+    t!("roster.killmail.hours_ago", n => diff / 3600).into_owned()
   } else {
-    format!("{}d ago", diff / 86_400)
+    t!("roster.killmail.days_ago", n => diff / 86_400).into_owned()
   }
 }
 
@@ -280,7 +282,7 @@ fn parse_iso8601(s: &str) -> Option<i64> {
 fn header<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
   let Some(detail) = detail else {
     let left: Vec<Element<'a, M>> = vec![
-      text("Killmail")
+      text(t!("roster.killmail.heading"))
         .font(typography::body::MEDIUM)
         .size(typography::size::LG + 2.0)
         .style(|_| text::Style {
@@ -319,8 +321,8 @@ fn header<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
   let left: Vec<Element<'a, M>> = vec![type_icon(&detail.ship_icon, SHIP_ICON_BOX), info.into()];
 
   let value = Column::with_children(vec![
-    eyebrow_text("Total value", Some(color::text::tertiary())).into(),
-    text(format!("{} ISK", fmt_isk(detail.value_isk)))
+    eyebrow_text(&t!("roster.killmail.total_value"), Some(color::text::tertiary())).into(),
+    text(t!("roster.killmail.isk_value", value => fmt_isk(detail.value_isk)))
       .font(typography::mono::MEDIUM)
       .size(typography::size::LG)
       .style(move |_| text::Style {
@@ -337,7 +339,11 @@ fn header<'a, M: 'a>(detail: Option<&'a KillmailDetail>) -> Element<'a, M> {
 }
 
 fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
-  let label = if detail.is_kill { "Victim" } else { "Pilot lost" };
+  let label = if detail.is_kill {
+    t!("roster.killmail.victim")
+  } else {
+    t!("roster.killmail.pilot_lost")
+  };
 
   let portrait = portrait_tile(&detail.victim_portrait, &detail.victim_name);
 
@@ -369,14 +375,17 @@ fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   .width(Length::Fill);
 
   let stats = Row::with_children(vec![
-    mini("Ship", detail.ship_name.clone()),
-    mini("Damage taken", format!("{} HP", detail.damage_taken)),
+    mini(&t!("roster.killmail.ship"), detail.ship_name.clone()),
+    mini(
+      &t!("roster.killmail.damage_taken"),
+      t!("roster.killmail.hp_value", value => detail.damage_taken).into_owned(),
+    ),
   ])
   .spacing(spacing::SPACE_2)
   .width(Length::Fill);
 
   panel(
-    label,
+    &label,
     None,
     Column::with_children(vec![identity.into(), stats.into()])
       .spacing(spacing::SPACE_3)
@@ -386,7 +395,7 @@ fn victim_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
 }
 
 fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
-  let total = text(format!("{} ISK", fmt_isk(detail.value_isk)))
+  let total = text(t!("roster.killmail.isk_value", value => fmt_isk(detail.value_isk)))
     .font(typography::mono::MEDIUM)
     .size(24.0)
     .style(move |_| text::Style {
@@ -419,13 +428,23 @@ fn value_card<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   .width(Length::Fill);
 
   let legend = Row::with_children(vec![
-    legend_cell(color::status::DANGER, "Destroyed", detail.value_destroyed_isk, false),
-    legend_cell(color::status::ONLINE, "Dropped", detail.dropped_isk, true),
+    legend_cell(
+      color::status::DANGER,
+      &t!("roster.killmail.destroyed"),
+      detail.value_destroyed_isk,
+      false,
+    ),
+    legend_cell(
+      color::status::ONLINE,
+      &t!("roster.killmail.dropped"),
+      detail.dropped_isk,
+      true,
+    ),
   ])
   .width(Length::Fill);
 
   panel(
-    "Value",
+    &t!("roster.killmail.value"),
     None,
     Column::with_children(vec![total.into(), bar.into(), legend.into()])
       .spacing(spacing::SPACE_2_5)
@@ -446,22 +465,26 @@ fn fitting_panel<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   }
   if sections.is_empty() {
     sections.push(
-      container(subtitle("No items recorded", color::text::secondary()))
+      container(subtitle(&t!("roster.killmail.no_items"), color::text::secondary()))
         .padding(spacing::SPACE_3)
         .into(),
     );
   }
 
   panel_unpadded(
-    "Fitting & cargo",
-    Some(format!("{count} items")),
+    &t!("roster.killmail.fitting"),
+    Some(t!("roster.killmail.items_count", count => count).into_owned()),
     Column::with_children(sections).width(Length::Fill).into(),
   )
 }
 
 fn attacker_panel<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
   let count = detail.attackers.len();
-  let suffix = if count == 1 { "pilot" } else { "pilots" };
+  let parties = if count == 1 {
+    t!("roster.killmail.parties_count_one", count => count)
+  } else {
+    t!("roster.killmail.parties_count_other", count => count)
+  };
 
   let rows: Vec<Element<'a, M>> = detail
     .attackers
@@ -471,14 +494,18 @@ fn attacker_panel<'a, M: 'a>(detail: &'a KillmailDetail) -> Element<'a, M> {
     .collect();
 
   let body: Element<'a, M> = if rows.is_empty() {
-    container(subtitle("No attackers recorded", color::text::secondary()))
+    container(subtitle(&t!("roster.killmail.no_attackers"), color::text::secondary()))
       .padding(spacing::SPACE_3)
       .into()
   } else {
     Column::with_children(rows).width(Length::Fill).into()
   };
 
-  panel_unpadded("Involved parties", Some(format!("{count} {suffix}")), body)
+  panel_unpadded(
+    &t!("roster.killmail.involved_parties"),
+    Some(parties.into_owned()),
+    body,
+  )
 }
 
 fn item_row<'a, M: 'a>(item: &'a ItemView) -> Element<'a, M> {
@@ -712,7 +739,7 @@ fn legend_cell<'a, M: 'a>(swatch: iced::Color, label: &str, value: f64, right: b
   .spacing(spacing::SPACE_2 - 2.0)
   .align_y(Vertical::Center);
 
-  let value = text(format!("{} ISK", fmt_isk(value)))
+  let value = text(t!("roster.killmail.isk_value", value => fmt_isk(value)))
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .style(|_| text::Style {
@@ -846,7 +873,7 @@ fn dot<'a, M: 'a>() -> Element<'a, M> {
 
 fn final_blow_chip<'a, M: 'a>() -> Element<'a, M> {
   container(
-    text("FINAL BLOW")
+    text(t!("roster.killmail.final_blow"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS - 1.0)
       .style(|_| text::Style {
@@ -872,9 +899,9 @@ fn final_blow_chip<'a, M: 'a>() -> Element<'a, M> {
 
 fn kind_badge<'a, M: 'a>(is_kill: bool) -> Element<'a, M> {
   let (label, tint) = if is_kill {
-    ("KILL", color::status::ONLINE)
+    (t!("roster.killmail.kind_kill"), color::status::ONLINE)
   } else {
-    ("LOSS", color::status::DANGER)
+    (t!("roster.killmail.kind_loss"), color::status::DANGER)
   };
   container(
     text(label)
@@ -1086,7 +1113,7 @@ mod tests {
         555,
       );
 
-      assert_eq!(state.title(), "Killmail #555");
+      assert_eq!(state.title(), t!("roster.killmail.title_loading", id => 555));
     }
 
     #[test]
@@ -1099,7 +1126,10 @@ mod tests {
       );
       state.set_detail(Some(detail()));
 
-      assert_eq!(state.title(), "Rifter \u{2014} #100");
+      assert_eq!(
+        state.title(),
+        t!("roster.killmail.title_named", ship => "Rifter", id => 100)
+      );
     }
   }
 

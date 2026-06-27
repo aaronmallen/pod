@@ -51,10 +51,10 @@ pub enum ContactFilter {
 
 impl ContactFilter {
   const SEGMENTS: [(ContactFilter, &'static str); 4] = [
-    (ContactFilter::All, "All"),
-    (ContactFilter::Character, "Characters"),
-    (ContactFilter::Corp, "Corps"),
-    (ContactFilter::Alliance, "Alliances"),
+    (ContactFilter::All, "roster.contacts.filter_all"),
+    (ContactFilter::Character, "roster.contacts.filter_characters"),
+    (ContactFilter::Corp, "roster.contacts.filter_corps"),
+    (ContactFilter::Alliance, "roster.contacts.filter_alliances"),
   ];
 
   /// The `character_contacts.contact_type` value this facet filters to, or `None` for the All facet. The feature
@@ -167,23 +167,28 @@ pub(in crate::features::roster::character_detail) fn header<'a>(
     .width(Length::Fill);
 
   let filtering = !query.trim().is_empty() || filter != ContactFilter::All;
+  let display = format!("{count}{suffix}");
   let meta = if filtering {
-    format!("{count}{suffix} matching")
+    t!("roster.contacts.matching", count => display).into_owned()
   } else {
-    format!("{count}{suffix} contacts")
+    t!("roster.contacts.contacts", count => display).into_owned()
   };
 
-  Column::with_children(vec![controls.into(), section_header("Address book", Some(&meta))])
-    .spacing(spacing::SPACE_3)
-    .width(Length::Fill)
-    .into()
+  Column::with_children(vec![
+    controls.into(),
+    section_header(&t!("roster.contacts.address_book"), Some(&meta)),
+  ])
+  .spacing(spacing::SPACE_3)
+  .width(Length::Fill)
+  .into()
 }
 
 /// The contacts name-search field: a bordered input with a leading search glyph and a clear button when a query is
 /// present, sat to the left of the type facet. The query is pushed into the paginated SQL load rather than filtering
 /// the loaded rows in memory.
 fn filter_bar<'a>(query: &'a str) -> Element<'a, Message> {
-  let mut field = TextInput::new("Filter by name\u{2026}", query, Message::ContactsSearchChanged)
+  let placeholder = shared::static_text(t!("roster.contacts.filter_placeholder"));
+  let mut field = TextInput::new(placeholder, query, Message::ContactsSearchChanged)
     .leading_icon(Icon::search())
     .font_size(typography::size::SM)
     .width(Length::Fill);
@@ -224,7 +229,7 @@ fn clear_button<'a>() -> Element<'a, Message> {
 fn add_button<'a>() -> Element<'a, Message> {
   let label = Row::with_children(vec![
     Icon::plus().size(14.0).color(color::text::PRIMARY).render(),
-    text("Add contact")
+    text(t!("roster.contacts.add_contact"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -285,7 +290,9 @@ pub(in crate::features::roster::character_detail) fn body<'a>(
   let page = match contacts {
     LoadState::Loaded(page) => page,
     LoadState::Loading => {
-      return load_state_view(LoadStateView::Loading("Loading contacts\u{2026}"));
+      return load_state_view(LoadStateView::Loading(shared::static_text(t!(
+        "roster.contacts.loading"
+      ))));
     }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
@@ -294,7 +301,7 @@ pub(in crate::features::roster::character_detail) fn body<'a>(
   if rows.is_empty() {
     return card::panel(
       container(
-        text("No contacts match this filter")
+        text(t!("roster.contacts.no_match"))
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
@@ -345,7 +352,7 @@ fn segmented<'a>(active: ContactFilter) -> Element<'a, Message> {
     };
     buttons.push(
       button(
-        text(label)
+        text(t!(label))
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(move |_| text::Style {
@@ -426,17 +433,23 @@ fn sortable_label<'a>(label: &str, right: bool, column: SortColumn, sort: Contac
 
 fn column_header<'a>(sort: ContactSort, write_enabled: bool) -> Element<'a, Message> {
   let mut children = vec![
-    sortable_label("Entity", false, SortColumn::Entity, sort),
-    cell(sortable_label("Type", false, SortColumn::Type, sort), TYPE_WIDTH),
+    sortable_label(&t!("roster.contacts.column_entity"), false, SortColumn::Entity, sort),
     cell(
-      sortable_label("Standing", true, SortColumn::Standing, sort),
+      sortable_label(&t!("roster.contacts.column_type"), false, SortColumn::Type, sort),
+      TYPE_WIDTH,
+    ),
+    cell(
+      sortable_label(&t!("roster.contacts.column_standing"), true, SortColumn::Standing, sort),
       STANDING_WIDTH,
     ),
-    col_label("Note", false),
-    cell(col_label("Watchlist", true), WATCHLIST_WIDTH),
+    col_label(&t!("roster.contacts.column_note"), false),
+    cell(
+      col_label(&t!("roster.contacts.column_watchlist"), true),
+      WATCHLIST_WIDTH,
+    ),
   ];
   if write_enabled {
-    children.push(cell(col_label("Edit", true), ACTIONS_WIDTH));
+    children.push(cell(col_label(&t!("roster.contacts.column_edit"), true), ACTIONS_WIDTH));
   }
 
   let row = Row::with_children(children)
@@ -517,7 +530,7 @@ fn contact_row<'a>(
     .width(Length::Fill);
 
   let watch: Element<'a, Message> = if contact.is_watched() {
-    pill("watch")
+    pill(&t!("roster.contacts.watch_pill"))
   } else {
     text("").width(Length::Fill).into()
   };
@@ -806,10 +819,10 @@ mod tests {
       assert_eq!(
         ContactFilter::SEGMENTS,
         [
-          (ContactFilter::All, "All"),
-          (ContactFilter::Character, "Characters"),
-          (ContactFilter::Corp, "Corps"),
-          (ContactFilter::Alliance, "Alliances"),
+          (ContactFilter::All, "roster.contacts.filter_all"),
+          (ContactFilter::Character, "roster.contacts.filter_characters"),
+          (ContactFilter::Corp, "roster.contacts.filter_corps"),
+          (ContactFilter::Alliance, "roster.contacts.filter_alliances"),
         ]
       );
     }

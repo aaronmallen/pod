@@ -37,10 +37,12 @@ pub(in crate::features::roster::character_detail) fn body(
   let clones = match clones {
     LoadState::Loaded(Some(clones)) => clones,
     LoadState::Loaded(None) => {
-      return load_state_view(LoadStateView::Empty(empty_state("No clones synced yet")));
+      return load_state_view(LoadStateView::Empty(empty_state(shared::static_text(t!(
+        "roster.clones.empty"
+      )))));
     }
     LoadState::Loading => {
-      return load_state_view(LoadStateView::Loading("Loading clones\u{2026}"));
+      return load_state_view(LoadStateView::Loading(shared::static_text(t!("roster.clones.loading"))));
     }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
@@ -56,25 +58,28 @@ fn active_section(active: &CloneWithImplants<crate::store::model::CharacterClone
   let title = clone
     .home_location_name()
     .clone()
-    .unwrap_or_else(|| format!("Location {}", clone.home_location_id()));
+    .unwrap_or_else(|| t!("roster.fallback.location", id => clone.home_location_id()).into_owned());
 
-  let header = panel_header(title, None, Some("active".to_owned()), true);
+  let header = panel_header(title, None, Some(t!("roster.clones.status_active").into_owned()), true);
   let grid = implant_grid(&active.implants, 2);
   let card = card::panel(Column::with_children(vec![header, grid]).width(Length::Fill), true);
 
-  Column::with_children(vec![section_header("Active clone", None), card])
+  let heading = t!("roster.clones.active_clone").into_owned();
+  Column::with_children(vec![section_header(&heading, None), card])
     .spacing(spacing::SPACE_2_5)
     .width(Length::Fill)
     .into()
 }
 
 fn jump_section(jumps: &[CloneWithImplants<crate::store::model::CharacterJumpClone>]) -> Element<'_, Message> {
-  let eyebrow = section_header("Jump clones", Some(&format!("{} installed", jumps.len())));
+  let heading = t!("roster.clones.jump_clones").into_owned();
+  let installed = t!("roster.clones.installed", count => jumps.len()).into_owned();
+  let eyebrow = section_header(&heading, Some(&installed));
 
   if jumps.is_empty() {
     let card = card::panel(
       container(
-        text("No jump clones installed")
+        text(t!("roster.clones.no_jump_clones"))
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
@@ -115,13 +120,13 @@ fn jump_card(jump: &CloneWithImplants<crate::store::model::CharacterJumpClone>) 
     .clone()
     .filter(|name| !name.is_empty())
     .or_else(|| clone.location_name().clone())
-    .unwrap_or_else(|| format!("Location {}", clone.location_id()));
+    .unwrap_or_else(|| t!("roster.fallback.location", id => clone.location_id()).into_owned());
   let subtitle = clone.location_name().clone();
 
   let right = if jump.implants.is_empty() {
-    "empty".to_owned()
+    t!("roster.clones.empty_slots_short").into_owned()
   } else {
-    format!("{} implants", jump.implants.len())
+    t!("roster.clones.implants", count => jump.implants.len()).into_owned()
   };
 
   let header = panel_header(title, subtitle, Some(right), false);
@@ -196,7 +201,7 @@ fn implant_cell(slot: usize, implant: Option<&CharacterCloneImplant>) -> Element
       })
       .width(Length::Fill)
       .into(),
-    None => text("(empty slot)")
+    None => text(t!("roster.clones.empty_slot"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {

@@ -56,20 +56,21 @@ impl EntityCategory {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Self::Alliance => "Alliance",
-      Self::Character => "Character",
-      Self::Corporation => "Corporation",
-      Self::SolarSystem => "Solar System",
-      Self::Station => "Station",
+      Self::Alliance => t!("roster.entity_category.alliance"),
+      Self::Character => t!("roster.entity_category.character"),
+      Self::Corporation => t!("roster.entity_category.corporation"),
+      Self::SolarSystem => t!("roster.entity_category.solar_system"),
+      Self::Station => t!("roster.entity_category.station"),
     }
+    .into_owned()
   }
 }
 
 impl Display for EntityCategory {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    f.write_str(self.label())
+    f.write_str(&self.label())
   }
 }
 
@@ -230,11 +231,20 @@ mod tests {
 
     #[test]
     fn it_maps_each_category_to_its_label() {
-      assert_eq!(EntityCategory::Alliance.label(), "Alliance");
-      assert_eq!(EntityCategory::Character.label(), "Character");
-      assert_eq!(EntityCategory::Corporation.label(), "Corporation");
-      assert_eq!(EntityCategory::SolarSystem.label(), "Solar System");
-      assert_eq!(EntityCategory::Station.label(), "Station");
+      assert_eq!(EntityCategory::Alliance.label(), t!("roster.entity_category.alliance"));
+      assert_eq!(
+        EntityCategory::Character.label(),
+        t!("roster.entity_category.character")
+      );
+      assert_eq!(
+        EntityCategory::Corporation.label(),
+        t!("roster.entity_category.corporation")
+      );
+      assert_eq!(
+        EntityCategory::SolarSystem.label(),
+        t!("roster.entity_category.solar_system")
+      );
+      assert_eq!(EntityCategory::Station.label(), t!("roster.entity_category.station"));
     }
 
     #[test]

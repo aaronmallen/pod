@@ -34,10 +34,17 @@ impl Tab {
 
   fn label(self) -> &'static str {
     match self {
-      Tab::Contacts => "Contacts",
-      Tab::Killlog => "Kill Log",
-      Tab::Standings => "Standings",
+      Tab::Contacts => static_text(t!("roster.corporation.tab_contacts")),
+      Tab::Killlog => static_text(t!("roster.corporation.tab_killlog")),
+      Tab::Standings => static_text(t!("roster.corporation.tab_standings")),
     }
+  }
+}
+
+fn static_text(value: std::borrow::Cow<'static, str>) -> &'static str {
+  match value {
+    std::borrow::Cow::Borrowed(text) => text,
+    std::borrow::Cow::Owned(text) => Box::leak(text.into_boxed_str()),
   }
 }
 

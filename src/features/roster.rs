@@ -1268,13 +1268,13 @@ pub fn view<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Message> {
     vec![roster_tabs::roster_tabs(vec![
       roster_tabs::Tab {
         count: roster_count(state),
-        label: "Characters",
+        label: t!("roster.tabs.characters").into_owned(),
         on_press: (pane != Pane::Characters).then_some(Message::TabSelected(Pane::Characters)),
         selected: pane == Pane::Characters,
       },
       roster_tabs::Tab {
         count: corp_count(state),
-        label: "Corporations",
+        label: t!("roster.tabs.corporations").into_owned(),
         on_press: (pane != Pane::Corporations).then_some(Message::TabSelected(Pane::Corporations)),
         selected: pane == Pane::Corporations,
       },
@@ -1312,11 +1312,10 @@ fn active_overlay(state: &State) -> Option<(Message, Element<'_, Message>)> {
     return Some((
       Message::CloseRemoveConfirm,
       confirm_modal::confirm_modal(
-        "Remove character",
-        format!("Remove {} from Pod?", confirm.name),
-        "This unlinks the character from this app only. Their skills, assets and ISK on the EVE servers \
-are unaffected. You can re-add them later via Add character.",
-        "Remove",
+        t!("roster.confirm.remove_character_title").into_owned(),
+        t!("roster.confirm.remove_body", name => confirm.name).into_owned(),
+        t!("roster.confirm.remove_character_explanation").into_owned(),
+        t!("roster.confirm.remove").into_owned(),
         Message::RemoveCharacterConfirmed(confirm.character_id),
         Message::CloseRemoveConfirm,
       ),
@@ -1327,11 +1326,10 @@ are unaffected. You can re-add them later via Add character.",
     return Some((
       Message::CloseCorpRemoveConfirm,
       confirm_modal::confirm_modal(
-        "Remove corporation",
-        format!("Remove {} from Pod?", confirm.name),
-        "This unlinks the corporation from this app only. Its members, assets and structures on the EVE \
-servers are unaffected. You can re-add it later via Add corporation.",
-        "Remove",
+        t!("roster.confirm.remove_corporation_title").into_owned(),
+        t!("roster.confirm.remove_body", name => confirm.name).into_owned(),
+        t!("roster.confirm.remove_corporation_explanation").into_owned(),
+        t!("roster.confirm.remove").into_owned(),
         Message::RemoveCorporationConfirmed(confirm.corporation_id),
         Message::CloseCorpRemoveConfirm,
       ),
@@ -1364,14 +1362,17 @@ fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
   let mut items = Vec::new();
   if menu.needs_fix {
     items.push(Item::danger(
-      "Fix Permissions",
+      t!("roster.actions.fix_permissions"),
       Message::ReauthCharacterRequested(menu.character_id),
     ));
     items.push(Item::separator());
   }
-  items.push(Item::action("Copy name", Message::CopyCharacterName(menu.name.clone())));
   items.push(Item::action(
-    "Edit tags",
+    t!("roster.actions.copy_name"),
+    Message::CopyCharacterName(menu.name.clone()),
+  ));
+  items.push(Item::action(
+    t!("roster.actions.edit_tags"),
     Message::OpenAddTagModal {
       entity_id: menu.character_id,
       entity_type: ENTITY_TYPE_CHARACTER,
@@ -1379,7 +1380,7 @@ fn context_menu_view(menu: &ContextMenu) -> Element<'_, Message> {
   ));
   items.push(Item::separator());
   items.push(Item::danger(
-    "Remove from app",
+    t!("roster.actions.remove_from_app"),
     Message::OpenRemoveConfirm(menu.character_id),
   ));
   context_menu::context_menu(&menu.name, items, menu.anchor)
@@ -1389,17 +1390,17 @@ fn corp_context_menu_view(menu: &CorpContextMenu) -> Element<'_, Message> {
   let mut items = Vec::new();
   if menu.needs_reauth {
     items.push(Item::danger(
-      "Re-authorize",
+      t!("roster.actions.reauthorize"),
       Message::ReauthCorporationRequested(menu.corporation_id),
     ));
     items.push(Item::separator());
   }
   items.push(Item::action(
-    "Copy name",
+    t!("roster.actions.copy_name"),
     Message::CopyCorporationName(menu.name.clone()),
   ));
   items.push(Item::action(
-    "Edit tags",
+    t!("roster.actions.edit_tags"),
     Message::OpenAddTagModal {
       entity_id: menu.corporation_id,
       entity_type: ENTITY_TYPE_CORPORATION,
@@ -1407,26 +1408,33 @@ fn corp_context_menu_view(menu: &CorpContextMenu) -> Element<'_, Message> {
   ));
   items.push(Item::separator());
   items.push(Item::danger(
-    "Remove from app",
+    t!("roster.actions.remove_from_app"),
     Message::OpenCorpRemoveConfirm(menu.corporation_id),
   ));
   context_menu::context_menu(&menu.name, items, menu.anchor)
 }
 
 fn squad_menu_view(menu: &SquadMenu) -> Element<'_, Message> {
-  let collapse = if menu.collapsed { "Expand" } else { "Collapse" };
-  let move_pilots = if menu.is_empty {
-    Item::disabled("Move pilots to Unassigned")
+  let collapse = if menu.collapsed {
+    t!("roster.actions.expand")
   } else {
-    Item::action("Move pilots to Unassigned", Message::UngroupSquad(menu.squad_id))
+    t!("roster.actions.collapse")
+  };
+  let move_pilots = if menu.is_empty {
+    Item::disabled(t!("roster.actions.move_pilots_to_unassigned"))
+  } else {
+    Item::action(
+      t!("roster.actions.move_pilots_to_unassigned"),
+      Message::UngroupSquad(menu.squad_id),
+    )
   };
   let items = vec![
-    Item::action("Edit squad", Message::OpenSquadEditor(menu.squad_id)),
+    Item::action(t!("roster.actions.edit_squad"), Message::OpenSquadEditor(menu.squad_id)),
     Item::action(collapse, Message::ToggleSquadCollapse(menu.squad_id)),
     Item::separator(),
     move_pilots,
     Item::separator(),
-    Item::danger("Delete squad", Message::DeleteSquad(menu.squad_id)),
+    Item::danger(t!("roster.actions.delete_squad"), Message::DeleteSquad(menu.squad_id)),
   ];
   let anchor = iced::Point::new((menu.anchor.x - context_menu::MENU_WIDTH).max(0.0), menu.anchor.y);
   context_menu::context_menu(&menu.name, items, anchor)
@@ -1529,8 +1537,13 @@ fn corp_filtered_body<'a>(state: &'a State, sync: &SyncStatus) -> Element<'a, Me
   match state.corp_filtered() {
     Some(CorpFiltered::Loaded(corps)) if corps.is_empty() => corp_no_matches(),
     Some(CorpFiltered::Loaded(corps)) => corp_grid_scroll(corps, sync),
-    Some(CorpFiltered::Error(error)) => corp_message(format!("Search failed: {error}"), color::status::DANGER),
-    Some(CorpFiltered::Loading) | None => corp_message("Searching…".to_owned(), color::text::secondary()),
+    Some(CorpFiltered::Error(error)) => corp_message(
+      t!("roster.search.search_failed", error => error).into_owned(),
+      color::status::DANGER,
+    ),
+    Some(CorpFiltered::Loading) | None => {
+      corp_message(t!("roster.search.searching").into_owned(), color::text::secondary())
+    }
   }
 }
 
@@ -1573,11 +1586,11 @@ fn corp_grid<'a>(corps: &'a [CorpCardModel], sync: &SyncStatus) -> Element<'a, M
 
 fn corporations_empty_state<'a>() -> Element<'a, Message> {
   let content = Column::with_children(vec![
-    text("No corporations yet")
+    text(t!("roster.empty.no_corporations"))
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("Add a corporation to start tracking it.")
+    text(t!("roster.empty.add_corporation_hint"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -1617,17 +1630,17 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
         color: Some(color::text::tertiary()),
       })
       .into(),
-    text("No corporations match")
+    text(t!("roster.empty.no_corporations_match"))
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("Try a different search or clear filters")
+    text(t!("roster.empty.no_match_hint"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
       .into(),
     button(
-      text("Clear filters")
+      text(t!("roster.actions.clear_filters"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM),
     )
@@ -1651,7 +1664,7 @@ fn add_corporation_button<'a>() -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       text("+").size(typography::size::MD).into(),
-      text("Add corporation")
+      text(t!("roster.actions.add_corporation"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .into(),
@@ -1668,7 +1681,9 @@ fn add_corporation_button<'a>() -> Element<'a, Message> {
 fn roster_count(state: &State) -> String {
   let total = state.groups.iter().map(|group| group.cards.len()).sum::<usize>() + state.unassigned.len();
   match &state.filtered {
-    Some(Filtered::Loaded(cards)) => format!("{} of {total}", cards.len()),
+    Some(Filtered::Loaded(cards)) => {
+      t!("roster.search.shown_of_total", shown => cards.len(), total => total).into_owned()
+    }
     _ => total.to_string(),
   }
 }
@@ -1676,7 +1691,9 @@ fn roster_count(state: &State) -> String {
 fn corp_count(state: &State) -> String {
   let total = state.corps.len();
   match &state.corp_filtered {
-    Some(CorpFiltered::Loaded(corps)) => format!("{} of {total}", corps.len()),
+    Some(CorpFiltered::Loaded(corps)) => {
+      t!("roster.search.shown_of_total", shown => corps.len(), total => total).into_owned()
+    }
     _ => total.to_string(),
   }
 }
@@ -2281,7 +2298,7 @@ async fn resolve_location(
 fn format_remaining(duration: chrono::Duration) -> String {
   let total_minutes = duration.num_minutes();
   if total_minutes <= 0 {
-    return "Done".to_owned();
+    return t!("roster.card.done").into_owned();
   }
   let days = total_minutes / (24 * 60);
   let hours = (total_minutes % (24 * 60)) / 60;
@@ -3143,7 +3160,10 @@ mod tests {
       );
       assert_eq!(format_remaining(chrono::Duration::minutes(8 * 60 + 12)), "8h 12m");
       assert_eq!(format_remaining(chrono::Duration::minutes(45)), "45m");
-      assert_eq!(format_remaining(chrono::Duration::minutes(-5)), "Done");
+      assert_eq!(
+        format_remaining(chrono::Duration::minutes(-5)),
+        t!("roster.card.done").into_owned()
+      );
     }
   }
 

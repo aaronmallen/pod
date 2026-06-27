@@ -28,11 +28,11 @@ use crate::{
 
 /// The five discrete standing tiers; an arbitrary stored standing is snapped to the nearest of these.
 pub const CONTACT_STANDINGS: [(f64, &str); 5] = [
-  (-10.0, "Terrible"),
-  (-5.0, "Bad"),
-  (0.0, "Neutral"),
-  (5.0, "Good"),
-  (10.0, "Excellent"),
+  (-10.0, "roster.contact_modal.tier_terrible"),
+  (-5.0, "roster.contact_modal.tier_bad"),
+  (0.0, "roster.contact_modal.tier_neutral"),
+  (5.0, "roster.contact_modal.tier_good"),
+  (10.0, "roster.contact_modal.tier_excellent"),
 ];
 
 const DIALOG_WIDTH: f32 = 480.0;
@@ -216,7 +216,7 @@ fn tier_label(value: f64) -> &'static str {
   CONTACT_STANDINGS
     .iter()
     .find(|(tier, _)| (tier - value).abs() < f64::EPSILON)
-    .map_or("Neutral", |(_, label)| *label)
+    .map_or("roster.contact_modal.tier_neutral", |(_, label)| *label)
 }
 
 fn standing_color(value: f64) -> Color {
@@ -234,12 +234,16 @@ fn standing_color(value: f64) -> Color {
 }
 
 pub fn modal(state: &ContactModal) -> Element<'_, Message> {
-  let title = if state.edit { "Edit contact" } else { "Add contact" };
+  let title = if state.edit {
+    t!("roster.contact_modal.title_edit")
+  } else {
+    t!("roster.contact_modal.title_add")
+  };
 
   let header = container(
     Row::with_children(vec![
       Column::with_children(vec![
-        eyebrow("Contact"),
+        eyebrow(&t!("roster.contact_modal.contact")),
         text(title)
           .font(typography::body::MEDIUM)
           .size(typography::size::LG)
@@ -308,9 +312,9 @@ pub fn delete_confirm(confirm: &DeleteConfirm) -> Element<'_, Message> {
   let name = confirm.contact.contact_name().clone();
   crate::ui::components::confirm_modal::confirm_modal(
     name.clone(),
-    "Remove contact?",
-    format!("{name} will be removed from your contact list. Their standing and any assigned labels will be cleared."),
-    "Remove",
+    t!("roster.contact_modal.remove_title"),
+    t!("roster.contact_modal.remove_body", name => name),
+    t!("roster.contact_modal.remove"),
     Message::ContactDeleteConfirmed,
     Message::ContactDeleteCancelled,
   )
@@ -318,9 +322,9 @@ pub fn delete_confirm(confirm: &DeleteConfirm) -> Element<'_, Message> {
 
 fn entity_field(state: &ContactModal) -> Element<'_, Message> {
   let label = if state.edit {
-    "Character locked"
+    t!("roster.contact_modal.character_locked")
   } else {
-    "Find a character, corp or alliance"
+    t!("roster.contact_modal.find_entity")
   };
 
   let control: Element<'_, Message> = if state.edit {
@@ -338,11 +342,15 @@ fn entity_field(state: &ContactModal) -> Element<'_, Message> {
     .view()
   };
 
-  field("Entity", Some(label), control)
+  field(&t!("roster.contact_modal.entity"), Some(&label), control)
 }
 
 fn standing_field(state: &ContactModal) -> Element<'_, Message> {
-  field("Standing", None, standing_slider(state.standing))
+  field(
+    &t!("roster.contact_modal.standing"),
+    None,
+    standing_slider(state.standing),
+  )
 }
 
 fn labels_field(state: &ContactModal) -> Element<'_, Message> {
@@ -362,9 +370,9 @@ fn labels_field(state: &ContactModal) -> Element<'_, Message> {
   wrapped = wrapped.push(chips);
 
   let heading = Row::with_children(vec![
-    modal_label("Labels"),
+    modal_label(&t!("roster.contact_modal.labels")),
     container(
-      text("Created in-game \u{b7} assign only")
+      text(t!("roster.contact_modal.labels_hint"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {
@@ -398,9 +406,9 @@ fn watchlist_field(state: &ContactModal) -> Element<'_, Message> {
     .render();
 
   let sub = if is_char {
-    "Alerts on login & location"
+    t!("roster.contact_modal.watch_alerts")
   } else {
-    "Only characters can be watched"
+    t!("roster.contact_modal.watch_characters_only")
   };
   let primary_color = if is_char {
     color::text::PRIMARY
@@ -409,7 +417,7 @@ fn watchlist_field(state: &ContactModal) -> Element<'_, Message> {
   };
 
   let text_block = Column::with_children(vec![
-    text("Watch this contact")
+    text(t!("roster.contact_modal.watch_this"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(move |_| text::Style {
@@ -454,21 +462,25 @@ fn watchlist_field(state: &ContactModal) -> Element<'_, Message> {
     control = control.on_press(Message::ContactWatchToggled);
   }
 
-  field("Watchlist", None, control.into())
+  field(&t!("roster.contact_modal.watchlist"), None, control.into())
 }
 
 fn footer(state: &ContactModal) -> Element<'_, Message> {
   let status = match state.entity.as_ref() {
     Some(_) => format!(
       "{} \u{b7} {}{:.1}",
-      tier_label(state.standing),
+      t!(tier_label(state.standing)),
       if state.standing >= 0.0 { "+" } else { "" },
       state.standing
     ),
-    None => "No entity selected".to_owned(),
+    None => t!("roster.contact_modal.no_entity").into_owned(),
   };
 
-  let submit_label = if state.edit { "Save changes" } else { "Add contact" };
+  let submit_label = if state.edit {
+    t!("roster.contact_modal.save_changes")
+  } else {
+    t!("roster.contact_modal.add_contact")
+  };
   let enabled = state.can_submit();
   let mut submit = button(
     text(submit_label)
@@ -510,7 +522,7 @@ fn footer(state: &ContactModal) -> Element<'_, Message> {
   }
 
   let cancel = button(
-    text("Cancel")
+    text(t!("roster.contact_modal.cancel"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -577,7 +589,7 @@ fn standing_slider(value: f64) -> Element<'static, Message> {
         color: Some(tint),
       })
       .into(),
-    text(tier_label(value).to_uppercase())
+    text(t!(tier_label(value)).to_uppercase())
       .font(typography::mono::MEDIUM)
       .size(typography::size::MD)
       .style(move |_| text::Style {
@@ -608,7 +620,7 @@ fn standing_slider(value: f64) -> Element<'static, Message> {
     ticks = ticks.push(
       button(
         container(
-          text(label.to_uppercase())
+          text(t!(*label).to_uppercase())
             .font(typography::mono::REGULAR)
             .size(typography::size::XS)
             .style(move |_| text::Style {
@@ -791,7 +803,7 @@ fn close_button() -> Element<'static, Message> {
   .into()
 }
 
-fn field<'a>(label: &'a str, sub: Option<&'a str>, control: Element<'a, Message>) -> Element<'a, Message> {
+fn field<'a>(label: &str, sub: Option<&str>, control: Element<'a, Message>) -> Element<'a, Message> {
   let label: Element<'a, Message> = match sub {
     Some(sub) => modal_label(sub),
     None => modal_label(label),
@@ -803,7 +815,7 @@ fn field<'a>(label: &'a str, sub: Option<&'a str>, control: Element<'a, Message>
     .into()
 }
 
-fn modal_label(label: &str) -> Element<'_, Message> {
+fn modal_label<'a>(label: &str) -> Element<'a, Message> {
   text(label.to_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -813,7 +825,7 @@ fn modal_label(label: &str) -> Element<'_, Message> {
     .into()
 }
 
-fn eyebrow(label: &str) -> Element<'_, Message> {
+fn eyebrow<'a>(label: &str) -> Element<'a, Message> {
   text(label.to_uppercase())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)

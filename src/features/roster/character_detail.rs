@@ -1611,7 +1611,7 @@ async fn resolve_killlog_entries(
       .ok()
       .flatten()
       .map(|item| item.name().clone())
-      .unwrap_or_else(|| format!("Type {}", row.ship_type_id()));
+      .unwrap_or_else(|| t!("roster.fallback.ship_type", id => row.ship_type_id()).into_owned());
     let ship_icon = images::default_store().resolve_type_icon(row.ship_type_id(), None, KILLLOG_SHIP_ICON_SIZE);
 
     let (system_name, system_security) = match sde::get_solar_system(db, row.system_id()).await.ok().flatten() {
@@ -1625,8 +1625,8 @@ async fn resolve_killlog_entries(
         .ok()
         .flatten()
         .map(|c| c.name().to_owned())
-        .unwrap_or_else(|| format!("Pilot {id}")),
-      None => "Unknown".to_owned(),
+        .unwrap_or_else(|| t!("roster.fallback.pilot", id => id).into_owned()),
+      None => t!("roster.fallback.unknown").into_owned(),
     };
     let victim_corp = match row.victim_corp_id() {
       Some(id) => org::get_corporation(db, id)
@@ -1634,7 +1634,7 @@ async fn resolve_killlog_entries(
         .ok()
         .flatten()
         .map(|c| c.name().to_owned())
-        .unwrap_or_else(|| format!("Corp {id}")),
+        .unwrap_or_else(|| t!("roster.fallback.corporation", id => id).into_owned()),
       None => String::new(),
     };
 
@@ -1752,7 +1752,7 @@ async fn picker_pilot(db: &Database, id: i64, granted_scopes: Option<String>) ->
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("Select a character to view details")
+    text(t!("roster.character.empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),
@@ -2546,10 +2546,10 @@ mod tests {
 
       assert_eq!(entries.len(), 1);
       assert_eq!(entries[0].killmail_id, 100);
-      assert_eq!(entries[0].ship_name, "Type 587");
+      assert_eq!(entries[0].ship_name, t!("roster.fallback.ship_type", id => 587));
       assert_eq!(entries[0].system_name, None);
-      assert_eq!(entries[0].victim_name, "Pilot 2002");
-      assert_eq!(entries[0].victim_corp, "Corp 3003");
+      assert_eq!(entries[0].victim_name, t!("roster.fallback.pilot", id => 2002));
+      assert_eq!(entries[0].victim_corp, t!("roster.fallback.corporation", id => 3003));
     }
 
     #[tokio::test]
@@ -2581,7 +2581,7 @@ mod tests {
         panic!("expected a loaded killlog");
       };
 
-      assert_eq!(entries[0].victim_name, "Unknown");
+      assert_eq!(entries[0].victim_name, t!("roster.fallback.unknown"));
       assert_eq!(entries[0].victim_corp, "");
     }
   }

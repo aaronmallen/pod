@@ -1,9 +1,32 @@
+use std::{
+  borrow::Cow,
+  collections::HashSet,
+  sync::{LazyLock, Mutex},
+};
+
 use iced::{Border, widget::container};
 
 use crate::ui::style::color;
 
 pub(super) const STANDING_MAX: f64 = 10.0;
 pub(super) const STANDING_HIGH: f64 = 5.0;
+
+static INTERNED: LazyLock<Mutex<HashSet<&'static str>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+pub(super) fn static_text(value: Cow<'static, str>) -> &'static str {
+  match value {
+    Cow::Borrowed(text) => text,
+    Cow::Owned(text) => {
+      let mut interned = INTERNED.lock().expect("interned localized-string pool poisoned");
+      if let Some(existing) = interned.get(text.as_str()) {
+        return existing;
+      }
+      let leaked: &'static str = Box::leak(text.into_boxed_str());
+      interned.insert(leaked);
+      leaked
+    }
+  }
+}
 
 pub(super) fn row_rule_style(width: f32) -> container::Style {
   container::Style {

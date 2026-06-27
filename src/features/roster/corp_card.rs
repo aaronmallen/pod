@@ -57,7 +57,13 @@ pub(super) fn corp_card(model: &CorpCardModel, failure: Option<Phase>) -> Elemen
     rule::horizontal(),
     members_section(model),
     rule::horizontal(),
-    stats_row("CEO", model.ceo.clone(), "HQ", model.hq.clone(), false),
+    stats_row(
+      t!("roster.card.ceo").into_owned(),
+      model.ceo.clone(),
+      t!("roster.card.hq").into_owned(),
+      model.hq.clone(),
+      false,
+    ),
   ];
 
   if let Some(indicator) = sync_failure_indicator(failure) {
@@ -117,7 +123,7 @@ fn plate(model: &CorpCardModel) -> Element<'_, Message> {
         color: Some(color::text::secondary()),
       })
       .into(),
-    None => text("UNAFFILIATED")
+    None => text(t!("roster.card.unaffiliated"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -152,12 +158,17 @@ fn identity(model: &CorpCardModel) -> Element<'_, Message> {
       color: Some(color::text::PRIMARY),
     });
 
-  let alliance = text(model.alliance.clone().unwrap_or_else(|| "No alliance".to_owned()))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::XS_PLUS)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    });
+  let alliance = text(
+    model
+      .alliance
+      .clone()
+      .unwrap_or_else(|| t!("roster.card.no_alliance").into_owned()),
+  )
+  .font(typography::mono::REGULAR)
+  .size(typography::size::XS_PLUS)
+  .style(|_| text::Style {
+    color: Some(color::text::secondary()),
+  });
 
   container(Column::with_children(vec![name.into(), alliance.into()]).spacing(spacing::UNIT))
     .padding(Padding {
@@ -224,9 +235,9 @@ fn add_tag_affordance<'a>(corporation_id: i64) -> Element<'a, Message> {
 
 fn members_section(model: &CorpCardModel) -> Element<'_, Message> {
   let labels = Row::with_children(vec![
-    eyebrow("Members", None),
+    eyebrow(&t!("roster.card.members"), None),
     Space::new().width(Length::Fill).into(),
-    eyebrow("Tax rate", None),
+    eyebrow(&t!("roster.card.tax_rate"), None),
   ])
   .width(Length::Fill);
 
@@ -254,9 +265,9 @@ fn big_value<'a>(value: String) -> Element<'a, Message> {
 }
 
 fn stats_row<'a>(
-  left_label: &'a str,
+  left_label: String,
   left_value: Option<String>,
-  right_label: &'a str,
+  right_label: String,
   right_value: Option<String>,
   mono: bool,
 ) -> Element<'a, Message> {
@@ -275,7 +286,7 @@ fn stats_row<'a>(
   .into()
 }
 
-fn stat<'a>(label: &'a str, value: Option<String>, mono: bool) -> Element<'a, Message> {
+fn stat<'a>(label: String, value: Option<String>, mono: bool) -> Element<'a, Message> {
   let value_font = if mono {
     typography::mono::MEDIUM
   } else {
@@ -310,7 +321,7 @@ fn sync_failure_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Mess
 
   Some(
     container(
-      text("Needs re-authentication")
+      text(t!("roster.card.needs_reauthentication"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {

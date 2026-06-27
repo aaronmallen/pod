@@ -66,9 +66,9 @@ pub enum KilllogFilter {
 
 impl KilllogFilter {
   const SEGMENTS: [(KilllogFilter, &'static str); 3] = [
-    (KilllogFilter::All, "All"),
-    (KilllogFilter::Kills, "Kills"),
-    (KilllogFilter::Losses, "Losses"),
+    (KilllogFilter::All, "roster.killlog.filter_all"),
+    (KilllogFilter::Kills, "roster.killlog.filter_kills"),
+    (KilllogFilter::Losses, "roster.killlog.filter_losses"),
   ];
 
   pub(in crate::features::roster::corporation_detail) fn matches(self, entry: &KillLogEntry) -> bool {
@@ -105,13 +105,11 @@ pub(in crate::features::roster::corporation_detail) fn header(
   let visible = entries.iter().filter(|entry| filter.matches(entry)).count();
 
   let tiles = summary_tiles(&stats);
-  let eyebrow = Row::with_children(vec![
-    section_header(&format!("Activity \u{00b7} {visible} entries"), None),
-    segmented(filter),
-  ])
-  .spacing(spacing::SPACE_3)
-  .align_y(Vertical::Center)
-  .width(Length::Fill);
+  let activity = t!("roster.killlog.activity", count => visible).into_owned();
+  let eyebrow = Row::with_children(vec![section_header(&activity, None), segmented(filter)])
+    .spacing(spacing::SPACE_3)
+    .align_y(Vertical::Center)
+    .width(Length::Fill);
 
   Some(
     Column::with_children(vec![tiles, eyebrow.into()])
@@ -132,12 +130,16 @@ pub(in crate::features::roster::corporation_detail) fn body(
   let entries = match killlog {
     LoadState::Loaded(entries) => entries,
     LoadState::Loading => {
-      return load_state_view(LoadStateView::Loading("Loading kill log\u{2026}"));
+      return load_state_view(LoadStateView::Loading(shared::static_text(t!(
+        "roster.killlog.loading"
+      ))));
     }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
   if entries.is_empty() {
-    return load_state_view(LoadStateView::Empty(empty_state("No killmails recorded")));
+    return load_state_view(LoadStateView::Empty(empty_state(shared::static_text(t!(
+      "roster.killlog.empty"
+    )))));
   }
 
   let visible: Vec<&KillLogEntry> = entries.iter().filter(|entry| filter.matches(entry)).collect();
@@ -178,14 +180,22 @@ fn summary_tiles<'a>(stats: &KillStats) -> Element<'a, Message> {
   };
 
   Row::with_children(vec![
-    summary_tile("Kills", stats.kill_count.to_string(), color::status::ONLINE),
-    summary_tile("Losses", stats.loss_count.to_string(), color::status::DANGER),
     summary_tile(
-      "ISK Destroyed",
-      format!("{} ISK", fmt_isk(stats.kill_isk)),
+      &t!("roster.killlog.tile_kills").into_owned(),
+      stats.kill_count.to_string(),
       color::status::ONLINE,
     ),
-    summary_tile("Efficiency", eff_label, eff_color),
+    summary_tile(
+      &t!("roster.killlog.tile_losses").into_owned(),
+      stats.loss_count.to_string(),
+      color::status::DANGER,
+    ),
+    summary_tile(
+      &t!("roster.killlog.tile_isk_destroyed").into_owned(),
+      t!("roster.killlog.isk_value", value => fmt_isk(stats.kill_isk)).into_owned(),
+      color::status::ONLINE,
+    ),
+    summary_tile(&t!("roster.killlog.tile_efficiency").into_owned(), eff_label, eff_color),
   ])
   .spacing(spacing::SPACE_3)
   .width(Length::Fill)
@@ -229,7 +239,7 @@ fn summary_tile<'a>(label: &str, value: String, accent: iced::Color) -> Element<
 
 fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
   let mut buttons: Vec<Element<'a, Message>> = Vec::with_capacity(KilllogFilter::SEGMENTS.len());
-  for (filter, label) in KilllogFilter::SEGMENTS {
+  for (filter, key) in KilllogFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
       color::accent::PLASMA
@@ -238,7 +248,7 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
     };
     buttons.push(
       iced::widget::button(
-        text(label)
+        text(t!(key).into_owned())
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(move |_| text::Style {
@@ -274,7 +284,7 @@ fn segmented<'a>(active: KilllogFilter) -> Element<'a, Message> {
 fn entries_card<'a>(visible: Vec<&'a KillLogEntry>, viewport_height: f32, scroll_offset: f32) -> Element<'a, Message> {
   if visible.is_empty() {
     let empty = container(
-      text("No entries match this filter")
+      text(t!("roster.killlog.no_match"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -304,12 +314,21 @@ fn header_row<'a>() -> Element<'a, Message> {
   let row = Row::with_children(vec![
     Space::new().width(Length::Fixed(4.0)).into(),
     Space::new().width(Length::Fixed(SHIP_ICON_BOX)).into(),
-    col_label("Ship", false),
-    col_label("Victim \u{00b7} Corp", false),
-    cell(col_label("System", false), SYSTEM_WIDTH),
-    cell(col_label("Value", true), VALUE_WIDTH),
-    cell(col_label("Attackers", true), ATTACKERS_WIDTH),
-    cell(col_label("Time", true), TIME_WIDTH),
+    col_label(&t!("roster.killlog.col_ship").into_owned(), false),
+    col_label(&t!("roster.killlog.col_victim_corp").into_owned(), false),
+    cell(
+      col_label(&t!("roster.killlog.col_system").into_owned(), false),
+      SYSTEM_WIDTH,
+    ),
+    cell(
+      col_label(&t!("roster.killlog.col_value").into_owned(), true),
+      VALUE_WIDTH,
+    ),
+    cell(
+      col_label(&t!("roster.killlog.col_attackers").into_owned(), true),
+      ATTACKERS_WIDTH,
+    ),
+    cell(col_label(&t!("roster.killlog.col_time").into_owned(), true), TIME_WIDTH),
   ])
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Center)
@@ -436,7 +455,10 @@ fn ship_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
       .into(),
   ];
   if entry.final_blow {
-    items.push(badge("FINAL BLOW", Some(color::status::ONLINE)));
+    items.push(badge(
+      t!("roster.killlog.final_blow").into_owned(),
+      Some(color::status::ONLINE),
+    ));
   }
   Column::with_children(items)
     .spacing(spacing::UNIT)
@@ -510,7 +532,7 @@ fn system_col<'a>(entry: &'a KillLogEntry) -> Element<'a, Message> {
 
 fn value_col<'a>(entry: &'a KillLogEntry, accent: iced::Color) -> Element<'a, Message> {
   let label = if entry.value_isk > 0.0 {
-    format!("{} ISK", fmt_isk(entry.value_isk))
+    t!("roster.killlog.isk_value", value => fmt_isk(entry.value_isk)).into_owned()
   } else {
     "\u{2014}".to_owned()
   };

@@ -75,7 +75,7 @@ async fn alliance_view(db: &Database, alliance_id: Option<i64>) -> Option<Entity
     .ok()
     .flatten()
     .map(|alliance| alliance.name().clone())
-    .unwrap_or_else(|| format!("Alliance {id}"));
+    .unwrap_or_else(|| t!("roster.fallback.alliance", id => id).into_owned());
   Some(EntityView {
     logo: images::resolve(&images::default_store(), images::ImageKind::AllianceLogo, id),
     name,
@@ -88,7 +88,7 @@ async fn character_name(db: &Database, id: i64) -> String {
     .ok()
     .flatten()
     .map(|character| character.name().to_owned())
-    .unwrap_or_else(|| format!("Pilot {id}"))
+    .unwrap_or_else(|| t!("roster.fallback.pilot", id => id).into_owned())
 }
 
 async fn corporation_name(db: &Database, id: i64) -> String {
@@ -97,7 +97,7 @@ async fn corporation_name(db: &Database, id: i64) -> String {
     .ok()
     .flatten()
     .map(|corp| corp.name().to_owned())
-    .unwrap_or_else(|| format!("Corp {id}"))
+    .unwrap_or_else(|| t!("roster.fallback.corporation", id => id).into_owned())
 }
 
 async fn corporation_view(db: &Database, corp_id: Option<i64>) -> Option<EntityView> {
@@ -123,7 +123,7 @@ async fn load_attackers(
   for row in &rows {
     let name = match row.attacker_character_id() {
       Some(id) => character_name(db, id).await,
-      None => "Unknown".to_owned(),
+      None => t!("roster.fallback.unknown").into_owned(),
     };
     let corp_name = match row.corporation_id() {
       Some(id) => corporation_name(db, id).await,
@@ -134,7 +134,10 @@ async fn load_attackers(
         type_name(db, type_id).await,
         images::default_store().resolve_type_icon(type_id, None, ITEM_ICON_SIZE),
       ),
-      None => ("Unknown".to_owned(), images::IconResolution::Missing),
+      None => (
+        t!("roster.fallback.unknown").into_owned(),
+        images::IconResolution::Missing,
+      ),
     };
     let damage_share = if total_damage > 0.0 {
       row.damage_done() as f64 / total_damage
@@ -196,12 +199,12 @@ async fn type_name(db: &Database, type_id: i64) -> String {
     .ok()
     .flatten()
     .map(|item| item.name().clone())
-    .unwrap_or_else(|| format!("Type {type_id}"))
+    .unwrap_or_else(|| t!("roster.fallback.ship_type", id => type_id).into_owned())
 }
 
 async fn victim_name(db: &Database, victim_id: Option<i64>) -> String {
   match victim_id {
     Some(id) => character_name(db, id).await,
-    None => "Unknown".to_owned(),
+    None => t!("roster.fallback.unknown").into_owned(),
   }
 }

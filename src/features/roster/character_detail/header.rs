@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use iced::{Element, widget::text};
 
 use super::{HeadStats, Message, PickerPilot, State};
@@ -22,21 +24,21 @@ pub(super) fn header(state: &State) -> Element<'_, Message> {
     character_picker(state),
     header_divider(),
     stat_block(
-      "Total SP",
-      format!("{} SP", fmt_sp_opt(head.total_sp)),
+      t!("roster.character.stat_total_sp").as_ref(),
+      t!("roster.character.sp_value", value => fmt_sp_opt(head.total_sp)).into_owned(),
       color::text::PRIMARY,
       None,
     ),
     header_divider(),
     stat_block(
-      "Liquid",
-      format!("{} ISK", fmt_isk_opt(head.liquid_isk)),
+      t!("roster.character.stat_liquid").as_ref(),
+      t!("roster.character.isk_value", value => fmt_isk_opt(head.liquid_isk)).into_owned(),
       color::text::PRIMARY,
       None,
     ),
     header_divider(),
     stat_block(
-      "Sec Status",
+      t!("roster.character.stat_sec_status").as_ref(),
       fmt_sec_status(head.sec_status),
       sec_status_color(head.sec_status),
       None,
@@ -65,7 +67,7 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
     .collect();
 
   let groups = vec![PickerGroup {
-    title: Some("Switch character".to_owned()),
+    title: Some(t!("roster.character.picker_title").into_owned()),
     items: rows,
   }];
 
@@ -85,13 +87,14 @@ fn trigger(active: Option<&PickerPilot>, active_id: i64) -> Element<'_, Message>
 }
 
 fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
-  let trailing: Element<'_, Message> = text(format!("{} SP", fmt_sp_opt(Some(pilot.total_sp))))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::secondary()),
-    })
-    .into();
+  let trailing: Element<'_, Message> =
+    text(t!("roster.character.sp_value", value => fmt_sp_opt(Some(pilot.total_sp))).into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into();
 
   picker_character_row(
     pilot.id,
@@ -106,12 +109,23 @@ fn picker_row(pilot: &PickerPilot, selected: bool) -> Element<'_, Message> {
 }
 
 fn location_stat(head: &HeadStats) -> Element<'_, Message> {
+  static DOCKED: LazyLock<String> = LazyLock::new(|| t!("roster.character.location_docked").into_owned());
+  static IN_SPACE: LazyLock<String> = LazyLock::new(|| t!("roster.character.location_in_space").into_owned());
+
   let value = head.location.clone().unwrap_or_else(|| "\u{2014}".to_owned());
-  let sub = head
-    .location
-    .as_ref()
-    .map(|_| if head.docked { "docked" } else { "in space" });
-  stat_block("Location", value, color::text::PRIMARY, sub)
+  let sub = head.location.as_ref().map(|_| {
+    if head.docked {
+      DOCKED.as_str()
+    } else {
+      IN_SPACE.as_str()
+    }
+  });
+  stat_block(
+    t!("roster.character.stat_location").as_ref(),
+    value,
+    color::text::PRIMARY,
+    sub,
+  )
 }
 
 fn fmt_sec_status(sec: Option<f64>) -> String {

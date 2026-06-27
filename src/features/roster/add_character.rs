@@ -11,7 +11,7 @@ pub(super) fn add_character_button<'a>() -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       text("+").size(typography::size::MD).into(),
-      text("Add character")
+      text(t!("roster.actions.add_character"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .into(),

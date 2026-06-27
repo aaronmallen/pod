@@ -91,12 +91,12 @@ pub enum NotificationsFilter {
 
 impl NotificationsFilter {
   const SEGMENTS: [(NotificationsFilter, &'static str); 6] = [
-    (NotificationsFilter::All, "All"),
-    (NotificationsFilter::Combat, "Combat"),
-    (NotificationsFilter::Corp, "Corp"),
-    (NotificationsFilter::Structure, "Structure"),
-    (NotificationsFilter::Unread, "Unread"),
-    (NotificationsFilter::War, "War"),
+    (NotificationsFilter::All, "roster.notifications.filter_all"),
+    (NotificationsFilter::Combat, "roster.notifications.filter_combat"),
+    (NotificationsFilter::Corp, "roster.notifications.filter_corp"),
+    (NotificationsFilter::Structure, "roster.notifications.filter_structure"),
+    (NotificationsFilter::Unread, "roster.notifications.filter_unread"),
+    (NotificationsFilter::War, "roster.notifications.filter_war"),
   ];
 
   pub(in crate::features::roster::character_detail) fn matches(self, notification: &CharacterNotification) -> bool {
@@ -122,25 +122,27 @@ pub(in crate::features::roster::character_detail) fn body(
   let entries = match notifications {
     LoadState::Loaded(entries) => entries,
     LoadState::Loading => {
-      return load_state_view(LoadStateView::Loading("Loading notifications\u{2026}"));
+      return load_state_view(LoadStateView::Loading(shared::static_text(t!(
+        "roster.notifications.loading"
+      ))));
     }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
   if entries.is_empty() {
-    return load_state_view(LoadStateView::Empty(empty_state("No notifications recorded")));
+    return load_state_view(LoadStateView::Empty(empty_state(shared::static_text(t!(
+      "roster.notifications.empty"
+    )))));
   }
 
   let visible: Vec<&CharacterNotification> = entries.iter().filter(|n| filter.matches(n)).collect();
   let unread = unread_count(entries);
 
+  let count_label = t!("roster.notifications.count", count => visible.len()).into_owned();
+  let unread_label = t!("roster.notifications.unread", count => unread).into_owned();
   let eyebrow = Row::with_children(vec![
-    eyebrow_text(
-      &format!("Notifications \u{00b7} {}", visible.len()),
-      Some(color::text::secondary()),
-    )
-    .into(),
+    eyebrow_text(&count_label, Some(color::text::secondary())).into(),
     Space::new().width(Length::Fixed(spacing::SPACE_2)).into(),
-    eyebrow_text(&format!("{unread} unread"), Some(color::text::dim())).into(),
+    eyebrow_text(&unread_label, Some(color::text::dim())).into(),
     Space::new().width(Length::Fill).into(),
     segmented(filter),
   ])
@@ -157,7 +159,7 @@ pub(in crate::features::roster::character_detail) fn body(
 
 fn segmented<'a>(active: NotificationsFilter) -> Element<'a, Message> {
   let mut buttons: Vec<Element<'a, Message>> = Vec::with_capacity(NotificationsFilter::SEGMENTS.len());
-  for (filter, label) in NotificationsFilter::SEGMENTS {
+  for (filter, key) in NotificationsFilter::SEGMENTS {
     let selected = filter == active;
     let label_color = if selected {
       color::accent::PLASMA
@@ -166,7 +168,7 @@ fn segmented<'a>(active: NotificationsFilter) -> Element<'a, Message> {
     };
     buttons.push(
       button(
-        text(label)
+        text(t!(key).into_owned())
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(move |_| text::Style {
@@ -204,7 +206,7 @@ fn notifications_card<'a>(visible: &[&'a CharacterNotification]) -> Element<'a, 
   if visible.is_empty() {
     rows.push(
       container(
-        text("No notifications match this filter")
+        text(t!("roster.notifications.no_match"))
           .font(typography::body::REGULAR)
           .size(typography::size::MD)
           .style(|_| text::Style {
@@ -295,8 +297,9 @@ fn content_col<'a>(notification: &'a CharacterNotification, cat: &'static str, u
     typography::mono::REGULAR
   };
 
+  let cat_label = category_label(cat);
   let mut items: Vec<Element<'a, Message>> = vec![
-    eyebrow_text(cat, Some(cat_color)).into(),
+    eyebrow_text(&cat_label, Some(cat_color)).into(),
     text(humanise_type(notification.notif_type()))
       .font(title_font)
       .size(typography::size::MD)
@@ -376,6 +379,30 @@ pub(in crate::features::roster::character_detail) fn category(notif_type: &str) 
     .iter()
     .find(|(_, needles)| needles.iter().any(|needle| lower.contains(needle)))
     .map_or("system", |(cat, _)| cat)
+}
+
+fn category_label(category: &str) -> String {
+  match category {
+    "war" => t!("roster.notifications.category_war"),
+    "fw" => t!("roster.notifications.category_fw"),
+    "combat" => t!("roster.notifications.category_combat"),
+    "incursion" => t!("roster.notifications.category_incursion"),
+    "corp" => t!("roster.notifications.category_corp"),
+    "sovereignty" => t!("roster.notifications.category_sovereignty"),
+    "structure" => t!("roster.notifications.category_structure"),
+    "moon" => t!("roster.notifications.category_moon"),
+    "contact" => t!("roster.notifications.category_contact"),
+    "contract" => t!("roster.notifications.category_contract"),
+    "clone" => t!("roster.notifications.category_clone"),
+    "standing" => t!("roster.notifications.category_standing"),
+    "insurance" => t!("roster.notifications.category_insurance"),
+    "market" => t!("roster.notifications.category_market"),
+    "reward" => t!("roster.notifications.category_reward"),
+    "industry" => t!("roster.notifications.category_industry"),
+    "mission" => t!("roster.notifications.category_mission"),
+    _ => t!("roster.notifications.category_system"),
+  }
+  .into_owned()
 }
 
 fn category_color(category: &str) -> iced::Color {

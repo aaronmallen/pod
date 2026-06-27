@@ -53,11 +53,11 @@ pub enum StandingsFilter {
 
 impl StandingsFilter {
   const SEGMENTS: [(StandingsFilter, &'static str); 5] = [
-    (StandingsFilter::All, "All"),
-    (StandingsFilter::Factions, "Factions"),
-    (StandingsFilter::Corps, "Corps"),
-    (StandingsFilter::Agents, "Agents"),
-    (StandingsFilter::Other, "Other"),
+    (StandingsFilter::All, "roster.standings.filter_all"),
+    (StandingsFilter::Factions, "roster.standings.filter_factions"),
+    (StandingsFilter::Corps, "roster.standings.filter_corps"),
+    (StandingsFilter::Agents, "roster.standings.filter_agents"),
+    (StandingsFilter::Other, "roster.standings.filter_other"),
   ];
 
   /// Whether the segment needs the agent catalog loaded. The All and Agents segments list agents, so
@@ -112,7 +112,9 @@ pub(crate) fn body<'a>(
   let rows = match catalog {
     LoadState::Loaded(rows) => rows,
     LoadState::Loading => {
-      return load_state_view(LoadStateView::Loading("Loading standings\u{2026}"));
+      return load_state_view(LoadStateView::Loading(shared::static_text(t!(
+        "roster.standings.loading"
+      ))));
     }
     LoadState::Error(error) => return load_state_view(LoadStateView::Error(error)),
   };
@@ -166,9 +168,9 @@ fn flatten_sections<'a>(rows: &'a [StandingsRow], filter: StandingsFilter) -> Ve
   };
 
   for (kind, label) in [
-    (StandingKind::Faction, "Factions"),
-    (StandingKind::Corporation, "Corporations"),
-    (StandingKind::Agent, "Agents"),
+    (StandingKind::Faction, "roster.standings.section_factions"),
+    (StandingKind::Corporation, "roster.standings.section_corporations"),
+    (StandingKind::Agent, "roster.standings.section_agents"),
   ] {
     let group: Vec<&StandingsRow> = rows
       .iter()
@@ -178,7 +180,7 @@ fn flatten_sections<'a>(rows: &'a [StandingsRow], filter: StandingsFilter) -> Ve
   }
 
   let other: Vec<&StandingsRow> = rows.iter().filter(|row| is_other(row) && filter.matches(row)).collect();
-  push_section("Other", other);
+  push_section("roster.standings.section_other", other);
 
   items
 }
@@ -204,7 +206,7 @@ fn chip_padding() -> Padding {
 }
 
 fn clear_button<'a>() -> Element<'a, Message> {
-  button(eyebrow("Clear", Some(color::text::secondary())))
+  button(eyebrow(&t!("roster.standings.clear"), Some(color::text::secondary())))
     .padding(Padding {
       top: spacing::SPACE_2,
       right: spacing::SPACE_3,
@@ -336,11 +338,14 @@ fn meta_line<'a>(row: &StandingsRow) -> Option<Element<'a, Message>> {
 
 fn no_results<'a>(has_filters: bool) -> Element<'a, Message> {
   if has_filters {
+    let title = shared::static_text(t!("roster.standings.no_match"));
+    let action = shared::static_text(t!("roster.standings.clear_filter"));
     load_state_view(LoadStateView::Empty(
-      empty_state("No standings match").action("Clear filter", Message::StandingsClearSearch),
+      empty_state(title).action(action, Message::StandingsClearSearch),
     ))
   } else {
-    load_state_view(LoadStateView::Empty(empty_state("No standings catalog available")))
+    let title = shared::static_text(t!("roster.standings.no_catalog"));
+    load_state_view(LoadStateView::Empty(empty_state(title)))
   }
 }
 
@@ -391,7 +396,8 @@ fn query_preview<'a>(query: &str) -> Option<Element<'a, Message>> {
     return None;
   }
 
-  let mut children: Vec<Element<'a, Message>> = vec![eyebrow("Parsed", Some(color::text::tertiary()))];
+  let mut children: Vec<Element<'a, Message>> =
+    vec![eyebrow(&t!("roster.standings.parsed"), Some(color::text::tertiary()))];
   for (label, kind) in chips {
     children.push(preview_chip(&label, &kind));
   }
@@ -433,7 +439,8 @@ fn row_view<'a>(row: &StandingsRow, last: bool) -> Element<'a, Message> {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let raw = text(format!("{}{:.2} raw", if row.raw >= 0.0 { "+" } else { "" }, row.raw))
+  let raw_value = format!("{}{:.2}", if row.raw >= 0.0 { "+" } else { "" }, row.raw);
+  let raw = text(t!("roster.standings.raw", value => raw_value))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -482,7 +489,8 @@ fn row_view<'a>(row: &StandingsRow, last: bool) -> Element<'a, Message> {
 }
 
 fn search_bar<'a>(query: &str, has_filters: bool) -> Element<'a, Message> {
-  let input = text_input("Filter\u{2026} try faction:caldari or -corp:\"sisters of eve\"", query)
+  let placeholder = t!("roster.standings.search_placeholder").into_owned();
+  let input = text_input(&placeholder, query)
     .id(STANDINGS_SEARCH_INPUT_ID)
     .on_input(Message::StandingsSearchChanged)
     .size(typography::size::MD)
@@ -541,7 +549,7 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
     };
     buttons.push(
       button(
-        text(label)
+        text(t!(label))
           .font(typography::body::MEDIUM)
           .size(typography::size::SM)
           .style(move |_| text::Style {
@@ -582,8 +590,12 @@ fn segmented<'a>(active: StandingsFilter) -> Element<'a, Message> {
 /// A section heading pseudo-row for the flattened, windowed standings body. Mirrors the `section_header` the grouped
 /// view rendered above each card, with the same matched/tracked count suffix.
 fn section_heading<'a>(label: &'a str, count: usize, has_filters: bool) -> Element<'a, Message> {
-  let suffix = if has_filters { "matched" } else { "tracked" };
-  section_header(label, Some(&format!("{count} {suffix}")))
+  let meta = if has_filters {
+    t!("roster.standings.count_matched", count => count).into_owned()
+  } else {
+    t!("roster.standings.count_tracked", count => count).into_owned()
+  };
+  section_header(&t!(label), Some(&meta))
 }
 
 #[cfg(test)]
@@ -751,7 +763,15 @@ mod tests {
 
       let items = flatten_sections(&rows, StandingsFilter::All);
 
-      assert_eq!(labels(&items), ["Factions", "Corporations", "Agents", "Other"]);
+      assert_eq!(
+        labels(&items),
+        [
+          "roster.standings.section_factions",
+          "roster.standings.section_corporations",
+          "roster.standings.section_agents",
+          "roster.standings.section_other",
+        ]
+      );
       assert_eq!(items.len(), 4 + 4, "one header per section plus every visible row");
     }
   }

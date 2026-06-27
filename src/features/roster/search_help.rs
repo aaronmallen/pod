@@ -22,15 +22,15 @@ const CHIPS_PER_ROW: usize = 3;
 const CLOSE_ICON_SIZE: f32 = 14.0;
 
 const EXAMPLES: &[(&str, &str)] = &[
-  ("tag:pvp", "has tag PvP"),
-  ("tag:cruiser,frigate", "cruiser OR frigate"),
-  ("tag:pvp tag:caldari", "pvp AND caldari"),
-  ("-tag:alt", "NOT tagged alt"),
-  ("corp:cobalt", "corp contains \"cobalt\""),
-  ("loc:jita", "in Jita"),
-  ("status:in-space", "undocked"),
-  ("training:idle", "queue empty"),
-  ("\"black iris\"", "phrase match"),
+  ("tag:pvp", "roster.search_help.example_tag"),
+  ("tag:cruiser,frigate", "roster.search_help.example_tag_or"),
+  ("tag:pvp tag:caldari", "roster.search_help.example_tag_and"),
+  ("-tag:alt", "roster.search_help.example_tag_not"),
+  ("corp:cobalt", "roster.search_help.example_corp"),
+  ("loc:jita", "roster.search_help.example_loc"),
+  ("status:in-space", "roster.search_help.example_status"),
+  ("training:idle", "roster.search_help.example_training"),
+  ("\"black iris\"", "roster.search_help.example_phrase"),
 ];
 
 const HELP_ICON_SIZE: f32 = 15.0;
@@ -47,7 +47,7 @@ const SEARCH_ROW_PAD_X: f32 = 32.0;
 
 pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
   let header = Row::with_children(vec![
-    section_label("Query syntax"),
+    section_label(&t!("roster.search_help.query_syntax")),
     Space::new().width(Length::Fill).into(),
     icon_button(
       icon(CLOSE_ICON, CLOSE_ICON_SIZE, color::text::secondary()),
@@ -56,18 +56,15 @@ pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
   ])
   .align_y(Vertical::Center);
 
-  let intro = text(
-    "Combine plain text with key:value filters. Comma-separate values for OR. Repeat keys to AND. \
-    Prefix with - to negate. Click any example to add it.",
-  )
-  .font(typography::body::REGULAR)
-  .size(typography::size::SM)
-  .style(muted_text);
+  let intro = text(t!("roster.search_help.intro"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(muted_text);
 
   let examples = Column::with_children(
     EXAMPLES
       .iter()
-      .map(|&(query, note)| example_row(query, note))
+      .map(|&(query, note_key)| example_row(query, note_key))
       .collect::<Vec<_>>(),
   )
   .spacing(spacing::SPACE_2);
@@ -79,9 +76,9 @@ pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
     header.into(),
     intro.into(),
     examples.into(),
-    section_label("Available keys"),
+    section_label(&t!("roster.search_help.available_keys")),
     keys,
-    section_label(&format!("Your tags ({})", tags.len())),
+    section_label(&t!("roster.search_help.your_tags", count => tags.len())),
     your_tags,
   ])
   .spacing(spacing::SPACE_3);
@@ -106,7 +103,7 @@ pub(super) fn popover(tags: &[Tag]) -> Element<'_, Message> {
 }
 
 pub(super) fn search_bar(state: &State) -> Element<'_, Message> {
-  let input = text_input("Search… try tag:pvp or status:docked", state.search_query())
+  let input = text_input(&t!("roster.search_help.placeholder"), state.search_query())
     .id(crate::features::shell::focus_search::characters_search_id())
     .on_input(Message::SearchChanged)
     .size(typography::size::MD)
@@ -223,11 +220,11 @@ fn chip_padding() -> Padding {
   }
 }
 
-fn example_row<'a>(query: &'a str, note: &'a str) -> Element<'a, Message> {
+fn example_row<'a>(query: &'a str, note_key: &'a str) -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       code_chip(query),
-      text(note)
+      text(t!(note_key).into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(muted_text)
@@ -324,7 +321,7 @@ fn input_style(_theme: &iced::Theme, _status: text_input::Status) -> text_input:
 
 fn key_chip<'a>(key: &str) -> Element<'a, Message> {
   container(
-    text(format!("{key}:"))
+    text(t!("roster.search_help.key_label", key => key).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(muted_text),

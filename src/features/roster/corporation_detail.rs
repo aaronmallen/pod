@@ -901,7 +901,7 @@ async fn killlog_ship_name(db: &Database, ship_type_id: i64) -> String {
     .ok()
     .flatten()
     .map(|item| item.name().clone())
-    .unwrap_or_else(|| format!("Type {ship_type_id}"))
+    .unwrap_or_else(|| t!("roster.fallback.ship_type", id => ship_type_id).into_owned())
 }
 
 async fn killlog_system(db: &Database, system_id: i64) -> (Option<String>, f64) {
@@ -918,8 +918,8 @@ async fn killlog_victim_name(db: &Database, victim_id: Option<i64>) -> String {
       .ok()
       .flatten()
       .map(|c| c.name().to_owned())
-      .unwrap_or_else(|| format!("Pilot {id}")),
-    None => "Unknown".to_owned(),
+      .unwrap_or_else(|| t!("roster.fallback.pilot", id => id).into_owned()),
+    None => t!("roster.fallback.unknown").into_owned(),
   }
 }
 
@@ -930,7 +930,7 @@ async fn killlog_victim_corp(db: &Database, victim_corp_id: Option<i64>) -> Stri
       .ok()
       .flatten()
       .map(|c| c.name().to_owned())
-      .unwrap_or_else(|| format!("Corp {id}")),
+      .unwrap_or_else(|| t!("roster.fallback.corporation", id => id).into_owned()),
     None => String::new(),
   }
 }
@@ -1001,26 +1001,36 @@ fn loaded_header(head: &CorpHead) -> Element<'_, Message> {
   let left: Vec<Element<'_, Message>> = vec![
     identity(head),
     header_divider(),
-    stat_block("Members", format_members(head.members), color::text::PRIMARY, None),
-    header_divider(),
-    stat_block("Tax Rate", format_tax(head.tax_rate), color::text::PRIMARY, None),
+    stat_block(
+      &t!("roster.corporation.stat_members").into_owned(),
+      format_members(head.members),
+      color::text::PRIMARY,
+      None,
+    ),
     header_divider(),
     stat_block(
-      "Alliance",
+      &t!("roster.corporation.stat_tax_rate").into_owned(),
+      format_tax(head.tax_rate),
+      color::text::PRIMARY,
+      None,
+    ),
+    header_divider(),
+    stat_block(
+      &t!("roster.corporation.stat_alliance").into_owned(),
       head.alliance.clone().unwrap_or_else(placeholder),
       color::text::PRIMARY,
       None,
     ),
     header_divider(),
     stat_block(
-      "CEO",
+      &t!("roster.corporation.stat_ceo").into_owned(),
       head.ceo.clone().unwrap_or_else(placeholder),
       color::text::PRIMARY,
       None,
     ),
     header_divider(),
     stat_block(
-      "HQ",
+      &t!("roster.corporation.stat_hq").into_owned(),
       head.hq.clone().unwrap_or_else(placeholder),
       color::text::PRIMARY,
       None,
@@ -1064,7 +1074,7 @@ fn identity(head: &CorpHead) -> Element<'_, Message> {
 }
 
 fn loading_identity<'a>() -> Element<'a, Message> {
-  text("Loading\u{2026}")
+  text(t!("roster.corporation.loading").into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()))

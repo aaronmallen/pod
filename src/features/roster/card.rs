@@ -209,10 +209,10 @@ fn ghost_surface(has_accent: bool) -> impl Fn(&iced::Theme) -> container::Style 
   card_surface(has_accent, true)
 }
 
-fn status_label(docked: Option<bool>) -> Option<&'static str> {
+fn status_label(docked: Option<bool>) -> Option<String> {
   match docked {
-    Some(true) => Some("DOCKED"),
-    Some(false) => Some("IN SPACE"),
+    Some(true) => Some(t!("roster.card.docked").into_owned()),
+    Some(false) => Some(t!("roster.card.in_space").into_owned()),
     None => None,
   }
 }
@@ -372,7 +372,7 @@ fn add_tag_affordance<'a>(character_id: i64) -> Element<'a, Message> {
 }
 
 fn training_section(model: &CardModel) -> Element<'_, Message> {
-  let label = text("Training")
+  let label = text(t!("roster.card.training"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -406,8 +406,12 @@ fn training_section(model: &CardModel) -> Element<'_, Message> {
 }
 
 fn paused_label(queued: usize) -> String {
-  let noun = if queued == 1 { "skill" } else { "skills" };
-  format!("Paused \u{b7} {queued} {noun} queued")
+  let key = if queued == 1 {
+    "roster.card.paused_queued_one"
+  } else {
+    "roster.card.paused_queued_other"
+  };
+  t!(key, count => queued).into_owned()
 }
 
 fn training_detail(character_id: i64, training: &Training) -> Element<'_, Message> {
@@ -439,7 +443,7 @@ fn idle_state<'a>() -> Element<'a, Message> {
     container(status::dot(color::status::DANGER))
       .align_y(Vertical::Center)
       .into(),
-    text("Skill queue empty")
+    text(t!("roster.card.skill_queue_empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -456,16 +460,24 @@ fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> 
   let isk = format_isk(model.wallet_balance);
 
   if !location_enabled {
-    return container(stat("ISK", isk, typography::mono::SEMIBOLD))
-      .width(Length::Fill)
-      .into();
+    return container(stat(
+      t!("roster.card.isk").into_owned(),
+      isk,
+      typography::mono::SEMIBOLD,
+    ))
+    .width(Length::Fill)
+    .into();
   }
 
   let location = model.location.clone().unwrap_or_else(|| PLACEHOLDER.to_owned());
   let columns = Row::with_children(vec![
-    stat("Location", location, typography::body::REGULAR),
+    stat(
+      t!("roster.card.location").into_owned(),
+      location,
+      typography::body::REGULAR,
+    ),
     Space::new().width(Length::Fixed(HAIRLINE)).into(),
-    stat("ISK", isk, typography::mono::SEMIBOLD),
+    stat(t!("roster.card.isk").into_owned(), isk, typography::mono::SEMIBOLD),
   ])
   .width(Length::Fill);
 
@@ -477,7 +489,7 @@ fn stats_row(model: &CardModel, location_enabled: bool) -> Element<'_, Message> 
   .into()
 }
 
-fn stat<'a>(label: &'a str, value: String, value_font: iced::Font) -> Element<'a, Message> {
+fn stat<'a>(label: String, value: String, value_font: iced::Font) -> Element<'a, Message> {
   let label = text(label)
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
@@ -503,7 +515,7 @@ pub(super) fn reauth_badge<'a>(on_press: Message) -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       status::dot(on_danger),
-      text("Fix Permissions")
+      text(t!("roster.actions.fix_permissions"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(move |_| text::Style {
@@ -534,8 +546,8 @@ fn reauth_badge_style(_theme: &iced::Theme, _status: button::Status) -> button::
 
 fn sync_indicator<'a>(failure: Option<Phase>) -> Option<Element<'a, Message>> {
   let label = match failure? {
-    Phase::BackingOff => "Sync backing off",
-    Phase::Failed => "Sync failed",
+    Phase::BackingOff => t!("roster.card.sync_backing_off"),
+    Phase::Failed => t!("roster.card.sync_failed"),
     Phase::Blocked | Phase::Done | Phase::Empty | Phase::NotReady | Phase::Syncing => {
       return None;
     }
@@ -722,12 +734,18 @@ mod tests {
 
     #[test]
     fn it_labels_a_paused_queue_with_its_real_count() {
-      assert_eq!(paused_label(4), "Paused \u{b7} 4 skills queued");
+      assert_eq!(
+        paused_label(4),
+        t!("roster.card.paused_queued_other", count => 4).into_owned()
+      );
     }
 
     #[test]
     fn it_uses_the_singular_noun_for_a_one_skill_paused_queue() {
-      assert_eq!(paused_label(1), "Paused \u{b7} 1 skill queued");
+      assert_eq!(
+        paused_label(1),
+        t!("roster.card.paused_queued_one", count => 1).into_owned()
+      );
     }
 
     #[test]
@@ -848,8 +866,8 @@ mod tests {
 
     #[test]
     fn it_labels_docked_in_space_and_renders_no_pill_when_unknown() {
-      assert_eq!(status_label(Some(true)), Some("DOCKED"));
-      assert_eq!(status_label(Some(false)), Some("IN SPACE"));
+      assert_eq!(status_label(Some(true)), Some(t!("roster.card.docked").into_owned()));
+      assert_eq!(status_label(Some(false)), Some(t!("roster.card.in_space").into_owned()));
       assert_eq!(status_label(None), None);
     }
   }

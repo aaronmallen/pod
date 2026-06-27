@@ -12,12 +12,22 @@
   {
     "category": "character",
     "title": "Tip of the Day",
-    "body": "Search smarter, not harder. The character search understands filters like tag:, corp:, loc:, status:, and training: — try training: to instantly find every character with a skill in progress."
+    "body": "Search smarter, not harder. The character search understands filters like tag:, corp:, loc:, status:, and training:. Try training: to instantly find every character with a skill in progress."
   },
   {
     "category": "character",
     "title": "Tip of the Day",
     "body": "Make your roster yours. Create, rename, recolor, and reorder Tags from the Tags section in Settings, then apply them to any character."
+  },
+  {
+    "category": "onboarding",
+    "title": "Tip of the Day",
+    "body": "New to Pod? Hit Add character and Pod opens EVE SSO in your browser. Authorize there and Pod finishes the link automatically, no IDs to copy."
+  },
+  {
+    "category": "corporations",
+    "title": "Tip of the Day",
+    "body": "Run with a corp? Add it from the Corporations tab in your Roster and Pod tracks its profile alongside your pilots, ready for corp wallet divisions and moon extractions."
   },
   {
     "category": "skills",
@@ -27,7 +37,7 @@
   {
     "category": "skills",
     "title": "Tip of the Day",
-    "body": "Already have a skill plan in EVE? Paste it straight in — Skill Plans import from EVE's clipboard text or a JSON file, and export back out the same way."
+    "body": "Already have a skill plan in EVE? Paste it straight in. Skill Plans import from EVE's clipboard text or a JSON file, and export back out the same way."
   },
   {
     "category": "skills",
@@ -40,46 +50,6 @@
     "body": "Squeeze more out of your training. Skill Plans suggest an attribute remap to shave time off long queues."
   },
   {
-    "category": "wallet",
-    "title": "Tip of the Day",
-    "body": "Watch your empire grow. The Wallet tab charts your net worth over time — assets, wallet, and a separate Liquid ISK line so you can see how much you can actually spend."
-  },
-  {
-    "category": "assets",
-    "title": "Tip of the Day",
-    "body": "Lost track of your stuff? The Assets tab groups everything into a geographic tree — drill from region down to the exact station or structure holding an item."
-  },
-  {
-    "category": "stockpiles",
-    "title": "Tip of the Day",
-    "body": "Never undock short again. Set up a Stockpile with target quantities and Pod tracks how full it is across all your characters and corp hangars."
-  },
-  {
-    "category": "stockpiles",
-    "title": "Tip of the Day",
-    "body": "Restocking? Export any Stockpile's shortfall straight to an EVE multibuy list — paste it into the in-game window and buy exactly what you're missing."
-  },
-  {
-    "category": "abyssals",
-    "title": "Tip of the Day",
-    "body": "Got a drawer full of abyssal modules? The Abyssals view lists each one's mutated stats and estimated value — filter by any stat range to find that perfect roll."
-  },
-  {
-    "category": "settings",
-    "title": "Tip of the Day",
-    "body": "Small system drive? The Storage section in Settings lets you move Pod's database, logs, and image cache to any folder or drive you like."
-  },
-  {
-    "category": "privacy",
-    "title": "Tip of the Day",
-    "body": "Your data stays yours. Pod keeps everything in a local database on your machine — nothing about your characters lives on someone else's server."
-  },
-  {
-    "category": "mail",
-    "title": "Tip of the Day",
-    "body": "Sending EVEmail from Pod? Recipient search is live — start typing a character, corp, or alliance name and pick from real results, no copy-pasting IDs."
-  },
-  {
     "category": "skills",
     "title": "Tip of the Day",
     "body": "Don't let your queue run dry. Pod shows each character's training ETA right on their card, so you know at a glance who needs attention."
@@ -90,19 +60,144 @@
     "body": "Optimizing attributes? Skill Plan remaps account for the implants you're actually flying, so the suggested split matches your real clone."
   },
   {
+    "category": "industry",
+    "title": "Tip of the Day",
+    "body": "Lots of jobs running? The Industry Jobs tab lists your manufacturing, reactions, invention, and research jobs. Filter to In progress or Ready, and group by owner, facility, or activity."
+  },
+  {
+    "category": "industry",
+    "title": "Tip of the Day",
+    "body": "Sitting on a stack of blueprints? The Blueprints tab shows ME, TE, and runs for each one. Hit Plan Build on any row to jump straight into the Planner seeded with that product."
+  },
+  {
+    "category": "industry",
+    "title": "Tip of the Day",
+    "body": "Wondering if a build is worth it? The Industry Planner breaks a product into a buy-or-build material tree and estimates build time, cost, and profit before you commit a single job."
+  },
+  {
+    "category": "industry",
+    "title": "Tip of the Day",
+    "body": "Mining moons with your corp? The Extractions tab lays out every moon timer with chunk arrival and natural decay, sorted soonest first so you never miss a fracture."
+  },
+  {
+    "category": "calendar",
+    "title": "Tip of the Day",
+    "body": "Keep your schedule in view. The Calendar pulls in your EVE events across Agenda, Day, Week, Month, and Year views, and can overlay skill completions, job finishes, extraction timers, and expiring orders and contracts."
+  },
+  {
+    "category": "mail",
+    "title": "Tip of the Day",
+    "body": "Sending EVEmail from Pod? Recipient search is live. Start typing a character, corp, or alliance name and pick from real results, no copy-pasting IDs."
+  },
+  {
+    "category": "wallet",
+    "title": "Tip of the Day",
+    "body": "Want a clean read on your cash? The Wallets tab gathers every pilot wallet and corp division into one place and sums your liquid ISK across all of them."
+  },
+  {
+    "category": "wallet",
+    "title": "Tip of the Day",
+    "body": "Where did the ISK go? The Journal tab is your full inflow and outflow ledger, with each entry labeled by type and character so you can trace every credit and debit."
+  },
+  {
+    "category": "wallet",
+    "title": "Tip of the Day",
+    "body": "Trading a lot? The Transactions tab logs every market buy and sell with quantity, unit price, total, location, and which character made the trade."
+  },
+  {
+    "category": "wallet",
+    "title": "Tip of the Day",
+    "body": "Got contracts in flight? The Contracts tab tracks each one's type, status, issuer, counterparty, value, and collateral, so nothing slips past its deadline."
+  },
+  {
+    "category": "wallet",
+    "title": "Tip of the Day",
+    "body": "Give every ISK a job. The Budget tab is an envelope planner: assign your income to categories each month, then watch activity and available balances update as you spend."
+  },
+  {
+    "category": "assets",
+    "title": "Tip of the Day",
+    "body": "Lost track of your stuff? The Assets tab groups everything into a geographic tree. Drill from region down to the exact station or structure holding an item."
+  },
+  {
     "category": "assets",
     "title": "Tip of the Day",
     "body": "Big hauler, small patience? The Assets list loads as you scroll and expands containers on demand, so even a huge inventory stays snappy."
   },
   {
+    "category": "assets",
+    "title": "Tip of the Day",
+    "body": "Where is your wealth sitting? The Values tab breaks holdings down by owner and location, by category, and a top items list, so you can see exactly what is worth the most."
+  },
+  {
+    "category": "assets",
+    "title": "Tip of the Day",
+    "body": "Watch your empire grow. The Tracker tab charts your net asset value over 90 days, with current, high, low, and 30-day average tiles so you can see the trend at a glance."
+  },
+  {
     "category": "stockpiles",
     "title": "Tip of the Day",
-    "body": "Comparing buy lists? Stockpile multibuy export can show the full target or just the remaining shortfall — toggle whichever you need."
+    "body": "Never undock short again. Set up a Stockpile with target quantities and Pod tracks how full it is across all your characters and corp hangars."
+  },
+  {
+    "category": "stockpiles",
+    "title": "Tip of the Day",
+    "body": "Restocking? Export any Stockpile's shortfall straight to an EVE multibuy list, paste it into the in-game window, and buy exactly what you're missing."
+  },
+  {
+    "category": "stockpiles",
+    "title": "Tip of the Day",
+    "body": "Comparing buy lists? Stockpile multibuy export can show the full target or just the remaining shortfall. Toggle whichever you need."
+  },
+  {
+    "category": "abyssals",
+    "title": "Tip of the Day",
+    "body": "Got a drawer full of abyssal modules? The Abyssals view lists each one's mutated stats and estimated value. Filter by any stat range to find that perfect roll."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Text too small? The Accessibility settings scale the whole interface from 85% up to 150%, and a high contrast toggle firms up secondary text. Both apply live across every window."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Only use part of Pod? The Features settings let you turn individual capabilities on or off, from Wallet and Assets to Mail and Calendar. Changes apply live, no restart."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Always build in the same structure? Set a default install structure per activity in the Industry settings and the Planner pre-selects it for you, or leave it on Ask each install."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Want an AI agent to help? The MCP settings run an embedded Model Context Protocol server so tools like Claude can work with Pod on your behalf. It stays off until you turn it on and binds to localhost only."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Small system drive? The Storage section in Settings lets you move Pod's database, logs, and image cache to any folder or drive you like."
   },
   {
     "category": "storage",
     "title": "Tip of the Day",
     "body": "Fly on more than one machine? Point Pod's storage at a shared drive and your data follows you, with safe handoff between computers."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Curious what to build next? The Telemetry settings let you share anonymous, aggregate usage data, with separate toggles for usage, performance, and crash reports. Switch it off and nothing leaves your machine."
+  },
+  {
+    "category": "settings",
+    "title": "Tip of the Day",
+    "body": "Make the layout yours. The User Interface settings dock the navigation rail to either edge, choose how its sub-sections cascade, and let you drag the rail icons into any order."
+  },
+  {
+    "category": "privacy",
+    "title": "Tip of the Day",
+    "body": "Your data stays yours. Pod keeps everything in a local database on your machine. Nothing about your characters lives on someone else's server."
   },
   {
     "category": "images",

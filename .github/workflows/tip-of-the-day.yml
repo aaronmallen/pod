@@ -20,7 +20,7 @@ jobs:
           DISCORD_TIP_WEBHOOK_URL: ${{ secrets.DISCORD_TIP_WEBHOOK_URL }}
         run: |-
           count=$(jq 'length' .github/tips.json)
-          idx=$(( (10#$(date -u +%j) - 1) % count ))
+          idx=$(( ($(date -u +%s) / 86400) % count ))
           body=$(jq -r ".[$idx].body" .github/tips.json)
 
           payload=$(jq -n \

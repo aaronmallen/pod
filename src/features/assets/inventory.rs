@@ -39,9 +39,7 @@ const INDENT_STEP: f32 = 16.0;
 const OWNER_PORTRAIT: f32 = 22.0;
 const TOGGLE_WIDTH: f32 = 16.0;
 
-/// Width of the warning-colored left edge marking a worth-reprocessing row,
-/// revealed as the outer container's background by left padding (the
-/// `notification_toaster` padding-revealed-accent idiom).
+/// Width of the warning-colored left-edge bar marking a worth-reprocessing row.
 const REPROC_EDGE_WIDTH: f32 = 2.0;
 
 /// Relative flex widths for the inventory columns, in column order:
@@ -648,24 +646,23 @@ fn select_wrap<'a>(row: Element<'a, Message>, item_id: i64) -> Element<'a, Messa
     .into()
 }
 
-/// Wrap a row in an outer container whose warning-colored background is revealed
-/// by left padding, drawing the worth-reprocessing left edge. A `Length::Fill`
-/// accent bar would balloon vertically, so we reveal the background instead (the
-/// `notification_toaster` idiom).
+/// Prefix a row with a discrete warning-colored left edge marking it worth reprocessing. The bar is
+/// its own `Length::Fill`-height element so it tracks the row's intrinsic height without bleeding the
+/// warning color across the (transparent) row background.
 fn reproc_edge<'a>(row: Element<'a, Message>) -> Element<'a, Message> {
-  container(row)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: 0.0,
-      right: 0.0,
-      bottom: 0.0,
-      left: REPROC_EDGE_WIDTH,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::status::WARNING)),
-      ..container::Style::default()
-    })
-    .into()
+  let bar = container(
+    Space::new()
+      .width(Length::Fixed(REPROC_EDGE_WIDTH))
+      .height(Length::Fill),
+  )
+  .width(Length::Fixed(REPROC_EDGE_WIDTH))
+  .height(Length::Fill)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::status::WARNING)),
+    ..container::Style::default()
+  });
+
+  Row::with_children(vec![bar.into(), row]).into()
 }
 
 fn row_icon<'a>(inventory_row: &'a InventoryRow) -> Element<'a, Message> {
@@ -1475,6 +1472,21 @@ mod tests {
       // Per-unit falls back to the raw reproc value; no panic.
       let _text = reproc_tooltip_text(&row);
       let _value: Element<'_, Message> = value_cell(&row);
+    }
+
+    #[test]
+    fn it_prefixes_a_left_edge_bar_for_a_worth_row() {
+      let probe = text("row").into();
+      let _edged: Element<'_, Message> = reproc_edge(probe);
+    }
+
+    #[test]
+    fn it_renders_a_worth_row_with_the_left_edge_and_a_non_worth_row_without() {
+      let worth = worth_row();
+      let plain = sample_row(1, "Tritanium", "commodity", 7, 1_000.0);
+
+      let _worth: Element<'_, Message> = table_row(&worth, &[], &[], false, Vec::new(), false, false);
+      let _plain: Element<'_, Message> = table_row(&plain, &[], &[], false, Vec::new(), false, false);
     }
   }
 

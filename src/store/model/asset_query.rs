@@ -45,6 +45,14 @@ pub struct AssetRenderRow {
   pub volume: Option<f64>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ChildFilter<'a> {
+  pub filter: &'a str,
+  pub me_id: Option<i64>,
+  pub path_container_ids: &'a [i64],
+  pub reproc_yield: f64,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct GeoConstellationNode {
   pub constellation_id: i64,

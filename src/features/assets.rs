@@ -43,7 +43,8 @@ use crate::{
     model::{
       ENTITY_TYPE_ASSET, OwnerType, SavedAssetFilter, StatTemplate, TAG_SCOPE_ASSET, Tag,
       asset_query::{
-        GeoSort, GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn, SortDirection,
+        ChildFilter, GeoSort, GeoTree, InventoryCursor, InventoryQuery, InventoryRow, InventoryTotals, SortColumn,
+        SortDirection,
       },
       normalize_tag_name,
     },
@@ -2123,8 +2124,9 @@ fn update_pagination(state: &mut State, message: Message, db: &Database) -> Task
         state.roster.clone(),
         state.corporations.clone(),
       );
+      let filter = effective_filter(state.category, &state.search);
       Task::perform(
-        async move { load_container_children(&db, scope, &roster, &corporations, item_id).await },
+        async move { load_container_children(&db, scope, &roster, &corporations, item_id, &filter).await },
         move |children| Message::ContainerChildrenLoaded(item_id, children),
       )
     }
@@ -2649,18 +2651,10 @@ async fn load_scope(db: &Database, owner: &Owner, view: &InventoryView) -> Scope
   }
 }
 
-/// Computes the ancestor-container expansion for an active filter: the ordered set of container ids
-/// on the path to any match, their pre-loaded children, and the top-level ancestor rows to inject
-/// back into the page (the rows the filtered query dropped because they do not match themselves).
-async fn load_match_ancestors(
-  db: &Database,
-  owner: &Owner,
-  filter: &str,
-  me_id: Option<i64>,
-) -> (Vec<i64>, HashMap<i64, Vec<InventoryRow>>, Vec<InventoryRow>) {
-  let reproc_yield = crate::config::reprocessing_yield_or_default();
-
-  let ancestors = match owner {
+/// Resolves the set of container ids on the path from the top level down to any filter match,
+/// deduped across a combined scope's characters and corporations.
+async fn resolve_match_ancestors(db: &Database, owner: &Owner, filter: &str, me_id: Option<i64>) -> Vec<i64> {
+  match owner {
     Owner::Character(id) => assets::ancestors_of_match_for_character(db, *id, filter, me_id)
       .await
       .unwrap_or_default(),
@@ -2685,7 +2679,21 @@ async fn load_match_ancestors(
     Owner::Corporation(id) => assets::ancestors_of_match_for_corporation(db, *id, filter, me_id)
       .await
       .unwrap_or_default(),
-  };
+  }
+}
+
+/// Computes the ancestor-container expansion for an active filter: the ordered set of container ids
+/// on the path to any match, their pre-loaded children, and the top-level ancestor rows to inject
+/// back into the page (the rows the filtered query dropped because they do not match themselves).
+async fn load_match_ancestors(
+  db: &Database,
+  owner: &Owner,
+  filter: &str,
+  me_id: Option<i64>,
+) -> (Vec<i64>, HashMap<i64, Vec<InventoryRow>>, Vec<InventoryRow>) {
+  let reproc_yield = crate::config::reprocessing_yield_or_default();
+
+  let ancestors = resolve_match_ancestors(db, owner, filter, me_id).await;
 
   if ancestors.is_empty() {
     return (Vec::new(), HashMap::new(), Vec::new());
@@ -2700,11 +2708,17 @@ async fn load_match_ancestors(
     .cloned()
     .collect();
 
-  // Load every ancestor's full (unfiltered) children so the chain renders in place. A child that is
-  // itself an ancestor is the next link down; non-matching siblings come along too (accepted).
+  // Load every ancestor's children pruned to the page filter, keeping path containers (the ancestor
+  // set itself) so deeper matches stay reachable while non-matching siblings are dropped.
+  let child_filter = ChildFilter {
+    filter,
+    me_id,
+    path_container_ids: &ancestors,
+    reproc_yield,
+  };
   let mut inventory_children = HashMap::with_capacity(ancestors.len());
   for &container_id in &ancestors {
-    let children = load_container_children_for_owner(db, owner, container_id, reproc_yield).await;
+    let children = load_container_children_for_owner(db, owner, container_id, &child_filter).await;
     inventory_children.insert(container_id, children);
   }
 
@@ -2745,35 +2759,36 @@ async fn rows_by_item_id(db: &Database, owner: &Owner, item_ids: &[i64], reproc_
   }
 }
 
-/// Fetches a container's full children for a scope, ignoring any filter (mirrors `load_container_children`
-/// but keyed on a resolved `Owner` so the ancestor loader can reuse it).
+/// Fetches a container's children for a scope pruned to the active filter, keeping the path
+/// containers carried in `child_filter` so deeper matches stay reachable (mirrors
+/// `load_container_children` but keyed on a resolved `Owner` so the ancestor loader can reuse it).
 async fn load_container_children_for_owner(
   db: &Database,
   owner: &Owner,
   container_id: i64,
-  reproc_yield: f64,
+  child_filter: &ChildFilter<'_>,
 ) -> Vec<InventoryRow> {
   match owner {
-    Owner::Character(id) => assets::children_render_for_character(db, *id, container_id, reproc_yield)
+    Owner::Character(id) => assets::children_render_filtered_for_character(db, *id, container_id, child_filter)
       .await
       .unwrap_or_default(),
     Owner::Combined {
       character_ids,
       corporation_ids,
     } => {
-      let mut children = assets::children_render_for_characters(db, character_ids, container_id, reproc_yield)
+      let mut children = assets::children_render_filtered_for_characters(db, character_ids, container_id, child_filter)
         .await
         .unwrap_or_default();
       for corporation_id in corporation_ids {
         children.extend(
-          assets::children_render_for_corporation(db, *corporation_id, container_id, reproc_yield)
+          assets::children_render_filtered_for_corporation(db, *corporation_id, container_id, child_filter)
             .await
             .unwrap_or_default(),
         );
       }
       children
     }
-    Owner::Corporation(id) => assets::children_render_for_corporation(db, *id, container_id, reproc_yield)
+    Owner::Corporation(id) => assets::children_render_filtered_for_corporation(db, *id, container_id, child_filter)
       .await
       .unwrap_or_default(),
   }
@@ -2824,12 +2839,43 @@ async fn load_container_children(
   roster: &[RosterPilot],
   corporations: &[RosterCorp],
   container_id: i64,
+  filter: &str,
 ) -> Vec<InventoryRow> {
   let Some(owner) = resolve_scope_owner(scope, roster, corporations) else {
     return Vec::new();
   };
   let reproc_yield = crate::config::reprocessing_yield_or_default();
-  match &owner {
+  // With no filter, manual expansion lists every child. While a filter is active it stays in view
+  // mode: only matching children plus the path containers that lead to deeper matches.
+  if filter.trim().is_empty() {
+    return load_container_children_unfiltered(db, &owner, container_id, reproc_yield).await;
+  }
+  let me_id = match &owner {
+    Owner::Character(id) => Some(*id),
+    Owner::Combined {
+      ..
+    }
+    | Owner::Corporation(_) => None,
+  };
+  let path_container_ids = resolve_match_ancestors(db, &owner, filter, me_id).await;
+  let child_filter = ChildFilter {
+    filter,
+    me_id,
+    path_container_ids: &path_container_ids,
+    reproc_yield,
+  };
+  load_container_children_for_owner(db, &owner, container_id, &child_filter).await
+}
+
+/// Fetches a container's full children for a scope, ignoring any filter (the no-filter manual-expand
+/// path; the filtered counterpart is `load_container_children_for_owner`).
+async fn load_container_children_unfiltered(
+  db: &Database,
+  owner: &Owner,
+  container_id: i64,
+  reproc_yield: f64,
+) -> Vec<InventoryRow> {
+  match owner {
     Owner::Character(id) => assets::children_render_for_character(db, *id, container_id, reproc_yield)
       .await
       .unwrap_or_default(),
@@ -3285,11 +3331,13 @@ mod tests {
       }
     }
 
-    /// Seeds a character whose holdings are:
-    ///   - container 100 (root) -> container 101 (sub) -> Tritanium 102 (the nested match)
-    ///   - container 200 (root) -> Rifter 201 (a ship; never matches `category:material`)
-    ///
-    /// Neither root container matches `category:material`, so the filtered page query drops both.
+    // Seeds a character whose holdings are:
+    //   - container 100 (root) -> container 101 (sub) -> Tritanium 102 (the nested match)
+    //   - container 101 also holds Rifter 103 (a ship sibling of the match; never matches)
+    //   - container 100 also holds Rifter 104 (a ship sibling of the path container; never matches)
+    //   - container 200 (root) -> Rifter 201 (a ship; never matches `category:material`)
+    //
+    // Neither root container matches `category:material`, so the filtered page query drops both.
     async fn seed_nested_holdings(db: &Database) {
       seed_pilot(db).await;
       seed_item_type(db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
@@ -3298,6 +3346,8 @@ mod tests {
         asset(100, None, 587, true, 0),
         asset(101, Some(100), 587, true, 1),
         asset(102, Some(101), 24, false, 2),
+        asset(103, Some(101), 587, false, 2),
+        asset(104, Some(100), 587, false, 1),
         asset(200, None, 587, true, 0),
         asset(201, Some(200), 587, false, 1),
       ];
@@ -3331,6 +3381,30 @@ mod tests {
       let match_in_sub = loaded.inventory_children[&101].iter().any(|row| row.item_id == 102);
       assert!(sub_in_root, "the sub-container is a loaded child of the root");
       assert!(match_in_sub, "the match is a loaded child of the sub-container");
+    }
+
+    #[tokio::test]
+    async fn it_prunes_non_matching_siblings_at_every_level_of_the_chain() {
+      let db = crate::store::open_test().await.unwrap();
+      seed_nested_holdings(&db).await;
+
+      let loaded = load_assets(db, Scope::Character(PILOT), filtered_view()).await;
+
+      // The root keeps only the path container 101; its non-matching ship sibling 104 is pruned.
+      let root_children: Vec<i64> = loaded.inventory_children[&100].iter().map(|row| row.item_id).collect();
+      assert_eq!(
+        root_children,
+        [101],
+        "the root lists only the path container, not its ship sibling"
+      );
+
+      // The sub-container keeps only the match 102; its non-matching ship sibling 103 is pruned.
+      let sub_children: Vec<i64> = loaded.inventory_children[&101].iter().map(|row| row.item_id).collect();
+      assert_eq!(
+        sub_children,
+        [102],
+        "the sub-container lists only the match, not its ship sibling"
+      );
     }
 
     #[tokio::test]

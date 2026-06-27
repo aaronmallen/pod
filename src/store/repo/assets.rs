@@ -10,9 +10,9 @@ use crate::store::{
     ENTITY_TYPE_ASSET, SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
-      AssetCompleteness, AssetRenderRow, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery, InventoryRow,
-      InventoryRowSql, InventoryTotals, NodeRollup, NodeRollupSql, ReferencedLocation, RenderRowSql, SortColumn,
-      SortDirection, SortValue, TotalsRowSql,
+      AssetCompleteness, AssetRenderRow, ChildFilter, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery,
+      InventoryRow, InventoryRowSql, InventoryTotals, NodeRollup, NodeRollupSql, ReferencedLocation, RenderRowSql,
+      SortColumn, SortDirection, SortValue, TotalsRowSql,
     },
     stockpile_fill::{StockpileFill, StockpileItemFill, StockpileWithItems},
   },
@@ -1366,6 +1366,63 @@ pub async fn children_render_for_corporation(
   .await
 }
 
+pub async fn children_render_filtered_for_character(
+  db: &Database,
+  character_id: i64,
+  container_id: i64,
+  child_filter: &ChildFilter<'_>,
+) -> Result<Vec<InventoryRow>, Error> {
+  children_render_filtered(
+    db,
+    "character_assets",
+    "character_id",
+    &[character_id],
+    container_id,
+    child_filter,
+  )
+  .await
+}
+
+pub async fn children_render_filtered_for_characters(
+  db: &Database,
+  character_ids: &[i64],
+  container_id: i64,
+  child_filter: &ChildFilter<'_>,
+) -> Result<Vec<InventoryRow>, Error> {
+  if character_ids.is_empty() {
+    return Ok(Vec::new());
+  }
+  children_render_filtered(
+    db,
+    "character_assets",
+    "character_id",
+    character_ids,
+    container_id,
+    child_filter,
+  )
+  .await
+}
+
+pub async fn children_render_filtered_for_corporation(
+  db: &Database,
+  corporation_id: i64,
+  container_id: i64,
+  child_filter: &ChildFilter<'_>,
+) -> Result<Vec<InventoryRow>, Error> {
+  if !corp_scope_visible(db, corporation_id).await? {
+    return Ok(Vec::new());
+  }
+  children_render_filtered(
+    db,
+    "corporation_assets",
+    "corporation_id",
+    &[corporation_id],
+    container_id,
+    child_filter,
+  )
+  .await
+}
+
 // Public store API exercised by unit tests; not yet wired into a production call site.
 #[allow(dead_code)]
 pub async fn child_count_for_character(db: &Database, character_id: i64, container_id: i64) -> Result<i64, Error> {
@@ -1496,6 +1553,50 @@ async fn children_render(
   builder.push(" AND a.container_id = ");
   builder.push_bind(container_id);
   builder.push(" ORDER BY a.item_id");
+
+  let rows = builder.build_query_as::<InventoryRowSql>().fetch_all(&db.0).await?;
+  Ok(rows.into_iter().map(InventoryRowSql::into_row).collect())
+}
+
+async fn children_render_filtered(
+  db: &Database,
+  table: &'static str,
+  owner_column: &'static str,
+  owner_ids: &[i64],
+  container_id: i64,
+  child_filter: &ChildFilter<'_>,
+) -> Result<Vec<InventoryRow>, Error> {
+  let Some(clause) = scoped_where(child_filter.filter, owner_column, child_filter.me_id) else {
+    return children_render(
+      db,
+      table,
+      owner_column,
+      owner_ids,
+      container_id,
+      child_filter.reproc_yield,
+    )
+    .await;
+  };
+  let select_head = inventory_select_head(table, owner_column, child_filter.reproc_yield);
+
+  let mut builder = QueryBuilder::<Sqlite>::new(select_head);
+  push_owner_predicate(&mut builder, owner_ids);
+  builder.push(" AND a.container_id = ");
+  builder.push_bind(container_id);
+  // Keep a child only if it matches the page filter, or if it is a path container on the route down
+  // to a deeper match (otherwise the match would be unreachable through a pruned intermediate).
+  builder.push(" AND ((");
+  clause.bind_onto(&mut builder);
+  builder.push(")");
+  if !child_filter.path_container_ids.is_empty() {
+    builder.push(" OR a.item_id IN (");
+    let mut separated = builder.separated(", ");
+    for item_id in child_filter.path_container_ids {
+      separated.push_bind(*item_id);
+    }
+    builder.push(")");
+  }
+  builder.push(") ORDER BY a.item_id");
 
   let rows = builder.build_query_as::<InventoryRowSql>().fetch_all(&db.0).await?;
   Ok(rows.into_iter().map(InventoryRowSql::into_row).collect())
@@ -4223,6 +4324,95 @@ mod asset_tests {
         .unwrap();
 
       assert_eq!(ancestors, [100, 101]);
+    }
+  }
+
+  mod children_render_filtered {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    /// Seeds container 100 holding a Tritanium match (101), a non-matching Rifter sibling (102), and
+    /// a path sub-container (103) leading to a deeper Tritanium match (104).
+    async fn seed_mixed_container(db: &Database) {
+      seed_character(db, 42).await;
+      seed_item_type(db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
+      seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
+      let mut root = char_asset(100, 42, None);
+      root.is_container = true;
+      root.type_id = 587;
+      let mut hit = char_asset(101, 42, Some(100));
+      hit.type_id = 24;
+      let mut sibling = char_asset(102, 42, Some(100));
+      sibling.type_id = 587;
+      let mut sub = char_asset(103, 42, Some(100));
+      sub.is_container = true;
+      sub.type_id = 587;
+      let mut deep = char_asset(104, 42, Some(103));
+      deep.type_id = 24;
+      replace_for_character(db, 42, &[root, hit, sibling, sub, deep])
+        .await
+        .unwrap();
+    }
+
+    fn child_filter<'a>(filter: &'a str, path_container_ids: &'a [i64]) -> ChildFilter<'a> {
+      ChildFilter {
+        filter,
+        me_id: None,
+        path_container_ids,
+        reproc_yield: 0.5,
+      }
+    }
+
+    #[tokio::test]
+    async fn it_keeps_only_matching_children_and_path_containers() {
+      let db = store::open_test().await.unwrap();
+      seed_mixed_container(&db).await;
+
+      let children = children_render_filtered_for_character(&db, 42, 100, &child_filter("category:material", &[103]))
+        .await
+        .unwrap();
+
+      // The match 101 and the path container 103 survive; the non-matching Rifter 102 is pruned.
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_a_matching_child_even_without_a_path_exception() {
+      let db = store::open_test().await.unwrap();
+      seed_mixed_container(&db).await;
+
+      let children = children_render_filtered_for_character(&db, 42, 100, &child_filter("category:material", &[]))
+        .await
+        .unwrap();
+
+      // With no path exception, only the matching leaf 101 remains.
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
+    }
+
+    #[tokio::test]
+    async fn it_prunes_with_a_negated_predicate() {
+      let db = store::open_test().await.unwrap();
+      seed_mixed_container(&db).await;
+
+      let children = children_render_filtered_for_character(&db, 42, 100, &child_filter("-category:material", &[]))
+        .await
+        .unwrap();
+
+      // The negation keeps only the non-material children: the Rifter 102 and the sub-container 103.
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
+    }
+
+    #[tokio::test]
+    async fn it_lists_every_child_for_an_empty_filter() {
+      let db = store::open_test().await.unwrap();
+      seed_mixed_container(&db).await;
+
+      let children = children_render_filtered_for_character(&db, 42, 100, &child_filter("", &[]))
+        .await
+        .unwrap();
+
+      assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 102, 103]);
     }
   }
 

@@ -21,118 +21,118 @@ const SEARCH_MAX_WIDTH: f32 = 480.0;
 const CATALOG: [Catalog; 23] = [
   Catalog {
     sub: SubFeature::CloneMonitoring,
-    title: "Clone Monitoring",
-    description: "Track jump clones and the implants installed in each.",
+    title: "settings.features.clone_monitoring_title",
+    description: "settings.features.clone_monitoring_desc",
   },
   Catalog {
     sub: SubFeature::Contacts,
-    title: "Contacts",
-    description: "Sync your personal contact list and their standings.",
+    title: "settings.features.contacts_title",
+    description: "settings.features.contacts_desc",
   },
   Catalog {
     sub: SubFeature::KillLog,
-    title: "Kill Log",
-    description: "Capture combat activity for after-action review.",
+    title: "settings.features.kill_log_title",
+    description: "settings.features.kill_log_desc",
   },
   Catalog {
     sub: SubFeature::Notifications,
-    title: "EVE Notifications",
-    description: "Sync in-game notifications from EVE Online.",
+    title: "settings.features.notifications_title",
+    description: "settings.features.notifications_desc",
   },
   Catalog {
     sub: SubFeature::Standings,
-    title: "Standings",
-    description: "Sync your standings toward characters, corporations, and alliances.",
+    title: "settings.features.standings_title",
+    description: "settings.features.standings_desc",
   },
   Catalog {
     sub: SubFeature::LocationTracking,
-    title: "Location Tracking",
-    description: "Track each character's current solar system, station, and ship.",
+    title: "settings.features.location_tracking_title",
+    description: "settings.features.location_tracking_desc",
   },
   Catalog {
     sub: SubFeature::SkillQueue,
-    title: "Skill Queue",
-    description: "Monitor trained skills and the active training queue.",
+    title: "settings.features.skill_queue_title",
+    description: "settings.features.skill_queue_desc",
   },
   Catalog {
     sub: SubFeature::JobMonitoring,
-    title: "Job Monitoring",
-    description: "Monitor running manufacturing, research, and reaction jobs.",
+    title: "settings.features.job_monitoring_title",
+    description: "settings.features.job_monitoring_desc",
   },
   Catalog {
     sub: SubFeature::Blueprints,
-    title: "Blueprints",
-    description: "Track owned blueprints with their material and time efficiency.",
+    title: "settings.features.blueprints_title",
+    description: "settings.features.blueprints_desc",
   },
   Catalog {
     sub: SubFeature::Planner,
-    title: "Build Planner",
-    description: "Plan recursive build orders with materials, costs, and facilities.",
+    title: "settings.features.planner_title",
+    description: "settings.features.planner_desc",
   },
   Catalog {
     sub: SubFeature::Extractions,
-    title: "Moon Extractions",
-    description: "Track corporation moon-extraction timers.",
+    title: "settings.features.extractions_title",
+    description: "settings.features.extractions_desc",
   },
   Catalog {
     sub: SubFeature::Mail,
-    title: "Mail",
-    description: "Sync EVE mail headers and message bodies.",
+    title: "settings.features.mail_title",
+    description: "settings.features.mail_desc",
   },
   Catalog {
     sub: SubFeature::Calendar,
-    title: "Calendar",
-    description: "Sync calendar events and respond to invitations.",
+    title: "settings.features.calendar_title",
+    description: "settings.features.calendar_desc",
   },
   Catalog {
     sub: SubFeature::Wallets,
-    title: "Wallets",
-    description: "Show character and corporation wallet balances.",
+    title: "settings.features.wallets_title",
+    description: "settings.features.wallets_desc",
   },
   Catalog {
     sub: SubFeature::Journal,
-    title: "Journal",
-    description: "Sync the wallet transaction journal.",
+    title: "settings.features.journal_title",
+    description: "settings.features.journal_desc",
   },
   Catalog {
     sub: SubFeature::Transactions,
-    title: "Market Transactions",
-    description: "Sync market orders and traded items.",
+    title: "settings.features.transactions_title",
+    description: "settings.features.transactions_desc",
   },
   Catalog {
     sub: SubFeature::Contracts,
-    title: "Contracts",
-    description: "Sync outstanding and historical contracts.",
+    title: "settings.features.contracts_title",
+    description: "settings.features.contracts_desc",
   },
   Catalog {
     sub: SubFeature::Budget,
-    title: "Budget",
-    description: "Plan a zero-based budget over your wallet activity.",
+    title: "settings.features.budget_title",
+    description: "settings.features.budget_desc",
   },
   Catalog {
     sub: SubFeature::Inventory,
-    title: "Inventory",
-    description: "Track assets across stations, structures, and hangars.",
+    title: "settings.features.inventory_title",
+    description: "settings.features.inventory_desc",
   },
   Catalog {
     sub: SubFeature::Abyssals,
-    title: "Abyssals",
-    description: "Appraise abyssal modules against MutaMarket pricing.",
+    title: "settings.features.abyssals_title",
+    description: "settings.features.abyssals_desc",
   },
   Catalog {
     sub: SubFeature::Stockpiles,
-    title: "Stockpiles",
-    description: "Watch curated stockpiles against target quantities.",
+    title: "settings.features.stockpiles_title",
+    description: "settings.features.stockpiles_desc",
   },
   Catalog {
     sub: SubFeature::Values,
-    title: "Values",
-    description: "Value owned assets at market pricing.",
+    title: "settings.features.values_title",
+    description: "settings.features.values_desc",
   },
   Catalog {
     sub: SubFeature::Tracker,
-    title: "Net Worth Tracker",
-    description: "Chart net worth over time across every owner.",
+    title: "settings.features.tracker_title",
+    description: "settings.features.tracker_desc",
   },
 ];
 
@@ -302,7 +302,9 @@ fn matches(entry: &Catalog, query: &str) -> bool {
   if query.is_empty() {
     return true;
   }
-  entry.title.to_lowercase().contains(&query) || entry.description.to_lowercase().contains(&query)
+  let title = super::i18n::tr_static(entry.title).to_lowercase();
+  let description = super::i18n::tr_static(entry.description).to_lowercase();
+  title.contains(&query) || description.contains(&query)
 }
 
 fn group_matches(group: Group, query: &str) -> bool {
@@ -548,14 +550,14 @@ fn child_row<'a>(entry: &'a Catalog, settings: &'a Settings) -> Element<'a, Mess
   // enabled while both are off. Lock its toggle and explain why instead of letting a press no-op.
   let locked = dependency_unmet(entry.sub, settings);
 
-  let title = text(entry.title)
+  let title = text(super::i18n::tr_static(entry.title))
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
   let description = text(if locked {
     super::i18n::tr_static("settings.features.budget_locked")
   } else {
-    entry.description
+    super::i18n::tr_static(entry.description)
   })
   .font(typography::body::REGULAR)
   .size(typography::size::SM)

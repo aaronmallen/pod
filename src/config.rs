@@ -120,12 +120,13 @@ pub enum CascadeMode {
 impl CascadeMode {
   pub const ALL: [CascadeMode; 3] = [CascadeMode::Flyout, CascadeMode::SubRail, CascadeMode::None];
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      CascadeMode::Flyout => "Flyout",
-      CascadeMode::None => "Off",
-      CascadeMode::SubRail => "Sub-rail",
+      CascadeMode::Flyout => t!("config.cascade_mode.flyout"),
+      CascadeMode::None => t!("config.cascade_mode.none"),
+      CascadeMode::SubRail => t!("config.cascade_mode.sub_rail"),
     }
+    .into_owned()
   }
 }
 
@@ -582,12 +583,13 @@ pub enum LogLevel {
 impl LogLevel {
   pub const ALL: [LogLevel; 3] = [LogLevel::Quiet, LogLevel::Normal, LogLevel::Verbose];
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      LogLevel::Normal => "Normal",
-      LogLevel::Quiet => "Quiet",
-      LogLevel::Verbose => "Verbose",
+      LogLevel::Normal => t!("config.log_level.normal"),
+      LogLevel::Quiet => t!("config.log_level.quiet"),
+      LogLevel::Verbose => t!("config.log_level.verbose"),
     }
+    .into_owned()
   }
 
   fn is_default(&self) -> bool {
@@ -1162,6 +1164,23 @@ fn save_to(path: &Path, settings: &Settings) -> Result<(), Error> {
 mod tests {
   use super::*;
 
+  mod cascade_mode {
+    use super::*;
+
+    mod label {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_resolves_each_variant_to_its_english_text() {
+        assert_eq!(CascadeMode::Flyout.label(), "Flyout");
+        assert_eq!(CascadeMode::None.label(), "Off");
+        assert_eq!(CascadeMode::SubRail.label(), "Sub-rail");
+      }
+    }
+  }
+
   mod feature {
     use super::*;
 
@@ -1173,6 +1192,23 @@ mod tests {
         for feature in Feature::ALL {
           assert!(!feature.noun().is_empty(), "{feature:?} must have a noun");
         }
+      }
+    }
+  }
+
+  mod log_level {
+    use super::*;
+
+    mod label {
+      use pretty_assertions::assert_eq;
+
+      use super::*;
+
+      #[test]
+      fn it_resolves_each_variant_to_its_english_text() {
+        assert_eq!(LogLevel::Normal.label(), "Normal");
+        assert_eq!(LogLevel::Quiet.label(), "Quiet");
+        assert_eq!(LogLevel::Verbose.label(), "Verbose");
       }
     }
   }

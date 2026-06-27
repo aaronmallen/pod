@@ -1,0 +1,9 @@
+[config.cascade_mode]
+flyout = "Flyout"
+none = "Off"
+sub_rail = "Sub-rail"
+
+[config.log_level]
+normal = "Normal"
+quiet = "Quiet"
+verbose = "Verbose"

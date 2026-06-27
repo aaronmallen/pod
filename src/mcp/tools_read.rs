@@ -564,7 +564,7 @@ mod tests {
     config::McpPerms,
     store::{
       Database,
-      repo::industry::{PlanTree, PlanType},
+      model::{PlanTree, PlanType},
     },
   };
 

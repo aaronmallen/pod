@@ -806,8 +806,8 @@ pub async fn resolve_default_facilities(
 fn save_plan(
   db: &Database,
   name: String,
-  tree: crate::store::repo::industry::PlanTree,
-  segments: Vec<crate::store::repo::industry::PlanSegment>,
+  tree: crate::store::model::PlanTree,
+  segments: Vec<crate::store::model::PlanSegment>,
 ) -> Task<Message> {
   let db = db.clone();
   Task::perform(
@@ -1634,7 +1634,10 @@ mod tests {
   mod list_saved_plans {
     use pretty_assertions::assert_eq;
 
-    use crate::store::repo::industry::{self as industry_repo, PlanTree, PlanType};
+    use crate::store::{
+      model::{PlanTree, PlanType},
+      repo::industry::{self as industry_repo},
+    };
 
     fn sample_tree() -> PlanTree {
       PlanTree {

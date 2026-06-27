@@ -11,12 +11,11 @@ use crate::{
   },
   store::{
     Database,
-    model::{BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, NewRule, Rule, RuleCondition, RuleField, RuleOp},
-    repo::{
-      budget as budget_repo, industry as industry_repo,
-      industry::{PlanSegment, PlanTree, PlanType},
-      skills as skills_repo,
+    model::{
+      BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, NewRule, PlanSegment, PlanTree, PlanType, Rule,
+      RuleCondition, RuleField, RuleOp,
     },
+    repo::{budget as budget_repo, industry as industry_repo, skills as skills_repo},
   },
 };
 

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
   features::shell::window_state::UiState,
-  store::repo::industry::{self as industry_repo, PlanTree, PlanType},
+  store::model::{PlanSegment as RepoPlanSegment, PlanTree, PlanType},
   ui::components::resizable_pane::PaneDrag,
 };
 
@@ -200,7 +200,7 @@ pub enum Message {
   PlanDeleteRequested(i64),
   PlanLoadRequested(i64),
   PlanRestored {
-    segments: Vec<industry_repo::PlanSegment>,
+    segments: Vec<RepoPlanSegment>,
     tree: Box<PlanTree>,
   },
   PlanSaveRequested,
@@ -730,7 +730,7 @@ impl Planner {
   /// Rehydrates per-type build-order segments from persisted rows (grouped by `type_id`, ordered by
   /// `segment_index`). Reconciliation against the live total runs happens lazily on read, so the stored
   /// runs are kept verbatim here. Call after [`restore`], which clears any prior segments.
-  pub fn restore_segments(&mut self, segments: &[industry_repo::PlanSegment]) {
+  pub fn restore_segments(&mut self, segments: &[RepoPlanSegment]) {
     self.order_segments.clear();
     for segment in segments {
       self
@@ -950,10 +950,10 @@ impl Planner {
     })
   }
 
-  /// The build-order segments to persist for the current plan: one indexed [`industry_repo::PlanSegment`]
+  /// The build-order segments to persist for the current plan: one indexed [`RepoPlanSegment`]
   /// row per stored segment, reconciled to its type's live total runs. A type carrying only one implicit
   /// full unassigned segment is omitted (it reconstructs from absence), so an untouched plan persists none.
-  pub fn segments(&self) -> Vec<industry_repo::PlanSegment> {
+  pub fn segments(&self) -> Vec<RepoPlanSegment> {
     let mut out = Vec::new();
     for &type_id in self.order_segments.keys() {
       let segments = self.segments_for(type_id);
@@ -962,7 +962,7 @@ impl Planner {
         continue;
       }
       for (index, segment) in segments.iter().enumerate() {
-        out.push(industry_repo::PlanSegment {
+        out.push(RepoPlanSegment {
           clone_id: segment.clone_id,
           pilot_id: segment.pilot_id,
           runs: segment.runs,

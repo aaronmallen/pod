@@ -112,7 +112,7 @@ Set up the Access policy once in the CF dashboard:
 
 ### Post-deploy verification
 
-After `wrangler deploy` (still pinned to **3.114.17** — do not bump to 4.x):
+After `wrangler deploy`:
 
 ```sh
 # Admin route is reachable behind Access (interactive SSO in a browser):
@@ -147,15 +147,16 @@ telemetry/
 
 `telemetry/` is committed; `.wrangler/` is gitignored.
 
-## Toolchain (mise)
+## Toolchain (mise + aube)
 
-`wrangler` is pinned in `.config/mise.toml` under `[tools]` as
-`"npm:wrangler"`, alongside the rest of the toolchain. `mise install`
-provisions it for every contributor and CI — no `npx`, no global install.
+`node` and `aube` come from `.config/mise.toml`. The TypeScript dev dependencies
+— `wrangler` (v4), `typescript`, `vitest`, `@cloudflare/workers-types` — are
+declared in `package.json` and installed by `aube` (locked in `aube-lock.yaml`),
+so deploys use the same wrangler everywhere. No global installs.
 
 ```sh
-mise install            # provisions wrangler, aube (and node)
-aube install            # installs typescript + vitest (dev deps) → aube-lock.yaml
+mise install            # node + aube
+aube install            # wrangler, typescript, vitest, workers-types → aube-lock.yaml
 aube run typecheck      # tsc --noEmit
 aube test               # vitest run
 ```

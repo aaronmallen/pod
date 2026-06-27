@@ -1653,6 +1653,16 @@ fn exit_process() -> Task<Message> {
   .discard()
 }
 
+pub fn restart() {
+  auth::release_lock();
+  if let Ok(exe) = std::env::current_exe()
+    && let Err(error) = std::process::Command::new(exe).spawn()
+  {
+    tracing::error!(target: "pod::lifecycle", %error, "failed to relaunch on restart");
+  }
+  std::process::exit(0);
+}
+
 /// On a clean exit in sync mode, flushes the working copy back to the share and releases the lease
 /// before the process exits, so the next launch sees a current canonical copy and an unheld share.
 fn shutdown_storage(app: &mut App) -> Task<Message> {

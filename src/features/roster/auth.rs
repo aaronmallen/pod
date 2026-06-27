@@ -124,6 +124,10 @@ pub fn forward_or_claim() -> bool {
   deep_link::forward_or_claim()
 }
 
+pub fn release_lock() {
+  deep_link::release_lock();
+}
+
 pub fn update(
   state: &mut State,
   message: Message,

@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::{
   io::{Read, Write},
+  sync::{Arc, Mutex},
   thread,
 };
 
@@ -30,6 +31,8 @@ use crate::config;
 /// and `classify()` matches it by equality before falling through to `validate()`.
 const FOCUS_PING: &str = "pod-deeplink:focus";
 
+static HELD_LOCK: Mutex<Option<Arc<PrimaryLock>>> = Mutex::new(None);
+
 pub type PrimaryLock = interprocess::local_socket::Listener;
 
 enum Signal {
@@ -41,21 +44,31 @@ pub fn forward_to_primary(url: &str) -> bool {
   signal(url)
 }
 
+pub fn release_lock() {
+  drop_held_lock();
+  #[cfg(not(target_os = "windows"))]
+  release_socket_file(&socket_path());
+}
+
 pub fn request_focus() -> bool {
   signal(FOCUS_PING)
 }
 
 pub fn spawn_listener(lock: PrimaryLock, deliver: impl Fn(String) + Send + 'static) {
+  let lock = Arc::new(lock);
+  if let Ok(mut guard) = HELD_LOCK.lock() {
+    *guard = Some(Arc::clone(&lock));
+  }
   let _ = thread::Builder::new()
     .name("deeplink-listener".to_owned())
-    .spawn(move || accept_loop(lock, deliver));
+    .spawn(move || accept_loop(&lock, deliver));
 }
 
 pub fn try_become_primary() -> Option<PrimaryLock> {
   acquire()
 }
 
-fn accept_loop(listener: PrimaryLock, deliver: impl Fn(String)) {
+fn accept_loop(listener: &PrimaryLock, deliver: impl Fn(String)) {
   loop {
     match listener.accept() {
       Ok(mut stream) => {
@@ -127,6 +140,12 @@ fn dispatch_signal(payload: &str, deliver: &impl Fn(String)) {
   }
 }
 
+fn drop_held_lock() {
+  if let Ok(mut guard) = HELD_LOCK.lock() {
+    let _ = guard.take();
+  }
+}
+
 #[cfg(not(target_os = "windows"))]
 fn forward_to(path: &Path, payload: &str) -> bool {
   let Ok(name) = path.to_fs_name::<GenericFilePath>() else {
@@ -162,6 +181,11 @@ fn recover_stale(path: &Path) -> Option<PrimaryLock> {
   }
   let _ = std::fs::remove_file(path);
   create_listener(path).ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn release_socket_file(path: &Path) {
+  let _ = std::fs::remove_file(path);
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -304,7 +328,7 @@ mod tests {
       let (_dir, path, lock) = bind_listener("reject");
       let (tx, rx) = std::sync::mpsc::channel();
       let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
+        accept_loop(&lock, move |url| {
           let _ = tx.send(url);
         })
       });
@@ -325,7 +349,7 @@ mod tests {
       let (_dir, path, lock) = bind_listener("roundtrip");
       let (tx, rx) = std::sync::mpsc::channel();
       let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
+        accept_loop(&lock, move |url| {
           let _ = tx.send(url);
         })
       });
@@ -345,7 +369,7 @@ mod tests {
       let (tx, rx) = std::sync::mpsc::channel();
       let lock = bind(&name).expect("first bind becomes the primary");
       let _ = thread::spawn(move || {
-        accept_loop(lock, move |url| {
+        accept_loop(&lock, move |url| {
           let _ = tx.send(url);
         })
       });
@@ -356,6 +380,30 @@ mod tests {
 
       assert!(forwarded, "the second instance reaches the primary");
       assert_eq!(delivered, url);
+    }
+  }
+
+  #[cfg(not(target_os = "windows"))]
+  mod release_socket_file {
+    use super::*;
+
+    #[test]
+    fn it_frees_the_path_so_a_relaunch_can_rebind() {
+      let (_dir, path) = unique_socket("handoff");
+      let primary = bind(&path).expect("first bind becomes the primary");
+      assert!(
+        bind(&path).is_none(),
+        "while the primary holds the socket a second bind is refused, not duplicated"
+      );
+
+      release_socket_file(&path);
+      let relaunched = bind(&path);
+
+      assert!(
+        relaunched.is_some(),
+        "releasing the socket file lets the relaunched process re-acquire the lock at the same path"
+      );
+      drop(primary);
     }
   }
 

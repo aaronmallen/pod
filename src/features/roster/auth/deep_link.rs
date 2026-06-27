@@ -100,6 +100,14 @@ pub fn forward_or_claim() -> bool {
   false
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub fn release_lock() {
+  single_instance::release_lock();
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn release_lock() {}
+
 /// Writes a flushed launch record directly to `launch.log` rather than via `tracing`, because
 /// `forward_or_claim` runs before the tracing subscriber is initialized and a forwarding instance
 /// exits immediately — both paths would silently drop any buffered tracing output.

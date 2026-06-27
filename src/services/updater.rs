@@ -221,7 +221,7 @@ impl Engine {
   fn restart(&self) {
     if matches!(*self.state.borrow(), State::ReadyToRestart { .. }) {
       tracing::info!(target: "pod::updater", "restarting into new release");
-      restart_process();
+      crate::app::restart();
     } else {
       tracing::debug!(target: "pod::updater", "restart requested but no installed update is ready");
     }
@@ -246,13 +246,6 @@ impl Engine {
   fn set(&self, state: State) {
     let _ = self.state.send(state);
   }
-}
-
-fn restart_process() {
-  if let Ok(exe) = std::env::current_exe() {
-    let _ = std::process::Command::new(exe).spawn();
-  }
-  std::process::exit(0);
 }
 
 pub fn spawn(config: Config) -> Handle {

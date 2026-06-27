@@ -57,7 +57,7 @@ CREATE TABLE character_wallet_journal_new (
 
 INSERT OR IGNORE INTO character_wallet_journal_new
   (id, character_id, date, description, ref_type, amount, balance, context_id,
-   context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id)
+    context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id)
 SELECT
   id, character_id, date, description, ref_type, amount, balance, context_id,
   context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id
@@ -89,7 +89,7 @@ CREATE TABLE character_wallet_transaction_new (
 
 INSERT OR IGNORE INTO character_wallet_transaction_new
   (transaction_id, character_id, client_id, date, is_buy, is_personal, journal_ref_id,
-   location_id, quantity, type_id, unit_price)
+    location_id, quantity, type_id, unit_price)
 SELECT
   transaction_id, character_id, client_id, date, is_buy, is_personal, journal_ref_id,
   location_id, quantity, type_id, unit_price
@@ -127,7 +127,7 @@ CREATE TABLE corporation_wallet_journal_new (
 
 INSERT OR IGNORE INTO corporation_wallet_journal_new
   (id, corporation_id, division, date, description, ref_type, amount, balance, context_id,
-   context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id)
+    context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id)
 SELECT
   id, corporation_id, division, date, description, ref_type, amount, balance, context_id,
   context_id_type, first_party_id, reason, second_party_id, tax, tax_receiver_id
@@ -159,7 +159,7 @@ CREATE TABLE corporation_wallet_transaction_new (
 
 INSERT OR IGNORE INTO corporation_wallet_transaction_new
   (transaction_id, corporation_id, division, client_id, date, is_buy, journal_ref_id,
-   location_id, quantity, type_id, unit_price)
+    location_id, quantity, type_id, unit_price)
 SELECT
   transaction_id, corporation_id, division, client_id, date, is_buy, journal_ref_id,
   location_id, quantity, type_id, unit_price

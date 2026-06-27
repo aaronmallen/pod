@@ -1,7 +1,7 @@
 use iced::{
   Element, Length,
   alignment::Horizontal,
-  widget::{Column, Space, container, text},
+  widget::{Column, Space, text},
 };
 
 use crate::ui::{
@@ -9,32 +9,32 @@ use crate::ui::{
   style::{color, spacing, typography},
 };
 
-const BAR_WIDTH: f32 = 240.0;
-const BAR_HEIGHT: f32 = 2.0;
+const BAR_HEIGHT: f32 = 3.0;
 
-pub fn status_message<'a, M>(label: &str, progress: Option<f32>) -> Element<'a, M>
+pub fn status_message<'a, M>(label: &str, progress: Option<f32>, align: Horizontal) -> Element<'a, M>
 where
   M: 'a,
 {
   let label_el = text(label.to_string())
+    .width(Length::Fill)
+    .align_x(align)
     .font(typography::mono::REGULAR)
-    .size(typography::size::SM)
+    .size(typography::size::MD)
     .style(|_| text::Style {
       color: Some(color::text::secondary()),
     });
 
   let bar: Element<'a, M> = match progress {
-    Some(value) => container(progress_bar(value, color::accent::PLASMA, BAR_HEIGHT))
-      .width(Length::Fixed(BAR_WIDTH))
-      .into(),
+    Some(value) => progress_bar(value, color::accent::PLASMA, BAR_HEIGHT),
     None => Space::new()
-      .width(Length::Fixed(BAR_WIDTH))
+      .width(Length::Fill)
       .height(Length::Fixed(BAR_HEIGHT))
       .into(),
   };
 
   Column::with_children(vec![label_el.into(), bar])
+    .width(Length::Fill)
     .align_x(Horizontal::Center)
-    .spacing(spacing::SPACE_3)
+    .spacing(spacing::SPACE_4_5)
     .into()
 }

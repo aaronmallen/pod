@@ -14,10 +14,12 @@ use iced::{
 use crate::{
   features::shell::window_chrome,
   ui::{
-    components::{eve_time::eve_time, status_bar::status_bar},
+    components::{eve_time::eve_time, status::dot, status_bar::status_bar},
     style::{color, control, spacing, typography},
   },
 };
+
+const STAGE_PADDING: f32 = 56.0;
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -170,48 +172,54 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     Phase::Loading | Phase::Update | Phase::Updating => state.step_label.as_str(),
   };
   let progress = match state.phase {
-    Phase::CheckingUpdate => Some(state.progress),
-    Phase::Loading => Some(state.progress),
+    Phase::CheckingUpdate | Phase::Loading => Some(state.progress),
     Phase::Updating => Some(state.update_progress),
     Phase::Done | Phase::Expanding | Phase::Update => None,
   };
 
   let logo = animation::logo(state.rotation, state.pulse, state.expand);
-  let status = match (&state.error, &state.phase) {
+  let slot = match (&state.error, &state.phase) {
     (Some(error), _) => error_view(error),
     (None, Phase::Update) => update_view(state),
     (None, Phase::Updating) => updating_view(state),
-    (None, _) => status_message::status_message(label, progress),
+    (None, _) => status_message::status_message(label, progress, Horizontal::Center),
   };
 
-  let inner = container(
+  let stage = container(
     Column::with_children(vec![
+      Space::new().width(Length::Fill).height(Length::FillPortion(5)).into(),
       logo,
-      Space::new().width(Length::Fill).height(Length::Fill).into(),
-      status,
+      Space::new().width(Length::Fill).height(Length::FillPortion(4)).into(),
+      slot,
     ])
-    .align_x(Horizontal::Center)
-    .spacing(spacing::SPACE_3_5),
+    .align_x(Horizontal::Center),
   )
   .padding(Padding {
     top: 0.0,
-    right: 0.0,
-    bottom: spacing::SPACE_3,
-    left: 0.0,
+    right: STAGE_PADDING,
+    bottom: spacing::SPACE_6,
+    left: STAGE_PADDING,
   })
   .width(Length::Fill)
   .height(Length::Fill)
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center);
 
-  let bar = status_bar(vec![eve_time(now)], vec![version::version()]);
+  let bar = status_bar(vec![eve_time(now)], vec![version::version(footer_update(state))]);
 
-  let panel = container(Column::with_children(vec![inner.into(), bar]))
+  let panel = container(Column::with_children(vec![stage.into(), bar]))
     .width(Length::Fill)
     .height(Length::Fill)
     .style(window_chrome::panel_style);
 
   mouse_area(panel).on_press(Message::DragWindow).into()
+}
+
+fn footer_update(state: &State) -> Option<&str> {
+  match state.phase {
+    Phase::Update | Phase::Updating => state.update_version.as_deref(),
+    _ => None,
+  }
 }
 
 fn error_view<'a>(error: &str) -> Element<'a, Message> {
@@ -236,15 +244,53 @@ fn error_view<'a>(error: &str) -> Element<'a, Message> {
 fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
   let current = env!("CARGO_PKG_VERSION");
   let next = state.update_version.as_deref().unwrap_or("");
-  let heading = text("Update available")
+
+  let eyebrow = Row::with_children(vec![
+    dot(color::accent::PLASMA),
+    text("UPDATE AVAILABLE")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::SM)
+      .style(|_| text::Style {
+        color: Some(color::accent::PLASMA),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let title = text("A new version of Pod is ready")
     .font(typography::body::MEDIUM)
-    .size(typography::size::MD);
-  let versions = text(format!("v{current} \u{2192} v{next}"))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::SM)
-    .style(|_| text::Style {
-      color: Some(color::text::tertiary()),
-    });
+    .size(typography::size::LG);
+
+  let versions = Row::with_children(vec![
+    text(format!("v{current}"))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::secondary()),
+      })
+      .into(),
+    text("\u{2192}")
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::tertiary()),
+      })
+      .into(),
+    text(format!("v{next}"))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      })
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center);
+
+  let copy = Column::with_children(vec![eyebrow.into(), title.into(), versions.into()])
+    .align_x(Horizontal::Left)
+    .spacing(spacing::SPACE_2);
 
   let later = button(text("Later").font(typography::body::MEDIUM).size(typography::size::MD))
     .padding(control::padding())
@@ -259,18 +305,31 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
   .on_press(Message::Update)
   .style(control::primary_button);
 
-  let actions = Row::with_children(vec![later.into(), update.into()]).spacing(spacing::SPACE_3);
+  let actions = Row::with_children(vec![later.into(), update.into()]).spacing(spacing::SPACE_2_5);
 
-  Column::with_children(vec![heading.into(), versions.into(), actions.into()])
-    .align_x(Horizontal::Center)
-    .spacing(spacing::SPACE_3)
-    .into()
+  Row::with_children(vec![
+    copy.into(),
+    Space::new().width(Length::Fill).height(Length::Shrink).into(),
+    actions.into(),
+  ])
+  .align_y(Vertical::Bottom)
+  .into()
 }
 
 fn updating_view<'a>(state: &'a State) -> Element<'a, Message> {
   let next = state.update_version.as_deref().unwrap_or("");
-  let label = format!("Installing v{next}\u{2026}");
-  status_message::status_message(&label, Some(state.update_progress))
+  let label = updating_label(state.update_progress, next);
+  status_message::status_message(&label, Some(state.update_progress), Horizontal::Left)
+}
+
+fn updating_label(progress: f32, next: &str) -> String {
+  if progress >= 1.0 {
+    "Restarting\u{2026}".to_string()
+  } else if progress > 0.7 {
+    format!("Installing v{next}\u{2026}")
+  } else {
+    "Downloading update\u{2026}".to_string()
+  }
 }
 
 fn tick(state: &mut State) -> Task<Message> {
@@ -300,6 +359,39 @@ fn advance_expand(state: &mut State) -> Task<Message> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  mod footer_update {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_exposes_the_version_during_update_and_updating() {
+      let update = State {
+        phase: Phase::Update,
+        update_version: Some("0.7.0".to_string()),
+        ..State::default()
+      };
+      let updating = State {
+        phase: Phase::Updating,
+        update_version: Some("0.7.0".to_string()),
+        ..State::default()
+      };
+
+      assert_eq!(footer_update(&update), Some("0.7.0"));
+      assert_eq!(footer_update(&updating), Some("0.7.0"));
+    }
+
+    #[test]
+    fn it_hides_the_version_outside_the_update_phases() {
+      let loading = State {
+        update_version: Some("0.7.0".to_string()),
+        ..State::default()
+      };
+
+      assert_eq!(footer_update(&loading), None);
+    }
+  }
 
   mod update {
     use pretty_assertions::assert_eq;
@@ -506,6 +598,27 @@ mod tests {
 
       assert_eq!(state.phase, Phase::Update);
       assert_eq!(state.update_version.as_deref(), Some("9.9.9"));
+    }
+  }
+
+  mod updating_label {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_installs_the_target_version_past_the_download() {
+      assert_eq!(updating_label(0.85, "0.7.0"), "Installing v0.7.0\u{2026}");
+    }
+
+    #[test]
+    fn it_reports_downloading_while_in_the_early_progress() {
+      assert_eq!(updating_label(0.2, "0.7.0"), "Downloading update\u{2026}");
+    }
+
+    #[test]
+    fn it_restarts_once_the_install_completes() {
+      assert_eq!(updating_label(1.0, "0.7.0"), "Restarting\u{2026}");
     }
   }
 }

@@ -7149,8 +7149,15 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
 }
 
 fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
+  // A language pick re-renders the whole wizard in that language on the next frame: the view resolves
+  // every `t!` against the active locale, so applying it here (before the next view) is what makes the
+  // rail, headers, and footer reflect the chosen language live, with no config write until Finish.
+  let relocalize = matches!(message, wizard::Message::SelectLanguage(_));
   if let Some(state) = app.wizard.as_mut() {
     wizard::update(state, message);
+    if relocalize {
+      i18n::set_locale(state.pending_language());
+    }
   }
   Task::none()
 }

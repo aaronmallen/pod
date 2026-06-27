@@ -5,6 +5,7 @@ use iced::{
 };
 
 use crate::{
+  config::Settings,
   features::settings::features_tab::Group,
   i18n::Language,
   ui::{
@@ -14,6 +15,11 @@ use crate::{
     style::{color, control, radius, spacing, typography},
   },
 };
+
+const BENEFIT_CARD_MAX_WIDTH: f32 = 720.0;
+const LANGUAGE_GRID_COLUMNS: usize = 3;
+const LANGUAGE_GRID_MAX_WIDTH: f32 = 860.0;
+const STEP_TITLE_SIZE: f32 = 30.0;
 
 const CONTENT_PADDING: f32 = 48.0;
 const FOOTER_SIDE_PADDING: f32 = 48.0;
@@ -28,9 +34,8 @@ pub enum Message {
   JumpTo(usize),
   Next,
   // Selecting a language re-renders the whole wizard in that language on the next frame, before any
-  // config is written (the view resolves keys against `pending_language`). The Language step task
-  // (plxsyvtu) dispatches this from the language grid.
-  #[allow(dead_code)]
+  // config is written (the view resolves keys against `pending_language`). The language grid
+  // dispatches this; the app's wizard update applies the locale so the next frame renders in it.
   SelectLanguage(Language),
   Skip,
 }
@@ -103,16 +108,30 @@ impl Phase {
 pub struct State {
   current: usize,
   // The in-progress language drives the rendered locale before any config write (ADR-0041 keeps the
-  // committed locale fixed mid-session). The Language step task reads/writes this through
-  // `Message::SelectLanguage`.
-  #[allow(dead_code)]
+  // committed locale fixed mid-session). The language grid reads/writes this through
+  // `Message::SelectLanguage`; the app applies the locale so the next frame renders in it.
   pending_language: Language,
+  // The in-progress configuration the Features and Storage steps mutate. It is written to disk once
+  // at Finish (no per-step persistence), so the wizard owns its own draft instead of touching the
+  // live settings until the run completes.
+  settings: Settings,
   steps: Vec<Step>,
 }
 
 impl State {
   pub fn current_step(&self) -> Step {
     self.steps[self.current]
+  }
+
+  pub fn pending_language(&self) -> Language {
+    self.pending_language
+  }
+
+  // Consumed at Finish (persist the draft) and by the Features/Storage step tasks that read the live
+  // flag/path state; only the tests read it until those land, so it reads as unused in the bin build.
+  #[allow(dead_code)]
+  pub fn settings(&self) -> &Settings {
+    &self.settings
   }
 
   pub fn is_first(&self) -> bool {
@@ -151,9 +170,11 @@ impl State {
 
 impl Default for State {
   fn default() -> Self {
+    let settings = Settings::default();
     State {
       current: 0,
-      pending_language: Language::default(),
+      pending_language: settings.accessibility().language(),
+      settings,
       steps: steps(),
     }
   }
@@ -185,6 +206,7 @@ pub fn update(state: &mut State, message: Message) {
     }
     Message::SelectLanguage(language) => {
       state.pending_language = language;
+      state.settings.accessibility_mut().set_language(language);
     }
     Message::Skip => {
       state.current = state.steps.len().saturating_sub(1);
@@ -436,11 +458,14 @@ fn content(state: &State) -> Element<'_, Message> {
   container(column).width(Length::Fill).height(Length::Fill).into()
 }
 
-// The per-step body seam. The sibling step tasks (Welcome+Language, Features, Storage, Finish) fill
-// each arm; until then every step renders the same placeholder framed by the shared chrome.
+// The per-step body seam. Each arm renders one step's content; the Features and Storage steps still
+// render the shared placeholder until their sibling tasks fill them in.
 fn step_body(state: &State) -> Element<'_, Message> {
-  let _ = state.current_step();
-  step_placeholder()
+  match state.current_step() {
+    Step::Language => language_body(state),
+    Step::Welcome => welcome_body(),
+    Step::Features(_) | Step::Finish | Step::Storage => step_placeholder(),
+  }
 }
 
 fn step_placeholder<'a>() -> Element<'a, Message> {
@@ -455,6 +480,381 @@ fn step_placeholder<'a>() -> Element<'a, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .into()
+}
+
+// The shared step header: a Plasma eyebrow over a large title and an optional lede, with an optional
+// right-aligned readout. Mirrors firstrun.jsx's StepHeader so every step shares the same masthead.
+fn step_header<'a>(
+  eyebrow: String,
+  title: String,
+  lede: Option<String>,
+  right: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+  let eyebrow = text(eyebrow)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::accent::PLASMA));
+  let title = text(title)
+    .font(typography::body::MEDIUM)
+    .size(STEP_TITLE_SIZE)
+    .style(typography::colored(color::text::PRIMARY));
+
+  let mut column: Vec<Element<'a, Message>> = vec![eyebrow.into(), title.into()];
+  if let Some(lede) = lede {
+    column.push(
+      container(
+        text(lede)
+          .font(typography::body::REGULAR)
+          .size(typography::size::MD)
+          .style(typography::colored(color::text::secondary())),
+      )
+      .max_width(620.0)
+      .into(),
+    );
+  }
+  let identity = Column::with_children(column)
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill);
+
+  let mut children: Vec<Element<'a, Message>> = vec![identity.into()];
+  if let Some(right) = right {
+    children.push(right);
+  }
+
+  Row::with_children(children)
+    .align_y(Vertical::Bottom)
+    .spacing(spacing::SPACE_6)
+    .width(Length::Fill)
+    .into()
+}
+
+fn welcome_body<'a>() -> Element<'a, Message> {
+  let mark = container(Icon::star().size(52.0).color(color::accent::PLASMA).render()).padding(Padding {
+    top: 0.0,
+    right: 0.0,
+    bottom: spacing::SPACE_6 + 6.0,
+    left: 0.0,
+  });
+
+  let header = step_header(
+    t!("wizard.welcome.eyebrow").into_owned(),
+    t!("wizard.welcome.title").into_owned(),
+    Some(t!("wizard.welcome.lede").into_owned()),
+    None,
+  );
+
+  let points = Column::with_children(vec![
+    benefit_card(
+      Icon::settings(),
+      t!("wizard.welcome.point_features_title").into_owned(),
+      t!("wizard.welcome.point_features_desc").into_owned(),
+    ),
+    benefit_card(
+      Icon::archive(),
+      t!("wizard.welcome.point_storage_title").into_owned(),
+      t!("wizard.welcome.point_storage_desc").into_owned(),
+    ),
+    benefit_card(
+      Icon::shield(),
+      t!("wizard.welcome.point_privacy_title").into_owned(),
+      t!("wizard.welcome.point_privacy_desc").into_owned(),
+    ),
+  ])
+  .spacing(spacing::SPACE_3_5)
+  .width(Length::Fill);
+
+  let column = Column::with_children(vec![
+    mark.into(),
+    container(header)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6 + 6.0,
+        left: 0.0,
+      })
+      .into(),
+    points.into(),
+  ])
+  .width(Length::Fill);
+
+  container(column).max_width(BENEFIT_CARD_MAX_WIDTH).into()
+}
+
+fn benefit_card<'a>(icon: Icon, title: String, description: String) -> Element<'a, Message> {
+  let glyph = container(icon.size(20.0).color(color::accent::PLASMA).render())
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
+    .align_x(Horizontal::Center)
+    .align_y(Vertical::Center)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.1))),
+      border: Border {
+        color: color::with_alpha(color::accent::PLASMA, 0.28),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    });
+
+  let heading = text(title)
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let blurb = text(description)
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+  let copy = Column::with_children(vec![heading.into(), blurb.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![glyph.into(), copy.into()])
+    .spacing(spacing::SPACE_4_5 - 2.0)
+    .align_y(Vertical::Top);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_4_5,
+      right: spacing::SPACE_4_5 + 2.0,
+      bottom: spacing::SPACE_4_5,
+      left: spacing::SPACE_4_5 + 2.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn language_body(state: &State) -> Element<'_, Message> {
+  let selected = state.pending_language;
+
+  let readout = Row::with_children(vec![
+    Icon::market().size(18.0).color(color::accent::PLASMA).render(),
+    text(format!("{} · {}", selected.native_label(), selected.esi_code()))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2_5);
+
+  let header = step_header(
+    t!("wizard.language.eyebrow").into_owned(),
+    t!("wizard.language.title").into_owned(),
+    Some(t!("wizard.language.lede").into_owned()),
+    Some(readout.into()),
+  );
+
+  let grid = language_grid(selected);
+  let note = language_note(selected);
+
+  let column = Column::with_children(vec![
+    container(header)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6 + 6.0,
+        left: 0.0,
+      })
+      .into(),
+    grid,
+    container(note)
+      .padding(Padding {
+        top: spacing::SPACE_6,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+      })
+      .into(),
+  ])
+  .width(Length::Fill);
+
+  container(column).max_width(LANGUAGE_GRID_MAX_WIDTH).into()
+}
+
+// A three-column grid of language cards. Iced has no grid widget, so the rows are built by chunking
+// the nine languages into rows of three, padding the trailing row with spacers to keep the columns
+// aligned. `native_label` is rendered straight (the native names are not themselves translated).
+fn language_grid<'a>(selected: Language) -> Element<'a, Message> {
+  let rows: Vec<Element<'a, Message>> = Language::ALL
+    .chunks(LANGUAGE_GRID_COLUMNS)
+    .map(|chunk| {
+      let mut cells: Vec<Element<'a, Message>> = chunk
+        .iter()
+        .map(|&language| language_card(language, language == selected))
+        .collect();
+      while cells.len() < LANGUAGE_GRID_COLUMNS {
+        cells.push(Space::new().width(Length::Fill).into());
+      }
+      Row::with_children(cells)
+        .spacing(spacing::SPACE_3_5)
+        .width(Length::Fill)
+        .into()
+    })
+    .collect();
+
+  Column::with_children(rows)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill)
+    .into()
+}
+
+fn language_card<'a>(language: Language, selected: bool) -> Element<'a, Message> {
+  let native_color = if selected {
+    color::text::PRIMARY
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.86)
+  };
+  let native = text(language.native_label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(native_color));
+
+  let code = language_code_tag(language.esi_code(), selected);
+  let top = Row::with_children(vec![native.into(), Space::new().width(Length::Fill).into(), code])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5);
+
+  let label = text(t!("wizard.language.card_label", label => language.label()).into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  let mut stack: Vec<Element<'a, Message>> = vec![top.into(), label.into()];
+  if selected {
+    stack.push(
+      container(
+        Icon::check()
+          .size(11.0)
+          .color(color::on_fill(color::accent::PLASMA))
+          .render(),
+      )
+      .width(Length::Fixed(18.0))
+      .height(Length::Fixed(18.0))
+      .align_x(Horizontal::Center)
+      .align_y(Vertical::Center)
+      .style(|_| container::Style {
+        background: Some(Background::Color(color::accent::PLASMA)),
+        border: Border {
+          radius: 9.0.into(),
+          ..Border::default()
+        },
+        ..container::Style::default()
+      })
+      .into(),
+    );
+  }
+
+  let content = Column::with_children(stack)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
+
+  let (background, border) = if selected {
+    (color::with_alpha(color::accent::PLASMA, 0.1), color::accent::PLASMA)
+  } else {
+    (color::surface::RAISED, color::rule())
+  };
+
+  let cell = container(content).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_4_5,
+    right: spacing::SPACE_4_5,
+    bottom: spacing::SPACE_4_5 - 2.0,
+    left: spacing::SPACE_4_5,
+  });
+
+  button(cell)
+    .padding(0)
+    .width(Length::Fill)
+    .on_press(Message::SelectLanguage(language))
+    .style(move |_, _| button::Style {
+      background: Some(Background::Color(background)),
+      border: Border {
+        color: border,
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      text_color: color::text::PRIMARY,
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn language_code_tag<'a>(code: &'static str, selected: bool) -> Element<'a, Message> {
+  let (text_color, border_color, background) = if selected {
+    (
+      color::accent::PLASMA,
+      color::with_alpha(color::accent::PLASMA, 0.28),
+      color::with_alpha(color::accent::PLASMA, 0.1),
+    )
+  } else {
+    (
+      color::text::tertiary(),
+      color::rule(),
+      color::with_alpha(color::text::PRIMARY, 0.04),
+    )
+  };
+  let label = text(code)
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS)
+    .style(typography::colored(text_color));
+
+  container(label)
+    .padding(Padding {
+      top: 2.0,
+      right: spacing::SPACE_2 - 2.0,
+      bottom: 2.0,
+      left: spacing::SPACE_2 - 2.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(background)),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: radius::SUBTLE.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn language_note<'a>(selected: Language) -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    Icon::market().size(15.0).color(color::text::secondary()).render(),
+    text(t!("wizard.language.note", code => selected.esi_code()).into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Top);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5 - 2.0,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5 - 2.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
 }
 
 fn footer(state: &State) -> Element<'_, Message> {
@@ -700,6 +1100,15 @@ mod tests {
     }
 
     #[test]
+    fn select_language_also_writes_the_choice_into_the_draft_settings() {
+      let mut state = state();
+
+      update(&mut state, Message::SelectLanguage(Language::Ja));
+
+      assert_eq!(state.settings().accessibility().language(), Language::Ja);
+    }
+
+    #[test]
     fn jump_to_moves_to_a_reachable_phase_step() {
       let mut state = state();
       update(&mut state, Message::Next);
@@ -793,6 +1202,42 @@ mod tests {
       update(&mut state, Message::Next);
 
       let _el: Element<'_, Message> = view(&state);
+    }
+  }
+
+  mod step_body {
+    use super::*;
+
+    #[test]
+    fn it_renders_the_welcome_body() {
+      let state = state();
+      assert_eq!(state.current_step(), Step::Welcome);
+
+      let _el: Element<'_, Message> = step_body(&state);
+    }
+
+    #[test]
+    fn it_renders_the_language_body() {
+      let mut state = state();
+      update(&mut state, Message::Next);
+      assert_eq!(state.current_step(), Step::Language);
+
+      let _el: Element<'_, Message> = step_body(&state);
+    }
+
+    #[test]
+    fn the_language_grid_offers_every_one_of_the_nine_languages() {
+      let _el: Element<'_, Message> = language_grid(Language::Ja);
+
+      assert_eq!(Language::ALL.len(), 9);
+    }
+
+    #[test]
+    fn the_language_body_renders_for_a_non_latin_selection() {
+      let mut state = state();
+      update(&mut state, Message::SelectLanguage(Language::Ko));
+
+      let _el: Element<'_, Message> = language_body(&state);
     }
   }
 }

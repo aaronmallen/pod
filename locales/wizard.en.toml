@@ -1,6 +1,13 @@
 [wizard.body]
 placeholder = "This step is being assembled."
 
+[wizard.language]
+card_label = "%{label}"
+eyebrow = "Language"
+lede = "Pod requests item names, descriptions, and other localized text from EVE’s ESI in this language. These are the languages ESI itself supports — you can switch any time in Settings."
+note = "Pod’s own interface is English for now; this setting controls the localized game data ESI returns (sent as Accept-Language: %{code})."
+title = "Choose your language"
+
 [wizard.footer]
 back = "Back"
 continue_to_features = "Continue to Features"
@@ -46,6 +53,12 @@ step_counter = "%{current}/%{total}"
 [wizard.welcome]
 eyebrow = "WELCOME TO POD"
 lede = "A two-minute walkthrough to tailor Pod before you fly. We’ll pick which features run and where Pod keeps its files — then you’re straight into the app."
+point_features_desc = "Turn Pod’s capabilities on or off across the feature groups. Everything starts on — trim what you don’t need."
+point_features_title = "Choose your features"
+point_privacy_desc = "Setup writes only to local preferences. You can change any of this later in Settings."
+point_privacy_title = "Nothing leaves your machine"
+point_storage_desc = "Keep Pod’s database, logs, and cache on the default volume, or point them somewhere shared."
+point_storage_title = "Pick where data lives"
 title = "Let’s get you set up"
 
 [wizard.window]

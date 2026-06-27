@@ -1474,6 +1474,36 @@ fn write_stored_sde_version(path: &Path, version: &str) {
   std::fs::write(path, version).ok();
 }
 
+// The synced-language marker is read on boot to force a re-sync (sibling task nlwrsvyt) and rewritten
+// after the switch is applied (sibling task wzkmsqyk); the helpers read as unused until that wiring
+// lands, mirroring the SDE-version marker.
+#[allow(dead_code)]
+pub fn synced_language_path() -> Option<PathBuf> {
+  Some(dir_spec::state_home()?.join("pod").join("synced_language"))
+}
+
+// True only when a marker is present AND records a different language than the one configured. An
+// absent marker (first run, or an upgrade from a pre-i18n build) is treated as already matching, so
+// a pilot who has never picked a language sees no forced re-fetch. See ADR-0041 section 3.
+#[allow(dead_code)]
+pub fn language_switched(marker: Option<Language>, configured: Language) -> bool {
+  marker.is_some_and(|synced| synced != configured)
+}
+
+#[allow(dead_code)]
+pub fn read_synced_language(path: &Path) -> Option<Language> {
+  let contents = std::fs::read_to_string(path).ok()?;
+  Language::from_code(contents.trim())
+}
+
+#[allow(dead_code)]
+pub fn write_synced_language(path: &Path, language: Language) {
+  if let Some(parent) = path.parent() {
+    std::fs::create_dir_all(parent).ok();
+  }
+  std::fs::write(path, language.esi_code()).ok();
+}
+
 fn build_mastery_entries(outer: serde_yaml::Mapping) -> Vec<(i32, i32, Vec<i32>)> {
   let mut entries: Vec<(i32, i32, Vec<i32>)> = Vec::new();
   for (ship_key, tiers_val) in outer {
@@ -2311,6 +2341,75 @@ mod tests {
         Some(&marker),
         Some("20240101.1+pod-0.5.0+seed-2+lang-en")
       ));
+    }
+  }
+
+  mod language_switched {
+    use super::*;
+
+    #[test]
+    fn it_reports_no_switch_when_the_marker_is_absent() {
+      assert!(!language_switched(None, Language::Fr));
+    }
+
+    #[test]
+    fn it_reports_no_switch_when_the_marker_matches_the_configured_language() {
+      assert!(!language_switched(Some(Language::De), Language::De));
+    }
+
+    #[test]
+    fn it_reports_a_switch_when_the_marker_differs_from_the_configured_language() {
+      assert!(language_switched(Some(Language::En), Language::Fr));
+    }
+  }
+
+  mod read_synced_language {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_round_trips_the_written_language() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("synced_language");
+      write_synced_language(&marker, Language::Ja);
+
+      assert_eq!(read_synced_language(&marker), Some(Language::Ja));
+    }
+
+    #[test]
+    fn it_round_trips_en_us_through_the_esi_code() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("synced_language");
+      write_synced_language(&marker, Language::EnUs);
+
+      assert_eq!(read_synced_language(&marker), Some(Language::EnUs));
+    }
+
+    #[test]
+    fn it_returns_none_when_the_marker_is_absent() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("synced_language");
+
+      assert_eq!(read_synced_language(&marker), None);
+    }
+
+    #[test]
+    fn it_returns_none_for_an_unrecognized_code() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("synced_language");
+      std::fs::write(&marker, "xx").unwrap();
+
+      assert_eq!(read_synced_language(&marker), None);
+    }
+
+    #[test]
+    fn it_trims_surrounding_whitespace_before_parsing() {
+      let tmp = tempfile::tempdir().unwrap();
+      let marker = tmp.path().join("synced_language");
+      std::fs::write(&marker, "  fr\n").unwrap();
+
+      assert_eq!(read_synced_language(&marker), Some(Language::Fr));
     }
   }
 

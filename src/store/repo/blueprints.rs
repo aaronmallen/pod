@@ -1,44 +1,14 @@
 use std::collections::HashSet;
 
-use sqlx::{FromRow, QueryBuilder, Sqlite};
+use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
   Database, Error,
-  model::{CharacterBlueprint, CorporationBlueprint},
+  model::{ActivityMaterial, ActivityMeta, ActivityProduct, AllBlueprints, CharacterBlueprint, CorporationBlueprint},
   repo::org,
 };
 
 const BLUEPRINT_WRITE_BATCH_SIZE: usize = 500;
-
-#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
-pub struct ActivityMaterial {
-  pub activity_id: i64,
-  pub blueprint_type_id: i64,
-  pub material_type_id: i64,
-  pub quantity: i64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
-pub struct ActivityMeta {
-  pub activity_id: i64,
-  pub blueprint_type_id: i64,
-  pub max_production_limit: i64,
-  pub time: i64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, FromRow, PartialEq)]
-pub struct ActivityProduct {
-  pub activity_id: i64,
-  pub blueprint_type_id: i64,
-  pub product_type_id: i64,
-  pub quantity: i64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct AllBlueprints {
-  pub character_blueprints: Vec<CharacterBlueprint>,
-  pub corporation_blueprints: Vec<CorporationBlueprint>,
-}
 
 pub async fn activity_meta(
   db: &Database,

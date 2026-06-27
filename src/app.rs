@@ -41,6 +41,7 @@ use crate::{
     skills::{skill_plan_editor, skill_plan_manager, skills_compare},
     splash, wallet,
     wallet::contract_detail,
+    wizard,
   },
   i18n, mcp,
   services::{crash, images, telemetry, updater},
@@ -287,6 +288,7 @@ struct App {
   updater_toast_dismissed: bool,
   wallet: Option<wallet::State>,
   windows: Windows,
+  wizard: Option<wizard::State>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -435,6 +437,7 @@ enum Message {
   Wallet(wallet::Message),
   Window(window::Id, window::Event),
   WindowOpened(window::Id),
+  Wizard(wizard::Message),
 }
 
 #[derive(Clone, Debug)]
@@ -563,6 +566,7 @@ impl Message {
       Message::TextInputFocused(_) => "TextInputFocused",
       Message::TrashPurged(_) => "TrashPurged",
       Message::WindowOpened(_) => "WindowOpened",
+      Message::Wizard(_) => "Wizard",
       _ => return None,
     })
   }
@@ -1058,21 +1062,34 @@ fn boot() -> (App, Task<Message>) {
   store::images::init_root(image_root);
 
   let telemetry = init_telemetry(&settings);
+  let first_run = config::should_run_wizard(&settings);
 
   auth::install();
-  let settings = window::Settings {
-    size: Size::new(spacing::layout::SPLASH_WIDTH, spacing::layout::SPLASH_HEIGHT),
-    decorations: false,
-    resizable: false,
-    transparent: true,
-    position: window::Position::Centered,
-    icon: app_icon(),
-    ..window::Settings::default()
+  let window_settings = if first_run {
+    window::Settings {
+      size: Size::new(
+        spacing::layout::WINDOW_DEFAULT_WIDTH,
+        spacing::layout::WINDOW_DEFAULT_HEIGHT,
+      ),
+      position: window::Position::Centered,
+      icon: app_icon(),
+      ..window::Settings::default()
+    }
+  } else {
+    window::Settings {
+      size: Size::new(spacing::layout::SPLASH_WIDTH, spacing::layout::SPLASH_HEIGHT),
+      decorations: false,
+      resizable: false,
+      transparent: true,
+      position: window::Position::Centered,
+      icon: app_icon(),
+      ..window::Settings::default()
+    }
   };
-  let (id, open_task) = window::open(settings);
+  let (id, open_task) = window::open(window_settings);
 
   let mut registry = Windows::default();
-  registry.register(id, Window::Splash);
+  registry.register(id, if first_run { Window::FirstRun } else { Window::Splash });
 
   let updater = updater::Config::from_env().map(updater::spawn);
   subscribe_updater(updater.as_ref());
@@ -1136,7 +1153,7 @@ fn boot() -> (App, Task<Message>) {
     selected_character: None,
     settings: None,
     skills: None,
-    splash: Some(splash::State::default()),
+    splash: (!first_run).then(splash::State::default),
     splash_step: 0,
     stockpile_editors: WindowStates::default(),
     stockpile_imports: WindowStates::default(),
@@ -1153,8 +1170,10 @@ fn boot() -> (App, Task<Message>) {
     updater_toast_dismissed: false,
     wallet: None,
     windows: registry,
+    wizard: first_run.then(wizard::State::default),
   };
-  let boot = start_boot(&mut app);
+  // First run holds the store/SDE seed until the wizard finishes; only the splash path boots now.
+  let boot = if first_run { Task::none() } else { start_boot(&mut app) };
   let task = Task::batch([open_task.map(Message::WindowOpened), boot]);
 
   (app, task)
@@ -3378,6 +3397,7 @@ fn window_title(app: &App, id: window::Id) -> String {
       .map(|window| t!("shell.window.titled", title => window.title()).into_owned())
       .unwrap_or_else(|| t!("shell.window.event").into_owned()),
     Some(Window::Compare) => t!("shell.window.compare_skills").into_owned(),
+    Some(Window::FirstRun) => t!("wizard.window.title").into_owned(),
     Some(Window::Contract) => match app.contracts.get(id) {
       Some(state) => t!("shell.window.titled", title => state.title()).into_owned(),
       None => t!("shell.window.contract").into_owned(),
@@ -4289,6 +4309,7 @@ fn dispatch_lifecycle(app: &mut App, message: Message) -> Task<Message> {
     Message::StorageMigrated => Task::none(),
     Message::StoreOpened(ready) => handle_store_opened(app, *ready),
     Message::TrashPurged(purged) => handle_trash_purged(app, purged),
+    Message::Wizard(msg) => update_wizard(app, msg),
     other => dispatch_sync_lifecycle(app, other),
   }
 }
@@ -7127,6 +7148,13 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
   }
 }
 
+fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
+  if let Some(state) = app.wizard.as_mut() {
+    wizard::update(state, message);
+  }
+  Task::none()
+}
+
 fn retry_seed(app: &mut App) -> Task<Message> {
   let Some(ready) = app.store_ready.clone() else {
     return Task::none();
@@ -7142,6 +7170,7 @@ fn retry_seed(app: &mut App) -> Task<Message> {
 fn view(app: &App, id: window::Id) -> Element<'_, Message> {
   match app.windows.kind(id) {
     Some(Window::Splash) => splash_window_view(app),
+    Some(Window::FirstRun) => first_run_window_view(app),
     Some(Window::Main) => main_view(app),
     Some(Window::Compare) => compare_window_view(app, id),
     Some(Window::Contract) => contract_window_view(app, id),
@@ -7173,6 +7202,13 @@ fn stockpile_import_window_view(app: &App, id: window::Id) -> Element<'_, Messag
 fn splash_window_view(app: &App) -> Element<'_, Message> {
   match app.splash.as_ref() {
     Some(state) => splash::view(state, app.now).map(Message::Splash),
+    None => blank(),
+  }
+}
+
+fn first_run_window_view(app: &App) -> Element<'_, Message> {
+  match app.wizard.as_ref() {
+    Some(state) => wizard::view(state).map(Message::Wizard),
     None => blank(),
   }
 }
@@ -7331,6 +7367,7 @@ mod tests {
       updater_toast_dismissed: false,
       wallet: None,
       windows: Windows::default(),
+      wizard: None,
     }
   }
 

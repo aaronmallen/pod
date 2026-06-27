@@ -9,6 +9,7 @@ pub enum Window {
   CalendarEvent,
   Compare,
   Contract,
+  FirstRun,
   Killmail,
   MailCompose,
   Main,
@@ -31,6 +32,7 @@ impl Window {
       Self::StockpileImport => Some("stockpile_import"),
       Self::CalendarEvent
       | Self::Contract
+      | Self::FirstRun
       | Self::Killmail
       | Self::MailCompose
       | Self::Splash
@@ -258,6 +260,11 @@ mod tests {
     #[test]
     fn it_never_persists_splash() {
       assert_eq!(Window::Splash.state_key(), None);
+    }
+
+    #[test]
+    fn it_never_persists_first_run() {
+      assert_eq!(Window::FirstRun.state_key(), None);
     }
   }
 

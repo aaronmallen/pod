@@ -1,0 +1,7 @@
+[wizard.welcome]
+eyebrow = "WELCOME TO POD"
+lede = "A two-minute walkthrough to tailor Pod before you fly. We’ll pick which features run and where Pod keeps its files — then you’re straight into the app."
+title = "Let’s get you set up"
+
+[wizard.window]
+title = "Pod — First-time setup"

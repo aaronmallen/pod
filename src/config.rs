@@ -884,14 +884,29 @@ pub fn cache_dir() -> PathBuf {
     .join("pod")
 }
 
-// Consumed by the first-run wizard boot branch (task qvmwtwky); no production caller lands yet.
-#[allow(dead_code)]
 pub fn config_exists() -> bool {
   config_path().is_ok_and(|path| config_exists_at(&path))
 }
 
 fn config_exists_at(path: &Path) -> bool {
   path.is_file()
+}
+
+pub fn database_exists(settings: &Settings) -> bool {
+  let storage = settings.storage();
+  database_exists_at(&storage.resolved_database_path(), &storage.resolved_working_copy_path())
+}
+
+fn database_exists_at(canonical: &Path, working_copy: &Path) -> bool {
+  canonical.is_file() || working_copy.is_file()
+}
+
+pub fn should_run_wizard(settings: &Settings) -> bool {
+  is_first_run(config_exists(), database_exists(settings))
+}
+
+fn is_first_run(config_present: bool, database_present: bool) -> bool {
+  !config_present && !database_present
 }
 
 fn config_path() -> Result<PathBuf, Error> {
@@ -1450,6 +1465,106 @@ mod tests {
 
       assert!(!exists);
       assert!(!path.exists(), "the predicate must not materialize the file");
+    }
+  }
+
+  mod database_exists_at {
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_neither_database_is_present() {
+      let dir = tempfile::tempdir().unwrap();
+
+      assert!(!database_exists_at(
+        &dir.path().join("pod.db"),
+        &dir.path().join("pod-working.db")
+      ));
+    }
+
+    #[test]
+    fn it_is_true_when_the_canonical_database_is_present() {
+      let dir = tempfile::tempdir().unwrap();
+      let canonical = dir.path().join("pod.db");
+      std::fs::write(&canonical, b"db").unwrap();
+
+      assert!(database_exists_at(&canonical, &dir.path().join("pod-working.db")));
+    }
+
+    #[test]
+    fn it_is_true_when_only_a_working_copy_is_present() {
+      let dir = tempfile::tempdir().unwrap();
+      let working_copy = dir.path().join("pod-working.db");
+      std::fs::write(&working_copy, b"db").unwrap();
+
+      assert!(database_exists_at(&dir.path().join("pod.db"), &working_copy));
+    }
+
+    #[test]
+    fn it_does_not_create_the_database_as_a_side_effect() {
+      let dir = tempfile::tempdir().unwrap();
+      let canonical = dir.path().join("pod.db");
+      let working_copy = dir.path().join("pod-working.db");
+
+      let exists = database_exists_at(&canonical, &working_copy);
+
+      assert!(!exists);
+      assert!(!canonical.exists(), "the predicate must not materialize the database");
+      assert!(
+        !working_copy.exists(),
+        "the predicate must not materialize the working copy"
+      );
+    }
+  }
+
+  mod database_exists {
+    use super::*;
+
+    fn settings_with_storage_root(root: &Path) -> Settings {
+      let mut settings = Settings::default();
+      settings.storage_mut().set_db_dir(Some(root.to_path_buf()));
+      settings.storage_mut().set_working_copy_dir(Some(root.join("working")));
+      settings
+    }
+
+    #[test]
+    fn it_is_false_against_an_empty_storage_root() {
+      let dir = tempfile::tempdir().unwrap();
+      let settings = settings_with_storage_root(dir.path());
+
+      assert!(!database_exists(&settings));
+    }
+
+    #[test]
+    fn it_is_true_once_the_resolved_database_is_present() {
+      let dir = tempfile::tempdir().unwrap();
+      let settings = settings_with_storage_root(dir.path());
+      std::fs::write(settings.storage().resolved_database_path(), b"db").unwrap();
+
+      assert!(database_exists(&settings));
+    }
+  }
+
+  mod is_first_run {
+    use super::*;
+
+    #[test]
+    fn it_is_true_when_neither_config_nor_database_is_present() {
+      assert!(is_first_run(false, false));
+    }
+
+    #[test]
+    fn it_is_false_when_a_config_is_present() {
+      assert!(!is_first_run(true, false));
+    }
+
+    #[test]
+    fn it_is_false_when_a_database_is_present() {
+      assert!(!is_first_run(false, true));
+    }
+
+    #[test]
+    fn it_is_false_when_both_are_present() {
+      assert!(!is_first_run(true, true));
     }
   }
 

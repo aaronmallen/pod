@@ -285,10 +285,8 @@ pub enum Message {
   TimeframeSelected(Timeframe),
   UiFlagPersisted(String, bool),
   // Emitted by sibling wallet-view tasks to set a persisted UI flag; today only the tests construct it.
-  #[allow(dead_code)]
   UiFlagSet(String, bool),
   // Emitted by sibling wallet-view tasks to toggle a persisted UI list item; today only the tests construct it.
-  #[allow(dead_code)]
   UiListItemToggled(String, String),
   UiListPersisted(String, Vec<String>),
   WalletsSortSelected(WalletSort),
@@ -673,13 +671,11 @@ impl State {
   }
 
   // Generic UI-flag accessor consumed by sibling wallet-view tasks; today only the tests use it.
-  #[allow(dead_code)]
   pub fn ui_flag(&self, key: &str, default: bool) -> bool {
     self.ui_flags.get(key).copied().unwrap_or(default)
   }
 
   // Generic UI-list accessor consumed by sibling wallet-view tasks; today only the tests use it.
-  #[allow(dead_code)]
   pub fn ui_list(&self, key: &str) -> &[String] {
     self.ui_lists.get(key).map(Vec::as_slice).unwrap_or_default()
   }
@@ -3344,8 +3340,9 @@ pub fn combined_liquid(state: &State) -> Option<f64> {
   sum_option([character_liquid, state.owned_corp_liquid()].into_iter())
 }
 
-// Kept: tested aggregation over loaded `state.periods`, awaiting the period-totals UI wiring; deletion would orphan the loaded `periods` data.
-#[allow(dead_code)]
+// Awaiting the period-totals UI wiring; aggregates the loaded `state.periods` and is exercised by unit tests until
+// then. Deleting it would orphan `PeriodTotals` and `CharacterWalletPeriodSummary`'s fields, so it is kept.
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn period_totals(state: &State) -> PeriodTotals {
   let ids: std::collections::HashSet<i64> = state.scope_ids().into_iter().collect();
   let mut totals = PeriodTotals::default();

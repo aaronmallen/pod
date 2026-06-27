@@ -200,7 +200,6 @@ const TRANSFER_NET_EPSILON: f64 = 0.5;
 /// see [`internal_transfer_ids`].
 // Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
 // follow-on tasks. Exercised by unit tests until then.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BudgetFlow {
   Expense,
@@ -213,7 +212,6 @@ impl BudgetFlow {
   /// Classifies a market trade by side: a buy spends working capital
   /// ([`BudgetFlow::Expense`]); a sell brings ISK in ([`BudgetFlow::Income`]).
   // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
-  #[allow(dead_code)]
   pub fn from_market(is_buy: bool) -> Self {
     if is_buy {
       BudgetFlow::Expense
@@ -232,7 +230,6 @@ impl BudgetFlow {
   /// Internal transfers are never returned here: that status is owner-aware and
   /// is layered on by [`classify_journal`].
   // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
-  #[allow(dead_code)]
   pub fn from_ref_type(ref_type: &str, amount: f64) -> Self {
     if REFUND_REF_TYPES.contains(&ref_type) {
       return BudgetFlow::Refund;
@@ -252,7 +249,6 @@ impl BudgetFlow {
 /// negative = out). `carry` is last month's positive available rolled forward.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CategoryMonth {
   pub activity: f64,
@@ -263,7 +259,6 @@ pub struct CategoryMonth {
 impl CategoryMonth {
   // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
   // until then.
-  #[allow(dead_code)]
   pub fn available(self) -> f64 {
     self.carry + self.assigned + self.activity
   }
@@ -285,7 +280,6 @@ pub struct MonthFlow {
 /// The budgetable pool for a scope and the derived YNAB top-line figures.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PoolSummary {
   /// Σ min(0, available) across the displayed month's categories (≤ 0); fuels
@@ -302,7 +296,6 @@ pub struct PoolSummary {
 /// tests, deduplicated on `ref_type` (later entries win, though there are none).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub fn default_ref_type_slugs() -> HashMap<&'static str, &'static str> {
   DEFAULT_REF_TYPE_MAP.iter().copied().collect()
 }
@@ -312,7 +305,6 @@ pub fn default_ref_type_slugs() -> HashMap<&'static str, &'static str> {
 /// leading `YYYY-MM` is exact and avoids a parse on the hot path.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub fn month_key(date: &str) -> Option<String> {
   let bytes = date.as_bytes();
   if bytes.len() < 7 || bytes[4] != b'-' {
@@ -332,7 +324,6 @@ pub fn month_key(date: &str) -> Option<String> {
 /// month or any gap with no prior data.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub fn carry_from(prior_available: Option<f64>) -> f64 {
   prior_available.map_or(0.0, |available| available.max(0.0))
 }
@@ -346,7 +337,6 @@ pub fn carry_from(prior_available: Option<f64>) -> f64 {
 /// present month carries from whatever the previous *present* month resolved to.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> {
   let mut out = Vec::with_capacity(months.len());
   let mut carry = seed_carry;
@@ -368,7 +358,6 @@ pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> 
 /// neither an override nor a default applies (the flow is unmapped).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub fn category_for_ref_type(
   ref_type: &str,
   overrides: &HashMap<String, i64>,
@@ -393,7 +382,6 @@ pub fn category_for_ref_type(
 /// is skipped and `Ok(None)` returned rather than persisting a mis-owned row.
 // Per-entry budget assignment (child A); consumed by the Budget UI in child C. Exercised by unit
 // tests until then.
-#[allow(dead_code)]
 pub async fn assign_entry(
   db: &Database,
   scope: BudgetScope,
@@ -413,7 +401,6 @@ pub async fn assign_entry(
 
 // Dormant auto-categorization helper: the v1 derivation is manual-only, so this
 // feeds only the (test-exercised) `ResolutionContext::resolve` fallback path.
-#[allow(dead_code)]
 fn market_default_slug(is_buy: bool) -> &'static str {
   if is_buy { MARKET_BUY_SLUG } else { MARKET_SELL_SLUG }
 }
@@ -424,7 +411,6 @@ fn market_default_slug(is_buy: bool) -> &'static str {
 /// derivation resolves thousands of entries without re-querying per entry.
 // Budget activity derivation (child B); consumed by the Budget Plan/Reflect UI and the per-entry
 // chip in child C. Exercised by unit tests until then.
-#[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 pub struct ResolutionContext {
   pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
@@ -515,7 +501,6 @@ impl ResolutionContext {
   // Dormant auto-categorization path. The v1 derivation and chip are manual-only
   // (they use `override_for`); this full-precedence resolver is retained, and
   // exercised by unit tests, for a future opt-in auto-assign mode.
-  #[allow(dead_code)]
   pub fn resolve(
     &self,
     owner: BudgetOwner,
@@ -568,7 +553,6 @@ impl ResolutionContext {
 ///   [`BudgetFlow::InternalTransfer`]) files wherever it resolved, unchanged.
 // First-run income→RTA disposition (child rowluuus); consumed by the activity derivation. Exercised
 // by unit tests.
-#[allow(dead_code)]
 pub fn dispose_inflow_assignment(flow: BudgetFlow, manual: Option<i64>, resolved: Option<i64>) -> Option<i64> {
   if manual.is_some() {
     return resolved;
@@ -1080,7 +1064,7 @@ fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
 /// (e.g. an unseeded scope, or an unmapped `ref_type`).
 // Per-entry budget assignment (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_entry_category(
   db: &Database,
   scope: BudgetScope,
@@ -1102,7 +1086,7 @@ pub async fn resolve_entry_category(
 /// Positive amounts add to activity (income/in), negative subtract (spend/out).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn aggregate_activity<'a>(
   entries: impl IntoIterator<Item = (i64, &'a str, Option<f64>)>,
   mut resolve: impl FnMut(i64, &str) -> Option<i64>,
@@ -1153,7 +1137,6 @@ pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> Poo
 /// `Corporation` covers no character wallets (its money lives in divisions).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn scope_character_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
   match scope {
     BudgetScope::All => character::all_owned(db)
@@ -1172,7 +1155,6 @@ pub async fn scope_character_ids(db: &Database, scope: BudgetScope) -> Vec<i64> 
 /// single-character scope.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn scope_corporation_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
   match scope {
     BudgetScope::All => org::all_owned_corporations(db)
@@ -1191,7 +1173,6 @@ pub async fn scope_corporation_ids(db: &Database, scope: BudgetScope) -> Vec<i64
 /// liquid roll-up). Missing balances are treated as 0.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
   let mut pool = 0.0;
   for id in scope_character_ids(db, scope).await {
@@ -1210,7 +1191,6 @@ pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
 /// The persisted `ref_type` → category-id overrides for a scope.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn ref_type_overrides(db: &Database, scope: BudgetScope) -> HashMap<String, i64> {
   crate::store::repo::budget::list_ref_type_maps(db, scope)
     .await
@@ -1225,7 +1205,6 @@ pub async fn ref_type_overrides(db: &Database, scope: BudgetScope) -> HashMap<St
 /// after seeding without persisting a slug column.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&'static str, i64> {
   let name_to_slug: HashMap<&str, &str> = SEED_GROUPS
     .iter()
@@ -1256,7 +1235,6 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
 /// who deletes a starter envelope never has it resurrected.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
 pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> {
   use crate::store::{
     model::{NewCategory, NewGroup},
@@ -1373,7 +1351,6 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
 /// via [`BudgetFlow::from_ref_type`].
 // Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
 // follow-on tasks. Exercised by unit tests until then.
-#[allow(dead_code)]
 fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> BudgetFlow {
   if transfer_ids.contains(&row.id) {
     return BudgetFlow::InternalTransfer;
@@ -1399,7 +1376,6 @@ fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> Budge
 /// mis-paired.
 // Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
 // follow-on tasks. Exercised by unit tests until then.
-#[allow(dead_code)]
 fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
   let mut legs_by_key: HashMap<(&str, i64), Vec<&JournalActivity>> = HashMap::new();
   for row in rows {
@@ -1440,7 +1416,7 @@ fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
 /// so an assigned trade is counted once.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) -> HashMap<i64, f64> {
   activity_by_month(db, scope).await.remove(month).unwrap_or_default()
 }
@@ -1454,7 +1430,6 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
 /// applied independently within each month.
 // Budget activity math (B2); consumed by the carry chain in the Budget Plan UI. Exercised by unit
 // tests until then.
-#[allow(dead_code)]
 pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
   let ScopeLedger {
     context,
@@ -1807,7 +1782,6 @@ async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, 
 
 /// Months with no data are still emitted as zeros so the Reflect charts always have a full series.
 // Budget reporting history (B4); consumed by the Budget Reflect UI. Exercised by unit tests.
-#[allow(dead_code)]
 pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, months: usize) -> Vec<MonthFlow> {
   // income/spend are raw monthly cashflow (every journal movement), independent
   // of envelope assignment — the Reflect trend tracks money in/out, not budgeting.

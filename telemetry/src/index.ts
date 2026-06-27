@@ -1,6 +1,9 @@
 // pod-telemetry Cloudflare Worker (spec mmmzstpq §9).
 //
-// Route: pod.aaronmallen.dev/telemetry/*  (only /telemetry/v1/ingest is live).
+// Routes: pod.aaronmallen.dev/telemetry/*
+//   * /telemetry/v1/ingest -> write path (POST, write-key auth)
+//   * /telemetry/admin     -> read-only maintainer dashboard (task sqsmupwn,
+//                             gated by Cloudflare Access in the CF dashboard)
 //
 // Pipeline is fail-closed, first-failure-wins, with empty response bodies:
 //   1. path     -> 404 (anything but /telemetry/v1/ingest)
@@ -20,6 +23,8 @@ import type { D1Database, ExecutionContext, ScheduledController } from "@cloudfl
 
 import { crashFreeTextViolation, validateEnvelope } from "./contract";
 import { buildStatements } from "./db";
+import { renderDashboard } from "./render";
+import { clampWindowDays, getDashboardStats } from "./stats";
 
 export interface Env {
   DB: D1Database;
@@ -31,6 +36,7 @@ export interface Env {
 }
 
 const INGEST_PATH = "/telemetry/v1/ingest";
+const ADMIN_PATH = "/telemetry/admin";
 const MAX_BODY_BYTES = 256 * 1024;
 
 const RETENTION_DELETE = [
@@ -41,6 +47,18 @@ const RETENTION_DELETE = [
 /** Empty-body response with the given status. */
 function status(code: number, headers?: Record<string, string>): Response {
   return new Response(null, { status: code, headers });
+}
+
+/** HTML response (used by the dashboard). Never cached; never indexed. */
+function html(body: string, code = 200): Response {
+  return new Response(body, {
+    status: code,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
 }
 
 /**
@@ -133,11 +151,43 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   return status(204);
 }
 
+/**
+ * Read-only maintainer dashboard (task sqsmupwn).
+ *
+ * Access control: this route is gated by Cloudflare Access (a single-user SSO
+ * policy configured in the CF dashboard, NOT in code). The ingest write-key is
+ * deliberately NOT reused here -- it ships inside released binaries and is
+ * anti-abuse, not auth. By the time a request reaches the Worker, Access has
+ * already authenticated the maintainer and attached a Cf-Access-Jwt-Assertion
+ * header. We require that header's presence as cheap defense-in-depth (so a
+ * misconfigured/removed Access policy fails closed to 403 rather than serving
+ * aggregates openly), but Access remains the primary gate -- we do not verify
+ * the JWT signature here.
+ *
+ * GET only; renders aggregate-only HTML. No mutations, SELECT only.
+ */
+async function handleAdmin(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET") return status(405, { Allow: "GET" });
+
+  // Defense-in-depth: Access injects this header on every authenticated request.
+  // Its absence means the request did not traverse the Access policy.
+  if (!request.headers.get("Cf-Access-Jwt-Assertion")) return status(403);
+
+  const url = new URL(request.url);
+  const daysParam = url.searchParams.get("days");
+  const windowDays = clampWindowDays(daysParam === null ? null : Number(daysParam));
+
+  const stats = await getDashboardStats(env.DB, windowDays);
+  return html(renderDashboard(stats));
+}
+
 export default {
   async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
-      // 1. path
+      // Read-only maintainer dashboard (Cloudflare Access-gated).
+      if (url.pathname === ADMIN_PATH) return await handleAdmin(request, env);
+      // 1. path (ingest + 404-for-everything-else, unchanged)
       if (url.pathname !== INGEST_PATH) return status(404);
       return await handleIngest(request, env);
     } catch {

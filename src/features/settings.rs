@@ -156,6 +156,7 @@ pub enum Outcome {
     generation: u64,
     query: String,
   },
+  LanguageChanged(crate::i18n::Language),
   McpChanged,
   None,
   Persist,
@@ -319,6 +320,7 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     outcome,
     Outcome::AccessibilityChanged
       | Outcome::IndustryPin(_)
+      | Outcome::LanguageChanged(_)
       | Outcome::McpChanged
       | Outcome::Persist
       | Outcome::SetLogLevel(_)

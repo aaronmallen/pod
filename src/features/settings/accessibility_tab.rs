@@ -7,12 +7,14 @@ use iced::{
 use super::Outcome;
 use crate::{
   config::Settings,
+  i18n::Language,
   ui::{
-    components::{rule, toggle},
+    components::{anchored_dropdown::AnchoredDropdown, icon::Icon, rule, toggle},
     style::{color, control, radius, spacing, typography},
   },
 };
 
+const LANGUAGE_POPOVER_WIDTH: f32 = 360.0;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PRESET_HEIGHT: f32 = 78.0;
 const READOUT_MAX_WIDTH: f32 = 640.0;
@@ -71,15 +73,21 @@ const TIERS: [Tier; 3] = [
 #[derive(Clone, Copy, Debug)]
 pub enum Message {
   HighContrastToggled(bool),
+  LanguageChanged(Language),
+  LanguagePickerToggled,
+  LanguageRestartConfirmed,
   ScaleChanged(u8),
 }
 
 #[derive(Debug, Default)]
-pub struct State;
+pub struct State {
+  language_picker_open: bool,
+  pending_language: Option<Language>,
+}
 
 impl State {
   pub fn from_settings(_settings: &Settings) -> Self {
-    State
+    State::default()
   }
 }
 
@@ -106,12 +114,33 @@ fn preset_for(scale: u8) -> Option<Preset> {
   PRESETS.into_iter().find(|preset| preset.pct == scale)
 }
 
-pub fn update(_state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
+pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> Outcome {
   match message {
     Message::HighContrastToggled(enabled) => {
       settings.accessibility_mut().set_high_contrast(enabled);
       Outcome::AccessibilityChanged
     }
+    // Picking a language never applies live: it parks a pending selection so the panel can surface the
+    // restart confirmation. Re-picking the running language clears the pending state (a no-op). The
+    // applied switch + re-seed lands on the confirm action below.
+    Message::LanguageChanged(language) => {
+      state.language_picker_open = false;
+      state.pending_language = (language != settings.accessibility().language()).then_some(language);
+      Outcome::None
+    }
+    Message::LanguagePickerToggled => {
+      state.language_picker_open = !state.language_picker_open;
+      Outcome::None
+    }
+    // The restart-gated apply (ADR-0041): persist the pending language and emit the outcome the app
+    // consumes to re-seed and relaunch. Nothing to do without a pending selection.
+    Message::LanguageRestartConfirmed => match state.pending_language.take() {
+      Some(language) => {
+        settings.accessibility_mut().set_language(language);
+        Outcome::LanguageChanged(language)
+      }
+      None => Outcome::None,
+    },
     Message::ScaleChanged(scale) => {
       settings.accessibility_mut().set_scale(clamp_scale(scale));
       Outcome::AccessibilityChanged
@@ -132,9 +161,9 @@ pub fn badge(settings: &Settings) -> String {
   t!(key, scale => scale).into_owned()
 }
 
-pub fn view<'a>(_state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
+pub fn view<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Message> {
   let header = panel_header();
-  let body = panel_body(settings);
+  let body = panel_body(state, settings);
 
   Column::with_children(vec![header, body])
     .width(Length::Fill)
@@ -167,9 +196,17 @@ fn panel_header<'a>() -> Element<'a, Message> {
     .into()
 }
 
-fn panel_body(settings: &Settings) -> Element<'_, Message> {
+fn panel_body(state: &State, settings: &Settings) -> Element<'static, Message> {
   let scale = clamp_scale(*settings.accessibility().scale());
   let high_contrast = *settings.accessibility().high_contrast();
+  let language = settings.accessibility().language();
+
+  let language_head = language_section_head(state.pending_language.is_some());
+  let language_picker = language_dropdown(language, state.language_picker_open);
+  let language_footer = match state.pending_language {
+    Some(pending) => language_confirm_row(pending),
+    None => language_resting_note(),
+  };
 
   let section = section_head(
     super::i18n::tr_static("settings.accessibility.scale_section_label"),
@@ -194,6 +231,9 @@ fn panel_body(settings: &Settings) -> Element<'_, Message> {
 
   let inner = container(
     Column::with_children(vec![
+      language_head,
+      language_picker,
+      language_footer,
       section,
       presets,
       readout,
@@ -287,6 +327,377 @@ fn live_chip(label: &str) -> Element<'_, Message> {
       ..container::Style::default()
     })
     .into()
+}
+
+// The language section head mirrors `section_head` but trades the green live chip for an amber
+// "restart required" pill when a switch is pending — the language change applies on restart, not live.
+fn language_section_head(pending: bool) -> Element<'static, Message> {
+  let micro = text(super::i18n::tr_static("settings.accessibility.language_section_label"))
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::accent::PLASMA));
+  let detail = text(super::i18n::tr_static("settings.accessibility.language_section_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+  let identity = Column::with_children(vec![micro.into(), detail.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let mut children: Vec<Element<'static, Message>> = vec![identity.into()];
+  if pending {
+    children.push(restart_chip());
+  }
+  let row = Row::with_children(children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3_5);
+
+  let band = container(row).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_6,
+    right: 0.0,
+    bottom: spacing::SPACE_3,
+    left: 0.0,
+  });
+
+  Column::with_children(vec![band.into(), rule::horizontal_alpha(0.18)])
+    .width(Length::Fill)
+    .into()
+}
+
+fn restart_chip() -> Element<'static, Message> {
+  let dot = container(Space::new())
+    .width(Length::Fixed(6.0))
+    .height(Length::Fixed(6.0))
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::status::WARNING)),
+      border: Border {
+        radius: radius::CONTROL.into(),
+        ..Border::default()
+      },
+      ..container::Style::default()
+    });
+  let label = text(super::i18n::tr_static("settings.accessibility.language_section_chip"))
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS)
+    .style(typography::colored(color::status::WARNING));
+
+  let row = Row::with_children(vec![dot.into(), label.into()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  container(row)
+    .padding(Padding {
+      top: spacing::UNIT + 1.0,
+      right: spacing::SPACE_3,
+      bottom: spacing::UNIT + 1.0,
+      left: spacing::SPACE_3,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.07))),
+      border: Border {
+        color: color::with_alpha(color::status::WARNING, 0.34),
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn language_dropdown(current: Language, open: bool) -> Element<'static, Message> {
+  let trigger = language_trigger(current);
+  let popover = open.then(|| language_popover(current));
+
+  AnchoredDropdown::new(trigger, popover)
+    .popover_width(LANGUAGE_POPOVER_WIDTH)
+    .on_dismiss(Message::LanguagePickerToggled)
+    .into()
+}
+
+fn language_trigger(current: Language) -> Element<'static, Message> {
+  let native = text(current.native_label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::LG)
+    .style(typography::colored(color::text::PRIMARY));
+  let code = language_code_tag(current.esi_code(), false);
+  let identity = Row::with_children(vec![native.into(), code])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5)
+    .width(Length::Fill);
+
+  let chevron = Icon::chevron_down()
+    .size(typography::size::MD)
+    .color(color::text::secondary())
+    .render();
+
+  let row = Row::with_children(vec![identity.into(), chevron])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3)
+    .width(Length::Fill);
+
+  let cell = container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::with_alpha(color::text::PRIMARY, 0.1),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    });
+
+  button(cell)
+    .padding(0)
+    .width(Length::Fill)
+    .on_press(Message::LanguagePickerToggled)
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn language_popover(current: Language) -> Element<'static, Message> {
+  let mut options: Vec<Element<'static, Message>> = Vec::with_capacity(Language::ALL.len());
+  for language in Language::ALL {
+    options.push(language_option(language, language == current));
+  }
+
+  let list = Column::with_children(options)
+    .spacing(spacing::SPACE_2)
+    .width(Length::Fill);
+
+  container(list)
+    .width(Length::Fill)
+    .padding(spacing::SPACE_2)
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::BASE)),
+      border: Border {
+        color: color::rule_strong(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      shadow: crate::ui::style::shadow::CARD,
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn language_option(language: Language, selected: bool) -> Element<'static, Message> {
+  let native_color = if selected {
+    color::text::PRIMARY
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.86)
+  };
+  let native = text(language.native_label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(native_color));
+  let label = text(language.label())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+  let identity = Column::with_children(vec![native.into(), label.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let mut row_children: Vec<Element<'static, Message>> =
+    vec![identity.into(), language_code_tag(language.esi_code(), selected)];
+  if selected {
+    row_children.push(
+      Icon::check()
+        .size(typography::size::SM)
+        .color(color::accent::PLASMA)
+        .render(),
+    );
+  }
+  let row = Row::with_children(row_children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2_5)
+    .width(Length::Fill);
+
+  let cell = container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2_5,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2_5,
+      left: spacing::SPACE_3,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(if selected {
+        color::with_alpha(color::accent::PLASMA, 0.1)
+      } else {
+        iced::Color::TRANSPARENT
+      })),
+      border: Border {
+        color: if selected {
+          color::accent::PLASMA
+        } else {
+          iced::Color::TRANSPARENT
+        },
+        width: 1.0,
+        radius: radius::CONTROL.into(),
+      },
+      ..container::Style::default()
+    });
+
+  button(cell)
+    .padding(0)
+    .width(Length::Fill)
+    .on_press(Message::LanguageChanged(language))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn language_code_tag(code: &'static str, selected: bool) -> Element<'static, Message> {
+  let (text_color, border_color) = if selected {
+    (color::accent::PLASMA, color::with_alpha(color::accent::PLASMA, 0.28))
+  } else {
+    (color::text::tertiary(), color::rule())
+  };
+  let background = if selected {
+    color::with_alpha(color::accent::PLASMA, 0.1)
+  } else {
+    color::with_alpha(color::text::PRIMARY, 0.04)
+  };
+  let label = text(code)
+    .font(typography::mono::MEDIUM)
+    .size(typography::size::XS)
+    .style(typography::colored(text_color));
+
+  container(label)
+    .padding(Padding {
+      top: 2.0,
+      right: spacing::SPACE_2 - 2.0,
+      bottom: 2.0,
+      left: spacing::SPACE_2 - 2.0,
+    })
+    .style(move |_| container::Style {
+      background: Some(Background::Color(background)),
+      border: Border {
+        color: border_color,
+        width: 1.0,
+        radius: radius::SUBTLE.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+// Resting state: a quiet note explaining the language is sent to ESI and that a restart applies it.
+fn language_resting_note() -> Element<'static, Message> {
+  let note = text(super::i18n::tr_static("settings.accessibility.language_resting_note"))
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  container(note)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+// Pending state: the restart-gated confirmation (ADR-0041). The confirm button emits
+// `LanguageRestartConfirmed`, which is where the persist + re-seed + relaunch is wired.
+fn language_confirm_row(pending: Language) -> Element<'static, Message> {
+  let heading = text(
+    t!(
+      "settings.accessibility.language_dirty_heading",
+      native => pending.native_label()
+    )
+    .into_owned(),
+  )
+  .font(typography::body::MEDIUM)
+  .size(typography::size::SM)
+  .style(typography::colored(color::text::PRIMARY));
+  let blurb = text(
+    t!(
+      "settings.accessibility.language_dirty_blurb",
+      native => format!("{} ({})", pending.native_label(), pending.esi_code())
+    )
+    .into_owned(),
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::SM)
+  .style(typography::colored(color::text::secondary()));
+  let identity = Column::with_children(vec![heading.into(), blurb.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![identity.into(), language_apply_button()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3,
+      right: spacing::SPACE_3_5,
+      bottom: spacing::SPACE_3,
+      left: spacing::SPACE_3_5,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::with_alpha(color::status::WARNING, 0.06))),
+      border: Border {
+        color: color::with_alpha(color::status::WARNING, 0.32),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn language_apply_button() -> Element<'static, Message> {
+  let label = text(super::i18n::tr_static("settings.accessibility.language_apply"))
+    .font(typography::body::MEDIUM)
+    .size(typography::size::SM)
+    .style(typography::colored(color::on_fill(color::status::WARNING)));
+
+  button(container(label).padding(Padding {
+    top: spacing::SPACE_2_5,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3_5,
+  }))
+  .padding(0)
+  .on_press(Message::LanguageRestartConfirmed)
+  .style(|_, _| button::Style {
+    background: Some(Background::Color(color::status::WARNING)),
+    border: Border {
+      color: color::status::WARNING,
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..button::Style::default()
+  })
+  .into()
 }
 
 fn contrast_toggle_row(high_contrast: bool) -> Element<'static, Message> {
@@ -886,7 +1297,7 @@ mod tests {
 
     #[test]
     fn dragging_to_a_custom_value_sets_the_same_scale_the_badge_reads() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
 
       let outcome = update(&mut state, Message::ScaleChanged(112), &mut settings);
@@ -898,7 +1309,7 @@ mod tests {
 
     #[test]
     fn it_clamps_a_scale_above_the_maximum() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
 
       update(&mut state, Message::ScaleChanged(240), &mut settings);
@@ -908,7 +1319,7 @@ mod tests {
 
     #[test]
     fn it_clamps_a_scale_below_the_minimum() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
 
       update(&mut state, Message::ScaleChanged(10), &mut settings);
@@ -918,7 +1329,7 @@ mod tests {
 
     #[test]
     fn selecting_a_preset_sets_the_scale_and_signals_a_live_change() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
 
       let outcome = update(&mut state, Message::ScaleChanged(125), &mut settings);
@@ -929,7 +1340,7 @@ mod tests {
 
     #[test]
     fn toggling_high_contrast_off_clears_the_flag_and_signals_a_live_change() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
       settings.accessibility_mut().set_high_contrast(true);
 
@@ -941,13 +1352,106 @@ mod tests {
 
     #[test]
     fn toggling_high_contrast_on_flips_the_flag_and_signals_a_live_change() {
-      let mut state = State;
+      let mut state = State::default();
       let mut settings = Settings::default();
 
       let outcome = update(&mut state, Message::HighContrastToggled(true), &mut settings);
 
       assert_eq!(outcome, Outcome::AccessibilityChanged);
       assert!(*settings.accessibility().high_contrast());
+    }
+
+    #[test]
+    fn confirming_a_restart_persists_the_pending_language_and_signals_the_change() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+      update(&mut state, Message::LanguageChanged(Language::De), &mut settings);
+
+      let outcome = update(&mut state, Message::LanguageRestartConfirmed, &mut settings);
+
+      assert_eq!(outcome, Outcome::LanguageChanged(Language::De));
+      assert_eq!(settings.accessibility().language(), Language::De);
+      assert!(state.pending_language.is_none());
+    }
+
+    #[test]
+    fn confirming_a_restart_without_a_pending_language_is_a_no_op() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LanguageRestartConfirmed, &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(settings.accessibility().language(), Language::default());
+    }
+
+    #[test]
+    fn picking_a_different_language_parks_it_pending_without_persisting() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      let outcome = update(&mut state, Message::LanguageChanged(Language::Ja), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert_eq!(state.pending_language, Some(Language::Ja));
+      assert_eq!(settings.accessibility().language(), Language::default());
+    }
+
+    #[test]
+    fn picking_the_running_language_is_a_no_op() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+      let running = settings.accessibility().language();
+
+      let outcome = update(&mut state, Message::LanguageChanged(running), &mut settings);
+
+      assert_eq!(outcome, Outcome::None);
+      assert!(state.pending_language.is_none());
+    }
+
+    #[test]
+    fn re_picking_the_running_language_clears_a_prior_pending_selection() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+      let running = settings.accessibility().language();
+      update(&mut state, Message::LanguageChanged(Language::Fr), &mut settings);
+
+      update(&mut state, Message::LanguageChanged(running), &mut settings);
+
+      assert!(state.pending_language.is_none());
+    }
+
+    #[test]
+    fn toggling_the_language_picker_flips_it_open_and_shut() {
+      let mut state = State::default();
+      let mut settings = Settings::default();
+
+      update(&mut state, Message::LanguagePickerToggled, &mut settings);
+      assert!(state.language_picker_open);
+
+      update(&mut state, Message::LanguagePickerToggled, &mut settings);
+      assert!(!state.language_picker_open);
+    }
+  }
+
+  mod language_popover {
+    use std::collections::HashSet;
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_offers_every_one_of_the_nine_languages() {
+      let offered: HashSet<&'static str> = Language::ALL.iter().map(|language| language.native_label()).collect();
+
+      assert_eq!(offered.len(), 9);
+      assert_eq!(Language::ALL.len(), 9);
+    }
+
+    #[test]
+    fn it_builds_the_popover_for_a_selected_language() {
+      let _el: Element<'static, Message> = language_popover(Language::Ja);
     }
   }
 
@@ -957,7 +1461,7 @@ mod tests {
     #[test]
     fn it_renders_the_accessibility_panel() {
       let settings = Settings::default();
-      let state = State;
+      let state = State::default();
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }
@@ -966,7 +1470,7 @@ mod tests {
     fn it_renders_the_contrast_preview_with_high_contrast_on() {
       let mut settings = Settings::default();
       settings.accessibility_mut().set_high_contrast(true);
-      let state = State;
+      let state = State::default();
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }
@@ -975,7 +1479,16 @@ mod tests {
     fn it_renders_with_a_custom_scale() {
       let mut settings = Settings::default();
       settings.accessibility_mut().set_scale(112);
-      let state = State;
+      let state = State::default();
+
+      let _el: Element<'_, Message> = view(&state, &settings);
+    }
+
+    #[test]
+    fn it_renders_the_restart_confirmation_when_a_language_is_pending() {
+      let mut settings = Settings::default();
+      let mut state = State::default();
+      update(&mut state, Message::LanguageChanged(Language::De), &mut settings);
 
       let _el: Element<'_, Message> = view(&state, &settings);
     }

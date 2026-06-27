@@ -1,5 +1,9 @@
 use super::loaders::strip_html_snippet;
-use crate::store::{Database, model::MailDraft, repo::mail};
+use crate::store::{
+  Database,
+  model::{DraftInput, MailDraft},
+  repo::mail,
+};
 
 const SNIPPET_MAX_CHARS: usize = 90;
 
@@ -40,7 +44,7 @@ pub(super) async fn load_rows(db: Database, character_id: i64) -> Vec<DraftRow> 
 
 /// Upserts the live compose into its `mail_drafts` row, returning the row id so it can be threaded
 /// back onto the open compose. Returns `None` for a blank draft, which is never persisted.
-pub(super) async fn persist(db: Database, id: Option<i64>, input: mail::DraftInput) -> Option<i64> {
+pub(super) async fn persist(db: Database, id: Option<i64>, input: DraftInput) -> Option<i64> {
   mail::upsert_draft(&db, id, &input).await.ok()
 }
 
@@ -108,8 +112,8 @@ mod tests {
       .unwrap();
   }
 
-  fn input(character_id: i64) -> mail::DraftInput {
-    mail::DraftInput {
+  fn input(character_id: i64) -> DraftInput {
+    DraftInput {
       body: "<b>Form up</b> at Jita.".to_owned(),
       character_id,
       kind: "New".to_owned(),

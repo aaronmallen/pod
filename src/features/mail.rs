@@ -28,7 +28,7 @@ use crate::{
   store::{
     Database, images,
     model::{
-      CharacterMail,
+      CharacterMail, DraftInput, MailCursor,
       character_mail_view::{MailRender, UnifiedMail},
       mail_overlay_state::MailOverlayState,
     },
@@ -286,7 +286,7 @@ pub struct State {
   list_scroll_offset: f32,
   message_list_pane: PaneDrag,
   messages: Vec<MessageRow>,
-  messages_cursor: Option<mail::MailCursor>,
+  messages_cursor: Option<MailCursor>,
   messages_has_more: bool,
   messages_loading: bool,
   messages_page_epoch: LoadEpoch,
@@ -297,7 +297,7 @@ pub struct State {
   render: Option<ReadingRender>,
   roster: Vec<RosterPilot>,
   search: String,
-  search_cursor: Option<mail::MailCursor>,
+  search_cursor: Option<MailCursor>,
   search_has_more: bool,
   search_loading: bool,
   selected: Option<i64>,
@@ -590,7 +590,7 @@ fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32
 /// Persists a compose window's pending save (built from its [`compose::Draft`]) before the app exits,
 /// so a draft in flight at quit is present in Drafts on next launch. Awaited by the app's shutdown
 /// sequence rather than dispatched as a message, since the UI is tearing down.
-pub async fn persist_pending_draft(db: Database, id: Option<i64>, input: mail::DraftInput) {
+pub async fn persist_pending_draft(db: Database, id: Option<i64>, input: DraftInput) {
   let _ = draft::persist(db, id, input).await;
 }
 
@@ -635,8 +635,8 @@ fn reload_for(db: &Database, scope: Scope, folder: Folder) -> Task<Message> {
 }
 
 /// Build a keyset cursor at a loaded row's position.
-fn cursor_of(row: &MessageRow) -> mail::MailCursor {
-  mail::MailCursor::new(row.timestamp.clone(), row.mail_id)
+fn cursor_of(row: &MessageRow) -> MailCursor {
+  MailCursor::new(row.timestamp.clone(), row.mail_id)
 }
 
 /// Kick the first page of a search. Results stream into `all_messages`, the

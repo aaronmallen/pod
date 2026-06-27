@@ -9,8 +9,8 @@ use crate::{
   },
   store::{
     Database,
-    model::CharacterMailLabel,
-    repo::mail::{self, MailSnapshot},
+    model::{CharacterMailLabel, MailSnapshot},
+    repo::mail,
   },
 };
 

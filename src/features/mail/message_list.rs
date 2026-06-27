@@ -12,7 +12,11 @@ use super::{
   loaders::{MessageLabel, strip_html_snippet},
 };
 use crate::{
-  store::{self, Database, images, model::CharacterMail, repo::mail},
+  store::{
+    self, Database, images,
+    model::{CharacterMail, MailCursor},
+    repo::mail,
+  },
   ui::{
     components::{
       avatar::Avatar,
@@ -235,7 +239,7 @@ pub(super) async fn load_messages_page(
   db: &Database,
   scope: Scope,
   folder: Folder,
-  cursor: mail::MailCursor,
+  cursor: MailCursor,
 ) -> Vec<MessageRow> {
   let now = Utc::now();
   let now_iso = now.to_rfc3339();
@@ -261,7 +265,7 @@ pub(super) async fn load_search_page(
   scope: Scope,
   folder: Folder,
   needle: &str,
-  cursor: Option<mail::MailCursor>,
+  cursor: Option<MailCursor>,
 ) -> Vec<MessageRow> {
   let now = Utc::now();
   let now_iso = now.to_rfc3339();

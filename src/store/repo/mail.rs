@@ -5,7 +5,8 @@ use crate::store::{
   Database, Error,
   model::{
     CharacterMail, CharacterMailBody, CharacterMailLabel, CharacterMailLabelMembership, CharacterMailRecipient,
-    MailDraft, MailFolderAssignment, MailSnooze, MailTriage,
+    DraftInput, MailCursor, MailDraft, MailFolderAssignment, MailSnapshot, MailSnooze, MailTriage, SnapshotFolder,
+    SnapshotRecipient, SnapshotTriage,
     character_mail_view::{MailRender, UnifiedMail},
     mail_overlay_state::MailOverlayState,
   },
@@ -14,89 +15,6 @@ use crate::store::{
 /// The visible-header column list, aliased to `m` (the `character_mail` table).
 const VISIBLE_HEADER_COLUMNS: &str = "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, \
   m.important, m.from_corp, m.from_system, m.mail_id, m.subject, m.timestamp FROM character_mail m ";
-
-/// A keyset cursor into the visible-mail listing, ordered `(timestamp DESC, mail_id DESC)`.
-///
-/// Pagination seeks strictly past the last row of the previous page rather than
-/// using `OFFSET`, so inserts/deletes between page loads cannot duplicate or skip
-/// rows. Build one from the last row of a loaded page.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MailCursor {
-  pub mail_id: i64,
-  pub timestamp: String,
-}
-
-impl MailCursor {
-  /// Cursor at the `(timestamp, mail_id)` position of an already-loaded row.
-  ///
-  /// The next page seeks strictly past this position, so pass the last row of the
-  /// page just loaded.
-  pub fn new(timestamp: String, mail_id: i64) -> Self {
-    Self {
-      mail_id,
-      timestamp,
-    }
-  }
-
-  /// Cursor pointing just before `header`'s position in the listing.
-  // Public store API exercised by unit tests; not yet wired into a production call site.
-  #[allow(dead_code)]
-  pub fn after(header: &CharacterMail) -> Self {
-    Self {
-      mail_id: header.mail_id,
-      timestamp: header.timestamp.clone(),
-    }
-  }
-}
-
-/// A complete capture of every local row a single mail owns, taken before a permanent delete so the
-/// outbox SAGA can restore it byte-for-byte if the ESI delete permanently fails.
-///
-/// It rides inside the `mail.delete` outbox payload, so the fields are plain serializable values
-/// rather than the `FromRow` model structs. `(character_id, mail_id)` identifies the mail; the
-/// dependent rows reference it implicitly.
-#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct MailSnapshot {
-  pub body: Option<String>,
-  pub character_id: i64,
-  pub folder: Option<SnapshotFolder>,
-  pub from_corp: bool,
-  pub from_id: i64,
-  pub from_name: String,
-  pub from_system: bool,
-  pub has_attachment: bool,
-  pub important: bool,
-  pub is_read: bool,
-  pub label_ids: Vec<i64>,
-  pub mail_id: i64,
-  pub recipients: Vec<SnapshotRecipient>,
-  pub snooze_until: Option<String>,
-  pub subject: Option<String>,
-  pub timestamp: String,
-  pub triage: Option<SnapshotTriage>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct SnapshotFolder {
-  /// `None` for rows written before this column existed; `restore_mail` re-inserts it so a
-  /// restored mail retains its original trash age and remains eligible for auto-purge.
-  pub assigned_at: Option<String>,
-  pub folder: String,
-  pub remap_label_id: Option<i64>,
-  pub soft_delete_intent: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct SnapshotRecipient {
-  pub recipient_id: i64,
-  pub recipient_name: String,
-  pub recipient_type: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct SnapshotTriage {
-  pub star: bool,
-}
 
 pub async fn upsert_complete(
   db: &Database,
@@ -662,17 +580,6 @@ pub async fn expired_trashed_mails(db: &Database, cutoff: &str) -> Result<Vec<Ma
   .fetch_all(&db.0)
   .await?;
   Ok(rows)
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DraftInput {
-  pub body: String,
-  pub character_id: i64,
-  pub kind: String,
-  pub quote: Option<String>,
-  pub recipients_cc: String,
-  pub recipients_to: String,
-  pub subject: String,
 }
 
 /// Persists a draft and returns its row id. `None` inserts a fresh row (preserving `created_at`); `Some(id)` updates

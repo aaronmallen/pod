@@ -12,7 +12,8 @@ use crate::{
   store::{
     Database, images,
     model::{
-      CharacterMail, CharacterMailBody, CharacterMailRecipient, MailDraft, OwnerType, character_mail_view::MailRender,
+      CharacterMail, CharacterMailBody, CharacterMailRecipient, DraftInput, MailDraft, OwnerType,
+      character_mail_view::MailRender,
     },
     repo::{infra, mail},
   },
@@ -181,8 +182,8 @@ impl Draft {
     self.subject.trim().is_empty() && self.body.text().trim().is_empty() && self.to.is_empty() && self.cc.is_empty()
   }
 
-  pub(super) fn persist_input(&self) -> mail::DraftInput {
-    mail::DraftInput {
+  pub(super) fn persist_input(&self) -> DraftInput {
+    DraftInput {
       body: self.body.text(),
       character_id: self.from_character_id,
       kind: self.kind.as_storage().to_owned(),
@@ -266,7 +267,7 @@ impl Draft {
 
   /// The persist input paired with the existing row id, when the compose is non-empty and worth
   /// saving. `None` for a blank compose, which is discarded rather than saved.
-  pub fn pending_save(&self) -> Option<(Option<i64>, mail::DraftInput)> {
+  pub fn pending_save(&self) -> Option<(Option<i64>, DraftInput)> {
     if self.is_empty() {
       return None;
     }

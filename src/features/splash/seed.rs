@@ -3563,4 +3563,253 @@ mod tests {
       assert!(should_skip_download(Some("12345"), Some(&marker), true, Language::En));
     }
   }
+
+  mod language_reseed_roundtrip {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::store::{self, repo::sde};
+
+    const BUILD: &str = "20240101.1";
+
+    // A multi-language SDE fixture for several localized reference tables. Some records ship an `fr`
+    // column (exercising the chosen-language path), some omit it (exercising the en fallback), and the
+    // 9999 region omits every language (exercising the pre-existing unwrap_or_default empty-string
+    // semantics for an Option-wrapped name).
+    async fn write_localized_fixture(dir: &Path) {
+      write_yaml(
+        dir,
+        "categories.yaml",
+        "25: { name: { en: Ship, fr: Vaisseau }, published: true }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "groups.yaml",
+        "25: { categoryID: 25, name: { en: Frigate, fr: Frégate }, published: true }\n",
+      )
+      .await;
+      write_yaml(dir, "marketGroups.yaml", "9: { name: { en: Ships, fr: Vaisseaux } }\n").await;
+      write_yaml(
+        dir,
+        "types.yaml",
+        // 596 ships an fr name + description; 597 ships only en (fallback).
+        "596: { groupID: 25, name: { en: Impairor, fr: Châtieur }, \
+        description: { en: A rookie ship., fr: Un vaisseau de débutant. }, published: true }\n\
+        597: { groupID: 25, name: { en: Reaper }, description: { en: A rookie ship. }, published: true }\n",
+      )
+      .await;
+      write_yaml(dir, "typeDogma.yaml", "{}\n").await;
+      write_yaml(dir, "dogmaAttributes.yaml", "{}\n").await;
+      write_yaml(
+        dir,
+        "races.yaml",
+        "1: { name: { en: Caldari, fr: Caldari }, allianceID: 500001 }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "bloodlines.yaml",
+        "5: { name: { en: Deteis }, raceID: 1, corporationID: 1000035 }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "factions.yaml",
+        // 500001 ships an fr name; 500024 ships only en (fallback).
+        "500001: { name: { en: Caldari State, fr: État Caldari }, isUnique: true }\n\
+        500024: { name: { en: Generic } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "npcCorporations.yaml",
+        "1000035: { name: { en: Caldari Navy, fr: Marine Caldari }, factionID: 500001, tickerName: CN }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "mapRegions.yaml",
+        // 10000002 ships an fr name; 10000003 ships only en (fallback); 9999 ships neither (empty).
+        "10000002: { name: { en: The Forge, fr: La Forge } }\n\
+        10000003: { name: { en: Domain } }\n\
+        9999: {}\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "mapConstellations.yaml",
+        "20000020: { name: { en: Kimotoro }, regionID: 10000002, position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write_yaml(
+        dir,
+        "mapSolarSystems.yaml",
+        "30000142: { name: { en: Jita }, constellationID: 20000020, securityStatus: 0.95, \
+        position: { x: 0.0, y: 0.0, z: 0.0 } }\n",
+      )
+      .await;
+      write_yaml(dir, "mapPlanets.yaml", "{}\n").await;
+      write_yaml(dir, "mapMoons.yaml", "{}\n").await;
+      write_yaml(dir, "stationOperations.yaml", "{}\n").await;
+      write_yaml(dir, "npcStations.yaml", "{}\n").await;
+      write_yaml(dir, "agentTypes.yaml", "{}\n").await;
+      write_yaml(dir, "npcCorporationDivisions.yaml", "{}\n").await;
+      write_yaml(dir, "npcCharacters.yaml", "{}\n").await;
+    }
+
+    async fn write_yaml(dir: &Path, name: &str, body: &str) {
+      tokio::fs::write(dir.join(name), body).await.unwrap();
+    }
+
+    fn channel() -> (Tx, iced::futures::channel::mpsc::Receiver<Progress>) {
+      iced::futures::channel::mpsc::channel(64)
+    }
+
+    async fn type_name(db: &Database, id: i64) -> String {
+      sqlx::query_scalar("SELECT name FROM item_types WHERE id = ?")
+        .bind(id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    async fn type_description(db: &Database, id: i64) -> Option<String> {
+      sqlx::query_scalar("SELECT description FROM item_types WHERE id = ?")
+        .bind(id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    async fn region_name(db: &Database, id: i64) -> String {
+      sqlx::query_scalar("SELECT name FROM regions WHERE id = ?")
+        .bind(id)
+        .fetch_one(&db.0)
+        .await
+        .unwrap()
+    }
+
+    async fn count(db: &Database, query: &'static str) -> i64 {
+      sqlx::query_scalar(query).fetch_one(&db.0).await.unwrap()
+    }
+
+    // Seeds the fixture in English, then re-seeds the same database in French against the same SDE
+    // build, so the only thing that changes is the language and the re-seed is driven entirely by the
+    // composite_version/marker mismatch.
+    async fn seed_then_reseed(dir: &Path, marker: &Path) -> Database {
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
+
+      seed_if_stale_at(&db, &mut tx, dir, Some(BUILD), Some(marker), Language::En)
+        .await
+        .unwrap();
+      seed_if_stale_at(&db, &mut tx, dir, Some(BUILD), Some(marker), Language::Fr)
+        .await
+        .unwrap();
+
+      db
+    }
+
+    #[tokio::test]
+    async fn it_falls_back_to_en_when_the_chosen_language_is_missing() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_localized_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+
+      let db = seed_then_reseed(tmp.path(), &marker).await;
+
+      assert_eq!(type_name(&db, 597).await, "Reaper");
+      assert_eq!(type_description(&db, 597).await.as_deref(), Some("A rookie ship."));
+      assert_eq!(region_name(&db, 10_000_003).await, "Domain");
+
+      let generic = sde::get_faction(&db, 500_024).await.unwrap().unwrap();
+      assert_eq!(generic.name, "Generic");
+    }
+
+    #[tokio::test]
+    async fn it_persists_an_empty_name_when_every_language_is_missing() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_localized_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+
+      let db = seed_then_reseed(tmp.path(), &marker).await;
+
+      assert_eq!(region_name(&db, 9999).await, "");
+    }
+
+    #[tokio::test]
+    async fn it_re_seeds_in_place_keeping_ids_and_row_counts() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_localized_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
+
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some(BUILD), Some(&marker), Language::En)
+        .await
+        .unwrap();
+      let regions_after_en = count(&db, "SELECT COUNT(*) FROM regions").await;
+      let types_after_en = count(&db, "SELECT COUNT(*) FROM item_types").await;
+      let factions_after_en = count(&db, "SELECT COUNT(*) FROM factions").await;
+      assert_eq!(region_name(&db, 10_000_002).await, "The Forge");
+
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some(BUILD), Some(&marker), Language::Fr)
+        .await
+        .unwrap();
+
+      assert_eq!(count(&db, "SELECT COUNT(*) FROM regions").await, regions_after_en);
+      assert_eq!(count(&db, "SELECT COUNT(*) FROM item_types").await, types_after_en);
+      assert_eq!(count(&db, "SELECT COUNT(*) FROM factions").await, factions_after_en);
+
+      assert!(sde::get_faction(&db, 500_001).await.unwrap().is_some());
+      assert!(sde::get_race(&db, 1).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn it_replaces_text_with_the_new_language_where_present() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_localized_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+
+      let db = seed_then_reseed(tmp.path(), &marker).await;
+
+      assert_eq!(type_name(&db, 596).await, "Châtieur");
+      assert_eq!(
+        type_description(&db, 596).await.as_deref(),
+        Some("Un vaisseau de débutant.")
+      );
+      assert_eq!(region_name(&db, 10_000_002).await, "La Forge");
+
+      let state = sde::get_faction(&db, 500_001).await.unwrap().unwrap();
+      assert_eq!(state.name, "État Caldari");
+    }
+
+    #[tokio::test]
+    async fn it_rewrites_the_marker_so_the_re_seed_is_triggered_not_skipped() {
+      let tmp = tempfile::tempdir().unwrap();
+      write_localized_fixture(tmp.path()).await;
+      let marker = tmp.path().join("sde_version");
+      let db = store::open_test().await.unwrap();
+      let (mut tx, _rx) = channel();
+
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some(BUILD), Some(&marker), Language::En)
+        .await
+        .unwrap();
+      assert_eq!(
+        read_stored_sde_version(&marker),
+        Some(composite_version(BUILD, Language::En))
+      );
+
+      seed_if_stale_at(&db, &mut tx, tmp.path(), Some(BUILD), Some(&marker), Language::Fr)
+        .await
+        .unwrap();
+
+      assert_eq!(
+        read_stored_sde_version(&marker),
+        Some(composite_version(BUILD, Language::Fr))
+      );
+      assert_eq!(type_name(&db, 596).await, "Châtieur");
+    }
+  }
 }

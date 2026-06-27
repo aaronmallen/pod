@@ -17,6 +17,26 @@ pub async fn all(db: &Database) -> Result<Vec<SyncLedger>, Error> {
   Ok(rows)
 }
 
+// Deletes every ledger row whose kind is in `kinds`, across all subjects, so the engine re-dispatches
+// those jobs as never-attempted on the next discovery pass. Used to force a re-fetch on a detected
+// language switch (ADR-0041 section 4), reusing ADR-0040's `DELETE FROM sync_ledger WHERE kind IN (...)`
+// precedent. Idempotent: expiring an already-expired (absent) row deletes nothing.
+pub async fn expire_kinds(db: &Database, kinds: &[&str]) -> Result<u64, Error> {
+  if kinds.is_empty() {
+    return Ok(0);
+  }
+
+  let mut builder = sqlx::QueryBuilder::<sqlx::Sqlite>::new("DELETE FROM sync_ledger WHERE kind IN (");
+  let mut separated = builder.separated(", ");
+  for kind in kinds {
+    separated.push_bind(*kind);
+  }
+  builder.push(")");
+
+  let result = builder.build().execute(db.writer()).await?;
+  Ok(result.rows_affected())
+}
+
 pub async fn for_subject(db: &Database, subject_type: OwnerType, subject_id: i64) -> Result<Vec<SyncLedger>, Error> {
   let rows = sqlx::query_as::<_, SyncLedger>(
     "SELECT kind, last_attempt_at, last_reason, last_success_at, next_eligible_at, outcome, rows_touched, \
@@ -96,6 +116,58 @@ mod tests {
   use crate::store;
 
   const CHARACTER: i64 = 95_465_499;
+
+  mod expire_kinds {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn seed_row(db: &Database, subject_type: OwnerType, subject_id: i64, kind: &str) {
+      upsert(db, subject_type, subject_id, kind, "synced", 1, None, None, None)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn it_deletes_only_the_requested_kinds_across_all_subjects() {
+      let db = store::open_test().await.unwrap();
+      seed_row(&db, OwnerType::Character, CHARACTER, "AssetSync").await;
+      seed_row(&db, OwnerType::Character, 90_000_002, "AssetSync").await;
+      seed_row(&db, OwnerType::Corporation, 98_000_001, "CorporationStructures").await;
+      seed_row(&db, OwnerType::Character, CHARACTER, "MarketPrices").await;
+
+      let deleted = expire_kinds(&db, &["AssetSync", "CorporationStructures"])
+        .await
+        .unwrap();
+
+      assert_eq!(deleted, 3);
+      let remaining = all(&db).await.unwrap();
+      assert_eq!(remaining.len(), 1);
+      assert_eq!(remaining[0].kind(), "MarketPrices");
+    }
+
+    #[tokio::test]
+    async fn it_is_a_no_op_for_an_empty_kind_set() {
+      let db = store::open_test().await.unwrap();
+      seed_row(&db, OwnerType::Character, CHARACTER, "AssetSync").await;
+
+      let deleted = expire_kinds(&db, &[]).await.unwrap();
+
+      assert_eq!(deleted, 0);
+      assert_eq!(all(&db).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_deletes_nothing_when_no_row_matches() {
+      let db = store::open_test().await.unwrap();
+      seed_row(&db, OwnerType::Character, CHARACTER, "MarketPrices").await;
+
+      let deleted = expire_kinds(&db, &["AssetSync"]).await.unwrap();
+
+      assert_eq!(deleted, 0);
+      assert_eq!(all(&db).await.unwrap().len(), 1);
+    }
+  }
 
   mod for_subject {
     use pretty_assertions::assert_eq;

@@ -41,9 +41,6 @@ impl Language {
     Language::Zh,
   ];
 
-  // Consumed by sibling i18n tasks (config field, ESI injection, SDE re-seed); only the tests
-  // exercise the parser today, so it is dead until those land.
-  #[allow(dead_code)]
   pub fn from_code(code: &str) -> Option<Language> {
     Language::ALL.into_iter().find(|language| language.esi_code() == code)
   }
@@ -66,8 +63,6 @@ impl Language {
   }
 
   /// The ESI `?language=` query-parameter code and the serde wire form persisted to `config.toml`.
-  // ESI injection is a sibling task; only the tests read this today.
-  #[allow(dead_code)]
   pub fn esi_code(self) -> &'static str {
     match self {
       Language::De => "de",

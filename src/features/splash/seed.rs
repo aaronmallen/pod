@@ -1474,9 +1474,8 @@ fn write_stored_sde_version(path: &Path, version: &str) {
   std::fs::write(path, version).ok();
 }
 
-// The synced-language marker is read on boot to force a re-sync (sibling task nlwrsvyt) and rewritten
-// after the switch is applied (sibling task wzkmsqyk); the helpers read as unused until that wiring
-// lands, mirroring the SDE-version marker.
+// Resolves the synced-language marker path; consumed by the app's boot wiring (sibling task
+// wzkmsqyk), so it reads as unused until that lands, mirroring the SDE-version marker path helper.
 #[allow(dead_code)]
 pub fn synced_language_path() -> Option<PathBuf> {
   Some(dir_spec::state_home()?.join("pod").join("synced_language"))
@@ -1485,18 +1484,15 @@ pub fn synced_language_path() -> Option<PathBuf> {
 // True only when a marker is present AND records a different language than the one configured. An
 // absent marker (first run, or an upgrade from a pre-i18n build) is treated as already matching, so
 // a pilot who has never picked a language sees no forced re-fetch. See ADR-0041 section 3.
-#[allow(dead_code)]
 pub fn language_switched(marker: Option<Language>, configured: Language) -> bool {
   marker.is_some_and(|synced| synced != configured)
 }
 
-#[allow(dead_code)]
 pub fn read_synced_language(path: &Path) -> Option<Language> {
   let contents = std::fs::read_to_string(path).ok()?;
   Language::from_code(contents.trim())
 }
 
-#[allow(dead_code)]
 pub fn write_synced_language(path: &Path, language: Language) {
   if let Some(parent) = path.parent() {
     std::fs::create_dir_all(parent).ok();

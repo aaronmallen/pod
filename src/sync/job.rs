@@ -116,9 +116,6 @@ impl JobKind {
     !self.applies_to(Subject::Character(0)) && !self.applies_to(Subject::Corporation(0))
   }
 
-  // Consumed by the forced re-sync on a language switch (sibling task nlwrsvyt's expire_kinds);
-  // remove the allow once that wiring lands.
-  #[allow(dead_code)]
   pub fn is_language_dependent(self) -> bool {
     // Exhaustive on purpose: a new JobKind must consciously pick a side. See ADR-0041 section 1 for
     // why these jobs (and not the language-invariant universe/names path) carry localized text.

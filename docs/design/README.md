@@ -48,6 +48,7 @@ ADRs (storage, assets, net worth, outbox, mail, logging, image assets).
 | [0037] | Notification History Keyset Pagination          | ![Active][badge-active] | 2026-06-23 |
 | [0038] | Data Export/Import Archive Format & Restore     | ![Active][badge-active] | 2026-06-23 |
 | [0039] | Anonymous Opt-Out Telemetry                     | ![Active][badge-active] | 2026-06-25 |
+| [0040] | Per-Wallet Journal Identity                     | ![Active][badge-active] | 2026-06-26 |
 
 ADRs document significant architectural decisions, the context in which they were made, and their consequences. See
 [Writing ADRs] for the process and template.
@@ -90,5 +91,6 @@ ADRs document significant architectural decisions, the context in which they wer
 [0037]: 0037-notification-history-keyset-pagination-and-time-based-retention.md
 [0038]: 0038-data-export-import-archive-format-and-restore-strategy.md
 [0039]: 0039-anonymous-opt-out-telemetry.md
+[0040]: 0040-per-wallet-journal-identity.md
 [badge-active]: https://img.shields.io/badge/Active-green?style=for-the-badge
 [Writing ADRs]: ../process/writing-adrs.md

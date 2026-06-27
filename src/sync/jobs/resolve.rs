@@ -177,6 +177,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_requests_item_type_text_in_the_configured_language() {
+      use wiremock::matchers::query_param;
+
+      use crate::i18n::Language;
+
+      let server = MockServer::start().await;
+      Mock::given(method("GET"))
+        .and(path("/universe/types/34/"))
+        .and(query_param("language", "fr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+          "description": "Tritanium.", "group_id": 18, "name": "Tritanium", "published": true, "type_id": 34,
+        })))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/groups/18/"))
+        .and(query_param("language", "fr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+          serde_json::json!({ "category_id": 4, "group_id": 18, "name": "Mineral", "published": true, "types": [34] }),
+        ))
+        .mount(&server)
+        .await;
+      Mock::given(method("GET"))
+        .and(path("/universe/categories/4/"))
+        .and(query_param("language", "fr"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+          serde_json::json!({ "category_id": 4, "groups": [18], "name": "Material", "published": true }),
+        ))
+        .mount(&server)
+        .await;
+      let db = store::open_test().await.unwrap();
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url_and_language(http.clone(), server.uri(), Language::Fr);
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = build_ctx(&db, &esi, &image, &image_store);
+
+      resolve_item_type(&ctx, 34).await.unwrap();
+
+      assert!(sde::get_item_type(&db, 34).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
     async fn it_does_not_write_skill_metadata_for_a_non_skill_type() {
       let server = MockServer::start().await;
       mount_json(
@@ -248,6 +292,55 @@ mod tests {
       let item_type = sde::get_item_type(&db, 3300).await.unwrap().unwrap();
       let dogma: serde_json::Value = serde_json::from_str(item_type.dogma_attributes()).unwrap();
       assert_eq!(dogma.as_array().unwrap().len(), 3);
+    }
+  }
+
+  mod language_dependence {
+    use super::*;
+
+    // Every job that reaches a resolve_* reference-row helper (here or in structure_resolution.rs)
+    // persists localized text and must re-sync on a language switch (ADR-0041 section 1). This pins
+    // that coupling at the resolver site: a new resolver caller has to join this list AND
+    // JobKind::is_language_dependent, or this test fails. The names path is deliberately absent: it is
+    // language-invariant (see resolve_names / universe().names).
+    const RESOLVER_BACKED_JOBS: [JobKind; 15] = [
+      JobKind::AssetSync,
+      JobKind::CharacterClones,
+      JobKind::CharacterContacts,
+      JobKind::CharacterContracts,
+      JobKind::CharacterKillmails,
+      JobKind::CharacterProfile,
+      JobKind::CharacterSkills,
+      JobKind::CharacterStandings,
+      JobKind::CharacterTelemetry,
+      JobKind::CorporationContacts,
+      JobKind::CorporationContracts,
+      JobKind::CorporationKillmails,
+      JobKind::CorporationProfile,
+      JobKind::CorporationStandings,
+      JobKind::CorporationStructures,
+    ];
+
+    #[test]
+    fn it_marks_every_resolver_backed_job_as_language_dependent() {
+      for kind in RESOLVER_BACKED_JOBS {
+        assert!(
+          kind.is_language_dependent(),
+          "{kind:?} backfills localized reference rows via a resolve_* helper and must be language-dependent"
+        );
+      }
+    }
+
+    #[test]
+    fn it_does_not_classify_a_language_dependent_job_outside_the_resolver_set() {
+      for kind in JobKind::ALL.iter().copied() {
+        if kind.is_language_dependent() {
+          assert!(
+            RESOLVER_BACKED_JOBS.contains(&kind),
+            "{kind:?} is language-dependent but is not a known resolve_* caller; add it here or revisit the predicate"
+          );
+        }
+      }
     }
   }
 }

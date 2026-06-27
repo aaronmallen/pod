@@ -52,6 +52,10 @@ impl<'a> Client<'a> {
   }
 
   pub async fn names(&self, ids: &[i64]) -> Result<Vec<NameRecord>, clients::Error> {
+    // Anonymous and language-invariant: this resolves character/corporation/alliance/system ids to
+    // their canonical names, which do not vary by language. It rides the same `with_language()`
+    // chokepoint as every other ESI request, so `?language=` is appended, but ESI ignores it here and
+    // the persisted text is identical in every language. See ADR-0041 section 2.
     let url = self.esi.url("universe/names/");
     self.esi.post_json_anon(&url, &ids).await
   }

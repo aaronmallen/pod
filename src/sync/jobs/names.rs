@@ -7,6 +7,10 @@ use crate::{
 
 const MAX_IDS_PER_REQUEST: usize = 1000;
 
+// Resolves ids to their canonical, language-invariant names via the anonymous `/universe/names/`
+// endpoint. Unlike the resolve_* reference-row helpers, this carries no localized text and never
+// persists language-dependent strings, so the jobs that call it are not language-dependent (ADR-0041
+// section 2). The `?language=` the ESI client appends is inert here.
 pub async fn resolve_names(ctx: &JobCtx<'_>, ids: &[i64]) -> Result<HashMap<i64, NameRecord>, Error> {
   let mut unique: Vec<i64> = ids.to_vec();
   unique.sort_unstable();

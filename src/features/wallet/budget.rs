@@ -592,22 +592,8 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_e
 /// A short month label (e.g. `Jun`) for a `YYYY-MM` key, used by the flow chart
 /// axis and the age delta caption. Falls back to the key verbatim.
 pub fn month_short_label(month: &str) -> String {
-  const KEYS: [&str; 12] = [
-    "wallet.budget.month_short_jan",
-    "wallet.budget.month_short_feb",
-    "wallet.budget.month_short_mar",
-    "wallet.budget.month_short_apr",
-    "wallet.budget.month_short_may",
-    "wallet.budget.month_short_jun",
-    "wallet.budget.month_short_jul",
-    "wallet.budget.month_short_aug",
-    "wallet.budget.month_short_sep",
-    "wallet.budget.month_short_oct",
-    "wallet.budget.month_short_nov",
-    "wallet.budget.month_short_dec",
-  ];
   match parse_month(month) {
-    Some((_, mon)) => t!(KEYS[(mon - 1) as usize]).into_owned(),
+    Some((_, mon)) => crate::ui::datefmt::month_short(mon as u32),
     None => month.to_owned(),
   }
 }
@@ -653,24 +639,10 @@ pub fn shift_month(month: &str, delta: i32) -> String {
 /// A human month label (e.g. `June 2026`) for a `YYYY-MM` key, or the key
 /// verbatim when it cannot be parsed.
 pub fn month_label(month: &str) -> String {
-  const KEYS: [&str; 12] = [
-    "wallet.budget.month_long_jan",
-    "wallet.budget.month_long_feb",
-    "wallet.budget.month_long_mar",
-    "wallet.budget.month_long_apr",
-    "wallet.budget.month_long_may",
-    "wallet.budget.month_long_jun",
-    "wallet.budget.month_long_jul",
-    "wallet.budget.month_long_aug",
-    "wallet.budget.month_long_sep",
-    "wallet.budget.month_long_oct",
-    "wallet.budget.month_long_nov",
-    "wallet.budget.month_long_dec",
-  ];
   match parse_month(month) {
     Some((year, mon)) => t!(
       "wallet.budget.month_long_year",
-      month => t!(KEYS[(mon - 1) as usize]),
+      month => crate::ui::datefmt::month_long(mon as u32),
       year => year
     )
     .into_owned(),

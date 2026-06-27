@@ -121,7 +121,7 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
         color: Some(color::text::PRIMARY),
       })
       .into(),
-    text("ISK")
+    text(t!("wallet.hero.isk").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -337,7 +337,7 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
           color: Some(color::text::PRIMARY),
         })
         .into(),
-      text("ISK")
+      text(t!("wallet.hero.isk").into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::LG)
         .style(|_| text::Style {

@@ -45,9 +45,6 @@ impl ClientBuilder {
     })
   }
 
-  // Consumed by the app.rs ESI construction sites (build_runtime_inner, build_sync_esi) in a sibling
-  // i18n task; dead until that wiring lands, so the builder API can exist independently of its callers.
-  #[allow(dead_code)]
   pub fn language(mut self, language: Language) -> Self {
     self.language = language;
     self

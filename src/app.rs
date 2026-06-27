@@ -1399,10 +1399,11 @@ async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event
 
 /// Builds a dedicated ESI client whose HTTP cache is backed by the sync pool, keeping sync
 /// cache reads/writes off the interactive pool and avoiding contention with UI queries.
-fn build_sync_esi(sync_db: store::Database) -> Result<Arc<esi::Client>, String> {
+fn build_sync_esi(sync_db: store::Database, language: crate::i18n::Language) -> Result<Arc<esi::Client>, String> {
   let sync_http = http::Client::builder(http::Cache::new(sync_db)).build();
   Ok(Arc::new(
     esi::Client::builder(sync_http)
+      .language(language)
       .user_agent(clients::user_agent())
       .build()
       .map_err(|error| error.to_string())?,
@@ -1423,6 +1424,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
 
   let esi = Arc::new(
     esi::Client::builder(http.clone())
+      .language(settings.accessibility().language())
       .user_agent(clients::user_agent())
       .build()
       .map_err(|error| error.to_string())?,
@@ -1434,7 +1436,7 @@ fn build_runtime_inner(ready: StoreReady) -> Result<(Runtime, tokio::sync::mpsc:
     tracing::info!(target: "pod::lifecycle", "opened read-only; the sync engine stays parked");
     inert_sync()
   } else {
-    let sync_esi = build_sync_esi(sync_db.clone())?;
+    let sync_esi = build_sync_esi(sync_db.clone(), settings.accessibility().language())?;
     let started = sync::spawn(
       sync_db,
       sync_housekeeping_db,
@@ -7737,7 +7739,7 @@ mod tests {
       let entry = HttpCacheEntry::new(b"sync-pool".to_vec(), 0, url);
       infra::http_cache_upsert(&sync_db, &entry).await.unwrap();
 
-      let sync_esi = build_sync_esi(sync_db).unwrap();
+      let sync_esi = build_sync_esi(sync_db, crate::i18n::Language::default()).unwrap();
       let cache_db = sync_esi.http().cache_db().clone();
 
       assert!(
@@ -7756,7 +7758,7 @@ mod tests {
       let ui_http = http::Client::builder(http::Cache::new(interactive_db.clone())).build();
       let ui_esi = Arc::new(esi::Client::builder(ui_http).user_agent("test").build().unwrap());
 
-      let sync_esi = build_sync_esi(interactive_db).unwrap();
+      let sync_esi = build_sync_esi(interactive_db, crate::i18n::Language::default()).unwrap();
 
       assert!(
         !Arc::ptr_eq(&sync_esi.http(), &ui_esi.http()),

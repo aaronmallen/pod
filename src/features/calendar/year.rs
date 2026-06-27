@@ -8,6 +8,7 @@ use iced::{
 use super::{CalendarEvent, Message, State, View, grid};
 use crate::ui::{
   components::rule,
+  datefmt,
   style::{color, radius, spacing, typography},
 };
 
@@ -212,7 +213,7 @@ fn mini_month<'a>(
 
 fn month_title<'a>(year: i32, month0: u32, count: usize) -> Element<'a, Message> {
   let mut children: Vec<Element<'a, Message>> = vec![
-    text(month_long(month0))
+    text(datefmt::month_long(month0 + 1))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
@@ -261,24 +262,6 @@ fn month_cursor(year: i32, month0: u32) -> DateTime<Utc> {
     .and_then(|date| date.and_hms_opt(0, 0, 0))
     .map(|naive| DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc))
     .unwrap_or_else(Utc::now)
-}
-
-fn month_long(month0: u32) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  MONTHS[(month0 as usize).min(11)]
 }
 
 fn weekday_min(weekday: u32) -> &'static str {

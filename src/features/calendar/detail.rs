@@ -14,6 +14,7 @@ use crate::{
   store::model::AttendeeTally,
   ui::{
     components::icon::Icon,
+    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -136,7 +137,12 @@ fn body_text<'a>(body: &str) -> Element<'a, EventMessage> {
 }
 
 fn date_label(start: DateTime<Utc>) -> String {
-  format!("{}, {} {}", long_weekday(start), long_month(start), start.day())
+  format!(
+    "{}, {} {}",
+    datefmt::weekday_long(start.weekday()),
+    datefmt::month_long(start.month()),
+    start.day()
+  )
 }
 
 fn eyebrow<'a>(label: String) -> Element<'a, EventMessage> {
@@ -201,37 +207,6 @@ fn header<'a>(event: &'a CalendarEvent, owner: OwnerType, tint: iced::Color) -> 
   .spacing(spacing::SPACE_3)
   .align_y(Vertical::Top)
   .into()
-}
-
-fn long_month(day: DateTime<Utc>) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  MONTHS[(day.month0() as usize).min(11)]
-}
-
-fn long_weekday(day: DateTime<Utc>) -> &'static str {
-  const DAYS: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
-  DAYS[day.weekday().num_days_from_monday() as usize]
 }
 
 fn meta_grid(window: &EventWindow) -> Element<'_, EventMessage> {

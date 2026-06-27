@@ -14,6 +14,7 @@ use crate::{
   config::CalendarDensity,
   ui::{
     components::rule,
+    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -128,7 +129,7 @@ fn day_group<'a>(
         .size(typography::size::MD)
         .style(typography::colored(color::text::PRIMARY))
         .into(),
-      text(format!("{} {}", month(day), day.year()))
+      text(format!("{} {}", datefmt::month_long(day.month()), day.year()))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::text::secondary()))
@@ -258,24 +259,6 @@ fn empty_state<'a>() -> Element<'a, Message> {
   .align_x(Horizontal::Center)
   .align_y(Vertical::Center)
   .into()
-}
-
-fn month(day: DateTime<Utc>) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  MONTHS[(day.month0() as usize).min(11)]
 }
 
 fn pod_tag<'a>() -> Element<'a, Message> {
@@ -440,17 +423,8 @@ fn start_of_day(dt: DateTime<Utc>) -> DateTime<Utc> {
   dt - Duration::seconds(i64::from(dt.num_seconds_from_midnight()))
 }
 
-fn weekday(day: DateTime<Utc>) -> &'static str {
-  const DAYS: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
-  DAYS[day.weekday().num_days_from_monday() as usize]
+fn weekday(day: DateTime<Utc>) -> String {
+  datefmt::weekday_long(day.weekday())
 }
 
 #[cfg(test)]

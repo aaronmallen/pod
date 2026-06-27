@@ -16,6 +16,7 @@ use crate::{
       backdrop, forbidden, header::header as content_header, icon::Icon, positioned_dropdown::positioned_dropdown,
       rule, segmented::segment_button,
     },
+    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -327,24 +328,6 @@ fn legend_item<'a>(fill: iced::Color, label: &str) -> Element<'a, Message> {
   .into()
 }
 
-fn long_month(day: DateTime<Utc>) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  MONTHS[(day.month0() as usize).min(11)]
-}
-
 fn nav_button_style(status: button::Status) -> button::Style {
   let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
   button::Style {
@@ -367,10 +350,18 @@ fn nav_period(state: &State) -> (String, Option<String>) {
   match state.view() {
     View::Agenda => (
       t!("calendar.nav.agenda_title").into_owned(),
-      Some(t!("calendar.nav.agenda_subtitle", month => short_month(cursor), day => cursor.day()).into_owned()),
+      Some(
+        t!("calendar.nav.agenda_subtitle", month => datefmt::month_short(cursor.month()), day => cursor.day())
+          .into_owned(),
+      ),
     ),
     View::Day => (
-      format!("{}, {} {}", long_weekday(cursor), long_month(cursor), cursor.day()),
+      format!(
+        "{}, {} {}",
+        datefmt::weekday_long(cursor.weekday()),
+        datefmt::month_long(cursor.month()),
+        cursor.day()
+      ),
       Some(t!("calendar.nav.day_subtitle", year => cursor.year()).into_owned()),
     ),
     View::Week => {
@@ -378,13 +369,18 @@ fn nav_period(state: &State) -> (String, Option<String>) {
       let first = dates.first().copied().unwrap_or(cursor);
       let last = dates.last().copied().unwrap_or(cursor);
       let span = if first.month0() == last.month0() {
-        format!("{} {} \u{2013} {}", short_month(first), first.day(), last.day())
+        format!(
+          "{} {} \u{2013} {}",
+          datefmt::month_short(first.month()),
+          first.day(),
+          last.day()
+        )
       } else {
         format!(
           "{} {} \u{2013} {} {}",
-          short_month(first),
+          datefmt::month_short(first.month()),
           first.day(),
-          short_month(last),
+          datefmt::month_short(last.month()),
           last.day()
         )
       };
@@ -393,32 +389,15 @@ fn nav_period(state: &State) -> (String, Option<String>) {
         Some(t!("calendar.nav.week_subtitle", year => first.year()).into_owned()),
       )
     }
-    View::Month => (format!("{} {}", long_month(cursor), cursor.year()), None),
+    View::Month => (
+      format!("{} {}", datefmt::month_long(cursor.month()), cursor.year()),
+      None,
+    ),
     View::Year => (
       cursor.year().to_string(),
       Some(t!("calendar.nav.year_subtitle").into_owned()),
     ),
   }
-}
-
-fn short_month(day: DateTime<Utc>) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  MONTHS[(day.month0() as usize).min(11)]
-}
-
-fn long_weekday(day: DateTime<Utc>) -> &'static str {
-  const DAYS: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ];
-  DAYS[day.weekday().num_days_from_monday() as usize]
 }
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {

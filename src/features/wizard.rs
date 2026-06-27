@@ -1,16 +1,22 @@
+use std::{
+  collections::HashMap,
+  path::PathBuf,
+  sync::{OnceLock, RwLock},
+};
+
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, scrollable, text},
+  widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
 
 use crate::{
-  config::Settings,
+  config::{self, LogLevel, Settings},
   features::settings::{features_tab, features_tab::Group},
   i18n::Language,
   ui::{
     components::{
-      eve_time::eve_time, icon::Icon, progress_bar::progress_bar, rule, status::dot, status_bar::status_bar,
+      eve_time::eve_time, icon::Icon, progress_bar::progress_bar, rule, status::dot, status_bar::status_bar, toggle,
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -20,10 +26,29 @@ const BENEFIT_CARD_MAX_WIDTH: f32 = 720.0;
 const LANGUAGE_GRID_COLUMNS: usize = 3;
 const LANGUAGE_GRID_MAX_WIDTH: f32 = 860.0;
 const STEP_TITLE_SIZE: f32 = 30.0;
+const STORAGE_MAX_WIDTH: f32 = 920.0;
 
 const CONTENT_PADDING: f32 = 48.0;
 const FOOTER_SIDE_PADDING: f32 = 48.0;
 const RAIL_WIDTH: f32 = 300.0;
+
+// Interns a resolved translation as a `&'static str`, for the few widgets (the storage path field's
+// placeholder) that need a borrowed string outliving the view. Mirrors the settings module's own
+// interner; the leak is bounded by the small fixed key set.
+fn tr_static(key: &str) -> &'static str {
+  static CACHE: OnceLock<RwLock<HashMap<String, &'static str>>> = OnceLock::new();
+  let cache = CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+  if let Some(&interned) = cache.read().expect("wizard i18n cache poisoned").get(key) {
+    return interned;
+  }
+
+  let resolved: &'static str = Box::leak(t!(key).into_owned().into_boxed_str());
+  cache
+    .write()
+    .expect("wizard i18n cache poisoned")
+    .entry(key.to_owned())
+    .or_insert(resolved)
+}
 
 #[derive(Clone, Debug)]
 pub enum Message {
@@ -42,6 +67,15 @@ pub enum Message {
   // dispatches this; the app's wizard update applies the locale so the next frame renders in it.
   SelectLanguage(Language),
   Skip,
+  // The slimmed Storage step's actions. Each writes only into the draft `Settings.storage` (a path
+  // override, the log level, or the sync flag) — first run has no data, so there is no migration,
+  // export, or relocation machinery behind any of these.
+  StorageBrowse(PathKind),
+  StorageLogLevel(LogLevel),
+  StoragePathEdited(PathKind, String),
+  StoragePathSubmitted(PathKind),
+  StorageReset(PathKind),
+  StorageSyncToggled(bool),
 }
 
 /// One concrete position in the wizard. The flat step list is Welcome, Language, one
@@ -108,6 +142,72 @@ impl Phase {
   }
 }
 
+/// The three directories the slimmed Storage step lets the user repoint, mapped onto the matching
+/// `StorageConfig` override. First run has no data to migrate, so each kind only reads the resolved
+/// path and writes the override — there is no relocation or migration behind it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum PathKind {
+  Cache,
+  Database,
+  Log,
+}
+
+impl PathKind {
+  const ALL: [PathKind; 3] = [PathKind::Database, PathKind::Log, PathKind::Cache];
+
+  fn default_dir(self) -> PathBuf {
+    match self {
+      PathKind::Cache => config::cache_dir(),
+      PathKind::Database => config::data_dir(),
+      PathKind::Log => config::log_dir(),
+    }
+  }
+
+  fn description_key(self) -> &'static str {
+    match self {
+      PathKind::Cache => "settings.storage.cache_description",
+      PathKind::Database => "settings.storage.database_description",
+      PathKind::Log => "settings.storage.log_description",
+    }
+  }
+
+  fn label_key(self) -> &'static str {
+    match self {
+      PathKind::Cache => "settings.storage.cache_label",
+      PathKind::Database => "settings.storage.database_label",
+      PathKind::Log => "settings.storage.log_label",
+    }
+  }
+
+  fn override_dir(self, settings: &Settings) -> Option<PathBuf> {
+    let storage = settings.storage();
+    match self {
+      PathKind::Cache => storage.cache_dir().clone(),
+      PathKind::Database => storage.db_dir().clone(),
+      PathKind::Log => storage.log_dir().clone(),
+    }
+  }
+
+  fn resolved_dir(self, settings: &Settings) -> PathBuf {
+    let storage = settings.storage();
+    match self {
+      PathKind::Cache => storage.resolved_cache_dir(),
+      PathKind::Database => storage.resolved_db_dir(),
+      PathKind::Log => storage.resolved_log_dir(),
+    }
+  }
+
+  // Writes only the path override (cleared to the default when it matches), never a relocation.
+  fn set_dir(self, settings: &mut Settings, dir: Option<PathBuf>) {
+    let storage = settings.storage_mut();
+    match self {
+      PathKind::Cache => storage.set_cache_dir(dir),
+      PathKind::Database => storage.set_db_dir(dir),
+      PathKind::Log => storage.set_log_dir(dir),
+    };
+  }
+}
+
 #[derive(Debug)]
 pub struct State {
   current: usize,
@@ -123,6 +223,9 @@ pub struct State {
   // live settings until the run completes.
   settings: Settings,
   steps: Vec<Step>,
+  // The editable path text per storage kind, kept in sync with the resolved override so a typed or
+  // browsed path round-trips through the field before it commits to `Settings.storage`.
+  storage_drafts: HashMap<PathKind, String>,
 }
 
 impl State {
@@ -178,12 +281,17 @@ impl State {
 impl Default for State {
   fn default() -> Self {
     let settings = Settings::default();
+    let storage_drafts = PathKind::ALL
+      .into_iter()
+      .map(|kind| (kind, kind.resolved_dir(&settings).display().to_string()))
+      .collect();
     State {
       current: 0,
       features: features_tab::State::from_settings(&settings),
       pending_language: settings.accessibility().language(),
       settings,
       steps: steps(),
+      storage_drafts,
     }
   }
 }
@@ -225,6 +333,79 @@ pub fn update(state: &mut State, message: Message) {
     Message::Skip => {
       state.current = state.steps.len().saturating_sub(1);
     }
+    Message::StorageBrowse(kind) => {
+      if let Some(dir) = pick_folder(kind, &state.settings) {
+        commit_path(state, kind, dir);
+      }
+    }
+    Message::StorageLogLevel(level) => {
+      state.settings.storage_mut().set_log_level(level);
+    }
+    Message::StoragePathEdited(kind, value) => {
+      state.storage_drafts.insert(kind, value);
+    }
+    Message::StoragePathSubmitted(kind) => {
+      let draft = state.storage_drafts.get(&kind).cloned().unwrap_or_default();
+      let trimmed = draft.trim();
+      if trimmed.is_empty() {
+        sync_storage_draft(state, kind);
+      } else {
+        commit_path(state, kind, PathBuf::from(trimmed));
+      }
+    }
+    Message::StorageReset(kind) => {
+      commit_path(state, kind, kind.default_dir());
+    }
+    Message::StorageSyncToggled(value) => {
+      // First run has no database to migrate, so flipping sync only records the network flag — there
+      // is no MigrationRequest, working-copy seed, or consolidation behind it.
+      state.settings.storage_mut().set_network(value);
+    }
+  }
+}
+
+// Commits a chosen directory to the draft override (cleared to the default when it matches) and
+// resyncs the field to the resolved path. No relocation runs — first run has nothing to move.
+fn commit_path(state: &mut State, kind: PathKind, dir: PathBuf) {
+  let dir = if paths_equal(&dir, &kind.default_dir()) {
+    None
+  } else {
+    Some(dir)
+  };
+  kind.set_dir(&mut state.settings, dir);
+  sync_storage_draft(state, kind);
+}
+
+fn sync_storage_draft(state: &mut State, kind: PathKind) {
+  let resolved = kind.resolved_dir(&state.settings).display().to_string();
+  state.storage_drafts.insert(kind, resolved);
+}
+
+fn paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
+  match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+    (Ok(a), Ok(b)) => a == b,
+    _ => a == b,
+  }
+}
+
+/// Opens a folder picker rooted at the kind's current directory. Stubbed to a no-op (`None`) under
+/// `cfg(test)` so the storage update path can be exercised without opening a real dialog, mirroring
+/// the settings storage tab's own test stub.
+fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
+  #[cfg(not(test))]
+  {
+    let mut dialog = rfd::FileDialog::new()
+      .set_title(t!("settings.storage.pick_folder_title", name => tr_static(kind.label_key())).into_owned());
+    let start = kind.resolved_dir(settings);
+    if start.is_dir() {
+      dialog = dialog.set_directory(&start);
+    }
+    dialog.pick_folder()
+  }
+  #[cfg(test)]
+  {
+    let _ = (kind, settings);
+    None
   }
 }
 
@@ -478,8 +659,9 @@ fn step_body(state: &State) -> Element<'_, Message> {
   match state.current_step() {
     Step::Features(group) => features_body(state, group),
     Step::Language => language_body(state),
+    Step::Storage => storage_body(state),
     Step::Welcome => welcome_body(),
-    Step::Finish | Step::Storage => step_placeholder(),
+    Step::Finish => step_placeholder(),
   }
 }
 
@@ -951,6 +1133,300 @@ fn features_position(group: Group) -> usize {
   Group::ALL.iter().position(|&candidate| candidate == group).unwrap_or(0)
 }
 
+// The slimmed Storage step: a path row per directory (db / log / cache) with a Browse picker and a
+// reset-to-default, a verbosity selector on the log row, and a sync toggle on the database row. Every
+// control writes only into the draft `Settings.storage` — first run has no data, so no migration,
+// export, or relocation flow is reachable from here.
+fn storage_body(state: &State) -> Element<'_, Message> {
+  let settings = &state.settings;
+
+  let header = step_header(
+    t!("wizard.storage.eyebrow").into_owned(),
+    t!("wizard.storage.title").into_owned(),
+    Some(t!("wizard.storage.lede").into_owned()),
+    Some(storage_customized_indicator(settings)),
+  );
+
+  let rows: Vec<Element<'_, Message>> = PathKind::ALL
+    .into_iter()
+    .map(|kind| storage_path_row(state, kind))
+    .collect();
+  let list = Column::with_children(rows).width(Length::Fill);
+
+  let column = Column::with_children(vec![
+    container(header)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6 + 6.0,
+        left: 0.0,
+      })
+      .into(),
+    Column::with_children(vec![rule::horizontal(), list.into()])
+      .width(Length::Fill)
+      .into(),
+  ])
+  .width(Length::Fill);
+
+  container(column).max_width(STORAGE_MAX_WIDTH).into()
+}
+
+fn storage_customized_indicator(settings: &Settings) -> Element<'_, Message> {
+  let custom = PathKind::ALL
+    .into_iter()
+    .filter(|kind| kind.override_dir(settings).is_some())
+    .count();
+  let (dot_color, label) = if custom > 0 {
+    (
+      color::accent::PLASMA,
+      t!("wizard.storage.customized_count", count => custom, total => PathKind::ALL.len()).into_owned(),
+    )
+  } else {
+    (color::status::ONLINE, t!("wizard.storage.all_defaults").into_owned())
+  };
+
+  Row::with_children(vec![
+    dot(dot_color),
+    text(label)
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_2)
+  .into()
+}
+
+fn storage_path_row(state: &State, kind: PathKind) -> Element<'_, Message> {
+  let settings = &state.settings;
+  let overridden = kind.override_dir(settings).is_some();
+  let default = kind.default_dir();
+
+  let mut title_row: Vec<Element<'_, Message>> = vec![
+    text(t!(kind.label_key()).into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::LG)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+  ];
+  if overridden {
+    title_row.push(storage_custom_badge());
+  }
+  let title = Row::with_children(title_row)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_3);
+
+  let description = container(
+    text(t!(kind.description_key()).into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .max_width(640.0);
+
+  let value = state.storage_drafts.get(&kind).map(String::as_str).unwrap_or_default();
+  let field = text_input(tr_static("settings.storage.path_placeholder"), value)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::MD)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: spacing::SPACE_3,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_3,
+    })
+    .width(Length::Fill)
+    .on_input(move |next| Message::StoragePathEdited(kind, next))
+    .on_submit(Message::StoragePathSubmitted(kind));
+
+  let browse = button(
+    text(t!("settings.storage.browse").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::StorageBrowse(kind))
+  .style(control::ghost_button);
+
+  let mut reset = button(
+    text(t!("settings.storage.default_button").into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .style(control::ghost_button);
+  if overridden {
+    reset = reset.on_press(Message::StorageReset(kind));
+  }
+
+  let controls = Row::with_children(vec![field.into(), browse.into(), reset.into()])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
+  let mut cell_children: Vec<Element<'_, Message>> = vec![title.into(), description.into(), controls.into()];
+  if kind == PathKind::Log {
+    cell_children.push(storage_verbosity_row(*settings.storage().log_level()));
+  }
+  if kind == PathKind::Database {
+    cell_children.push(storage_sync_row(*settings.storage().network()));
+  }
+  cell_children.push(storage_default_footnote(&default));
+
+  let cell = container(
+    Column::with_children(cell_children)
+      .spacing(spacing::SPACE_3)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_6 - 4.0,
+    right: 0.0,
+    bottom: spacing::SPACE_6 - 4.0,
+    left: 0.0,
+  });
+
+  Column::with_children(vec![cell.into(), rule::horizontal()])
+    .width(Length::Fill)
+    .into()
+}
+
+fn storage_default_footnote(default: &std::path::Path) -> Element<'static, Message> {
+  Row::with_children(vec![
+    text(t!("settings.storage.default_label").into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+    text(default.display().to_string())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS_PLUS)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Center)
+  .into()
+}
+
+fn storage_custom_badge<'a>() -> Element<'a, Message> {
+  container(
+    text(t!("settings.storage.custom").into_owned())
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(color::accent::PLASMA)),
+  )
+  .padding(Padding {
+    top: 1.0,
+    right: spacing::UNIT + 2.0,
+    bottom: 1.0,
+    left: spacing::UNIT + 2.0,
+  })
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.06))),
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.3),
+      width: 1.0,
+      radius: radius::SUBTLE.into(),
+    },
+    ..container::Style::default()
+  })
+  .into()
+}
+
+fn storage_verbosity_row<'a>(active: LogLevel) -> Element<'a, Message> {
+  let mut children: Vec<Element<'a, Message>> = vec![
+    text(t!("settings.storage.verbosity").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ];
+
+  for level in LogLevel::ALL {
+    children.push(storage_verbosity_cell(level, level == active));
+  }
+
+  Row::with_children(children)
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2)
+    .into()
+}
+
+fn storage_verbosity_cell<'a>(level: LogLevel, active: bool) -> Element<'a, Message> {
+  let label_color = if active {
+    color::accent::PLASMA
+  } else {
+    color::text::secondary()
+  };
+  let cell = container(
+    text(level.label())
+      .font(typography::body::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(label_color)),
+  )
+  .padding(control::padding())
+  .style(move |_| container::Style {
+    background: Some(Background::Color(if active {
+      color::with_alpha(color::accent::PLASMA, 0.07)
+    } else {
+      iced::Color::TRANSPARENT
+    })),
+    border: Border {
+      color: if active {
+        color::with_alpha(color::accent::PLASMA, 0.45)
+      } else {
+        color::rule_strong()
+      },
+      width: 1.0,
+      radius: radius::CONTROL.into(),
+    },
+    ..container::Style::default()
+  });
+
+  button(cell)
+    .padding(0)
+    .on_press(Message::StorageLogLevel(level))
+    .style(|_, _| button::Style {
+      background: Some(Background::Color(iced::Color::TRANSPARENT)),
+      ..button::Style::default()
+    })
+    .into()
+}
+
+fn storage_sync_row<'a>(checked: bool) -> Element<'a, Message> {
+  let label = text(t!("settings.storage.sync_label").into_owned())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let explanation = container(
+    text(t!("settings.storage.sync_description").into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary())),
+  )
+  .max_width(560.0);
+  let copy = Column::with_children(vec![label.into(), explanation.into()])
+    .spacing(spacing::UNIT)
+    .width(Length::Fill);
+
+  let row = Row::with_children(vec![
+    copy.into(),
+    toggle::toggle(checked, Message::StorageSyncToggled(!checked)),
+  ])
+  .align_y(Vertical::Center)
+  .spacing(spacing::SPACE_6);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_2,
+      right: 0.0,
+      bottom: spacing::SPACE_2,
+      left: spacing::SPACE_6,
+    })
+    .into()
+}
+
 fn footer(state: &State) -> Element<'_, Message> {
   let mut back = button(footer_label(t!("wizard.footer.back").into_owned()))
     .padding(control::padding())
@@ -1388,6 +1864,123 @@ mod tests {
       for (index, group) in Group::ALL.into_iter().enumerate() {
         assert_eq!(features_position(group), index);
       }
+    }
+  }
+
+  mod storage {
+    use std::path::{Path, PathBuf};
+
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_renders_the_storage_body() {
+      let mut state = state();
+      while state.current_step() != Step::Storage {
+        update(&mut state, Message::Next);
+      }
+
+      let _el: Element<'_, Message> = storage_body(&state);
+    }
+
+    #[test]
+    fn a_custom_db_dir_updates_the_draft_storage_without_moving_files() {
+      let target = std::env::temp_dir().join("pod-wizard-storage-test-db");
+      assert!(!target.exists(), "the test target must not pre-exist");
+      let mut state = state();
+
+      update(
+        &mut state,
+        Message::StoragePathEdited(PathKind::Database, target.display().to_string()),
+      );
+      update(&mut state, Message::StoragePathSubmitted(PathKind::Database));
+
+      assert_eq!(
+        state.settings().storage().db_dir(),
+        &Some(target.clone()),
+        "the custom db dir lands on the draft override"
+      );
+      assert!(
+        !target.exists(),
+        "writing the override must not create or move any directory on disk"
+      );
+    }
+
+    #[test]
+    fn resetting_a_path_clears_the_override_back_to_the_default() {
+      let mut state = state();
+      update(
+        &mut state,
+        Message::StoragePathEdited(
+          PathKind::Cache,
+          PathBuf::from("/tmp/pod-custom-cache").display().to_string(),
+        ),
+      );
+      update(&mut state, Message::StoragePathSubmitted(PathKind::Cache));
+      assert!(state.settings().storage().cache_dir().is_some());
+
+      update(&mut state, Message::StorageReset(PathKind::Cache));
+
+      assert_eq!(
+        state.settings().storage().cache_dir(),
+        &None,
+        "a reset returns the path to the platform default (no override)"
+      );
+    }
+
+    #[test]
+    fn the_log_verbosity_selector_sets_the_draft_log_level() {
+      let mut state = state();
+
+      update(&mut state, Message::StorageLogLevel(LogLevel::Verbose));
+
+      assert_eq!(state.settings().storage().log_level(), &LogLevel::Verbose);
+    }
+
+    #[test]
+    fn the_sync_toggle_records_the_network_flag_with_no_relocation() {
+      let mut state = state();
+      assert!(!*state.settings().storage().network());
+
+      update(&mut state, Message::StorageSyncToggled(true));
+
+      assert!(
+        *state.settings().storage().network(),
+        "the sync toggle flips the network flag on the draft"
+      );
+      assert_eq!(
+        state.settings().storage().db_dir(),
+        &None,
+        "flipping sync never repoints or relocates the database on first run"
+      );
+    }
+
+    #[test]
+    fn an_empty_submitted_path_resyncs_the_field_to_the_resolved_default() {
+      let mut state = state();
+
+      update(&mut state, Message::StoragePathEdited(PathKind::Log, "   ".to_owned()));
+      update(&mut state, Message::StoragePathSubmitted(PathKind::Log));
+
+      assert_eq!(
+        state.settings().storage().log_dir(),
+        &None,
+        "a blank submit leaves the override untouched"
+      );
+      assert_eq!(
+        state.storage_drafts.get(&PathKind::Log).map(String::as_str),
+        Some(PathKind::Log.default_dir().display().to_string().as_str()),
+        "the field resyncs to the resolved default"
+      );
+    }
+
+    #[test]
+    fn paths_equal_matches_the_same_directory() {
+      let dir = Path::new("/var/pod/data");
+
+      assert!(super::super::paths_equal(dir, dir));
+      assert!(!super::super::paths_equal(dir, Path::new("/var/pod/other")));
     }
   }
 }

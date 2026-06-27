@@ -135,8 +135,8 @@ impl State {
 
   pub fn title(&self) -> String {
     match &self.detail {
-      Some(detail) => format!("{} \u{2014} #{}", detail.title, detail.contract_id),
-      None => format!("Contract #{}", self.contract_id),
+      Some(detail) => t!("wallet.contracts.window_title", title => detail.title, id => detail.contract_id).into_owned(),
+      None => t!("wallet.contracts.window_title_fallback", id => self.contract_id).into_owned(),
     }
   }
 }
@@ -159,9 +159,9 @@ impl ContractKind {
 
   fn label(self) -> &'static str {
     match self {
-      ContractKind::Auction => "Auction",
-      ContractKind::Courier => "Courier",
-      ContractKind::ItemExchange => "Item Exchange",
+      ContractKind::Auction => super::i18n::tr_static("wallet.contracts.kind_auction"),
+      ContractKind::Courier => super::i18n::tr_static("wallet.contracts.kind_courier"),
+      ContractKind::ItemExchange => super::i18n::tr_static("wallet.contracts.kind_item_exchange"),
     }
   }
 }
@@ -364,7 +364,7 @@ pub fn view<M: 'static>(state: &State) -> Element<'_, M> {
 fn window_body<'a, M: 'a>(detail: Option<&'a ContractDetail>) -> Element<'a, M> {
   let Some(detail) = detail else {
     return container(
-      text("Loading contract\u{2026}")
+      text(t!("wallet.contracts.loading"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -425,10 +425,10 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
   let reward = basis.reward.unwrap_or(0.0);
 
   let headline_label = match kind {
-    ContractKind::Auction => "Current bid",
-    ContractKind::Courier => "Reward",
-    ContractKind::ItemExchange if is_buyer => "You pay",
-    ContractKind::ItemExchange => "Price",
+    ContractKind::Auction => super::i18n::tr_static("wallet.contracts.headline_current_bid"),
+    ContractKind::Courier => super::i18n::tr_static("wallet.contracts.headline_reward"),
+    ContractKind::ItemExchange if is_buyer => super::i18n::tr_static("wallet.contracts.headline_you_pay"),
+    ContractKind::ItemExchange => super::i18n::tr_static("wallet.contracts.headline_price"),
   };
   let headline = match kind {
     ContractKind::Auction => bids.first().map(|bid| bid.amount).unwrap_or(price),
@@ -442,7 +442,7 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
     Some(corp_id) => PartyView {
       name: corporation_name(db, corp_id).await,
       portrait: images::resolve(&images::default_store(), images::ImageKind::CorporationLogo, corp_id),
-      role: "Issuer",
+      role: super::i18n::tr_static("wallet.contracts.role_issuer"),
       sub: Some(party_name(&basis.issuer_name, basis.issuer_id)),
     },
     None => PartyView {
@@ -452,7 +452,7 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
         images::ImageKind::CharacterPortrait,
         basis.issuer_id,
       ),
-      role: "Issuer",
+      role: super::i18n::tr_static("wallet.contracts.role_issuer"),
       sub: issuer_sub(db, &basis).await,
     },
   };
@@ -498,14 +498,14 @@ async fn assemble(db: &Database, basis: ContractBasis, items: Vec<ItemView>, bid
 async fn acceptor_view(db: &Database, basis: &ContractBasis) -> Option<PartyView> {
   let id = basis.acceptor_id?;
   let role = if basis.status == "finished" {
-    "Acceptor"
+    super::i18n::tr_static("wallet.contracts.role_acceptor")
   } else {
-    "Hauler"
+    super::i18n::tr_static("wallet.contracts.role_hauler")
   };
   let sub = if basis.status == "finished" {
-    "Completed"
+    super::i18n::tr_static("wallet.contracts.acceptor_completed")
   } else {
-    "In progress"
+    super::i18n::tr_static("wallet.contracts.acceptor_in_progress")
   };
   // The acceptor/assignee may be a corporation (corp-to-corp contracts); resolve it as a corp when the id
   // matches a known corporation so the corp logo loads instead of a (404) character portrait.
@@ -609,13 +609,13 @@ async fn issuer_sub(db: &Database, basis: &ContractBasis) -> Option<String> {
   if let Some(corp_id) = basis.issuer_corporation_id {
     let corp = corporation_name(db, corp_id).await;
     return Some(if basis.for_corporation {
-      format!("{corp} \u{00b7} for corp")
+      t!("wallet.contracts.issuer_for_corp", corp => corp).into_owned()
     } else {
       corp
     });
   }
   if basis.availability.as_deref() == Some("public") {
-    return Some("Public contract".to_owned());
+    return Some(t!("wallet.contracts.public_contract").into_owned());
   }
   None
 }
@@ -630,11 +630,13 @@ async fn location_name(db: &Database, location_id: Option<i64>) -> String {
   if let Some(structure) = sde::get_structure(db, id).await.ok().flatten() {
     return structure.name().clone();
   }
-  format!("Structure {id}")
+  t!("wallet.contracts.structure_fallback", id => id).into_owned()
 }
 
 fn party_name(name: &Option<String>, id: i64) -> String {
-  name.clone().unwrap_or_else(|| format!("Pilot {id}"))
+  name
+    .clone()
+    .unwrap_or_else(|| t!("wallet.contracts.pilot_fallback", id => id).into_owned())
 }
 
 async fn character_name(db: &Database, id: i64) -> String {
@@ -643,7 +645,7 @@ async fn character_name(db: &Database, id: i64) -> String {
     .ok()
     .flatten()
     .map(|character| character.name().to_owned())
-    .unwrap_or_else(|| format!("Pilot {id}"))
+    .unwrap_or_else(|| t!("wallet.contracts.pilot_fallback", id => id).into_owned())
 }
 
 async fn corporation_name(db: &Database, id: i64) -> String {
@@ -652,25 +654,25 @@ async fn corporation_name(db: &Database, id: i64) -> String {
     .ok()
     .flatten()
     .map(|corp| corp.name().to_owned())
-    .unwrap_or_else(|| format!("Corp {id}"))
+    .unwrap_or_else(|| t!("wallet.contracts.corp_fallback", id => id).into_owned())
 }
 
 fn expiry_view(status: &str, date_completed: &Option<String>, date_issued: &str) -> ExpiryView {
   match status {
     "outstanding" | "in_progress" | "outbid" => ExpiryView {
       future: true,
-      label: "Open".to_owned(),
-      title: "Expires",
+      label: t!("wallet.contracts.expiry_open").into_owned(),
+      title: super::i18n::tr_static("wallet.contracts.expiry_expires"),
     },
     "finished" => ExpiryView {
       future: false,
       label: relative_time(date_completed.as_deref().unwrap_or(date_issued)),
-      title: "Completed",
+      title: super::i18n::tr_static("wallet.contracts.expiry_completed"),
     },
     _ => ExpiryView {
       future: false,
       label: relative_time(date_issued),
-      title: "Expired",
+      title: super::i18n::tr_static("wallet.contracts.expiry_expired"),
     },
   }
 }
@@ -681,7 +683,7 @@ async fn type_name(db: &Database, type_id: i64) -> String {
     .ok()
     .flatten()
     .map(|item| item.name().clone())
-    .unwrap_or_else(|| format!("Type {type_id}"))
+    .unwrap_or_else(|| t!("wallet.contracts.type_fallback", id => type_id).into_owned())
 }
 
 pub fn relative_time(iso: &str) -> String {
@@ -694,13 +696,13 @@ pub fn relative_time(iso: &str) -> String {
     .unwrap_or(0);
   let diff = now - ts;
   if diff < 60 {
-    "just now".to_owned()
+    t!("wallet.contracts.time_just_now").into_owned()
   } else if diff < 3600 {
-    format!("{}m ago", diff / 60)
+    t!("wallet.contracts.time_minutes_ago", n => diff / 60).into_owned()
   } else if diff < 86_400 {
-    format!("{}h ago", diff / 3600)
+    t!("wallet.contracts.time_hours_ago", n => diff / 3600).into_owned()
   } else {
-    format!("{}d ago", diff / 86_400)
+    t!("wallet.contracts.time_days_ago", n => diff / 86_400).into_owned()
   }
 }
 
@@ -751,11 +753,14 @@ fn header<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
     meta_text(detail.location_name.clone(), color::text::secondary()),
     dot(),
     meta_text(
-      format!("issued {}", relative_time(&detail.issued_time)),
+      t!("wallet.contracts.issued", when => relative_time(&detail.issued_time)).into_owned(),
       color::text::secondary(),
     ),
     dot(),
-    meta_text(format!("#{}", detail.contract_id), color::text::tertiary()),
+    meta_text(
+      t!("wallet.contracts.contract_number", id => detail.contract_id).into_owned(),
+      color::text::tertiary(),
+    ),
   ])
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
@@ -807,9 +812,9 @@ fn parties_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
     Some(acceptor) => rows.push(party_row(acceptor)),
     None => {
       let label = if detail.availability == "Public" {
-        "Open to anyone \u{00b7} no acceptor yet"
+        super::i18n::tr_static("wallet.contracts.no_acceptor_public")
       } else {
-        "Assigned \u{00b7} awaiting acceptance"
+        super::i18n::tr_static("wallet.contracts.no_acceptor_assigned")
       };
       rows.push(
         container(subtitle(label, color::text::tertiary()))
@@ -824,7 +829,11 @@ fn parties_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
     }
   }
 
-  panel_unpadded("Parties", None, Column::with_children(rows).width(Length::Fill).into())
+  panel_unpadded(
+    super::i18n::tr_static("wallet.contracts.parties"),
+    None,
+    Column::with_children(rows).width(Length::Fill).into(),
+  )
 }
 
 fn headline_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
@@ -838,7 +847,7 @@ fn headline_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
         color: Some(accent),
       })
       .into(),
-    text("ISK")
+    text(t!("wallet.contracts.isk"))
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -851,24 +860,32 @@ fn headline_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
 
   let second = if detail.kind == ContractKind::Auction {
     field_cell(
-      "Buyout",
+      super::i18n::tr_static("wallet.contracts.buyout"),
       detail
         .buyout
-        .map(|v| format!("{} ISK", fmt_isk(v)))
+        .map(|v| t!("wallet.contracts.amount_isk", amount => fmt_isk(v)).into_owned())
         .unwrap_or_else(|| "\u{2014}".to_owned()),
       None,
     )
   } else {
-    field_cell("Volume", fmt_volume(detail.volume), None)
+    field_cell(
+      super::i18n::tr_static("wallet.contracts.volume"),
+      fmt_volume(detail.volume),
+      None,
+    )
   };
 
   let collateral = match detail.collateral {
     Some(value) if value > 0.0 => field_cell(
-      "Collateral",
-      format!("{} ISK", fmt_isk(value)),
+      super::i18n::tr_static("wallet.contracts.collateral"),
+      t!("wallet.contracts.amount_isk", amount => fmt_isk(value)).into_owned(),
       Some(color::status::WARNING),
     ),
-    _ => field_cell("Collateral", "\u{2014}".to_owned(), Some(color::text::tertiary())),
+    _ => field_cell(
+      super::i18n::tr_static("wallet.contracts.collateral"),
+      "\u{2014}".to_owned(),
+      Some(color::text::tertiary()),
+    ),
   };
 
   let grid = container(
@@ -899,8 +916,8 @@ fn headline_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
 
 fn terms_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
   let days = match detail.days_to_complete {
-    Some(days) if days > 0 => format!("{days} days"),
-    _ => "Immediate".to_owned(),
+    Some(days) if days > 0 => t!("wallet.contracts.days", n => days).into_owned(),
+    _ => t!("wallet.contracts.immediate").into_owned(),
   };
   let expiry_accent = if detail.expiry.future {
     color::text::PRIMARY
@@ -910,9 +927,17 @@ fn terms_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
 
   let grid = container(
     Row::with_children(vec![
-      field_cell("Type", detail.kind.label().to_owned(), None),
-      field_cell("Availability", detail.availability.clone(), None),
-      field_cell("Days to complete", days, None),
+      field_cell(
+        super::i18n::tr_static("wallet.contracts.type"),
+        detail.kind.label().to_owned(),
+        None,
+      ),
+      field_cell(
+        super::i18n::tr_static("wallet.contracts.availability"),
+        detail.availability.clone(),
+        None,
+      ),
+      field_cell(super::i18n::tr_static("wallet.contracts.days_to_complete"), days, None),
       field_cell(detail.expiry.title, detail.expiry.label.clone(), Some(expiry_accent)),
     ])
     .spacing(FIELD_GAP)
@@ -924,14 +949,18 @@ fn terms_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
     ..container::Style::default()
   });
 
-  panel_unpadded("Terms", None, grid.into())
+  panel_unpadded(super::i18n::tr_static("wallet.contracts.terms"), None, grid.into())
 }
 
 fn route_panel<'a, M: 'a>(detail: &'a ContractDetail, route: &'a RouteView) -> Element<'a, M> {
   let accent = contract_status_color(&detail.status);
 
   let pickup = Column::with_children(vec![
-    eyebrow_text("Pickup", Some(color::text::tertiary())).into(),
+    eyebrow_text(
+      super::i18n::tr_static("wallet.contracts.pickup"),
+      Some(color::text::tertiary()),
+    )
+    .into(),
     text(route.start.clone())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
@@ -945,7 +974,11 @@ fn route_panel<'a, M: 'a>(detail: &'a ContractDetail, route: &'a RouteView) -> E
 
   let destination = container(
     Column::with_children(vec![
-      eyebrow_text("Destination", Some(color::text::tertiary())).into(),
+      eyebrow_text(
+        super::i18n::tr_static("wallet.contracts.destination"),
+        Some(color::text::tertiary()),
+      )
+      .into(),
       text(route.end.clone())
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
@@ -976,7 +1009,7 @@ fn route_panel<'a, M: 'a>(detail: &'a ContractDetail, route: &'a RouteView) -> E
   .align_y(Vertical::Center);
 
   panel(
-    "Route",
+    super::i18n::tr_static("wallet.contracts.route"),
     None,
     Row::with_children(vec![pickup.into(), connector.into(), destination.into()])
       .spacing(spacing::SPACE_3)
@@ -1001,18 +1034,31 @@ fn manifest_row<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
 
 fn item_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
   let label = if detail.kind == ContractKind::Courier {
-    "Cargo manifest"
+    super::i18n::tr_static("wallet.contracts.cargo_manifest")
   } else {
-    "Contract items"
+    super::i18n::tr_static("wallet.contracts.contract_items")
   };
   let count = detail.items.len();
-  let unit = if count == 1 { "item" } else { "items" };
-  let right = format!("{count} {unit} \u{00b7} {} ISK est", fmt_isk(detail.items_value));
+  let unit = if count == 1 {
+    super::i18n::tr_static("wallet.contracts.item_singular")
+  } else {
+    super::i18n::tr_static("wallet.contracts.item_plural")
+  };
+  let right = t!(
+    "wallet.contracts.manifest_summary",
+    count => count,
+    unit => unit,
+    amount => fmt_isk(detail.items_value)
+  )
+  .into_owned();
 
   let body: Element<'a, M> = if detail.items.is_empty() {
-    container(subtitle("No items recorded", color::text::secondary()))
-      .padding(spacing::SPACE_3)
-      .into()
+    container(subtitle(
+      super::i18n::tr_static("wallet.contracts.no_items"),
+      color::text::secondary(),
+    ))
+    .padding(spacing::SPACE_3)
+    .into()
   } else {
     let rows: Vec<Element<'a, M>> = detail
       .items
@@ -1036,7 +1082,7 @@ fn bids_panel<'a, M: 'a>(detail: &'a ContractDetail) -> Element<'a, M> {
     .collect();
 
   panel_unpadded(
-    "Bids",
+    super::i18n::tr_static("wallet.contracts.bids"),
     Some(format!("{count}")),
     Column::with_children(rows).width(Length::Fill).into(),
   )
@@ -1085,13 +1131,13 @@ fn party_row<'a, M: 'a>(party: &'a PartyView) -> Element<'a, M> {
 fn item_row<'a, M: 'a>(item: &'a ItemView, last: bool) -> Element<'a, M> {
   let mut sub = String::new();
   if item.singleton {
-    sub.push_str("assembled");
+    sub.push_str(&t!("wallet.contracts.item_assembled"));
   }
   if !item.included {
     if !sub.is_empty() {
       sub.push_str(" \u{00b7} ");
     }
-    sub.push_str("requested");
+    sub.push_str(&t!("wallet.contracts.item_requested"));
   }
 
   let mut name_lines: Vec<Element<'a, M>> = vec![
@@ -1113,7 +1159,7 @@ fn item_row<'a, M: 'a>(item: &'a ItemView, last: bool) -> Element<'a, M> {
       .spacing(2.0)
       .width(Length::Fill)
       .into(),
-    text(format!("\u{00d7}{}", item.quantity))
+    text(t!("wallet.contracts.item_quantity", quantity => item.quantity))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -1200,7 +1246,7 @@ fn bid_row<'a, M: 'a>(bid: &'a BidView, top: bool, last: bool) -> Element<'a, M>
         color: Some(amount_color),
       })
       .into(),
-    text("ISK")
+    text(t!("wallet.contracts.isk"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -1357,7 +1403,7 @@ fn dot<'a, M: 'a>() -> Element<'a, M> {
 
 fn high_bid_chip<'a, M: 'a>() -> Element<'a, M> {
   container(
-    text("HIGH BID")
+    text(t!("wallet.contracts.high_bid"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS - 1.0)
       .style(|_| text::Style {

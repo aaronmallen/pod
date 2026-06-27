@@ -45,7 +45,7 @@ pub(super) fn reflect_surface(state: &State) -> Element<'_, Message> {
 
 fn loading<'a>() -> Element<'a, Message> {
   container(
-    text("Loading budget\u{2026}")
+    text(t!("wallet.budget.loading_budget"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),
@@ -67,35 +67,42 @@ fn stat_band<'a>(reflect: &ReflectView) -> Element<'a, Message> {
   };
 
   let cells = vec![
-    stat_cell("Net this month", signed_isk(net), "ISK", net_color, None, false),
     stat_cell(
-      "Assigned",
+      super::i18n::tr_static("wallet.budget.stat_net_this_month"),
+      signed_isk(net),
+      super::i18n::tr_static("wallet.budget.unit_isk"),
+      net_color,
+      None,
+      false,
+    ),
+    stat_cell(
+      super::i18n::tr_static("wallet.budget.stat_assigned"),
       crate::ui::format::fmt_isk(reflect.assigned),
-      "ISK",
+      super::i18n::tr_static("wallet.budget.unit_isk"),
       color::text::PRIMARY,
       None,
       true,
     ),
     stat_cell(
-      "Income",
+      super::i18n::tr_static("wallet.budget.stat_income"),
       crate::ui::format::fmt_isk(reflect.income),
-      "ISK",
+      super::i18n::tr_static("wallet.budget.unit_isk"),
       color::status::ONLINE,
       None,
       true,
     ),
     stat_cell(
-      "Spent",
+      super::i18n::tr_static("wallet.budget.stat_spent"),
       crate::ui::format::fmt_isk(reflect.spend),
-      "ISK",
+      super::i18n::tr_static("wallet.budget.unit_isk"),
       color::status::DANGER,
       None,
       true,
     ),
     stat_cell(
-      "Age of ISK",
+      super::i18n::tr_static("wallet.budget.stat_age_of_isk"),
       format!("{}", reflect.age.round() as i64),
-      "days",
+      super::i18n::tr_static("wallet.budget.unit_days"),
       color::text::PRIMARY,
       age_delta(reflect),
       true,
@@ -129,7 +136,10 @@ fn age_delta(reflect: &ReflectView) -> Option<(bool, String)> {
   }
   let up = reflect.age_delta >= 0.0;
   let days = reflect.age_delta.abs().round() as i64;
-  Some((up, format!("{days}d vs {}", reflect.prev_label)))
+  Some((
+    up,
+    t!("wallet.budget.age_delta", days => days, label => reflect.prev_label).into_owned(),
+  ))
 }
 
 fn stat_cell<'a>(
@@ -207,23 +217,33 @@ fn report_grid<'a>(state: &State, reflect: &ReflectView) -> Element<'a, Message>
 
   let top = Row::with_children(vec![
     card(
-      "Income vs spending",
+      super::i18n::tr_static("wallet.budget.card_income_vs_spending"),
       Some(range_toggle(range)),
       flow_chart(&flow_months),
       14,
     ),
-    card("Age of ISK", None, age_block(reflect), 10),
+    card(
+      super::i18n::tr_static("wallet.budget.card_age_of_isk"),
+      None,
+      age_block(reflect),
+      10,
+    ),
   ])
   .spacing(GRID_GAP);
 
   let bottom = Row::with_children(vec![
     card(
-      "Spending by category",
+      super::i18n::tr_static("wallet.budget.card_spending_by_category"),
       Some(spend_total(reflect.spend)),
       spend_bars(&reflect.spend_rows, reflect.spend),
       14,
     ),
-    card("Target health", None, target_health(&reflect.tally), 10),
+    card(
+      super::i18n::tr_static("wallet.budget.card_target_health"),
+      None,
+      target_health(&reflect.tally),
+      10,
+    ),
   ])
   .spacing(GRID_GAP);
 
@@ -307,9 +327,17 @@ fn range_toggle<'a>(active: BudgetRange) -> Element<'a, Message> {
     })
     .into();
   let buttons = Row::with_children(vec![
-    range_button("3M", BudgetRange::ThreeMonths, active),
+    range_button(
+      super::i18n::tr_static("wallet.budget.range_3m"),
+      BudgetRange::ThreeMonths,
+      active,
+    ),
     divider,
-    range_button("6M", BudgetRange::SixMonths, active),
+    range_button(
+      super::i18n::tr_static("wallet.budget.range_6m"),
+      BudgetRange::SixMonths,
+      active,
+    ),
   ]);
 
   container(buttons)
@@ -385,10 +413,16 @@ fn flow_chart<'a>(months: &[MonthFlow]) -> Element<'a, Message> {
     .align_y(Vertical::Bottom);
 
   let footer = Row::with_children(vec![
-    legend(color::status::ONLINE, "Income"),
-    legend(color::status::DANGER, "Spend"),
+    legend(
+      color::status::ONLINE,
+      super::i18n::tr_static("wallet.budget.legend_income"),
+    ),
+    legend(
+      color::status::DANGER,
+      super::i18n::tr_static("wallet.budget.legend_spend"),
+    ),
     Space::new().width(Length::Fill).into(),
-    text("Net under each month")
+    text(t!("wallet.budget.net_under_each_month"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary()))
@@ -520,7 +554,7 @@ fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
       .size(30.0)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("days")
+    text(t!("wallet.budget.unit_days"))
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -556,16 +590,16 @@ fn age_block<'a>(reflect: &ReflectView) -> Element<'a, Message> {
   .into();
 
   Column::with_children(vec![
-    Row::with_children(head).spacing(spacing::SPACE_2).align_y(Vertical::Bottom).into(),
+    Row::with_children(head)
+      .spacing(spacing::SPACE_2)
+      .align_y(Vertical::Bottom)
+      .into(),
     spark,
-    text(
-      "How long ISK sits in your wallet before it\u{2019}s spent. Higher means you\u{2019}re spending money you earned a \
-      while ago \u{2014} a buffer, not paycheck-to-paycheck.",
-    )
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary()))
-    .into(),
+    text(t!("wallet.budget.age_of_isk_explainer"))
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
   ])
   .spacing(14.0)
   .width(Length::Fill)
@@ -656,7 +690,7 @@ impl canvas::Program<Message> for Sparkline {
 }
 
 fn spend_total<'a>(spend: f64) -> Element<'a, Message> {
-  text(format!("{} ISK total", crate::ui::format::fmt_isk(spend)))
+  text(t!("wallet.budget.spend_total", amount => crate::ui::format::fmt_isk(spend)))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::secondary()))
@@ -665,7 +699,7 @@ fn spend_total<'a>(spend: f64) -> Element<'a, Message> {
 
 fn spend_bars<'a>(rows: &[SpendRow], total: f64) -> Element<'a, Message> {
   if rows.is_empty() {
-    return text("No spending recorded this month.")
+    return text(t!("wallet.budget.no_spending_recorded"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -796,9 +830,21 @@ fn target_health<'a>(tally: &TargetTally) -> Element<'a, Message> {
   });
 
   let tallies = Row::with_children(vec![
-    tally_cell(tally.met, "Funded", color::status::ONLINE),
-    tally_cell(tally.under, "Underfunded", color::status::WARNING),
-    tally_cell(tally.over, "Overspent", color::status::DANGER),
+    tally_cell(
+      tally.met,
+      super::i18n::tr_static("wallet.budget.tally_funded"),
+      color::status::ONLINE,
+    ),
+    tally_cell(
+      tally.under,
+      super::i18n::tr_static("wallet.budget.tally_underfunded"),
+      color::status::WARNING,
+    ),
+    tally_cell(
+      tally.over,
+      super::i18n::tr_static("wallet.budget.tally_overspent"),
+      color::status::DANGER,
+    ),
   ])
   .spacing(18.0);
 
@@ -860,7 +906,8 @@ fn tally_cell<'a>(count: usize, label: &'a str, value_color: Color) -> Element<'
 }
 
 fn attention_list<'a>(tally: &TargetTally) -> Element<'a, Message> {
-  let mut rows: Vec<Element<'a, Message>> = vec![eyebrow_text("Needs attention", None).into()];
+  let mut rows: Vec<Element<'a, Message>> =
+    vec![eyebrow_text(super::i18n::tr_static("wallet.budget.needs_attention"), None).into()];
   for alert in tally.attention.iter().take(5) {
     let tone = if alert.over {
       color::status::DANGER
@@ -870,7 +917,7 @@ fn attention_list<'a>(tally: &TargetTally) -> Element<'a, Message> {
     let figure = if alert.over {
       crate::ui::format::fmt_isk(alert.amount)
     } else {
-      format!("{} short", crate::ui::format::fmt_isk(alert.amount))
+      t!("wallet.budget.attention_short", amount => crate::ui::format::fmt_isk(alert.amount)).into_owned()
     };
     rows.push(
       Row::with_children(vec![

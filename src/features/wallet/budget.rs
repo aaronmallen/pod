@@ -10,8 +10,6 @@ use crate::{
 };
 
 const AVERAGE_WINDOW: usize = 3;
-const DEFAULT_CATEGORY_NAME: &str = "New Category";
-const DEFAULT_GROUP_NAME: &str = "New Group";
 const DEFAULT_TONE: &str = "plasma";
 
 const TONE_INFO: iced::Color = crate::ui::style::color::chart::VIOLET;
@@ -237,29 +235,29 @@ impl TargetKind {
 
   pub fn amount_label(self) -> &'static str {
     match self {
-      TargetKind::Monthly => "Amount per month",
-      TargetKind::Refill => "Refill up to",
-      _ => "Target amount",
+      TargetKind::Monthly => super::i18n::tr_static("wallet.budget.target_amount_per_month"),
+      TargetKind::Refill => super::i18n::tr_static("wallet.budget.target_amount_refill_up_to"),
+      _ => super::i18n::tr_static("wallet.budget.target_amount_label"),
     }
   }
 
   pub fn hint(self) -> &'static str {
     match self {
-      TargetKind::Monthly => "Assign a set amount every month, then spend it down.",
-      TargetKind::Refill => "Top the Available balance back up to a number each month.",
-      TargetKind::Balance => "Build a standing reserve and hold it there. Open-ended.",
-      TargetKind::Goal => "Save toward a number. No deadline.",
-      TargetKind::GoalBy => "Save a number by a deadline.",
+      TargetKind::Monthly => super::i18n::tr_static("wallet.budget.target_hint_monthly"),
+      TargetKind::Refill => super::i18n::tr_static("wallet.budget.target_hint_refill"),
+      TargetKind::Balance => super::i18n::tr_static("wallet.budget.target_hint_balance"),
+      TargetKind::Goal => super::i18n::tr_static("wallet.budget.target_hint_goal"),
+      TargetKind::GoalBy => super::i18n::tr_static("wallet.budget.target_hint_goalby"),
     }
   }
 
   pub fn label(self) -> &'static str {
     match self {
-      TargetKind::Monthly => "Monthly",
-      TargetKind::Refill => "Refill",
-      TargetKind::Balance => "Balance",
-      TargetKind::Goal => "Goal",
-      TargetKind::GoalBy => "By date",
+      TargetKind::Monthly => super::i18n::tr_static("wallet.budget.target_kind_monthly"),
+      TargetKind::Refill => super::i18n::tr_static("wallet.budget.target_kind_refill"),
+      TargetKind::Balance => super::i18n::tr_static("wallet.budget.target_kind_balance"),
+      TargetKind::Goal => super::i18n::tr_static("wallet.budget.target_kind_goal"),
+      TargetKind::GoalBy => super::i18n::tr_static("wallet.budget.target_kind_by_date"),
     }
   }
 
@@ -594,11 +592,22 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_e
 /// A short month label (e.g. `Jun`) for a `YYYY-MM` key, used by the flow chart
 /// axis and the age delta caption. Falls back to the key verbatim.
 pub fn month_short_label(month: &str) -> String {
-  const NAMES: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  const KEYS: [&str; 12] = [
+    "wallet.budget.month_short_jan",
+    "wallet.budget.month_short_feb",
+    "wallet.budget.month_short_mar",
+    "wallet.budget.month_short_apr",
+    "wallet.budget.month_short_may",
+    "wallet.budget.month_short_jun",
+    "wallet.budget.month_short_jul",
+    "wallet.budget.month_short_aug",
+    "wallet.budget.month_short_sep",
+    "wallet.budget.month_short_oct",
+    "wallet.budget.month_short_nov",
+    "wallet.budget.month_short_dec",
   ];
   match parse_month(month) {
-    Some((_, mon)) => NAMES[(mon - 1) as usize].to_owned(),
+    Some((_, mon)) => t!(KEYS[(mon - 1) as usize]).into_owned(),
     None => month.to_owned(),
   }
 }
@@ -644,22 +653,27 @@ pub fn shift_month(month: &str, delta: i32) -> String {
 /// A human month label (e.g. `June 2026`) for a `YYYY-MM` key, or the key
 /// verbatim when it cannot be parsed.
 pub fn month_label(month: &str) -> String {
-  const NAMES: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
+  const KEYS: [&str; 12] = [
+    "wallet.budget.month_long_jan",
+    "wallet.budget.month_long_feb",
+    "wallet.budget.month_long_mar",
+    "wallet.budget.month_long_apr",
+    "wallet.budget.month_long_may",
+    "wallet.budget.month_long_jun",
+    "wallet.budget.month_long_jul",
+    "wallet.budget.month_long_aug",
+    "wallet.budget.month_long_sep",
+    "wallet.budget.month_long_oct",
+    "wallet.budget.month_long_nov",
+    "wallet.budget.month_long_dec",
   ];
   match parse_month(month) {
-    Some((year, mon)) => format!("{} {year}", NAMES[(mon - 1) as usize]),
+    Some((year, mon)) => t!(
+      "wallet.budget.month_long_year",
+      month => t!(KEYS[(mon - 1) as usize]),
+      year => year
+    )
+    .into_owned(),
     None => month.to_owned(),
   }
 }
@@ -674,11 +688,11 @@ pub fn month_relative_label(month: &str) -> String {
   };
   let delta = (year * 12 + (mon - 1)) - (current_year * 12 + (current_mon - 1));
   match delta {
-    0 => "This month".to_owned(),
-    -1 => "Last month".to_owned(),
-    1 => "Next month".to_owned(),
-    months if months < 0 => format!("{} months ago", -months),
-    months => format!("In {months} months"),
+    0 => t!("wallet.budget.month_this").into_owned(),
+    -1 => t!("wallet.budget.month_last").into_owned(),
+    1 => t!("wallet.budget.month_next").into_owned(),
+    months if months < 0 => t!("wallet.budget.month_ago", count => -months).into_owned(),
+    months => t!("wallet.budget.month_in", count => months).into_owned(),
   }
 }
 
@@ -701,45 +715,62 @@ pub fn target_status(target: &Target, assigned: f64, available: f64, month: &str
       progress(assigned, amount),
       (amount - assigned).max(0.0),
       assigned >= amount - 1.0,
-      format!("Assign {} every month", fmt_isk(amount)),
-      format!("{} of {} assigned", fmt_isk(assigned), fmt_isk(amount)),
+      t!("wallet.budget.status_monthly_label", amount => fmt_isk(amount)).into_owned(),
+      t!(
+        "wallet.budget.status_monthly_progress",
+        assigned => fmt_isk(assigned),
+        amount => fmt_isk(amount)
+      )
+      .into_owned(),
     ),
     TargetKind::Refill => (
       progress(available, amount),
       (amount - available).max(0.0),
       available >= amount - 1.0,
-      format!("Refill up to {} each month", fmt_isk(amount)),
-      format!("{} of {} available", fmt_isk(available), fmt_isk(amount)),
+      t!("wallet.budget.status_refill_label", amount => fmt_isk(amount)).into_owned(),
+      t!(
+        "wallet.budget.status_refill_progress",
+        available => fmt_isk(available),
+        amount => fmt_isk(amount)
+      )
+      .into_owned(),
     ),
     TargetKind::Balance => (
       progress(available, amount),
       (amount - available).max(0.0),
       available >= amount - 1.0,
-      format!("Build a balance of {}", fmt_isk(amount)),
-      format!("{} of {} saved", fmt_isk(available), fmt_isk(amount)),
+      t!("wallet.budget.status_balance_label", amount => fmt_isk(amount)).into_owned(),
+      t!(
+        "wallet.budget.status_balance_progress",
+        available => fmt_isk(available),
+        amount => fmt_isk(amount)
+      )
+      .into_owned(),
     ),
     TargetKind::Goal | TargetKind::GoalBy => {
       let pct = progress(available, amount);
       let label = if target.kind == TargetKind::GoalBy {
-        format!(
-          "Save {} by {}",
-          fmt_isk(amount),
-          target.by_date.as_deref().unwrap_or("\u{2014}")
+        t!(
+          "wallet.budget.status_goalby_label",
+          amount => fmt_isk(amount),
+          date => target.by_date.as_deref().unwrap_or("\u{2014}")
         )
+        .into_owned()
       } else {
-        format!("Save toward {}", fmt_isk(amount))
+        t!("wallet.budget.status_goal_label", amount => fmt_isk(amount)).into_owned()
       };
       (
         pct,
         goal_needed(target, available, month),
         available >= amount - 1.0,
         label,
-        format!(
-          "{} of {} \u{b7} {}%",
-          fmt_isk(available),
-          fmt_isk(amount),
-          (pct * 100.0).round() as i64
-        ),
+        t!(
+          "wallet.budget.status_goal_progress",
+          available => fmt_isk(available),
+          amount => fmt_isk(amount),
+          pct => (pct * 100.0).round() as i64
+        )
+        .into_owned(),
       )
     }
   };
@@ -1042,7 +1073,7 @@ pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option
     db,
     &NewCategory {
       group_id,
-      name: DEFAULT_CATEGORY_NAME.to_owned(),
+      name: t!("wallet.budget.default_category_name").into_owned(),
       note: None,
       position,
       tone: Some(DEFAULT_TONE.to_owned()),
@@ -1059,7 +1090,7 @@ pub async fn add_group(db: &Database, scope: BudgetScope, position: i64) -> Opti
   budget::create_group(
     db,
     &NewGroup {
-      name: DEFAULT_GROUP_NAME.to_owned(),
+      name: t!("wallet.budget.default_group_name").into_owned(),
       position,
       scope,
     },

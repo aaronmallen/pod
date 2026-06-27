@@ -51,13 +51,13 @@ fn review_banner(state: &State) -> Option<Element<'_, Message>> {
     return None;
   }
   let noun = if count == 1 {
-    "transaction needs"
+    t!("wallet.budget.review_noun_singular").into_owned()
   } else {
-    "transactions need"
+    t!("wallet.budget.review_noun_plural").into_owned()
   };
 
   let review = button(
-    text("Review & assign")
+    text(t!("wallet.budget.review_assign"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(typography::colored(color::status::WARNING)),
@@ -88,12 +88,12 @@ fn review_banner(state: &State) -> Option<Element<'_, Message>> {
 
   let message = Row::with_children(vec![
     color_dot(Some("warning"), 8.0),
-    text(format!("{count} {noun} a category"))
+    text(t!("wallet.budget.review_count", count => count, noun => noun))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("Until assigned, this spending won\u{2019}t show against any envelope.")
+    text(t!("wallet.budget.review_hint"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -129,14 +129,24 @@ fn review_banner(state: &State) -> Option<Element<'_, Message>> {
 fn sub_nav(state: &State) -> Element<'_, Message> {
   let mode = state.budget_mode();
   let toggle = Row::with_children(vec![
-    mode_button("Plan", mode == Mode::Plan, Mode::Plan, true),
-    mode_button("Reflect", mode == Mode::Reflect, Mode::Reflect, false),
+    mode_button(
+      super::i18n::tr_static("wallet.budget.mode_plan"),
+      mode == Mode::Plan,
+      Mode::Plan,
+      true,
+    ),
+    mode_button(
+      super::i18n::tr_static("wallet.budget.mode_reflect"),
+      mode == Mode::Reflect,
+      Mode::Reflect,
+      false,
+    ),
   ])
   .into();
 
   let blurb = match mode {
-    Mode::Plan => "Give every ISK a job",
-    Mode::Reflect => "Look back at where it went",
+    Mode::Plan => t!("wallet.budget.blurb_plan").into_owned(),
+    Mode::Reflect => t!("wallet.budget.blurb_reflect").into_owned(),
   };
 
   let mut row: Vec<Element<'_, Message>> = vec![
@@ -208,7 +218,11 @@ fn mode_button<'a>(label: &'a str, active: bool, mode: Mode, leading: bool) -> E
 }
 
 fn edit_toggle<'a>(edit_mode: bool) -> Element<'a, Message> {
-  let label = if edit_mode { "Done editing" } else { "Edit budget" };
+  let label = if edit_mode {
+    t!("wallet.budget.done_editing").into_owned()
+  } else {
+    t!("wallet.budget.edit_budget").into_owned()
+  };
   let text_color = if edit_mode {
     color::accent::PLASMA
   } else {
@@ -226,7 +240,7 @@ fn edit_toggle<'a>(edit_mode: bool) -> Element<'a, Message> {
   };
 
   button(
-    text(label.to_owned())
+    text(label)
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(text_color)),
@@ -361,21 +375,21 @@ fn ready_hero<'a>(ready: f64) -> Element<'a, Message> {
       color::status::ONLINE,
       color::with_alpha(color::status::ONLINE, 0.10),
       color::with_alpha(color::status::ONLINE, 0.3),
-      "Every ISK has a job. Nothing left idle.",
+      super::i18n::tr_static("wallet.budget.ready_message_zero"),
     )
   } else if positive {
     (
       color::accent::PLASMA,
       color::with_alpha(color::accent::PLASMA, 0.10),
       color::with_alpha(color::accent::PLASMA, 0.3),
-      "Idle ISK earns nothing. Give it a job.",
+      super::i18n::tr_static("wallet.budget.ready_message_positive"),
     )
   } else {
     (
       color::status::DANGER,
       color::with_alpha(color::status::DANGER, 0.12),
       color::with_alpha(color::status::DANGER, 0.35),
-      "You\u{2019}ve assigned more than you hold. Pull some back.",
+      super::i18n::tr_static("wallet.budget.ready_message_negative"),
     )
   };
 
@@ -385,7 +399,7 @@ fn ready_hero<'a>(ready: f64) -> Element<'a, Message> {
       .size(30.0)
       .style(typography::colored(value_color))
       .into(),
-    text(" ISK")
+    text(t!("wallet.budget.isk_suffix"))
       .font(typography::body::MEDIUM)
       .size(16.0)
       .style(typography::colored(color::text::secondary()))
@@ -394,7 +408,7 @@ fn ready_hero<'a>(ready: f64) -> Element<'a, Message> {
   .align_y(Vertical::Bottom);
 
   let left = Column::with_children(vec![
-    crate::ui::components::eyebrow::eyebrow_text("Ready to Assign", None).into(),
+    crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.ready_to_assign"), None).into(),
     amount.into(),
   ])
   .spacing(spacing::UNIT);
@@ -441,7 +455,7 @@ fn hero_message<'a>(message: &'a str) -> Element<'a, Message> {
 
 fn auto_assign_button<'a>() -> Element<'a, Message> {
   button(
-    text("Auto-Assign")
+    text(t!("wallet.budget.auto_assign"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::on_fill(color::accent::PLASMA))),
@@ -467,7 +481,7 @@ fn auto_assign_button<'a>() -> Element<'a, Message> {
 
 fn overspent_button<'a>(overspent: f64) -> Element<'a, Message> {
   let body = Column::with_children(vec![
-    text("Overspent")
+    text(t!("wallet.budget.overspent"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::status::DANGER))
@@ -477,7 +491,7 @@ fn overspent_button<'a>(overspent: f64) -> Element<'a, Message> {
       .size(typography::size::LG)
       .style(typography::colored(color::status::DANGER))
       .into(),
-    text("Click to cover")
+    text(t!("wallet.budget.click_to_cover"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -527,10 +541,10 @@ fn plan_body(state: &State) -> Element<'_, Message> {
 
 fn envelope_table(state: &State) -> Element<'_, Message> {
   let Some(view) = state.budget() else {
-    return empty_table("Loading budget\u{2026}");
+    return empty_table(super::i18n::tr_static("wallet.budget.loading"));
   };
   if view.groups.is_empty() {
-    return empty_table("No budget categories yet.");
+    return empty_table(super::i18n::tr_static("wallet.budget.no_categories"));
   }
 
   let edit_mode = state.budget_edit_mode();
@@ -567,7 +581,7 @@ fn add_category_row<'a>(group_id: i64) -> Element<'a, Message> {
       .size(15.0)
       .style(typography::colored(color::text::secondary()))
       .into(),
-    text("Add category")
+    text(t!("wallet.budget.add_category"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -605,7 +619,7 @@ fn add_group_button<'a>() -> Element<'a, Message> {
       .size(16.0)
       .style(typography::colored(color::text::secondary()))
       .into(),
-    text("New category group")
+    text(t!("wallet.budget.new_category_group"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -649,18 +663,21 @@ fn empty_table(message: &str) -> Element<'_, Message> {
 fn column_heads<'a>() -> Element<'a, Message> {
   let row = Row::with_children(vec![
     Space::new().width(Length::Fixed(DOT_COL)).into(),
-    container(crate::ui::components::eyebrow::eyebrow_text("Category", None))
-      .padding(Padding {
-        top: 0.0,
-        right: 0.0,
-        bottom: 0.0,
-        left: 10.0,
-      })
-      .width(Length::Fill)
-      .into(),
-    head_cell("Assigned", ASSIGNED_COL),
-    head_cell("Activity", ACTIVITY_COL),
-    head_cell("Available", AVAILABLE_COL),
+    container(crate::ui::components::eyebrow::eyebrow_text(
+      super::i18n::tr_static("wallet.budget.col_category"),
+      None,
+    ))
+    .padding(Padding {
+      top: 0.0,
+      right: 0.0,
+      bottom: 0.0,
+      left: 10.0,
+    })
+    .width(Length::Fill)
+    .into(),
+    head_cell(super::i18n::tr_static("wallet.budget.col_assigned"), ASSIGNED_COL),
+    head_cell(super::i18n::tr_static("wallet.budget.col_activity"), ACTIVITY_COL),
+    head_cell(super::i18n::tr_static("wallet.budget.col_available"), AVAILABLE_COL),
   ])
   .align_y(Vertical::Center);
 
@@ -838,7 +855,11 @@ fn group_name_editor<'a>(group: &'a Group, state: &'a State) -> Element<'a, Mess
     .on_submit(Message::BudgetGroupRenameWritten)
     .style(group_name_input_style);
 
-  let delete_label = if pending { "confirm?" } else { "delete" };
+  let delete_label = if pending {
+    t!("wallet.budget.delete_confirm").into_owned()
+  } else {
+    t!("wallet.budget.delete").into_owned()
+  };
   let delete_color = if pending {
     color::status::DANGER
   } else {
@@ -1123,7 +1144,10 @@ fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus, hovered:
   // The "View transactions →" link only reveals on row hover, mirroring the design.
   if hovered {
     head.push(Space::new().width(Length::Fill).into());
-    head.push(view_transactions_link(category.id, "View transactions \u{2192}"));
+    head.push(view_transactions_link(
+      category.id,
+      super::i18n::tr_static("wallet.budget.view_transactions"),
+    ));
   }
 
   let underline = target_bar(status);
@@ -1166,7 +1190,7 @@ fn view_transactions_link<'a>(category_id: i64, label: &'a str) -> Element<'a, M
 
 fn due_pill<'a>(label: &'a str) -> Element<'a, Message> {
   container(
-    text(format!("DUE {label}"))
+    text(t!("wallet.budget.due", label => label))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::status::WARNING)),
@@ -1464,7 +1488,7 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
       .style(typography::colored(color::text::PRIMARY))
       .width(Length::Fill)
       .into(),
-    text(format!("{} avail", crate::ui::format::fmt_isk_full(available)))
+    text(t!("wallet.budget.amount_avail", amount => crate::ui::format::fmt_isk_full(available)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(if available < 0.0 {
@@ -1478,7 +1502,7 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
   .align_y(Vertical::Center);
 
   let header = Column::with_children(vec![
-    eyebrow_label("Move money from"),
+    eyebrow_label(super::i18n::tr_static("wallet.budget.move_money_from")),
     source_label.into(),
     move_amount_field(draft, available, valid).into(),
   ])
@@ -1486,9 +1510,9 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
   .padding(spacing::SPACE_3);
 
   let mut rows: Vec<Element<'a, Message>> = vec![
-    eyebrow_label("To"),
+    eyebrow_label(super::i18n::tr_static("wallet.budget.move_to")),
     move_dest_row(
-      "Ready to Assign",
+      super::i18n::tr_static("wallet.budget.ready_to_assign"),
       color::accent::PLASMA,
       true,
       valid.then_some(Message::BudgetMoveCommitted(MoveDest::ReadyToAssign)),
@@ -1547,7 +1571,7 @@ fn move_all_prefill(available: f64) -> String {
 /// "All" prefills `max(0, available)` so negative available does not seed a
 /// negative transfer.
 fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Message> {
-  let input = text_input("0", draft)
+  let input = text_input(super::i18n::tr_static("wallet.budget.amount_placeholder"), draft)
     .on_input(Message::BudgetMoveAmountChanged)
     .font(typography::mono::MEDIUM)
     .size(typography::size::MD)
@@ -1571,7 +1595,7 @@ fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Me
     });
 
   let all = button(
-    text("All")
+    text(t!("wallet.budget.move_all"))
       .font(typography::mono::MEDIUM)
       .size(typography::size::XS)
       .style(typography::colored(color::text::secondary())),
@@ -1738,7 +1762,7 @@ fn inspector_empty<'a>() -> Element<'a, Message> {
   Column::with_children(vec![
     Icon::budget().size(34.0).color(color::text::tertiary()).render(),
     container(
-      text("Select a category to inspect its target, set funding, and review activity.")
+      text(t!("wallet.budget.inspector_empty"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .align_x(Horizontal::Center)
@@ -1798,13 +1822,13 @@ fn inspector_tab_bar<'a>(state: &'a State, category: &'a Category) -> Element<'a
 
   let tabs = Row::with_children(vec![
     inspector_tab_button(
-      "Detail",
+      super::i18n::tr_static("wallet.budget.tab_detail"),
       None,
       active == budget::InspectorTab::Detail,
       budget::InspectorTab::Detail,
     ),
     inspector_tab_button(
-      "Automation",
+      super::i18n::tr_static("wallet.budget.tab_automation"),
       Some(rule_count),
       active == budget::InspectorTab::Automation,
       budget::InspectorTab::Automation,
@@ -1934,7 +1958,10 @@ fn inspector_header<'a>(
   category: &'a Category,
   status: &budget::TargetStatus,
 ) -> Element<'a, Message> {
-  let note = category.note.clone().unwrap_or_else(|| "No note".to_owned());
+  let note = category
+    .note
+    .clone()
+    .unwrap_or_else(|| t!("wallet.budget.no_note").into_owned());
 
   let mut head: Vec<Element<'a, Message>> = vec![
     color_dot(category.tone.as_deref(), 14.0),
@@ -1969,7 +1996,7 @@ fn inspector_header<'a>(
       .size(28.0)
       .style(typography::colored(available_color))
       .into(),
-    crate::ui::components::eyebrow::eyebrow_text("available", None).into(),
+    crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.available"), None).into(),
   ])
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Bottom);
@@ -2015,7 +2042,7 @@ fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Elemen
         .size(typography::size::MD)
         .style(typography::colored(color::accent::PLASMA))
         .into(),
-      text("Move money")
+      text(t!("wallet.budget.move_money"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::accent::PLASMA))
@@ -2062,7 +2089,7 @@ fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
   button(
     Row::with_children(vec![
       Icon::journal().size(14.0).color(color::text::PRIMARY).render(),
-      text("Transactions")
+      text(t!("wallet.budget.transactions"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::text::PRIMARY))
@@ -2154,13 +2181,16 @@ fn bordered_section<'a>(content: Column<'a, Message>) -> Element<'a, Message> {
 
 fn target_block<'a>(status: &budget::TargetStatus) -> Element<'a, Message> {
   let (state_label, state_color) = match status.state {
-    TargetState::Over => ("Overspent", color::status::DANGER),
-    TargetState::Met => ("Funded", color::status::ONLINE),
-    TargetState::Under => ("Underfunded", color::status::WARNING),
+    TargetState::Over => (t!("wallet.budget.target_overspent").into_owned(), color::status::DANGER),
+    TargetState::Met => (t!("wallet.budget.target_funded").into_owned(), color::status::ONLINE),
+    TargetState::Under => (
+      t!("wallet.budget.target_underfunded").into_owned(),
+      color::status::WARNING,
+    ),
   };
 
   let header = Row::with_children(vec![
-    crate::ui::components::eyebrow::eyebrow_text("Target", None)
+    crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.target"), None)
       .width(Length::Fill)
       .into(),
     text(state_label.to_uppercase())
@@ -2202,7 +2232,7 @@ fn target_block<'a>(status: &budget::TargetStatus) -> Element<'a, Message> {
   ];
   if status.needed > 0.0 {
     footer.push(mono_caption(
-      format!("{} to go", crate::ui::format::fmt_isk(status.needed)),
+      t!("wallet.budget.to_go", amount => crate::ui::format::fmt_isk(status.needed)).into_owned(),
       color::status::WARNING,
       typography::size::XS_PLUS,
     ));
@@ -2234,16 +2264,20 @@ fn this_month_block<'a>(category: &'a Category, status: &budget::TargetStatus) -
 
   let rows = Column::with_children(vec![
     breakdown_row(
-      "Rolled over",
+      super::i18n::tr_static("wallet.budget.rolled_over"),
       crate::ui::format::fmt_isk_full(category.carry),
       color::text::secondary(),
     ),
     breakdown_row(
-      "Assigned",
+      super::i18n::tr_static("wallet.budget.assigned"),
       crate::ui::format::fmt_isk_full(category.assigned),
       color::text::PRIMARY,
     ),
-    breakdown_row("Activity", fmt_signed(category.activity), activity_color),
+    breakdown_row(
+      super::i18n::tr_static("wallet.budget.activity"),
+      fmt_signed(category.activity),
+      activity_color,
+    ),
   ])
   .spacing(spacing::SPACE_2);
 
@@ -2253,7 +2287,7 @@ fn this_month_block<'a>(category: &'a Category, status: &budget::TargetStatus) -
     color::text::PRIMARY
   };
   let total = Row::with_children(vec![
-    crate::ui::components::eyebrow::eyebrow_text("Available", None)
+    crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.col_available"), None)
       .width(Length::Fill)
       .into(),
     text(crate::ui::format::fmt_isk_full(category.available()))
@@ -2266,7 +2300,7 @@ fn this_month_block<'a>(category: &'a Category, status: &budget::TargetStatus) -
 
   bordered_section(
     Column::with_children(vec![
-      crate::ui::components::eyebrow::eyebrow_text("This month", None).into(),
+      crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.this_month"), None).into(),
       rows.into(),
       crate::ui::components::rule::horizontal(),
       total.into(),
@@ -2307,33 +2341,39 @@ fn quick_assign_block<'a>(category: &'a Category, month: &str) -> Element<'a, Me
   if category.status(month).needed > 0.0 {
     suggestions.push(quick_assign_row(
       category.id,
-      "Underfunded",
-      Some("Meet this month\u{2019}s target".to_owned()),
+      super::i18n::tr_static("wallet.budget.quick_underfunded"),
+      Some(t!("wallet.budget.quick_underfunded_hint").into_owned()),
       category.underfunded_assign(month),
     ));
   }
   suggestions.push(quick_assign_row(
     category.id,
-    "Assigned last month",
+    super::i18n::tr_static("wallet.budget.quick_assigned_last"),
     Some(prev),
     category.last_assigned,
   ));
   suggestions.push(quick_assign_row(
     category.id,
-    "Spent last month",
+    super::i18n::tr_static("wallet.budget.quick_spent_last"),
     None,
     category.spent_last,
   ));
   suggestions.push(quick_assign_row(
     category.id,
-    "Average assigned",
-    Some("Trailing 3 months".to_owned()),
+    super::i18n::tr_static("wallet.budget.quick_average"),
+    Some(t!("wallet.budget.quick_average_hint").into_owned()),
     category.avg_assigned,
   ));
-  suggestions.push(quick_assign_row(category.id, "Set to zero", None, 0.0));
+  suggestions.push(quick_assign_row(
+    category.id,
+    super::i18n::tr_static("wallet.budget.quick_set_zero"),
+    None,
+    0.0,
+  ));
 
   Column::with_children(vec![
-    crate::ui::components::eyebrow::eyebrow_text("Auto-assign", None).into(),
+    crate::ui::components::eyebrow::eyebrow_text(super::i18n::tr_static("wallet.budget.auto_assign_eyebrow"), None)
+      .into(),
     Column::with_children(suggestions).spacing(7.0).into(),
   ])
   .spacing(spacing::SPACE_3)
@@ -2392,20 +2432,37 @@ fn quick_assign_row<'a>(category_id: i64, label: &'a str, hint: Option<String>, 
 
 fn category_editor(draft: &CategoryDraft) -> Element<'_, Message> {
   let mut children: Vec<Element<'_, Message>> = vec![
-    editor_field("Name", text_field(&draft.name, "", Message::BudgetEditorNameChanged)),
     editor_field(
-      "Note",
-      text_field(&draft.note, "Optional", Message::BudgetEditorNoteChanged),
+      super::i18n::tr_static("wallet.budget.field_name"),
+      text_field(&draft.name, "", Message::BudgetEditorNameChanged),
     ),
-    editor_field("Colour", tone_picker(draft.tone.as_deref())),
+    editor_field(
+      super::i18n::tr_static("wallet.budget.field_note"),
+      text_field(
+        &draft.note,
+        super::i18n::tr_static("wallet.budget.field_note_placeholder"),
+        Message::BudgetEditorNoteChanged,
+      ),
+    ),
+    editor_field(
+      super::i18n::tr_static("wallet.budget.field_colour"),
+      tone_picker(draft.tone.as_deref()),
+    ),
     crate::ui::components::rule::horizontal(),
-    editor_field("Target type", target_type_picker(draft.target_kind)),
+    editor_field(
+      super::i18n::tr_static("wallet.budget.field_target_type"),
+      target_type_picker(draft.target_kind),
+    ),
     editor_field(draft.target_kind.amount_label(), money_field(&draft.target_amount_text)),
   ];
   if draft.target_kind == TargetKind::GoalBy {
     children.push(editor_field(
-      "By date",
-      text_field(&draft.by_date, "e.g. Jan 2028", Message::BudgetEditorByDateChanged),
+      super::i18n::tr_static("wallet.budget.field_by_date"),
+      text_field(
+        &draft.by_date,
+        super::i18n::tr_static("wallet.budget.field_by_date_placeholder"),
+        Message::BudgetEditorByDateChanged,
+      ),
     ));
   }
   children.push(editor_commit_button());
@@ -2589,7 +2646,7 @@ fn mono_caption_sans<'a>(value: &'a str) -> Element<'a, Message> {
 
 fn editor_commit_button<'a>() -> Element<'a, Message> {
   button(
-    text("Save category")
+    text(t!("wallet.budget.save_category"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::on_fill(color::accent::PLASMA))),
@@ -2656,7 +2713,7 @@ fn automation_tab<'a>(state: &'a State, category: &'a Category) -> Element<'a, M
 
 fn automation_intro<'a>(category: &'a Category) -> Element<'a, Message> {
   let line = Row::with_children(vec![
-    text("Rules file matching spending into")
+    text(t!("wallet.budget.automation_intro_prefix"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -2667,7 +2724,7 @@ fn automation_intro<'a>(category: &'a Category) -> Element<'a, Message> {
       .size(typography::size::SM)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text("automatically. Manual picks always win.")
+    text(t!("wallet.budget.automation_intro_suffix"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -2687,7 +2744,7 @@ fn new_rule_button<'a>(category_id: i64) -> Element<'a, Message> {
         .size(typography::size::LG)
         .style(typography::colored(color::accent::PLASMA))
         .into(),
-      text("New rule")
+      text(t!("wallet.budget.new_rule"))
         .font(typography::body::MEDIUM)
         .size(typography::size::MD)
         .style(typography::colored(color::accent::PLASMA))
@@ -2727,7 +2784,7 @@ fn automation_empty_state<'a>() -> Element<'a, Message> {
   Column::with_children(vec![
     Icon::budget().size(18.0).color(color::text::tertiary()).render(),
     container(
-      text("No rules yet. Add one to stop hand-filing the same kind of transaction into this envelope.")
+      text(t!("wallet.budget.automation_empty"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .align_x(Horizontal::Center)
@@ -2924,7 +2981,11 @@ fn count_pill<'a>(count: usize, enabled: bool) -> Element<'a, Message> {
   } else {
     color::text::tertiary()
   };
-  let label = format!("{count} match{}", if count == 1 { "" } else { "es" });
+  let label = if count == 1 {
+    t!("wallet.budget.count_match_singular", count => count).into_owned()
+  } else {
+    t!("wallet.budget.count_match_plural", count => count).into_owned()
+  };
   container(
     text(label)
       .font(typography::mono::REGULAR)
@@ -2960,7 +3021,7 @@ fn count_pill<'a>(count: usize, enabled: bool) -> Element<'a, Message> {
 fn global_link<'a>(rule_count: usize, total_matched: usize) -> Element<'a, Message> {
   let link = button(
     Row::with_children(vec![
-      text("Manage all rules & priority")
+      text(t!("wallet.budget.manage_all_rules"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .width(Length::Fill)
@@ -2998,11 +3059,22 @@ fn global_link<'a>(rule_count: usize, total_matched: usize) -> Element<'a, Messa
 
   let mut children: Vec<Element<'a, Message>> = vec![link.into()];
   if rule_count > 0 {
-    let summary = format!(
-      "{rule_count} rule{} \u{00b7} {total_matched} transaction{} filed here",
-      if rule_count == 1 { "" } else { "s" },
-      if total_matched == 1 { "" } else { "s" },
-    );
+    let rules_phrase = if rule_count == 1 {
+      t!("wallet.budget.global_rules_singular", count => rule_count).into_owned()
+    } else {
+      t!("wallet.budget.global_rules_plural", count => rule_count).into_owned()
+    };
+    let txns_phrase = if total_matched == 1 {
+      t!("wallet.budget.global_txns_singular", count => total_matched).into_owned()
+    } else {
+      t!("wallet.budget.global_txns_plural", count => total_matched).into_owned()
+    };
+    let summary = t!(
+      "wallet.budget.global_summary",
+      rules => rules_phrase,
+      transactions => txns_phrase
+    )
+    .into_owned();
     children.push(
       container(mono_caption(summary, color::text::tertiary(), 9.5))
         .width(Length::Fill)
@@ -3048,7 +3120,7 @@ fn rule_display_name(state: &State, rule: &Rule) -> String {
     |key| character_name(state, key),
   );
   if suggested.is_empty() {
-    "Untitled rule".to_owned()
+    t!("wallet.budget.untitled_rule").into_owned()
   } else {
     suggested
   }
@@ -3162,13 +3234,20 @@ pub(super) fn global_rules_modal(state: &State) -> Element<'_, Message> {
 }
 
 fn global_rules_header<'a>(rule_count: usize, enabled_count: usize) -> Element<'a, Message> {
-  let summary = format!(
-    "{rule_count} rule{} \u{00b7} {enabled_count} active \u{00b7} drag to set priority",
-    if rule_count == 1 { "" } else { "s" },
-  );
+  let rules_phrase = if rule_count == 1 {
+    t!("wallet.budget.global_rules_singular", count => rule_count).into_owned()
+  } else {
+    t!("wallet.budget.global_rules_plural", count => rule_count).into_owned()
+  };
+  let summary = t!(
+    "wallet.budget.global_header_summary",
+    rules => rules_phrase,
+    active => enabled_count
+  )
+  .into_owned();
 
   let left = Column::with_children(vec![
-    text("Automation rules")
+    text(t!("wallet.budget.automation_rules"))
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
@@ -3233,17 +3312,17 @@ fn global_rules_close_button<'a>() -> Element<'a, Message> {
 
 fn global_rules_note<'a>() -> Element<'a, Message> {
   let line = Row::with_children(vec![
-    text("When a transaction matches more than one rule, the")
+    text(t!("wallet.budget.priority_note_prefix"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
       .into(),
-    text("highest one wins")
+    text(t!("wallet.budget.priority_note_emphasis"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(". Manual assignments override all rules.")
+    text(t!("wallet.budget.priority_note_suffix"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
@@ -3275,7 +3354,7 @@ fn global_rules_note<'a>() -> Element<'a, Message> {
 
 fn global_rules_empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No rules yet. Create one from any budget envelope\u{2019}s Automation tab.")
+    text(t!("wallet.budget.global_rules_empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .align_x(Horizontal::Center)
@@ -3315,7 +3394,7 @@ fn global_rule_row<'a>(state: &'a State, rule: &'a Rule, index: usize, count: us
       .style(typography::colored(color::text::PRIMARY))
       .into(),
     mono_caption(
-      format!("\u{2192} {category_name}"),
+      t!("wallet.budget.files_into", category => category_name).into_owned(),
       color::text::tertiary(),
       typography::size::XS,
     ),
@@ -3428,13 +3507,13 @@ fn global_rule_edit_button<'a>(rule_id: i64) -> Element<'a, Message> {
 
 fn rule_modal_header<'a>(draft: &'a budget::RuleDraft, category: Option<&'a Category>) -> Element<'a, Message> {
   let eyebrow = if draft.rule_id.is_some() {
-    "Edit rule"
+    super::i18n::tr_static("wallet.budget.edit_rule")
   } else {
-    "New rule"
+    super::i18n::tr_static("wallet.budget.new_rule")
   };
 
   let mut title: Vec<Element<'a, Message>> = vec![
-    text("File matches into")
+    text(t!("wallet.budget.file_matches_into"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -3574,18 +3653,21 @@ fn rule_builder<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Element<'
 }
 
 fn rule_search_box<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
-  let input = text_input("e.g. Cerberus, broker fee, Jita\u{2026}", draft.search_value())
-    .font(typography::body::REGULAR)
-    .size(typography::size::MD)
-    .padding(Padding {
-      top: 8.0,
-      right: 11.0,
-      bottom: 8.0,
-      left: 11.0,
-    })
-    .width(Length::Fill)
-    .on_input(Message::BudgetRuleEditorSearchChanged)
-    .style(editor_input_style);
+  let input = text_input(
+    super::i18n::tr_static("wallet.budget.search_placeholder"),
+    draft.search_value(),
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::MD)
+  .padding(Padding {
+    top: 8.0,
+    right: 11.0,
+    bottom: 8.0,
+    left: 11.0,
+  })
+  .width(Length::Fill)
+  .on_input(Message::BudgetRuleEditorSearchChanged)
+  .style(editor_input_style);
 
   let search_row = Row::with_children(vec![
     Icon::search().size(14.0).color(color::text::secondary()).render(),
@@ -3595,7 +3677,7 @@ fn rule_search_box<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
   .align_y(Vertical::Center);
 
   let caption = Row::with_children(vec![
-    text("Searches reference, party, location & item.")
+    text(t!("wallet.budget.search_caption"))
       .font(typography::body::REGULAR)
       .size(typography::size::XS_PLUS)
       .width(Length::Fill)
@@ -3606,7 +3688,7 @@ fn rule_search_box<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
   .align_y(Vertical::Center);
 
   Column::with_children(vec![
-    eyebrow_label("Match transactions containing"),
+    eyebrow_label(super::i18n::tr_static("wallet.budget.match_containing")),
     search_row.into(),
     caption.into(),
   ])
@@ -3621,7 +3703,11 @@ fn advanced_toggle<'a>(advanced: bool) -> Element<'a, Message> {
   } else {
     color::text::secondary()
   };
-  let label = if advanced { "Hide advanced" } else { "Add conditions" };
+  let label = if advanced {
+    t!("wallet.budget.hide_advanced")
+  } else {
+    t!("wallet.budget.add_conditions")
+  };
   button(
     text(label)
       .font(typography::mono::REGULAR)
@@ -3639,13 +3725,13 @@ fn advanced_toggle<'a>(advanced: bool) -> Element<'a, Message> {
 
 fn rule_advanced_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Element<'a, Message> {
   let mode_row = Row::with_children(vec![
-    text("Match")
+    text(t!("wallet.budget.match_label"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
       .into(),
     match_mode_segment(draft.match_mode),
-    text("of these conditions")
+    text(t!("wallet.budget.of_these_conditions"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))
@@ -3669,7 +3755,7 @@ fn rule_advanced_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> El
         .size(typography::size::MD)
         .style(typography::colored(color::text::secondary()))
         .into(),
-      text("Add condition")
+      text(t!("wallet.budget.add_condition"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -3800,14 +3886,14 @@ fn condition_value_editor<'a>(
     engine::FieldKind::Type => value_select(
       index,
       condition.value(),
-      "Select type\u{2026}",
+      super::i18n::tr_static("wallet.budget.select_type"),
       rule_type_options(state),
       open,
     ),
     engine::FieldKind::Character => value_select(
       index,
       condition.value(),
-      "Select character\u{2026}",
+      super::i18n::tr_static("wallet.budget.select_character"),
       rule_character_options(state),
       open,
     ),
@@ -3828,23 +3914,26 @@ fn condition_value_editor<'a>(
 }
 
 fn condition_text_input<'a>(index: usize, value: &'a str) -> Element<'a, Message> {
-  text_input("e.g. Cerberus", value)
-    .font(typography::body::REGULAR)
-    .size(typography::size::MD)
-    .padding(Padding {
-      top: 7.0,
-      right: 10.0,
-      bottom: 7.0,
-      left: 10.0,
-    })
-    .width(Length::Fill)
-    .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
-    .style(editor_input_style)
-    .into()
+  text_input(
+    super::i18n::tr_static("wallet.budget.condition_text_placeholder"),
+    value,
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::MD)
+  .padding(Padding {
+    top: 7.0,
+    right: 10.0,
+    bottom: 7.0,
+    left: 10.0,
+  })
+  .width(Length::Fill)
+  .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
+  .style(editor_input_style)
+  .into()
 }
 
 fn amount_value_input<'a>(index: usize, value: &'a str) -> Element<'a, Message> {
-  text_input("100M", value)
+  text_input(super::i18n::tr_static("wallet.budget.amount_example_lower"), value)
     .font(typography::mono::REGULAR)
     .size(typography::size::MD)
     .padding(Padding {
@@ -3861,33 +3950,39 @@ fn amount_value_input<'a>(index: usize, value: &'a str) -> Element<'a, Message> 
 }
 
 fn amount_between_editor<'a>(index: usize, condition: &'a crate::store::model::RuleCondition) -> Element<'a, Message> {
-  let lower = text_input("100M", condition.value())
-    .font(typography::mono::REGULAR)
-    .size(typography::size::MD)
-    .padding(Padding {
-      top: 7.0,
-      right: 10.0,
-      bottom: 7.0,
-      left: 10.0,
-    })
-    .width(Length::Fill)
-    .align_x(Horizontal::Right)
-    .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
-    .style(editor_input_style);
+  let lower = text_input(
+    super::i18n::tr_static("wallet.budget.amount_example_lower"),
+    condition.value(),
+  )
+  .font(typography::mono::REGULAR)
+  .size(typography::size::MD)
+  .padding(Padding {
+    top: 7.0,
+    right: 10.0,
+    bottom: 7.0,
+    left: 10.0,
+  })
+  .width(Length::Fill)
+  .align_x(Horizontal::Right)
+  .on_input(move |value| Message::BudgetRuleConditionValueChanged(index, value))
+  .style(editor_input_style);
 
-  let upper = text_input("1B", condition.value2().as_deref().unwrap_or(""))
-    .font(typography::mono::REGULAR)
-    .size(typography::size::MD)
-    .padding(Padding {
-      top: 7.0,
-      right: 10.0,
-      bottom: 7.0,
-      left: 10.0,
-    })
-    .width(Length::Fill)
-    .align_x(Horizontal::Right)
-    .on_input(move |value| Message::BudgetRuleConditionValue2Changed(index, value))
-    .style(editor_input_style);
+  let upper = text_input(
+    super::i18n::tr_static("wallet.budget.amount_example_upper"),
+    condition.value2().as_deref().unwrap_or(""),
+  )
+  .font(typography::mono::REGULAR)
+  .size(typography::size::MD)
+  .padding(Padding {
+    top: 7.0,
+    right: 10.0,
+    bottom: 7.0,
+    left: 10.0,
+  })
+  .width(Length::Fill)
+  .align_x(Horizontal::Right)
+  .on_input(move |value| Message::BudgetRuleConditionValue2Changed(index, value))
+  .style(editor_input_style);
 
   Row::with_children(vec![
     lower.into(),
@@ -3973,7 +4068,7 @@ fn rule_name_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Elemen
     draft.name.clone()
   };
   let placeholder = if suggestion.is_empty() {
-    "Name this rule".to_owned()
+    t!("wallet.budget.name_this_rule").into_owned()
   } else {
     suggestion
   };
@@ -3992,9 +4087,12 @@ fn rule_name_block<'a>(state: &'a State, draft: &'a budget::RuleDraft) -> Elemen
     .style(editor_input_style);
 
   container(
-    Column::with_children(vec![eyebrow_label("Rule name"), input.into()])
-      .spacing(8.0)
-      .width(Length::Fill),
+    Column::with_children(vec![
+      eyebrow_label(super::i18n::tr_static("wallet.budget.rule_name")),
+      input.into(),
+    ])
+    .spacing(8.0)
+    .width(Length::Fill),
   )
   .width(Length::Fill)
   .padding(Padding {
@@ -4041,20 +4139,27 @@ fn rule_preview<'a>(
       .size(26.0)
       .style(typography::colored(count_color))
       .into(),
-    text(if rows.len() == 1 { "match" } else { "matches" })
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
+    text(if rows.len() == 1 {
+      t!("wallet.budget.preview_match_singular")
+    } else {
+      t!("wallet.budget.preview_match_plural")
+    })
+    .font(typography::body::REGULAR)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::secondary()))
+    .into(),
   ])
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Bottom);
 
-  let mut head: Vec<Element<'a, Message>> = vec![eyebrow_label("Live preview"), count_row.into()];
+  let mut head: Vec<Element<'a, Message>> = vec![
+    eyebrow_label(super::i18n::tr_static("wallet.budget.live_preview")),
+    count_row.into(),
+  ];
   if active_conditions {
     let name = category.map(|category| category.name.clone()).unwrap_or_default();
     head.push(mono_caption(
-      format!("{will_assign} will file into {name}"),
+      t!("wallet.budget.will_file_into", count => will_assign, name => name).into_owned(),
       if will_assign > 0 {
         color::status::ONLINE
       } else {
@@ -4082,9 +4187,9 @@ fn rule_preview<'a>(
     });
 
   let list: Element<'a, Message> = if !active_conditions {
-    preview_empty("Type a search or add a condition to see which transactions this rule catches.")
+    preview_empty(super::i18n::tr_static("wallet.budget.preview_empty_no_conditions"))
   } else if rows.is_empty() {
-    preview_empty("No spending matches yet. It\u{2019}ll still file matching transactions as they arrive.")
+    preview_empty(super::i18n::tr_static("wallet.budget.preview_empty_no_matches"))
   } else {
     let cards = rows
       .iter()
@@ -4183,10 +4288,22 @@ fn preview_row<'a>(target: &engine::MatchTarget, status: engine::PreviewStatus) 
 
 fn preview_status_chip(status: engine::PreviewStatus) -> (&'static str, Color) {
   match status {
-    engine::PreviewStatus::Already => ("Already here", color::text::secondary()),
-    engine::PreviewStatus::Assign => ("Will file here", color::status::ONLINE),
-    engine::PreviewStatus::Manual => ("Manual, kept", color::status::WARNING),
-    engine::PreviewStatus::Preempted => ("Higher rule wins", color::accent::PLASMA),
+    engine::PreviewStatus::Already => (
+      super::i18n::tr_static("wallet.budget.preview_already"),
+      color::text::secondary(),
+    ),
+    engine::PreviewStatus::Assign => (
+      super::i18n::tr_static("wallet.budget.preview_will_file"),
+      color::status::ONLINE,
+    ),
+    engine::PreviewStatus::Manual => (
+      super::i18n::tr_static("wallet.budget.preview_manual"),
+      color::status::WARNING,
+    ),
+    engine::PreviewStatus::Preempted => (
+      super::i18n::tr_static("wallet.budget.preview_preempted"),
+      color::accent::PLASMA,
+    ),
   }
 }
 
@@ -4218,13 +4335,13 @@ fn status_chip<'a>(label: &'a str, tint: Color) -> Element<'a, Message> {
 fn rule_modal_footer<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
   let can_save = draft.conditions.iter().any(engine::is_active_condition);
   let save_label = if draft.rule_id.is_some() {
-    "Save rule"
+    super::i18n::tr_static("wallet.budget.save_rule")
   } else {
-    "Create rule"
+    super::i18n::tr_static("wallet.budget.create_rule")
   };
 
   let footer = Row::with_children(vec![
-    text("Applies to matching past transactions and everything new. Manual assignments are never overridden.")
+    text(t!("wallet.budget.rule_footer"))
       .font(typography::body::REGULAR)
       .size(typography::size::XS_PLUS)
       .width(Length::Fill)
@@ -4258,7 +4375,7 @@ fn rule_modal_footer<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
 
 fn cancel_button<'a>() -> Element<'a, Message> {
   button(
-    text("Cancel")
+    text(t!("wallet.budget.cancel"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),
@@ -4455,7 +4572,10 @@ fn anchored_option<'a>(label: &str, selected: bool, on_press: Message) -> Elemen
 }
 
 fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
-  let segments = [(MatchMode::All, "ALL"), (MatchMode::Any, "ANY")];
+  let segments = [
+    (MatchMode::All, super::i18n::tr_static("wallet.budget.match_mode_all")),
+    (MatchMode::Any, super::i18n::tr_static("wallet.budget.match_mode_any")),
+  ];
   let buttons = segments
     .into_iter()
     .map(|(mode, label)| {

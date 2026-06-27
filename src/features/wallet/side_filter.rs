@@ -23,9 +23,9 @@ impl Side {
 
   pub fn label(self) -> &'static str {
     match self {
-      Side::All => "All",
-      Side::Buy => "Buy",
-      Side::Sell => "Sell",
+      Side::All => super::i18n::tr_static("wallet.side.all"),
+      Side::Buy => super::i18n::tr_static("wallet.side.buy"),
+      Side::Sell => super::i18n::tr_static("wallet.side.sell"),
     }
   }
 }

@@ -839,11 +839,13 @@ pub fn suggest_name(
   match condition.field() {
     RuleField::Type => type_label(condition.value()).unwrap_or_else(|| condition.value().clone()),
     RuleField::Character => character_name(condition.value()).unwrap_or_else(|| condition.value().clone()),
-    RuleField::Amount => format!("Amount {} {}", op_label(condition.op()), condition.value()),
+    RuleField::Amount => {
+      t!("wallet.budget.suggest_amount", op => op_label(condition.op()), value => condition.value()).into_owned()
+    }
     RuleField::Direction => if condition.value() == DIRECTION_IN {
-      "Inflows"
+      super::i18n::tr_static("wallet.budget.suggest_inflows")
     } else {
-      "Outflows"
+      super::i18n::tr_static("wallet.budget.suggest_outflows")
     }
     .to_owned(),
     _ => condition.value().clone(),
@@ -888,28 +890,28 @@ pub fn journal_match_text(ref_type: &str, reason: Option<&str>, description: &st
 
 pub fn op_label(op: RuleOp) -> &'static str {
   match op {
-    RuleOp::Between => "is between",
-    RuleOp::Contains => "contains",
-    RuleOp::GreaterThan => "is over",
-    RuleOp::Is => "is",
-    RuleOp::IsNot => "is not",
-    RuleOp::LessThan => "is under",
-    RuleOp::NotContains => "does not contain",
-    RuleOp::StartsWith => "starts with",
+    RuleOp::Between => super::i18n::tr_static("wallet.budget.op_between"),
+    RuleOp::Contains => super::i18n::tr_static("wallet.budget.op_contains"),
+    RuleOp::GreaterThan => super::i18n::tr_static("wallet.budget.op_over"),
+    RuleOp::Is => super::i18n::tr_static("wallet.budget.op_is"),
+    RuleOp::IsNot => super::i18n::tr_static("wallet.budget.op_is_not"),
+    RuleOp::LessThan => super::i18n::tr_static("wallet.budget.op_under"),
+    RuleOp::NotContains => super::i18n::tr_static("wallet.budget.op_not_contains"),
+    RuleOp::StartsWith => super::i18n::tr_static("wallet.budget.op_starts_with"),
   }
 }
 
 pub fn field_label(field: RuleField) -> &'static str {
   match field {
-    RuleField::Amount => "Amount",
-    RuleField::Character => "Character",
-    RuleField::Direction => "Direction",
-    RuleField::Item => "Item",
-    RuleField::Location => "Location",
-    RuleField::Party => "Party",
-    RuleField::Reference => "Reference",
-    RuleField::Text => "Any text",
-    RuleField::Type => "Type",
+    RuleField::Amount => super::i18n::tr_static("wallet.budget.field_amount"),
+    RuleField::Character => super::i18n::tr_static("wallet.budget.field_character"),
+    RuleField::Direction => super::i18n::tr_static("wallet.budget.field_direction"),
+    RuleField::Item => super::i18n::tr_static("wallet.budget.field_item"),
+    RuleField::Location => super::i18n::tr_static("wallet.budget.field_location"),
+    RuleField::Party => super::i18n::tr_static("wallet.budget.field_party"),
+    RuleField::Reference => super::i18n::tr_static("wallet.budget.field_reference"),
+    RuleField::Text => super::i18n::tr_static("wallet.budget.field_any_text"),
+    RuleField::Type => super::i18n::tr_static("wallet.budget.field_type"),
   }
 }
 
@@ -985,7 +987,10 @@ pub fn new_condition(field: RuleField) -> RuleCondition {
 
 /// The two direction options, as `(stored value, label)` pairs.
 pub fn direction_options() -> [(&'static str, &'static str); 2] {
-  [(DIRECTION_OUT, "Outflow (spend)"), (DIRECTION_IN, "Inflow (income)")]
+  [
+    (DIRECTION_OUT, super::i18n::tr_static("wallet.budget.direction_outflow")),
+    (DIRECTION_IN, super::i18n::tr_static("wallet.budget.direction_inflow")),
+  ]
 }
 
 /// A one-line human summary of a rule's active conditions, joined by "and"/"or"
@@ -1005,11 +1010,11 @@ pub fn summarize_rule(
     .map(|c| condition_text(c, &type_label, &character_name))
     .collect();
   if parts.is_empty() {
-    return "No conditions yet".to_owned();
+    return t!("wallet.budget.summary_no_conditions").into_owned();
   }
   let joiner = match rule.match_mode() {
-    MatchMode::Any => " or ",
-    MatchMode::All => " and ",
+    MatchMode::Any => super::i18n::tr_static("wallet.budget.summary_join_or"),
+    MatchMode::All => super::i18n::tr_static("wallet.budget.summary_join_and"),
   };
   parts.join(joiner)
 }
@@ -1022,30 +1027,37 @@ fn condition_text(
   let op = op_label(condition.op());
   match condition.field() {
     RuleField::Amount => match condition.op() {
-      RuleOp::Between => format!(
-        "Amount is between {} and {}",
-        condition.value(),
-        condition.value2().as_deref().unwrap_or("")
-      ),
-      _ => format!("Amount {op} {}", condition.value()),
+      RuleOp::Between => t!(
+        "wallet.budget.condition_amount_between",
+        low => condition.value(),
+        high => condition.value2().as_deref().unwrap_or("")
+      )
+      .into_owned(),
+      _ => t!("wallet.budget.condition_amount", op => op, value => condition.value()).into_owned(),
     },
     RuleField::Direction => {
       let value = if condition.value() == DIRECTION_IN {
-        "inflow"
+        super::i18n::tr_static("wallet.budget.condition_direction_inflow")
       } else {
-        "outflow"
+        super::i18n::tr_static("wallet.budget.condition_direction_outflow")
       };
-      format!("Direction is {value}")
+      t!("wallet.budget.condition_direction", value => value).into_owned()
     }
     RuleField::Type => {
       let value = type_label(condition.value()).unwrap_or_else(|| condition.value().clone());
-      format!("Type {op} {value}")
+      t!("wallet.budget.condition_type", op => op, value => value).into_owned()
     }
     RuleField::Character => {
       let value = character_name(condition.value()).unwrap_or_else(|| condition.value().clone());
-      format!("Character {op} {value}")
+      t!("wallet.budget.condition_character", op => op, value => value).into_owned()
     }
-    field => format!("{} {op} \u{201c}{}\u{201d}", field_label(field), condition.value()),
+    field => t!(
+      "wallet.budget.condition_field",
+      field => field_label(field),
+      op => op,
+      value => condition.value()
+    )
+    .into_owned(),
   }
 }
 

@@ -39,12 +39,22 @@ pub(super) fn header(state: &State, now: DateTime<Utc>) -> Element<'_, Message> 
   let left: Vec<Element<'_, Message>> = vec![
     scope_picker(state),
     header_divider(),
-    stat_block("Liquid ISK", fmt_isk(liquid), color::text::PRIMARY, None),
-    header_divider(),
-    stat_block("Net worth · est.", fmt_isk(net_worth), color::text::PRIMARY, None),
+    stat_block(
+      super::i18n::tr_static("wallet.header.liquid_isk"),
+      fmt_isk(liquid),
+      color::text::PRIMARY,
+      None,
+    ),
     header_divider(),
     stat_block(
-      &format!("Change · {}", state.timeframe().label()),
+      super::i18n::tr_static("wallet.header.net_worth"),
+      fmt_isk(net_worth),
+      color::text::PRIMARY,
+      None,
+    ),
+    header_divider(),
+    stat_block(
+      &t!("wallet.header.change", label => state.timeframe().label()),
       change_text,
       change_color,
       None,
@@ -62,8 +72,8 @@ fn trigger(state: &State) -> Element<'_, Message> {
   match state.active() {
     Scope::All => trigger_badge_identity(
       Icon::wallet(),
-      "All Wallets",
-      format!("{} characters combined", state.roster.len()),
+      t!("wallet.header.all_wallets").into_owned(),
+      t!("wallet.header.characters_combined", count => state.roster.len()).into_owned(),
     ),
     Scope::Character(id) => match state.roster.iter().find(|pilot| pilot.id == id) {
       Some(pilot) => trigger_identity(
@@ -75,7 +85,7 @@ fn trigger(state: &State) -> Element<'_, Message> {
           path: pilot.portrait.path(),
         }),
       ),
-      None => trigger_identity("Character", String::new(), None),
+      None => trigger_identity(t!("wallet.header.character").into_owned(), String::new(), None),
     },
     Scope::Corporation(id) => match state.corporations.iter().find(|corp| corp.id == id) {
       Some(corp) => trigger_identity(
@@ -87,7 +97,7 @@ fn trigger(state: &State) -> Element<'_, Message> {
           path: corp.logo.path(),
         }),
       ),
-      None => trigger_identity("Corporation", String::new(), None),
+      None => trigger_identity(t!("wallet.header.corporation").into_owned(), String::new(), None),
     },
   }
 }
@@ -102,14 +112,14 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 
   if !state.roster.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Characters".to_owned()),
+      title: Some(t!("wallet.header.characters").into_owned()),
       items: state.roster.iter().map(|pilot| character_row(state, pilot)).collect(),
     });
   }
 
   if !state.corporations.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Corporations".to_owned()),
+      title: Some(t!("wallet.header.corporations").into_owned()),
       items: state.corporations.iter().map(|corp| corp_row(state, corp)).collect(),
     });
   }
@@ -118,11 +128,12 @@ pub(super) fn picker_dropdown(state: &State) -> Element<'_, Message> {
 }
 
 fn all_wallets_row(state: &State) -> Element<'_, Message> {
-  let label = format!(
-    "All Wallets  ·  {} ISK  ·  {} characters",
-    fmt_isk(super::combined_liquid(state)),
-    state.roster.len()
-  );
+  let label = t!(
+    "wallet.header.all_wallets_row",
+    isk => fmt_isk(super::combined_liquid(state)),
+    count => state.roster.len(),
+  )
+  .into_owned();
   picker_row(
     label,
     matches!(state.active(), Scope::All),
@@ -136,7 +147,7 @@ fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Me
     .iter()
     .find(|row| row.character_id == pilot.id)
     .and_then(|row| row.liquid);
-  let sub = format!("{}  ·  {} ISK", pilot.corp, fmt_isk(liquid));
+  let sub = t!("wallet.header.character_row", corp => pilot.corp, isk => fmt_isk(liquid)).into_owned();
   let required_scopes = registry::descriptor(Feature::Wallet).scopes;
   let needs_reauth = roster::needs_reauthorization(pilot.granted_scopes.as_deref(), required_scopes);
   picker_character_row(

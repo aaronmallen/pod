@@ -5,6 +5,7 @@ mod budget_view;
 pub(crate) mod contract_detail;
 mod header;
 mod hero;
+mod i18n;
 mod loaders;
 pub(crate) mod selection;
 mod shell;
@@ -86,7 +87,7 @@ impl CorpDivision {
     self
       .name
       .clone()
-      .unwrap_or_else(|| format!("Division {}", self.division))
+      .unwrap_or_else(|| t!("wallet.wallets.division", n => self.division).into_owned())
   }
 }
 
@@ -1220,11 +1221,11 @@ impl Timeframe {
 
   pub fn label(self) -> &'static str {
     match self {
-      Timeframe::HalfYear => "6M",
-      Timeframe::Month => "1M",
-      Timeframe::Quarter => "3M",
-      Timeframe::Week => "1W",
-      Timeframe::Year => "1Y",
+      Timeframe::HalfYear => i18n::tr_static("wallet.hero.timeframe_half_year"),
+      Timeframe::Month => i18n::tr_static("wallet.hero.timeframe_month"),
+      Timeframe::Quarter => i18n::tr_static("wallet.hero.timeframe_quarter"),
+      Timeframe::Week => i18n::tr_static("wallet.hero.timeframe_week"),
+      Timeframe::Year => i18n::tr_static("wallet.hero.timeframe_year"),
     }
   }
 }
@@ -1726,7 +1727,7 @@ fn budget_effective_rule_name(state: &State, draft: &budget::RuleDraft) -> Strin
     |key| budget_character_name(state, key),
   );
   if suggested.trim().is_empty() {
-    "Untitled rule".to_owned()
+    t!("wallet.budget.rule_untitled").into_owned()
   } else {
     suggested
   }

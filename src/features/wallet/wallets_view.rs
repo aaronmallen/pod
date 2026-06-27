@@ -173,23 +173,23 @@ fn personal_section(state: &State, sort: WalletSort) -> Section {
   let subtotal = rows.iter().map(|row| row.balance).sum();
 
   Section {
-    caption: Some("Liquid ISK across your pilots".to_owned()),
+    caption: Some(t!("wallet.wallets.personal_caption").into_owned()),
     key: PERSONAL_SECTION_KEY.to_owned(),
     personal: true,
     pinnable: false,
     rows,
     subtotal,
     swatch: SectionSwatch::Personal,
-    title: "Personal Wallets".to_owned(),
+    title: t!("wallet.wallets.personal_title").into_owned(),
   }
 }
 
 fn single_pilot_section(pilot: &RosterPilot) -> Section {
   let balance = pilot.liquid.unwrap_or(0.0);
   let caption = if pilot.corp.is_empty() {
-    "Personal wallet".to_owned()
+    t!("wallet.wallets.personal_wallet").into_owned()
   } else {
-    format!("{} \u{00b7} personal wallet", pilot.corp)
+    t!("wallet.wallets.personal_wallet_with_corp", corp => pilot.corp).into_owned()
   };
 
   Section {
@@ -200,8 +200,8 @@ fn single_pilot_section(pilot: &RosterPilot) -> Section {
     rows: vec![RowData {
       balance,
       indent: false,
-      name: "Master Wallet".to_owned(),
-      sub: Some("Personal \u{00b7} liquid ISK".to_owned()),
+      name: t!("wallet.wallets.master_wallet").into_owned(),
+      sub: Some(t!("wallet.wallets.personal_liquid").into_owned()),
       swatch: None,
     }],
     subtotal: balance,
@@ -242,20 +242,18 @@ fn corp_section(section: &CorpWalletSection, sort: WalletSort) -> Section {
 
 fn corp_caption(section: &CorpWalletSection) -> String {
   match (section.granted_by.as_deref(), section.role.as_deref()) {
-    (Some(name), Some(role)) => {
-      format!("Corporation wallet \u{00b7} via {name} \u{00b7} {role}")
-    }
-    (Some(name), None) => format!("Corporation wallet \u{00b7} via {name}"),
-    _ => "Corporation wallet".to_owned(),
+    (Some(name), Some(role)) => t!("wallet.wallets.corp_caption_via_role", name => name, role => role).into_owned(),
+    (Some(name), None) => t!("wallet.wallets.corp_caption_via", name => name).into_owned(),
+    _ => t!("wallet.wallets.corp_caption").into_owned(),
   }
 }
 
 fn division_label(division: &CorpDivision) -> String {
   division.name.clone().unwrap_or_else(|| match division.division {
-    1 => "Master Wallet".to_owned(),
-    2 => "2nd Wallet".to_owned(),
-    3 => "3rd Wallet".to_owned(),
-    other => format!("{other}th Wallet"),
+    1 => t!("wallet.wallets.master_wallet").into_owned(),
+    2 => t!("wallet.wallets.division_2nd").into_owned(),
+    3 => t!("wallet.wallets.division_3rd").into_owned(),
+    other => t!("wallet.wallets.division_nth", n => other).into_owned(),
   })
 }
 
@@ -273,7 +271,7 @@ fn toolbar<'a>(
   show_first_corps: bool,
 ) -> Element<'a, Message> {
   let showing = Row::with_children(vec![
-    eyebrow_text("Showing", None).into(),
+    eyebrow_text(super::i18n::tr_static("wallet.wallets.showing"), None).into(),
     text(context)
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
@@ -285,21 +283,24 @@ fn toolbar<'a>(
 
   let sort_toggle = segmented_frame(vec![
     sort_button(
-      "High \u{2192} Low",
+      super::i18n::tr_static("wallet.wallets.sort_high_low"),
       sort == WalletSort::Descending,
       WalletSort::Descending,
     ),
     segment_divider(),
     sort_button(
-      "Low \u{2192} High",
+      super::i18n::tr_static("wallet.wallets.sort_low_high"),
       sort == WalletSort::Ascending,
       WalletSort::Ascending,
     ),
   ]);
 
-  let sort_group = Row::with_children(vec![eyebrow_text("Sort", None).into(), sort_toggle])
-    .spacing(spacing::SPACE_2_5)
-    .align_y(Vertical::Center);
+  let sort_group = Row::with_children(vec![
+    eyebrow_text(super::i18n::tr_static("wallet.wallets.sort"), None).into(),
+    sort_toggle,
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center);
 
   let mut controls: Vec<Element<'a, Message>> = vec![showing.into(), Space::new().width(Length::Fill).into()];
   if show_group_order {
@@ -328,20 +329,31 @@ fn context_label(state: &State, sections: &[Section]) -> String {
     Scope::All => {
       let pilots = state.roster().len();
       let corps = state.wallet_sections().len();
-      format!(
-        "All wallets \u{00b7} {pilots} {} + {corps} corp {}",
-        plural(pilots, "pilot", "pilots"),
-        plural(corps, "wallet", "wallets"),
+      t!(
+        "wallet.wallets.context_all",
+        pilots => pilots,
+        pilot_word => plural(
+          pilots,
+          super::i18n::tr_static("wallet.wallets.pilot_singular"),
+          super::i18n::tr_static("wallet.wallets.pilot_plural"),
+        ),
+        corps => corps,
+        wallet_word => plural(
+          corps,
+          super::i18n::tr_static("wallet.wallets.wallet_singular"),
+          super::i18n::tr_static("wallet.wallets.wallet_plural"),
+        )
       )
+      .into_owned()
     }
     Scope::Character(_) => sections
       .first()
-      .map(|section| format!("{} \u{00b7} personal wallet", section.title))
-      .unwrap_or_else(|| "Personal wallet".to_owned()),
+      .map(|section| t!("wallet.wallets.context_personal", name => section.title).into_owned())
+      .unwrap_or_else(|| t!("wallet.wallets.personal_wallet").into_owned()),
     Scope::Corporation(_) => sections
       .first()
-      .map(|section| format!("{} \u{00b7} corporation wallet", section.title))
-      .unwrap_or_else(|| "Corporation wallet".to_owned()),
+      .map(|section| t!("wallet.wallets.context_corporation", name => section.title).into_owned())
+      .unwrap_or_else(|| t!("wallet.wallets.corp_caption").into_owned()),
   }
 }
 
@@ -365,15 +377,22 @@ fn group_order_button<'a>(label: &'a str, active: bool, show_first_corps: bool) 
 
 fn group_order_group<'a>(show_first_corps: bool) -> Element<'a, Message> {
   let toggle = segmented_frame(vec![
-    group_order_button("Pilots", !show_first_corps, false),
+    group_order_button(
+      super::i18n::tr_static("wallet.wallets.pilots"),
+      !show_first_corps,
+      false,
+    ),
     segment_divider(),
-    group_order_button("Corps", show_first_corps, true),
+    group_order_button(super::i18n::tr_static("wallet.wallets.corps"), show_first_corps, true),
   ]);
 
-  Row::with_children(vec![eyebrow_text("Show first", None).into(), toggle])
-    .spacing(spacing::SPACE_2_5)
-    .align_y(Vertical::Center)
-    .into()
+  Row::with_children(vec![
+    eyebrow_text(super::i18n::tr_static("wallet.wallets.show_first"), None).into(),
+    toggle,
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Center)
+  .into()
 }
 
 fn segment_divider<'a>() -> Element<'a, Message> {
@@ -451,9 +470,21 @@ fn pilot_hero<'a>(pilot: &RosterPilot, composition: Composition) -> Element<'a, 
   .spacing(spacing::UNIT);
 
   let stats = Row::with_children(vec![
-    hero_stat("Liquid \u{00b7} master wallet", liquid, color::text::PRIMARY),
-    hero_stat("Assets \u{00b7} est.", assets, color::text::secondary()),
-    hero_stat("Net worth", net_worth, color::text::PRIMARY),
+    hero_stat(
+      super::i18n::tr_static("wallet.wallets.hero_liquid"),
+      liquid,
+      color::text::PRIMARY,
+    ),
+    hero_stat(
+      super::i18n::tr_static("wallet.wallets.hero_assets"),
+      assets,
+      color::text::secondary(),
+    ),
+    hero_stat(
+      super::i18n::tr_static("wallet.wallets.hero_net_worth"),
+      net_worth,
+      color::text::PRIMARY,
+    ),
   ])
   .spacing(spacing::SPACE_6);
 
@@ -552,7 +583,7 @@ fn pin_button<'a>(key: String, pinned: bool) -> Element<'a, Message> {
     vec![Icon::tack().size(15.0).color(tint).rotation(Radians(rotation)).render()];
   if pinned {
     content.push(
-      text("Pinned")
+      text(t!("wallet.wallets.pinned"))
         .font(typography::mono::MEDIUM)
         .size(typography::size::XS)
         .style(typography::colored(color::accent::PLASMA))
@@ -624,11 +655,19 @@ fn section_head<'a>(
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(format!("{count} {}", plural(count, "WALLET", "WALLETS")))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
+    text(t!(
+      "wallet.wallets.wallet_count",
+      count => count,
+      word => plural(
+        count,
+        super::i18n::tr_static("wallet.wallets.wallet_unit_singular"),
+        super::i18n::tr_static("wallet.wallets.wallet_unit_plural"),
+      )
+    ))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()))
+    .into(),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center);
@@ -645,7 +684,7 @@ fn section_head<'a>(
   }
 
   let subtotal = Column::with_children(vec![
-    eyebrow_text("Subtotal", None).into(),
+    eyebrow_text(super::i18n::tr_static("wallet.wallets.subtotal"), None).into(),
     isk_amount(subtotal, 16.0, color::accent::PLASMA),
   ])
   .spacing(spacing::UNIT)
@@ -846,7 +885,7 @@ fn isk_amount<'a>(value: f64, size: f32, value_color: Color) -> Element<'a, Mess
       .size(size)
       .style(typography::colored(value_color))
       .into(),
-    text(" ISK")
+    text(t!("wallet.wallets.isk_suffix"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
@@ -859,7 +898,7 @@ fn isk_amount<'a>(value: f64, size: f32, value_color: Color) -> Element<'a, Mess
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No wallets to show yet \u{2014} sync populates balances.")
+    text(t!("wallet.wallets.empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),

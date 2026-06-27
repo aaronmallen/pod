@@ -107,7 +107,7 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let arrow = if up { Icon::chevron_up() } else { Icon::chevron_down() };
 
   let label = Row::with_children(vec![
-    eyebrow_text("Net worth", None).into(),
+    eyebrow_text(super::i18n::tr_static("wallet.hero.net_worth"), None).into(),
     eyebrow_text(scope_suffix(state), Some(color::text::tertiary())).into(),
   ])
   .spacing(spacing::SPACE_2)
@@ -169,9 +169,21 @@ fn collapsed_hero(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   });
 
   let splits = Row::with_children(vec![
-    collapsed_split("Liquid", composition.liquid, color::accent::PLASMA),
-    collapsed_split("Assets", composition.asset_value, color::text::secondary()),
-    collapsed_split("Escrow", composition.escrow, color::status::DANGER),
+    collapsed_split(
+      super::i18n::tr_static("wallet.hero.liquid"),
+      composition.liquid,
+      color::accent::PLASMA,
+    ),
+    collapsed_split(
+      super::i18n::tr_static("wallet.hero.assets"),
+      composition.asset_value,
+      color::text::secondary(),
+    ),
+    collapsed_split(
+      super::i18n::tr_static("wallet.hero.escrow"),
+      composition.escrow,
+      color::status::DANGER,
+    ),
   ])
   .spacing(spacing::SPACE_4_5)
   .align_y(Vertical::Center);
@@ -263,13 +275,13 @@ fn hovered_value(state: &State, sliced: &[NetWorthPoint], window: (NaiveDate, Na
 
 fn scope_suffix(state: &State) -> &'static str {
   match state.active {
-    Scope::All => "\u{00b7} all characters",
-    _ => "\u{00b7} est.",
+    Scope::All => super::i18n::tr_static("wallet.hero.scope_all_characters"),
+    _ => super::i18n::tr_static("wallet.hero.scope_estimate"),
   }
 }
 
 fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<'a, Message> {
-  let scope_label = format!("Net worth {}", scope_suffix(state));
+  let scope_label = t!("wallet.hero.net_worth_scope", suffix => scope_suffix(state)).into_owned();
 
   let up = change >= 0.0;
   let change_color = if up {
@@ -282,7 +294,7 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
   let chip = container(
     Row::with_children(vec![
       arrow.size(typography::size::SM).color(change_color).render(),
-      text(format!("{sign}{} ISK", fmt_isk(Some(change.abs()))))
+      text(t!("wallet.hero.change_amount", sign => sign, amount => fmt_isk(Some(change.abs()))))
         .font(typography::mono::MEDIUM)
         .size(typography::size::SM)
         .style(move |_| text::Style {
@@ -344,9 +356,21 @@ fn big_number<'a>(state: &'a State, value: Option<f64>, change: f64) -> Element<
 
 fn composition_chips<'a>(composition: Composition) -> Element<'a, Message> {
   Row::with_children(vec![
-    composition_chip("Liquid", composition.liquid, color::accent::PLASMA),
-    composition_chip("Assets", composition.asset_value, color::text::secondary()),
-    composition_chip("Escrow", composition.escrow, color::status::DANGER),
+    composition_chip(
+      super::i18n::tr_static("wallet.hero.liquid"),
+      composition.liquid,
+      color::accent::PLASMA,
+    ),
+    composition_chip(
+      super::i18n::tr_static("wallet.hero.assets"),
+      composition.asset_value,
+      color::text::secondary(),
+    ),
+    composition_chip(
+      super::i18n::tr_static("wallet.hero.escrow"),
+      composition.escrow,
+      color::status::DANGER,
+    ),
   ])
   .spacing(spacing::SPACE_3)
   .into()
@@ -432,7 +456,7 @@ fn timeframe_selector(state: &State) -> Element<'_, Message> {
 fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint], window: (NaiveDate, NaiveDate)) -> Element<'a, Message> {
   if sliced.len() < 2 {
     return container(
-      text("Net-worth history will appear after the next daily aggregation run.")
+      text(t!("wallet.hero.history_pending"))
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(|_| text::Style {
@@ -461,7 +485,7 @@ fn graph<'a>(state: &'a State, sliced: &'a [NetWorthPoint], window: (NaiveDate, 
       Message::ChartHovered,
     )
     .hover(state.chart_hover)
-    .liquid("Liquid", color::accent::PLASMA),
+    .liquid(super::i18n::tr_static("wallet.hero.liquid"), color::accent::PLASMA),
   )
   .width(Length::Fill)
   .height(Length::Fixed(GRAPH_HEIGHT))
@@ -546,7 +570,7 @@ fn composition_stack(state: &State) -> Option<Element<'_, Message>> {
 
   Some(
     Column::with_children(vec![
-      eyebrow_text("By character", None).into(),
+      eyebrow_text(super::i18n::tr_static("wallet.hero.by_character"), None).into(),
       bar.into(),
       Row::with_children(legend).spacing(spacing::SPACE_6).wrap().into(),
     ])

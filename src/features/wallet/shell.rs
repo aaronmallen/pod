@@ -109,11 +109,15 @@ fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
       bulk_assign_picker(state, anchor)
     } else {
       let count = state.ledger_selection_count();
-      let title = format!("{count} row{}", if count == 1 { "" } else { "s" });
+      let title = if count == 1 {
+        t!("wallet.shell.ledger_selection_one", count => count).into_owned()
+      } else {
+        t!("wallet.shell.ledger_selection_other", count => count).into_owned()
+      };
       context_menu::context_menu(
         &title,
         vec![context_menu::Item::action(
-          "Assign to Budget\u{2026}",
+          t!("wallet.shell.assign_to_budget").into_owned(),
           Message::LedgerBulkAssignOpened,
         )],
         anchor,
@@ -211,7 +215,7 @@ fn division_strip(state: &State) -> Element<'_, Message> {
   let divisions = state.corp_divisions();
 
   let strip: Element<'_, Message> = if divisions.is_empty() {
-    division_caption("No divisions synced yet \u{2014} corp wallet sync populates these.")
+    division_caption(super::i18n::tr_static("wallet.shell.no_divisions"))
   } else {
     scrollable(
       Row::with_children(
@@ -242,7 +246,12 @@ fn division_strip(state: &State) -> Element<'_, Message> {
 
 fn division_button<'a>(division: &'a CorpDivision, active_division: i64) -> Element<'a, Message> {
   let active = division.division == active_division;
-  let label = format!("{}  \u{00b7}  {}", division.label(), fmt_isk(division.balance));
+  let label = t!(
+    "wallet.shell.division_label",
+    division => division.label(),
+    isk => fmt_isk(division.balance),
+  )
+  .into_owned();
 
   segment_button(
     label,
@@ -283,11 +292,17 @@ fn tabs(state: &State) -> Element<'_, Message> {
     .iter()
     .map(|&tab| {
       let (label, count) = match tab {
-        Tab::Wallets => ("Wallets", None),
-        Tab::Journal => ("Journal", Some(journal_count)),
-        Tab::Market => ("Transactions", Some(market_count)),
-        Tab::Contracts => ("Contracts", Some(contract_count)),
-        Tab::Budget => ("Budget", None),
+        Tab::Wallets => (super::i18n::tr_static("wallet.shell.tab_wallets"), None),
+        Tab::Journal => (super::i18n::tr_static("wallet.shell.tab_journal"), Some(journal_count)),
+        Tab::Market => (
+          super::i18n::tr_static("wallet.shell.tab_transactions"),
+          Some(market_count),
+        ),
+        Tab::Contracts => (
+          super::i18n::tr_static("wallet.shell.tab_contracts"),
+          Some(contract_count),
+        ),
+        Tab::Budget => (super::i18n::tr_static("wallet.shell.tab_budget"), None),
       };
       (tab, label, count)
     })
@@ -328,17 +343,17 @@ fn tab_icon(tab: Tab) -> Icon {
 
 fn tab_noun(tab: Tab) -> &'static str {
   match tab {
-    Tab::Budget => "Budget",
-    Tab::Contracts => "Contracts",
-    Tab::Journal => "Wallet journal",
-    Tab::Market => "Transactions",
-    Tab::Wallets => "Wallet balances",
+    Tab::Budget => super::i18n::tr_static("wallet.shell.tab_noun_budget"),
+    Tab::Contracts => super::i18n::tr_static("wallet.shell.tab_noun_contracts"),
+    Tab::Journal => super::i18n::tr_static("wallet.shell.tab_noun_journal"),
+    Tab::Market => super::i18n::tr_static("wallet.shell.tab_noun_transactions"),
+    Tab::Wallets => super::i18n::tr_static("wallet.shell.tab_noun_wallets"),
   }
 }
 
 fn filter_bar(state: &State) -> Element<'_, Message> {
   let search = TextInput::new(
-    "Filter by ref, party, station\u{2026}",
+    super::i18n::tr_static("wallet.shell.search_placeholder"),
     &state.search,
     Message::SearchChanged,
   )
@@ -389,7 +404,10 @@ fn budget_filter_badge(state: &State) -> Option<Element<'_, Message>> {
         super::budget::tone_color(envelope.tone.as_deref()),
       )
     }
-    super::BudgetFilterKind::Uncategorized => ("Uncategorized only".to_owned(), color::status::WARNING),
+    super::BudgetFilterKind::Uncategorized => (
+      t!("wallet.shell.uncategorized_only").into_owned(),
+      color::status::WARNING,
+    ),
   };
 
   let dot = container(Space::new())
@@ -450,7 +468,7 @@ fn budget_filter_badge(state: &State) -> Option<Element<'_, Message>> {
 
 fn clear_filters_button<'a>() -> Element<'a, Message> {
   button(
-    text("Clear Filters")
+    text(t!("wallet.shell.clear_filters"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary())),
@@ -487,9 +505,9 @@ fn clear_filters_button<'a>() -> Element<'a, Message> {
 
 fn sign_control(state: &State) -> Element<'_, Message> {
   let segments = [
-    (SignFilter::All, "All"),
-    (SignFilter::In, "In"),
-    (SignFilter::Out, "Out"),
+    (SignFilter::All, super::i18n::tr_static("wallet.shell.sign_all")),
+    (SignFilter::In, super::i18n::tr_static("wallet.shell.sign_in")),
+    (SignFilter::Out, super::i18n::tr_static("wallet.shell.sign_out")),
   ];
 
   let row = Row::with_children(
@@ -535,15 +553,15 @@ fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
     // The Budget and Wallets tabs take the dedicated full-width surface path in
     // `body`; these arms are unreachable from `center` but keep the match
     // exhaustive.
-    Tab::Budget => empty_ledger("Budget"),
-    Tab::Wallets => empty_ledger("Wallets"),
+    Tab::Budget => empty_ledger(super::i18n::tr_static("wallet.shell.tab_budget")),
+    Tab::Wallets => empty_ledger(super::i18n::tr_static("wallet.shell.tab_wallets")),
   }
 }
 
 fn journal_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let entries = super::filtered_journal(state);
   if entries.is_empty() {
-    return empty_ledger("No journal entries match.");
+    return empty_ledger(super::i18n::tr_static("wallet.shell.empty_journal"));
   }
 
   windowed_ledger(state, entries, move |entry| journal_row(state, entry, now))
@@ -666,19 +684,55 @@ fn journal_right_col<'a>(delta: &str, delta_color: iced::Color, when: &str) -> E
 
 fn market_header<'a>(state: &State) -> Element<'a, Message> {
   let mut columns = vec![
-    ("Side", Length::FillPortion(1), Horizontal::Left),
-    ("Item", Length::FillPortion(3), Horizontal::Left),
+    (
+      super::i18n::tr_static("wallet.shell.col_side"),
+      Length::FillPortion(1),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_item"),
+      Length::FillPortion(3),
+      Horizontal::Left,
+    ),
   ];
   if state.budget_enabled() {
-    columns.push(("Budget", Length::FillPortion(2), Horizontal::Left));
+    columns.push((
+      super::i18n::tr_static("wallet.shell.col_budget"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ));
   }
   columns.extend([
-    ("Qty", Length::FillPortion(1), Horizontal::Right),
-    ("Unit", Length::FillPortion(2), Horizontal::Right),
-    ("Total", Length::FillPortion(2), Horizontal::Right),
-    ("Location", Length::FillPortion(2), Horizontal::Left),
-    ("Character", Length::FillPortion(2), Horizontal::Left),
-    ("When", Length::FillPortion(1), Horizontal::Left),
+    (
+      super::i18n::tr_static("wallet.shell.col_qty"),
+      Length::FillPortion(1),
+      Horizontal::Right,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_unit"),
+      Length::FillPortion(2),
+      Horizontal::Right,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_total"),
+      Length::FillPortion(2),
+      Horizontal::Right,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_location"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_character"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_when"),
+      Length::FillPortion(1),
+      Horizontal::Left,
+    ),
   ]);
   table_header(&columns)
 }
@@ -686,7 +740,7 @@ fn market_header<'a>(state: &State) -> Element<'a, Message> {
 fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   let entries = super::filtered_market(state);
   if entries.is_empty() {
-    return empty_ledger("No transactions match.");
+    return empty_ledger(super::i18n::tr_static("wallet.shell.empty_transactions"));
   }
 
   windowed_ledger(state, entries, move |entry| market_row(state, entry, now))
@@ -694,9 +748,9 @@ fn market_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
 
 fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) -> Element<'a, Message> {
   let (side_label, side_color) = if entry.is_buy {
-    ("\u{2193} BUY", color::status::DANGER)
+    (super::i18n::tr_static("wallet.shell.side_buy"), color::status::DANGER)
   } else {
-    ("\u{2191} SELL", color::status::ONLINE)
+    (super::i18n::tr_static("wallet.shell.side_sell"), color::status::ONLINE)
   };
 
   let select = |cell| select_wrap(cell, BudgetEntryKind::Market, entry.owner, entry.transaction_id);
@@ -861,7 +915,7 @@ fn assign_affordance<'a>(on_press: Message) -> Element<'a, Message> {
         .size(typography::size::SM)
         .style(typography::colored(color::status::WARNING))
         .into(),
-      text("Assign category")
+      text(t!("wallet.shell.assign_category"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::status::WARNING))
@@ -969,7 +1023,7 @@ fn bulk_assign_picker<'a>(state: &'a State, anchor: Point) -> Element<'a, Messag
   // authoritative DB-side cross-owner delete so clearing a selection removes the
   // mark for every owner of each event, not just the loaded copies.
   rows.push(budget_picker_row(
-    "Clear",
+    super::i18n::tr_static("wallet.shell.clear"),
     false,
     color::text::tertiary(),
     Message::LedgerBulkAssignChosen(None),
@@ -1230,27 +1284,55 @@ fn corp_logo(state: &State, corporation_id: i64) -> Option<std::path::PathBuf> {
 
 fn contract_header<'a>() -> Element<'a, Message> {
   table_header(&[
-    ("Type", Length::FillPortion(2), Horizontal::Left),
-    ("Status", Length::FillPortion(2), Horizontal::Left),
-    ("Issuer", Length::FillPortion(2), Horizontal::Left),
-    ("Counterparty", Length::FillPortion(2), Horizontal::Left),
-    ("Value", Length::FillPortion(2), Horizontal::Right),
-    ("Collateral", Length::FillPortion(2), Horizontal::Right),
-    ("When", Length::FillPortion(1), Horizontal::Left),
+    (
+      super::i18n::tr_static("wallet.shell.col_type"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_status"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_issuer"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_counterparty"),
+      Length::FillPortion(2),
+      Horizontal::Left,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_value"),
+      Length::FillPortion(2),
+      Horizontal::Right,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_collateral"),
+      Length::FillPortion(2),
+      Horizontal::Right,
+    ),
+    (
+      super::i18n::tr_static("wallet.shell.col_when"),
+      Length::FillPortion(1),
+      Horizontal::Left,
+    ),
   ])
 }
 
 fn contracts_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   if !state.has_contracts() {
     return no_source_state(
-      "Contracts",
-      "No contracts synced yet \u{2014} they appear here after the next contract sync.",
+      super::i18n::tr_static("wallet.shell.tab_contracts"),
+      super::i18n::tr_static("wallet.shell.no_contracts_synced"),
     );
   }
 
   let entries = super::filtered_contracts(state);
   if entries.is_empty() {
-    return empty_ledger("No contracts match.");
+    return empty_ledger(super::i18n::tr_static("wallet.shell.empty_contracts"));
   }
 
   windowed_ledger(state, entries, move |entry| contract_row(entry, now))
@@ -1552,13 +1634,13 @@ fn fmt_relative(iso: &str, now: DateTime<Utc>) -> String {
   let hours = delta.num_hours();
   let minutes = delta.num_minutes();
   if days >= 1 {
-    format!("{days}d ago")
+    t!("wallet.shell.relative_days", days => days).into_owned()
   } else if hours >= 1 {
-    format!("{hours}h ago")
+    t!("wallet.shell.relative_hours", hours => hours).into_owned()
   } else if minutes >= 1 {
-    format!("{minutes}m ago")
+    t!("wallet.shell.relative_minutes", minutes => minutes).into_owned()
   } else {
-    "just now".to_owned()
+    t!("wallet.shell.relative_just_now").into_owned()
   }
 }
 

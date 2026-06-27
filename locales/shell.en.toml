@@ -1,0 +1,5 @@
+[shell.notifications]
+footer_total = "%{count} total"
+footer_unread = "%{count} unread"
+mark_all_read = "Mark all read"
+title = "Notifications"

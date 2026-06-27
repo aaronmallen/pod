@@ -1,5 +1,10 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+#[macro_use]
+extern crate rust_i18n;
+
+rust_i18n::i18n!("locales", fallback = "en");
+
 mod app;
 mod clients;
 mod config;

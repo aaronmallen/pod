@@ -3,7 +3,14 @@ authors = ["Aaron Allen <hello@aaronmallen.me>"]
 description = "A one-stop-shop capsuleer manager for EVE Online."
 edition = "2024"
 homepage = "https://pod.aaronmallen.dev"
-include = ["assets/*", "migrations/*", "src/*", "LICENSE", "README.md"]
+include = [
+  "assets/*",
+  "locales/*",
+  "migrations/*",
+  "src/*",
+  "LICENSE",
+  "README.md",
+]
 license = "MIT"
 name = "pod"
 publish = false
@@ -66,6 +73,7 @@ open = "5"
 rand = "0.10"
 reqwest = { features = ["form", "gzip", "json"], version = "0.13" }
 rfd = "0.17"
+rust-i18n = "4"
 serde = "1"
 serde_json = "1"
 serde_yaml = "0.9"

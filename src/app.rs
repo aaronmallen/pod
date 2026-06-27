@@ -42,7 +42,7 @@ use crate::{
     splash, wallet,
     wallet::contract_detail,
   },
-  mcp,
+  i18n, mcp,
   services::{crash, images, telemetry, updater},
   store,
   sync::{self, FreshnessSummary, JobKey, JobKind},
@@ -1047,6 +1047,7 @@ fn boot() -> (App, Task<Message>) {
   let settings = config::load().unwrap_or_default();
   let accessibility = *settings.accessibility();
   color::set_high_contrast(*accessibility.high_contrast());
+  i18n::set_locale(accessibility.language());
   let image_root = settings.storage().resolved_cache_dir().join("images");
   store::images::init_root(image_root);
 
@@ -2395,7 +2396,7 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
   };
 
   let header = Row::with_children(vec![
-    text("Notifications")
+    text(t!("shell.notifications.title"))
       .font(typography::body::MEDIUM)
       .size(typography::size::LG)
       .style(typography::colored(color::text::PRIMARY))
@@ -2474,8 +2475,10 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
 /// rows, mirroring the mockup's `shown.length > 0` guard.
 fn notifications_footer_label(tab: NotificationTab, total: usize, history_count: usize) -> Option<String> {
   match tab {
-    NotificationTab::New => (total > 0).then(|| format!("{total} unread")),
-    NotificationTab::History => (history_count > 0).then(|| format!("{total} total")),
+    NotificationTab::New => (total > 0).then(|| t!("shell.notifications.footer_unread", count => total).into_owned()),
+    NotificationTab::History => {
+      (history_count > 0).then(|| t!("shell.notifications.footer_total", count => total).into_owned())
+    }
   }
 }
 
@@ -2486,7 +2489,7 @@ fn mark_all_read_button<'a>(enabled: bool) -> button::Button<'a, Message> {
     color::text::tertiary()
   };
   let button = button(
-    text("Mark all read")
+    text(t!("shell.notifications.mark_all_read"))
       .font(typography::body::MEDIUM)
       .size(typography::size::XS_PLUS)
       .style(move |_| text::Style {

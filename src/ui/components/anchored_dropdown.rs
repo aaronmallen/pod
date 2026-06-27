@@ -22,6 +22,8 @@ use iced::{
   },
 };
 
+use crate::ui::components::overlay_layer::OverlayLayer;
+
 /// Vertical gap between the trigger's bottom edge and the floating popover.
 const DROPDOWN_GAP: f32 = 6.0;
 
@@ -276,8 +278,11 @@ where
       let over_popover = cursor.is_over(layout.bounds());
       let over_trigger = cursor.is_over(self.bounds);
       if !over_popover && !over_trigger {
+        // Dismiss without capturing the event: capturing would short-circuit the base-tree pass and
+        // swallow the click, so the tab/rail underneath would never receive it. Letting it fall
+        // through dismisses the popover and navigates in a single click. The early return still keeps
+        // the click out of the popover's own content.
         shell.publish(on_dismiss.clone());
-        shell.capture_event();
         return;
       }
     }
@@ -297,8 +302,7 @@ where
   }
 
   fn index(&self) -> f32 {
-    // Render above sibling overlays (e.g. the modal panel) so the dropdown floats on top.
-    1.0
+    OverlayLayer::Dropdown.z()
   }
 }
 
@@ -341,6 +345,39 @@ mod tests {
       let popover: Element<'_, (), iced::Theme, iced::Renderer> = Space::new().into();
       let _el: Element<'_, (), iced::Theme, iced::Renderer> =
         AnchoredDropdown::new(underlay(), Some(popover)).on_dismiss(()).into();
+    }
+  }
+
+  mod index {
+    use iced::advanced::overlay::Overlay;
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[test]
+    fn it_returns_the_dropdown_overlay_layer() {
+      let mut popover: Element<'_, (), iced::Theme, iced::Renderer> = Space::new().into();
+      let mut tree = Tree::empty();
+      let dropdown = DropdownOverlay {
+        popover: &mut popover,
+        tree: &mut tree,
+        bounds: Rectangle {
+          x: 0.0,
+          y: 0.0,
+          width: 0.0,
+          height: 0.0,
+        },
+        viewport: Rectangle {
+          x: 0.0,
+          y: 0.0,
+          width: 0.0,
+          height: 0.0,
+        },
+        on_dismiss: None,
+        width: None,
+      };
+
+      assert_eq!(dropdown.index(), OverlayLayer::Dropdown.z());
     }
   }
 

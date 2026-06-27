@@ -27,6 +27,7 @@ pub mod meter;
 pub mod modal_overlay;
 pub mod notification_row;
 pub mod notification_toaster;
+pub mod overlay_layer;
 pub mod panel_header;
 pub mod picker;
 pub mod positioned_dropdown;

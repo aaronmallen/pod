@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
   config::{CascadeMode, Feature, NavLocation},
   features::shell::{nav_catalog, registry},
-  ui::style::{color, radius, spacing, typography},
+  ui::{
+    components::overlay_layer::OverlayLayer,
+    style::{color, radius, spacing, typography},
+  },
 };
 
 const BADGE_INSET: f32 = 8.0;
@@ -1133,7 +1136,7 @@ where
   }
 
   fn index(&self) -> f32 {
-    1.0
+    OverlayLayer::RailCascade.z()
   }
 }
 
@@ -1348,6 +1351,34 @@ mod tests {
       !flyout_keeps_open(mouse::Cursor::Unavailable, panel),
       "an unavailable cursor cannot keep the flyout open"
     );
+  }
+
+  #[test]
+  fn flyout_overlay_reports_the_rail_cascade_layer() {
+    use iced::advanced::overlay::Overlay;
+    use pretty_assertions::assert_eq;
+
+    let mut popover: Element<'_, ()> = Space::new().into();
+    let mut tree = Tree::empty();
+    let flyout = FlyoutOverlay {
+      bounds: Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+      },
+      open_up: false,
+      popover: &mut popover,
+      tree: &mut tree,
+      viewport: Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+      },
+    };
+
+    assert_eq!(flyout.index(), OverlayLayer::RailCascade.z());
   }
 
   #[test]

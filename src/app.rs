@@ -237,7 +237,7 @@ struct App {
   /// the New tab or the bell badge.
   notifications_history: Vec<store::model::Notification>,
   /// Keyset cursor positioned just past the last accumulated History row; `None` requests the newest page.
-  notifications_history_cursor: Option<store::repo::notifications::HistoryCursor>,
+  notifications_history_cursor: Option<store::model::HistoryCursor>,
   /// Monotonic generation bumped whenever the History accumulator resets (panel open or newer rows
   /// arrive). An in-flight page tagged with a stale generation is dropped so it can't append to the
   /// freshly-reset accumulator.
@@ -5440,7 +5440,7 @@ fn handle_notifications_history_page_loaded(
   }
   app.notifications_history_loading = false;
   app.notifications_history_has_more = rows.len() as i64 == store::repo::notifications::HISTORY_PAGE_SIZE;
-  if let Some(cursor) = store::repo::notifications::HistoryCursor::from_page(&rows) {
+  if let Some(cursor) = store::model::HistoryCursor::from_page(&rows) {
     app.notifications_history_cursor = Some(cursor);
   }
   // Merge freshly-resolved "who" names so the paged rows render their author line; the live refresh map
@@ -13328,7 +13328,7 @@ mod tests {
       assert_eq!(ids, vec![3, 2], "the page is appended newest-first");
       assert_eq!(
         app.notifications_history_cursor,
-        Some(store::repo::notifications::HistoryCursor {
+        Some(store::model::HistoryCursor {
           created_at: "2026-06-02T00:00:00+00:00".to_owned(),
           id: 2,
         }),
@@ -13445,7 +13445,7 @@ mod tests {
     fn it_resets_the_accumulator_and_bumps_the_epoch() {
       let mut app = ready_app();
       app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
-      app.notifications_history_cursor = Some(store::repo::notifications::HistoryCursor {
+      app.notifications_history_cursor = Some(store::model::HistoryCursor {
         created_at: "2026-06-01T00:00:00+00:00".to_owned(),
         id: 1,
       });

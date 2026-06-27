@@ -1,10 +1,6 @@
-use sqlx::FromRow;
-
 use crate::store::{
   Database, Error,
-  model::{
-    NewNotification, Notification, NotificationDestination, NotificationKind, NotificationOwner, NotificationTarget,
-  },
+  model::{HistoryCursor, NewNotification, Notification, NotificationKind, NotificationOwner, NotificationRow},
 };
 
 /// Time-based retention window for surfaced rows. emit() prunes surfaced rows whose created_at is
@@ -18,67 +14,6 @@ const NOTIFICATION_RETENTION_DAYS: i64 = 90;
 /// Default keyset page size for the History view. A caller may request a different limit.
 #[allow(dead_code)]
 pub const HISTORY_PAGE_SIZE: i64 = 50;
-
-/// A keyset cursor into the surfaced-row history: the (created_at, id) of the last row a page
-/// returned. The next page returns surfaced rows strictly older than this in the (created_at DESC,
-/// id DESC) order, so paging walks the whole history with no duplicated or skipped rows even when new
-/// rows are inserted between fetches (a newer insert sorts before the cursor and never reappears in a
-/// later page).
-#[derive(Clone, Debug, PartialEq)]
-pub struct HistoryCursor {
-  pub created_at: String,
-  pub id: i64,
-}
-
-#[allow(dead_code)]
-impl HistoryCursor {
-  /// The cursor positioned just after the last row of a page, or None when the page was empty (no
-  /// further rows to request).
-  pub fn from_page(page: &[Notification]) -> Option<Self> {
-    page.last().map(|last| Self {
-      created_at: last.created_at().clone(),
-      id: last.id(),
-    })
-  }
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, FromRow)]
-struct Row {
-  body: String,
-  created_at: String,
-  dedup_key: String,
-  id: i64,
-  kind: String,
-  owner_id: i64,
-  owner_type: String,
-  read_at: Option<String>,
-  target_char: Option<i64>,
-  target_dest: String,
-  target_sub: Option<String>,
-  title: String,
-}
-
-#[allow(dead_code)]
-impl Row {
-  fn into_notification(self) -> Option<Notification> {
-    Some(Notification {
-      body: self.body,
-      created_at: self.created_at,
-      dedup_key: self.dedup_key,
-      id: self.id,
-      kind: NotificationKind::from_key(&self.kind)?,
-      owner: NotificationOwner::from_key(&self.owner_type, self.owner_id)?,
-      read_at: self.read_at,
-      target: NotificationTarget {
-        character: self.target_char,
-        destination: NotificationDestination::from_key(&self.target_dest),
-        sub: self.target_sub,
-      },
-      title: self.title,
-    })
-  }
-}
 
 // Notification storage repo (epic zyrmyrlk, spec A). Called by the detectors (spec B) and the
 // center/toast UI (specs C/D); exercised only by unit tests until those land.
@@ -100,7 +35,7 @@ pub async fn clear_all(db: &Database) -> Result<(), Error> {
 #[allow(dead_code)]
 pub async fn emit(db: &Database, notification: &NewNotification) -> Result<Option<Notification>, Error> {
   let now = chrono::Utc::now().to_rfc3339();
-  let row = sqlx::query_as::<_, Row>(
+  let row = sqlx::query_as::<_, NotificationRow>(
     "INSERT OR IGNORE INTO notifications \
       (kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, created_at, suppressed) \
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0) \
@@ -124,12 +59,12 @@ pub async fn emit(db: &Database, notification: &NewNotification) -> Result<Optio
     prune(db).await?;
   }
 
-  Ok(row.and_then(Row::into_notification))
+  Ok(row.and_then(NotificationRow::into_notification))
 }
 
 #[allow(dead_code)]
 pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error> {
-  let rows = sqlx::query_as::<_, Row>(
+  let rows = sqlx::query_as::<_, NotificationRow>(
     "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
       created_at, read_at \
       FROM notifications WHERE suppressed = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -137,7 +72,12 @@ pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error>
   .bind(limit)
   .fetch_all(db.reader())
   .await?;
-  Ok(rows.into_iter().filter_map(Row::into_notification).collect())
+  Ok(
+    rows
+      .into_iter()
+      .filter_map(NotificationRow::into_notification)
+      .collect(),
+  )
 }
 
 // Keyset page over surfaced rows for the History view. `cursor` is the (created_at, id) of the last
@@ -150,7 +90,7 @@ pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error>
 pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64) -> Result<Vec<Notification>, Error> {
   let rows = match cursor {
     Some(cursor) => {
-      sqlx::query_as::<_, Row>(
+      sqlx::query_as::<_, NotificationRow>(
         "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
           created_at, read_at \
           FROM notifications \
@@ -165,7 +105,7 @@ pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64
       .await?
     }
     None => {
-      sqlx::query_as::<_, Row>(
+      sqlx::query_as::<_, NotificationRow>(
         "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
           created_at, read_at \
           FROM notifications WHERE suppressed = 0 ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -175,14 +115,19 @@ pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64
       .await?
     }
   };
-  Ok(rows.into_iter().filter_map(Row::into_notification).collect())
+  Ok(
+    rows
+      .into_iter()
+      .filter_map(NotificationRow::into_notification)
+      .collect(),
+  )
 }
 
 // Surfaced unread rows (read_at IS NULL AND suppressed = 0), newest-first, for the New tab — correct
 // independent of how far History has paged.
 #[allow(dead_code)]
 pub async fn list_unread(db: &Database, limit: i64) -> Result<Vec<Notification>, Error> {
-  let rows = sqlx::query_as::<_, Row>(
+  let rows = sqlx::query_as::<_, NotificationRow>(
     "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
       created_at, read_at \
       FROM notifications WHERE suppressed = 0 AND read_at IS NULL ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -190,7 +135,12 @@ pub async fn list_unread(db: &Database, limit: i64) -> Result<Vec<Notification>,
   .bind(limit)
   .fetch_all(db.reader())
   .await?;
-  Ok(rows.into_iter().filter_map(Row::into_notification).collect())
+  Ok(
+    rows
+      .into_iter()
+      .filter_map(NotificationRow::into_notification)
+      .collect(),
+  )
 }
 
 #[allow(dead_code)]
@@ -306,7 +256,10 @@ async fn prune(db: &Database) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::store;
+  use crate::store::{
+    self,
+    model::{NotificationDestination, NotificationTarget},
+  };
 
   fn sample(dedup_key: &str) -> NewNotification {
     NewNotification {

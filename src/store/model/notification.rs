@@ -1,4 +1,5 @@
 use getset::{CopyGetters, Getters};
+use sqlx::FromRow;
 
 const DEST_ASSETS: &str = "assets";
 
@@ -31,6 +32,17 @@ const KIND_SKILL: &str = "skill";
 const OWNER_CHARACTER: &str = "character";
 
 const OWNER_CORPORATION: &str = "corporation";
+
+// A keyset cursor into the surfaced-row history: the (created_at, id) of the last row a page
+// returned. The next page returns surfaced rows strictly older than this in the (created_at DESC,
+// id DESC) order, so paging walks the whole history with no duplicated or skipped rows even when new
+// rows are inserted between fetches (a newer insert sorts before the cursor and never reappears in a
+// later page).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryCursor {
+  pub created_at: String,
+  pub id: i64,
+}
 
 // In-app notification storage substrate (epic zyrmyrlk, spec A). Constructed/read by the detectors
 // (spec B) and the center/toast UI (specs C/D); exercised only by unit tests until those land.
@@ -105,6 +117,34 @@ pub struct NotificationTarget {
   pub character: Option<i64>,
   pub destination: NotificationDestination,
   pub sub: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow)]
+pub(crate) struct NotificationRow {
+  pub body: String,
+  pub created_at: String,
+  pub dedup_key: String,
+  pub id: i64,
+  pub kind: String,
+  pub owner_id: i64,
+  pub owner_type: String,
+  pub read_at: Option<String>,
+  pub target_char: Option<i64>,
+  pub target_dest: String,
+  pub target_sub: Option<String>,
+  pub title: String,
+}
+
+#[allow(dead_code)]
+impl HistoryCursor {
+  // The cursor positioned just after the last row of a page, or None when the page was empty (no
+  // further rows to request).
+  pub fn from_page(page: &[Notification]) -> Option<Self> {
+    page.last().map(|last| Self {
+      created_at: last.created_at().clone(),
+      id: last.id(),
+    })
+  }
 }
 
 #[allow(dead_code)]
@@ -188,6 +228,27 @@ impl NotificationOwner {
       NotificationOwner::Character(_) => OWNER_CHARACTER,
       NotificationOwner::Corporation(_) => OWNER_CORPORATION,
     }
+  }
+}
+
+#[allow(dead_code)]
+impl NotificationRow {
+  pub(crate) fn into_notification(self) -> Option<Notification> {
+    Some(Notification {
+      body: self.body,
+      created_at: self.created_at,
+      dedup_key: self.dedup_key,
+      id: self.id,
+      kind: NotificationKind::from_key(&self.kind)?,
+      owner: NotificationOwner::from_key(&self.owner_type, self.owner_id)?,
+      read_at: self.read_at,
+      target: NotificationTarget {
+        character: self.target_char,
+        destination: NotificationDestination::from_key(&self.target_dest),
+        sub: self.target_sub,
+      },
+      title: self.title,
+    })
   }
 }
 

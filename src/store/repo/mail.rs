@@ -103,7 +103,7 @@ pub async fn headers(db: &Database, character_id: i64) -> Result<Vec<CharacterMa
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn headers_for_label(db: &Database, character_id: i64, label_id: i64) -> Result<Vec<CharacterMail>, Error> {
   let rows = sqlx::query_as::<_, CharacterMail>(
     "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, m.important, \
@@ -131,7 +131,7 @@ pub async fn body(db: &Database, character_id: i64, mail_id: i64) -> Result<Opti
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn has_body(db: &Database, character_id: i64, mail_id: i64) -> Result<bool, Error> {
   let exists =
     sqlx::query_scalar::<_, i64>("SELECT 1 FROM character_mail_body WHERE character_id = ? AND mail_id = ? LIMIT 1")
@@ -156,7 +156,7 @@ pub async fn recipients(db: &Database, character_id: i64, mail_id: i64) -> Resul
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn recipients_display(db: &Database, character_id: i64, mail_id: i64) -> Result<String, Error> {
   let names = sqlx::query_scalar::<_, String>(
     "SELECT recipient_name FROM character_mail_recipients \
@@ -316,7 +316,7 @@ pub async fn delete_label(db: &Database, character_id: i64, label_id: i64) -> Re
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn unread_count_for_label(db: &Database, character_id: i64, label_id: i64) -> Result<i64, Error> {
   let count = sqlx::query_scalar::<_, i64>(
     "SELECT COUNT(*) FROM character_mail_label_membership mem \
@@ -331,7 +331,7 @@ pub async fn unread_count_for_label(db: &Database, character_id: i64, label_id: 
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn unread_counts_by_label(db: &Database, character_id: i64) -> Result<Vec<(i64, i64)>, Error> {
   let rows = sqlx::query_as::<_, (i64, i64)>(
     "SELECT l.label_id, \
@@ -361,7 +361,7 @@ pub async fn unread_count(db: &Database, character_id: i64) -> Result<i64, Error
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn unified_unread_count(db: &Database) -> Result<i64, Error> {
   let count =
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mail_unified WHERE is_read = 0 AND from_id != character_id")
@@ -450,7 +450,7 @@ pub async fn triage(db: &Database, character_id: i64, mail_id: i64) -> Result<Op
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_triage(db: &Database, character_id: i64) -> Result<Vec<MailTriage>, Error> {
   let rows = sqlx::query_as::<_, MailTriage>(
     "SELECT character_id, id, mail_id, star FROM mail_triage WHERE character_id = ? ORDER BY mail_id",
@@ -557,7 +557,7 @@ pub async fn folder(db: &Database, character_id: i64, mail_id: i64) -> Result<Op
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_in_folder(db: &Database, character_id: i64, folder: &str) -> Result<Vec<MailFolderAssignment>, Error> {
   let rows = sqlx::query_as::<_, MailFolderAssignment>(
     "SELECT assigned_at, character_id, folder, id, mail_id, remap_label_id, soft_delete_intent FROM mail_folder_assignment \

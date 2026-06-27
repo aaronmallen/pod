@@ -102,7 +102,7 @@ pub async fn clear_needs_reauth(db: &Database, owner_id: i64, owner_type: OwnerT
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn http_cache_delete(db: &Database, url: &str) -> Result<(), Error> {
   sqlx::query("DELETE FROM http_cache WHERE url = ?")
     .bind(url)
@@ -121,7 +121,7 @@ pub async fn http_cache_get(db: &Database, url: &str) -> Result<Option<HttpCache
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn purge_expired(db: &Database) -> Result<u64, Error> {
   let result = sqlx::query("DELETE FROM http_cache WHERE expires_at IS NOT NULL AND expires_at < ?")
     .bind(Utc::now().timestamp())
@@ -219,7 +219,7 @@ pub async fn mark_done(db: &Database, id: i64) -> Result<(), Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn mark_failed(db: &Database, id: i64, error: &str) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   sqlx::query("UPDATE outbox SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?")
@@ -310,7 +310,6 @@ pub async fn tag_all(db: &Database) -> Result<Vec<Tag>, Error> {
 
 // Public store API consumed by the asset-tag UI tasks (filter/modal/chips/settings); exercised by unit tests
 // until those callers land.
-#[allow(dead_code)]
 pub async fn tag_all_scoped(db: &Database, scope: &str) -> Result<Vec<Tag>, Error> {
   let rows = sqlx::query_as::<_, Tag>(
     "SELECT color, created_at, description, id, name, position, updated_at FROM tags WHERE scope = ? ORDER BY position",
@@ -340,7 +339,6 @@ pub async fn create(db: &Database, name: &str, description: Option<&str>, color:
 
 // Public store API consumed by the asset-tag UI tasks (settings/modal); exercised by unit tests until those
 // callers land.
-#[allow(dead_code)]
 pub async fn create_scoped(
   db: &Database,
   name: &str,
@@ -382,7 +380,7 @@ pub async fn create_scoped(
 
 // Tag-scope seed marker, mirroring budget's once-only seed guard: a seeded scope stays seeded so a deleted
 // default is never resurrected. Consumed by the asset-registry seed path; exercised by unit tests until wired.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn is_tag_scope_seeded(db: &Database, scope: &str) -> Result<bool, Error> {
   let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM tag_scope_seeded WHERE scope = ?")
     .bind(scope)
@@ -393,7 +391,7 @@ pub async fn is_tag_scope_seeded(db: &Database, scope: &str) -> Result<bool, Err
 
 // Tag-scope seed marker companion to is_tag_scope_seeded. Consumed by the asset-registry seed path; exercised
 // by unit tests until wired.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn mark_tag_scope_seeded(db: &Database, scope: &str) -> Result<(), Error> {
   let now = Utc::now().to_rfc3339();
   sqlx::query("INSERT INTO tag_scope_seeded (scope, seeded_at) VALUES (?, ?) ON CONFLICT(scope) DO NOTHING")
@@ -413,7 +411,7 @@ pub async fn tag_delete(db: &Database, id: i64) -> Result<(), Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn tag_get(db: &Database, id: i64) -> Result<Option<Tag>, Error> {
   let row = sqlx::query_as::<_, Tag>(
     "SELECT color, created_at, description, id, name, position, updated_at FROM tags WHERE id = ?",
@@ -425,7 +423,7 @@ pub async fn tag_get(db: &Database, id: i64) -> Result<Option<Tag>, Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn members(db: &Database, tag_id: i64, entity_type: &str) -> Result<Vec<i64>, Error> {
   let ids = sqlx::query_scalar::<_, i64>(
     "SELECT entity_id FROM entity_tags WHERE tag_id = ? AND entity_type = ? ORDER BY entity_id",
@@ -450,7 +448,6 @@ pub async fn memberships(db: &Database, entity_type: &str) -> Result<Vec<EntityT
 // Per-entity tag membership map (entity_id -> tag_ids, in tag position order) for one entity type, so a view
 // can resolve every row's chips from a single query instead of a per-row scan. Consumed by the asset inventory
 // tag chips; exercised by unit tests until that caller lands.
-#[allow(dead_code)]
 pub async fn membership_map(db: &Database, entity_type: &str) -> Result<HashMap<i64, Vec<i64>>, Error> {
   let rows = sqlx::query_as::<_, (i64, i64)>(
     "SELECT et.entity_id, et.tag_id FROM entity_tags et \

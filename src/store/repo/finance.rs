@@ -16,8 +16,6 @@ use crate::store::{
 
 pub const RETENTION_DAYS: i64 = 365;
 const SQLITE_MAX_BIND_PARAMS: usize = 999;
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 const STATE_OPEN: &str = "open";
 
 fn now_iso() -> String {
@@ -550,7 +548,7 @@ pub async fn count_transactions_for_corporation_all_divisions(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn escrow(db: &Database, character_id: i64) -> Result<Option<ContractEscrow>, Error> {
   let row = sqlx::query_as::<_, ContractEscrow>(
     "SELECT character_id, escrow, escrow_collateral, escrow_price FROM character_contract_escrow \
@@ -657,7 +655,7 @@ pub async fn divisions(db: &Database, corporation_id: i64) -> Result<Vec<Corpora
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn division(
   db: &Database,
   corporation_id: i64,
@@ -861,7 +859,7 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Marke
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn open_escrow(db: &Database, character_id: i64) -> Result<f64, Error> {
   let total: f64 =
     sqlx::query_scalar("SELECT COALESCE(SUM(escrow), 0.0) FROM market_orders WHERE character_id = ? AND state = ?")
@@ -1029,7 +1027,7 @@ pub async fn for_character_since(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn latest(db: &Database, scope: Scope) -> Result<Option<SeriesPoint>, Error> {
   let point = match scope {
     Scope::Character(id) => sqlx::query_as::<_, CharacterNetWorthSnapshot>(
@@ -1054,7 +1052,7 @@ pub async fn latest(db: &Database, scope: Scope) -> Result<Option<SeriesPoint>, 
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn period_delta(series: &[SeriesPoint]) -> Option<PeriodDelta> {
   let mut figures = series.iter().filter_map(|point| point.net_worth);
   let start = figures.next()?;
@@ -1070,7 +1068,7 @@ pub fn period_delta(series: &[SeriesPoint]) -> Option<PeriodDelta> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn series_since(
   db: &Database,
   scope: Scope,
@@ -1125,7 +1123,7 @@ pub async fn upsert(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn series(db: &Database, type_id: i64) -> Result<Vec<TypePriceHistory>, Error> {
   let rows = sqlx::query_as::<_, TypePriceHistory>(
     "SELECT close, date, high, low, open, type_id FROM type_price_histories \
@@ -1138,7 +1136,7 @@ pub async fn series(db: &Database, type_id: i64) -> Result<Vec<TypePriceHistory>
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn close_as_of(db: &Database, type_id: i64, date: &str) -> Result<Option<f64>, Error> {
   let close = sqlx::query_scalar::<_, f64>(
     "SELECT close FROM type_price_histories WHERE type_id = ? AND date <= ? ORDER BY date DESC LIMIT 1",
@@ -1289,7 +1287,6 @@ pub async fn append_wallet_transaction(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn wallet_transactions(db: &Database, character_id: i64) -> Result<Vec<CharacterWalletTransaction>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletTransaction>(
     "SELECT character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
@@ -1334,7 +1331,7 @@ pub async fn wallet_period_summaries_all(db: &Database) -> Result<Vec<CharacterW
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn wallet_period_summaries_get(
   db: &Database,
   character_id: i64,

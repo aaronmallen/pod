@@ -12,7 +12,6 @@ use crate::store::{
 const NOTIFICATION_RETENTION_DAYS: i64 = 90;
 
 /// Default keyset page size for the History view. A caller may request a different limit.
-#[allow(dead_code)]
 pub const HISTORY_PAGE_SIZE: i64 = 50;
 
 // Notification storage repo (epic zyrmyrlk, spec A). Called by the detectors (spec B) and the
@@ -21,7 +20,7 @@ pub const HISTORY_PAGE_SIZE: i64 = 50;
 // dedup_key stays occupied, so emit()'s INSERT OR IGNORE remains a permanent no-op and a cleared
 // event can never re-surface or re-toast on a later detector pass. The rows drop out of
 // list()/unread_count() (both filter suppressed = 0) but persist as ledger tombstones across restart.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn clear_all(db: &Database) -> Result<(), Error> {
   sqlx::query("UPDATE notifications SET suppressed = 1 WHERE suppressed = 0")
     .execute(db.writer())
@@ -32,7 +31,6 @@ pub async fn clear_all(db: &Database) -> Result<(), Error> {
 // INSERT OR IGNORE makes this insert-if-absent: a duplicate dedup_key (already-notified, surfaced or
 // watermarked) yields zero rows, so `RETURNING ... fetch_optional` gives None and the emit is a no-op.
 // Surfaced rows pin suppressed=0; prune runs only after a successful insert.
-#[allow(dead_code)]
 pub async fn emit(db: &Database, notification: &NewNotification) -> Result<Option<Notification>, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, NotificationRow>(
@@ -62,7 +60,6 @@ pub async fn emit(db: &Database, notification: &NewNotification) -> Result<Optio
   Ok(row.and_then(NotificationRow::into_notification))
 }
 
-#[allow(dead_code)]
 pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error> {
   let rows = sqlx::query_as::<_, NotificationRow>(
     "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
@@ -86,7 +83,6 @@ pub async fn list(db: &Database, limit: i64) -> Result<Vec<Notification>, Error>
 // partial index, so deep history pages stay cheap. Walking with each page's last cursor visits every
 // surfaced row exactly once, even when newer rows are inserted mid-paging — they sort ahead of the
 // cursor and never reappear in a later page.
-#[allow(dead_code)]
 pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64) -> Result<Vec<Notification>, Error> {
   let rows = match cursor {
     Some(cursor) => {
@@ -125,7 +121,7 @@ pub async fn list_page(db: &Database, cursor: Option<&HistoryCursor>, limit: i64
 
 // Surfaced unread rows (read_at IS NULL AND suppressed = 0), newest-first, for the New tab — correct
 // independent of how far History has paged.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_unread(db: &Database, limit: i64) -> Result<Vec<Notification>, Error> {
   let rows = sqlx::query_as::<_, NotificationRow>(
     "SELECT id, kind, owner_type, owner_id, dedup_key, title, body, target_dest, target_char, target_sub, \
@@ -143,7 +139,6 @@ pub async fn list_unread(db: &Database, limit: i64) -> Result<Vec<Notification>,
   )
 }
 
-#[allow(dead_code)]
 pub async fn mark_all_read(db: &Database) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE notifications SET read_at = ? WHERE suppressed = 0 AND read_at IS NULL")
@@ -153,7 +148,6 @@ pub async fn mark_all_read(db: &Database) -> Result<(), Error> {
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn mark_read(db: &Database, id: i64) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE notifications SET read_at = ? WHERE id = ? AND read_at IS NULL")
@@ -164,7 +158,6 @@ pub async fn mark_read(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-#[allow(dead_code)]
 pub async fn unread_count(db: &Database) -> Result<i64, Error> {
   let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE suppressed = 0 AND read_at IS NULL")
     .fetch_one(db.reader())
@@ -177,7 +170,6 @@ pub async fn unread_count(db: &Database) -> Result<i64, Error> {
 // the ledger's last_success_at BEFORE the detector pulse, so a ledger-based first-run check would read
 // false on the very first sync and flood the whole history. A row only exists here once a prior scan
 // either surfaced or watermarked this owner+kind, so its presence is the true first-scan signal.
-#[allow(dead_code)]
 pub async fn has_any(db: &Database, owner: &NotificationOwner, kind: NotificationKind) -> Result<bool, Error> {
   let count: i64 =
     sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE owner_type = ? AND owner_id = ? AND kind = ? LIMIT 1")
@@ -209,7 +201,6 @@ fn first_scan_sentinel(owner: &NotificationOwner, kind: NotificationKind) -> Str
 // the first-run guard safe. The rows carry the real owner+kind (not placeholders) so has_any() can
 // recognise the subject's first scan; the title/body/target columns stay empty since a watermark row is
 // a pure dedup ledger entry, never rendered.
-#[allow(dead_code)]
 pub async fn watermark(
   db: &Database,
   owner: &NotificationOwner,
@@ -243,7 +234,6 @@ pub async fn watermark(
 // rather than deleted, so they leave the center (list()/unread_count() filter suppressed = 0) while
 // keeping their dedup_key occupied — emit() stays a permanent no-op and the event never re-notifies.
 // Suppressed watermark rows are already excluded by the suppressed = 0 guard.
-#[allow(dead_code)]
 async fn prune(db: &Database) -> Result<(), Error> {
   let cutoff = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS)).to_rfc3339();
   sqlx::query("UPDATE notifications SET suppressed = 1 WHERE suppressed = 0 AND created_at < ?")

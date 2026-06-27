@@ -6,7 +6,7 @@
 //! gate refuse the call when the relevant config flag is off — handlers never re-check permissions
 //! themselves.
 
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 
@@ -76,21 +76,26 @@ type ToolHandler = Arc<dyn Fn(Database, Value) -> ToolFuture + Send + Sync>;
 #[derive(Clone)]
 pub struct McpTool {
   args: Vec<ArgSpec>,
-  description: &'static str,
+  description: Cow<'static, str>,
   handler: ToolHandler,
   name: &'static str,
   permission: Permission,
 }
 
 impl McpTool {
-  pub fn new<F, Fut>(name: &'static str, description: &'static str, permission: Permission, handler: F) -> Self
+  pub fn new<F, Fut>(
+    name: &'static str,
+    description: impl Into<Cow<'static, str>>,
+    permission: Permission,
+    handler: F,
+  ) -> Self
   where
     F: Fn(Database, Value) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ToolOutcome> + Send + 'static,
   {
     Self {
       args: Vec::new(),
-      description,
+      description: description.into(),
       handler: Arc::new(move |db, args| Box::pin(handler(db, args))),
       name,
       permission,
@@ -108,8 +113,8 @@ impl McpTool {
     &self.args
   }
 
-  pub fn description(&self) -> &'static str {
-    self.description
+  pub fn description(&self) -> &str {
+    self.description.as_ref()
   }
 
   pub fn name(&self) -> &'static str {

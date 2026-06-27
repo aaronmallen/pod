@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use serde_json::{Value, json};
 
 use crate::mcp::tool::ToolError;
@@ -38,33 +40,33 @@ impl ArgType {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArgSpec {
-  description: &'static str,
+  description: Cow<'static, str>,
   name: &'static str,
   ty: ArgType,
 }
 
 impl ArgSpec {
-  pub fn integer(name: &'static str, description: &'static str) -> Self {
+  pub fn integer(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::Integer,
     }
   }
 
-  pub fn integer_array(name: &'static str, description: &'static str) -> Self {
+  pub fn integer_array(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::IntegerArray,
     }
   }
 
-  pub fn optional_integer(name: &'static str, default: i64, description: &'static str) -> Self {
+  pub fn optional_integer(name: &'static str, default: i64, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::OptionalInteger {
         default,
@@ -72,25 +74,25 @@ impl ArgSpec {
     }
   }
 
-  pub fn optional_integer_array(name: &'static str, description: &'static str) -> Self {
+  pub fn optional_integer_array(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::OptionalIntegerArray,
     }
   }
 
-  pub fn optional_string(name: &'static str, description: &'static str) -> Self {
+  pub fn optional_string(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::OptionalString,
     }
   }
 
-  pub fn string(name: &'static str, description: &'static str) -> Self {
+  pub fn string(name: &'static str, description: impl Into<Cow<'static, str>>) -> Self {
     Self {
-      description,
+      description: description.into(),
       name,
       ty: ArgType::String,
     }
@@ -111,7 +113,7 @@ impl ArgSpec {
   fn property(&self) -> Value {
     let mut schema = self.ty.json_schema();
     if let Value::Object(map) = &mut schema {
-      map.insert("description".to_owned(), json!(self.description));
+      map.insert("description".to_owned(), json!(self.description.as_ref()));
     }
     schema
   }

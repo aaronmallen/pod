@@ -40,7 +40,7 @@ pub fn tools() -> Vec<McpTool> {
 fn budget_assign_category_tool() -> McpTool {
   McpTool::new(
     "budget_assign_category",
-    "Sets a budget category's assignment for a month (the global All scope).",
+    t!("mcp.tools.budget_assign_category").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let category_id = require_i64(&args, "category_id")?;
@@ -57,16 +57,19 @@ fn budget_assign_category_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("category_id", "The budget category to assign to."),
-    ArgSpec::string("month", "The budget month in YYYY-MM format."),
-    ArgSpec::integer("value", "The amount to assign to the category for the month."),
+    ArgSpec::integer(
+      "category_id",
+      t!("mcp.tools.budget_assign_category_category_id").into_owned(),
+    ),
+    ArgSpec::string("month", t!("mcp.tools.budget_assign_category_month").into_owned()),
+    ArgSpec::integer("value", t!("mcp.tools.budget_assign_category_value").into_owned()),
   ])
 }
 
 fn budget_move_money_tool() -> McpTool {
   McpTool::new(
     "budget_move_money",
-    "Moves assigned money between budget categories, or to Ready-to-Assign.",
+    t!("mcp.tools.budget_move_money").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let month = require_month(&args)?;
@@ -90,13 +93,16 @@ fn budget_move_money_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::string("month", "The budget month in YYYY-MM format."),
-    ArgSpec::integer("from_category_id", "The category to move money out of."),
-    ArgSpec::integer("amount", "The amount of money to move."),
+    ArgSpec::string("month", t!("mcp.tools.budget_move_money_month").into_owned()),
+    ArgSpec::integer(
+      "from_category_id",
+      t!("mcp.tools.budget_move_money_from_category_id").into_owned(),
+    ),
+    ArgSpec::integer("amount", t!("mcp.tools.budget_move_money_amount").into_owned()),
     ArgSpec::optional_integer(
       "to_category_id",
       0,
-      "The destination category; omit to move the money to Ready-to-Assign.",
+      t!("mcp.tools.budget_move_money_to_category_id").into_owned(),
     ),
   ])
 }
@@ -104,7 +110,7 @@ fn budget_move_money_tool() -> McpTool {
 fn budget_assign_entry_tool() -> McpTool {
   McpTool::new(
     "budget_assign_entry",
-    "Pins a single wallet entry to a budget category.",
+    t!("mcp.tools.budget_assign_entry").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let owner = require_owner(&args)?;
@@ -124,19 +130,27 @@ fn budget_assign_entry_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::string("owner_kind", "The owner type: character or corporation."),
-    ArgSpec::integer("owner_id", "The id of the owning character or corporation."),
-    ArgSpec::string("entry_kind", "The entry type: journal or market."),
-    ArgSpec::integer("entry_id", "The id of the wallet entry to pin."),
-    ArgSpec::integer("category_id", "The budget category to pin the entry to."),
+    ArgSpec::string(
+      "owner_kind",
+      t!("mcp.tools.budget_assign_entry_owner_kind").into_owned(),
+    ),
+    ArgSpec::integer("owner_id", t!("mcp.tools.budget_assign_entry_owner_id").into_owned()),
+    ArgSpec::string(
+      "entry_kind",
+      t!("mcp.tools.budget_assign_entry_entry_kind").into_owned(),
+    ),
+    ArgSpec::integer("entry_id", t!("mcp.tools.budget_assign_entry_entry_id").into_owned()),
+    ArgSpec::integer(
+      "category_id",
+      t!("mcp.tools.budget_assign_entry_category_id").into_owned(),
+    ),
   ])
 }
 
 fn budget_set_rule_tool() -> McpTool {
   McpTool::new(
     "budget_set_rule",
-    "Creates or updates an automation rule that files matching entries into a category. Optional inputs: match_mode \
-      (all|any, default all), conditions (array of {field, op, value, value2?}), enabled (boolean, default true).",
+    t!("mcp.tools.budget_set_rule").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let category_id = require_i64(&args, "category_id")?;
@@ -190,16 +204,16 @@ fn budget_set_rule_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("category_id", "The category matching entries should be filed into."),
-    ArgSpec::string("name", "A human-readable name for the rule."),
-    ArgSpec::optional_integer("rule_id", 0, "The rule to update; omit to create a new rule."),
+    ArgSpec::integer("category_id", t!("mcp.tools.budget_set_rule_category_id").into_owned()),
+    ArgSpec::string("name", t!("mcp.tools.budget_set_rule_name").into_owned()),
+    ArgSpec::optional_integer("rule_id", 0, t!("mcp.tools.budget_set_rule_rule_id").into_owned()),
   ])
 }
 
 fn skill_plan_create_tool() -> McpTool {
   McpTool::new(
     "skill_plan_create",
-    "Creates an empty skill plan for a character.",
+    t!("mcp.tools.skill_plan_create").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -209,15 +223,18 @@ fn skill_plan_create_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("character_id", "The character that owns the plan."),
-    ArgSpec::string("name", "A human-readable name for the plan."),
+    ArgSpec::integer(
+      "character_id",
+      t!("mcp.tools.skill_plan_create_character_id").into_owned(),
+    ),
+    ArgSpec::string("name", t!("mcp.tools.skill_plan_create_name").into_owned()),
   ])
 }
 
 fn skill_plan_add_entry_tool() -> McpTool {
   McpTool::new(
     "skill_plan_add_entry",
-    "Appends a skill-to-level to a plan.",
+    t!("mcp.tools.skill_plan_add_entry").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -231,16 +248,16 @@ fn skill_plan_add_entry_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("plan_id", "The plan to append the entry to."),
-    ArgSpec::integer("skill_id", "The skill to train."),
-    ArgSpec::integer("to_level", "The target skill level, 1 through 5."),
+    ArgSpec::integer("plan_id", t!("mcp.tools.skill_plan_add_entry_plan_id").into_owned()),
+    ArgSpec::integer("skill_id", t!("mcp.tools.skill_plan_add_entry_skill_id").into_owned()),
+    ArgSpec::integer("to_level", t!("mcp.tools.skill_plan_add_entry_to_level").into_owned()),
   ])
 }
 
 fn skill_plan_remove_entry_tool() -> McpTool {
   McpTool::new(
     "skill_plan_remove_entry",
-    "Removes one entry from a plan and densifies the order.",
+    t!("mcp.tools.skill_plan_remove_entry").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let entry_id = require_i64(&args, "entry_id")?;
@@ -248,13 +265,16 @@ fn skill_plan_remove_entry_tool() -> McpTool {
       Ok(json!({ "entry_id": entry_id, "removed": true }))
     },
   )
-  .with_args([ArgSpec::integer("entry_id", "The plan entry to remove.")])
+  .with_args([ArgSpec::integer(
+    "entry_id",
+    t!("mcp.tools.skill_plan_remove_entry_entry_id").into_owned(),
+  )])
 }
 
 fn skill_plan_reorder_tool() -> McpTool {
   McpTool::new(
     "skill_plan_reorder",
-    "Sets a plan's entry order.",
+    t!("mcp.tools.skill_plan_reorder").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let ids = require_i64_array(&args, "ordered_entry_ids")?;
@@ -264,15 +284,14 @@ fn skill_plan_reorder_tool() -> McpTool {
   )
   .with_args([ArgSpec::integer_array(
     "ordered_entry_ids",
-    "The plan entry ids in the desired order.",
+    t!("mcp.tools.skill_plan_reorder_ordered_entry_ids").into_owned(),
   )])
 }
 
 fn skill_plan_replace_tool() -> McpTool {
   McpTool::new(
     "skill_plan_replace",
-    "Replaces every entry of a plan in one shot. Required `entries` is an array of {skill_id, to_level, priority?, \
-      note?, is_auto?}.",
+    t!("mcp.tools.skill_plan_replace").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -288,13 +307,16 @@ fn skill_plan_replace_tool() -> McpTool {
       Ok(json!({ "entry_count": rows.len(), "plan_id": plan_id }))
     },
   )
-  .with_args([ArgSpec::integer("plan_id", "The plan whose entries are replaced.")])
+  .with_args([ArgSpec::integer(
+    "plan_id",
+    t!("mcp.tools.skill_plan_replace_plan_id").into_owned(),
+  )])
 }
 
 fn skill_plan_delete_tool() -> McpTool {
   McpTool::new(
     "skill_plan_delete",
-    "Deletes a skill plan and all of its entries.",
+    t!("mcp.tools.skill_plan_delete").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -302,14 +324,16 @@ fn skill_plan_delete_tool() -> McpTool {
       Ok(json!({ "deleted": true, "plan_id": plan_id }))
     },
   )
-  .with_args([ArgSpec::integer("plan_id", "The plan to delete.")])
+  .with_args([ArgSpec::integer(
+    "plan_id",
+    t!("mcp.tools.skill_plan_delete_plan_id").into_owned(),
+  )])
 }
 
 fn planner_create_tool() -> McpTool {
   McpTool::new(
     "planner_create",
-    "Creates a saved industry plan. Required `types` is an array of {type_id, me?, te?, built?, use_stock?, \
-      facility_system?, facility_structure?}.",
+    t!("mcp.tools.planner_create").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let name = require_str(&args, "name")?;
@@ -319,13 +343,16 @@ fn planner_create_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::string("name", "A human-readable name for the plan."),
-    ArgSpec::integer("product_type_id", "The type id of the plan's final product."),
-    ArgSpec::integer("runs", "The number of production runs of the product."),
+    ArgSpec::string("name", t!("mcp.tools.planner_create_name").into_owned()),
+    ArgSpec::integer(
+      "product_type_id",
+      t!("mcp.tools.planner_create_product_type_id").into_owned(),
+    ),
+    ArgSpec::integer("runs", t!("mcp.tools.planner_create_runs").into_owned()),
     ArgSpec::optional_integer(
       "root_facility_system",
       0,
-      "The solar system id of the root facility; omit to leave unset.",
+      t!("mcp.tools.planner_create_root_facility_system").into_owned(),
     ),
   ])
 }
@@ -333,8 +360,7 @@ fn planner_create_tool() -> McpTool {
 fn planner_replace_segments_tool() -> McpTool {
   McpTool::new(
     "planner_replace_segments",
-    "Replaces a plan's per-type build segments. Required `segments` is an array of {type_id, runs, segment_index, \
-      pilot_id?, clone_id?}.",
+    t!("mcp.tools.planner_replace_segments").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -352,13 +378,16 @@ fn planner_replace_segments_tool() -> McpTool {
       Ok(json!({ "plan_id": plan_id, "segment_count": segments.len() }))
     },
   )
-  .with_args([ArgSpec::integer("plan_id", "The plan whose segments are replaced.")])
+  .with_args([ArgSpec::integer(
+    "plan_id",
+    t!("mcp.tools.planner_replace_segments_plan_id").into_owned(),
+  )])
 }
 
 fn planner_delete_tool() -> McpTool {
   McpTool::new(
     "planner_delete",
-    "Deletes a saved industry plan and its types and segments.",
+    t!("mcp.tools.planner_delete").into_owned(),
     Permission::LocalWrite,
     |db, args: Value| async move {
       let plan_id = require_i64(&args, "plan_id")?;
@@ -366,7 +395,10 @@ fn planner_delete_tool() -> McpTool {
       Ok(json!({ "deleted": true, "plan_id": plan_id }))
     },
   )
-  .with_args([ArgSpec::integer("plan_id", "The plan to delete.")])
+  .with_args([ArgSpec::integer(
+    "plan_id",
+    t!("mcp.tools.planner_delete_plan_id").into_owned(),
+  )])
 }
 
 struct PlanEntryInput {

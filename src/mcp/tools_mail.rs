@@ -20,7 +20,7 @@ pub fn tools() -> Vec<McpTool> {
 fn send_mail_tool() -> McpTool {
   McpTool::new(
     "send_mail",
-    "Queues an EVE mail for delivery through Pod's outbox (optimistic Sent insert, real ESI send by the drainer).",
+    t!("mcp.tools.send_mail").into_owned(),
     Permission::SendMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -49,21 +49,17 @@ fn send_mail_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("character_id", "The sending character's id."),
-    ArgSpec::string("subject", "The mail subject line."),
-    ArgSpec::string("body", "The mail body text."),
-    ArgSpec::integer_array(
-      "recipients",
-      "The recipients as an array of objects, each `{ id: integer, type?: string }` where `type` defaults to `character` (e.g. `character`, `corporation`, `alliance`, `mailing_list`). At least one is required.",
-    ),
+    ArgSpec::integer("character_id", t!("mcp.tools.send_mail_character_id").into_owned()),
+    ArgSpec::string("subject", t!("mcp.tools.send_mail_subject").into_owned()),
+    ArgSpec::string("body", t!("mcp.tools.send_mail_body").into_owned()),
+    ArgSpec::integer_array("recipients", t!("mcp.tools.send_mail_recipients").into_owned()),
   ])
 }
 
 fn delete_mail_tool() -> McpTool {
   McpTool::new(
     "delete_mail",
-    "Permanently deletes a mail from Pod and the EVE mailbox through the outbox (optimistic purge, real ESI delete by \
-      the drainer, restore-on-failure).",
+    t!("mcp.tools.delete_mail").into_owned(),
     Permission::DeleteMail,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -87,15 +83,15 @@ fn delete_mail_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("character_id", "The owning character's id."),
-    ArgSpec::integer("mail_id", "The id of the mail to delete."),
+    ArgSpec::integer("character_id", t!("mcp.tools.delete_mail_character_id").into_owned()),
+    ArgSpec::integer("mail_id", t!("mcp.tools.delete_mail_mail_id").into_owned()),
   ])
 }
 
 fn manage_labels_tool() -> McpTool {
   McpTool::new(
     "manage_labels",
-    "Creates or deletes a mail label, or sets a mail's labels, through the outbox.",
+    t!("mcp.tools.manage_labels").into_owned(),
     Permission::ManageLabels,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -111,33 +107,13 @@ fn manage_labels_tool() -> McpTool {
     },
   )
   .with_args([
-    ArgSpec::integer("character_id", "The owning character's id."),
-    ArgSpec::string(
-      "action",
-      "Which operation to perform: `create_label`, `delete_label`, or `set_labels`.",
-    ),
-    ArgSpec::string(
-      "name",
-      "The label name. Required (and must be non-blank) when `action` is `create_label`; ignored otherwise.",
-    ),
-    ArgSpec::string(
-      "color",
-      "Optional label color (e.g. `#ffffff`) used when `action` is `create_label`.",
-    ),
-    ArgSpec::optional_integer(
-      "label_id",
-      0,
-      "The id of the label to remove. Required when `action` is `delete_label`.",
-    ),
-    ArgSpec::optional_integer(
-      "mail_id",
-      0,
-      "The id of the mail whose labels to set. Required when `action` is `set_labels`.",
-    ),
-    ArgSpec::integer_array(
-      "labels",
-      "The full set of label ids the mail should carry. Required when `action` is `set_labels`.",
-    ),
+    ArgSpec::integer("character_id", t!("mcp.tools.manage_labels_character_id").into_owned()),
+    ArgSpec::string("action", t!("mcp.tools.manage_labels_action").into_owned()),
+    ArgSpec::string("name", t!("mcp.tools.manage_labels_name").into_owned()),
+    ArgSpec::string("color", t!("mcp.tools.manage_labels_color").into_owned()),
+    ArgSpec::optional_integer("label_id", 0, t!("mcp.tools.manage_labels_label_id").into_owned()),
+    ArgSpec::optional_integer("mail_id", 0, t!("mcp.tools.manage_labels_mail_id").into_owned()),
+    ArgSpec::integer_array("labels", t!("mcp.tools.manage_labels_labels").into_owned()),
   ])
 }
 

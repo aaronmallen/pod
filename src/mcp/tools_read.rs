@@ -34,7 +34,7 @@ pub fn tools() -> Vec<McpTool> {
 fn list_characters_tool() -> McpTool {
   McpTool::new(
     "list_characters",
-    "Lists every owned character: id, name, corporation, total skill points, and wallet balance.",
+    t!("mcp.tools.list_characters").into_owned(),
     Permission::Read,
     |db, _args| async move {
       let characters = character::all_owned(&db).await.map_err(internal)?;
@@ -57,7 +57,7 @@ fn list_characters_tool() -> McpTool {
 fn get_wallet_balances_tool() -> McpTool {
   McpTool::new(
     "get_wallet_balances",
-    "Returns per-character liquid/asset/net-worth figures and every owned corporation's wallet divisions.",
+    t!("mcp.tools.get_wallet_balances").into_owned(),
     Permission::Read,
     |db, _args| async move {
       let financials = finance::financials_all(&db).await.map_err(internal)?;
@@ -103,7 +103,7 @@ fn get_wallet_balances_tool() -> McpTool {
 fn list_journal_tool() -> McpTool {
   McpTool::new(
     "list_journal",
-    "Pages a character's wallet journal (most recent first).",
+    t!("mcp.tools.list_journal").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -135,7 +135,7 @@ fn list_journal_tool() -> McpTool {
 fn list_market_transactions_tool() -> McpTool {
   McpTool::new(
     "list_market_transactions",
-    "Pages a character's market transactions (most recent first).",
+    t!("mcp.tools.list_market_transactions").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -168,7 +168,7 @@ fn list_market_transactions_tool() -> McpTool {
 fn list_contracts_tool() -> McpTool {
   McpTool::new(
     "list_contracts",
-    "Pages a character's contracts (most recent first).",
+    t!("mcp.tools.list_contracts").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -202,7 +202,7 @@ fn list_contracts_tool() -> McpTool {
 fn get_budget_view_tool() -> McpTool {
   McpTool::new(
     "get_budget_view",
-    "Returns the global budget envelopes, assignments, and Ready-to-Assign for a month.",
+    t!("mcp.tools.get_budget_view").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let month = args
@@ -242,14 +242,14 @@ fn get_budget_view_tool() -> McpTool {
   )
   .with_args([ArgSpec::optional_string(
     "month",
-    "A budget month (YYYY-MM); omit to use the current month.",
+    t!("mcp.tools.get_budget_view_month").into_owned(),
   )])
 }
 
 fn get_skills_tool() -> McpTool {
   McpTool::new(
     "get_skills",
-    "Returns a character's trained skills and total skill points.",
+    t!("mcp.tools.get_skills").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -275,7 +275,7 @@ fn get_skills_tool() -> McpTool {
 fn get_skill_queue_tool() -> McpTool {
   McpTool::new(
     "get_skill_queue",
-    "Returns a character's skill training queue in position order.",
+    t!("mcp.tools.get_skill_queue").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -301,7 +301,7 @@ fn get_skill_queue_tool() -> McpTool {
 fn list_industry_jobs_tool() -> McpTool {
   McpTool::new(
     "list_industry_jobs",
-    "Returns every character and authorized-corporation industry job.",
+    t!("mcp.tools.list_industry_jobs").into_owned(),
     Permission::Read,
     |db, _args| async move {
       let jobs = industry::list_all(&db).await.map_err(internal)?;
@@ -347,7 +347,7 @@ fn list_industry_jobs_tool() -> McpTool {
 fn get_planner_tool() -> McpTool {
   McpTool::new(
     "get_planner",
-    "Lists saved industry plans, or returns one plan's full type tree and segments.",
+    t!("mcp.tools.get_planner").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       if let Some(plan_id) = args.get("plan_id").and_then(Value::as_i64) {
@@ -411,14 +411,14 @@ fn get_planner_tool() -> McpTool {
   .with_args([ArgSpec::optional_integer(
     "plan_id",
     0,
-    "An industry plan id; omit to list every saved plan.",
+    t!("mcp.tools.get_planner_plan_id").into_owned(),
   )])
 }
 
 fn list_assets_tool() -> McpTool {
   McpTool::new(
     "list_assets",
-    "Pages a character's asset holdings.",
+    t!("mcp.tools.list_assets").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -448,7 +448,7 @@ fn list_assets_tool() -> McpTool {
 fn list_mail_tool() -> McpTool {
   McpTool::new(
     "list_mail",
-    "Pages a character's mail headers (most recent first).",
+    t!("mcp.tools.list_mail").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -477,7 +477,7 @@ fn list_mail_tool() -> McpTool {
 fn get_mail_body_tool() -> McpTool {
   McpTool::new(
     "get_mail_body",
-    "Returns a single mail's header, recipients, labels, and full body.",
+    t!("mcp.tools.get_mail_body").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let character_id = require_i64(&args, "character_id")?;
@@ -501,14 +501,14 @@ fn get_mail_body_tool() -> McpTool {
   )
   .with_args([
     character_id_arg(),
-    ArgSpec::integer("mail_id", "The mail id whose body to fetch."),
+    ArgSpec::integer("mail_id", t!("mcp.tools.get_mail_body_mail_id").into_owned()),
   ])
 }
 
 fn get_market_prices_tool() -> McpTool {
   McpTool::new(
     "get_market_prices",
-    "Returns the canonical per-type market prices (adjusted/average).",
+    t!("mcp.tools.get_market_prices").into_owned(),
     Permission::Read,
     |db, args: Value| async move {
       let filter: Option<Vec<i64>> = args
@@ -533,7 +533,7 @@ fn get_market_prices_tool() -> McpTool {
   )
   .with_args([ArgSpec::optional_integer_array(
     "type_ids",
-    "Type ids to filter prices by; omit to return every type.",
+    t!("mcp.tools.get_market_prices_type_ids").into_owned(),
   )])
 }
 
@@ -542,18 +542,14 @@ fn internal(error: impl std::fmt::Display) -> ToolError {
 }
 
 fn character_id_arg() -> ArgSpec {
-  ArgSpec::integer("character_id", "The character whose data to read.")
+  ArgSpec::integer("character_id", t!("mcp.tools.shared_arg_character_id").into_owned())
 }
 
 fn paginated_character_args() -> [ArgSpec; 3] {
   [
     character_id_arg(),
-    ArgSpec::optional_integer("page", 0, "Zero-based page index (defaults to 0)."),
-    ArgSpec::optional_integer(
-      "limit",
-      DEFAULT_LIMIT,
-      "Maximum rows per page (1..=500, defaults to 50).",
-    ),
+    ArgSpec::optional_integer("page", 0, t!("mcp.tools.shared_arg_page").into_owned()),
+    ArgSpec::optional_integer("limit", DEFAULT_LIMIT, t!("mcp.tools.shared_arg_limit").into_owned()),
   ]
 }
 

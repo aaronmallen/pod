@@ -76,17 +76,17 @@ impl Language {
   }
 
   /// The English display label for the selector UI.
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Language::De => "German",
-      Language::En => "English",
-      Language::EnUs => "English (US)",
-      Language::Es => "Spanish",
-      Language::Fr => "French",
-      Language::Ja => "Japanese",
-      Language::Ko => "Korean",
-      Language::Ru => "Russian",
-      Language::Zh => "Chinese",
+      Language::De => t!("language.name.de").into_owned(),
+      Language::En => t!("language.name.en").into_owned(),
+      Language::EnUs => t!("language.name.en_us").into_owned(),
+      Language::Es => t!("language.name.es").into_owned(),
+      Language::Fr => t!("language.name.fr").into_owned(),
+      Language::Ja => t!("language.name.ja").into_owned(),
+      Language::Ko => t!("language.name.ko").into_owned(),
+      Language::Ru => t!("language.name.ru").into_owned(),
+      Language::Zh => t!("language.name.zh").into_owned(),
     }
   }
 

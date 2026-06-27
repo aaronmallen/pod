@@ -447,4 +447,44 @@ mod tests {
       );
     }
   }
+
+  mod rekey_wallet_journal_per_wallet {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    async fn primary_key_columns(db: &Database, table: &str) -> Vec<String> {
+      sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk")
+        .bind(table)
+        .fetch_all(db.reader())
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn it_applies_cleanly_and_rekeys_every_wallet_table_to_the_composite_identity() {
+      let db = open_test().await.unwrap();
+
+      assert_eq!(
+        primary_key_columns(&db, "character_wallet_journal").await,
+        vec!["character_id".to_owned(), "id".to_owned()]
+      );
+      assert_eq!(
+        primary_key_columns(&db, "character_wallet_transaction").await,
+        vec!["character_id".to_owned(), "transaction_id".to_owned()]
+      );
+      assert_eq!(
+        primary_key_columns(&db, "corporation_wallet_journal").await,
+        vec!["corporation_id".to_owned(), "division".to_owned(), "id".to_owned()]
+      );
+      assert_eq!(
+        primary_key_columns(&db, "corporation_wallet_transaction").await,
+        vec![
+          "corporation_id".to_owned(),
+          "division".to_owned(),
+          "transaction_id".to_owned()
+        ]
+      );
+    }
+  }
 }

@@ -704,7 +704,7 @@ pub async fn append_corporation_wallet_journal(
         .push_bind(entry.tax())
         .push_bind(entry.tax_receiver_id());
     });
-    builder.push(" ON CONFLICT(id) DO NOTHING");
+    builder.push(" ON CONFLICT(corporation_id, division, id) DO NOTHING");
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -755,7 +755,7 @@ pub async fn append_corporation_wallet_transaction(
         .push_bind(transaction.type_id())
         .push_bind(transaction.unit_price());
     });
-    builder.push(" ON CONFLICT(transaction_id) DO NOTHING");
+    builder.push(" ON CONFLICT(corporation_id, division, transaction_id) DO NOTHING");
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -1212,7 +1212,7 @@ pub async fn append_wallet_journal(db: &Database, entries: &[CharacterWalletJour
         .push_bind(entry.tax())
         .push_bind(entry.tax_receiver_id());
     });
-    builder.push(" ON CONFLICT(id) DO NOTHING");
+    builder.push(" ON CONFLICT(character_id, id) DO NOTHING");
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -1282,7 +1282,7 @@ pub async fn append_wallet_transaction(
         .push_bind(transaction.type_id())
         .push_bind(transaction.unit_price());
     });
-    builder.push(" ON CONFLICT(transaction_id) DO NOTHING");
+    builder.push(" ON CONFLICT(character_id, transaction_id) DO NOTHING");
     builder.build().execute(&mut *tx).await?;
   }
 
@@ -2085,6 +2085,95 @@ mod corporation_wallet_tests {
         .unwrap();
 
       assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
+    }
+  }
+
+  mod per_wallet_identity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    const OTHER_CORP: i64 = 90_000_002;
+
+    async fn seed_other_corp(db: &Database) {
+      let mut corporation = Corporation::new(OTHER_CORP, "Other Corporation", "OTHC");
+      corporation.set_ceo_id(12_345_678);
+      corporation.set_creator_id(12_345_678);
+      corporation.set_member_count(50);
+      corporation.set_tax_rate(0.1);
+      org::upsert_corporation(db, &corporation).await.unwrap();
+    }
+
+    fn journal_for(corporation_id: i64, id: i64, division: i64) -> CorporationWalletJournal {
+      let mut entry = journal_entry(id, division);
+      entry.corporation_id = corporation_id;
+      entry
+    }
+
+    fn transaction_for(corporation_id: i64, transaction_id: i64, division: i64) -> CorporationWalletTransaction {
+      let mut row = transaction(transaction_id, division);
+      row.corporation_id = corporation_id;
+      row
+    }
+
+    #[tokio::test]
+    async fn it_keeps_both_journal_legs_of_an_internal_transfer_across_divisions() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_journal(&db, &[journal_for(CORP, 500, 1), journal_for(CORP, 500, 2)])
+        .await
+        .unwrap();
+
+      assert_eq!(corporation_wallet_journal(&db, CORP, 1).await.unwrap().len(), 1);
+      assert_eq!(corporation_wallet_journal(&db, CORP, 2).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_both_journal_legs_of_a_transfer_across_corporations() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_other_corp(&db).await;
+
+      append_corporation_wallet_journal(&db, &[journal_for(CORP, 500, 1), journal_for(OTHER_CORP, 500, 1)])
+        .await
+        .unwrap();
+
+      assert_eq!(corporation_wallet_journal(&db, CORP, 1).await.unwrap().len(), 1);
+      assert_eq!(corporation_wallet_journal(&db, OTHER_CORP, 1).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_both_transaction_legs_of_an_internal_transfer_across_divisions() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+
+      append_corporation_wallet_transaction(&db, &[transaction_for(CORP, 500, 1), transaction_for(CORP, 500, 2)])
+        .await
+        .unwrap();
+
+      assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
+      assert_eq!(corporation_wallet_transactions(&db, CORP, 2).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_both_transaction_legs_of_a_transfer_across_corporations() {
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_other_corp(&db).await;
+
+      append_corporation_wallet_transaction(
+        &db,
+        &[transaction_for(CORP, 500, 1), transaction_for(OTHER_CORP, 500, 1)],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(corporation_wallet_transactions(&db, CORP, 1).await.unwrap().len(), 1);
+      assert_eq!(
+        corporation_wallet_transactions(&db, OTHER_CORP, 1).await.unwrap().len(),
+        1
+      );
     }
   }
 }
@@ -3722,6 +3811,46 @@ mod wallet_tests {
       let rows = wallet_transactions(&db, 42).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].unit_price(), 5.0);
+    }
+  }
+
+  mod per_wallet_identity {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn it_keeps_both_journal_legs_of_a_transfer_across_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+
+      super::append_wallet_journal(
+        &db,
+        &[
+          make_entry(42, 500, Some(10.0), Some(110.0)),
+          make_entry(43, 500, Some(-10.0), Some(90.0)),
+        ],
+      )
+      .await
+      .unwrap();
+
+      assert_eq!(wallet_journal(&db, 42).await.unwrap().len(), 1);
+      assert_eq!(wallet_journal(&db, 43).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn it_keeps_both_transaction_legs_of_a_transfer_across_characters() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      seed_character(&db, 43).await;
+
+      super::append_wallet_transaction(&db, &[make_transaction(42, 500, 5.0), make_transaction(43, 500, 6.0)])
+        .await
+        .unwrap();
+
+      assert_eq!(wallet_transactions(&db, 42).await.unwrap().len(), 1);
+      assert_eq!(wallet_transactions(&db, 43).await.unwrap().len(), 1);
     }
   }
 

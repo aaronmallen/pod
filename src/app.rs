@@ -7149,6 +7149,18 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
 }
 
 fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
+  // Finish: persist the assembled draft (language + features + storage) to config.toml, then restart
+  // into the normal boot path. config now exists, so `should_run_wizard` is false next launch and boot
+  // takes the splash path. The relaunch reuses the same shared restart mechanism as the language
+  // switch; persistence is split into `complete_wizard` so it can be exercised without exiting.
+  if matches!(message, wizard::Message::Complete) {
+    if let Some(state) = app.wizard.as_ref() {
+      complete_wizard(state.settings());
+    }
+    restart();
+    return Task::none();
+  }
+
   // A language pick re-renders the whole wizard in that language on the next frame: the view resolves
   // every `t!` against the active locale, so applying it here (before the next view) is what makes the
   // rail, headers, and footer reflect the chosen language live, with no config write until Finish.
@@ -7160,6 +7172,23 @@ fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
     }
   }
   Task::none()
+}
+
+// Persists the wizard's assembled settings to config.toml and pre-creates the configured storage
+// directories (db / log / cache) so the relaunched boot finds them in place. Split out from the
+// restart so the persist+create outcome is testable without exiting the process.
+fn complete_wizard(settings: &config::Settings) {
+  let storage = settings.storage();
+  for dir in [
+    storage.resolved_db_dir(),
+    storage.resolved_log_dir(),
+    storage.resolved_cache_dir(),
+  ] {
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+      tracing::warn!(target: "pod::lifecycle", %error, dir = %dir.display(), "failed to create storage directory on wizard finish");
+    }
+  }
+  config::save(settings);
 }
 
 fn retry_seed(app: &mut App) -> Task<Message> {
@@ -10414,6 +10443,69 @@ mod tests {
       app.accessibility.set_language(Language::De);
 
       assert_eq!(language_change_action(&app, Language::De), LanguageChangeAction::Ignore);
+    }
+  }
+
+  mod complete_wizard {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::i18n::Language;
+
+    #[test]
+    fn it_writes_a_config_with_the_chosen_language_and_storage_then_clears_should_run_wizard() {
+      // Keep config::save off the real user config by pointing XDG_CONFIG_HOME at a tempdir.
+      let config_home = tempfile::tempdir().unwrap();
+      // SAFETY: only this test touches XDG_CONFIG_HOME within its body.
+      unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", config_home.path());
+      }
+
+      let storage_root = tempfile::tempdir().unwrap();
+      let db_dir = storage_root.path().join("data");
+      let mut settings = config::Settings::default();
+      settings.accessibility_mut().set_language(Language::De);
+      settings.storage_mut().set_db_dir(Some(db_dir.clone()));
+      settings.features_mut().set_sub_enabled(config::SubFeature::Mail, false);
+      assert!(
+        config::should_run_wizard(&settings),
+        "no config exists before finishing"
+      );
+
+      complete_wizard(&settings);
+
+      let config_path = config_home.path().join("pod").join("config.toml");
+      assert!(config_path.is_file(), "finishing writes config.toml");
+      assert!(
+        db_dir.is_dir(),
+        "the configured database directory is created on finish"
+      );
+
+      let written = std::fs::read_to_string(&config_path).unwrap();
+      assert!(
+        written.contains("language = \"de\""),
+        "the chosen language is persisted to config.toml"
+      );
+
+      let reloaded = config::load().unwrap();
+      assert_eq!(
+        reloaded.accessibility().language(),
+        Language::De,
+        "the reloaded config carries the chosen language"
+      );
+      assert_eq!(
+        reloaded.storage().db_dir(),
+        &Some(db_dir),
+        "the reloaded config carries the storage override"
+      );
+      assert!(
+        !reloaded.features().is_sub_enabled(config::SubFeature::Mail),
+        "the reloaded config carries the disabled feature flag"
+      );
+      assert!(
+        !config::should_run_wizard(&reloaded),
+        "with a config present the wizard is skipped on the next boot"
+      );
     }
   }
 

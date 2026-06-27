@@ -1,11 +1,20 @@
-[wizard.body]
-placeholder = "This step is being assembled."
-
 [wizard.features]
 disable_all = "Disable all"
 enable_all = "Enable all"
 eyebrow = "Features · %{current} of %{total}"
 on_count = "%{on}/%{total} on"
+
+[wizard.finish]
+eyebrow = "Finish"
+features_groups = "across %{count} groups"
+features_label = "Features enabled"
+language_label = "Language"
+lede = "Pod is configured and ready. Your choices are saved to this machine’s preferences — open the app to start flying, or step back to adjust anything."
+privacy_note = "Everything here lives under Settings in the app. Change features, paths, accessibility, and more whenever you like."
+storage_customized = "customized"
+storage_default = "Default"
+storage_label = "Storage paths"
+title = "You’re all set"
 
 [wizard.language]
 card_label = "%{label}"

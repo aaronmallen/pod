@@ -53,6 +53,10 @@ fn tr_static(key: &str) -> &'static str {
 #[derive(Clone, Debug)]
 pub enum Message {
   Back,
+  // The Finish step's completion action. The app's wizard update consumes the draft `Settings`,
+  // persists it to config.toml (creating the configured storage dirs), then restarts into the normal
+  // boot path — config now exists, so the next launch skips the wizard and runs the splash.
+  Complete,
   // A per-group Features step toggle. The wizard routes this through the settings Features tab's own
   // `update` over the draft `Settings.features`, dropping its persist outcome (config is written once
   // at Finish), so the wizard and the settings tab mutate the same flag model.
@@ -237,9 +241,9 @@ impl State {
     self.pending_language
   }
 
-  // Consumed at Finish (persist the draft) and by the Features/Storage step tasks that read the live
-  // flag/path state; only the tests read it until those land, so it reads as unused in the bin build.
-  #[allow(dead_code)]
+  // The assembled draft, read by the Finish step's summary and consumed by the app's completion path
+  // (`Message::Complete`), which persists it to config.toml verbatim — language from the Language step,
+  // feature flags from the Features steps, and the storage overrides from the Storage step.
   pub fn settings(&self) -> &Settings {
     &self.settings
   }
@@ -309,6 +313,10 @@ pub fn update(state: &mut State, message: Message) {
   match message {
     Message::Back => {
       state.current = state.current.saturating_sub(1);
+    }
+    Message::Complete => {
+      // The completion action (persist + restart) lives in the app, which consumes `settings()`
+      // before delegating here, so the wizard state itself has nothing left to mutate.
     }
     Message::Features(message) => {
       // Route through the settings Features tab's own update so the catalog, cascade rules, and
@@ -661,22 +669,8 @@ fn step_body(state: &State) -> Element<'_, Message> {
     Step::Language => language_body(state),
     Step::Storage => storage_body(state),
     Step::Welcome => welcome_body(),
-    Step::Finish => step_placeholder(),
+    Step::Finish => finish_body(state),
   }
-}
-
-fn step_placeholder<'a>() -> Element<'a, Message> {
-  container(
-    text(t!("wizard.body.placeholder").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .width(Length::Fill)
-  .height(Length::Fill)
-  .align_x(Horizontal::Center)
-  .align_y(Vertical::Center)
-  .into()
 }
 
 // The shared step header: a Plasma eyebrow over a large title and an optional lede, with an optional
@@ -819,6 +813,258 @@ fn benefit_card<'a>(icon: Icon, title: String, description: String) -> Element<'
     })
     .style(|_| container::Style {
       background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+// The Finish step: a plasma check mark, the "you're all set" masthead, a two-up summary of the
+// choices (enabled features over the catalog total, customized-vs-default storage paths with the
+// resolved database location), a language readout, and a privacy footnote. Mirrors firstrun.jsx's
+// FinishStep; the footer's primary button dispatches `Message::Complete` to persist and restart.
+fn finish_body(state: &State) -> Element<'_, Message> {
+  let settings = state.settings();
+
+  let mark = container(
+    Icon::check()
+      .size(34.0)
+      .color(color::on_fill(color::accent::PLASMA))
+      .render(),
+  )
+  .width(Length::Fixed(64.0))
+  .height(Length::Fixed(64.0))
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
+    border: Border {
+      color: color::with_alpha(color::accent::PLASMA, 0.32),
+      width: 1.0,
+      radius: radius::CARD.into(),
+    },
+    ..container::Style::default()
+  });
+
+  let header = step_header(
+    t!("wizard.finish.eyebrow").into_owned(),
+    t!("wizard.finish.title").into_owned(),
+    Some(t!("wizard.finish.lede").into_owned()),
+    None,
+  );
+
+  let summary = Row::with_children(vec![finish_features_card(settings), finish_storage_card(settings)])
+    .spacing(spacing::SPACE_3_5)
+    .width(Length::Fill);
+
+  let column = Column::with_children(vec![
+    container(mark)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6,
+        left: 0.0,
+      })
+      .into(),
+    container(header)
+      .padding(Padding {
+        top: 0.0,
+        right: 0.0,
+        bottom: spacing::SPACE_6 + 6.0,
+        left: 0.0,
+      })
+      .into(),
+    summary.into(),
+    container(finish_language_row(state.pending_language()))
+      .padding(Padding {
+        top: spacing::SPACE_3_5,
+        right: 0.0,
+        bottom: spacing::SPACE_3_5,
+        left: 0.0,
+      })
+      .into(),
+    finish_privacy_note(),
+  ])
+  .width(Length::Fill);
+
+  container(column).max_width(BENEFIT_CARD_MAX_WIDTH).into()
+}
+
+// The total enabled sub-features over the catalog size, summed across the display groups. The Finish
+// summary reads this as the "N of M features" headline.
+fn finish_enabled_over_total(settings: &Settings) -> (usize, usize) {
+  Group::ALL
+    .into_iter()
+    .map(|group| group.enabled_over_total(settings))
+    .fold((0, 0), |(on, total), (group_on, group_total)| {
+      (on + group_on, total + group_total)
+    })
+}
+
+fn finish_features_card(settings: &Settings) -> Element<'_, Message> {
+  let (on, total) = finish_enabled_over_total(settings);
+
+  let label = text(t!("wizard.finish.features_label").into_owned())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let figure = Row::with_children(vec![
+    text(format!("{on}"))
+      .font(typography::body::MEDIUM)
+      .size(STEP_TITLE_SIZE)
+      .style(typography::colored(color::text::PRIMARY))
+      .into(),
+    text(format!("/ {total}"))
+      .font(typography::mono::REGULAR)
+      .size(typography::size::MD)
+      .style(typography::colored(color::text::tertiary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2)
+  .align_y(Vertical::Bottom);
+  let groups = text(t!("wizard.finish.features_groups", count => Group::ALL.len()).into_owned())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+
+  finish_card(Column::with_children(vec![label.into(), figure.into(), groups.into()]).spacing(spacing::SPACE_2))
+}
+
+fn finish_storage_card(settings: &Settings) -> Element<'_, Message> {
+  let custom = PathKind::ALL
+    .into_iter()
+    .filter(|kind| kind.override_dir(settings).is_some())
+    .count();
+  let db = PathKind::Database.resolved_dir(settings).display().to_string();
+
+  let label = text(t!("wizard.finish.storage_label").into_owned())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let figure: Element<'_, Message> = if custom > 0 {
+    Row::with_children(vec![
+      text(format!("{custom}"))
+        .font(typography::body::MEDIUM)
+        .size(STEP_TITLE_SIZE)
+        .style(typography::colored(color::text::PRIMARY))
+        .into(),
+      text(t!("wizard.finish.storage_customized").into_owned())
+        .font(typography::mono::REGULAR)
+        .size(typography::size::MD)
+        .style(typography::colored(color::text::tertiary()))
+        .into(),
+    ])
+    .spacing(spacing::SPACE_2)
+    .align_y(Vertical::Bottom)
+    .into()
+  } else {
+    text(t!("wizard.finish.storage_default").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(STEP_TITLE_SIZE)
+      .style(typography::colored(color::text::PRIMARY))
+      .into()
+  };
+  let path = text(db)
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::secondary()));
+
+  finish_card(Column::with_children(vec![label.into(), figure, path.into()]).spacing(spacing::SPACE_2))
+}
+
+fn finish_card<'a>(body: Column<'a, Message>) -> Element<'a, Message> {
+  container(body.width(Length::Fill))
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_4_5,
+      right: spacing::SPACE_4_5 + 2.0,
+      bottom: spacing::SPACE_4_5,
+      left: spacing::SPACE_4_5 + 2.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn finish_language_row<'a>(language: Language) -> Element<'a, Message> {
+  let label = text(t!("wizard.finish.language_label").into_owned())
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS)
+    .style(typography::colored(color::text::tertiary()));
+  let native = text(language.native_label())
+    .font(typography::body::MEDIUM)
+    .size(typography::size::MD)
+    .style(typography::colored(color::text::PRIMARY));
+  let name = text(language.label())
+    .font(typography::body::REGULAR)
+    .size(typography::size::SM)
+    .style(typography::colored(color::text::secondary()));
+  let code = language_code_tag(language.esi_code(), true);
+
+  let row = Row::with_children(vec![
+    Icon::market().size(18.0).color(color::accent::PLASMA).render(),
+    label.into(),
+    Space::new().width(Length::Fill).height(Length::Shrink).into(),
+    native.into(),
+    name.into(),
+    code,
+  ])
+  .spacing(spacing::SPACE_3)
+  .align_y(Vertical::Center);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5 - 2.0,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5 - 2.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::RAISED)),
+      border: Border {
+        color: color::rule(),
+        width: 1.0,
+        radius: radius::CARD.into(),
+      },
+      ..container::Style::default()
+    })
+    .into()
+}
+
+fn finish_privacy_note<'a>() -> Element<'a, Message> {
+  let row = Row::with_children(vec![
+    Icon::shield().size(15.0).color(color::text::secondary()).render(),
+    text(t!("wizard.finish.privacy_note").into_owned())
+      .font(typography::body::REGULAR)
+      .size(typography::size::SM)
+      .style(typography::colored(color::text::secondary()))
+      .into(),
+  ])
+  .spacing(spacing::SPACE_2_5)
+  .align_y(Vertical::Top);
+
+  container(row)
+    .width(Length::Fill)
+    .padding(Padding {
+      top: spacing::SPACE_3_5,
+      right: spacing::SPACE_4_5 - 2.0,
+      bottom: spacing::SPACE_3_5,
+      left: spacing::SPACE_4_5 - 2.0,
+    })
+    .style(|_| container::Style {
+      background: Some(Background::Color(color::surface::SUNKEN)),
       border: Border {
         color: color::rule(),
         width: 1.0,
@@ -1454,7 +1700,7 @@ fn footer(state: &State) -> Element<'_, Message> {
     children.push(
       button(footer_label(t!("wizard.footer.open").into_owned()))
         .padding(control::padding())
-        .on_press(Message::Next)
+        .on_press(Message::Complete)
         .style(control::primary_button)
         .into(),
     );
@@ -1817,6 +2063,99 @@ mod tests {
       for group in Group::ALL {
         let _el: Element<'_, Message> = features_body(&state, group);
       }
+    }
+
+    #[test]
+    fn it_renders_the_finish_body() {
+      let mut state = state();
+      update(&mut state, Message::Skip);
+      assert_eq!(state.current_step(), Step::Finish);
+
+      let _el: Element<'_, Message> = finish_body(&state);
+    }
+  }
+
+  mod finish {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::config::SubFeature;
+
+    #[test]
+    fn complete_is_a_no_op_on_the_finish_step() {
+      let mut state = state();
+      update(&mut state, Message::Skip);
+
+      update(&mut state, Message::Complete);
+
+      assert_eq!(state.current_step(), Step::Finish);
+      assert!(state.is_last());
+    }
+
+    #[test]
+    fn the_summary_counts_every_enabled_sub_feature_over_the_catalog() {
+      let state = state();
+
+      let (on, total) = finish_enabled_over_total(state.settings());
+
+      assert_eq!(on, total, "every feature starts enabled on a fresh draft");
+      assert_eq!(
+        total,
+        SubFeature::ALL.len(),
+        "the total spans the whole feature catalog"
+      );
+    }
+
+    #[test]
+    fn a_disabled_feature_drops_the_summary_enabled_count() {
+      let mut state = state();
+      let (baseline, total) = finish_enabled_over_total(state.settings());
+
+      update(
+        &mut state,
+        Message::Features(features_tab::Message::SubToggled(SubFeature::Mail, false)),
+      );
+
+      let (on, after_total) = finish_enabled_over_total(state.settings());
+      assert_eq!(
+        on,
+        baseline - 1,
+        "disabling one feature lowers the enabled tally by one"
+      );
+      assert_eq!(after_total, total, "the catalog total is unchanged");
+    }
+
+    #[test]
+    fn the_draft_carries_the_language_features_and_storage_into_the_assembled_settings() {
+      let mut state = state();
+      let db_dir = std::env::temp_dir().join("pod-wizard-finish-test-db");
+
+      update(&mut state, Message::SelectLanguage(Language::De));
+      update(
+        &mut state,
+        Message::Features(features_tab::Message::SubToggled(SubFeature::Mail, false)),
+      );
+      update(
+        &mut state,
+        Message::StoragePathEdited(PathKind::Database, db_dir.display().to_string()),
+      );
+      update(&mut state, Message::StoragePathSubmitted(PathKind::Database));
+
+      let assembled = state.settings();
+      assert_eq!(
+        assembled.accessibility().language(),
+        Language::De,
+        "the chosen language is folded into the assembled config"
+      );
+      assert!(
+        !assembled.features().is_sub_enabled(SubFeature::Mail),
+        "the disabled feature flag carries into the assembled config"
+      );
+      assert_eq!(
+        assembled.storage().db_dir(),
+        &Some(db_dir),
+        "the storage override carries into the assembled config"
+      );
     }
   }
 

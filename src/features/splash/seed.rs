@@ -479,7 +479,7 @@ async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<
     return Ok(());
   }
 
-  step(tx, "Downloading static data\u{2026}").await;
+  step(tx, &t!("splash.seed.downloading_static_data")).await;
   let extracted = client.download_and_extract().await.map_err(|e| e.to_string())?;
 
   seed_if_stale(db, tx, &extracted.root, extracted.build_version.as_deref(), language).await
@@ -544,7 +544,7 @@ async fn backfill_dogma_attributes(db: &Database, tx: &mut Tx, root: &Path, lang
 
   let path = root.join("dogmaAttributes.yaml");
   if path.exists() {
-    step(tx, "Backfilling dogma attributes\u{2026}").await;
+    step(tx, &t!("splash.seed.backfilling_dogma_attributes")).await;
     seed_dogma_attributes(db, &path, language).await?;
   }
 
@@ -559,16 +559,16 @@ fn sde_is_current(marker_path: Option<&Path>, composite: Option<&str>) -> bool {
 }
 
 async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
-  step(tx, "Seeding item categories\u{2026}").await;
+  step(tx, &t!("splash.seed.item_categories")).await;
   seed_categories(db, &r.join("categories.yaml"), language).await?;
 
-  step(tx, "Seeding item groups\u{2026}").await;
+  step(tx, &t!("splash.seed.item_groups")).await;
   seed_groups(db, &r.join("groups.yaml"), language).await?;
 
-  step(tx, "Seeding market groups\u{2026}").await;
+  step(tx, &t!("splash.seed.market_groups")).await;
   seed_market_groups(db, &r.join("marketGroups.yaml"), language).await?;
 
-  step(tx, "Seeding item types\u{2026}").await;
+  step(tx, &t!("splash.seed.item_types")).await;
   seed_types(
     db,
     &r.join("types.yaml"),
@@ -578,72 +578,72 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Languag
   )
   .await?;
 
-  step(tx, "Seeding dogma attributes\u{2026}").await;
+  step(tx, &t!("splash.seed.dogma_attributes")).await;
   seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml"), language).await?;
 
   let dynamic_path = r.join("dynamicItemAttributes.yaml");
   if dynamic_path.exists() {
-    step(tx, "Seeding abyssal module stats\u{2026}").await;
+    step(tx, &t!("splash.seed.abyssal_module_stats")).await;
     seed_abyssal_module_stats(db, &dynamic_path).await?;
   }
 
-  step(tx, "Seeding races\u{2026}").await;
+  step(tx, &t!("splash.seed.races")).await;
   seed_races(db, &r.join("races.yaml"), language).await?;
 
-  step(tx, "Seeding bloodlines\u{2026}").await;
+  step(tx, &t!("splash.seed.bloodlines")).await;
   seed_bloodlines(db, &r.join("bloodlines.yaml"), language).await?;
 
-  step(tx, "Seeding factions\u{2026}").await;
+  step(tx, &t!("splash.seed.factions")).await;
   seed_factions(db, &r.join("factions.yaml"), language).await?;
 
   let cert_path = r.join("certificates.yaml");
   if cert_path.exists() {
-    step(tx, "Seeding certificates\u{2026}").await;
+    step(tx, &t!("splash.seed.certificates")).await;
     seed_certificates(db, &cert_path, language).await?;
   }
 
   let mastery_path = r.join("masteries.yaml");
   if mastery_path.exists() {
-    step(tx, "Seeding ship masteries\u{2026}").await;
+    step(tx, &t!("splash.seed.ship_masteries")).await;
     seed_masteries(db, &mastery_path).await?;
   }
 
-  step(tx, "Seeding NPC corporations\u{2026}").await;
+  step(tx, &t!("splash.seed.npc_corporations")).await;
   seed_npc_corporations(db, &r.join("npcCorporations.yaml"), language).await?;
 
-  step(tx, "Seeding regions\u{2026}").await;
+  step(tx, &t!("splash.seed.regions")).await;
   seed_regions(db, &r.join("mapRegions.yaml"), language).await?;
 
-  step(tx, "Seeding constellations\u{2026}").await;
+  step(tx, &t!("splash.seed.constellations")).await;
   seed_constellations(db, &r.join("mapConstellations.yaml"), language).await?;
 
-  step(tx, "Seeding solar systems\u{2026}").await;
+  step(tx, &t!("splash.seed.solar_systems")).await;
   seed_solar_systems(db, &r.join("mapSolarSystems.yaml"), language).await?;
 
-  step(tx, "Seeding NPC stations\u{2026}").await;
+  step(tx, &t!("splash.seed.npc_stations")).await;
   seed_npc_stations(db, r, language).await?;
 
-  step(tx, "Seeding moons\u{2026}").await;
+  step(tx, &t!("splash.seed.moons")).await;
   seed_moons(db, r).await?;
 
-  step(tx, "Seeding agent types\u{2026}").await;
+  step(tx, &t!("splash.seed.agent_types")).await;
   seed_agent_types(db, &r.join("agentTypes.yaml")).await?;
 
-  step(tx, "Seeding NPC corporation divisions\u{2026}").await;
+  step(tx, &t!("splash.seed.npc_corporation_divisions")).await;
   seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.yaml"), language).await?;
 
-  step(tx, "Seeding NPC agents\u{2026}").await;
+  step(tx, &t!("splash.seed.npc_agents")).await;
   seed_npc_agents(db, &r.join("npcCharacters.yaml"), language).await?;
 
   let blueprints_path = r.join("blueprints.yaml");
   if blueprints_path.exists() {
-    step(tx, "Seeding blueprints\u{2026}").await;
+    step(tx, &t!("splash.seed.blueprints")).await;
     seed_blueprints(db, &blueprints_path).await?;
   }
 
   let type_materials_path = r.join("typeMaterials.yaml");
   if type_materials_path.exists() {
-    step(tx, "Seeding type materials\u{2026}").await;
+    step(tx, &t!("splash.seed.type_materials")).await;
     seed_type_materials(db, &type_materials_path).await?;
   }
 

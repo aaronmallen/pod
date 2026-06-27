@@ -1064,6 +1064,73 @@ skill_plan_reorder_ordered_entry_ids = "The plan entry ids in the desired order.
 skill_plan_replace = "Replaces every entry of a plan in one shot. Required `entries` is an array of {skill_id, to_level, priority?, note?, is_auto?}."
 skill_plan_replace_plan_id = "The plan whose entries are replaced."
 
+# nav
+[nav.assets]
+abyssals = "Abyssals"
+inventory = "Inventory"
+kicker = "Holdings across space"
+stockpiles = "Stockpiles"
+tracker = "Tracker"
+values = "Values"
+
+[nav.calendar]
+agenda = "Agenda"
+day = "Day"
+kicker = "In-game schedule"
+month = "Month"
+week = "Week"
+year = "Year"
+
+[nav.destination]
+assets = "Assets"
+calendar = "Calendar"
+industry = "Industry"
+mail = "Mail"
+roster = "Roster"
+settings = "Settings"
+skills = "Skills"
+wallet = "Wallet"
+
+[nav.industry]
+blueprints = "Blueprints"
+extractions = "Extractions"
+jobs = "Jobs"
+kicker = "Manufacturing & planning"
+planner = "Planner"
+
+[nav.mail]
+kicker = "Correspondence"
+
+[nav.roster]
+characters = "Characters"
+corporations = "Corporations"
+kicker = "Pilots & corporations"
+label = "Roster"
+
+[nav.settings]
+accessibility = "Accessibility"
+features = "Features"
+industry = "Industry"
+kicker = "Preferences"
+mcp = "MCP"
+storage = "Storage"
+tags = "Tags"
+telemetry = "Telemetry"
+ui = "User Interface"
+
+[nav.skills]
+compare = "Compare"
+kicker = "Training & planning"
+queue = "Queue"
+
+[nav.wallet]
+budget = "Budget"
+contracts = "Contracts"
+journal = "Journal"
+kicker = "Ledger & budget"
+market = "Transactions"
+wallets = "Wallets"
+
 # roster
 [roster.actions]
 add_character = "Add character"

@@ -80,17 +80,18 @@ impl Destination {
     icon_for(self)
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Destination::Assets => "Assets",
-      Destination::Calendar => "Calendar",
-      Destination::Characters => "Roster",
-      Destination::Industry => "Industry",
-      Destination::Mail => "Mail",
-      Destination::Settings => "Settings",
-      Destination::Skills => "Skills",
-      Destination::Wallet => "Wallet",
+      Destination::Assets => t!("nav.destination.assets"),
+      Destination::Calendar => t!("nav.destination.calendar"),
+      Destination::Characters => t!("nav.destination.roster"),
+      Destination::Industry => t!("nav.destination.industry"),
+      Destination::Mail => t!("nav.destination.mail"),
+      Destination::Settings => t!("nav.destination.settings"),
+      Destination::Skills => t!("nav.destination.skills"),
+      Destination::Wallet => t!("nav.destination.wallet"),
     }
+    .into_owned()
   }
 }
 
@@ -290,7 +291,7 @@ where
   let title = Row::with_children(vec![head_icon.into(), head_label.into()])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2_5);
-  let kicker = text(section.kicker)
+  let kicker = text(section.kicker())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
@@ -410,7 +411,7 @@ where
     .style(move |_, _| svg::Style {
       color: Some(icon_color),
     });
-  let label = text(sub.label)
+  let label = text(sub.label())
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(label_color));
@@ -541,7 +542,7 @@ where
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(color::text::PRIMARY));
-  let kicker = text(section.kicker)
+  let kicker = text(section.kicker())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(typography::colored(color::text::tertiary()));
@@ -646,7 +647,7 @@ where
     .style(move |_, _| svg::Style {
       color: Some(icon_color),
     });
-  let label = text(sub.label)
+  let label = text(sub.label())
     .font(typography::body::REGULAR)
     .size(typography::size::MD)
     .style(typography::colored(label_color));

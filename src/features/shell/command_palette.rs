@@ -140,21 +140,24 @@ pub fn build_entries(
   let mut entities = Vec::new();
 
   for section in nav_catalog::visible_sections(enabled_features) {
-    if matches(&needle, &[section.label(), section.kicker]) {
+    let label = section.label();
+    let kicker = section.kicker();
+    if matches(&needle, &[&label, &kicker]) {
       nav.push(Entry {
         action: Action::NavTo(*section, section.sub_sections.first().map(|sub| sub.id)),
-        detail: Some(section.kicker.to_owned()),
+        detail: Some(kicker),
         kind: Kind::Section,
-        label: section.label().to_owned(),
+        label: label.clone(),
       });
     }
     for sub in section.sub_sections {
-      if matches(&needle, &[sub.label, section.label()]) {
+      let sub_label = sub.label();
+      if matches(&needle, &[&sub_label, &label]) {
         nav.push(Entry {
           action: Action::NavTo(*section, Some(sub.id)),
-          detail: Some(section.label().to_owned()),
+          detail: Some(label.clone()),
           kind: Kind::Tab,
-          label: sub.label.to_owned(),
+          label: sub_label,
         });
       }
     }

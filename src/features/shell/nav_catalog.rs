@@ -32,19 +32,19 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Characters,
     // The Destination enum keeps the Characters identity; this screen reads "Roster" to users.
-    label_override: Some("Roster"),
-    kicker: "Pilots & corporations",
+    label_override: Some("nav.roster.label"),
+    kicker: "nav.roster.kicker",
     sub_sections: &[
       SubSection {
         icon: CHARACTERS_ICON,
         id: "characters",
-        label: "Characters",
+        label: "nav.roster.characters",
         route: None,
       },
       SubSection {
         icon: CORP_ICON,
         id: "corporations",
-        label: "Corporations",
+        label: "nav.roster.corporations",
         route: None,
       },
     ],
@@ -52,18 +52,18 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Skills,
     label_override: None,
-    kicker: "Training & planning",
+    kicker: "nav.skills.kicker",
     sub_sections: &[
       SubSection {
         icon: SKILLS_ICON,
         id: "queue",
-        label: "Queue",
+        label: "nav.skills.queue",
         route: None,
       },
       SubSection {
         icon: COMPARE_ICON,
         id: "compare",
-        label: "Compare",
+        label: "nav.skills.compare",
         route: None,
       },
     ],
@@ -71,30 +71,30 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Industry,
     label_override: None,
-    kicker: "Manufacturing & planning",
+    kicker: "nav.industry.kicker",
     sub_sections: &[
       SubSection {
         icon: INDUSTRY_ICON,
         id: "jobs",
-        label: "Jobs",
+        label: "nav.industry.jobs",
         route: None,
       },
       SubSection {
         icon: DOC_ICON,
         id: "blueprints",
-        label: "Blueprints",
+        label: "nav.industry.blueprints",
         route: None,
       },
       SubSection {
         icon: FLASK_ICON,
         id: "planner",
-        label: "Planner",
+        label: "nav.industry.planner",
         route: None,
       },
       SubSection {
         icon: MOON_ICON,
         id: "extractions",
-        label: "Extractions",
+        label: "nav.industry.extractions",
         route: None,
       },
     ],
@@ -102,42 +102,42 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Mail,
     label_override: None,
-    kicker: "Correspondence",
+    kicker: "nav.mail.kicker",
     sub_sections: &[],
   },
   Section {
     destination: Destination::Calendar,
     label_override: None,
-    kicker: "In-game schedule",
+    kicker: "nav.calendar.kicker",
     sub_sections: &[
       SubSection {
         icon: JOURNAL_ICON,
         id: "agenda",
-        label: "Agenda",
+        label: "nav.calendar.agenda",
         route: None,
       },
       SubSection {
         icon: CLOCK_ICON,
         id: "day",
-        label: "Day",
+        label: "nav.calendar.day",
         route: None,
       },
       SubSection {
         icon: CALENDAR_ICON,
         id: "week",
-        label: "Week",
+        label: "nav.calendar.week",
         route: None,
       },
       SubSection {
         icon: INVENTORY_ICON,
         id: "month",
-        label: "Month",
+        label: "nav.calendar.month",
         route: None,
       },
       SubSection {
         icon: TRACKER_ICON,
         id: "year",
-        label: "Year",
+        label: "nav.calendar.year",
         route: None,
       },
     ],
@@ -145,36 +145,36 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Wallet,
     label_override: None,
-    kicker: "Ledger & budget",
+    kicker: "nav.wallet.kicker",
     sub_sections: &[
       SubSection {
         icon: WALLET_ICON,
         id: "wallets",
-        label: "Wallets",
+        label: "nav.wallet.wallets",
         route: None,
       },
       SubSection {
         icon: JOURNAL_ICON,
         id: "journal",
-        label: "Journal",
+        label: "nav.wallet.journal",
         route: None,
       },
       SubSection {
         icon: MARKET_ICON,
         id: "market",
-        label: "Transactions",
+        label: "nav.wallet.market",
         route: None,
       },
       SubSection {
         icon: CONTRACTS_ICON,
         id: "contracts",
-        label: "Contracts",
+        label: "nav.wallet.contracts",
         route: None,
       },
       SubSection {
         icon: BUDGET_ICON,
         id: "budget",
-        label: "Budget",
+        label: "nav.wallet.budget",
         route: None,
       },
     ],
@@ -182,36 +182,36 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Assets,
     label_override: None,
-    kicker: "Holdings across space",
+    kicker: "nav.assets.kicker",
     sub_sections: &[
       SubSection {
         icon: INVENTORY_ICON,
         id: "inventory",
-        label: "Inventory",
+        label: "nav.assets.inventory",
         route: None,
       },
       SubSection {
         icon: ABYSSALS_ICON,
         id: "abyssals",
-        label: "Abyssals",
+        label: "nav.assets.abyssals",
         route: None,
       },
       SubSection {
         icon: STOCKPILES_ICON,
         id: "stockpiles",
-        label: "Stockpiles",
+        label: "nav.assets.stockpiles",
         route: None,
       },
       SubSection {
         icon: VALUES_ICON,
         id: "values",
-        label: "Values",
+        label: "nav.assets.values",
         route: None,
       },
       SubSection {
         icon: TRACKER_ICON,
         id: "tracker",
-        label: "Tracker",
+        label: "nav.assets.tracker",
         route: None,
       },
     ],
@@ -219,55 +219,55 @@ static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Settings,
     label_override: None,
-    kicker: "Preferences",
+    kicker: "nav.settings.kicker",
     // About is a real Settings tab but is deliberately excluded from the cascade catalog.
     sub_sections: &[
       SubSection {
         icon: USERS_ICON,
         id: "accessibility",
-        label: "Accessibility",
+        label: "nav.settings.accessibility",
         route: None,
       },
       SubSection {
         icon: SETTINGS_ICON,
         id: "features",
-        label: "Features",
+        label: "nav.settings.features",
         route: None,
       },
       SubSection {
         icon: INDUSTRY_ICON,
         id: "industry",
-        label: "Industry",
+        label: "nav.settings.industry",
         route: None,
       },
       SubSection {
         icon: LINK_ICON,
         id: "mcp",
-        label: "MCP",
+        label: "nav.settings.mcp",
         route: None,
       },
       SubSection {
         icon: ARCHIVE_ICON,
         id: "storage",
-        label: "Storage",
+        label: "nav.settings.storage",
         route: None,
       },
       SubSection {
         icon: STAR_ICON,
         id: "tags",
-        label: "Tags",
+        label: "nav.settings.tags",
         route: None,
       },
       SubSection {
         icon: PULSE_ICON,
         id: "telemetry",
-        label: "Telemetry",
+        label: "nav.settings.telemetry",
         route: None,
       },
       SubSection {
         icon: LAYOUT_ICON,
         id: "ui",
-        label: "User Interface",
+        label: "nav.settings.ui",
         route: None,
       },
     ],
@@ -277,10 +277,11 @@ static SECTIONS: &[Section] = &[
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Section {
   pub destination: Destination,
-  // Overrides the cascade header text without touching the rail icon's `Destination` identity.
-  // `None` falls back to `Destination::label()`.
-  pub label_override: Option<&'static str>,
-  pub kicker: &'static str,
+  // i18n key overriding the cascade header text without touching the rail icon's `Destination`
+  // identity. `None` falls back to `Destination::label()`.
+  label_override: Option<&'static str>,
+  // i18n key for the cascade header's kicker line.
+  kicker: &'static str,
   pub sub_sections: &'static [SubSection],
 }
 
@@ -293,8 +294,14 @@ impl Section {
     registry::feature_for_destination(self.destination).is_none_or(|feature| enabled_features.contains(&feature))
   }
 
-  pub fn label(&self) -> &'static str {
-    self.label_override.unwrap_or_else(|| self.destination.label())
+  pub fn kicker(&self) -> String {
+    t!(self.kicker).into_owned()
+  }
+
+  pub fn label(&self) -> String {
+    self
+      .label_override
+      .map_or_else(|| self.destination.label(), |key| t!(key).into_owned())
   }
 }
 
@@ -302,10 +309,17 @@ impl Section {
 pub struct SubSection {
   pub icon: &'static [u8],
   pub id: &'static str,
-  pub label: &'static str,
+  // i18n key for the sub-section's rail label.
+  label: &'static str,
   // A sub-section that is really its own top-level route rather than an in-view tab. The mechanism
   // exists for the deep-nav consumer to special-case; no entry uses it today.
   pub route: Option<Destination>,
+}
+
+impl SubSection {
+  pub fn label(&self) -> String {
+    t!(self.label).into_owned()
+  }
 }
 
 pub fn section(destination: Destination) -> Option<&'static Section> {

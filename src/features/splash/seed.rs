@@ -9,6 +9,8 @@ use serde::Deserialize;
 
 use crate::{
   clients::{esi::models::universe::DogmaAttribute, http, sde as sde_client},
+  config,
+  i18n::Language,
   store::{
     Database,
     model::{
@@ -76,14 +78,40 @@ struct CertSkillLevel {
   improved: i32,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 struct LocalizedString {
+  de: Option<String>,
   en: Option<String>,
+  es: Option<String>,
+  fr: Option<String>,
+  ja: Option<String>,
+  ko: Option<String>,
+  ru: Option<String>,
+  zh: Option<String>,
 }
 
 impl LocalizedString {
-  fn en(self) -> String {
-    self.en.unwrap_or_default()
+  fn field(&self, sde_code: &str) -> Option<&str> {
+    let field = match sde_code {
+      "de" => &self.de,
+      "en" => &self.en,
+      "es" => &self.es,
+      "fr" => &self.fr,
+      "ja" => &self.ja,
+      "ko" => &self.ko,
+      "ru" => &self.ru,
+      "zh" => &self.zh,
+      _ => &self.en,
+    };
+    field.as_deref().filter(|value| !value.is_empty())
+  }
+
+  fn pick(&self, language: Language) -> String {
+    self
+      .field(language.sde_code())
+      .or_else(|| self.field("en"))
+      .unwrap_or_default()
+      .to_owned()
   }
 }
 
@@ -442,6 +470,7 @@ async fn run_seed(db: Database, http: Arc<http::Client>, mut tx: Tx) {
 
 async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<(), String> {
   let client = sde_client::Client::new(http);
+  let language = configured_language();
 
   let latest_build = client.latest_build_version().await;
   let seeded = sde::is_seeded(db).await.unwrap_or(false);
@@ -453,7 +482,13 @@ async fn do_seed(db: &Database, http: Arc<http::Client>, tx: &mut Tx) -> Result<
   step(tx, "Downloading static data\u{2026}").await;
   let extracted = client.download_and_extract().await.map_err(|e| e.to_string())?;
 
-  seed_if_stale(db, tx, &extracted.root, extracted.build_version.as_deref()).await
+  seed_if_stale(db, tx, &extracted.root, extracted.build_version.as_deref(), language).await
+}
+
+fn configured_language() -> Language {
+  config::load()
+    .map(|settings| settings.accessibility().language())
+    .unwrap_or_default()
 }
 
 fn should_skip_download(latest_build: Option<&str>, marker_path: Option<&Path>, seeded: bool) -> bool {
@@ -464,8 +499,14 @@ fn should_skip_download(latest_build: Option<&str>, marker_path: Option<&Path>, 
   seeded && sde_is_current(marker_path, Some(&composite_version(build)))
 }
 
-async fn seed_if_stale(db: &Database, tx: &mut Tx, root: &Path, build_version: Option<&str>) -> Result<(), String> {
-  seed_if_stale_at(db, tx, root, build_version, sde_version_path().as_deref()).await
+async fn seed_if_stale(
+  db: &Database,
+  tx: &mut Tx,
+  root: &Path,
+  build_version: Option<&str>,
+  language: Language,
+) -> Result<(), String> {
+  seed_if_stale_at(db, tx, root, build_version, sde_version_path().as_deref(), language).await
 }
 
 async fn seed_if_stale_at(
@@ -474,14 +515,15 @@ async fn seed_if_stale_at(
   root: &Path,
   build_version: Option<&str>,
   marker_path: Option<&Path>,
+  language: Language,
 ) -> Result<(), String> {
   let composite = build_version.map(composite_version);
   if sde_is_current(marker_path, composite.as_deref()) {
-    backfill_dogma_attributes(db, tx, root).await?;
+    backfill_dogma_attributes(db, tx, root, language).await?;
     return Ok(());
   }
 
-  seed_all_tables(db, tx, root).await?;
+  seed_all_tables(db, tx, root, language).await?;
 
   if let (Some(path), Some(version)) = (marker_path, composite.as_deref()) {
     write_stored_sde_version(path, version);
@@ -490,7 +532,7 @@ async fn seed_if_stale_at(
   Ok(())
 }
 
-async fn backfill_dogma_attributes(db: &Database, tx: &mut Tx, root: &Path) -> Result<(), String> {
+async fn backfill_dogma_attributes(db: &Database, tx: &mut Tx, root: &Path, language: Language) -> Result<(), String> {
   if sde::is_seeded(db).await.map_err(|e| e.to_string())? {
     return Ok(());
   }
@@ -498,7 +540,7 @@ async fn backfill_dogma_attributes(db: &Database, tx: &mut Tx, root: &Path) -> R
   let path = root.join("dogmaAttributes.yaml");
   if path.exists() {
     step(tx, "Backfilling dogma attributes\u{2026}").await;
-    seed_dogma_attributes(db, &path).await?;
+    seed_dogma_attributes(db, &path, language).await?;
   }
 
   Ok(())
@@ -511,15 +553,15 @@ fn sde_is_current(marker_path: Option<&Path>, composite: Option<&str>) -> bool {
   read_stored_sde_version(marker_path).as_deref() == Some(composite)
 }
 
-async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), String> {
+async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path, language: Language) -> Result<(), String> {
   step(tx, "Seeding item categories\u{2026}").await;
-  seed_categories(db, &r.join("categories.yaml")).await?;
+  seed_categories(db, &r.join("categories.yaml"), language).await?;
 
   step(tx, "Seeding item groups\u{2026}").await;
-  seed_groups(db, &r.join("groups.yaml")).await?;
+  seed_groups(db, &r.join("groups.yaml"), language).await?;
 
   step(tx, "Seeding market groups\u{2026}").await;
-  seed_market_groups(db, &r.join("marketGroups.yaml")).await?;
+  seed_market_groups(db, &r.join("marketGroups.yaml"), language).await?;
 
   step(tx, "Seeding item types\u{2026}").await;
   seed_types(
@@ -527,11 +569,12 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
     &r.join("types.yaml"),
     &r.join("typeDogma.yaml"),
     &r.join("groups.yaml"),
+    language,
   )
   .await?;
 
   step(tx, "Seeding dogma attributes\u{2026}").await;
-  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml")).await?;
+  seed_dogma_attributes(db, &r.join("dogmaAttributes.yaml"), language).await?;
 
   let dynamic_path = r.join("dynamicItemAttributes.yaml");
   if dynamic_path.exists() {
@@ -540,18 +583,18 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
   }
 
   step(tx, "Seeding races\u{2026}").await;
-  seed_races(db, &r.join("races.yaml")).await?;
+  seed_races(db, &r.join("races.yaml"), language).await?;
 
   step(tx, "Seeding bloodlines\u{2026}").await;
-  seed_bloodlines(db, &r.join("bloodlines.yaml")).await?;
+  seed_bloodlines(db, &r.join("bloodlines.yaml"), language).await?;
 
   step(tx, "Seeding factions\u{2026}").await;
-  seed_factions(db, &r.join("factions.yaml")).await?;
+  seed_factions(db, &r.join("factions.yaml"), language).await?;
 
   let cert_path = r.join("certificates.yaml");
   if cert_path.exists() {
     step(tx, "Seeding certificates\u{2026}").await;
-    seed_certificates(db, &cert_path).await?;
+    seed_certificates(db, &cert_path, language).await?;
   }
 
   let mastery_path = r.join("masteries.yaml");
@@ -561,19 +604,19 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
   }
 
   step(tx, "Seeding NPC corporations\u{2026}").await;
-  seed_npc_corporations(db, &r.join("npcCorporations.yaml")).await?;
+  seed_npc_corporations(db, &r.join("npcCorporations.yaml"), language).await?;
 
   step(tx, "Seeding regions\u{2026}").await;
-  seed_regions(db, &r.join("mapRegions.yaml")).await?;
+  seed_regions(db, &r.join("mapRegions.yaml"), language).await?;
 
   step(tx, "Seeding constellations\u{2026}").await;
-  seed_constellations(db, &r.join("mapConstellations.yaml")).await?;
+  seed_constellations(db, &r.join("mapConstellations.yaml"), language).await?;
 
   step(tx, "Seeding solar systems\u{2026}").await;
-  seed_solar_systems(db, &r.join("mapSolarSystems.yaml")).await?;
+  seed_solar_systems(db, &r.join("mapSolarSystems.yaml"), language).await?;
 
   step(tx, "Seeding NPC stations\u{2026}").await;
-  seed_npc_stations(db, r).await?;
+  seed_npc_stations(db, r, language).await?;
 
   step(tx, "Seeding moons\u{2026}").await;
   seed_moons(db, r).await?;
@@ -582,10 +625,10 @@ async fn seed_all_tables(db: &Database, tx: &mut Tx, r: &Path) -> Result<(), Str
   seed_agent_types(db, &r.join("agentTypes.yaml")).await?;
 
   step(tx, "Seeding NPC corporation divisions\u{2026}").await;
-  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.yaml")).await?;
+  seed_npc_corporation_divisions(db, &r.join("npcCorporationDivisions.yaml"), language).await?;
 
   step(tx, "Seeding NPC agents\u{2026}").await;
-  seed_npc_agents(db, &r.join("npcCharacters.yaml")).await?;
+  seed_npc_agents(db, &r.join("npcCharacters.yaml"), language).await?;
 
   let blueprints_path = r.join("blueprints.yaml");
   if blueprints_path.exists() {
@@ -616,7 +659,7 @@ async fn read_yaml<T: serde::de::DeserializeOwned + Send + 'static>(path: &Path)
   .map_err(|e| e.to_string())?
 }
 
-async fn seed_categories(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_categories(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeCategoryEntry> = read_yaml(path).await?;
 
   let records: Vec<ItemCategory> = entries
@@ -624,7 +667,7 @@ async fn seed_categories(db: &Database, path: &Path) -> Result<(), String> {
     .map(|(id, e)| ItemCategory {
       icon_id: e.icon_id,
       id,
-      name: e.name.en(),
+      name: e.name.pick(language),
       published: e.published,
     })
     .collect();
@@ -634,7 +677,7 @@ async fn seed_categories(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_groups(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_groups(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeGroupEntry> = read_yaml(path).await?;
 
   let records: Vec<ItemGroup> = entries
@@ -643,7 +686,7 @@ async fn seed_groups(db: &Database, path: &Path) -> Result<(), String> {
       category_id: e.category_id,
       icon_id: e.icon_id,
       id,
-      name: e.name.en(),
+      name: e.name.pick(language),
       published: e.published,
     })
     .collect();
@@ -653,17 +696,17 @@ async fn seed_groups(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_market_groups(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_market_groups(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeMarketGroupEntry> = read_yaml(path).await?;
 
   let records: Vec<MarketGroup> = entries
     .into_iter()
     .map(|(id, e)| MarketGroup {
-      description: e.description.map(LocalizedString::en).unwrap_or_default(),
+      description: e.description.map(|d| d.pick(language)).unwrap_or_default(),
       has_types: e.has_types.unwrap_or(false),
       icon_id: e.icon_id,
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       parent_id: e.parent_group_id,
     })
     .collect();
@@ -673,7 +716,13 @@ async fn seed_market_groups(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_types(db: &Database, types_path: &Path, dogma_path: &Path, groups_path: &Path) -> Result<(), String> {
+async fn seed_types(
+  db: &Database,
+  types_path: &Path,
+  dogma_path: &Path,
+  groups_path: &Path,
+  language: Language,
+) -> Result<(), String> {
   let entries: HashMap<i64, SdeTypeEntry> = read_yaml(types_path).await?;
   let dogma: HashMap<i64, SdeTypeDogmaEntry> = read_yaml(dogma_path).await?;
   let groups: HashMap<i64, SdeGroupEntry> = read_yaml(groups_path).await?;
@@ -691,7 +740,7 @@ async fn seed_types(db: &Database, types_path: &Path, dogma_path: &Path, groups_
 
   let records: Vec<ItemType> = entries
     .into_iter()
-    .map(|(id, e)| build_item_type(id, e, dogma.get(&id)))
+    .map(|(id, e)| build_item_type(id, e, dogma.get(&id), language))
     .collect();
 
   sde::upsert_many_item_types(db, &records)
@@ -723,16 +772,16 @@ fn build_skill_metadata(skill_id: i64, d: Option<&SdeTypeDogmaEntry>) -> Option<
   })
 }
 
-fn build_item_type(id: i64, e: SdeTypeEntry, d: Option<&SdeTypeDogmaEntry>) -> ItemType {
+fn build_item_type(id: i64, e: SdeTypeEntry, d: Option<&SdeTypeDogmaEntry>, language: Language) -> ItemType {
   ItemType {
     capacity: e.capacity,
-    description: Some(e.description.map(LocalizedString::en).unwrap_or_default()),
+    description: Some(e.description.map(|desc| desc.pick(language)).unwrap_or_default()),
     dogma_attributes: build_dogma_attributes_json(d),
     group_id: e.group_id,
     icon_id: e.icon_id,
     id,
     market_group_id: e.market_group_id,
-    name: e.name.en(),
+    name: e.name.pick(language),
     packaged_volume: e.packaged_volume,
     portion_size: e.portion_size,
     published: e.published,
@@ -756,12 +805,12 @@ fn build_dogma_attributes_json(d: Option<&SdeTypeDogmaEntry>) -> String {
   serde_json::to_string(&attrs).unwrap_or_else(|_| "[]".to_owned())
 }
 
-fn build_dogma_attribute(id: i64, e: SdeDogmaAttrEntry) -> DogmaAttributeMeta {
+fn build_dogma_attribute(id: i64, e: SdeDogmaAttrEntry, language: Language) -> DogmaAttributeMeta {
   DogmaAttributeMeta {
     attribute_id: id,
     default_value: e.default_value,
     description: e.description.filter(|s| !s.is_empty()),
-    display_name: e.display_name.map(LocalizedString::en).filter(|s| !s.is_empty()),
+    display_name: e.display_name.map(|name| name.pick(language)).filter(|s| !s.is_empty()),
     high_is_good: e.high_is_good,
     icon_id: e.icon_id,
     name: e.name,
@@ -771,12 +820,12 @@ fn build_dogma_attribute(id: i64, e: SdeDogmaAttrEntry) -> DogmaAttributeMeta {
   }
 }
 
-async fn seed_dogma_attributes(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_dogma_attributes(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeDogmaAttrEntry> = read_yaml(path).await?;
 
   let records: Vec<DogmaAttributeMeta> = entries
     .into_iter()
-    .map(|(id, e)| build_dogma_attribute(id, e))
+    .map(|(id, e)| build_dogma_attribute(id, e, language))
     .collect();
 
   sde::upsert_many_dogma_attributes(db, &records)
@@ -806,13 +855,13 @@ async fn seed_abyssal_module_stats(db: &Database, path: &Path) -> Result<(), Str
     .map_err(|e| e.to_string())
 }
 
-async fn seed_races(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_races(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeRaceEntry> = read_yaml(path).await?;
 
   let records: Vec<Race> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(LocalizedString::en).unwrap_or_default();
+      let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
       Race::new(id, i64::from(e.alliance_id.unwrap_or(0)), name.clone(), name)
     })
     .collect();
@@ -823,13 +872,13 @@ async fn seed_races(db: &Database, path: &Path) -> Result<(), String> {
   Ok(())
 }
 
-async fn seed_bloodlines(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_bloodlines(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeBloodlineEntry> = read_yaml(path).await?;
 
   let records: Vec<Bloodline> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(LocalizedString::en).unwrap_or_default();
+      let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
       let mut m = Bloodline::new(
         id,
         i64::from(e.corporation_id),
@@ -855,13 +904,13 @@ async fn seed_bloodlines(db: &Database, path: &Path) -> Result<(), String> {
   Ok(())
 }
 
-async fn seed_factions(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_factions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeFactionEntry> = read_yaml(path).await?;
 
   let records: Vec<Faction> = entries
     .into_iter()
     .map(|(id, e)| {
-      let name = e.name.map(LocalizedString::en).unwrap_or_default();
+      let name = e.name.map(|n| n.pick(language)).unwrap_or_default();
       let mut m = Faction::new(id, name, e.is_unique.unwrap_or(false), e.size_factor, 0, 0);
       if let Some(solar_system_id) = e.solar_system_id {
         m.set_solar_system_id(i64::from(solar_system_id));
@@ -876,7 +925,7 @@ async fn seed_factions(db: &Database, path: &Path) -> Result<(), String> {
   Ok(())
 }
 
-async fn seed_certificates(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_certificates(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeCertEntry> = read_yaml(path).await?;
 
   let mut certificates: Vec<Certificate> = Vec::with_capacity(entries.len());
@@ -896,10 +945,10 @@ async fn seed_certificates(db: &Database, path: &Path) -> Result<(), String> {
       });
     }
     certificates.push(Certificate {
-      description: e.description.map(LocalizedString::en),
+      description: e.description.map(|d| d.pick(language)),
       grade,
       id,
-      name: e.name.en(),
+      name: e.name.pick(language),
     });
   }
 
@@ -953,14 +1002,14 @@ async fn seed_agent_types(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_npc_corporation_divisions(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_npc_corporation_divisions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeNpcCorporationDivisionEntry> = read_yaml(path).await?;
 
   let records: Vec<NpcCorporationDivision> = entries
     .into_iter()
     .map(|(id, e)| NpcCorporationDivision {
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
     })
     .collect();
 
@@ -969,7 +1018,7 @@ async fn seed_npc_corporation_divisions(db: &Database, path: &Path) -> Result<()
     .map_err(|e| e.to_string())
 }
 
-async fn seed_npc_corporations(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_npc_corporations(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeNpcCorporationEntry> = read_yaml(path).await?;
 
   let records: Vec<SeedCorporation> = entries
@@ -978,7 +1027,7 @@ async fn seed_npc_corporations(db: &Database, path: &Path) -> Result<(), String>
       faction_id: e.faction_id,
       home_station_id: e.station_id,
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       ticker: e.ticker_name.unwrap_or_default(),
     })
     .collect();
@@ -988,7 +1037,7 @@ async fn seed_npc_corporations(db: &Database, path: &Path) -> Result<(), String>
     .map_err(|e| e.to_string())
 }
 
-async fn seed_regions(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_regions(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeRegionEntry> = read_yaml(path).await?;
 
   let records: Vec<Region> = entries
@@ -996,21 +1045,21 @@ async fn seed_regions(db: &Database, path: &Path) -> Result<(), String> {
     .map(|(id, e)| Region {
       description: None,
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
     })
     .collect();
 
   sde::upsert_many_regions(db, &records).await.map_err(|e| e.to_string())
 }
 
-async fn seed_constellations(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_constellations(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeConstellationEntry> = read_yaml(path).await?;
 
   let records: Vec<Constellation> = entries
     .into_iter()
     .map(|(id, e)| Constellation {
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       position_x: e.position.x,
       position_y: e.position.y,
       position_z: e.position.z,
@@ -1023,7 +1072,7 @@ async fn seed_constellations(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_solar_systems(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_solar_systems(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeSolarSystemEntry> = read_yaml(path).await?;
 
   let records: Vec<SolarSystem> = entries
@@ -1031,7 +1080,7 @@ async fn seed_solar_systems(db: &Database, path: &Path) -> Result<(), String> {
     .map(|(id, e)| SolarSystem {
       constellation_id: e.constellation_id,
       id,
-      name: e.name.map(LocalizedString::en).unwrap_or_default(),
+      name: e.name.map(|n| n.pick(language)).unwrap_or_default(),
       position_x: e.position.x,
       position_y: e.position.y,
       position_z: e.position.z,
@@ -1046,7 +1095,7 @@ async fn seed_solar_systems(db: &Database, path: &Path) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
-async fn seed_npc_stations(db: &Database, r: &Path) -> Result<(), String> {
+async fn seed_npc_stations(db: &Database, r: &Path, language: Language) -> Result<(), String> {
   let stations: HashMap<i64, SdeNpcStationEntry> = read_yaml(&r.join("npcStations.yaml")).await?;
   let planets: HashMap<i64, SdeMapPlanetEntry> = read_yaml(&r.join("mapPlanets.yaml")).await?;
   let moons: HashMap<i64, SdeMapMoonEntry> = read_yaml(&r.join("mapMoons.yaml")).await?;
@@ -1063,7 +1112,7 @@ async fn seed_npc_stations(db: &Database, r: &Path) -> Result<(), String> {
         .operation_id
         .and_then(|op| operations.get(&op))
         .and_then(|op| op.operation_name.clone())
-        .map(LocalizedString::en);
+        .map(|name| name.pick(language));
       let name = derive_station_name(
         orbit_name.as_deref(),
         corporation_name.as_deref(),
@@ -1124,7 +1173,7 @@ async fn seed_moons(db: &Database, r: &Path) -> Result<(), String> {
   sde::upsert_many_moons(db, &records).await.map_err(|e| e.to_string())
 }
 
-async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
+async fn seed_npc_agents(db: &Database, path: &Path, language: Language) -> Result<(), String> {
   let entries: HashMap<i64, SdeNpcCharacterEntry> = read_yaml(path).await?;
 
   let mut agents: Vec<NpcAgent> = Vec::new();
@@ -1150,7 +1199,7 @@ async fn seed_npc_agents(db: &Database, path: &Path) -> Result<(), String> {
       is_locator: i32::from(agent.is_locator),
       level: agent.level,
       location_id: entry.location_id,
-      name: entry.name.map(LocalizedString::en).unwrap_or_default(),
+      name: entry.name.map(|n| n.pick(language)).unwrap_or_default(),
     });
   }
 
@@ -1688,6 +1737,7 @@ mod tests {
         name: "cpuOutput".to_owned(),
         display_name: display_name.map(|d| LocalizedString {
           en: Some(d.to_owned()),
+          ..LocalizedString::default()
         }),
         description: description.map(str::to_owned),
         default_value: Some(0.0),
@@ -1701,7 +1751,7 @@ mod tests {
 
     #[test]
     fn it_drops_empty_display_name_and_description_to_none() {
-      let model = build_dogma_attribute(48, make_entry(Some(""), Some("")));
+      let model = build_dogma_attribute(48, make_entry(Some(""), Some("")), Language::EnUs);
 
       assert_eq!(model.display_name(), &None);
       assert_eq!(model.description(), &None);
@@ -1709,7 +1759,7 @@ mod tests {
 
     #[test]
     fn it_maps_the_localized_display_name_to_english() {
-      let model = build_dogma_attribute(48, make_entry(Some("CPU Output"), None));
+      let model = build_dogma_attribute(48, make_entry(Some("CPU Output"), None), Language::EnUs);
 
       assert_eq!(model.attribute_id(), 48);
       assert_eq!(model.name(), "cpuOutput");
@@ -1728,9 +1778,11 @@ mod tests {
       SdeTypeEntry {
         name: LocalizedString {
           en: Some("Tritanium".to_owned()),
+          ..LocalizedString::default()
         },
         description: description.map(|d| LocalizedString {
           en: Some(d.to_owned()),
+          ..LocalizedString::default()
         }),
         group_id: 18,
         market_group_id: None,
@@ -1746,14 +1798,14 @@ mod tests {
 
     #[test]
     fn it_defaults_a_missing_description_to_empty_string_never_null() {
-      let model = build_item_type(34, make_type_entry(None), None);
+      let model = build_item_type(34, make_type_entry(None), None, Language::EnUs);
 
       assert_eq!(model.description(), &Some(String::new()));
     }
 
     #[test]
     fn it_preserves_a_present_description() {
-      let model = build_item_type(34, make_type_entry(Some("The most common ore")), None);
+      let model = build_item_type(34, make_type_entry(Some("The most common ore")), None, Language::EnUs);
 
       assert_eq!(model.description(), &Some("The most common ore".to_owned()));
     }
@@ -2101,6 +2153,58 @@ mod tests {
     }
   }
 
+  mod pick {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+
+    fn parse(yaml: &str) -> LocalizedString {
+      serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn it_falls_back_to_empty_when_neither_the_language_nor_en_is_present() {
+      let localized = parse("ja: モジュール\n");
+
+      assert_eq!(localized.pick(Language::De), String::new());
+    }
+
+    #[test]
+    fn it_falls_back_to_en_when_the_chosen_language_is_blank() {
+      let localized = parse("de: ''\nen: Module\n");
+
+      assert_eq!(localized.pick(Language::De), "Module");
+    }
+
+    #[test]
+    fn it_falls_back_to_en_when_the_chosen_language_is_missing() {
+      let localized = parse("en: Module\nfr: Module\n");
+
+      assert_eq!(localized.pick(Language::De), "Module");
+    }
+
+    #[test]
+    fn it_keeps_en_for_an_en_request() {
+      let localized = parse("de: Modul\nen: Module\n");
+
+      assert_eq!(localized.pick(Language::En), "Module");
+    }
+
+    #[test]
+    fn it_picks_the_chosen_language_when_present() {
+      let localized = parse("de: Modul\nen: Module\nfr: Module\n");
+
+      assert_eq!(localized.pick(Language::De), "Modul");
+    }
+
+    #[test]
+    fn it_resolves_en_us_through_the_en_field() {
+      let localized = parse("de: Modul\nen: Module\n");
+
+      assert_eq!(localized.pick(Language::EnUs), "Module");
+    }
+  }
+
   mod roman_numeral {
     use pretty_assertions::assert_eq;
 
@@ -2359,7 +2463,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_all_tables(&db, &mut tx, tmp.path()).await.unwrap();
+      seed_all_tables(&db, &mut tx, tmp.path(), Language::EnUs).await.unwrap();
 
       assert!(sde::get_race(&db, 1).await.unwrap().is_some());
       assert!(sde::get_bloodline(&db, 5).await.unwrap().is_some());
@@ -2403,7 +2507,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_all_tables(&db, &mut tx, tmp.path()).await.unwrap();
+      seed_all_tables(&db, &mut tx, tmp.path(), Language::EnUs).await.unwrap();
 
       assert!(skills::by_ids(&db, &[100]).await.unwrap().is_empty());
       assert!(skills::for_ship(&db, 596).await.unwrap().is_empty());
@@ -2418,9 +2522,16 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
-        .await
-        .unwrap();
+      seed_if_stale_at(
+        &db,
+        &mut tx,
+        tmp.path(),
+        Some("20240101.1"),
+        Some(&marker),
+        Language::EnUs,
+      )
+      .await
+      .unwrap();
 
       assert!(sde::get_dogma_attribute(&db, 4).await.unwrap().is_some());
       assert!(sde::get_race(&db, 1).await.unwrap().is_none());
@@ -2434,7 +2545,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_if_stale_at(&db, &mut tx, tmp.path(), None, Some(&marker))
+      seed_if_stale_at(&db, &mut tx, tmp.path(), None, Some(&marker), Language::EnUs)
         .await
         .unwrap();
 
@@ -2451,9 +2562,16 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
-        .await
-        .unwrap();
+      seed_if_stale_at(
+        &db,
+        &mut tx,
+        tmp.path(),
+        Some("20240101.1"),
+        Some(&marker),
+        Language::EnUs,
+      )
+      .await
+      .unwrap();
 
       assert!(sde::get_race(&db, 1).await.unwrap().is_none());
     }
@@ -2466,9 +2584,16 @@ mod tests {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();
 
-      seed_if_stale_at(&db, &mut tx, tmp.path(), Some("20240101.1"), Some(&marker))
-        .await
-        .unwrap();
+      seed_if_stale_at(
+        &db,
+        &mut tx,
+        tmp.path(),
+        Some("20240101.1"),
+        Some(&marker),
+        Language::EnUs,
+      )
+      .await
+      .unwrap();
 
       assert_eq!(read_stored_sde_version(&marker), Some(composite_version("20240101.1")));
       assert!(sde::get_race(&db, 1).await.unwrap().is_some());
@@ -2500,7 +2625,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_parent_race(&db).await;
 
-      seed_bloodlines(&db, &path).await.unwrap();
+      seed_bloodlines(&db, &path, Language::EnUs).await.unwrap();
 
       let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
       assert_eq!(deteis.ship_type_id, None);
@@ -2520,7 +2645,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_parent_race(&db).await;
 
-      seed_bloodlines(&db, &path).await.unwrap();
+      seed_bloodlines(&db, &path, Language::EnUs).await.unwrap();
 
       let deteis = sde::get_bloodline(&db, 5).await.unwrap().unwrap();
       assert_eq!(deteis.name, "Deteis");
@@ -2752,7 +2877,7 @@ mod tests {
       seed_agent_types(&db, &tmp.path().join("agentTypes.yaml"))
         .await
         .unwrap();
-      seed_npc_corporation_divisions(&db, &tmp.path().join("npcCorporationDivisions.yaml"))
+      seed_npc_corporation_divisions(&db, &tmp.path().join("npcCorporationDivisions.yaml"), Language::EnUs)
         .await
         .unwrap();
 
@@ -2817,15 +2942,19 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_item_type(&db, 52678).await;
 
-      seed_npc_corporations(&db, &r.join("npcCorporations.yaml"))
+      seed_npc_corporations(&db, &r.join("npcCorporations.yaml"), Language::EnUs)
         .await
         .unwrap();
-      seed_regions(&db, &r.join("mapRegions.yaml")).await.unwrap();
-      seed_constellations(&db, &r.join("mapConstellations.yaml"))
+      seed_regions(&db, &r.join("mapRegions.yaml"), Language::EnUs)
         .await
         .unwrap();
-      seed_solar_systems(&db, &r.join("mapSolarSystems.yaml")).await.unwrap();
-      seed_npc_stations(&db, r).await.unwrap();
+      seed_constellations(&db, &r.join("mapConstellations.yaml"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_solar_systems(&db, &r.join("mapSolarSystems.yaml"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_npc_stations(&db, r, Language::EnUs).await.unwrap();
 
       let region: String = sqlx::query_scalar("SELECT name FROM regions WHERE id = 10000002")
         .fetch_one(&db.0)
@@ -2865,7 +2994,9 @@ mod tests {
         .await
         .unwrap();
 
-      seed_npc_agents(&db, &r.join("npcCharacters.yaml")).await.unwrap();
+      seed_npc_agents(&db, &r.join("npcCharacters.yaml"), Language::EnUs)
+        .await
+        .unwrap();
 
       let agents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM npc_agents")
         .fetch_one(&db.0)
@@ -2905,7 +3036,7 @@ mod tests {
       .await
       .unwrap();
 
-      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"))
+      seed_npc_corporations(&db, &tmp.path().join("npcCorporations.yaml"), Language::EnUs)
         .await
         .unwrap();
 
@@ -2946,13 +3077,16 @@ mod tests {
       tokio::fs::write(dir.join("types.yaml"), types).await.unwrap();
       tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
 
-      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
+      seed_categories(db, &dir.join("categories.yaml"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_groups(db, &dir.join("groups.yaml"), Language::EnUs).await.unwrap();
       seed_types(
         db,
         &dir.join("types.yaml"),
         &dir.join("typeDogma.yaml"),
         &dir.join("groups.yaml"),
+        Language::EnUs,
       )
       .await
       .unwrap();
@@ -2970,7 +3104,7 @@ mod tests {
       .unwrap();
       let db = store::open_test().await.unwrap();
 
-      seed_certificates(&db, &path).await.unwrap();
+      seed_certificates(&db, &path, Language::EnUs).await.unwrap();
 
       let certs = skills::by_ids(&db, &[1001, 1002]).await.unwrap();
       let by_id = |id: i64| certs.iter().find(|c| c.id() == id).unwrap();
@@ -2993,7 +3127,7 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_parent_skills(&db, tmp.path(), &[3300, 3301]).await;
 
-      seed_certificates(&db, &path).await.unwrap();
+      seed_certificates(&db, &path, Language::EnUs).await.unwrap();
 
       let cert = skills::by_ids(&db, &[1001]).await.unwrap();
       assert_eq!(cert.len(), 1);
@@ -3030,7 +3164,7 @@ mod tests {
       .unwrap();
       let db = store::open_test().await.unwrap();
 
-      seed_factions(&db, &path).await.unwrap();
+      seed_factions(&db, &path, Language::EnUs).await.unwrap();
 
       let state = sde::get_faction(&db, 500_001).await.unwrap().unwrap();
       assert_eq!(state.name, "Caldari State");
@@ -3066,13 +3200,16 @@ mod tests {
         .await
         .unwrap();
       tokio::fs::write(dir.join("typeDogma.yaml"), "{}\n").await.unwrap();
-      seed_categories(db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(db, &dir.join("groups.yaml")).await.unwrap();
+      seed_categories(db, &dir.join("categories.yaml"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_groups(db, &dir.join("groups.yaml"), Language::EnUs).await.unwrap();
       seed_types(
         db,
         &dir.join("types.yaml"),
         &dir.join("typeDogma.yaml"),
         &dir.join("groups.yaml"),
+        Language::EnUs,
       )
       .await
       .unwrap();
@@ -3141,7 +3278,7 @@ mod tests {
       .unwrap();
       let db = store::open_test().await.unwrap();
 
-      seed_races(&db, &path).await.unwrap();
+      seed_races(&db, &path, Language::EnUs).await.unwrap();
 
       let caldari = sde::get_race(&db, 1).await.unwrap().unwrap();
       assert_eq!(caldari.name(), "Caldari");
@@ -3198,13 +3335,18 @@ mod tests {
 
     async fn run_seed_types(dir: &Path) -> Database {
       let db = store::open_test().await.unwrap();
-      seed_categories(&db, &dir.join("categories.yaml")).await.unwrap();
-      seed_groups(&db, &dir.join("groups.yaml")).await.unwrap();
+      seed_categories(&db, &dir.join("categories.yaml"), Language::EnUs)
+        .await
+        .unwrap();
+      seed_groups(&db, &dir.join("groups.yaml"), Language::EnUs)
+        .await
+        .unwrap();
       seed_types(
         &db,
         &dir.join("types.yaml"),
         &dir.join("typeDogma.yaml"),
         &dir.join("groups.yaml"),
+        Language::EnUs,
       )
       .await
       .unwrap();
@@ -3262,6 +3404,7 @@ mod tests {
         &tmp.path().join("types.yaml"),
         &tmp.path().join("typeDogma.yaml"),
         &tmp.path().join("groups.yaml"),
+        Language::EnUs,
       )
       .await
       .unwrap();

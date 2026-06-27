@@ -183,7 +183,9 @@ pub enum Group {
 }
 
 impl Group {
-  const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
+  // Made `pub` so the first-run wizard's Features phase can derive one sub-step per display group
+  // (`src/features/wizard.rs`); the settings tab and the wizard share the same group catalog.
+  pub const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
 
   fn title(self) -> &'static str {
     match self {

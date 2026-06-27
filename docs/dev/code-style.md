@@ -103,6 +103,21 @@ Order functions and methods within implementation blocks by:
 In test modules, fall back to purely alphabetical ordering when the static/instance/public/private structure doesn't
 apply. See [testing] for test-specific conventions.
 
+### Dead Code
+
+**Never use `#[allow(dead_code)]`.** `dead_code` is set to `deny` in `[lints.rust]` (Cargo.toml), so dead code is a hard
+error in every build. A bare `allow` would silence that permanently: it also hides newly-dead code, and a stale
+annotation can never self-correct once the item goes live again. Use one of the options below instead.
+
+For genuinely-dead code, pick by intent:
+
+- **Foundation code ahead of its consumer** — use `#[expect(dead_code)]` (per item, never module-level) with a comment
+  naming the awaited consumer. `expect` self-cleans: it warns the moment the item is used, forcing the annotation's
+  removal.
+- **Test-only items** — gate with `#[cfg(test)]`. Shared test helpers live in a `#[cfg(test)] pub mod test_support`
+  block. For a fluent-builder method on a struct whose other methods are live, gate the method, not the whole `impl`.
+- **No consumer and no near-term plan** — delete the item.
+
 ### Documentation Comments
 
 **Default to no comment.** Most code — structs, functions, fields, enums — should carry *no* doc comment. Good names and

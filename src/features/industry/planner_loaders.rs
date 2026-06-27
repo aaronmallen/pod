@@ -119,16 +119,17 @@ impl Category {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Category::Ammo => "Charges",
-      Category::Component => "Components",
-      Category::Fuel => "Fuel",
-      Category::Module => "Modules",
-      Category::Other => "Other",
-      Category::Reaction => "Reactions",
-      Category::Ship => "Ships",
+      Category::Ammo => t!("industry.category.ammo"),
+      Category::Component => t!("industry.category.component"),
+      Category::Fuel => t!("industry.category.fuel"),
+      Category::Module => t!("industry.category.module"),
+      Category::Other => t!("industry.category.other"),
+      Category::Reaction => t!("industry.category.reaction"),
+      Category::Ship => t!("industry.category.ship"),
     }
+    .into_owned()
   }
 }
 

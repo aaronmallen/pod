@@ -119,13 +119,25 @@ fn toolbar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
   .width(Length::Fill);
 
   let kinds = [
-    (BlueprintKind::All, "All", counts.originals + counts.copies),
-    (BlueprintKind::Originals, "Originals", counts.originals),
-    (BlueprintKind::Copies, "Copies", counts.copies),
+    (
+      BlueprintKind::All,
+      t!("industry.blueprints.kind_all"),
+      counts.originals + counts.copies,
+    ),
+    (
+      BlueprintKind::Originals,
+      t!("industry.blueprints.kind_originals"),
+      counts.originals,
+    ),
+    (
+      BlueprintKind::Copies,
+      t!("industry.blueprints.kind_copies"),
+      counts.copies,
+    ),
   ];
   let kind_buttons: Vec<Element<'a, Message>> = kinds
     .into_iter()
-    .map(|(kind, label, count)| kind_button(label, kind, count, state.blueprint_kind() == kind))
+    .map(|(kind, label, count)| kind_button(&label, kind, count, state.blueprint_kind() == kind))
     .collect();
   let kind_group = container(Row::with_children(kind_buttons).spacing(spacing::UNIT))
     .padding(3.0)
@@ -140,20 +152,23 @@ fn toolbar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
     });
 
   let sorts = [
-    (BlueprintSort::Name, "Name"),
-    (BlueprintSort::MaterialEfficiency, "ME"),
-    (BlueprintSort::Runs, "Runs"),
+    (BlueprintSort::Name, t!("industry.blueprints.sort_name")),
+    (
+      BlueprintSort::MaterialEfficiency,
+      t!("industry.blueprints.sort_material_eff"),
+    ),
+    (BlueprintSort::Runs, t!("industry.blueprints.sort_runs")),
   ];
   let sort_buttons: Vec<Element<'a, Message>> = sorts
     .into_iter()
-    .map(|(sort, label)| sort_button(label, sort, state.blueprint_sort() == sort))
+    .map(|(sort, label)| sort_button(&label, sort, state.blueprint_sort() == sort))
     .collect();
 
   let band = Row::with_children(vec![
     search.into(),
     kind_group.into(),
     Space::new().width(Length::Fill).into(),
-    text("SORT")
+    text(t!("industry.blueprints.sort"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
@@ -270,11 +285,13 @@ fn column_header<'a>() -> Element<'a, Message> {
   };
 
   let band = Row::with_children(vec![
-    container(head("BLUEPRINT", false)).width(Length::Fill).into(),
-    column(head("MATERIAL EFF.", false), COL_ME),
-    column(head("TIME EFF.", false), COL_TE),
-    column(head("RUNS", true), COL_RUNS),
-    column(head("LOCATION", true), COL_LOCATION),
+    container(head(&t!("industry.blueprints.column_blueprint"), false))
+      .width(Length::Fill)
+      .into(),
+    column(head(&t!("industry.blueprints.column_material_eff"), false), COL_ME),
+    column(head(&t!("industry.blueprints.column_time_eff"), false), COL_TE),
+    column(head(&t!("industry.blueprints.column_runs"), true), COL_RUNS),
+    column(head(&t!("industry.blueprints.column_location"), true), COL_LOCATION),
     column(Space::new().into(), COL_ACTION),
   ])
   .spacing(spacing::SPACE_3)
@@ -300,7 +317,7 @@ fn blueprint_row<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
     container(identity(blueprint)).width(Length::Fill).into(),
     column(
       efficiency_cell(
-        "ME",
+        &t!("industry.blueprints.material_eff"),
         blueprint.material_efficiency,
         ME_MAX,
         color::accent::PLASMA,
@@ -309,7 +326,13 @@ fn blueprint_row<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
       COL_ME,
     ),
     column(
-      efficiency_cell("TE", blueprint.time_efficiency, TE_MAX, TE_FILL, blueprint.reaction),
+      efficiency_cell(
+        &t!("industry.blueprints.time_eff"),
+        blueprint.time_efficiency,
+        TE_MAX,
+        TE_FILL,
+        blueprint.reaction,
+      ),
       COL_TE,
     ),
     column(runs_cell(blueprint), COL_RUNS),
@@ -352,9 +375,11 @@ fn identity<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
   .align_y(Vertical::Center);
 
   let subtitle = match (blueprint.group_name.is_empty(), &blueprint.product_name) {
-    (false, Some(product)) => format!("{} \u{00B7} makes {product}", blueprint.group_name),
+    (false, Some(product)) => {
+      t!("industry.blueprints.makes", group => blueprint.group_name, product => product).into_owned()
+    }
     (false, None) => blueprint.group_name.clone(),
-    (true, Some(product)) => format!("makes {product}"),
+    (true, Some(product)) => t!("industry.blueprints.makes_only", product => product).into_owned(),
     (true, None) => String::new(),
   };
 
@@ -378,9 +403,9 @@ fn identity<'a>(blueprint: &'a Blueprint) -> Element<'a, Message> {
 
 fn kind_badge<'a>(original: bool) -> Element<'a, Message> {
   if original {
-    badge("BPO", Some(color::accent::PLASMA))
+    badge(t!("industry.blueprints.status_bpo"), Some(color::accent::PLASMA))
   } else {
-    badge("BPC", Some(color::status::WARNING))
+    badge(t!("industry.blueprints.status_bpc"), Some(color::status::WARNING))
   }
 }
 
@@ -409,7 +434,7 @@ fn blueprint_tile<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
 
 fn efficiency_cell<'a>(label: &str, value: i64, max: i64, fill: Color, reaction: bool) -> Element<'a, Message> {
   if reaction {
-    return text("n/a")
+    return text(t!("industry.blueprints.reaction_efficiency"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::tertiary()))
@@ -467,7 +492,7 @@ fn runs_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
           .size(typography::size::LG)
           .style(typography::colored(color::accent::PLASMA))
           .into(),
-        text("ORIGINAL")
+        text(t!("industry.blueprints.runs_original"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::secondary()))
@@ -484,7 +509,7 @@ fn runs_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
         .size(typography::size::LG)
         .style(typography::colored(color::text::PRIMARY))
         .into(),
-      text("RUNS LEFT")
+      text(t!("industry.blueprints.runs_left"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary()))
@@ -529,7 +554,7 @@ fn plan_build_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
   let type_id = blueprint.type_id;
   let inner = Row::with_children(vec![
     Icon::flask().size(13.0).render::<Message>(),
-    text("Plan Build")
+    text(t!("industry.blueprints.plan_build"))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .into(),
@@ -573,7 +598,7 @@ fn plan_build_cell<'a>(blueprint: &Blueprint) -> Element<'a, Message> {
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No blueprints found.")
+    text(t!("industry.blueprints.empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::LG)
       .style(typography::colored(color::text::tertiary())),

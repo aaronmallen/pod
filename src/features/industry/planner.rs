@@ -390,10 +390,11 @@ impl Planner {
       .collect();
     self.data = data;
     self.loaded = true;
-    self.placeholder = format!(
-      "Search {} buildable products\u{2026}",
-      view::fmt_num(self.data.catalog.len() as i64)
-    );
+    self.placeholder = t!(
+      "industry.planner.search_placeholder_count",
+      count => view::fmt_num(self.data.catalog.len() as i64)
+    )
+    .into_owned();
     if self.recent.is_empty() {
       self.recent = self.seed_recent();
     }
@@ -1880,17 +1881,19 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
   let overlay: iced::Element<'a, Message> = if let Some(menu) = planner.menu() {
     let mut items = Vec::new();
     if !menu.buildable {
-      items.push(context_menu::Item::disabled("Raw material \u{2014} can't break down"));
+      items.push(context_menu::Item::disabled(t!(
+        "industry.planner.context_raw_material"
+      )));
     } else if menu.built {
       items.push(context_menu::Item::action(
-        "Stop building \u{2014} buy on market",
+        t!("industry.planner.context_stop_building"),
         Message::NodeCollapsed {
           type_id: menu.mat,
         },
       ));
     } else {
       items.push(context_menu::Item::warning(
-        "Break down \u{2014} build in-house",
+        t!("industry.planner.context_break_down"),
         Message::NodeBrokenDown {
           type_id: menu.mat,
         },
@@ -1913,20 +1916,22 @@ pub fn view<'a>(planner: &'a Planner, _scope: Scope) -> iced::Element<'a, Messag
     if total > segment_count as i64 {
       items.push(context_menu::Item::action(
         if menu.split {
-          "Split job again"
+          t!("industry.planner.context_split_again")
         } else {
-          "Split job in two"
+          t!("industry.planner.context_split_two")
         },
         Message::OrderJobSplit {
           type_id: menu.type_id,
         },
       ));
     } else {
-      items.push(context_menu::Item::disabled("Too few runs to split further"));
+      items.push(context_menu::Item::disabled(t!(
+        "industry.planner.context_split_too_few"
+      )));
     }
     if menu.split {
       items.push(context_menu::Item::action(
-        "Merge back into one job",
+        t!("industry.planner.context_merge"),
         Message::OrderJobMerged {
           type_id: menu.type_id,
         },
@@ -2057,7 +2062,7 @@ mod view {
 
   pub(super) fn loading<'a>() -> Element<'a, Message> {
     centered(
-      text("Loading build catalog\u{2026}")
+      text(t!("industry.planner.loading"))
         .font(typography::body::REGULAR)
         .size(typography::size::LG)
         .style(typography::colored(color::text::tertiary())),
@@ -2074,7 +2079,10 @@ mod view {
 
     let mut children: Vec<Element<'a, Message>> = vec![
       picker(planner),
-      section_label("Blueprints", (steps > 1).then(|| format!("{steps} steps"))),
+      section_label(
+        &t!("industry.tab.blueprints"),
+        (steps > 1).then(|| t!("industry.planner.section_steps", count => steps).into_owned()),
+      ),
       blueprint_card(planner, product, recipe, None),
     ];
 
@@ -2086,13 +2094,13 @@ mod view {
     }
 
     let me_hint = if recipe.is_reaction {
-      "reaction inputs".to_owned()
+      t!("industry.planner.reaction_inputs").into_owned()
     } else {
-      format!("ME {} applied", planner.settings_for(product).me)
+      t!("industry.planner.me_applied", me => planner.settings_for(product).me).into_owned()
     };
     children.push(material_plan_header(
       planner,
-      format!("{me_hint} \u{00B7} break down an item or right-click for options"),
+      t!("industry.planner.material_plan_hint", me_hint => me_hint).into_owned(),
     ));
     children.push(material_plan(planner, recipe));
 
@@ -2162,13 +2170,18 @@ mod view {
     let query = planner.search().trim().to_lowercase();
     let category = planner.category();
 
-    let chips: Vec<Element<'_, Message>> = std::iter::once(category_chip("All", Category::Other, true, category))
-      .chain(
-        Category::PICKER
-          .into_iter()
-          .map(|cat| category_chip(cat.label(), cat, false, category)),
-      )
-      .collect();
+    let chips: Vec<Element<'_, Message>> = std::iter::once(category_chip(
+      t!("industry.category.all"),
+      Category::Other,
+      true,
+      category,
+    ))
+    .chain(
+      Category::PICKER
+        .into_iter()
+        .map(|cat| category_chip(cat.label(), cat, false, category)),
+    )
+    .collect();
 
     let mut matches: Vec<i64> = data
       .catalog
@@ -2184,18 +2197,23 @@ mod view {
     matches.truncate(PICKER_MAX_RESULTS);
 
     let header = if query.is_empty() && matches.is_empty() {
-      "Your blueprints / recent".to_owned()
+      t!("industry.planner.your_blueprints").into_owned()
     } else {
-      format!("{} result{}", matches.len(), if matches.len() == 1 { "" } else { "s" })
+      t!(
+        "industry.planner.results",
+        count => matches.len(),
+        plural => if matches.len() == 1 { "" } else { "s" }
+      )
+      .into_owned()
     };
 
     let list: Element<'_, Message> = if matches.is_empty() {
       let source = if query.is_empty() { planner.recent() } else { &[] };
       if source.is_empty() {
         let message = if query.is_empty() {
-          "No products match.".to_owned()
+          t!("industry.planner.no_products").into_owned()
         } else {
-          format!("No products match \u{201C}{}\u{201D}.", planner.search().trim())
+          t!("industry.planner.no_products_query", query => planner.search().trim()).into_owned()
         };
         centered(
           text(message)
@@ -2259,7 +2277,7 @@ mod view {
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY));
 
-    let subtitle = text(format!("{} ISK", fmt_isk(data.price(type_id))))
+    let subtitle = text(t!("industry.planner.isk", value => fmt_isk(data.price(type_id))))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::tertiary()));
@@ -2290,7 +2308,12 @@ mod view {
       .into()
   }
 
-  fn category_chip(label: &str, category: Category, is_all: bool, active: Category) -> Element<'_, Message> {
+  fn category_chip<'a>(
+    label: impl Into<String>,
+    category: Category,
+    is_all: bool,
+    active: Category,
+  ) -> Element<'a, Message> {
     let on = if is_all {
       active == Category::Other
     } else {
@@ -2303,7 +2326,7 @@ mod view {
     };
     let target = if is_all { Category::Other } else { category };
     button(
-      text(label.to_owned())
+      text(label.into())
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(fill)),
@@ -2348,14 +2371,14 @@ mod view {
     let mut center: Vec<Element<'a, Message>> = Vec::new();
     if !is_reaction {
       center.push(efficiency_slider(
-        "Material efficiency",
+        &t!("industry.planner.material_efficiency"),
         config.me,
         super::ME_MAX,
         type_id,
         true,
       ));
       center.push(efficiency_slider(
-        "Time efficiency",
+        &t!("industry.planner.time_efficiency"),
         config.te,
         super::TE_MAX,
         type_id,
@@ -2429,19 +2452,20 @@ mod view {
     .spacing(spacing::SPACE_2)
     .align_y(Vertical::Center);
     badges = if job.is_some() {
-      badges.push(badge("BUILDING", Some(color::status::WARNING)))
+      badges.push(badge(t!("industry.planner.building"), Some(color::status::WARNING)))
     } else {
       badges.push(owned_badge(planner, type_id))
     };
 
     let subtitle = match job {
-      Some(job) => format!(
-        "builds {} \u{00B7} needs {} \u{00B7} {}",
-        fmt_num(data.recipe(type_id).map(|r| r.output_per_run).unwrap_or(1) * job.runs),
-        fmt_num(job.needed_qty),
-        merged_feeds_line(data, job)
-      ),
-      None => format!("{} ISK each", fmt_isk(data.price(type_id))),
+      Some(job) => t!(
+        "industry.planner.builds_subtitle",
+        output => fmt_num(data.recipe(type_id).map(|r| r.output_per_run).unwrap_or(1) * job.runs),
+        needed => fmt_num(job.needed_qty),
+        feeds => merged_feeds_line(data, job)
+      )
+      .into_owned(),
+      None => t!("industry.planner.isk_each", price => fmt_isk(data.price(type_id))).into_owned(),
     };
 
     let details = Column::with_children(vec![
@@ -2480,11 +2504,14 @@ mod view {
   }
 
   fn runs_control<'a>(runs: i64, runs_text: &'a str, locked: bool, is_reaction: bool) -> Element<'a, Message> {
-    let label = format!(
-      "{}{}",
-      if is_reaction { "Cycles" } else { "Runs" },
-      if locked { " \u{00B7} locked" } else { "" }
-    );
+    let mut label = if is_reaction {
+      t!("industry.planner.runs_cycles").into_owned()
+    } else {
+      t!("industry.planner.runs_runs").into_owned()
+    };
+    if locked {
+      label.push_str(&t!("industry.planner.runs_locked"));
+    }
 
     let value: Element<'a, Message> = if locked {
       Row::with_children(vec![
@@ -2493,7 +2520,7 @@ mod view {
           .size(typography::size::LG)
           .style(typography::colored(color::text::PRIMARY))
           .into(),
-        text("FOR JOB")
+        text(t!("industry.planner.for_job"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::tertiary()))
@@ -2605,7 +2632,11 @@ mod view {
   }
 
   fn efficiency_slider<'a>(label: &str, value: i64, max: i64, type_id: i64, material: bool) -> Element<'a, Message> {
-    let prefix = if material { "ME" } else { "TE" };
+    let prefix = if material {
+      t!("industry.planner.material_eff_short")
+    } else {
+      t!("industry.planner.time_eff_short")
+    };
     let handle = move |next: f64| {
       let next = next.round() as i64;
       if material {
@@ -2631,7 +2662,7 @@ mod view {
       micro_label(label),
       Row::with_children(vec![
         control.into(),
-        text(format!("{prefix} {value}"))
+        text(t!("industry.planner.efficiency_readout", prefix => prefix, value => value))
           .font(typography::mono::MEDIUM)
           .size(typography::size::MD)
           .style(typography::colored(color::text::PRIMARY))
@@ -2675,7 +2706,7 @@ mod view {
       type_id,
     });
 
-    Column::with_children(vec![micro_label("Build at"), dropdown.into()])
+    Column::with_children(vec![micro_label(&t!("industry.planner.build_at")), dropdown.into()])
       .spacing(spacing::SPACE_2)
       .width(Length::Fixed(FACILITY_PICKER_WIDTH))
       .into()
@@ -2794,7 +2825,7 @@ mod view {
   /// open) on the left and, when the plan has at least one buildable input, a warning-tinted "Break down all"
   /// button floated right that recursively builds every buildable input down to raw materials in one action.
   fn material_plan_header(planner: &Planner, hint: String) -> Element<'_, Message> {
-    let label = section_label("Material plan", Some(hint));
+    let label = section_label(&t!("industry.planner.material_plan"), Some(hint));
     if !planner.has_buildable_inputs() {
       return label;
     }
@@ -2814,7 +2845,7 @@ mod view {
         .color(color::status::WARNING)
         .size(13.0)
         .render::<Message>(),
-      text("Break down all")
+      text(t!("industry.planner.break_down_all"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::status::WARNING))
@@ -2855,7 +2886,10 @@ mod view {
     };
     material_rows(planner, recipe, planner.runs(), site, 0, &mut acc);
 
-    acc.out.push(footer_row("Material cost", &fmt_isk_full(acc.total)));
+    acc.out.push(footer_row(
+      &t!("industry.planner.material_cost"),
+      &fmt_isk_full(acc.total),
+    ));
 
     container(Column::with_children(acc.out).width(Length::Fill))
       .width(Length::Fill)
@@ -2938,7 +2972,7 @@ mod view {
         .color(color::status::WARNING)
         .size(11.0)
         .render::<Message>(),
-      text("Breakdown")
+      text(t!("industry.planner.breakdown"))
         .font(typography::body::MEDIUM)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::status::WARNING))
@@ -2978,7 +3012,7 @@ mod view {
         .color(color::status::ONLINE)
         .size(11.0)
         .render::<Message>(),
-      text("Use Stock")
+      text(t!("industry.planner.use_stock"))
         .font(typography::body::MEDIUM)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::status::ONLINE))
@@ -3015,7 +3049,7 @@ mod view {
   fn stock_chip<'a>(site: i64, type_id: i64) -> Element<'a, Message> {
     let inner = Row::with_children(vec![
       Icon::check().color(color::status::ONLINE).size(9.0).render::<Message>(),
-      text("STOCK")
+      text(t!("industry.planner.stock"))
         .font(typography::mono::MEDIUM)
         .size(typography::size::XS)
         .style(typography::colored(color::status::ONLINE))
@@ -3064,7 +3098,7 @@ mod view {
 
     if drawn > 0 {
       let mut tokens: Vec<Element<'a, Message>> = vec![
-        text(format!("{} stock", fmt_num(drawn)))
+        text(t!("industry.planner.qty.stock", count => fmt_num(drawn)))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::status::ONLINE))
@@ -3072,9 +3106,15 @@ mod view {
       ];
       if remaining > 0 {
         let (label, tint) = if building {
-          (format!("{} build", fmt_num(remaining)), color::status::WARNING)
+          (
+            t!("industry.planner.qty.build", count => fmt_num(remaining)).into_owned(),
+            color::status::WARNING,
+          )
         } else {
-          (format!("{} buy", fmt_num(remaining)), color::text::tertiary())
+          (
+            t!("industry.planner.qty.buy", count => fmt_num(remaining)).into_owned(),
+            color::text::tertiary(),
+          )
         };
         tokens.push(
           text("\u{00B7}")
@@ -3190,7 +3230,7 @@ mod view {
         .style(typography::colored(color::text::PRIMARY)),
     );
     if building {
-      name_row = name_row.push(badge("BUILDING", Some(color::status::WARNING)));
+      name_row = name_row.push(badge(t!("industry.planner.building"), Some(color::status::WARNING)));
     }
     if let Some(affordance) = stock_affordance(type_id, &split) {
       name_row = name_row.push(affordance);
@@ -3284,26 +3324,31 @@ mod view {
       rows.push(bom_row(planner, &allocation, total));
     }
     if inventory_value > 0.0 {
-      rows.push(footer_row("Covered from inventory", &fmt_isk_full(inventory_value)));
+      rows.push(footer_row(
+        &t!("industry.planner.covered_from_inventory"),
+        &fmt_isk_full(inventory_value),
+      ));
     }
     let footer_label = if inventory_value > 0.0 {
-      "Cost to buy"
+      t!("industry.planner.cost_to_buy")
     } else {
-      "Acquisition cost"
+      t!("industry.planner.acquisition_cost")
     };
-    rows.push(footer_row(footer_label, &fmt_isk_full(buy_cost)));
+    rows.push(footer_row(&footer_label, &fmt_isk_full(buy_cost)));
 
     let hint = if stocked > 0 {
-      format!(
-        "raw inputs to acquire \u{00B7} {} items \u{00B7} {stocked} drawn from stock",
-        totals.len()
+      t!(
+        "industry.planner.bom_hint_stocked",
+        count => totals.len(),
+        stocked => stocked
       )
+      .into_owned()
     } else {
-      format!("raw inputs to acquire \u{00B7} {} items", totals.len())
+      t!("industry.planner.bom_hint", count => totals.len()).into_owned()
     };
 
     Column::with_children(vec![
-      section_label("Bill of materials", Some(hint)),
+      section_label(&t!("industry.planner.bom_section"), Some(hint)),
       container(Column::with_children(rows).width(Length::Fill))
         .width(Length::Fill)
         .style(bordered_table)
@@ -3418,11 +3463,11 @@ mod view {
 
     container(
       Row::with_children(vec![
-        head("MATERIAL", None),
-        head("TOTAL", Some(COL_BOM_QTY)),
-        head("FROM STOCK", Some(COL_BOM_QTY)),
-        head("TO BUY", Some(COL_BOM_QTY)),
-        head("SUBTOTAL", Some(COL_COST)),
+        head(&t!("industry.planner.grid_material"), None),
+        head(&t!("industry.planner.bom_total"), Some(COL_BOM_QTY)),
+        head(&t!("industry.planner.bom_from_stock"), Some(COL_BOM_QTY)),
+        head(&t!("industry.planner.bom_to_buy"), Some(COL_BOM_QTY)),
+        head(&t!("industry.planner.grid_subtotal"), Some(COL_COST)),
       ])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center),
@@ -3453,16 +3498,23 @@ mod view {
 
     // "N jobs · M runs · x/y assigned · right-click to split" — the run count appears only once a job has
     // been split (otherwise the segment count equals the job count and adds nothing).
-    let mut hint = format!("{count} job{}", if count == 1 { "" } else { "s" });
+    let mut hint = t!(
+      "industry.planner.build_order_jobs",
+      count => count,
+      plural => if count == 1 { "" } else { "s" }
+    )
+    .into_owned();
     if total_segments > count {
-      hint.push_str(&format!(" \u{00B7} {total_segments} runs"));
+      hint.push_str(&t!("industry.planner.build_order_runs", total => total_segments));
     }
-    hint.push_str(&format!(
-      " \u{00B7} {assigned}/{total_segments} assigned \u{00B7} right-click to split"
+    hint.push_str(&t!(
+      "industry.planner.build_order_assigned",
+      assigned => assigned,
+      total => total_segments
     ));
 
     Column::with_children(vec![
-      section_label("Build order", Some(hint)),
+      section_label(&t!("industry.planner.build_order"), Some(hint)),
       container(Column::with_children(rows).width(Length::Fill))
         .width(Length::Fill)
         .style(bordered_table)
@@ -3497,7 +3549,10 @@ mod view {
       activity_badge(is_reaction),
     ];
     if split {
-      name_row.push(badge(format!("{}-WAY", segments.len()), Some(color::accent::PLASMA)));
+      name_row.push(badge(
+        t!("industry.planner.way", count => segments.len()),
+        Some(color::accent::PLASMA),
+      ));
     }
 
     let header = Row::with_children(vec![
@@ -3588,9 +3643,14 @@ mod view {
     if split {
       let pilots: std::collections::BTreeSet<i64> = segments.iter().filter_map(|segment| segment.pilot_id).collect();
       let lead = if pilots.is_empty() {
-        "unassigned".to_owned()
+        t!("industry.planner.pilot_unassigned").into_owned()
       } else {
-        format!("{} pilot{}", pilots.len(), if pilots.len() == 1 { "" } else { "s" })
+        t!(
+          "industry.planner.pilots_assigned",
+          count => pilots.len(),
+          plural => if pilots.len() == 1 { "" } else { "s" }
+        )
+        .into_owned()
       };
       return Column::with_children(vec![
         text(lead)
@@ -3598,7 +3658,7 @@ mod view {
           .size(typography::size::XS)
           .style(typography::colored(color::text::secondary()))
           .into(),
-        text("split below")
+        text(t!("industry.planner.split_below"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::tertiary()))
@@ -3630,7 +3690,7 @@ mod view {
   /// The one-line hint shown in place of the picker when Skills or Clone-Monitoring is disabled.
   fn assign_disabled_hint<'a>() -> Element<'a, Message> {
     container(
-      text("Enable Skills + Clones to assign pilots")
+      text(t!("industry.planner.assign_disabled"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary())),
@@ -3682,7 +3742,7 @@ mod view {
       Some((pilot, clone)) => {
         let clone_label = clone
           .map(|clone| clone.name.clone())
-          .unwrap_or_else(|| "active clone".to_owned());
+          .unwrap_or_else(|| t!("industry.planner.clone_active").into_owned());
         Row::with_children(vec![
           avatar(
             pilot.id,
@@ -3712,7 +3772,7 @@ mod view {
         .width(Length::Fill)
         .into()
       }
-      None => text("Assign pilot")
+      None => text(t!("industry.planner.assign_pilot"))
         .font(typography::body::REGULAR)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -3785,7 +3845,7 @@ mod view {
     if assigned_pilot.is_some() {
       rows.push(
         button(
-          text("\u{00D7}  Unassign")
+          text(t!("industry.planner.unassign"))
             .font(typography::body::REGULAR)
             .size(typography::size::SM)
             .style(typography::colored(color::text::secondary())),
@@ -3806,7 +3866,7 @@ mod view {
     if planner.pilots().is_empty() {
       rows.push(
         container(
-          text("No pilots in scope")
+          text(t!("industry.planner.pilots_empty"))
             .font(typography::body::REGULAR)
             .size(typography::size::SM)
             .style(typography::colored(color::text::tertiary())),
@@ -3860,10 +3920,10 @@ mod view {
             .size(typography::size::MD)
             .style(typography::colored(color::text::PRIMARY))
             .into(),
-          text(format!(
-            "{} clone{}",
-            pilot.clones.len(),
-            if pilot.clones.len() == 1 { "" } else { "s" }
+          text(t!(
+            "industry.planner.clone_count",
+            count => pilot.clones.len(),
+            plural => if pilot.clones.len() == 1 { "" } else { "s" }
           ))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
@@ -3989,7 +4049,11 @@ mod view {
       type_id,
     } = *ctx;
     let time = segment_build_time(recipe, segment.runs, te, planner.segment_assignment(segment));
-    let unit = if is_reaction { "cycles" } else { "runs" };
+    let unit = if is_reaction {
+      t!("industry.planner.unit_cycles")
+    } else {
+      t!("industry.planner.unit_runs")
+    };
 
     let body = Row::with_children(vec![
       text("\u{2514}")
@@ -3997,7 +4061,7 @@ mod view {
         .size(typography::size::MD)
         .style(typography::colored(color::text::tertiary()))
         .into(),
-      text(format!("SPLIT {}/{}", index + 1, count))
+      text(t!("industry.planner.split_index", index => index + 1, count => count))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(typography::colored(color::text::tertiary()))
@@ -4140,11 +4204,15 @@ mod view {
         .size(typography::size::LG)
         .style(typography::colored(accent))
         .into(),
-      text(if is_reaction { "CYCLES" } else { "RUNS" })
-        .font(typography::mono::REGULAR)
-        .size(typography::size::XS)
-        .style(typography::colored(label_color))
-        .into(),
+      text(if is_reaction {
+        t!("industry.planner.runs_label_cycles")
+      } else {
+        t!("industry.planner.runs_label_runs")
+      })
+      .font(typography::mono::REGULAR)
+      .size(typography::size::XS)
+      .style(typography::colored(label_color))
+      .into(),
     ])
     .spacing(spacing::UNIT)
     .align_x(Horizontal::Center);
@@ -4182,11 +4250,11 @@ mod view {
 
   fn merged_feeds_line(data: &PlannerData, job: &MergedBuildJob) -> String {
     if job.is_root {
-      return "final product".to_owned();
+      return t!("industry.planner.final_product").into_owned();
     }
     match job.consumers.as_slice() {
-      [consumer] => format!("feeds \u{2192} {}", data.name(*consumer)),
-      consumers => format!("feeds \u{2192} {} jobs", consumers.len()),
+      [consumer] => t!("industry.planner.feeds_one", name => data.name(*consumer)).into_owned(),
+      consumers => t!("industry.planner.feeds_jobs", count => consumers.len()).into_owned(),
     }
   }
 
@@ -4204,18 +4272,21 @@ mod view {
       rows.push(needed_blueprint_row(planner, blueprint));
     }
 
-    let hint = format!(
-      "{count} blueprint{} \u{00B7} {}",
-      if count == 1 { "" } else { "s" },
-      if missing > 0 {
-        format!("{missing} to acquire")
-      } else {
-        "all owned".to_owned()
-      }
-    );
+    let status = if missing > 0 {
+      t!("industry.planner.to_acquire", count => missing).into_owned()
+    } else {
+      t!("industry.planner.all_owned").into_owned()
+    };
+    let hint = t!(
+      "industry.planner.needed_blueprints_hint",
+      count => count,
+      plural => if count == 1 { "" } else { "s" },
+      status => status
+    )
+    .into_owned();
 
     Column::with_children(vec![
-      section_label("Needed blueprints", Some(hint)),
+      section_label(&t!("industry.planner.needed_blueprints"), Some(hint)),
       container(Column::with_children(rows).width(Length::Fill))
         .width(Length::Fill)
         .style(bordered_table)
@@ -4229,8 +4300,16 @@ mod view {
     let data = planner.data();
     let recipe = recipe_for(data, blueprint.type_id);
     let owned = data.owned.get(&blueprint.type_id);
-    let kind_word = if recipe.is_reaction { "Formula" } else { "Blueprint" };
-    let unit = if recipe.is_reaction { "cycles" } else { "runs" };
+    let kind_word = if recipe.is_reaction {
+      t!("industry.planner.formula")
+    } else {
+      t!("industry.planner.blueprint")
+    };
+    let unit = if recipe.is_reaction {
+      t!("industry.planner.unit_cycles")
+    } else {
+      t!("industry.planner.unit_runs")
+    };
 
     let name_row = Row::with_children(vec![
       Row::with_children(vec![
@@ -4258,11 +4337,12 @@ mod view {
       blueprint_tile(data.blueprint_icon(recipe.blueprint_type_id, is_copy)),
       Column::with_children(vec![
         name_row.into(),
-        text(format!(
-          "{} job{} \u{00B7} \u{00D7}{} {unit} total",
-          blueprint.jobs,
-          if blueprint.jobs == 1 { "" } else { "s" },
-          fmt_num(blueprint.runs)
+        text(t!(
+          "industry.planner.needed_blueprint_subtitle",
+          jobs => blueprint.jobs,
+          plural => if blueprint.jobs == 1 { "" } else { "s" },
+          runs => fmt_num(blueprint.runs),
+          unit => unit
         ))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
@@ -4305,15 +4385,15 @@ mod view {
     match owned {
       Some(summary) => {
         let mut label = if summary.is_original {
-          "BPO".to_owned()
+          t!("industry.planner.status_bpo").into_owned()
         } else {
-          "BPC".to_owned()
+          t!("industry.planner.status_bpc").into_owned()
         };
         if summary.material_efficiency > 0 {
-          label.push_str(&format!(" \u{00B7} ME{}", summary.material_efficiency));
+          label.push_str(&t!("industry.planner.status_me", me => summary.material_efficiency));
         }
         if !summary.in_scope {
-          label.push_str(" \u{00B7} ELSEWHERE");
+          label.push_str(&t!("industry.planner.elsewhere"));
         }
         badge(
           label,
@@ -4324,7 +4404,7 @@ mod view {
           }),
         )
       }
-      None => badge("BUY / INVENT", Some(color::status::WARNING)),
+      None => badge(t!("industry.planner.buy_invent"), Some(color::status::WARNING)),
     }
   }
 
@@ -4374,7 +4454,7 @@ mod view {
       RightTab::Detail => match product {
         Some(product) => detail_pane(planner, product),
         None => centered(
-          text("Search a product to see its cost, profit, and shopping list.")
+          text(t!("industry.planner.detail_empty"))
             .font(typography::body::REGULAR)
             .size(typography::size::MD)
             .style(typography::colored(color::text::tertiary())),
@@ -4424,10 +4504,10 @@ mod view {
           .size(typography::size::LG)
           .style(typography::colored(color::text::PRIMARY))
           .into(),
-        text(format!(
-          "\u{00D7}{} produced \u{00B7} {} runs",
-          fmt_num(eco.output_qty),
-          planner.runs()
+        text(t!(
+          "industry.planner.detail_subtitle",
+          output => fmt_num(eco.output_qty),
+          runs => planner.runs()
         ))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
@@ -4447,7 +4527,7 @@ mod view {
     };
     let hero = container(
       Column::with_children(vec![
-        micro_label("Estimated profit"),
+        micro_label(&t!("industry.planner.estimated_profit")),
         text(format!(
           "{}{}",
           if eco.profit >= 0.0 { "+" } else { "\u{2212}" },
@@ -4458,12 +4538,12 @@ mod view {
         .style(typography::colored(profit_color))
         .into(),
         Row::with_children(vec![
-          text(format!("{} margin", fmt_pct(eco.margin)))
+          text(t!("industry.planner.margin", pct => fmt_pct(eco.margin)))
             .font(typography::mono::MEDIUM)
             .size(typography::size::MD)
             .style(typography::colored(profit_color))
             .into(),
-          text(format!("{}/unit", fmt_isk(eco.per_unit)))
+          text(t!("industry.planner.per_unit", value => fmt_isk(eco.per_unit)))
             .font(typography::mono::REGULAR)
             .size(typography::size::MD)
             .style(typography::colored(color::text::secondary()))
@@ -4487,21 +4567,26 @@ mod view {
     });
 
     let breakdown = Column::with_children(vec![
-      detail_line("Revenue", &fmt_isk_full(eco.revenue), color::text::PRIMARY, false),
       detail_line(
-        "Material cost",
+        &t!("industry.planner.revenue"),
+        &fmt_isk_full(eco.revenue),
+        color::text::PRIMARY,
+        false,
+      ),
+      detail_line(
+        &t!("industry.planner.material_cost"),
         &format!("\u{2212}{}", fmt_isk_full(eco.material_cost)),
         color::status::DANGER,
         false,
       ),
       detail_line(
-        "Job fee",
+        &t!("industry.planner.job_fee"),
         &format!("\u{2212}{}", fmt_isk_full(eco.install_fee)),
         color::status::DANGER,
         false,
       ),
       detail_line(
-        "Net profit",
+        &t!("industry.planner.net_profit"),
         &format!(
           "{}{}",
           if eco.profit >= 0.0 { "+" } else { "\u{2212}" },
@@ -4516,11 +4601,19 @@ mod view {
     let meta = Column::with_children(vec![
       meta_line(
         Icon::clock(),
-        "Build time",
+        &t!("industry.planner.meta_build_time"),
         &fmt_duration_coarse(eco.build_time_secs as i64),
       ),
-      meta_line(Icon::wallet(), "ISK / hour", &fmt_isk(eco.isk_per_hour())),
-      meta_line(Icon::assets(), "Output volume", &fmt_volume(eco.output_volume)),
+      meta_line(
+        Icon::wallet(),
+        &t!("industry.planner.isk_per_hour"),
+        &fmt_isk(eco.isk_per_hour()),
+      ),
+      meta_line(
+        Icon::assets(),
+        &t!("industry.planner.meta_output_volume"),
+        &fmt_volume(eco.output_volume),
+      ),
     ])
     .spacing(spacing::SPACE_2);
 
@@ -4549,23 +4642,32 @@ mod view {
           color::text::secondary()
         },
         if summary.is_original {
-          "Blueprint original".to_owned()
+          t!("industry.planner.blueprint_original").into_owned()
         } else {
-          "Blueprint copy".to_owned()
+          t!("industry.planner.blueprint_copy").into_owned()
         },
-        format!(
-          "{} \u{00B7} {} \u{00B7} ME {} \u{00B7} TE {}",
-          if summary.is_original { "BPO" } else { "BPC" },
-          if summary.in_scope { "in scope" } else { "held elsewhere" },
-          summary.material_efficiency,
-          summary.time_efficiency
-        ),
+        t!(
+          "industry.planner.ownership_sub",
+          kind => if summary.is_original {
+            t!("industry.planner.status_bpo")
+          } else {
+            t!("industry.planner.status_bpc")
+          },
+          scope => if summary.in_scope {
+            t!("industry.planner.in_scope")
+          } else {
+            t!("industry.planner.held_elsewhere")
+          },
+          me => summary.material_efficiency,
+          te => summary.time_efficiency
+        )
+        .into_owned(),
       ),
       None => (
         Icon::help(),
         color::status::WARNING,
-        "No blueprint owned".to_owned(),
-        "planning only \u{2014} buy or invent one to build".to_owned(),
+        t!("industry.planner.blueprint_no_owned").into_owned(),
+        t!("industry.planner.blueprint_no_owned_sub").into_owned(),
       ),
     };
 
@@ -4630,7 +4732,7 @@ mod view {
     let mut control = button(
       Row::with_children(vec![
         Icon::doc().color(color::accent::PLASMA).size(14.0).render::<Message>(),
-        text("Save build plan")
+        text(t!("industry.planner.save_build_plan"))
           .font(typography::body::MEDIUM)
           .size(typography::size::MD)
           .style(typography::colored(color::accent::PLASMA))
@@ -4688,8 +4790,16 @@ mod view {
     let economics = plan_economics(plan.economics.as_ref());
 
     let actions = Row::with_children(vec![
-      plan_action("Load", color::accent::PLASMA, Message::PlanLoadRequested(plan.id)),
-      plan_action("Delete", color::status::DANGER, Message::PlanDeleteRequested(plan.id)),
+      plan_action(
+        &t!("industry.planner.plan_action_load"),
+        color::accent::PLASMA,
+        Message::PlanLoadRequested(plan.id),
+      ),
+      plan_action(
+        &t!("industry.planner.plan_action_delete"),
+        color::status::DANGER,
+        Message::PlanDeleteRequested(plan.id),
+      ),
     ])
     .spacing(spacing::SPACE_2);
 
@@ -4714,7 +4824,7 @@ mod view {
 
   fn plan_economics(economics: Option<&Economics>) -> Element<'_, Message> {
     let Some(eco) = economics else {
-      return text("Recipe unavailable at current data")
+      return text(t!("industry.planner.plan_economics_unavailable"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(typography::colored(color::text::tertiary()))
@@ -4728,7 +4838,7 @@ mod view {
 
     Row::with_children(vec![
       metric(
-        "Profit",
+        &t!("industry.planner.metric_profit"),
         &format!(
           "{}{}",
           if eco.profit >= 0.0 { "+" } else { "\u{2212}" },
@@ -4736,8 +4846,16 @@ mod view {
         ),
         profit_color,
       ),
-      metric("Margin", &fmt_pct(eco.margin), profit_color),
-      metric("Revenue", &fmt_isk(eco.revenue), color::text::secondary()),
+      metric(
+        &t!("industry.planner.metric_margin"),
+        &fmt_pct(eco.margin),
+        profit_color,
+      ),
+      metric(
+        &t!("industry.planner.metric_revenue"),
+        &fmt_isk(eco.revenue),
+        color::text::secondary(),
+      ),
     ])
     .spacing(spacing::SPACE_6)
     .into()
@@ -4780,12 +4898,12 @@ mod view {
           .color(color::text::tertiary())
           .size(28.0)
           .render::<Message>(),
-        text("No saved plans yet")
+        text(t!("industry.planner.plans_empty"))
           .font(typography::body::REGULAR)
           .size(typography::size::LG)
           .style(typography::colored(color::text::secondary()))
           .into(),
-        text("Configure a build, then save it here.")
+        text(t!("industry.planner.plans_empty_sub"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(typography::colored(color::text::tertiary()))
@@ -4800,7 +4918,7 @@ mod view {
     button(
       Row::with_children(vec![
         Icon::copy().color(color::text::PRIMARY).size(14.0).render::<Message>(),
-        text("Copy shopping list")
+        text(t!("industry.planner.copy_shopping_list"))
           .font(typography::body::MEDIUM)
           .size(typography::size::MD)
           .style(typography::colored(color::text::PRIMARY))
@@ -4923,10 +5041,10 @@ mod view {
 
     container(
       Row::with_children(vec![
-        head("MATERIAL", None, false),
-        head("QUANTITY", Some(COL_QTY), true),
-        head("UNIT PRICE", Some(COL_PRICE), true),
-        head("SUBTOTAL", Some(COL_COST), true),
+        head(&t!("industry.planner.grid_material"), None, false),
+        head(&t!("industry.planner.grid_quantity"), Some(COL_QTY), true),
+        head(&t!("industry.planner.grid_unit_price"), Some(COL_PRICE), true),
+        head(&t!("industry.planner.grid_subtotal"), Some(COL_COST), true),
       ])
       .spacing(spacing::SPACE_3)
       .align_y(Vertical::Center),
@@ -5001,7 +5119,7 @@ mod view {
     ];
     if let Some(hint) = hint {
       children.push(
-        text(format!("\u{00B7} {hint}"))
+        text(t!("industry.planner.section_hint", hint => hint))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS)
           .style(typography::colored(color::text::tertiary()))
@@ -5024,23 +5142,27 @@ mod view {
 
   fn activity_badge<'a>(is_reaction: bool) -> Element<'a, Message> {
     if is_reaction {
-      badge("REACTION", Some(color::status::WARNING))
+      badge(t!("industry.planner.reaction"), Some(color::status::WARNING))
     } else {
-      badge("MANUFACTURING", Some(color::accent::PLASMA))
+      badge(t!("industry.planner.manufacturing"), Some(color::accent::PLASMA))
     }
   }
 
   fn owned_badge<'a>(planner: &Planner, type_id: i64) -> Element<'a, Message> {
     match planner.data().owned.get(&type_id) {
       Some(summary) => badge(
-        if summary.is_original { "BPO" } else { "BPC" },
+        if summary.is_original {
+          t!("industry.planner.status_bpo")
+        } else {
+          t!("industry.planner.status_bpc")
+        },
         Some(if summary.in_scope {
           color::status::ONLINE
         } else {
           color::text::secondary()
         }),
       ),
-      None => badge("NO BP", None),
+      None => badge(t!("industry.planner.no_bp"), None),
     }
   }
 
@@ -5111,7 +5233,7 @@ mod view {
 
     if !planner.picker_open() && planner.search().is_empty() {
       children.push(centered(
-        text("Search a product to start planning a build.")
+        text(t!("industry.planner.empty"))
           .font(typography::body::REGULAR)
           .size(typography::size::LG)
           .style(typography::colored(color::text::tertiary())),

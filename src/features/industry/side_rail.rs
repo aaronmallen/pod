@@ -60,7 +60,7 @@ fn activity_section<'a>(jobs: &[&'a IndustryJob]) -> Element<'a, Message> {
     *counts.entry(job.activity).or_default() += 1;
   }
   let mut ordered: Vec<(Activity, usize)> = counts.into_iter().collect();
-  ordered.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.short().cmp(b.0.short())));
+  ordered.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.short().cmp(&b.0.short())));
   let max = ordered.first().map(|(_, n)| *n).unwrap_or(0).max(1);
 
   let rows: Vec<Element<'a, Message>> = ordered
@@ -91,7 +91,7 @@ fn activity_section<'a>(jobs: &[&'a IndustryJob]) -> Element<'a, Message> {
     .collect();
 
   section(
-    "Activity mix",
+    &t!("industry.side_rail.activity_mix"),
     Column::with_children(rows).spacing(spacing::SPACE_2).into(),
   )
 }
@@ -102,7 +102,7 @@ fn next_section<'a>(jobs: &[&'a IndustryJob], now: DateTime<Utc>) -> Element<'a,
   active.truncate(5);
 
   let content: Element<'a, Message> = if active.is_empty() {
-    text("Nothing in progress.")
+    text(t!("industry.side_rail.nothing_in_progress"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::tertiary()))
@@ -112,7 +112,7 @@ fn next_section<'a>(jobs: &[&'a IndustryJob], now: DateTime<Utc>) -> Element<'a,
     Column::with_children(rows).spacing(spacing::SPACE_3).into()
   };
 
-  section("Next to complete", content)
+  section(&t!("industry.side_rail.next_to_complete"), content)
 }
 
 fn next_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message> {
@@ -157,21 +157,21 @@ fn next_row<'a>(job: &'a IndustryJob, now: DateTime<Utc>) -> Element<'a, Message
 
 fn owner_meters<'a>(owner: &'a RosterOwner, used: &SlotUsage) -> Element<'a, Message> {
   let mut meters: Vec<Element<'a, Message>> = vec![slot_meter(
-    "Manuf.",
+    &t!("industry.side_rail.slot_manufacturing"),
     used.manufacturing,
     owner.slots.manufacturing,
     color::accent::PLASMA,
   )];
   if owner.slots.reactions > 0 {
     meters.push(slot_meter(
-      "React.",
+      &t!("industry.side_rail.slot_reactions"),
       used.reactions,
       owner.slots.reactions,
       color::status::DANGER,
     ));
   }
   meters.push(slot_meter(
-    "Science",
+    &t!("industry.side_rail.slot_science"),
     used.science,
     owner.slots.science,
     color::chart::VIOLET,
@@ -273,7 +273,7 @@ fn slots_section<'a>(state: &'a State) -> Element<'a, Message> {
     .collect();
 
   let content: Element<'a, Message> = if rows.is_empty() {
-    text("No characters loaded.")
+    text(t!("industry.side_rail.no_characters"))
       .font(typography::body::REGULAR)
       .size(typography::size::SM)
       .style(typography::colored(color::text::tertiary()))
@@ -282,7 +282,7 @@ fn slots_section<'a>(state: &'a State) -> Element<'a, Message> {
     Column::with_children(rows).spacing(spacing::SPACE_3_5).into()
   };
 
-  section("Job slots", content)
+  section(&t!("industry.side_rail.job_slots"), content)
 }
 
 fn owner_key(owner: &RosterOwner) -> Owner {

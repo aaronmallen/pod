@@ -14,11 +14,12 @@ use crate::{
 
 pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
   let combined = picker_row(
-    format!(
-      "All Industry \u{00B7} {} pilots, {} corps",
-      character_count(state),
-      corporation_count(state)
-    ),
+    t!(
+      "industry.switcher.combined",
+      pilots => character_count(state),
+      corps => corporation_count(state)
+    )
+    .into_owned(),
     matches!(state.active(), Scope::All),
     Message::ScopeSelected(Scope::All),
   );
@@ -38,18 +39,18 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
     .collect();
 
   let mut groups = vec![PickerGroup {
-    title: Some("Scope".to_owned()),
+    title: Some(t!("industry.switcher.scope").into_owned()),
     items: vec![combined],
   }];
   if !characters.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Characters".to_owned()),
+      title: Some(t!("industry.switcher.characters").into_owned()),
       items: characters,
     });
   }
   if !corporations.is_empty() {
     groups.push(PickerGroup {
-      title: Some("Corporations".to_owned()),
+      title: Some(t!("industry.switcher.corporations").into_owned()),
       items: corporations,
     });
   }
@@ -117,7 +118,7 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
           path: owner.portrait.as_ref().and_then(images::ImageState::path),
         }),
       ),
-      None => trigger_identity("Industry".to_owned(), String::new(), None),
+      None => trigger_identity(t!("industry.switcher.industry").into_owned(), String::new(), None),
     },
     Scope::Corp(id) => match state
       .roster()
@@ -125,16 +126,17 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
       .find(|owner| owner.id == id && owner.is_corporation)
     {
       Some(owner) => trigger_identity(owner.name.clone(), owner.corp.clone(), None),
-      None => trigger_identity("Industry".to_owned(), String::new(), None),
+      None => trigger_identity(t!("industry.switcher.industry").into_owned(), String::new(), None),
     },
     Scope::All => trigger_badge_identity(
       Icon::industry(),
-      "All Industry".to_owned(),
-      format!(
-        "{} pilots, {} corps combined",
-        character_count(state),
-        corporation_count(state)
-      ),
+      t!("industry.switcher.all_industry").into_owned(),
+      t!(
+        "industry.switcher.all_industry_summary",
+        pilots => character_count(state),
+        corps => corporation_count(state)
+      )
+      .into_owned(),
     ),
   }
 }

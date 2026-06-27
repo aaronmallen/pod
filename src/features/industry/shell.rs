@@ -93,9 +93,9 @@ fn auth_banner<'a>(state: &'a State) -> Option<Element<'a, Message>> {
     .collect::<Vec<_>>()
     .join(", ");
   let message = if unauthorized.len() == 1 {
-    format!("{names}'s industry isn't authorized and is hidden from the combined view.")
+    t!("industry.shell.unauthorized_one", name => names).into_owned()
   } else {
-    format!("{} pilots' industry isn't authorized: {names}.", unauthorized.len())
+    t!("industry.shell.unauthorized_many", count => unauthorized.len(), names => names).into_owned()
   };
   let target = unauthorized[0].id;
 
@@ -162,31 +162,31 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     switcher::trigger(state),
     rule::vertical(44.0),
     stat(
-      "Active jobs",
+      &t!("industry.header.jobs"),
       stats.active.to_string(),
       ready_accent(stats.ready),
-      "ready to deliver",
+      &t!("industry.header.jobs_sub"),
     ),
     rule::vertical(44.0),
     stat(
-      "Job slots",
+      &t!("industry.header.slots"),
       format!("{}/{}", stats.slots_used, stats.slots_max),
       None,
-      "used / max",
+      &t!("industry.header.slots_sub"),
     ),
     rule::vertical(44.0),
     stat(
-      "In production",
+      &t!("industry.header.in_production"),
       fmt_isk_opt((stats.output_value != 0.0).then_some(stats.output_value)),
       None,
-      "est. output value",
+      &t!("industry.header.in_production_sub"),
     ),
     rule::vertical(44.0),
     stat(
-      "Job fees",
+      &t!("industry.header.fees"),
       fmt_isk_opt((stats.fees != 0.0).then_some(stats.fees)),
       None,
-      "active jobs",
+      &t!("industry.header.fees_sub"),
     ),
     Space::new().width(Length::Fill).into(),
   ])
@@ -212,7 +212,7 @@ fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
   button(
-    text("Re-authenticate")
+    text(t!("industry.shell.reauth"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::status::WARNING)),

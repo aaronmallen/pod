@@ -99,7 +99,7 @@ fn card<'a>(extraction: &'a Extraction, now: DateTime<Utc>) -> Element<'a, Messa
 fn grid<'a>(extractions: Vec<&'a Extraction>, now: DateTime<Utc>) -> Element<'a, Message> {
   if extractions.is_empty() {
     return container(
-      text("No extraction timers for this scope.")
+      text(t!("industry.extractions.empty"))
         .font(typography::body::REGULAR)
         .size(typography::size::LG)
         .style(typography::colored(color::text::tertiary())),
@@ -129,12 +129,12 @@ fn grid<'a>(extractions: Vec<&'a Extraction>, now: DateTime<Utc>) -> Element<'a,
 
 fn header<'a>(count: usize) -> Element<'a, Message> {
   Row::with_children(vec![
-    text("Moon extraction timers")
+    text(t!("industry.extractions.header_title"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(format!("{count} active \u{00B7} corp scope"))
+    text(t!("industry.extractions.header_count", count => count))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::tertiary()))
@@ -246,15 +246,20 @@ fn timeline<'a>(
   let fractured = matches!(state, ExtractionState::Fractured);
   let (decay_value, decay_color) = decay_split(extraction, now, fractured);
 
+  let arrival_label = if arrived {
+    t!("industry.extractions.chunk_arrived")
+  } else {
+    t!("industry.extractions.chunk_arrives")
+  };
   let heads = Row::with_children(vec![
-    countdown(
-      if arrived { "Chunk arrived" } else { "Chunk arrives" },
-      &arrival_value,
-      arrival_color,
-      Horizontal::Left,
-    ),
+    countdown(&arrival_label, &arrival_value, arrival_color, Horizontal::Left),
     Space::new().width(Length::Fill).into(),
-    countdown("Natural fracture", &decay_value, decay_color, Horizontal::Right),
+    countdown(
+      &t!("industry.extractions.natural_fracture"),
+      &decay_value,
+      decay_color,
+      Horizontal::Right,
+    ),
   ])
   .width(Length::Fill);
 
@@ -290,7 +295,10 @@ fn arrival_text(extraction: &Extraction, now: DateTime<Utc>, arrived: bool) -> S
 
 fn decay_split(extraction: &Extraction, now: DateTime<Utc>, fractured: bool) -> (String, Color) {
   match extraction.decay() {
-    _ if fractured => ("passed".to_owned(), color::status::DANGER),
+    _ if fractured => (
+      t!("industry.extractions.decay_passed").into_owned(),
+      color::status::DANGER,
+    ),
     Some(decay) => {
       let remaining = (decay - now).num_seconds().max(0);
       let fill = if remaining < SECONDS_PER_DAY {
@@ -305,10 +313,11 @@ fn decay_split(extraction: &Extraction, now: DateTime<Utc>, fractured: bool) -> 
 }
 
 fn started_text(extraction: &Extraction) -> String {
-  match extraction.start() {
-    Some(start) => format!("started {}", fmt_day(start)),
-    None => "started \u{2014}".to_owned(),
-  }
+  let day = match extraction.start() {
+    Some(start) => fmt_day(start),
+    None => "\u{2014}".to_owned(),
+  };
+  t!("industry.extractions.started", day => day).into_owned()
 }
 
 fn countdown<'a>(label: &str, value: &str, value_color: Color, align: Horizontal) -> Element<'a, Message> {

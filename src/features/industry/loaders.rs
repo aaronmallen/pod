@@ -77,28 +77,30 @@ impl Activity {
     }
   }
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Activity::Copy => "Copying",
-      Activity::Invention => "Invention",
-      Activity::Manufacturing => "Manufacturing",
-      Activity::MaterialEfficiency => "Material Research",
-      Activity::Other => "Other",
-      Activity::Reactions => "Reactions",
-      Activity::TimeEfficiency => "Time Research",
+      Activity::Copy => t!("industry.activity.copy"),
+      Activity::Invention => t!("industry.activity.invention"),
+      Activity::Manufacturing => t!("industry.activity.manufacturing"),
+      Activity::MaterialEfficiency => t!("industry.activity.material_research"),
+      Activity::Other => t!("industry.activity.other"),
+      Activity::Reactions => t!("industry.activity.reactions"),
+      Activity::TimeEfficiency => t!("industry.activity.time_research"),
     }
+    .into_owned()
   }
 
-  pub fn short(self) -> &'static str {
+  pub fn short(self) -> String {
     match self {
-      Activity::Copy => "COPY",
-      Activity::Invention => "INVENT",
-      Activity::Manufacturing => "MANUF",
-      Activity::MaterialEfficiency => "ME",
-      Activity::Other => "JOB",
-      Activity::Reactions => "REACT",
-      Activity::TimeEfficiency => "TE",
+      Activity::Copy => t!("industry.activity_short.copy"),
+      Activity::Invention => t!("industry.activity_short.invention"),
+      Activity::Manufacturing => t!("industry.activity_short.manufacturing"),
+      Activity::MaterialEfficiency => t!("industry.activity_short.material_efficiency"),
+      Activity::Other => t!("industry.activity_short.other"),
+      Activity::Reactions => t!("industry.activity_short.reactions"),
+      Activity::TimeEfficiency => t!("industry.activity_short.time_efficiency"),
     }
+    .into_owned()
   }
 }
 
@@ -199,13 +201,14 @@ pub enum ExtractionState {
 }
 
 impl ExtractionState {
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      ExtractionState::Extracting => "Extracting",
-      ExtractionState::Fractured => "Auto-fractured",
-      ExtractionState::Imminent => "Arriving soon",
-      ExtractionState::Ready => "Ready to fracture",
+      ExtractionState::Extracting => t!("industry.extraction_state.extracting"),
+      ExtractionState::Fractured => t!("industry.extraction_state.auto_fractured"),
+      ExtractionState::Imminent => t!("industry.extraction_state.imminent"),
+      ExtractionState::Ready => t!("industry.extraction_state.ready"),
     }
+    .into_owned()
   }
 }
 

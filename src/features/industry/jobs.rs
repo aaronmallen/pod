@@ -241,13 +241,28 @@ fn blueprint_tile<'a>(blueprint_icon: &IconResolution, box_size: f32) -> Element
 
 fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
   let chips = [
-    ("All", Filter::All, counts.total, color::accent::PLASMA),
-    ("In progress", Filter::Active, counts.active, color::accent::PLASMA),
-    ("Ready", Filter::Ready, counts.ready, color::status::ONLINE),
+    (
+      t!("industry.jobs.filter_all"),
+      Filter::All,
+      counts.total,
+      color::accent::PLASMA,
+    ),
+    (
+      t!("industry.jobs.filter_active"),
+      Filter::Active,
+      counts.active,
+      color::accent::PLASMA,
+    ),
+    (
+      t!("industry.jobs.filter_ready"),
+      Filter::Ready,
+      counts.ready,
+      color::status::ONLINE,
+    ),
   ];
   let chip_buttons: Vec<Element<'a, Message>> = chips
     .into_iter()
-    .map(|(label, filter, count, accent)| filter_chip(label, filter, count, accent, state.filter() == filter))
+    .map(|(label, filter, count, accent)| filter_chip(&label, filter, count, accent, state.filter() == filter))
     .collect();
 
   let chip_group = container(Row::with_children(chip_buttons).spacing(spacing::UNIT))
@@ -263,19 +278,19 @@ fn filter_bar<'a>(state: &'a State, counts: Counts) -> Element<'a, Message> {
     });
 
   let group_buttons: Vec<Element<'a, Message>> = [
-    ("None", GroupBy::None),
-    ("Owner", GroupBy::Owner),
-    ("Activity", GroupBy::Activity),
-    ("Facility", GroupBy::Facility),
+    (t!("industry.jobs.group_none"), GroupBy::None),
+    (t!("industry.jobs.group_owner"), GroupBy::Owner),
+    (t!("industry.jobs.group_activity"), GroupBy::Activity),
+    (t!("industry.jobs.group_facility"), GroupBy::Facility),
   ]
   .into_iter()
-  .map(|(label, group_by)| group_button(label, group_by, state.group_by() == group_by))
+  .map(|(label, group_by)| group_button(&label, group_by, state.group_by() == group_by))
   .collect();
 
   let band = Row::with_children(vec![
     chip_group.into(),
     Space::new().width(Length::Fill).into(),
-    text("GROUP")
+    text(t!("industry.jobs.group"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
@@ -403,13 +418,17 @@ fn group_header<'a>(label: &str, count: usize, ready: usize) -> Element<'a, Mess
       .size(typography::size::XS)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(format!("{count} {}", if count == 1 { "job" } else { "jobs" }))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
+    text(t!(
+      "industry.jobs.group_count",
+      count => count,
+      noun => if count == 1 { t!("industry.jobs.noun_job") } else { t!("industry.jobs.noun_jobs") }
+    ))
+    .font(typography::mono::REGULAR)
+    .size(typography::size::XS_PLUS)
+    .style(typography::colored(color::text::tertiary()))
+    .into(),
     Space::new().width(Length::Fill).into(),
-    text(format!("{ready} ready"))
+    text(t!("industry.jobs.group_ready", ready => ready))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary()))
@@ -440,7 +459,7 @@ fn group_header<'a>(label: &str, count: usize, ready: usize) -> Element<'a, Mess
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("No jobs match this filter.")
+    text(t!("industry.jobs.empty"))
       .font(typography::body::REGULAR)
       .size(typography::size::LG)
       .style(typography::colored(color::text::tertiary())),
@@ -537,9 +556,9 @@ fn progress_color(ready: bool) -> iced::Color {
 
 fn progress_label(ready: bool, pct: f32) -> String {
   if ready {
-    "COMPLETE".to_owned()
+    t!("industry.jobs.progress_complete").into_owned()
   } else {
-    format!("{}%", pct.floor() as i64)
+    t!("industry.jobs.progress_pct", pct => pct.floor() as i64).into_owned()
   }
 }
 
@@ -581,16 +600,19 @@ fn countdown_color(remaining: i64) -> iced::Color {
 
 fn countdown_value_parts(job: &IndustryJob) -> (String, iced::Color) {
   match job.value {
-    Some(value) if value > 0.0 => (format!("{} out", fmt_isk(value)), color::accent::PLASMA),
-    _ => (idle_value_label(job.activity).to_owned(), color::text::tertiary()),
+    Some(value) if value > 0.0 => (
+      t!("industry.jobs.value_out", value => fmt_isk(value)).into_owned(),
+      color::accent::PLASMA,
+    ),
+    _ => (idle_value_label(job.activity), color::text::tertiary()),
   }
 }
 
-fn idle_value_label(activity: Activity) -> &'static str {
+fn idle_value_label(activity: Activity) -> String {
   match activity {
-    Activity::Copy => "copy",
-    Activity::Invention => "invention",
-    _ => "\u{2014}",
+    Activity::Copy => t!("industry.jobs.idle_copy").into_owned(),
+    Activity::Invention => t!("industry.jobs.idle_invention").into_owned(),
+    _ => "\u{2014}".to_owned(),
   }
 }
 
@@ -600,7 +622,7 @@ fn ready_countdown<'a>() -> Element<'a, Message> {
       .color(color::status::ONLINE)
       .size(13.0)
       .render::<Message>(),
-    text("Ready")
+    text(t!("industry.jobs.ready"))
       .font(typography::mono::MEDIUM)
       .size(typography::size::MD)
       .style(typography::colored(color::status::ONLINE))
@@ -613,8 +635,8 @@ fn ready_countdown<'a>() -> Element<'a, Message> {
 
 fn eta_label(job: &IndustryJob, now: DateTime<Utc>) -> String {
   match job.end() {
-    Some(end) if job.is_ready(now) => format!("done {}", fmt_clock(end)),
-    Some(end) => format!("\u{2192} {} {}", fmt_day(end), fmt_clock(end)),
+    Some(end) if job.is_ready(now) => t!("industry.jobs.eta_done", clock => fmt_clock(end)).into_owned(),
+    Some(end) => t!("industry.jobs.eta_arrow", day => fmt_day(end), clock => fmt_clock(end)).into_owned(),
     None => "\u{2014}".to_owned(),
   }
 }
@@ -639,7 +661,7 @@ fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
   }
 
   let mut second_line: Vec<Element<'a, Message>> = vec![
-    text(format!("\u{00D7}{} {}", job.runs, runs_word(job.activity)))
+    text(t!("industry.jobs.runs_label", runs => job.runs, noun => runs_word(job.activity)))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::PRIMARY))
@@ -678,17 +700,20 @@ fn job_identity<'a>(job: &'a IndustryJob) -> Element<'a, Message> {
   .into()
 }
 
-fn runs_word(activity: Activity) -> &'static str {
+fn runs_word(activity: Activity) -> String {
   match activity {
-    Activity::Copy => "copies",
-    Activity::Invention => "tries",
-    _ => "runs",
+    Activity::Copy => t!("industry.jobs.runs_copies"),
+    Activity::Invention => t!("industry.jobs.runs_tries"),
+    _ => t!("industry.jobs.runs_runs"),
   }
+  .into_owned()
 }
 
 fn success_label(job: &IndustryJob) -> Option<String> {
   match (job.activity, job.probability) {
-    (Activity::Invention, Some(prob)) => Some(format!("{}% success", (prob * 100.0).round() as i64)),
+    (Activity::Invention, Some(prob)) => {
+      Some(t!("industry.jobs.success", pct => (prob * 100.0).round() as i64).into_owned())
+    }
     _ => None,
   }
 }

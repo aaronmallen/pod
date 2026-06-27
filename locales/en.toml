@@ -1897,6 +1897,9 @@ steps = "Steps"
 total_sp = "Total SP"
 training_time = "Training time"
 
+[skills.empty]
+add_character = "Add a character to view skills"
+
 [skills.format]
 days = "%{n}d"
 hours = "%{n}h"

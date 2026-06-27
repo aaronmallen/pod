@@ -49,6 +49,7 @@ use crate::{
       modal_overlay::modal_overlay,
       resizable_pane::{self, PaneDrag, pane_handle},
     },
+    datefmt,
     style::{color, spacing, typography},
   },
 };
@@ -59,9 +60,6 @@ const LEFT_PANE_DEFAULT: f32 = 845.0;
 const HEADER_SIDE_PADDING: f32 = 28.0;
 const PICKER_OVERLAY_TOP: f32 = spacing::layout::HEADER_HEIGHT + 6.0;
 const PICKER_OVERLAY_LEFT: f32 = HEADER_SIDE_PADDING;
-const MONTHS: [&str; 12] = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
 const SECONDS_PER_DAY: i64 = 86_400;
 
 #[derive(Clone, Debug)]
@@ -475,7 +473,7 @@ async fn picker_pilot(db: &Database, id: i64) -> PickerPilot {
 
 fn empty_state<'a>() -> Element<'a, Message> {
   container(
-    text("Add a character to view skills")
+    text(t!("skills.empty.add_character").into_owned())
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary())),
@@ -493,7 +491,7 @@ pub(super) fn fmt_eta(now: DateTime<Utc>, seconds_from_now: i64) -> String {
   }
   let eta = now + Duration::seconds(seconds_from_now);
   let day = eta.day();
-  let month = MONTHS[(eta.month() - 1) as usize];
+  let month = datefmt::month_short(eta.month());
   let year = eta.year();
   let hour = eta.hour();
   let minute = eta.minute();

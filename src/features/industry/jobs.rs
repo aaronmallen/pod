@@ -18,6 +18,7 @@ use crate::{
       rule,
       virtual_list::{self, VirtualList, VirtualListConfig},
     },
+    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -369,10 +370,7 @@ pub(super) fn fmt_clock(time: DateTime<Utc>) -> String {
 }
 
 pub(super) fn fmt_day(time: DateTime<Utc>) -> String {
-  const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  format!("{} {}", MONTHS[(time.month0() as usize).min(11)], time.day())
+  format!("{} {}", datefmt::month_short(time.month()), time.day())
 }
 
 fn group_button<'a>(label: &str, group_by: GroupBy, active: bool) -> Element<'a, Message> {

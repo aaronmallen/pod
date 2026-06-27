@@ -18,6 +18,7 @@ use crate::{
       card::card,
       empty_state::{LoadStateView, load_state_view},
     },
+    datefmt,
     style::spacing,
   },
 };
@@ -221,14 +222,11 @@ async fn load_plans(db: Database, character_id: i64) -> Vec<PlanRow> {
 }
 
 fn fmt_plan_date(updated_at: &str) -> String {
-  const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
   match chrono::DateTime::parse_from_rfc3339(updated_at) {
     Ok(dt) => {
       use chrono::Datelike as _;
       let date = dt.naive_utc().date();
-      let month = MONTHS[(date.month() as usize).saturating_sub(1).min(11)];
+      let month = datefmt::month_short(date.month());
       format!("{} {} '{:02}", date.day(), month, date.year() % 100)
     }
     Err(_) => updated_at.get(..10).unwrap_or(updated_at).to_owned(),

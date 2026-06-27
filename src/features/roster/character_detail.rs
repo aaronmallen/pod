@@ -23,13 +23,11 @@ use crate::{
   store::{
     Database, images,
     model::{
-      CatalogRow, CharacterContact, CharacterContactLabel, CharacterNotification, CharacterState, OwnerType,
-      character_clone_view::CharacterClones, character_contacts_view::image_kind,
+      CatalogRow, CharacterContact, CharacterContactLabel, CharacterNotification, CharacterState, ContactCursor,
+      ContactSortColumn, ContactSortDir, OwnerType, character_clone_view::CharacterClones,
+      character_contacts_view::image_kind,
     },
-    repo::{
-      character::{self, ContactCursor, ContactSortColumn, ContactSortDir},
-      infra, org, sde, standings,
-    },
+    repo::{character, infra, org, sde, standings},
   },
   sync::{JobKey, JobKind, Subject},
   ui::{

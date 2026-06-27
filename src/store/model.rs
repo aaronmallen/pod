@@ -176,7 +176,7 @@ pub use character_calendar_attendee::Model as CharacterCalendarAttendee;
 pub use character_calendar_view::AttendeeTally;
 pub use character_clone::Model as CharacterClone;
 pub use character_clone_implant::Model as CharacterCloneImplant;
-pub use character_contact::Model as CharacterContact;
+pub use character_contact::{ContactCursor, ContactSortColumn, ContactSortDir, Model as CharacterContact};
 pub use character_contact_label::Model as CharacterContactLabel;
 pub use character_contract::{ContractEscrow, Model as CharacterContract};
 pub use character_contract_bid::Model as CharacterContractBid;

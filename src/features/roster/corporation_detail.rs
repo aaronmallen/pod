@@ -19,12 +19,11 @@ use crate::{
   clients::eve_image::Size,
   store::{
     Database, images,
-    model::{CatalogRow, CorporationContactLabel, character_contacts_view::image_kind},
-    repo::{
-      character,
-      character::{ContactCursor, ContactSortColumn, ContactSortDir},
-      org, sde, standings,
+    model::{
+      CatalogRow, ContactCursor, ContactSortColumn, ContactSortDir, CorporationContactLabel,
+      character_contacts_view::image_kind,
     },
+    repo::{character, org, sde, standings},
   },
   ui::{
     components::{

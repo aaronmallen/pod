@@ -5,15 +5,13 @@ use sqlx::{QueryBuilder, Sqlite};
 use crate::store::{
   Database, Error,
   model::{
-    Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationKillEntry,
-    CorporationKillmailAttacker, CorporationKillmailItem, CorporationMemberRole, CorporationMiningExtraction,
-    CorporationStanding, Faction, OwnedCorporation, SeedCorporation, Station,
+    Alliance, Character, ContactCursor, ContactSortColumn, ContactSortDir, Corporation, CorporationContact,
+    CorporationContactLabel, CorporationKillEntry, CorporationKillmailAttacker, CorporationKillmailItem,
+    CorporationMemberRole, CorporationMiningExtraction, CorporationStanding, Faction, OwnedCorporation,
+    SeedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
-  repo::{
-    character::{ContactCursor, ContactSortColumn, ContactSortDir},
-    infra::like_pattern,
-  },
+  repo::infra::like_pattern,
   search::{FilterToken, ParsedQuery},
 };
 

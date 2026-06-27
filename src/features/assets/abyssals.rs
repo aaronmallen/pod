@@ -12,9 +12,8 @@ use std::collections::HashMap;
 use iced::{Element, Length, Padding, widget::container};
 
 use super::{Message, RosterPilot, Scope};
-pub(super) use crate::store::{
-  model::{StatRange, StatTemplate, abyssal_source_type_filter::SourceTypeFilter},
-  repo::assets::AbyssalCursor,
+pub(super) use crate::store::model::{
+  AbyssalCursor, StatRange, StatTemplate, abyssal_source_type_filter::SourceTypeFilter,
 };
 use crate::{
   clients::eve_image::Size,

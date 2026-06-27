@@ -1,6 +1,12 @@
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AbyssalCursor {
+  pub item_id: i64,
+  pub source_type_id: i64,
+}
+
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
 pub struct Model {
   #[getset(get_copy = "pub")]

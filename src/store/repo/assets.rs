@@ -6,8 +6,8 @@ use crate::store::{
   Database, Error,
   asset_filter::{ColumnSchema, FilterContext, WhereClause, compile_query},
   model::{
-    AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset, ENTITY_TYPE_ASSET,
-    SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
+    AbyssalCursor, AbyssalItem, AbyssalModuleStat, CharacterAsset, CorporationAbyssalItem, CorporationAsset,
+    ENTITY_TYPE_ASSET, SavedAssetFilter, StatRange, StatTemplate, Stockpile, StockpileItem,
     abyssal_source_type_filter::SourceTypeFilter,
     asset_query::{
       AssetCompleteness, AssetRenderRow, GeoLocation, GeoLocationSql, InventoryCursor, InventoryQuery, InventoryRow,
@@ -110,18 +110,6 @@ pub async fn filtered_for_characters(
   stat_ranges: &HashMap<i64, StatRange>,
 ) -> Result<Vec<AbyssalItem>, Error> {
   page_for_characters(db, character_ids, source_type_id, stat_ranges, None, None).await
-}
-
-/// A keyset-pagination cursor over the abyssal grid.
-///
-/// The grid groups cards by their rolled base module (`source_type_id`), so the
-/// page query orders by `(source_type_id, item_id)` to keep a group's cards
-/// contiguous across pages. The cursor is the `(source_type_id, item_id)` of the
-/// last card on the previous page; the next page resumes strictly after it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AbyssalCursor {
-  pub item_id: i64,
-  pub source_type_id: i64,
 }
 
 /// Fetch one cursor-delimited page of abyssal items for the given characters.

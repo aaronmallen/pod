@@ -130,7 +130,7 @@ mod sync_ledger;
 mod tag;
 mod type_price_history;
 
-pub use abyssal_item::Model as AbyssalItem;
+pub use abyssal_item::{AbyssalCursor, Model as AbyssalItem};
 pub use abyssal_module_stat::Model as AbyssalModuleStat;
 pub use abyssal_stat_template::{StatRange, StatTemplate};
 pub use agent_type::Model as AgentType;

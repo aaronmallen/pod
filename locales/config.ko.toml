@@ -1,9 +1,0 @@
-[config.cascade_mode]
-flyout = "플라이아웃"
-none = "끔"
-sub_rail = "하위 레일"
-
-[config.log_level]
-normal = "보통"
-quiet = "조용히"
-verbose = "상세"

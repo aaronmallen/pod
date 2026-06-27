@@ -1,9 +1,0 @@
-[config.cascade_mode]
-flyout = "フライアウト"
-none = "オフ"
-sub_rail = "サブレール"
-
-[config.log_level]
-normal = "標準"
-quiet = "最小"
-verbose = "詳細"

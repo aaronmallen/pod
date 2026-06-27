@@ -1,9 +1,0 @@
-[config.cascade_mode]
-flyout = "Flyout"
-none = "Aus"
-sub_rail = "Unterleiste"
-
-[config.log_level]
-normal = "Normal"
-quiet = "Ruhig"
-verbose = "Ausführlich"

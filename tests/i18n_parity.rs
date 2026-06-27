@@ -16,7 +16,7 @@
 //   * en-us == en    — en-us must mirror en exactly, enforced once en-us has fragments.
 //   * referenced key — every `t!("literal")` key referenced in `src/` must exist in the en baseline -> RED.
 //
-// The `_meta.<locale>.toml` files only register each locale code, so they are excluded from key parity.
+// Each locale is a single consolidated `<locale>.toml` file with every feature's strings merged in.
 
 use std::{
   collections::{BTreeMap, BTreeSet},
@@ -26,7 +26,6 @@ use std::{
 
 const BASELINE_LOCALE: &str = "en";
 const LOCALES: [&str; 9] = ["en", "en-us", "de", "es", "fr", "ja", "ko", "ru", "zh"];
-const META_PREFIX: &str = "_meta";
 
 type KeyMap = BTreeMap<String, String>;
 
@@ -38,14 +37,10 @@ fn src_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
-// Parse the locale code out of a `<feature>.<locale>.toml` filename stem (segment after the last dot).
+// Parse the locale code out of a `<locale>.toml` filename (one consolidated file per locale).
 fn locale_of(file_name: &str) -> Option<String> {
   let stem = file_name.strip_suffix(".toml")?;
-  let (feature, locale) = stem.rsplit_once('.')?;
-  if feature == META_PREFIX {
-    return None;
-  }
-  Some(locale.to_string())
+  Some(stem.to_string())
 }
 
 // Flatten a parsed TOML table into dot-separated leaf keys -> string values.
@@ -70,7 +65,7 @@ fn flatten(prefix: &str, value: &toml::Value, out: &mut KeyMap) {
   }
 }
 
-// Merge every feature fragment for a given locale into one flat key map (mirrors rust-i18n's per-locale merge).
+// Load a locale's consolidated `<locale>.toml` into one flat key map (mirrors rust-i18n's per-locale merge).
 fn load_locale(locale: &str) -> KeyMap {
   let mut merged = KeyMap::new();
   let dir = locales_dir();
@@ -173,20 +168,19 @@ fn referenced_keys() -> BTreeSet<String> {
 }
 
 #[test]
-fn every_declared_locale_has_a_meta_file() {
+fn every_declared_locale_has_a_file() {
   let dir = locales_dir();
   let mut missing = Vec::new();
 
   for locale in LOCALES {
-    let meta = dir.join(format!("{META_PREFIX}.{locale}.toml"));
-    if !meta.exists() {
+    if !dir.join(format!("{locale}.toml")).exists() {
       missing.push(locale);
     }
   }
 
   assert!(
     missing.is_empty(),
-    "locales missing a _meta registration file: {missing:?}"
+    "locales missing a consolidated `<locale>.toml` file: {missing:?}"
   );
 }
 
@@ -204,7 +198,7 @@ fn referenced_keys_exist_in_the_en_baseline() {
 
   assert!(
     unknown.is_empty(),
-    "`t!(\"...\")` call sites reference keys absent from the en baseline (locales/*.en.toml):\n  {}",
+    "`t!(\"...\")` call sites reference keys absent from the en baseline (locales/en.toml):\n  {}",
     unknown.join("\n  ")
   );
 }

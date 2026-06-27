@@ -50,22 +50,18 @@ const WEEKDAYS_SHORT: [&str; 7] = [
   "date.weekday.short_sun",
 ];
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn month_long(month: u32) -> String {
   t!(MONTHS_LONG[month_index(month)]).into_owned()
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn month_short(month: u32) -> String {
   t!(MONTHS_SHORT[month_index(month)]).into_owned()
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn weekday_long(weekday: Weekday) -> String {
   t!(WEEKDAYS_LONG[weekday.num_days_from_monday() as usize]).into_owned()
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn weekday_short(weekday: Weekday) -> String {
   t!(WEEKDAYS_SHORT[weekday.num_days_from_monday() as usize]).into_owned()
 }

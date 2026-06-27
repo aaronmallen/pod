@@ -240,6 +240,32 @@ mod tests {
     }
   }
 
+  async fn mount_shared_id_division_ledgers(server: &MockServer, shared_id: i64) {
+    for division in 1..=7 {
+      let amount = if division == 1 {
+        -shared_id as f64
+      } else {
+        shared_id as f64
+      };
+      mount_paginated(
+        server,
+        &format!("/corporations/{CORP}/wallets/{division}/journal/"),
+        serde_json::json!([
+          { "amount": amount, "balance": 5000.0, "date": "2026-05-30T12:00:00Z",
+            "description": "Internal transfer", "id": shared_id,
+            "ref_type": "corporation_account_withdrawal" },
+        ]),
+      )
+      .await;
+      mount_json(
+        server,
+        &format!("/corporations/{CORP}/wallets/{division}/transactions/"),
+        serde_json::json!([]),
+      )
+      .await;
+    }
+  }
+
   async fn seed_corp(db: &store::Database) {
     let mut corporation = Corporation::new(CORP, "Test Corp", "TST");
     corporation.set_ceo_id(DIRECTOR);
@@ -321,6 +347,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_persists_both_legs_of_an_internal_transfer_sharing_one_eve_id_across_divisions() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Director"] }]),
+      )
+      .await;
+      mount_wallets(&server).await;
+      mount_shared_id_division_ledgers(&server, 777).await;
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", CORP);
+
+      run(&ctx(&db, &esi, &image, &image_store, &grant)).await.unwrap();
+
+      let leg_one = finance::corporation_wallet_journal(&db, CORP, 1).await.unwrap();
+      let leg_two = finance::corporation_wallet_journal(&db, CORP, 2).await.unwrap();
+
+      assert_eq!(
+        leg_one.len(),
+        1,
+        "division 1's leg of the transfer must persist under the per-wallet key"
+      );
+      assert_eq!(
+        leg_two.len(),
+        1,
+        "division 2's leg shares the same EVE id but a different division, so it must persist too, \
+        not collide and drop"
+      );
+      assert_eq!(leg_one[0].id(), leg_two[0].id());
+      assert_eq!(leg_one[0].amount(), Some(-777.0));
+      assert_eq!(leg_two[0].amount(), Some(777.0));
+    }
+
+    #[tokio::test]
     async fn it_persists_per_division_balances_journal_and_transactions_when_the_role_is_held() {
       let server = MockServer::start().await;
       mount_roles(
@@ -362,6 +429,42 @@ mod tests {
       assert_eq!(
         finance::corporation_wallet_journal(&db, CORP, 7).await.unwrap().len(),
         1
+      );
+    }
+
+    #[tokio::test]
+    async fn it_recovers_a_collided_leg_idempotently_when_the_forced_re_fetch_re_runs() {
+      let server = MockServer::start().await;
+      mount_roles(
+        &server,
+        serde_json::json!([{ "character_id": DIRECTOR, "roles": ["Director"] }]),
+      )
+      .await;
+      mount_wallets(&server).await;
+      mount_shared_id_division_ledgers(&server, 888).await;
+      let db = store::open_test().await.unwrap();
+      seed_corp(&db).await;
+      seed_credential(&db).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), server.uri());
+      let image = eve_image::Client::with_base_url(http, server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let grant = Grant::new_test("corp-token", CORP);
+
+      run(&ctx(&db, &esi, &image, &image_store, &grant)).await.unwrap();
+      run(&ctx(&db, &esi, &image, &image_store, &grant)).await.unwrap();
+
+      assert_eq!(
+        finance::corporation_wallet_journal(&db, CORP, 1).await.unwrap().len(),
+        1,
+        "re-running the wallet sync (the forced re-fetch) re-appends the same paginated journal but \
+        DO NOTHING keeps it a no-op; the leg stays exactly once"
+      );
+      assert_eq!(
+        finance::corporation_wallet_journal(&db, CORP, 2).await.unwrap().len(),
+        1,
+        "the second leg recovered by the re-fetch is idempotent across repeated syncs"
       );
     }
 

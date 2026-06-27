@@ -882,6 +882,16 @@ pub fn cache_dir() -> PathBuf {
     .join("pod")
 }
 
+// Consumed by the first-run wizard boot branch (task qvmwtwky); no production caller lands yet.
+#[allow(dead_code)]
+pub fn config_exists() -> bool {
+  config_path().is_ok_and(|path| config_exists_at(&path))
+}
+
+fn config_exists_at(path: &Path) -> bool {
+  path.is_file()
+}
+
 fn config_path() -> Result<PathBuf, Error> {
   dir_spec::config_home()
     .map(|dir| dir.join("pod").join("config.toml"))
@@ -1366,6 +1376,44 @@ mod tests {
           );
         }
       }
+    }
+  }
+
+  mod config_exists_at {
+    use super::*;
+
+    #[test]
+    fn it_is_false_when_the_file_is_absent() {
+      let dir = tempfile::tempdir().unwrap();
+
+      assert!(!config_exists_at(&dir.path().join("config.toml")));
+    }
+
+    #[test]
+    fn it_is_false_for_a_directory_at_the_path() {
+      let dir = tempfile::tempdir().unwrap();
+
+      assert!(!config_exists_at(dir.path()));
+    }
+
+    #[test]
+    fn it_is_true_when_the_file_is_present() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "reprocessing_yield = 0.5\n").unwrap();
+
+      assert!(config_exists_at(&path));
+    }
+
+    #[test]
+    fn it_does_not_create_the_file_as_a_side_effect() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+
+      let exists = config_exists_at(&path);
+
+      assert!(!exists);
+      assert!(!path.exists(), "the predicate must not materialize the file");
     }
   }
 

@@ -130,6 +130,7 @@ mod skill_plan_remap_point;
 mod skill_plan_ship_mastery;
 mod solar_system;
 mod squad;
+mod standings_catalog;
 mod station;
 mod stockpile;
 pub mod stockpile_fill;
@@ -272,6 +273,11 @@ pub use skill_plan_remap_point::Model as SkillPlanRemapPoint;
 pub use skill_plan_ship_mastery::Model as SkillPlanShipMastery;
 pub use solar_system::Model as SolarSystem;
 pub use squad::Model as Squad;
+pub use standings_catalog::{AgentPage, CatalogKind, CatalogRow, SocialSkills};
+pub(crate) use standings_catalog::{
+  AgentSql, CorpSql, FROM_TYPE_AGENT, FROM_TYPE_CORP, FROM_TYPE_FACTION, Facets, FactionClass, FactionSql, NameIndex,
+  RawStandings, SecurityClass,
+};
 pub use station::Model as Station;
 pub use stockpile::Model as Stockpile;
 pub use stockpile_item::Model as StockpileItem;

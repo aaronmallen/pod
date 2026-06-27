@@ -16,14 +16,14 @@ use self::tabs::{
   killlog::{KillLogEntry, KilllogFilter},
   notifications::NotificationsFilter,
 };
-pub use crate::store::repo::standings::CatalogKind as StandingKind;
+pub use crate::store::model::CatalogKind as StandingKind;
 use crate::{
   clients::eve_image::Size,
   config::Feature,
   store::{
     Database, images,
     model::{
-      CharacterContact, CharacterContactLabel, CharacterNotification, CharacterState, OwnerType,
+      CatalogRow, CharacterContact, CharacterContactLabel, CharacterNotification, CharacterState, OwnerType,
       character_clone_view::CharacterClones, character_contacts_view::image_kind,
     },
     repo::{
@@ -1358,7 +1358,7 @@ async fn load_standings_catalog(
   })
 }
 
-fn standings_row(store: &images::Store, row: standings::CatalogRow) -> StandingsRow {
+fn standings_row(store: &images::Store, row: CatalogRow) -> StandingsRow {
   let (image_kind, image_id) = match row.kind {
     StandingKind::Agent => (images::ImageKind::CharacterPortrait, row.id),
     StandingKind::Corporation => (images::ImageKind::CorporationLogo, row.id),

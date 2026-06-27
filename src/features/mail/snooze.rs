@@ -10,6 +10,7 @@ use crate::{
   store::{Database, repo::mail},
   ui::{
     components::{eyebrow::eyebrow_text, icon::Icon},
+    datefmt,
     style::{color, radius, spacing, typography},
   },
 };
@@ -273,31 +274,6 @@ fn days_in_month(year: i32, month0: u32) -> u32 {
   first_next.pred_opt().expect("non-min date").day()
 }
 
-pub(super) fn month_abbrev(month0: u32) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  MONTHS[(month0 % 12) as usize]
-}
-
-pub(super) fn month_name(month0: u32) -> &'static str {
-  const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  MONTHS[(month0 % 12) as usize]
-}
-
 pub(super) fn presets_menu<'a>(is_snoozed: bool, selected: Option<i64>) -> Element<'a, Message> {
   let mut column = Column::new()
     .spacing(spacing::UNIT / 2.0)
@@ -361,12 +337,16 @@ pub(super) fn calendar_menu(cal: &Calendar) -> Element<'_, Message> {
   let header = Row::with_children(vec![
     nav_button(Icon::chevron_left(), Message::SnoozeCalendarPrevMonth),
     container(
-      text(format!("{} {}", month_name(cal.view_month0), cal.view_year))
-        .size(typography::size::MD)
-        .font(typography::body::MEDIUM)
-        .style(|_| text::Style {
-          color: Some(color::text::PRIMARY),
-        }),
+      text(format!(
+        "{} {}",
+        datefmt::month_long(cal.view_month0 + 1),
+        cal.view_year
+      ))
+      .size(typography::size::MD)
+      .font(typography::body::MEDIUM)
+      .style(|_| text::Style {
+        color: Some(color::text::PRIMARY),
+      }),
     )
     .width(Length::Fill)
     .align_x(Horizontal::Center)
@@ -558,9 +538,9 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
     .map(|d| {
       format!(
         "{} {:02} {} · {:02}:{:02}",
-        d.weekday(),
+        datefmt::weekday_short(d.weekday()),
         d.day(),
-        month_abbrev(cal.sel_month0),
+        datefmt::month_short(cal.sel_month0 + 1),
         cal.hour,
         cal.minute
       )

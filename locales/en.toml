@@ -905,6 +905,10 @@ new_squad = "New squad"
 reauthorize = "Re-authorize"
 remove_from_app = "Remove from app"
 
+[roster.auth]
+cancel = "Cancel"
+try_again = "Try again"
+
 [roster.card]
 ceo = "CEO"
 docked = "DOCKED"

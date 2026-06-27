@@ -264,7 +264,7 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
   let mut actions: Vec<Element<'_, Message>> = Vec::new();
   if matches!(flow.status, Status::Failed(_)) {
     actions.push(
-      button(text("Try again").size(typography::size::MD))
+      button(text(t!("roster.auth.try_again").into_owned()).size(typography::size::MD))
         .padding(control::padding())
         .on_press(retry)
         .style(control::primary_button)
@@ -272,7 +272,7 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
     );
   }
   actions.push(
-    button(text("Cancel").size(typography::size::MD))
+    button(text(t!("roster.auth.cancel").into_owned()).size(typography::size::MD))
       .padding(control::padding())
       .on_press(Message::Cancel)
       .style(control::ghost_button)

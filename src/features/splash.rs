@@ -74,7 +74,7 @@ impl Default for State {
       progress_target: 0.0,
       pulse: 0.0,
       rotation: 0.0,
-      step_label: "Starting up\u{2026}".to_string(),
+      step_label: t!("splash.status.starting_up").into_owned(),
       update_error: None,
       update_progress: 0.0,
       update_version: None,
@@ -86,7 +86,7 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
   match message {
     Message::BeginChecking => {
       state.phase = Phase::CheckingUpdate;
-      state.step_label = "Checking for updates\u{2026}".to_string();
+      state.step_label = t!("splash.status.checking_update").into_owned();
       Task::none()
     }
     Message::DownloadProgress(progress) => {
@@ -156,9 +156,9 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
 
 pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
   let label = match state.phase {
-    Phase::CheckingUpdate => "Checking for updates\u{2026}",
-    Phase::Done | Phase::Expanding => "READY.",
-    Phase::Loading | Phase::Update | Phase::Updating => state.step_label.as_str(),
+    Phase::CheckingUpdate => t!("splash.status.checking_update").into_owned(),
+    Phase::Done | Phase::Expanding => t!("splash.status.ready").into_owned(),
+    Phase::Loading | Phase::Update | Phase::Updating => state.step_label.clone(),
   };
   let progress = match state.phase {
     Phase::CheckingUpdate | Phase::Loading => Some(state.progress),
@@ -171,7 +171,7 @@ pub fn view<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     (Some(error), _) => error_view(error),
     (None, Phase::Update) => update_view(state),
     (None, Phase::Updating) => updating_view(state),
-    (None, _) => status_message::status_message(label, progress, Horizontal::Center),
+    (None, _) => status_message::status_message(&label, progress, Horizontal::Center),
   };
 
   let stage = container(
@@ -212,17 +212,21 @@ fn footer_update(state: &State) -> Option<&str> {
 }
 
 fn error_view<'a>(error: &str) -> Element<'a, Message> {
-  let message = text(format!("Couldn\u{2019}t start Pod: {error}"))
+  let message = text(t!("splash.view.error", error => error).into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
       color: Some(color::status::DANGER),
     });
 
-  let retry = button(text("Retry").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(Message::Retry)
-    .style(control::primary_button);
+  let retry = button(
+    text(t!("splash.view.retry").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::Retry)
+  .style(control::primary_button);
 
   Column::with_children(vec![message.into(), retry.into()])
     .align_x(Horizontal::Center)
@@ -236,7 +240,7 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
 
   let eyebrow = Row::with_children(vec![
     dot(color::accent::PLASMA),
-    text("UPDATE AVAILABLE")
+    text(t!("splash.update.eyebrow").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -247,12 +251,12 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
 
-  let title = text("A new version of Pod is ready")
+  let title = text(t!("splash.update.available").into_owned())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG);
 
   let versions = Row::with_children(vec![
-    text(format!("v{current}"))
+    text(t!("splash.version.current", version => current).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -266,7 +270,7 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
         color: Some(color::text::tertiary()),
       })
       .into(),
-    text(format!("v{next}"))
+    text(t!("splash.version.current", version => next).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -281,12 +285,16 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
     .align_x(Horizontal::Left)
     .spacing(spacing::SPACE_2);
 
-  let later = button(text("Later").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(Message::Later)
-    .style(control::ghost_button);
+  let later = button(
+    text(t!("splash.update.later").into_owned())
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::Later)
+  .style(control::ghost_button);
   let update = button(
-    text("Update & restart")
+    text(t!("splash.update.update_and_restart").into_owned())
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -313,11 +321,11 @@ fn updating_view<'a>(state: &'a State) -> Element<'a, Message> {
 
 fn updating_label(progress: f32, next: &str) -> String {
   if progress >= 1.0 {
-    "Restarting\u{2026}".to_string()
+    t!("splash.status.restarting").into_owned()
   } else if progress > 0.7 {
-    format!("Installing v{next}\u{2026}")
+    t!("splash.status.installing", version => next).into_owned()
   } else {
-    "Downloading update\u{2026}".to_string()
+    t!("splash.status.downloading_update").into_owned()
   }
 }
 

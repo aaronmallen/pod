@@ -2222,9 +2222,9 @@ fn image_reload(app: &App) -> Task<Message> {
 
 fn main_view(app: &App) -> Element<'_, Message> {
   let inner: Element<'_, Message> = if let Some(error) = &app.init_error {
-    placeholder(format!("Couldn\u{2019}t start Pod: {error}"))
+    placeholder(t!("shell.window.init_error", error => error).into_owned())
   } else if app.runtime.is_none() {
-    placeholder("Starting up\u{2026}".to_owned())
+    placeholder(t!("shell.status.starting_up").into_owned())
   } else {
     route_view(app)
   };
@@ -2773,15 +2773,13 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
 }
 
 fn read_only_banner_label(hostname: &str) -> String {
-  format!("Open on {hostname} \u{2014} close it there, or take over.")
+  t!("shell.takeover.read_only", hostname => hostname).into_owned()
 }
 
 /// Data-loss warning shown before a forceful take-over: surfaces how recently the holder was seen so
 /// the user can judge whether it is plausibly dead before clobbering its in-flight work on the share.
 fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
-  format!(
-    "{hostname} was last active {last_active}. Taking over overwrites any unsaved changes it still has open. Continue?"
-  )
+  t!("shell.takeover.confirm", hostname => hostname, last_active => last_active).into_owned()
 }
 
 fn route_view(app: &App) -> Element<'_, Message> {
@@ -2804,7 +2802,7 @@ fn route_view(app: &App) -> Element<'_, Message> {
 }
 
 fn starting_up<'a>() -> Element<'a, Message> {
-  placeholder("Starting up\u{2026}".to_owned())
+  placeholder(t!("shell.status.starting_up").into_owned())
 }
 
 fn calendar_route_view(app: &App) -> Element<'_, Message> {
@@ -3057,7 +3055,7 @@ fn outbox_indicator(outbox: &sync::OutboxStatus) -> Option<Element<'_, Message>>
 
   let mut parts: Vec<Element<'_, Message>> = vec![
     dot(dot_color),
-    text("MUTATIONS")
+    text(t!("shell.status.mutations").into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -3343,34 +3341,36 @@ fn window_title(app: &App, id: window::Id) -> String {
     Some(Window::CalendarEvent) => app
       .calendar_events
       .get(id)
-      .map(|window| format!("Pod \u{2014} {}", window.title()))
-      .unwrap_or_else(|| "Pod \u{2014} Event".to_string()),
-    Some(Window::Compare) => "Pod — Compare Skills".to_string(),
+      .map(|window| t!("shell.window.titled", title => window.title()).into_owned())
+      .unwrap_or_else(|| t!("shell.window.event").into_owned()),
+    Some(Window::Compare) => t!("shell.window.compare_skills").into_owned(),
     Some(Window::Contract) => match app.contracts.get(id) {
-      Some(state) => format!("Pod \u{2014} {}", state.title()),
-      None => "Pod \u{2014} Contract".to_string(),
+      Some(state) => t!("shell.window.titled", title => state.title()).into_owned(),
+      None => t!("shell.window.contract").into_owned(),
     },
     Some(Window::Killmail) => app
       .killmails
       .get(id)
-      .map(|state| format!("Pod — {}", state.title()))
-      .unwrap_or_else(|| "Pod — Killmail".to_string()),
+      .map(|state| t!("shell.window.titled", title => state.title()).into_owned())
+      .unwrap_or_else(|| t!("shell.window.killmail").into_owned()),
     Some(Window::MailCompose) => app
       .composes
       .get(id)
-      .map(|draft| format!("Pod — {}", mail::compose::window_title(draft)))
-      .unwrap_or_else(|| "Pod — Compose Mail".to_string()),
-    Some(Window::Main) => "Pod".to_string(),
-    Some(Window::ManagePlans) => "Pod — Manage Skill Plans".to_string(),
-    Some(Window::SkillPlanEditor) => "Pod — Skill Plan Editor".to_string(),
-    Some(Window::Splash) => "Pod".to_string(),
+      .map(|draft| t!("shell.window.titled", title => mail::compose::window_title(draft)).into_owned())
+      .unwrap_or_else(|| t!("shell.window.compose_mail").into_owned()),
+    Some(Window::Main) => t!("shell.window.app").into_owned(),
+    Some(Window::ManagePlans) => t!("shell.window.manage_skill_plans").into_owned(),
+    Some(Window::SkillPlanEditor) => t!("shell.window.skill_plan_editor").into_owned(),
+    Some(Window::Splash) => t!("shell.window.app").into_owned(),
     Some(Window::StockpileEditor) => app
       .stockpile_editors
       .get(id)
-      .map(|editor| format!("Pod \u{2014} {}", assets::stockpile_editor_window_title(editor)))
-      .unwrap_or_else(|| "Pod \u{2014} Stockpile Editor".to_string()),
-    Some(Window::StockpileImport) => format!("Pod \u{2014} {}", assets::stockpile_import_window_title()),
-    None => "Pod".to_string(),
+      .map(|editor| t!("shell.window.titled", title => assets::stockpile_editor_window_title(editor)).into_owned())
+      .unwrap_or_else(|| t!("shell.window.stockpile_editor").into_owned()),
+    Some(Window::StockpileImport) => {
+      t!("shell.window.titled", title => assets::stockpile_import_window_title()).into_owned()
+    }
+    None => t!("shell.window.app").into_owned(),
   }
 }
 
@@ -6347,7 +6347,7 @@ fn handle_init_failed(app: &mut App, error: String) -> Task<Message> {
     let _ = splash::update(
       state,
       splash::Message::StepChanged {
-        label: format!("Couldn\u{2019}t start Pod: {error}"),
+        label: t!("splash.view.error", error => error).into_owned(),
         progress: state.progress_target,
       },
     );

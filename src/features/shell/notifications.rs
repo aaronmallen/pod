@@ -233,11 +233,11 @@ async fn mail_detector(
       .subject()
       .clone()
       .filter(|s| !s.is_empty())
-      .unwrap_or_else(|| "New EVE mail".to_owned());
+      .unwrap_or_else(|| t!("shell.notification.mail_title_fallback").into_owned());
     let emitted = notifications::emit(
       db,
       &NewNotification {
-        body: format!("From {}", header.from_name()),
+        body: t!("shell.notification.mail_body", name => header.from_name()).into_owned(),
         dedup_key: mail_key(character_id, header.mail_id()),
         kind: NotificationKind::Mail,
         owner: NotificationOwner::Character(character_id),
@@ -337,11 +337,13 @@ async fn killmail_detector(
 
   let mut surfaced = Vec::new();
   for (killmail_id, ship_type_id) in rows {
-    let ship = type_name(db, ship_type_id).await.unwrap_or_else(|| "ship".to_owned());
+    let ship = type_name(db, ship_type_id)
+      .await
+      .unwrap_or_else(|| t!("shell.notification.killmail_ship_fallback").into_owned());
     let emitted = notifications::emit(
       db,
       &NewNotification {
-        body: format!("{ship} destroyed"),
+        body: t!("shell.notification.killmail_destroyed", ship => ship).into_owned(),
         dedup_key: killmail_key(killmail_id),
         kind: NotificationKind::Killmail,
         owner,
@@ -350,7 +352,7 @@ async fn killmail_detector(
           destination: NotificationDestination::CharacterDetail,
           sub: None,
         },
-        title: "New killmail".to_owned(),
+        title: t!("shell.notification.killmail_title").into_owned(),
       },
     )
     .await?;
@@ -392,11 +394,13 @@ async fn skill_detector(
 
   let mut surfaced = Vec::new();
   for (skill_id, finish) in matured {
-    let skill = type_name(db, skill_id).await.unwrap_or_else(|| "Skill".to_owned());
+    let skill = type_name(db, skill_id)
+      .await
+      .unwrap_or_else(|| t!("shell.notification.skill_fallback").into_owned());
     let emitted = notifications::emit(
       db,
       &NewNotification {
-        body: "Training complete".to_owned(),
+        body: t!("shell.notification.skill_body").into_owned(),
         dedup_key: skill_key(character_id, skill_id, &finish),
         kind: NotificationKind::Skill,
         owner: NotificationOwner::Character(character_id),
@@ -405,7 +409,7 @@ async fn skill_detector(
           destination: NotificationDestination::Skills,
           sub: None,
         },
-        title: format!("{skill} finished"),
+        title: t!("shell.notification.skill_title", skill => skill).into_owned(),
       },
     )
     .await?;
@@ -452,13 +456,15 @@ async fn industry_detector(
   let mut surfaced = Vec::new();
   for (job_id, product_type_id) in jobs {
     let product = match product_type_id {
-      Some(id) => type_name(db, id).await.unwrap_or_else(|| "job".to_owned()),
-      None => "job".to_owned(),
+      Some(id) => type_name(db, id)
+        .await
+        .unwrap_or_else(|| t!("shell.notification.industry_fallback").into_owned()),
+      None => t!("shell.notification.industry_fallback").into_owned(),
     };
     let emitted = notifications::emit(
       db,
       &NewNotification {
-        body: format!("{product} ready"),
+        body: t!("shell.notification.industry_ready", product => product).into_owned(),
         dedup_key: industry_key(job_id),
         kind: NotificationKind::Industry,
         owner,
@@ -467,7 +473,7 @@ async fn industry_detector(
           destination: NotificationDestination::Industry,
           sub: None,
         },
-        title: "Industry job complete".to_owned(),
+        title: t!("shell.notification.industry_title").into_owned(),
       },
     )
     .await?;
@@ -523,7 +529,7 @@ async fn extraction_scheduled_detector(
           destination: NotificationDestination::Industry,
           sub: None,
         },
-        title: "Extraction scheduled".to_owned(),
+        title: t!("shell.notification.extraction_scheduled_title").into_owned(),
       },
     )
     .await?;
@@ -570,7 +576,7 @@ async fn extraction_cracked_detector(
     let emitted = notifications::emit(
       db,
       &NewNotification {
-        body: moon_name.unwrap_or_else(|| "Ready to mine".to_owned()),
+        body: moon_name.unwrap_or_else(|| t!("shell.notification.extraction_cracked_fallback").into_owned()),
         dedup_key: extraction_cracked_key(corporation_id, structure_id, moon_id, &arrival),
         kind: NotificationKind::ExtractionCracked,
         owner: NotificationOwner::Corporation(corporation_id),
@@ -579,7 +585,7 @@ async fn extraction_cracked_detector(
           destination: NotificationDestination::Industry,
           sub: None,
         },
-        title: "Moon chunk fractured".to_owned(),
+        title: t!("shell.notification.extraction_cracked_title").into_owned(),
       },
     )
     .await?;

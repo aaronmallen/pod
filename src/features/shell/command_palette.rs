@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use iced::{
   Background, Border, Color, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
@@ -42,16 +44,17 @@ impl Command {
     Command::ToggleHighContrast,
   ];
 
-  pub fn label(self) -> &'static str {
+  pub fn label(self) -> String {
     match self {
-      Command::AddCharacter => "Add character",
-      Command::ComposeMail => "Compose mail",
-      Command::CreateStockpile => "Create stockpile",
-      Command::ManageSkillPlans => "Manage skill plans",
-      Command::OpenSettings => "Open Settings",
-      Command::SyncNow => "Sync now",
-      Command::ToggleHighContrast => "Toggle high contrast",
+      Command::AddCharacter => t!("shell.command_palette.add_character"),
+      Command::ComposeMail => t!("shell.command_palette.compose_mail"),
+      Command::CreateStockpile => t!("shell.command_palette.create_stockpile"),
+      Command::ManageSkillPlans => t!("shell.command_palette.manage_skill_plans"),
+      Command::OpenSettings => t!("shell.command_palette.open_settings"),
+      Command::SyncNow => t!("shell.command_palette.sync_now"),
+      Command::ToggleHighContrast => t!("shell.command_palette.toggle_high_contrast"),
     }
+    .into_owned()
   }
 }
 
@@ -107,14 +110,15 @@ pub enum Kind {
 }
 
 impl Kind {
-  fn tag(self) -> &'static str {
+  fn tag(self) -> String {
     match self {
-      Kind::Character => "Character",
-      Kind::Command => "Command",
-      Kind::Corporation => "Corporation",
-      Kind::Section => "Section",
-      Kind::Tab => "Tab",
+      Kind::Character => t!("shell.command_palette.kind.character"),
+      Kind::Command => t!("shell.command_palette.kind.command"),
+      Kind::Corporation => t!("shell.command_palette.kind.corporation"),
+      Kind::Section => t!("shell.command_palette.kind.section"),
+      Kind::Tab => t!("shell.command_palette.kind.tab"),
     }
+    .into_owned()
   }
 }
 
@@ -157,12 +161,13 @@ pub fn build_entries(
   }
 
   for command in Command::ALL {
-    if matches(&needle, &[command.label()]) {
+    let label = command.label();
+    if matches(&needle, &[&label]) {
       commands.push(Entry {
         action: Action::Command(command),
         detail: None,
         kind: Kind::Command,
-        label: command.label().to_owned(),
+        label,
       });
     }
   }
@@ -219,25 +224,22 @@ pub fn view<'a, M>(
 where
   M: Clone + 'a,
 {
-  let search = text_input(
-    "Jump to anything\u{2026}  try \u{201c}planner\u{201d}, \u{201c}budget\u{201d}",
-    &state.query,
-  )
-  .id(input_id())
-  .on_input(on_query)
-  .padding(0)
-  .size(15.0)
-  .font(typography::body::REGULAR)
-  .style(|_, _| text_input::Style {
-    background: Background::Color(Color::TRANSPARENT),
-    border: Border::default(),
-    icon: color::text::tertiary(),
-    placeholder: color::text::tertiary(),
-    selection: color::accent::PLASMA_MUTED,
-    value: color::text::PRIMARY,
-  });
+  let search = text_input(placeholder(), &state.query)
+    .id(input_id())
+    .on_input(on_query)
+    .padding(0)
+    .size(15.0)
+    .font(typography::body::REGULAR)
+    .style(|_, _| text_input::Style {
+      background: Background::Color(Color::TRANSPARENT),
+      border: Border::default(),
+      icon: color::text::tertiary(),
+      placeholder: color::text::tertiary(),
+      selection: color::accent::PLASMA_MUTED,
+      value: color::text::PRIMARY,
+    });
 
-  let escape_hint = text("ESC")
+  let escape_hint = text(t!("shell.command_palette.escape_hint").into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS_PLUS)
     .style(typography::colored(color::text::tertiary()));
@@ -291,7 +293,7 @@ where
   let selected = state.selected;
   let results: Element<'a, M> = if entries.is_empty() {
     container(
-      text("No matches")
+      text(t!("shell.command_palette.no_matches").into_owned())
         .font(typography::body::REGULAR)
         .size(typography::size::MD)
         .style(typography::colored(color::text::tertiary())),
@@ -353,6 +355,11 @@ fn matches(needle: &str, haystacks: &[&str]) -> bool {
     return true;
   }
   haystacks.iter().any(|hay| hay.to_lowercase().contains(needle))
+}
+
+fn placeholder() -> &'static str {
+  static PLACEHOLDER: OnceLock<String> = OnceLock::new();
+  PLACEHOLDER.get_or_init(|| t!("shell.command_palette.placeholder").into_owned())
 }
 
 fn row<'a, M>(

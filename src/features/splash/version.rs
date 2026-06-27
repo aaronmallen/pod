@@ -7,14 +7,14 @@ where
   M: 'a,
 {
   match update {
-    Some(next) => text(format!("Update \u{00B7} v{next}"))
+    Some(next) => text(t!("splash.version.update", version => next).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
         color: Some(color::accent::PLASMA),
       })
       .into(),
-    None => text(format!("v{}", env!("CARGO_PKG_VERSION")))
+    None => text(t!("splash.version.current", version => env!("CARGO_PKG_VERSION")).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {

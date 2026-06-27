@@ -279,7 +279,7 @@ pub(super) async fn load_outbox_indicator(db: &Database) -> OutboxIndicator {
     .map(|(id, kind, last_error)| FailedMutation {
       id,
       kind,
-      last_error: last_error.unwrap_or_else(|| "unknown error".to_owned()),
+      last_error: last_error.unwrap_or_else(|| t!("mail.outbox.unknown_error").into_owned()),
     })
     .collect();
 

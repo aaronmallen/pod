@@ -18,14 +18,14 @@ const SELECT_RAIL: f32 = 2.0;
 const LABEL_DOT_RADIUS: f32 = 3.0;
 const LABEL_DOT_SIZE: f32 = 10.0;
 
-const STANDARD_FOLDER_ROWS: [(StandardFolder, &str); 7] = [
-  (StandardFolder::Inbox, "Inbox"),
-  (StandardFolder::Starred, "Starred"),
-  (StandardFolder::Snoozed, "Snoozed"),
-  (StandardFolder::Sent, "Sent"),
-  (StandardFolder::Drafts, "Drafts"),
-  (StandardFolder::Archive, "Archive"),
-  (StandardFolder::Trash, "Trash"),
+const STANDARD_FOLDER_ROWS: [StandardFolder; 7] = [
+  StandardFolder::Inbox,
+  StandardFolder::Starred,
+  StandardFolder::Snoozed,
+  StandardFolder::Sent,
+  StandardFolder::Drafts,
+  StandardFolder::Archive,
+  StandardFolder::Trash,
 ];
 
 pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
@@ -64,7 +64,7 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     active,
     Row::with_children(vec![
       folder_icon(Icon::inbox_all(), active),
-      text("All Inboxes")
+      text(t!("mail.folder.unified"))
         .size(typography::size::MD)
         .font(typography::body::MEDIUM)
         .width(Length::Fill)
@@ -83,7 +83,7 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     true,
   );
 
-  let subline = text(format!("{} mailboxes combined", state.roster().len()))
+  let subline = text(t!("mail.folder_pane.mailboxes_combined", count => state.roster().len()).into_owned())
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -92,7 +92,7 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
 
   let section = container(
     Column::with_children(vec![
-      section_header("Unified"),
+      section_header(&t!("mail.folder_pane.unified_header")),
       entry,
       container(subline)
         .padding(Padding {
@@ -133,15 +133,15 @@ fn folders_section<'a>(
   drop_target: Option<DropTarget>,
 ) -> Element<'a, Message> {
   let mut column = Column::new().width(Length::Fill).spacing(1.0);
-  column = column.push(inset_header("Folders"));
+  column = column.push(inset_header(&t!("mail.folder_pane.folders_header")));
 
-  for (standard_folder, name) in STANDARD_FOLDER_ROWS {
+  for standard_folder in STANDARD_FOLDER_ROWS {
     let folder = Folder::Standard(standard_folder);
     let over = drop_target == Some(DropTarget::StandardFolder(standard_folder));
     column = column.push(folder_row(
       folder,
       standard_folder_icon(standard_folder),
-      name,
+      standard_folder_label(standard_folder),
       counts.unread_for(standard_folder),
       selected == folder,
       dragging && is_drop_box(standard_folder),
@@ -236,6 +236,18 @@ fn drop_box_style(over: bool) -> container::Style {
   }
 }
 
+fn standard_folder_label(standard_folder: StandardFolder) -> &'static str {
+  match standard_folder {
+    StandardFolder::Archive => super::tr_static("mail.folder.archive"),
+    StandardFolder::Drafts => super::tr_static("mail.folder.drafts"),
+    StandardFolder::Inbox => super::tr_static("mail.folder.inbox"),
+    StandardFolder::Sent => super::tr_static("mail.folder.sent"),
+    StandardFolder::Snoozed => super::tr_static("mail.folder.snoozed"),
+    StandardFolder::Starred => super::tr_static("mail.folder.starred"),
+    StandardFolder::Trash => super::tr_static("mail.folder.trash"),
+  }
+}
+
 fn standard_folder_icon(standard_folder: StandardFolder) -> Icon {
   match standard_folder {
     StandardFolder::Archive => Icon::archive(),
@@ -264,7 +276,7 @@ fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<Dr
   if labels.is_empty() {
     column = column.push(
       container(
-        text("No custom labels")
+        text(t!("mail.folder_pane.no_custom_labels"))
           .size(typography::size::SM)
           .style(|_| text::Style {
             color: Some(color::text::tertiary()),
@@ -309,7 +321,7 @@ fn labels_header<'a>() -> Element<'a, Message> {
   .style(|_, status| add_button_style(status));
 
   let row = Row::with_children(vec![
-    shared_section_header::<Message>("Labels", None),
+    shared_section_header::<Message>(&t!("mail.folder_pane.labels_header"), None),
     Space::new().width(Length::Fill).into(),
     add.into(),
   ])
@@ -381,7 +393,7 @@ fn label_row_style(over: bool) -> container::Style {
 
 fn drag_hint<'a>() -> Element<'a, Message> {
   container(
-    text("Drag a message here to tag it")
+    text(t!("mail.folder_pane.drag_hint"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -546,7 +558,7 @@ mod tests {
 
   #[test]
   fn it_lists_the_fixed_standard_folder_set_in_prototype_order() {
-    let folders: Vec<StandardFolder> = STANDARD_FOLDER_ROWS.iter().map(|(folder, _)| *folder).collect();
+    let folders: Vec<StandardFolder> = STANDARD_FOLDER_ROWS.to_vec();
 
     assert_eq!(
       folders,

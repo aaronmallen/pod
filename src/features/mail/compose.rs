@@ -123,8 +123,8 @@ impl Draft {
 
     let subject = mail.header.subject().clone().unwrap_or_default();
     draft.subject = match kind {
-      Kind::Forward => prefixed(&subject, "Fwd: "),
-      _ => prefixed(&subject, "Re: "),
+      Kind::Forward => prefixed(&subject, &t!("mail.compose.forward_prefix")),
+      _ => prefixed(&subject, &t!("mail.compose.reply_prefix")),
     };
 
     if matches!(kind, Kind::Reply | Kind::ReplyAll) {
@@ -149,7 +149,8 @@ impl Draft {
 
     let quote_body = strip_quote(mail.body.body());
     if !quote_body.is_empty() {
-      draft.quote = Some(format!("From {}:\n{}", mail.header.from_name(), quote_body));
+      let intro = t!("mail.compose.quote_intro", sender => mail.header.from_name());
+      draft.quote = Some(format!("{intro}\n{quote_body}"));
     }
     draft
   }
@@ -297,7 +298,7 @@ impl Draft {
 pub fn window_title(draft: &Draft) -> String {
   let subject = draft.subject.trim();
   if subject.is_empty() {
-    "New message".to_owned()
+    t!("mail.compose.title_new").into_owned()
   } else {
     subject.to_owned()
   }
@@ -544,23 +545,24 @@ impl LinkKind {
     }
   }
 
-  pub(super) fn label(self) -> &'static str {
+  pub(super) fn label(self) -> String {
     match self {
-      LinkKind::Character => "Character",
-      LinkKind::Corporation => "Corporation",
-      LinkKind::Http => "http://",
-      LinkKind::SolarSystem => "Solar System",
-      LinkKind::Station => "Station",
+      LinkKind::Character => t!("mail.compose.link_kind.character"),
+      LinkKind::Corporation => t!("mail.compose.link_kind.corporation"),
+      LinkKind::Http => t!("mail.compose.link_kind.http"),
+      LinkKind::SolarSystem => t!("mail.compose.link_kind.solar_system"),
+      LinkKind::Station => t!("mail.compose.link_kind.station"),
     }
+    .into_owned()
   }
 
   pub(super) fn placeholder(self) -> &'static str {
     match self {
-      LinkKind::Character => "Search characters\u{2026}",
-      LinkKind::Corporation => "Search corporations\u{2026}",
-      LinkKind::Http => "example.com/path",
-      LinkKind::SolarSystem => "Search solar systems\u{2026}",
-      LinkKind::Station => "Search stations\u{2026}",
+      LinkKind::Character => super::tr_static("mail.compose.link_placeholder.character"),
+      LinkKind::Corporation => super::tr_static("mail.compose.link_placeholder.corporation"),
+      LinkKind::Http => super::tr_static("mail.compose.link_placeholder.http"),
+      LinkKind::SolarSystem => super::tr_static("mail.compose.link_placeholder.solar_system"),
+      LinkKind::Station => super::tr_static("mail.compose.link_placeholder.station"),
     }
   }
 
@@ -843,7 +845,7 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeToRemoved,
   )
   .inline(true)
-  .placeholder("Search characters or corporations\u{2026}")
+  .placeholder(super::tr_static("mail.compose.recipient_placeholder"))
   .searching(draft.to_search.searching())
   .on_submit(Message::ComposeToCommitted)
   .view();
@@ -853,9 +855,13 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
   } else {
     Row::with_children(vec![
       container(picker).width(Length::Fill).into(),
-      mouse_area(text("Cc").size(typography::size::SM).style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }))
+      mouse_area(
+        text(t!("mail.compose.cc"))
+          .size(typography::size::SM)
+          .style(|_| text::Style {
+            color: Some(color::text::secondary()),
+          }),
+      )
       .on_press(Message::ComposeCcShown)
       .into(),
     ])
@@ -864,7 +870,7 @@ fn to_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     .into()
   };
 
-  field_row("To", content)
+  field_row(&t!("mail.compose.to_field"), content)
 }
 
 fn cc_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
@@ -880,12 +886,12 @@ fn cc_field<'a>(draft: &'a Draft) -> Element<'a, Message> {
     Message::ComposeCcRemoved,
   )
   .inline(true)
-  .placeholder("Search characters or corporations\u{2026}")
+  .placeholder(super::tr_static("mail.compose.recipient_placeholder"))
   .searching(draft.cc_search.searching())
   .on_submit(Message::ComposeCcCommitted)
   .view();
 
-  field_row("Cc", picker)
+  field_row(&t!("mail.compose.cc_field"), picker)
 }
 
 fn recipient_entity(recipient: &Recipient) -> EntityRef {
@@ -899,19 +905,19 @@ fn recipient_entity(recipient: &Recipient) -> EntityRef {
 }
 
 fn subject_field(draft: &Draft) -> Element<'_, Message> {
-  let input = text_input("—", &draft.subject)
+  let input = text_input(super::tr_static("mail.compose.subject_placeholder"), &draft.subject)
     .on_input(Message::ComposeSubjectChanged)
     .padding(0.0)
     .size(typography::size::LG)
     .font(typography::body::MEDIUM)
     .width(Length::Fill)
     .style(transparent_input);
-  field_row("Subject", input.into())
+  field_row(&t!("mail.compose.subject"), input.into())
 }
 
 fn body_field(draft: &Draft) -> Element<'_, Message> {
   let editor = text_editor(&draft.body)
-    .placeholder("Write your message…")
+    .placeholder(super::tr_static("mail.compose.body_placeholder"))
     .on_action(Message::ComposeBodyChanged)
     .padding(0.0)
     .size(typography::size::MD)
@@ -967,9 +973,10 @@ fn footer<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Messag
   let from_pilot = roster.iter().find(|p| p.id == draft.from_character_id);
   let from_name = from_pilot
     .map(|p| p.name.clone())
-    .unwrap_or_else(|| "Unknown".to_owned());
+    .unwrap_or_else(|| t!("mail.compose.from_unknown").into_owned());
 
-  let mut trigger_cells: Vec<Element<'a, Message>> = vec![eyebrow_text("FROM", Some(color::text::tertiary())).into()];
+  let mut trigger_cells: Vec<Element<'a, Message>> =
+    vec![eyebrow_text(&t!("mail.compose.from"), Some(color::text::tertiary())).into()];
   if let Some(pilot) = from_pilot {
     let portrait = TriggerPortrait {
       id: pilot.id,
@@ -1069,14 +1076,17 @@ fn toolbar_button<'a>(icon: Icon, active: bool, message: Message) -> Element<'a,
 }
 
 fn link_popover(popover: &LinkPopover) -> Element<'_, Message> {
-  let header = container(eyebrow_text("GENERATE LINK", Some(color::text::tertiary())))
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_2_5,
-      bottom: spacing::SPACE_2_5,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    });
+  let header = container(eyebrow_text(
+    &t!("mail.compose.generate_link"),
+    Some(color::text::tertiary()),
+  ))
+  .width(Length::Fill)
+  .padding(Padding {
+    top: spacing::SPACE_2_5,
+    bottom: spacing::SPACE_2_5,
+    left: spacing::SPACE_3,
+    right: spacing::SPACE_3,
+  });
 
   let mut kinds = Column::new().spacing(spacing::UNIT).width(Length::Fill);
   for kind in LinkKind::ALL {
@@ -1224,7 +1234,7 @@ fn link_insert_button<'a>(enabled: bool) -> Element<'a, Message> {
     (color::text::tertiary(), color::with_alpha(color::text::PRIMARY, 0.08))
   };
   let button = container(
-    text("Insert")
+    text(t!("mail.compose.insert"))
       .size(typography::size::SM)
       .font(typography::body::MEDIUM)
       .style(move |_| text::Style {
@@ -1272,7 +1282,7 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
     column = column.push(
       mouse_area(
         container(
-          text(format!("{} · {}", pilot.name, pilot.corp))
+          text(t!("mail.compose.from_option", name => pilot.name, corp => pilot.corp).into_owned())
             .size(typography::size::MD)
             .style(move |_| text::Style {
               color: Some(if selected {
@@ -1312,7 +1322,7 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
 /// close button auto-saves a non-empty draft; this is the explicit throw-away path.
 fn discard_button<'a>() -> Element<'a, Message> {
   let button = container(
-    text("Discard")
+    text(t!("mail.compose.discard"))
       .size(typography::size::MD)
       .font(typography::body::MEDIUM)
       .style(|_| text::Style {
@@ -1345,7 +1355,7 @@ fn send_button<'a>(enabled: bool) -> Element<'a, Message> {
   };
   let button = container(
     Row::with_children(vec![
-      text("Send")
+      text(t!("mail.compose.send"))
         .size(typography::size::MD)
         .font(typography::body::MEDIUM)
         .style(move |_| text::Style {

@@ -60,7 +60,7 @@ fn recipient_summary(row: &MailDraft) -> String {
   let mut names: Vec<String> = deserialize_names(row.recipients_to());
   names.extend(deserialize_names(row.recipients_cc()));
   if names.is_empty() {
-    "(no recipients)".to_owned()
+    t!("mail.draft.no_recipients").into_owned()
   } else {
     names.join(", ")
   }
@@ -80,7 +80,7 @@ fn snippet_preview(body: &str) -> String {
 
 fn subject_or_no_subject(subject: &str) -> String {
   if subject.trim().is_empty() {
-    "(no subject)".to_owned()
+    t!("mail.draft.no_subject").into_owned()
   } else {
     subject.to_owned()
   }

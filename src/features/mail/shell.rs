@@ -86,15 +86,12 @@ pub(super) fn shell(state: &State) -> Element<'_, Message> {
   }
 
   if let Some(label) = state.pending_label_delete() {
-    let body = format!(
-      "Deleting \u{201c}{}\u{201d} removes it from every message, here and in EVE.",
-      label.name
-    );
+    let body = t!("mail.labels.delete.body", name => label.name).into_owned();
     let confirm = confirm_modal(
-      "Mail label",
-      "Delete label?",
+      t!("mail.labels.delete.eyebrow"),
+      t!("mail.labels.delete.title"),
       body,
-      "Delete",
+      t!("mail.labels.delete.confirm"),
       Message::LabelDeleteConfirmed,
       Message::LabelDeleteCancelled,
     );
@@ -165,12 +162,12 @@ fn count_column(state: &State) -> Element<'_, Message> {
   let caption = eyebrow_text(&folder_caption(state), None);
 
   let counts = Row::with_children(vec![
-    text(format!("{total} messages · "))
+    text(t!("mail.header.messages", count => total).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::PRIMARY))
       .into(),
-    text(format!("{unread} unread"))
+    text(t!("mail.header.unread", count => unread).into_owned())
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::accent::PLASMA))
@@ -184,21 +181,21 @@ fn count_column(state: &State) -> Element<'_, Message> {
 
 fn folder_caption(state: &State) -> String {
   match state.folder() {
-    Folder::Unified => "All Inboxes".to_owned(),
-    Folder::Standard(StandardFolder::Archive) => "Archive".to_owned(),
-    Folder::Standard(StandardFolder::Drafts) => "Drafts".to_owned(),
-    Folder::Standard(StandardFolder::Inbox) => "Inbox".to_owned(),
-    Folder::Standard(StandardFolder::Sent) => "Sent".to_owned(),
-    Folder::Standard(StandardFolder::Snoozed) => "Snoozed".to_owned(),
-    Folder::Standard(StandardFolder::Starred) => "Starred".to_owned(),
-    Folder::Standard(StandardFolder::Trash) => "Trash".to_owned(),
+    Folder::Unified => t!("mail.folder.unified").into_owned(),
+    Folder::Standard(StandardFolder::Archive) => t!("mail.folder.archive").into_owned(),
+    Folder::Standard(StandardFolder::Drafts) => t!("mail.folder.drafts").into_owned(),
+    Folder::Standard(StandardFolder::Inbox) => t!("mail.folder.inbox").into_owned(),
+    Folder::Standard(StandardFolder::Sent) => t!("mail.folder.sent").into_owned(),
+    Folder::Standard(StandardFolder::Snoozed) => t!("mail.folder.snoozed").into_owned(),
+    Folder::Standard(StandardFolder::Starred) => t!("mail.folder.starred").into_owned(),
+    Folder::Standard(StandardFolder::Trash) => t!("mail.folder.trash").into_owned(),
     Folder::Label(label_id) => state
       .folder_data()
       .labels
       .iter()
       .find(|label| label.label_id == label_id)
       .map(|label| label.name.clone())
-      .unwrap_or_else(|| "Folder".to_owned()),
+      .unwrap_or_else(|| t!("mail.folder.fallback").into_owned()),
   }
 }
 
@@ -208,7 +205,7 @@ fn compose_button<'a>() -> Element<'a, Message> {
       .size(14.0)
       .color(color::text::secondary())
       .render::<Message>(),
-    text("Compose")
+    text(t!("mail.header.compose"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(typography::colored(color::text::secondary()))

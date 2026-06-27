@@ -37,7 +37,7 @@ pub(super) fn pane(render: Option<&ReadingRender>, is_snoozed: bool, in_trash: b
 }
 
 fn empty_state<'a>() -> Element<'a, Message> {
-  shared_empty_state("Select a message").render()
+  shared_empty_state(super::tr_static("mail.reading.empty")).render()
 }
 
 fn opened(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<'_, Message> {
@@ -61,31 +61,47 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     color::text::secondary()
   };
 
+  let star_label = if render.is_starred {
+    t!("mail.reading.toolbar.starred")
+  } else {
+    t!("mail.reading.toolbar.star")
+  };
+  let snooze_label = if is_snoozed {
+    t!("mail.reading.toolbar.snoozed")
+  } else {
+    t!("mail.reading.toolbar.snooze")
+  };
+  let (trash_label, trash_message) = if in_trash {
+    (t!("mail.reading.toolbar.delete"), Message::Delete(mail_id))
+  } else {
+    (t!("mail.reading.toolbar.trash"), Message::Trash(mail_id))
+  };
+
   let mut row = Row::new().align_y(Vertical::Center);
   row = row.push(toolbar_button(
     Icon::reply(),
-    "Reply",
+    &t!("mail.reading.toolbar.reply"),
     Message::Reply(mail_id),
     false,
     false,
   ));
   row = row.push(toolbar_button(
     Icon::reply_all(),
-    "Reply all",
+    &t!("mail.reading.toolbar.reply_all"),
     Message::ReplyAll(mail_id),
     false,
     false,
   ));
   row = row.push(toolbar_button(
     Icon::forward(),
-    "Forward",
+    &t!("mail.reading.toolbar.forward"),
     Message::Forward(mail_id),
     false,
     false,
   ));
   row = row.push(toolbar_button(
     Icon::tag(),
-    "Label",
+    &t!("mail.reading.toolbar.label"),
     Message::LabelPickerOpened(mail_id),
     !render.labels.is_empty(),
     false,
@@ -93,31 +109,26 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
   row = row.push(toolbar_divider());
   row = row.push(toolbar_button(
     Icon::star().color(star_tone),
-    if render.is_starred { "Starred" } else { "Star" },
+    &star_label,
     Message::ToggleStar(mail_id),
     render.is_starred,
     false,
   ));
   row = row.push(toolbar_button(
     Icon::snooze().color(snooze_tone),
-    if is_snoozed { "Snoozed" } else { "Snooze" },
+    &snooze_label,
     Message::SnoozeMenuToggled,
     is_snoozed,
     false,
   ));
   row = row.push(toolbar_button(
     Icon::archive(),
-    "Archive",
+    &t!("mail.reading.toolbar.archive"),
     Message::Archive(mail_id),
     false,
     false,
   ));
-  let (trash_label, trash_message) = if in_trash {
-    ("Delete", Message::Delete(mail_id))
-  } else {
-    ("Move to Trash", Message::Trash(mail_id))
-  };
-  row = row.push(toolbar_button(Icon::trash(), trash_label, trash_message, false, true));
+  row = row.push(toolbar_button(Icon::trash(), &trash_label, trash_message, false, true));
   row = row.push(Space::new().width(Length::Fill));
   row = row.push(timestamp_stamp(render.mail.header.timestamp().clone()));
 
@@ -252,7 +263,7 @@ fn subject(mail: &MailRender) -> Element<'_, Message> {
     .subject()
     .clone()
     .filter(|s| !s.trim().is_empty())
-    .unwrap_or_else(|| "(no subject)".to_owned());
+    .unwrap_or_else(|| t!("mail.reading.no_subject").into_owned());
 
   container(
     text(subject)
@@ -281,7 +292,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
   let to_line = {
     let mut row = Row::new().spacing(spacing::UNIT).align_y(Vertical::Center);
     row = row.push(
-      text("to ")
+      text(t!("mail.reading.to"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS_PLUS)
         .style(|_| text::Style {
@@ -298,7 +309,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
     );
     if is_system {
       row = row.push(
-        text(" · System message")
+        text(t!("mail.reading.system_message"))
           .font(typography::mono::REGULAR)
           .size(typography::size::XS_PLUS)
           .style(|_| text::Style {
@@ -354,7 +365,7 @@ fn sender_block(render: &ReadingRender) -> Element<'_, Message> {
 
 fn recipients_label(mail: &MailRender) -> String {
   if mail.recipients_display.trim().is_empty() {
-    "me".to_owned()
+    t!("mail.reading.recipients_self").into_owned()
   } else {
     mail.recipients_display.clone()
   }
@@ -427,7 +438,7 @@ fn body_paragraphs(mail: &MailRender) -> Element<'_, Message> {
   let spans = parse_stored_body(mail.body.body());
 
   if spans.iter().all(|s| s.text.trim().is_empty()) {
-    return text("(no content)")
+    return text(t!("mail.reading.no_content"))
       .size(BODY_SIZE)
       .style(|_| text::Style {
         color: Some(color::text::secondary()),

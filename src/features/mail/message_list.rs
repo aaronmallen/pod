@@ -69,9 +69,9 @@ pub enum DayBucket {
 impl DayBucket {
   fn label(self) -> String {
     match self {
-      DayBucket::Today => "Today".to_owned(),
-      DayBucket::Yesterday => "Yesterday".to_owned(),
-      DayBucket::ThisMonth => "This Month".to_owned(),
+      DayBucket::Today => t!("mail.list.bucket.today").into_owned(),
+      DayBucket::Yesterday => t!("mail.list.bucket.yesterday").into_owned(),
+      DayBucket::ThisMonth => t!("mail.list.bucket.this_month").into_owned(),
       // `%B %Y` → "June 2026"; build a NaiveDate on the 1st of the month purely to format it.
       DayBucket::Month {
         year,
@@ -494,7 +494,7 @@ async fn overlay_folder_ids(db: &Database, character_id: i64, standard_folder: S
 
 fn subject_or_no_subject(subject: &str) -> String {
   if subject.trim().is_empty() {
-    "(no subject)".to_owned()
+    t!("mail.list.no_subject").into_owned()
   } else {
     subject.to_owned()
   }
@@ -608,7 +608,7 @@ fn draft_pane(state: &State, width: f32) -> Element<'_, Message> {
   let drafts = state.drafts();
 
   let body: Element<'_, Message> = if drafts.is_empty() {
-    shared_empty_state("No drafts.").render()
+    shared_empty_state(super::tr_static("mail.list.no_drafts")).render()
   } else {
     let rows = drafts.iter().map(draft_row).collect::<Vec<_>>();
     scrollable(Column::with_children(rows).width(Length::Fill))
@@ -735,13 +735,17 @@ fn flatten_rows(rows: &[MessageRow]) -> Vec<ListItem<'_>> {
 }
 
 fn search_box(query: &str) -> Element<'_, Message> {
-  let field = TextInput::new("Search mail", query, Message::SearchChanged)
-    .input_id(crate::features::shell::focus_search::mail_search_id())
-    .leading_icon(Icon::search())
-    .icon_size(16.0)
-    .icon_spacing(spacing::SPACE_2_5)
-    .width(Length::Fill)
-    .render();
+  let field = TextInput::new(
+    super::tr_static("mail.list.search_placeholder"),
+    query,
+    Message::SearchChanged,
+  )
+  .input_id(crate::features::shell::focus_search::mail_search_id())
+  .leading_icon(Icon::search())
+  .icon_size(16.0)
+  .icon_spacing(spacing::SPACE_2_5)
+  .width(Length::Fill)
+  .render();
 
   let field = container(field).width(Length::Fill).padding(Padding {
     top: spacing::SPACE_2,
@@ -957,12 +961,13 @@ fn attachment_indicator<'a>() -> Element<'a, Message> {
 }
 
 fn empty_state(query: &str) -> Element<'_, Message> {
-  let state = if query.trim().is_empty() {
-    shared_empty_state("No messages.")
+  if query.trim().is_empty() {
+    shared_empty_state(super::tr_static("mail.list.no_messages")).render()
   } else {
-    shared_empty_state("No messages match this search.").subtitle(query)
-  };
-  state.render()
+    shared_empty_state(super::tr_static("mail.list.no_search_results"))
+      .subtitle(query)
+      .render()
+  }
 }
 
 fn right_rule<'a>() -> Element<'a, Message> {

@@ -122,22 +122,24 @@ pub enum Preset {
 }
 
 impl Preset {
-  pub(super) fn label(self) -> &'static str {
+  pub(super) fn label(self) -> String {
     match self {
-      Preset::LaterToday => "Later today",
-      Preset::Tomorrow => "Tomorrow",
-      Preset::ThisWeekend => "This weekend",
-      Preset::NextWeek => "Next week",
+      Preset::LaterToday => t!("mail.snooze.preset.later_today"),
+      Preset::Tomorrow => t!("mail.snooze.preset.tomorrow"),
+      Preset::ThisWeekend => t!("mail.snooze.preset.this_weekend"),
+      Preset::NextWeek => t!("mail.snooze.preset.next_week"),
     }
+    .into_owned()
   }
 
-  pub(super) fn hint(self) -> &'static str {
+  pub(super) fn hint(self) -> String {
     match self {
-      Preset::LaterToday => "18:00 EVE",
-      Preset::Tomorrow => "09:00 EVE",
-      Preset::ThisWeekend => "Sat 09:00",
-      Preset::NextWeek => "Mon 09:00",
+      Preset::LaterToday => t!("mail.snooze.preset.later_today_hint"),
+      Preset::Tomorrow => t!("mail.snooze.preset.tomorrow_hint"),
+      Preset::ThisWeekend => t!("mail.snooze.preset.this_weekend_hint"),
+      Preset::NextWeek => t!("mail.snooze.preset.next_week_hint"),
     }
+    .into_owned()
   }
 
   pub(super) fn all() -> [Preset; 4] {
@@ -299,16 +301,24 @@ pub(super) fn month_name(month0: u32) -> &'static str {
 pub(super) fn presets_menu<'a>(is_snoozed: bool, selected: Option<i64>) -> Element<'a, Message> {
   let mut column = Column::new()
     .spacing(spacing::UNIT / 2.0)
-    .push(menu_header("Snooze until"));
+    .push(menu_header(&t!("mail.snooze.snooze_until")));
 
   for preset in Preset::all() {
     column = column.push(preset_row(preset, selected.is_some()));
   }
 
   column = column.push(menu_divider());
-  column = column.push(action_row("Pick date & time…", Message::SnoozeCalendarOpened, false));
+  column = column.push(action_row(
+    &t!("mail.snooze.pick_date"),
+    Message::SnoozeCalendarOpened,
+    false,
+  ));
   if is_snoozed && let Some(mail_id) = selected {
-    column = column.push(action_row("Unsnooze", Message::Unsnooze(mail_id), true));
+    column = column.push(action_row(
+      &t!("mail.snooze.unsnooze"),
+      Message::Unsnooze(mail_id),
+      true,
+    ));
   }
 
   menu_panel(column.into(), MENU_WIDTH)
@@ -471,7 +481,7 @@ fn day_cell<'a>(cell: DayCell, selected: bool) -> Element<'a, Message> {
 
 fn time_stepper(cal: &Calendar) -> Element<'_, Message> {
   let block = Row::with_children(vec![
-    eyebrow_text("TIME", None).width(Length::Fill).into(),
+    eyebrow_text(&t!("mail.snooze.time"), None).width(Length::Fill).into(),
     stepper(cal.hour, Message::SnoozeCalendarHourUp, Message::SnoozeCalendarHourDown),
     text(":")
       .font(typography::mono::REGULAR)
@@ -555,10 +565,10 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
         cal.minute
       )
     })
-    .unwrap_or_else(|| "—".to_owned());
+    .unwrap_or_else(|| t!("mail.snooze.empty_summary").into_owned());
 
   let summary = Column::with_children(vec![
-    eyebrow_text("SNOOZE UNTIL", Some(color::text::tertiary())).into(),
+    eyebrow_text(&t!("mail.snooze.summary_eyebrow"), Some(color::text::tertiary())).into(),
     text(resolved)
       .font(typography::mono::REGULAR)
       .size(typography::size::MD)
@@ -572,8 +582,8 @@ fn footer(cal: &Calendar) -> Element<'_, Message> {
 
   let row = Row::with_children(vec![
     summary.into(),
-    footer_button("Back", Message::SnoozeCalendarBack, false),
-    footer_button("Snooze", Message::SnoozeCalendarConfirmed, true),
+    footer_button(&t!("mail.snooze.back"), Message::SnoozeCalendarBack, false),
+    footer_button(&t!("mail.snooze.confirm"), Message::SnoozeCalendarConfirmed, true),
   ])
   .spacing(spacing::SPACE_2)
   .align_y(Vertical::Center);
@@ -643,7 +653,7 @@ fn nav_button<'a>(icon: Icon, message: Message) -> Element<'a, Message> {
 
 fn eve_tag<'a>() -> Element<'a, Message> {
   container(
-    text("EVE")
+    text(t!("mail.snooze.eve"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {

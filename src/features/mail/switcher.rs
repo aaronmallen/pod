@@ -19,14 +19,14 @@ fn trigger_content(state: &State) -> Element<'_, Message> {
   let (title, subtitle, portrait) = match state.roster().iter().find(|pilot| pilot.id == id) {
     Some(pilot) => (
       pilot.name.clone(),
-      format!("{} unread", pilot.unread),
+      t!("mail.switcher.character_unread", count => pilot.unread).into_owned(),
       Some(TriggerPortrait {
         id: pilot.id,
         name: pilot.name.clone(),
         path: pilot.portrait.path(),
       }),
     ),
-    None => ("Mail".to_owned(), String::new(), None),
+    None => (t!("mail.switcher.fallback").into_owned(), String::new(), None),
   };
 
   trigger_identity(title, subtitle, portrait)
@@ -37,7 +37,7 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
 
   if !state.roster().is_empty() {
     groups.push(PickerGroup {
-      title: Some(format!("Switch character · {} unread", state.unified_unread())),
+      title: Some(t!("mail.switcher.switch_character", count => state.unified_unread()).into_owned()),
       items: state.roster().iter().map(|pilot| character_row(state, pilot)).collect(),
     });
   }
@@ -47,7 +47,7 @@ pub(super) fn dropdown(state: &State) -> Element<'_, Message> {
 
 fn character_row<'a>(state: &'a State, pilot: &'a RosterPilot) -> Element<'a, Message> {
   let sub = if pilot.unread > 0 {
-    format!("{}  ·  {} unread", pilot.corp, pilot.unread)
+    t!("mail.switcher.row_unread", corp => pilot.corp, count => pilot.unread).into_owned()
   } else {
     pilot.corp.clone()
   };

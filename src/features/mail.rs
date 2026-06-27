@@ -43,6 +43,29 @@ use crate::{
   },
 };
 
+/// Resolves an i18n key to a process-lifetime `&'static str`.
+///
+/// The active locale is fixed for the run, so each key's localized value is interned once and
+/// handed back as `&'static str`. This lets borrowing widgets (`text_input`, `MultiSelect`, the
+/// shared `empty_state`) carry a localized placeholder/title whose lifetime outlives the rendered
+/// element without threading owned strings through every render helper.
+pub(super) fn tr_static(key: &'static str) -> &'static str {
+  use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+  };
+
+  static INTERNED: OnceLock<Mutex<HashMap<&'static str, &'static str>>> = OnceLock::new();
+  let cache = INTERNED.get_or_init(|| Mutex::new(HashMap::new()));
+  let mut guard = cache.lock().expect("mail i18n intern cache poisoned");
+  if let Some(value) = guard.get(key) {
+    return value;
+  }
+  let leaked: &'static str = Box::leak(t!(key).into_owned().into_boxed_str());
+  guard.insert(key, leaked);
+  leaked
+}
+
 pub const FOLDER_PANE_KEY: &str = "mail.folder";
 
 pub const MESSAGE_LIST_PANE_KEY: &str = "mail.message_list";

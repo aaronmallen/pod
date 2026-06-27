@@ -294,13 +294,13 @@ fn toggled_set(current: &[i64], label_id: i64) -> Vec<i64> {
 }
 
 pub(super) fn create_modal(draft: &LabelDraft) -> Element<'_, Message> {
-  let eyebrow = text("Mail label")
+  let eyebrow = text(t!("mail.labels.eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
       color: Some(color::text::tertiary()),
     });
-  let title = text("New label")
+  let title = text(t!("mail.labels.new"))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(|_| text::Style {
@@ -333,15 +333,19 @@ pub(super) fn create_modal(draft: &LabelDraft) -> Element<'_, Message> {
     right: MODAL_SIDE_PAD,
   });
 
-  let name_label = field_label("Name");
-  let name_input = TextInput::new("e.g. Coalition", &draft.name, Message::LabelNameChanged)
-    .background(color::surface::SUNKEN)
-    .font_size(typography::size::MD)
-    .on_submit(Message::LabelModalSubmitted)
-    .width(Length::Fill)
-    .render();
+  let name_label = field_label(&t!("mail.labels.name"));
+  let name_input = TextInput::new(
+    super::tr_static("mail.labels.name_placeholder"),
+    &draft.name,
+    Message::LabelNameChanged,
+  )
+  .background(color::surface::SUNKEN)
+  .font_size(typography::size::MD)
+  .on_submit(Message::LabelModalSubmitted)
+  .width(Length::Fill)
+  .render();
   let color_label = Row::with_children(vec![
-    field_label("Color"),
+    field_label(&t!("mail.labels.color")),
     Space::new().width(Length::Fill).into(),
     text(draft.color.to_uppercase())
       .font(typography::mono::REGULAR)
@@ -429,7 +433,7 @@ fn footer_row(draft: &LabelDraft) -> Element<'_, Message> {
   let preview = Row::with_children(vec![
     swatch(Some(draft.color.as_str())),
     text(if preview_name.is_empty() {
-      "Label preview".to_owned()
+      t!("mail.labels.preview").into_owned()
     } else {
       preview_name.to_owned()
     })
@@ -447,13 +451,17 @@ fn footer_row(draft: &LabelDraft) -> Element<'_, Message> {
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(Message::LabelModalClosed)
-    .style(control::ghost_button);
+  let cancel = button(
+    text(t!("mail.labels.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(Message::LabelModalClosed)
+  .style(control::ghost_button);
 
   let mut create = button(
-    text("Create label")
+    text(t!("mail.labels.create"))
       .font(typography::body::MEDIUM)
       .size(typography::size::MD),
   )
@@ -474,7 +482,7 @@ pub(super) fn toggle_picker<'a>(mail_id: i64, labels: &'a [FolderLabel], applied
   if labels.is_empty() {
     list = list.push(
       container(
-        text("No labels yet.")
+        text(t!("mail.labels.no_labels"))
           .size(typography::size::SM)
           .style(|_| text::Style {
             color: Some(color::text::tertiary()),
@@ -504,7 +512,7 @@ pub(super) fn toggle_picker<'a>(mail_id: i64, labels: &'a [FolderLabel], applied
         .size(13.0)
         .color(color::text::secondary())
         .render::<Message>(),
-      text("New label\u{2026}")
+      text(t!("mail.labels.new_label"))
         .size(typography::size::MD)
         .style(|_| text::Style {
           color: Some(color::text::secondary()),
@@ -525,7 +533,7 @@ pub(super) fn toggle_picker<'a>(mail_id: i64, labels: &'a [FolderLabel], applied
   .style(|_, status| picker_row_style(false, status));
 
   let body = Column::with_children(vec![
-    picker_header("Apply labels"),
+    picker_header(&t!("mail.labels.apply_header")),
     container(scroll)
       .max_height(PICKER_MAX_HEIGHT)
       .width(Length::Fill)

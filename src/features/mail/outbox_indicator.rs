@@ -17,11 +17,14 @@ pub(super) fn indicator(state: &OutboxIndicator) -> Option<Element<'_, Message>>
 
   let mut counts = Row::new().spacing(spacing::SPACE_2_5).align_y(Vertical::Center);
   if state.pending > 0 {
-    counts = counts.push(badge(format!("{} sending", state.pending), None));
+    counts = counts.push(badge(
+      t!("mail.outbox.sending", count => state.pending).into_owned(),
+      None,
+    ));
   }
   if !state.failed.is_empty() {
     counts = counts.push(badge(
-      format!("{} failed", state.failed.len()),
+      t!("mail.outbox.failed", count => state.failed.len()).into_owned(),
       Some(color::status::DANGER),
     ));
   }
@@ -63,17 +66,17 @@ fn failure_row(id: i64, last_error: &str) -> Element<'_, Message> {
 
   Row::with_children(vec![
     error.into(),
-    action("Retry", Message::OutboxRetry(id)),
-    action("Dismiss", Message::OutboxDismiss(id)),
+    action(t!("mail.outbox.retry"), Message::OutboxRetry(id)),
+    action(t!("mail.outbox.dismiss"), Message::OutboxDismiss(id)),
   ])
   .spacing(spacing::SPACE_2_5)
   .align_y(Vertical::Center)
   .into()
 }
 
-fn action(label: &str, message: Message) -> Element<'_, Message> {
+fn action<'a>(label: impl text::IntoFragment<'a>, message: Message) -> Element<'a, Message> {
   let pill = container(
-    text(label.to_owned())
+    text(label)
       .size(typography::size::SM)
       .font(typography::body::MEDIUM)
       .style(|_| text::Style {

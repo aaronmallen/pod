@@ -301,7 +301,7 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     };
 
     let header = Row::with_children(vec![
-      text("Facilities")
+      text(t!("common.facility_combobox.title"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -327,11 +327,11 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
 
     let list: Element<'a, M> = if rows.is_empty() {
       centered(status_label(if searching {
-        "Searching\u{2026}"
+        t!("common.facility_combobox.searching")
       } else if searchable(query) {
-        "No facilities found."
+        t!("common.facility_combobox.no_results")
       } else {
-        "Type to search stations & structures."
+        t!("common.facility_combobox.type_to_search")
       }))
     } else {
       scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
@@ -378,7 +378,7 @@ fn centered<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
 fn cost_index_block<'a, M: 'a>(cost_index: Option<f64>) -> Element<'a, M> {
   let pct = cost_index.unwrap_or(0.0) * 100.0;
   Column::with_children(vec![
-    text("COST INDEX")
+    text(t!("common.facility_combobox.cost_index"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary()))
@@ -408,7 +408,7 @@ fn empty_card<'a, M: 'a>(placeholder: &str) -> Element<'a, M> {
 
 fn footer<'a, M: Clone + 'a>(on_clear: M) -> Element<'a, M> {
   button(
-    text("Clear \u{2192} Ask each install")
+    text(t!("common.facility_combobox.clear"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary())),
@@ -536,7 +536,7 @@ fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
     return Space::new().into();
   };
   let (label, band) = if sec <= -0.9 {
-    ("J-space".to_owned(), WORMHOLE)
+    (t!("common.facility_combobox.jspace").into_owned(), WORMHOLE)
   } else if sec <= 0.0 {
     (format!("{sec:.1}"), color::status::DANGER)
   } else if sec < 0.5 {
@@ -598,8 +598,8 @@ fn selected_card<'a, M: 'a>(facility: &FacilityRef) -> Element<'a, M> {
     .into()
 }
 
-fn status_label<'a, M: 'a>(label: &str) -> Element<'a, M> {
-  text(label.to_owned())
+fn status_label<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M> {
+  text(label)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::tertiary()))

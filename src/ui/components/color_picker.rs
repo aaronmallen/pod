@@ -204,7 +204,7 @@ where
     })
     .collect();
 
-  let footer = text(format!("{} colors permitted by ESI", LABEL_COLORS.len()))
+  let footer = text(t!("common.color_picker.permitted", count => LABEL_COLORS.len()))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -242,7 +242,7 @@ where
   M: Clone + 'a,
 {
   button(
-    text("Clear color")
+    text(t!("common.color_picker.clear"))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .width(Length::Fill),
@@ -296,7 +296,7 @@ fn hex_entry<'a, M>(
 where
   M: Clone + 'a,
 {
-  let label = text("HEX")
+  let label = text(t!("common.color_picker.hex_label"))
     .font(typography::mono::REGULAR)
     .size(typography::size::SM)
     .style(|_| text::Style {
@@ -415,7 +415,7 @@ fn popover_header<'a, M>() -> Element<'a, M>
 where
   M: 'a,
 {
-  text("PICK A COLOR")
+  text(t!("common.color_picker.title"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {

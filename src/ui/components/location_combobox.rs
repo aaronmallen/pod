@@ -297,7 +297,7 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
     };
 
     let header = Row::with_children(vec![
-      text("Locations")
+      text(t!("common.location_combobox.title"))
         .font(typography::body::MEDIUM)
         .size(typography::size::SM)
         .style(typography::colored(color::text::secondary()))
@@ -323,11 +323,11 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
 
     let list: Element<'a, M> = if rows.is_empty() {
       centered(status_label(if searching {
-        "Searching\u{2026}"
+        t!("common.location_combobox.searching")
       } else if searchable(query) {
-        "No locations found."
+        t!("common.location_combobox.no_results")
       } else {
-        "Type to search any location."
+        t!("common.location_combobox.type_to_search")
       }))
     } else {
       scrollable(Column::with_children(rows).spacing(spacing::UNIT).width(Length::Fill))
@@ -394,7 +394,7 @@ fn empty_card<'a, M: 'a>(placeholder: &str) -> Element<'a, M> {
 
 fn footer<'a, M: Clone + 'a>(on_clear: M) -> Element<'a, M> {
   button(
-    text("Clear selection")
+    text(t!("common.action.clear_selection"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(typography::colored(color::text::secondary())),
@@ -496,7 +496,7 @@ fn sec_pill<'a, M: 'a>(tier: Option<LocationTier>, security_status: Option<f64>)
   }
   let sec = security_status?;
   let (label, band) = if sec <= -0.9 {
-    ("J-space".to_owned(), WORMHOLE)
+    (t!("common.location_combobox.jspace").into_owned(), WORMHOLE)
   } else if sec <= 0.0 {
     (format!("{sec:.1}"), color::status::DANGER)
   } else if sec < 0.5 {
@@ -560,8 +560,8 @@ fn selected_card<'a, M: 'a>(location: &LocationRef) -> Element<'a, M> {
   details.into()
 }
 
-fn status_label<'a, M: 'a>(label: &str) -> Element<'a, M> {
-  text(label.to_owned())
+fn status_label<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M> {
+  text(label)
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::tertiary()))

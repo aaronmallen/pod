@@ -109,7 +109,7 @@ where
   } else {
     color::status::WARNING
   };
-  mono_text(format!("\u{26a0} {attention} need attention"), fill)
+  mono_text(t!("common.sync_chip.attention", count => attention).into_owned(), fill)
 }
 
 fn catching_up_label<'a, M>(left: usize) -> Element<'a, M>
@@ -117,7 +117,7 @@ where
   M: 'a,
 {
   mono_text(
-    format!("\u{27f3} Catching up\u{2026} {left} left"),
+    t!("common.sync_chip.catching_up", count => left).into_owned(),
     color::accent::PLASMA,
   )
 }
@@ -140,8 +140,8 @@ where
   M: 'a,
 {
   let content = match hostname {
-    Some(hostname) => format!("Read-only \u{2014} open on {hostname}"),
-    None => "Read-only".to_owned(),
+    Some(hostname) => t!("common.sync_chip.read_only_host", hostname => hostname).into_owned(),
+    None => t!("common.sync_chip.read_only").into_owned(),
   };
   mono_text(content, color::status::WARNING)
 }
@@ -150,14 +150,14 @@ fn stopped_label<'a, M>() -> Element<'a, M>
 where
   M: 'a,
 {
-  mono_text("Sync stopped", color::status::DANGER)
+  mono_text(t!("common.sync_chip.stopped"), color::status::DANGER)
 }
 
 fn up_to_date_label<'a, M>(state: &State) -> Element<'a, M>
 where
   M: 'a,
 {
-  let headline = mono_text("Up to date", color::status::ONLINE);
+  let headline = mono_text(t!("common.sync_chip.up_to_date"), color::status::ONLINE);
   // The quiet last-sync time is a steady aside: it only appears once everything has truly settled,
   // so a routine mid-refresh never decorates the calm headline with a churning timestamp.
   match state.last_synced_secs {

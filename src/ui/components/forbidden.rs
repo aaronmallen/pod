@@ -40,14 +40,14 @@ pub fn forbidden<'a, M: Clone + 'static>(
       ..container::Style::default()
     });
 
-  let eyebrow = text("ESI 403 \u{00B7} FORBIDDEN")
+  let eyebrow = text(t!("common.forbidden.eyebrow"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
       color: Some(color::status::WARNING),
     });
 
-  let heading = text(format!("{noun} access not authorized"))
+  let heading = text(t!("common.forbidden.heading", noun => noun))
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
     .style(|_| text::Style {
@@ -85,7 +85,7 @@ pub fn forbidden<'a, M: Clone + 'static>(
   children.push(reauth_button(character_name, on_reauth));
   children.push(Space::new().height(Length::Fixed(spacing::SPACE_3)).into());
   children.push(
-    text("OPENS EVE ONLINE SSO \u{00B7} LOGIN.EVEONLINE.COM")
+    text(t!("common.forbidden.sso_hint"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -122,15 +122,13 @@ pub fn missing_scopes<'a>(granted: Option<&str>, required: &[&'a str]) -> Vec<&'
 }
 
 fn forbidden_copy(character_name: &str, lowered: &str) -> String {
-  let lead = format!("Pod doesn\u{2019}t have permission to read {character_name}\u{2019}s {lowered}.");
-  let context = format!("This character was authorized before the {lowered} feature existed.");
-  format!("{lead} {context} Re-authenticate to grant the missing scope.")
+  t!("common.forbidden.body", character_name => character_name, noun => lowered).into_owned()
 }
 
 fn reauth_button<'a, M: Clone + 'static>(character_name: &str, on_reauth: M) -> Element<'a, M> {
   let label = Row::with_children(vec![
     Icon::characters().color(color::surface::BASE).size(13.0).render::<M>(),
-    text(format!("Re-authenticate {character_name}"))
+    text(t!("common.forbidden.reauth", character_name => character_name))
       .font(typography::body::MEDIUM)
       .size(typography::size::SM)
       .style(|_| text::Style {
@@ -212,7 +210,7 @@ fn scope_chip<'a, M: 'a>(scope: &str) -> Element<'a, M> {
 }
 
 fn scopes_section<'a, M: 'a>(missing: &[&str]) -> Element<'a, M> {
-  let eyebrow = text("SCOPES REQUESTED")
+  let eyebrow = text(t!("common.forbidden.scopes_requested"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {

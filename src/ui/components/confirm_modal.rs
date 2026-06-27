@@ -56,10 +56,14 @@ where
         left: HEADER_PAD_X,
       });
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(control::padding())
-    .on_press(on_cancel)
-    .style(control::ghost_button);
+  let cancel = button(
+    text(t!("common.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::MD),
+  )
+  .padding(control::padding())
+  .on_press(on_cancel)
+  .style(control::ghost_button);
   let confirm = button(
     text(confirm_label)
       .font(typography::body::MEDIUM)

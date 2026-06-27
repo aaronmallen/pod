@@ -14,7 +14,7 @@ where
   let clock = now.format("%H:%M:%S").to_string();
 
   Row::with_children(vec![
-    text("EVE")
+    text(t!("common.eve_time.label"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {

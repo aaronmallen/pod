@@ -111,7 +111,7 @@ where
   M: 'a,
 {
   let titles = Column::with_children(vec![
-    text("Add tag")
+    text(t!("common.add_tag_modal.title"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -167,7 +167,7 @@ where
     })
     .collect();
 
-  let label = text("Current tags")
+  let label = text(t!("common.add_tag_modal.current_tags"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
@@ -201,7 +201,7 @@ where
   let entity_id = modal.entity_id;
   let entity_type = modal.entity_type;
   let on_change = on_message.clone();
-  let input = text_input("Search or create a tag…", &modal.input)
+  let input = text_input("Search or create a tag\u{2026}", &modal.input)
     .size(typography::size::MD)
     .padding(Padding {
       top: INPUT_WELL_PAD_Y,
@@ -285,7 +285,7 @@ where
   M: Clone + 'a,
 {
   let label = Row::with_children(vec![
-    text("Tag")
+    text(t!("common.add_tag_modal.tag"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -330,14 +330,14 @@ where
   M: Clone + 'a,
 {
   let label = Row::with_children(vec![
-    text("New")
+    text(t!("common.add_tag_modal.new"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
         color: Some(color::accent::PLASMA),
       })
       .into(),
-    text(format!("Create \u{201C}{input}\u{201D}"))
+    text(t!("common.add_tag_modal.create", name => input))
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {
@@ -369,9 +369,9 @@ where
   M: 'a,
 {
   let copy = if nothing_assignable {
-    "All tags already assigned"
+    t!("common.add_tag_modal.all_assigned")
   } else {
-    "Type to create a new tag"
+    t!("common.add_tag_modal.type_to_create")
   };
 
   container(
@@ -392,17 +392,21 @@ fn footer<'a, M>(on_message: impl Fn(AddTagMessage) -> M + 'a) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
-  let hint = text("Click a tag to add it · remove from Current tags")
+  let hint = text(t!("common.add_tag_modal.footer_hint"))
     .font(typography::mono::REGULAR)
     .size(typography::size::XS)
     .style(|_| text::Style {
       color: Some(color::text::tertiary()),
     });
 
-  let cancel = button(text("Cancel").font(typography::body::MEDIUM).size(typography::size::SM))
-    .padding(crate::ui::style::control::padding())
-    .on_press(on_message(AddTagMessage::Close))
-    .style(crate::ui::style::control::ghost_button);
+  let cancel = button(
+    text(t!("common.add_tag_modal.cancel"))
+      .font(typography::body::MEDIUM)
+      .size(typography::size::SM),
+  )
+  .padding(crate::ui::style::control::padding())
+  .on_press(on_message(AddTagMessage::Close))
+  .style(crate::ui::style::control::ghost_button);
 
   let row = Row::with_children(vec![
     container(hint).align_y(Vertical::Center).into(),

@@ -368,7 +368,7 @@ where
   M: 'a,
 {
   container(
-    text("No sub-sections")
+    text(t!("common.rail.no_sub_sections"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(typography::colored(color::text::tertiary())),

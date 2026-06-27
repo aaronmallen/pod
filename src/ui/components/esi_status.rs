@@ -22,7 +22,7 @@ where
   container(
     Row::with_children(vec![
       dot(dot_color),
-      text("ESI")
+      text(t!("common.esi_status.label"))
         .font(typography::mono::REGULAR)
         .size(typography::size::XS)
         .style(|_| text::Style {

@@ -363,7 +363,7 @@ fn chosen_card<'a, M: Clone + 'static>(value: &'a EntityRef, on_clear: M) -> Ele
   .width(Length::Fill);
 
   let change = button(
-    text("Change")
+    text(t!("common.action.change"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS)
       .style(|_| text::Style {
@@ -431,7 +431,7 @@ fn dropdown<'a, M: Clone + 'static>(
 
   if matches.is_empty() {
     if searching {
-      return wrap_dropdown(status_row("Searching\u{2026}"));
+      return wrap_dropdown(status_row(t!("common.entity_search.searching")));
     }
     // Suppress the dropdown entirely until the query is long enough to search; only a real, completed search that
     // returned nothing surfaces "No matches", so the resting/just-opened picker shows no stray empty panel.
@@ -565,7 +565,7 @@ fn field<'a, M: 'a>(content: Element<'a, M>, focused: bool) -> Element<'a, M> {
 
 fn no_matches<'a, M: 'a>() -> Element<'a, M> {
   container(
-    text("No matches")
+    text(t!("common.entity_search.no_matches"))
       .font(typography::mono::REGULAR)
       .size(typography::size::XS_PLUS)
       .style(|_| text::Style {
@@ -618,9 +618,9 @@ fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
-fn status_row<'a, M: 'a>(label: &str) -> Element<'a, M> {
+fn status_row<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M> {
   container(
-    text(label.to_owned())
+    text(label)
       .font(typography::body::REGULAR)
       .size(typography::size::MD)
       .style(|_| text::Style {

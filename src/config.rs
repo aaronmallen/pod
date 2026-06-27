@@ -9,6 +9,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+  i18n::Language,
   store::fs_kind::{self, FsKind},
   ui::components::rail::Destination,
 };
@@ -17,12 +18,15 @@ const EVE_CLIENT_ID: &str = "d2de5275730e40da8c15149c464b9c39";
 const WORKING_COPY_DB_NAME: &str = "pod.db";
 const WORKING_COPY_SUBDIR: &str = "db";
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
+#[derive(Clone, Copy, CopyGetters, Debug, Deserialize, Eq, Getters, PartialEq, Serialize, Setters)]
 #[getset(set = "pub")]
 pub struct AccessibilityConfig {
   #[getset(get = "pub")]
   #[serde(default, skip_serializing_if = "is_not_high_contrast")]
   high_contrast: bool,
+  #[getset(get_copy = "pub")]
+  #[serde(default, skip_serializing_if = "is_default_language")]
+  language: Language,
   #[getset(get = "pub")]
   #[serde(default = "default_scale_100", skip_serializing_if = "is_default_scale")]
   scale: u8,
@@ -38,6 +42,7 @@ impl Default for AccessibilityConfig {
   fn default() -> Self {
     Self {
       high_contrast: false,
+      language: Language::EnUs,
       scale: default_scale_100(),
     }
   }
@@ -994,6 +999,10 @@ fn generate_machine_id() -> String {
   )
 }
 
+fn is_default_language(language: &Language) -> bool {
+  *language == Language::default()
+}
+
 fn is_default_scale(scale: &u8) -> bool {
   *scale == default_scale_100()
 }
@@ -1383,6 +1392,29 @@ mod tests {
 
       assert_eq!(*accessibility.scale(), 100);
       assert!(!accessibility.high_contrast());
+      assert_eq!(accessibility.language(), Language::EnUs);
+    }
+
+    #[test]
+    fn it_defaults_the_language_when_the_accessibility_table_omits_it() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[accessibility]\nscale = 125\n").unwrap();
+
+      let accessibility = load_from(&path).unwrap().accessibility().to_owned();
+
+      assert_eq!(accessibility.language(), Language::EnUs);
+    }
+
+    #[test]
+    fn it_reads_a_language_override() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("config.toml");
+      std::fs::write(&path, "[accessibility]\nlanguage = \"de\"\n").unwrap();
+
+      let accessibility = load_from(&path).unwrap().accessibility().to_owned();
+
+      assert_eq!(accessibility.language(), Language::De);
     }
 
     #[test]
@@ -2163,6 +2195,25 @@ mod tests {
         !toml.contains("high_contrast"),
         "a default high_contrast must not leak to disk: {toml}"
       );
+      assert!(
+        !toml.contains("language"),
+        "a default (en-us) language must not leak to disk: {toml}"
+      );
+    }
+
+    #[test]
+    fn a_non_default_language_round_trips_through_toml() {
+      let mut accessibility = AccessibilityConfig::default();
+      accessibility.set_language(Language::De);
+
+      let toml = toml::to_string_pretty(&accessibility).unwrap();
+      let restored: AccessibilityConfig = toml::from_str(&toml).unwrap();
+
+      assert!(
+        toml.contains("language = \"de\""),
+        "a non-default language must persist as its ESI code: {toml}"
+      );
+      assert_eq!(restored.language(), Language::De);
     }
 
     #[test]
@@ -2612,6 +2663,32 @@ mod tests {
         *merged.accessibility().scale(),
         150,
         "local override survives an archived default"
+      );
+    }
+
+    #[test]
+    fn it_restores_a_non_default_archived_language() {
+      let local = Settings::default();
+      let mut archived = Settings::default();
+      archived.accessibility.set_language(Language::De);
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(merged.accessibility().language(), Language::De);
+    }
+
+    #[test]
+    fn it_does_not_clobber_a_local_language_override_with_an_archived_en_us_default() {
+      let mut local = Settings::default();
+      local.accessibility.set_language(Language::Fr);
+      let archived = Settings::default(); // archived language is still the en-us default
+
+      let merged = merge_for_restore(&local, &archived);
+
+      assert_eq!(
+        merged.accessibility().language(),
+        Language::Fr,
+        "local language override survives an archived en-us default"
       );
     }
 

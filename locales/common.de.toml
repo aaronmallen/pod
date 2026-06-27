@@ -1,0 +1,68 @@
+[common]
+cancel = "Abbrechen"
+
+[common.action]
+change = "Ändern"
+clear_selection = "Auswahl aufheben"
+
+[common.add_tag_modal]
+all_assigned = "Alle Tags bereits zugewiesen"
+cancel = "Abbrechen"
+create = "„%{name}“ erstellen"
+current_tags = "Aktuelle Tags"
+footer_hint = "Auf einen Tag klicken, um ihn hinzuzufügen · aus aktuellen Tags entfernen"
+new = "Neu"
+tag = "Tag"
+title = "Tag hinzufügen"
+type_to_create = "Tippen, um einen neuen Tag zu erstellen"
+
+[common.color_picker]
+clear = "Farbe entfernen"
+hex_label = "HEX"
+permitted = "%{count} von ESI erlaubte Farben"
+title = "FARBE WÄHLEN"
+
+[common.entity_search]
+no_matches = "Keine Treffer"
+searching = "Suche…"
+
+[common.esi_status]
+label = "ESI"
+
+[common.eve_time]
+label = "EVE"
+
+[common.facility_combobox]
+clear = "Leeren → Bei jeder Installation fragen"
+cost_index = "KOSTENINDEX"
+jspace = "J-space"
+no_results = "Keine Anlagen gefunden."
+searching = "Suche…"
+title = "Anlagen"
+type_to_search = "Tippen, um Stationen & Strukturen zu suchen."
+
+[common.forbidden]
+body = "Pod hat keine Berechtigung, %{noun} von %{character_name} zu lesen. Dieser Charakter wurde autorisiert, bevor die Funktion %{noun} existierte. Authentifiziere dich erneut, um den fehlenden Bereich zu gewähren."
+eyebrow = "ESI 403 · VERBOTEN"
+heading = "Zugriff auf %{noun} nicht autorisiert"
+reauth = "%{character_name} erneut authentifizieren"
+scopes_requested = "ANGEFORDERTE BEREICHE"
+sso_hint = "ÖFFNET EVE ONLINE SSO · LOGIN.EVEONLINE.COM"
+
+[common.location_combobox]
+jspace = "J-space"
+no_results = "Keine Orte gefunden."
+searching = "Suche…"
+title = "Orte"
+type_to_search = "Tippen, um einen beliebigen Ort zu suchen."
+
+[common.rail]
+no_sub_sections = "Keine Unterabschnitte"
+
+[common.sync_chip]
+attention = "⚠ %{count} benötigen Aufmerksamkeit"
+catching_up = "⟳ Aktualisiere… %{count} verbleiben"
+read_only = "Nur lesen"
+read_only_host = "Nur lesen — auf %{hostname} öffnen"
+stopped = "Synchronisierung gestoppt"
+up_to_date = "Aktuell"

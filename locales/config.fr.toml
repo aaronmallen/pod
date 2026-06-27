@@ -1,0 +1,9 @@
+[config.cascade_mode]
+flyout = "Volet"
+none = "Désactivé"
+sub_rail = "Sous-rail"
+
+[config.log_level]
+normal = "Normal"
+quiet = "Discret"
+verbose = "Détaillé"

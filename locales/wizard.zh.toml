@@ -1,0 +1,87 @@
+[wizard.features]
+disable_all = "全部禁用"
+enable_all = "全部启用"
+eyebrow = "功能 · 第 %{current} 项，共 %{total} 项"
+on_count = "%{on}/%{total} 已开启"
+
+[wizard.finish]
+eyebrow = "完成"
+features_groups = "跨 %{count} 个分组"
+features_label = "已启用功能"
+language_label = "语言"
+lede = "Pod 已配置完毕，准备就绪。你的选择已保存到本机的偏好设置中 — 打开应用即可开始驾驶，或返回调整任何内容。"
+privacy_note = "这里的一切都可在应用的“设置”中找到。随时更改功能、路径、无障碍选项等。"
+storage_customized = "已自定义"
+storage_default = "默认"
+storage_label = "存储路径"
+title = "全部就绪"
+
+[wizard.language]
+card_label = "%{label}"
+eyebrow = "语言"
+lede = "Pod 以此语言向 EVE 的 ESI 请求物品名称、描述及其他本地化文本。这些是 ESI 本身支持的语言 — 你可以随时在“设置”中切换。"
+note = "Pod 自身的界面目前为英文；此设置控制 ESI 返回的本地化游戏数据（以 Accept-Language: %{code} 发送）。"
+title = "选择你的语言"
+
+[wizard.footer]
+back = "返回"
+continue_to_features = "继续到功能"
+continue_to_storage = "继续到存储"
+get_started = "开始"
+next = "继续"
+open = "打开 Pod"
+review = "检查并完成"
+skip = "跳过设置"
+
+[wizard.phase.features]
+label = "功能"
+sub = "%{count} 个分组"
+
+[wizard.phase.finish]
+label = "完成"
+sub = "启动 Pod"
+
+[wizard.phase.language]
+label = "语言"
+sub = "ESI 响应"
+
+[wizard.phase.storage]
+label = "存储"
+sub = "数据存放位置"
+
+[wizard.phase.welcome]
+label = "欢迎"
+sub = "开始使用"
+
+[wizard.rail]
+eyebrow = "Pod · 首次运行"
+features_count = "%{on}/%{total}"
+progress = "进度"
+step_counter = "%{current} / %{total}"
+title = "设置"
+
+[wizard.status]
+session = "首次运行设置"
+step = "步骤"
+step_counter = "%{current}/%{total}"
+
+[wizard.storage]
+all_defaults = "全部默认"
+customized_count = "%{total} 项中已自定义 %{count} 项"
+eyebrow = "存储"
+lede = "路径默认遵循平台惯例。更改它们可将 Pod 的数据放到不同的卷上，或在多个安装之间共享 — 这些都可以稍后在“设置”中调整。"
+title = "Pod 文件的存放位置"
+
+[wizard.welcome]
+eyebrow = "欢迎使用 POD"
+lede = "用两分钟的引导在驾驶前定制 Pod。我们将选择运行哪些功能以及 Pod 文件的存放位置 — 然后你就能直接进入应用。"
+point_features_desc = "在各功能分组中开启或关闭 Pod 的功能。所有功能默认开启 — 关掉你不需要的。"
+point_features_title = "选择你的功能"
+point_privacy_desc = "设置仅写入本地偏好。你可以稍后在“设置”中更改任何内容。"
+point_privacy_title = "没有任何内容离开你的机器"
+point_storage_desc = "将 Pod 的数据库、日志和缓存保留在默认卷上，或将它们指向共享位置。"
+point_storage_title = "选择数据存放位置"
+title = "让我们来设置一下"
+
+[wizard.window]
+title = "Pod — 首次设置"

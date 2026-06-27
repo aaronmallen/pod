@@ -1,0 +1,87 @@
+[wizard.features]
+disable_all = "Desactivar todo"
+enable_all = "Activar todo"
+eyebrow = "Funciones · %{current} de %{total}"
+on_count = "%{on}/%{total} activas"
+
+[wizard.finish]
+eyebrow = "Finalizar"
+features_groups = "en %{count} grupos"
+features_label = "Funciones activadas"
+language_label = "Idioma"
+lede = "Pod está configurado y listo. Tus elecciones se guardan en las preferencias de este equipo — abre la aplicación para empezar a volar, o retrocede para ajustar cualquier cosa."
+privacy_note = "Todo lo que hay aquí vive en Ajustes dentro de la aplicación. Cambia funciones, rutas, accesibilidad y más cuando quieras."
+storage_customized = "personalizado"
+storage_default = "Predeterminado"
+storage_label = "Rutas de almacenamiento"
+title = "Todo listo"
+
+[wizard.language]
+card_label = "%{label}"
+eyebrow = "Idioma"
+lede = "Pod solicita nombres de objetos, descripciones y otros textos localizados de la ESI de EVE en este idioma. Estos son los idiomas que la propia ESI admite — puedes cambiarlo en cualquier momento desde Ajustes."
+note = "La interfaz de Pod está en inglés por ahora; este ajuste controla los datos de juego localizados que devuelve la ESI (enviados como Accept-Language: %{code})."
+title = "Elige tu idioma"
+
+[wizard.footer]
+back = "Atrás"
+continue_to_features = "Continuar a Funciones"
+continue_to_storage = "Continuar a Almacenamiento"
+get_started = "Empezar"
+next = "Continuar"
+open = "Abrir Pod"
+review = "Revisar y finalizar"
+skip = "Omitir configuración"
+
+[wizard.phase.features]
+label = "Funciones"
+sub = "%{count} grupos"
+
+[wizard.phase.finish]
+label = "Finalizar"
+sub = "Iniciar Pod"
+
+[wizard.phase.language]
+label = "Idioma"
+sub = "Respuestas de ESI"
+
+[wizard.phase.storage]
+label = "Almacenamiento"
+sub = "Dónde viven los datos"
+
+[wizard.phase.welcome]
+label = "Bienvenida"
+sub = "Empezar"
+
+[wizard.rail]
+eyebrow = "Pod · Primer arranque"
+features_count = "%{on}/%{total}"
+progress = "Progreso"
+step_counter = "%{current} / %{total}"
+title = "Configuración"
+
+[wizard.status]
+session = "Configuración de primer arranque"
+step = "Paso"
+step_counter = "%{current}/%{total}"
+
+[wizard.storage]
+all_defaults = "Todo predeterminado"
+customized_count = "%{count} de %{total} personalizados"
+eyebrow = "Almacenamiento"
+lede = "Las rutas siguen las convenciones de la plataforma de forma predeterminada. Cámbialas para poner los datos de Pod en otro volumen o compartirlos entre instalaciones — puedes ajustar todo esto más tarde en Ajustes."
+title = "Dónde guarda Pod sus archivos"
+
+[wizard.welcome]
+eyebrow = "BIENVENIDO A POD"
+lede = "Un recorrido de dos minutos para adaptar Pod antes de volar. Elegiremos qué funciones se ejecutan y dónde guarda Pod sus archivos — y luego entras directo a la aplicación."
+point_features_desc = "Activa o desactiva las capacidades de Pod en los grupos de funciones. Todo empieza activado — recorta lo que no necesites."
+point_features_title = "Elige tus funciones"
+point_privacy_desc = "La configuración solo escribe en las preferencias locales. Puedes cambiar todo esto más tarde en Ajustes."
+point_privacy_title = "Nada sale de tu equipo"
+point_storage_desc = "Mantén la base de datos, los registros y la caché de Pod en el volumen predeterminado, o apúntalos a algún lugar compartido."
+point_storage_title = "Elige dónde viven los datos"
+title = "Vamos a configurarte"
+
+[wizard.window]
+title = "Pod — Configuración inicial"

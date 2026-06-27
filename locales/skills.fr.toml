@@ -1,0 +1,298 @@
+[skills.compare_header]
+add_pilot = "AJOUTER UN PILOTE"
+compare = "Comparer"
+no_matches = "Aucune correspondance"
+pilots = "%{count} pilotes"
+search_placeholder = "Rechercher des pilotes…"
+sp_value = "%{sp} SP"
+
+[skills.compare_matrix]
+at_v = "%{count}×V"
+rank = "×%{rank}"
+
+[skills.compare_summary]
+skills_at_iv = "Compétences à IV+"
+skills_at_v = "Compétences à V"
+skills_trained = "Compétences entraînées"
+sp_value = "%{sp} SP"
+total_sp = "SP total"
+
+[skills.editor]
+col_primary = "Pri"
+col_secondary = "Sec"
+col_skill = "Compétence"
+col_sp = "SP"
+col_time = "Temps / Cumul."
+cumulative_time = "cum %{time}"
+empty_action = "Ouvrir le sélecteur de compétences"
+empty_subtitle = "Ajoutez votre première compétence à l’aide du sélecteur de compétences."
+empty_title = "Aucune compétence dans ce plan pour l’instant"
+note_placeholder = "Ajouter une note…"
+prereq_badge = "prérequis"
+sp_unit = "SP"
+
+[skills.editor_header]
+add_skills = "Ajouter des compétences"
+export = "Exporter"
+hide_picker = "Masquer le sélecteur"
+import = "Importer"
+name_placeholder = "Plan sans titre"
+save = "Enregistrer"
+
+[skills.editor_picker]
+add = "Ajouter"
+loading_certificates = "Chargement des certificats…"
+loading_modules = "Chargement des modules…"
+loading_ships = "Chargement des vaisseaux…"
+loading_skills = "Chargement des compétences…"
+no_certificates_match = "Aucun certificat ne correspond à votre recherche"
+no_modules_match = "Aucun module ne correspond à votre recherche"
+no_ships_match = "Aucun vaisseau ne correspond à votre recherche"
+no_skills_match = "Aucune compétence ne correspond à votre recherche"
+proficiency_adv = "Av"
+proficiency_basic = "Base"
+proficiency_elite = "Élite"
+proficiency_std = "Std"
+search_certificates = "Rechercher des certificats…"
+search_modules = "Rechercher des modules…"
+search_ships = "Rechercher des vaisseaux…"
+search_skills = "Rechercher des compétences…"
+tab_certs = "Certs"
+tab_modules = "Modules"
+tab_ships = "Vaisseaux"
+tab_skills = "Compétences"
+
+[skills.editor_remap]
+after_step = "Après l’étape %{step}"
+applied_at_start = "Appliqué au début du plan"
+neural_remap = "REMAPPAGE NEURONAL"
+remap_here = "+ REMAPPER ICI"
+
+[skills.editor_stats]
+completes = "Termine"
+steps = "Étapes"
+total_sp = "SP total"
+training_time = "Temps d’entraînement"
+
+[skills.format]
+days = "%{n} j"
+hours = "%{n} h"
+minutes = "%{n} min"
+seconds = "%{n} s"
+
+[skills.header]
+compare = "Comparer"
+empty = "Vide"
+eve_value = "%{eta} EVE"
+manage_plans = "Gérer les plans"
+queue_completes_label = "Fin de la file"
+queue_label = "File · %{count} %{noun}"
+skill = "compétence"
+skills = "compétences"
+sp_value = "%{sp} SP"
+total_sp_label = "Total de points de compétence"
+
+[skills.hero]
+attributes = "Attributs"
+completes_at = "Termine à"
+eve_time = "Heure EVE"
+progress = "Progression"
+rank = "×%{rank}"
+sp_rate = "%{per_min} SP/min · %{per_day}K/jour"
+sp_ratio = "%{now} / %{to} SP"
+
+[skills.hero_active]
+currently_training = "En cours d’entraînement"
+remaining = "RESTANT"
+
+[skills.hero_idle]
+inactive_eyebrow = "Entraînement inactif · file vide"
+inactive_headline = "Aucune compétence n’est en cours d’entraînement"
+inactive_supporting = "Appliquez un plan de compétences pour commencer l’entraînement."
+paused_eyebrow = "Entraînement en pause · %{count} %{noun} en file"
+paused_headline = "L’entraînement est en pause"
+paused_supporting = "Reprenez l’entraînement dans EVE pour continuer la file."
+
+[skills.import_export]
+append = "Ajouter à la suite"
+cancel = "Annuler"
+from_clipboard = "Depuis le presse-papiers"
+from_file = "Depuis un fichier…"
+import_plan = "Importer un plan"
+import_prompt = "Remplacer le plan actuel, ou ajouter les compétences importées à la fin ?"
+replace = "Remplacer"
+to_clipboard = "Vers le presse-papiers"
+to_file = "Vers un fichier…"
+
+[skills.manager]
+cancel = "Annuler"
+character_plural = "personnages"
+character_singular = "personnage"
+characters = "Personnages"
+copy_to = "Copier vers"
+copy_to_character = "Copier vers un personnage"
+delete = "Supprimer"
+delete_confirm = "Supprimer ?"
+header_summary = "%{plan_count} %{plan_word} sur %{char_count} %{char_word}"
+new_plan = "Nouveau plan"
+no_characters = "Aucun personnage"
+no_plans_for = "Aucun plan pour %{name}"
+no_plans_hint = "Créez-en un avec « Nouveau plan », ou copiez ici un plan d’un autre personnage."
+open = "Ouvrir"
+plan_meta = "%{skill_count} %{skill_word} · modifié %{edited}"
+plan_plural = "plans"
+plan_singular = "plan"
+skill_plural = "compétences"
+skill_singular = "compétence"
+time_days_ago = "il y a %{count} j"
+time_hours_ago = "il y a %{count} h"
+time_just_now = "à l’instant"
+time_minutes_ago = "il y a %{count} min"
+title = "Gérer les plans de compétences"
+
+[skills.panel]
+tab_attributes = "Attributs"
+tab_browse = "Parcourir"
+tab_plans = "Plans"
+
+[skills.panel_attributes]
+attr_charisma = "Charisme"
+attr_intelligence = "Intelligence"
+attr_memory = "Mémoire"
+attr_perception = "Perception"
+attr_short_charisma = "Cha"
+attr_short_intelligence = "Int"
+attr_short_memory = "Mém"
+attr_short_perception = "Per"
+attr_short_willpower = "Vol"
+attr_willpower = "Volonté"
+awaiting = "Les attributs neuronaux apparaîtront une fois synchronisés."
+pair_combat = "Combat"
+pair_drones = "Drones"
+pair_engineering = "Ingénierie"
+pair_navigation = "Navigation"
+pair_social = "Social"
+pair_trade = "Commerce"
+rate_grid_title = "Vitesse d’entraînement par paire d’attributs"
+rate_pair = "SP/h · %{primary}+%{secondary}"
+recommendation_completes = "La file se termine dans %{duration}"
+recommendation_optimal = "Déjà optimal. Aucun remappage n’améliore votre file actuelle."
+recommendation_out_of_spec = "Vos attributs actuels sont hors spécification ; la suggestion affichée est l’allocation légale la plus rapide."
+recommendation_saves = "Économise %{duration} par rapport à l’actuel"
+recommendation_title = "Remappage le plus rapide pour votre file actuelle"
+remap_bonus_one = "%{count} remappage bonus disponible"
+remap_bonus_other = "%{count} remappages bonus disponibles"
+remap_cooldown_available = "disponible maintenant"
+remap_cooldown_days = "récup %{days} j"
+remap_last_ago = "dernier remappage il y a %{days} j"
+remap_last_none = "aucun remappage précédent"
+remap_status = "%{last} · annuel %{cooldown}"
+remap_title = "Remappage neuronal"
+role_primary = "Primaire"
+role_secondary = "Secondaire"
+section_summary = "%{total} pts alloués · base"
+section_title = "Attributs neuronaux"
+
+[skills.panel_browser]
+group_summary = "%{trained}/%{total} · %{sp} SP"
+prereq_chip = "req · %{name} %{level}"
+queued_marker = "+%{count} en file"
+search_placeholder = "Rechercher des compétences…"
+
+[skills.panel_plans]
+cancel = "Annuler"
+card_subtitle_one = "%{count} compétence · %{updated}"
+card_subtitle_other = "%{count} compétences · %{updated}"
+confirm = "Confirmer"
+delete_prompt = "Supprimer ?"
+empty_body = "Créez votre premier plan pour commencer à optimiser votre file de compétences."
+empty_title = "Aucun plan de compétences pour l’instant"
+from_queue = "Depuis la file"
+from_selected = "Depuis la sélection"
+loading = "Chargement des plans…"
+new_plan = "Nouveau plan"
+open = "Ouvrir"
+
+[skills.plan]
+draft_from_selection = "Plan à partir de la sélection"
+eta = "%{day} %{month} %{year} · %{hour}:%{minute}"
+export_dialog_title = "Exporter le plan de compétences"
+export_file_base = "plan-de-competences"
+file_filter_json = "JSON"
+file_filter_plan = "Plan"
+group_other = "Autre"
+import_dialog_title = "Importer le plan de compétences"
+month_apr = "avr."
+month_aug = "août"
+month_dec = "déc."
+month_feb = "févr."
+month_jan = "janv."
+month_jul = "juil."
+month_jun = "juin"
+month_mar = "mars"
+month_may = "mai"
+month_nov = "nov."
+month_oct = "oct."
+month_sep = "sept."
+skill_fallback = "Compétence %{id}"
+untitled = "Plan sans titre"
+
+[skills.plan_math]
+no_remaps_available = "Aucun remappage neuronal disponible. Le prochain remappage s’accumule dans %{count} jours."
+
+[skills.queue]
+col_completes = "Termine"
+col_duration = "Durée"
+col_skill = "Compétence"
+col_sp = "SP"
+next = "Suivant"
+sp = "SP"
+unknown_skill = "Compétence inconnue"
+
+[skills.queue_empty]
+body = "Appliquez un plan de compétences pour commencer l’entraînement."
+eyebrow = "File · 0 compétence"
+title = "File vide"
+
+[skills.queue_footer]
+clear = "Effacer"
+create_plan = "Créer un plan"
+finishes = "termine %{eta} EVE"
+select_hint = "⇧ / ⌘-clic pour sélectionner"
+selected = "%{count} sélectionnés"
+total = "Total · %{count} compétences"
+
+[skills.summary_attr]
+already_optimal = "Déjà optimal"
+current = "ACTUEL"
+heading = "OPTIMISATION DES ATTRIBUTS"
+no_remap_available = "Aucun remappage disponible"
+proposed = "PROPOSÉ"
+remap_available = "Remappage disponible maintenant"
+
+[skills.summary_implant]
+heading = "EFFET DES IMPLANTS"
+implants_save = "Les implants économisent %{time}"
+no_effect = "Aucun effet sur le temps d’entraînement"
+with_implants = "AVEC IMPLANTS"
+without = "SANS"
+
+[skills.summary_injector]
+caption = "Pour injecter les %{sp} restants à votre palier de SP total actuel."
+heading = "INJECTEURS DE COMPÉTENCES"
+large = "GRAND"
+pill_label = "%{size} · %{sp} SP chacun"
+small = "PETIT"
+
+[skills.summary_time]
+by_attribute_pair = "TEMPS PAR PAIRE D’ATTRIBUTS"
+by_skill_group = "TEMPS PAR GROUPE DE COMPÉTENCES"
+
+[skills.summary_totals]
+completes = "Termine %{eta}"
+steps = "%{count} étapes"
+
+[skills.warning]
+empty = "Entraînement inactif · la file de compétences est vide"
+low_queue = "File réduite · moins de 24 h d’entraînement restant"
+paused = "Entraînement en pause · %{count} %{noun} en file"

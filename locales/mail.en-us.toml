@@ -1,0 +1,147 @@
+[mail.compose]
+body_placeholder = "Write your message…"
+cc = "Cc"
+cc_field = "Cc"
+discard = "Discard"
+forward_prefix = "Fwd: "
+from = "FROM"
+from_option = "%{name} · %{corp}"
+from_unknown = "Unknown"
+generate_link = "GENERATE LINK"
+insert = "Insert"
+quote_intro = "From %{sender}:"
+recipient_placeholder = "Search characters or corporations…"
+reply_prefix = "Re: "
+send = "Send"
+subject = "Subject"
+subject_placeholder = "—"
+title_new = "New message"
+to_field = "To"
+
+[mail.compose.link_kind]
+character = "Character"
+corporation = "Corporation"
+http = "http://"
+solar_system = "Solar System"
+station = "Station"
+
+[mail.compose.link_placeholder]
+character = "Search characters…"
+corporation = "Search corporations…"
+http = "example.com/path"
+solar_system = "Search solar systems…"
+station = "Search stations…"
+
+[mail.draft]
+no_recipients = "(no recipients)"
+no_subject = "(no subject)"
+
+[mail.folder]
+archive = "Archive"
+drafts = "Drafts"
+fallback = "Folder"
+inbox = "Inbox"
+sent = "Sent"
+snoozed = "Snoozed"
+starred = "Starred"
+trash = "Trash"
+unified = "All Inboxes"
+
+[mail.folder_pane]
+drag_hint = "Drag a message here to tag it"
+folders_header = "Folders"
+labels_header = "Labels"
+mailboxes_combined = "%{count} mailboxes combined"
+no_custom_labels = "No custom labels"
+unified_header = "Unified"
+
+[mail.header]
+compose = "Compose"
+messages = "%{count} messages · "
+unread = "%{count} unread"
+
+[mail.labels]
+apply_header = "Apply labels"
+cancel = "Cancel"
+color = "Color"
+create = "Create label"
+eyebrow = "Mail label"
+name = "Name"
+name_placeholder = "e.g. Coalition"
+new = "New label"
+new_label = "New label…"
+no_labels = "No labels yet."
+preview = "Label preview"
+
+[mail.labels.delete]
+body = "Deleting “%{name}” removes it from every message, here and in EVE."
+confirm = "Delete"
+eyebrow = "Mail label"
+title = "Delete label?"
+
+[mail.list]
+no_drafts = "No drafts."
+no_messages = "No messages."
+no_search_results = "No messages match this search."
+no_subject = "(no subject)"
+search_placeholder = "Search mail"
+
+[mail.list.bucket]
+this_month = "This Month"
+today = "Today"
+yesterday = "Yesterday"
+
+[mail.outbox]
+dismiss = "Dismiss"
+failed = "%{count} failed"
+retry = "Retry"
+sending = "%{count} sending"
+unknown_error = "unknown error"
+
+[mail.reading]
+empty = "Select a message"
+no_content = "(no content)"
+no_subject = "(no subject)"
+recipients_self = "me"
+system_message = " · System message"
+to = "to "
+
+[mail.reading.toolbar]
+archive = "Archive"
+delete = "Delete"
+forward = "Forward"
+label = "Label"
+reply = "Reply"
+reply_all = "Reply all"
+snooze = "Snooze"
+snoozed = "Snoozed"
+star = "Star"
+starred = "Starred"
+trash = "Move to Trash"
+
+[mail.snooze]
+back = "Back"
+confirm = "Snooze"
+empty_summary = "—"
+eve = "EVE"
+pick_date = "Pick date & time…"
+snooze_until = "Snooze until"
+summary_eyebrow = "SNOOZE UNTIL"
+time = "TIME"
+unsnooze = "Unsnooze"
+
+[mail.snooze.preset]
+later_today = "Later today"
+later_today_hint = "18:00 EVE"
+next_week = "Next week"
+next_week_hint = "Mon 09:00"
+this_weekend = "This weekend"
+this_weekend_hint = "Sat 09:00"
+tomorrow = "Tomorrow"
+tomorrow_hint = "09:00 EVE"
+
+[mail.switcher]
+character_unread = "%{count} unread"
+fallback = "Mail"
+row_unread = "%{corp}  ·  %{count} unread"
+switch_character = "Switch character · %{count} unread"

@@ -1,0 +1,68 @@
+[common]
+cancel = "取消"
+
+[common.action]
+change = "更改"
+clear_selection = "清除选择"
+
+[common.add_tag_modal]
+all_assigned = "所有标签均已分配"
+cancel = "取消"
+create = "创建“%{name}”"
+current_tags = "当前标签"
+footer_hint = "点击标签以添加 · 从“当前标签”中移除"
+new = "新建"
+tag = "标签"
+title = "添加标签"
+type_to_create = "输入以创建新标签"
+
+[common.color_picker]
+clear = "清除颜色"
+hex_label = "HEX"
+permitted = "ESI 允许 %{count} 种颜色"
+title = "选择颜色"
+
+[common.entity_search]
+no_matches = "无匹配项"
+searching = "正在搜索…"
+
+[common.esi_status]
+label = "ESI"
+
+[common.eve_time]
+label = "EVE"
+
+[common.facility_combobox]
+clear = "清除 → 每次安装时询问"
+cost_index = "成本指数"
+jspace = "J-space"
+no_results = "未找到设施。"
+searching = "正在搜索…"
+title = "设施"
+type_to_search = "输入以搜索空间站和建筑。"
+
+[common.forbidden]
+body = "Pod 没有读取 %{character_name} 的%{noun}的权限。此角色是在%{noun}功能存在之前授权的。请重新认证以授予缺失的权限范围。"
+eyebrow = "ESI 403 · 禁止访问"
+heading = "%{noun}访问未授权"
+reauth = "重新认证 %{character_name}"
+scopes_requested = "请求的权限范围"
+sso_hint = "打开 EVE ONLINE SSO · LOGIN.EVEONLINE.COM"
+
+[common.location_combobox]
+jspace = "J-space"
+no_results = "未找到地点。"
+searching = "正在搜索…"
+title = "地点"
+type_to_search = "输入以搜索任意地点。"
+
+[common.rail]
+no_sub_sections = "无子分区"
+
+[common.sync_chip]
+attention = "⚠ %{count} 项需要处理"
+catching_up = "⟳ 正在追赶… 还剩 %{count} 项"
+read_only = "只读"
+read_only_host = "只读 — 在 %{hostname} 上打开"
+stopped = "同步已停止"
+up_to_date = "已是最新"

@@ -1,0 +1,9 @@
+[config.cascade_mode]
+flyout = "弹出"
+none = "关闭"
+sub_rail = "子导航栏"
+
+[config.log_level]
+normal = "正常"
+quiet = "精简"
+verbose = "详细"

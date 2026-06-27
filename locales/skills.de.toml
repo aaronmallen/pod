@@ -1,0 +1,298 @@
+[skills.compare_header]
+add_pilot = "PILOT HINZUFÜGEN"
+compare = "Vergleichen"
+no_matches = "Keine Treffer"
+pilots = "%{count} Piloten"
+search_placeholder = "Piloten suchen…"
+sp_value = "%{sp} SP"
+
+[skills.compare_matrix]
+at_v = "%{count}×V"
+rank = "×%{rank}"
+
+[skills.compare_summary]
+skills_at_iv = "Skills auf IV+"
+skills_at_v = "Skills auf V"
+skills_trained = "Trainierte Skills"
+sp_value = "%{sp} SP"
+total_sp = "Gesamt-SP"
+
+[skills.editor]
+col_primary = "Pri"
+col_secondary = "Sek"
+col_skill = "Skill"
+col_sp = "SP"
+col_time = "Zeit / Kumul."
+cumulative_time = "kum %{time}"
+empty_action = "Skill-Auswahl öffnen"
+empty_subtitle = "Füge deinen ersten Skill über die Skill-Auswahl hinzu."
+empty_title = "Noch keine Skills in diesem Plan"
+note_placeholder = "Notiz hinzufügen…"
+prereq_badge = "Vorauss."
+sp_unit = "SP"
+
+[skills.editor_header]
+add_skills = "Skills hinzufügen"
+export = "Exportieren"
+hide_picker = "Auswahl ausblenden"
+import = "Importieren"
+name_placeholder = "Unbenannter Plan"
+save = "Speichern"
+
+[skills.editor_picker]
+add = "Hinzufügen"
+loading_certificates = "Zertifikate werden geladen…"
+loading_modules = "Module werden geladen…"
+loading_ships = "Schiffe werden geladen…"
+loading_skills = "Skills werden geladen…"
+no_certificates_match = "Keine Zertifikate entsprechen deiner Suche"
+no_modules_match = "Keine Module entsprechen deiner Suche"
+no_ships_match = "Keine Schiffe entsprechen deiner Suche"
+no_skills_match = "Keine Skills entsprechen deiner Suche"
+proficiency_adv = "Fortg."
+proficiency_basic = "Basis"
+proficiency_elite = "Elite"
+proficiency_std = "Std"
+search_certificates = "Zertifikate suchen…"
+search_modules = "Module suchen…"
+search_ships = "Schiffe suchen…"
+search_skills = "Skills suchen…"
+tab_certs = "Zertif."
+tab_modules = "Module"
+tab_ships = "Schiffe"
+tab_skills = "Skills"
+
+[skills.editor_remap]
+after_step = "Nach Schritt %{step}"
+applied_at_start = "Zu Beginn des Plans angewendet"
+neural_remap = "NEURALE NEUVERTEILUNG"
+remap_here = "+ HIER NEU VERTEILEN"
+
+[skills.editor_stats]
+completes = "Abschluss"
+steps = "Schritte"
+total_sp = "Gesamt-SP"
+training_time = "Trainingszeit"
+
+[skills.format]
+days = "%{n}T"
+hours = "%{n}Std"
+minutes = "%{n}Min"
+seconds = "%{n}s"
+
+[skills.header]
+compare = "Vergleichen"
+empty = "Leer"
+eve_value = "%{eta} EVE"
+manage_plans = "Pläne verwalten"
+queue_completes_label = "Warteschlange abgeschlossen"
+queue_label = "Warteschlange · %{count} %{noun}"
+skill = "Skill"
+skills = "Skills"
+sp_value = "%{sp} SP"
+total_sp_label = "Skillpunkte gesamt"
+
+[skills.hero]
+attributes = "Attribute"
+completes_at = "Abschluss um"
+eve_time = "EVE-Zeit"
+progress = "Fortschritt"
+rank = "×%{rank}"
+sp_rate = "%{per_min} SP/Min · %{per_day}K/Tag"
+sp_ratio = "%{now} / %{to} SP"
+
+[skills.hero_active]
+currently_training = "Aktuell im Training"
+remaining = "VERBLEIBEND"
+
+[skills.hero_idle]
+inactive_eyebrow = "Training inaktiv · Warteschlange leer"
+inactive_headline = "Aktuell wird kein Skill trainiert"
+inactive_supporting = "Wende einen Skillplan an, um mit dem Training zu beginnen."
+paused_eyebrow = "Training pausiert · %{count} %{noun} in Warteschlange"
+paused_headline = "Training ist pausiert"
+paused_supporting = "Setze das Training in EVE fort, um die Warteschlange weiterzuführen."
+
+[skills.import_export]
+append = "Anhängen"
+cancel = "Abbrechen"
+from_clipboard = "Aus Zwischenablage"
+from_file = "Aus Datei…"
+import_plan = "Plan importieren"
+import_prompt = "Den aktuellen Plan ersetzen oder die importierten Skills ans Ende anhängen?"
+replace = "Ersetzen"
+to_clipboard = "In Zwischenablage"
+to_file = "In Datei…"
+
+[skills.manager]
+cancel = "Abbrechen"
+character_plural = "Charaktere"
+character_singular = "Charakter"
+characters = "Charaktere"
+copy_to = "Kopieren nach"
+copy_to_character = "Zu Charakter kopieren"
+delete = "Löschen"
+delete_confirm = "Löschen?"
+header_summary = "%{plan_count} %{plan_word} über %{char_count} %{char_word}"
+new_plan = "Neuer Plan"
+no_characters = "Keine Charaktere"
+no_plans_for = "Keine Pläne für %{name}"
+no_plans_hint = "Erstelle einen mit „Neuer Plan“ oder kopiere hier einen Plan von einem anderen Charakter."
+open = "Öffnen"
+plan_meta = "%{skill_count} %{skill_word} · bearbeitet %{edited}"
+plan_plural = "Pläne"
+plan_singular = "Plan"
+skill_plural = "Skills"
+skill_singular = "Skill"
+time_days_ago = "vor %{count} T"
+time_hours_ago = "vor %{count} Std"
+time_just_now = "gerade eben"
+time_minutes_ago = "vor %{count} Min"
+title = "Skillpläne verwalten"
+
+[skills.panel]
+tab_attributes = "Attribute"
+tab_browse = "Durchsuchen"
+tab_plans = "Pläne"
+
+[skills.panel_attributes]
+attr_charisma = "Charisma"
+attr_intelligence = "Intelligenz"
+attr_memory = "Gedächtnis"
+attr_perception = "Wahrnehmung"
+attr_short_charisma = "Cha"
+attr_short_intelligence = "Int"
+attr_short_memory = "Ged"
+attr_short_perception = "Wah"
+attr_short_willpower = "Wil"
+attr_willpower = "Willenskraft"
+awaiting = "Neurale Attribute erscheinen nach der Synchronisierung."
+pair_combat = "Kampf"
+pair_drones = "Drohnen"
+pair_engineering = "Technik"
+pair_navigation = "Navigation"
+pair_social = "Sozial"
+pair_trade = "Handel"
+rate_grid_title = "Trainingsrate nach Attributpaar"
+rate_pair = "SP/Std · %{primary}+%{secondary}"
+recommendation_completes = "Warteschlange abgeschlossen in %{duration}"
+recommendation_optimal = "Bereits optimal. Keine Neuverteilung verbessert deine aktuelle Warteschlange."
+recommendation_out_of_spec = "Deine aktuellen Attribute sind außerhalb der Spezifikation; der gezeigte Vorschlag ist die schnellste zulässige Verteilung."
+recommendation_saves = "Spart %{duration} gegenüber aktuell"
+recommendation_title = "Schnellste Neuverteilung für deine aktuelle Warteschlange"
+remap_bonus_one = "%{count} Bonus-Neuverteilung verfügbar"
+remap_bonus_other = "%{count} Bonus-Neuverteilungen verfügbar"
+remap_cooldown_available = "jetzt verfügbar"
+remap_cooldown_days = "Abklingzeit %{days} T"
+remap_last_ago = "letzte Neuverteilung vor %{days} T"
+remap_last_none = "keine vorherige Neuverteilung"
+remap_status = "%{last} · jährlich %{cooldown}"
+remap_title = "Neurale Neuverteilung"
+role_primary = "Primär"
+role_secondary = "Sekundär"
+section_summary = "%{total} Pkt zugewiesen · Basis"
+section_title = "Neurale Attribute"
+
+[skills.panel_browser]
+group_summary = "%{trained}/%{total} · %{sp} SP"
+prereq_chip = "Vorauss · %{name} %{level}"
+queued_marker = "+%{count} in Warteschlange"
+search_placeholder = "Skills suchen…"
+
+[skills.panel_plans]
+cancel = "Abbrechen"
+card_subtitle_one = "%{count} Skill · %{updated}"
+card_subtitle_other = "%{count} Skills · %{updated}"
+confirm = "Bestätigen"
+delete_prompt = "Löschen?"
+empty_body = "Erstelle deinen ersten Plan, um deine Skill-Warteschlange zu optimieren."
+empty_title = "Noch keine Skillpläne"
+from_queue = "Aus Warteschlange"
+from_selected = "Aus Auswahl"
+loading = "Pläne werden geladen…"
+new_plan = "Neuer Plan"
+open = "Öffnen"
+
+[skills.plan]
+draft_from_selection = "Plan aus Auswahl"
+eta = "%{day} %{month} %{year} · %{hour}:%{minute}"
+export_dialog_title = "Skillplan exportieren"
+export_file_base = "skill-plan"
+file_filter_json = "JSON"
+file_filter_plan = "Plan"
+group_other = "Sonstiges"
+import_dialog_title = "Skillplan importieren"
+month_apr = "Apr"
+month_aug = "Aug"
+month_dec = "Dez"
+month_feb = "Feb"
+month_jan = "Jan"
+month_jul = "Jul"
+month_jun = "Jun"
+month_mar = "Mär"
+month_may = "Mai"
+month_nov = "Nov"
+month_oct = "Okt"
+month_sep = "Sep"
+skill_fallback = "Skill %{id}"
+untitled = "Unbenannter Plan"
+
+[skills.plan_math]
+no_remaps_available = "Keine neuralen Neuverteilungen verfügbar. Die nächste Neuverteilung ist in %{count} Tagen verfügbar."
+
+[skills.queue]
+col_completes = "Abschluss"
+col_duration = "Dauer"
+col_skill = "Skill"
+col_sp = "SP"
+next = "Nächster"
+sp = "SP"
+unknown_skill = "Unbekannter Skill"
+
+[skills.queue_empty]
+body = "Wende einen Skillplan an, um mit dem Training zu beginnen."
+eyebrow = "Warteschlange · 0 Skills"
+title = "Leere Warteschlange"
+
+[skills.queue_footer]
+clear = "Leeren"
+create_plan = "Plan erstellen"
+finishes = "endet %{eta} EVE"
+select_hint = "⇧ / ⌘-Klick zum Auswählen"
+selected = "%{count} ausgewählt"
+total = "Gesamt · %{count} Skills"
+
+[skills.summary_attr]
+already_optimal = "Bereits optimal"
+current = "AKTUELL"
+heading = "ATTRIBUT-OPTIMIERUNG"
+no_remap_available = "Keine Neuverteilung verfügbar"
+proposed = "VORGESCHLAGEN"
+remap_available = "Neuverteilung jetzt verfügbar"
+
+[skills.summary_implant]
+heading = "IMPLANTAT-EFFEKT"
+implants_save = "Implantate sparen %{time}"
+no_effect = "Kein Effekt auf die Trainingszeit"
+with_implants = "MIT IMPLANTATEN"
+without = "OHNE"
+
+[skills.summary_injector]
+caption = "Um die verbleibenden %{sp} bei deinem aktuellen Gesamt-SP-Band zu injizieren."
+heading = "SKILL-INJEKTOREN"
+large = "GROSS"
+pill_label = "%{size} · %{sp} SP je"
+small = "KLEIN"
+
+[skills.summary_time]
+by_attribute_pair = "ZEIT NACH ATTRIBUTPAAR"
+by_skill_group = "ZEIT NACH SKILL-GRUPPE"
+
+[skills.summary_totals]
+completes = "Abschluss %{eta}"
+steps = "%{count} Schritte"
+
+[skills.warning]
+empty = "Training inaktiv · Skill-Warteschlange ist leer"
+low_queue = "Niedrige Warteschlange · weniger als 24 Std Training verbleiben"
+paused = "Training pausiert · %{count} %{noun} in Warteschlange"

@@ -1,0 +1,298 @@
+[skills.compare_header]
+add_pilot = "AÑADIR PILOTO"
+compare = "Comparar"
+no_matches = "Sin coincidencias"
+pilots = "%{count} pilotos"
+search_placeholder = "Buscar pilotos…"
+sp_value = "%{sp} SP"
+
+[skills.compare_matrix]
+at_v = "%{count}×V"
+rank = "×%{rank}"
+
+[skills.compare_summary]
+skills_at_iv = "Habilidades en IV+"
+skills_at_v = "Habilidades en V"
+skills_trained = "Habilidades entrenadas"
+sp_value = "%{sp} SP"
+total_sp = "SP totales"
+
+[skills.editor]
+col_primary = "Pri"
+col_secondary = "Sec"
+col_skill = "Habilidad"
+col_sp = "SP"
+col_time = "Tiempo / Acum."
+cumulative_time = "acum %{time}"
+empty_action = "Abrir selector de habilidades"
+empty_subtitle = "Añade tu primera habilidad con el selector de habilidades."
+empty_title = "Aún no hay habilidades en este plan"
+note_placeholder = "Añade una nota…"
+prereq_badge = "prerreq"
+sp_unit = "SP"
+
+[skills.editor_header]
+add_skills = "Añadir habilidades"
+export = "Exportar"
+hide_picker = "Ocultar selector"
+import = "Importar"
+name_placeholder = "Plan sin título"
+save = "Guardar"
+
+[skills.editor_picker]
+add = "Añadir"
+loading_certificates = "Cargando certificados…"
+loading_modules = "Cargando módulos…"
+loading_ships = "Cargando naves…"
+loading_skills = "Cargando habilidades…"
+no_certificates_match = "Ningún certificado coincide con tu búsqueda"
+no_modules_match = "Ningún módulo coincide con tu búsqueda"
+no_ships_match = "Ninguna nave coincide con tu búsqueda"
+no_skills_match = "Ninguna habilidad coincide con tu búsqueda"
+proficiency_adv = "Avz"
+proficiency_basic = "Básico"
+proficiency_elite = "Élite"
+proficiency_std = "Est"
+search_certificates = "Buscar certificados…"
+search_modules = "Buscar módulos…"
+search_ships = "Buscar naves…"
+search_skills = "Buscar habilidades…"
+tab_certs = "Certs"
+tab_modules = "Módulos"
+tab_ships = "Naves"
+tab_skills = "Habilidades"
+
+[skills.editor_remap]
+after_step = "Después del paso %{step}"
+applied_at_start = "Aplicado al inicio del plan"
+neural_remap = "REMAPEO NEURAL"
+remap_here = "+ REMAPEAR AQUÍ"
+
+[skills.editor_stats]
+completes = "Se completa"
+steps = "Pasos"
+total_sp = "SP totales"
+training_time = "Tiempo de entrenamiento"
+
+[skills.format]
+days = "%{n}d"
+hours = "%{n}h"
+minutes = "%{n}m"
+seconds = "%{n}s"
+
+[skills.header]
+compare = "Comparar"
+empty = "Vacía"
+eve_value = "%{eta} EVE"
+manage_plans = "Gestionar planes"
+queue_completes_label = "La cola se completa"
+queue_label = "Cola · %{count} %{noun}"
+skill = "habilidad"
+skills = "habilidades"
+sp_value = "%{sp} SP"
+total_sp_label = "Puntos de habilidad totales"
+
+[skills.hero]
+attributes = "Atributos"
+completes_at = "Se completa a las"
+eve_time = "Hora de EVE"
+progress = "Progreso"
+rank = "×%{rank}"
+sp_rate = "%{per_min} SP/min · %{per_day}K/día"
+sp_ratio = "%{now} / %{to} SP"
+
+[skills.hero_active]
+currently_training = "Entrenando actualmente"
+remaining = "RESTANTE"
+
+[skills.hero_idle]
+inactive_eyebrow = "Entrenamiento inactivo · cola vacía"
+inactive_headline = "No se está entrenando ninguna habilidad"
+inactive_supporting = "Aplica un plan de habilidades para empezar a entrenar."
+paused_eyebrow = "Entrenamiento en pausa · %{count} %{noun} en cola"
+paused_headline = "El entrenamiento está en pausa"
+paused_supporting = "Reanuda el entrenamiento en EVE para continuar la cola."
+
+[skills.import_export]
+append = "Añadir al final"
+cancel = "Cancelar"
+from_clipboard = "Desde el portapapeles"
+from_file = "Desde archivo…"
+import_plan = "Importar plan"
+import_prompt = "¿Reemplazar el plan actual o añadir las habilidades importadas al final?"
+replace = "Reemplazar"
+to_clipboard = "Al portapapeles"
+to_file = "A archivo…"
+
+[skills.manager]
+cancel = "Cancelar"
+character_plural = "personajes"
+character_singular = "personaje"
+characters = "Personajes"
+copy_to = "Copiar a"
+copy_to_character = "Copiar a personaje"
+delete = "Eliminar"
+delete_confirm = "¿Eliminar?"
+header_summary = "%{plan_count} %{plan_word} en %{char_count} %{char_word}"
+new_plan = "Nuevo plan"
+no_characters = "Sin personajes"
+no_plans_for = "No hay planes para %{name}"
+no_plans_hint = "Crea uno con “Nuevo plan”, o copia aquí un plan de otro personaje."
+open = "Abrir"
+plan_meta = "%{skill_count} %{skill_word} · editado %{edited}"
+plan_plural = "planes"
+plan_singular = "plan"
+skill_plural = "habilidades"
+skill_singular = "habilidad"
+time_days_ago = "hace %{count}d"
+time_hours_ago = "hace %{count}h"
+time_just_now = "ahora mismo"
+time_minutes_ago = "hace %{count}m"
+title = "Gestionar planes de habilidades"
+
+[skills.panel]
+tab_attributes = "Atributos"
+tab_browse = "Explorar"
+tab_plans = "Planes"
+
+[skills.panel_attributes]
+attr_charisma = "Carisma"
+attr_intelligence = "Inteligencia"
+attr_memory = "Memoria"
+attr_perception = "Percepción"
+attr_short_charisma = "Car"
+attr_short_intelligence = "Int"
+attr_short_memory = "Mem"
+attr_short_perception = "Per"
+attr_short_willpower = "Vol"
+attr_willpower = "Voluntad"
+awaiting = "Los atributos neurales aparecerán una vez sincronizados."
+pair_combat = "Combate"
+pair_drones = "Drones"
+pair_engineering = "Ingeniería"
+pair_navigation = "Navegación"
+pair_social = "Social"
+pair_trade = "Comercio"
+rate_grid_title = "Ritmo de entrenamiento por par de atributos"
+rate_pair = "SP/h · %{primary}+%{secondary}"
+recommendation_completes = "La cola se completa en %{duration}"
+recommendation_optimal = "Ya es óptimo. Ningún remapeo mejora tu cola actual."
+recommendation_out_of_spec = "Tus atributos actuales están fuera de especificación; la sugerencia mostrada es la asignación legal más rápida."
+recommendation_saves = "Ahorra %{duration} frente al actual"
+recommendation_title = "Remapeo más rápido para tu cola actual"
+remap_bonus_one = "%{count} remapeo extra disponible"
+remap_bonus_other = "%{count} remapeos extra disponibles"
+remap_cooldown_available = "disponible ahora"
+remap_cooldown_days = "enfriamiento %{days}d"
+remap_last_ago = "último remapeo hace %{days}d"
+remap_last_none = "sin remapeo previo"
+remap_status = "%{last} · anual %{cooldown}"
+remap_title = "Remapeo neural"
+role_primary = "Primario"
+role_secondary = "Secundario"
+section_summary = "%{total} ptos asignados · base"
+section_title = "Atributos neurales"
+
+[skills.panel_browser]
+group_summary = "%{trained}/%{total} · %{sp} SP"
+prereq_chip = "req · %{name} %{level}"
+queued_marker = "+%{count} en cola"
+search_placeholder = "Buscar habilidades…"
+
+[skills.panel_plans]
+cancel = "Cancelar"
+card_subtitle_one = "%{count} habilidad · %{updated}"
+card_subtitle_other = "%{count} habilidades · %{updated}"
+confirm = "Confirmar"
+delete_prompt = "¿Eliminar?"
+empty_body = "Crea tu primer plan para empezar a optimizar tu cola de habilidades."
+empty_title = "Aún no hay planes de habilidades"
+from_queue = "Desde la cola"
+from_selected = "Desde lo seleccionado"
+loading = "Cargando planes…"
+new_plan = "Nuevo plan"
+open = "Abrir"
+
+[skills.plan]
+draft_from_selection = "Plan desde la selección"
+eta = "%{day} %{month} %{year} · %{hour}:%{minute}"
+export_dialog_title = "Exportar plan de habilidades"
+export_file_base = "plan-de-habilidades"
+file_filter_json = "JSON"
+file_filter_plan = "Plan"
+group_other = "Otros"
+import_dialog_title = "Importar plan de habilidades"
+month_apr = "Abr"
+month_aug = "Ago"
+month_dec = "Dic"
+month_feb = "Feb"
+month_jan = "Ene"
+month_jul = "Jul"
+month_jun = "Jun"
+month_mar = "Mar"
+month_may = "May"
+month_nov = "Nov"
+month_oct = "Oct"
+month_sep = "Sep"
+skill_fallback = "Habilidad %{id}"
+untitled = "Plan sin título"
+
+[skills.plan_math]
+no_remaps_available = "No hay remapeos neurales disponibles. El próximo remapeo se acumula en %{count} días."
+
+[skills.queue]
+col_completes = "Se completa"
+col_duration = "Duración"
+col_skill = "Habilidad"
+col_sp = "SP"
+next = "Siguiente"
+sp = "SP"
+unknown_skill = "Habilidad desconocida"
+
+[skills.queue_empty]
+body = "Aplica un plan de habilidades para empezar a entrenar."
+eyebrow = "Cola · 0 habilidades"
+title = "Cola vacía"
+
+[skills.queue_footer]
+clear = "Borrar"
+create_plan = "Crear plan"
+finishes = "termina %{eta} EVE"
+select_hint = "⇧ / ⌘-clic para seleccionar"
+selected = "%{count} seleccionadas"
+total = "Total · %{count} habilidades"
+
+[skills.summary_attr]
+already_optimal = "Ya es óptimo"
+current = "ACTUAL"
+heading = "OPTIMIZACIÓN DE ATRIBUTOS"
+no_remap_available = "No hay remapeo disponible"
+proposed = "PROPUESTO"
+remap_available = "Remapeo disponible ahora"
+
+[skills.summary_implant]
+heading = "EFECTO DE IMPLANTES"
+implants_save = "Los implantes ahorran %{time}"
+no_effect = "Sin efecto en el tiempo de entrenamiento"
+with_implants = "CON IMPLANTES"
+without = "SIN"
+
+[skills.summary_injector]
+caption = "Para inyectar los %{sp} restantes en tu banda de SP totales actual."
+heading = "INYECTORES DE HABILIDAD"
+large = "GRANDE"
+pill_label = "%{size} · %{sp} SP c/u"
+small = "PEQUEÑO"
+
+[skills.summary_time]
+by_attribute_pair = "TIEMPO POR PAR DE ATRIBUTOS"
+by_skill_group = "TIEMPO POR GRUPO DE HABILIDADES"
+
+[skills.summary_totals]
+completes = "Se completa %{eta}"
+steps = "%{count} pasos"
+
+[skills.warning]
+empty = "Entrenamiento inactivo · la cola de habilidades está vacía"
+low_queue = "Cola baja · queda menos de 24h de entrenamiento"
+paused = "Entrenamiento en pausa · %{count} %{noun} en cola"

@@ -1,0 +1,68 @@
+[common]
+cancel = "Annuler"
+
+[common.action]
+change = "Modifier"
+clear_selection = "Effacer la sélection"
+
+[common.add_tag_modal]
+all_assigned = "Toutes les étiquettes sont déjà assignées"
+cancel = "Annuler"
+create = "Créer « %{name} »"
+current_tags = "Étiquettes actuelles"
+footer_hint = "Cliquez sur une étiquette pour l’ajouter · retirez-la depuis Étiquettes actuelles"
+new = "Nouvelle"
+tag = "Étiquette"
+title = "Ajouter une étiquette"
+type_to_create = "Saisissez pour créer une nouvelle étiquette"
+
+[common.color_picker]
+clear = "Effacer la couleur"
+hex_label = "HEX"
+permitted = "%{count} couleurs autorisées par ESI"
+title = "CHOISIR UNE COULEUR"
+
+[common.entity_search]
+no_matches = "Aucune correspondance"
+searching = "Recherche…"
+
+[common.esi_status]
+label = "ESI"
+
+[common.eve_time]
+label = "EVE"
+
+[common.facility_combobox]
+clear = "Effacer → Demander à chaque installation"
+cost_index = "INDICE DE COÛT"
+jspace = "J-space"
+no_results = "Aucune installation trouvée."
+searching = "Recherche…"
+title = "Installations"
+type_to_search = "Saisissez pour rechercher stations et structures."
+
+[common.forbidden]
+body = "Pod n’a pas l’autorisation de lire les %{noun} de %{character_name}. Ce personnage a été autorisé avant l’existence de la fonctionnalité %{noun}. Réauthentifiez-vous pour accorder la portée manquante."
+eyebrow = "ESI 403 · INTERDIT"
+heading = "Accès aux %{noun} non autorisé"
+reauth = "Réauthentifier %{character_name}"
+scopes_requested = "PORTÉES DEMANDÉES"
+sso_hint = "OUVRE LE SSO EVE ONLINE · LOGIN.EVEONLINE.COM"
+
+[common.location_combobox]
+jspace = "J-space"
+no_results = "Aucun lieu trouvé."
+searching = "Recherche…"
+title = "Lieux"
+type_to_search = "Saisissez pour rechercher n’importe quel lieu."
+
+[common.rail]
+no_sub_sections = "Aucune sous-section"
+
+[common.sync_chip]
+attention = "⚠ %{count} nécessitent votre attention"
+catching_up = "⟳ Rattrapage… %{count} restants"
+read_only = "Lecture seule"
+read_only_host = "Lecture seule — ouvrir sur %{hostname}"
+stopped = "Synchronisation arrêtée"
+up_to_date = "À jour"

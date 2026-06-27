@@ -1,0 +1,61 @@
+[shell.command_palette]
+add_character = "Charakter hinzufügen"
+compose_mail = "Mail verfassen"
+create_stockpile = "Vorrat erstellen"
+escape_hint = "ESC"
+manage_skill_plans = "Skillpläne verwalten"
+no_matches = "Keine Treffer"
+open_settings = "Einstellungen öffnen"
+placeholder = "Zu allem springen…  versuche „Planer“, „Budget“"
+sync_now = "Jetzt synchronisieren"
+toggle_high_contrast = "Hohen Kontrast umschalten"
+
+[shell.command_palette.kind]
+character = "Charakter"
+command = "Befehl"
+corporation = "Corporation"
+section = "Abschnitt"
+tab = "Tab"
+
+[shell.notification]
+extraction_cracked_fallback = "Abbaubereit"
+extraction_cracked_title = "Mondbrocken aufgebrochen"
+extraction_scheduled_title = "Extraktion geplant"
+industry_fallback = "Auftrag"
+industry_ready = "%{product} bereit"
+industry_title = "Industrieauftrag abgeschlossen"
+killmail_destroyed = "%{ship} zerstört"
+killmail_ship_fallback = "Schiff"
+killmail_title = "Neue Killmail"
+mail_body = "Von %{name}"
+mail_title_fallback = "Neue EVE-Mail"
+skill_body = "Training abgeschlossen"
+skill_fallback = "Skill"
+skill_title = "%{skill} abgeschlossen"
+
+[shell.notifications]
+footer_total = "%{count} gesamt"
+footer_unread = "%{count} ungelesen"
+mark_all_read = "Alle als gelesen markieren"
+title = "Benachrichtigungen"
+
+[shell.status]
+mutations = "ÄNDERUNGEN"
+starting_up = "Wird gestartet…"
+
+[shell.takeover]
+confirm = "%{hostname} war zuletzt aktiv %{last_active}. Eine Übernahme überschreibt alle noch geöffneten ungespeicherten Änderungen. Fortfahren?"
+read_only = "Auf %{hostname} geöffnet — dort schließen oder übernehmen."
+
+[shell.window]
+app = "Pod"
+compare_skills = "Pod — Skills vergleichen"
+compose_mail = "Pod — Mail verfassen"
+contract = "Pod — Vertrag"
+event = "Pod — Ereignis"
+init_error = "Pod konnte nicht gestartet werden: %{error}"
+killmail = "Pod — Killmail"
+manage_skill_plans = "Pod — Skillpläne verwalten"
+skill_plan_editor = "Pod — Skillplan-Editor"
+stockpile_editor = "Pod — Vorrat-Editor"
+titled = "Pod — %{title}"

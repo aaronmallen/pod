@@ -1,0 +1,9 @@
+[config.cascade_mode]
+flyout = "Всплывающее меню"
+none = "Выкл."
+sub_rail = "Доп. панель"
+
+[config.log_level]
+normal = "Обычный"
+quiet = "Тихий"
+verbose = "Подробный"

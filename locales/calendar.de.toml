@@ -1,0 +1,125 @@
+[calendar.agenda]
+all_day = "Ganztägig"
+empty = "Keine bevorstehenden Ereignisse."
+event_count_one = "%{count} Ereignis"
+event_count_other = "%{count} Ereignisse"
+owner_line = "%{owner} · %{kind}"
+pod_tag = "POD"
+
+[calendar.detail]
+attendees = "Teilnehmer"
+date = "Datum"
+important = "Wichtig"
+owner = "Besitzer"
+owner_value = "%{owner} · %{kind}"
+pilot = "Kalender"
+pod = "Pod"
+provenance_esi = "ESI · GET /characters/%{character}/calendar/%{event}"
+provenance_pod = "Von Pod abgeleitete Überlagerung — kein ESI-Kalenderereignis."
+provenance_pod_source = "Von Pod abgeleitete Überlagerung · %{source} — kein ESI-Kalenderereignis."
+replied = "%{replied} / %{invited} geantwortet"
+when = "Wann"
+when_all_day = "Ganztägig · EVE"
+when_local = "%{base} · %{local}"
+when_range = "%{start} – %{end} EVE"
+when_single = "%{start} EVE"
+when_unknown = "Unbekannt"
+your_response = "Deine Antwort"
+
+[calendar.legend]
+event_count_one = "%{count} Ereignis"
+event_count_other = "%{count} Ereignisse"
+owner = "Besitzer"
+pilots = "Piloten"
+summary_eve = "%{events} · Zeiten in EVE"
+summary_local = "%{events} · Zeiten in EVE + lokal"
+
+[calendar.month]
+more = "+%{count} weitere"
+
+[calendar.nav]
+agenda_subtitle = "Ab %{month} %{day}"
+agenda_title = "Agenda"
+day_subtitle = "%{year} · EVE / UTC"
+today = "HEUTE"
+week_subtitle = "%{year} · Woche"
+year_subtitle = "Jahr"
+
+[calendar.overlay]
+contract_body = "Vertrag an %{party} läuft ab. Neu einstellen oder verfallen lassen."
+contract_body_generic = "Neu einstellen oder verfallen lassen."
+contract_fallback = "Vertrag"
+contract_title = "Vertrag läuft ab — %{label}"
+extraction_arrival_body = "Mining-Brocken trifft ein und ist bereit zum Aufbrechen."
+extraction_arrival_title = "%{moon} — Brocken-Ankunft"
+extraction_decay_body = "Brocken bricht von selbst auf, wenn er nicht zuvor gesprengt wird."
+extraction_decay_title = "%{moon} — Aufbruch"
+industry_body = "%{activity}-Auftrag, %{runs} Durchlauf/Durchläufe."
+industry_body_cost = "%{activity}-Auftrag, %{runs} Durchlauf/Durchläufe. Kosten %{cost} ISK."
+industry_title = "%{label} ×%{runs} %{verb} — %{activity}"
+market_body = "Neu einstellen oder neu bepreisen, bevor die Order abläuft."
+market_side_buy = "Kauf"
+market_side_sell = "Verkauf"
+market_title = "%{side}-Order läuft ab — %{item} ×%{volume}"
+moon_fallback = "Mond %{id}"
+owner_name = "Pod"
+skill_body = "Warteschlangeneintrag beendet das Training."
+skill_body_sp = "Warteschlangeneintrag beendet das Training. +%{sp} SP."
+skill_fallback = "Skill %{id}"
+skill_title = "%{skill} %{level} abgeschlossen"
+type_fallback = "Typ %{id}"
+
+[calendar.overlay.verb]
+cancelled = "abgebrochen"
+completes = "abgeschlossen"
+delivered = "geliefert"
+paused = "pausiert"
+
+[calendar.owner]
+alliance = "Allianz"
+character = "Persönlich"
+corporation = "Corporation"
+eve_server = "EVE-Server"
+faction = "Fraktion"
+pod = "Pod · abgeleitet"
+
+[calendar.owner_short]
+alliance = "Allianz"
+character = "Persönlich"
+corporation = "Corp"
+eve_server = "EVE"
+faction = "Fraktion"
+pod = "Pod"
+
+[calendar.response]
+accepted = "Angenommen"
+declined = "Abgelehnt"
+not_responded = "Keine Antwort"
+tentative = "Vorläufig"
+
+[calendar.response_pill]
+accepted = "Dabei"
+declined = "Kann nicht"
+not_responded = "Keine Antwort"
+tentative = "Vielleicht"
+
+[calendar.shell]
+all_day = "GANZTÄGIG"
+reauthenticate = "Erneut authentifizieren"
+today = "HEUTE"
+unauthorized_many = "Kalender von %{count} Piloten sind nicht autorisiert: %{names}."
+unauthorized_one = "Der Kalender von %{name} ist nicht autorisiert und wird in der kombinierten Ansicht ausgeblendet."
+
+[calendar.switcher]
+all_pilots = "Alle Piloten"
+all_pilots_count = "Alle Piloten · %{count} Kalender"
+combined = "%{count} Kalender kombiniert"
+fallback = "Kalender"
+source = "Kalenderquelle"
+
+[calendar.view]
+agenda = "Agenda"
+day = "Tag"
+month = "Monat"
+week = "Woche"
+year = "Jahr"

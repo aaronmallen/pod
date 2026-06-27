@@ -1,0 +1,9 @@
+[config.cascade_mode]
+flyout = "Desplegable"
+none = "Desactivado"
+sub_rail = "Subbarra"
+
+[config.log_level]
+normal = "Normal"
+quiet = "Silencioso"
+verbose = "Detallado"

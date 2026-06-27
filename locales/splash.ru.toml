@@ -1,0 +1,21 @@
+[splash.status]
+checking_update = "Проверка обновлений…"
+downloading_update = "Загрузка обновления…"
+installing = "Установка v%{version}…"
+ready = "ГОТОВО."
+restarting = "Перезапуск…"
+starting_up = "Запуск…"
+
+[splash.update]
+available = "Готова новая версия Pod"
+eyebrow = "ДОСТУПНО ОБНОВЛЕНИЕ"
+later = "Позже"
+update_and_restart = "Обновить и перезапустить"
+
+[splash.version]
+current = "v%{version}"
+update = "Обновить · v%{version}"
+
+[splash.view]
+error = "Не удалось запустить Pod: %{error}"
+retry = "Повторить"

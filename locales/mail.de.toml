@@ -1,0 +1,147 @@
+[mail.compose]
+body_placeholder = "Schreibe deine Nachricht…"
+cc = "Cc"
+cc_field = "Cc"
+discard = "Verwerfen"
+forward_prefix = "Fwd: "
+from = "VON"
+from_option = "%{name} · %{corp}"
+from_unknown = "Unbekannt"
+generate_link = "LINK ERZEUGEN"
+insert = "Einfügen"
+quote_intro = "Von %{sender}:"
+recipient_placeholder = "Charaktere oder Corporations suchen…"
+reply_prefix = "Re: "
+send = "Senden"
+subject = "Betreff"
+subject_placeholder = "—"
+title_new = "Neue Nachricht"
+to_field = "An"
+
+[mail.compose.link_kind]
+character = "Charakter"
+corporation = "Corporation"
+http = "http://"
+solar_system = "Sonnensystem"
+station = "Station"
+
+[mail.compose.link_placeholder]
+character = "Charaktere suchen…"
+corporation = "Corporations suchen…"
+http = "example.com/pfad"
+solar_system = "Sonnensysteme suchen…"
+station = "Stationen suchen…"
+
+[mail.draft]
+no_recipients = "(keine Empfänger)"
+no_subject = "(kein Betreff)"
+
+[mail.folder]
+archive = "Archiv"
+drafts = "Entwürfe"
+fallback = "Ordner"
+inbox = "Posteingang"
+sent = "Gesendet"
+snoozed = "Zurückgestellt"
+starred = "Markiert"
+trash = "Papierkorb"
+unified = "Alle Posteingänge"
+
+[mail.folder_pane]
+drag_hint = "Ziehe eine Nachricht hierher, um sie zu taggen"
+folders_header = "Ordner"
+labels_header = "Labels"
+mailboxes_combined = "%{count} Postfächer kombiniert"
+no_custom_labels = "Keine eigenen Labels"
+unified_header = "Vereinheitlicht"
+
+[mail.header]
+compose = "Verfassen"
+messages = "%{count} Nachrichten · "
+unread = "%{count} ungelesen"
+
+[mail.labels]
+apply_header = "Labels anwenden"
+cancel = "Abbrechen"
+color = "Farbe"
+create = "Label erstellen"
+eyebrow = "Mail-Label"
+name = "Name"
+name_placeholder = "z. B. Koalition"
+new = "Neues Label"
+new_label = "Neues Label…"
+no_labels = "Noch keine Labels."
+preview = "Label-Vorschau"
+
+[mail.labels.delete]
+body = "Wenn du „%{name}“ löschst, wird es aus jeder Nachricht entfernt, hier und in EVE."
+confirm = "Löschen"
+eyebrow = "Mail-Label"
+title = "Label löschen?"
+
+[mail.list]
+no_drafts = "Keine Entwürfe."
+no_messages = "Keine Nachrichten."
+no_search_results = "Keine Nachrichten entsprechen dieser Suche."
+no_subject = "(kein Betreff)"
+search_placeholder = "Mail durchsuchen"
+
+[mail.list.bucket]
+this_month = "Dieser Monat"
+today = "Heute"
+yesterday = "Gestern"
+
+[mail.outbox]
+dismiss = "Schließen"
+failed = "%{count} fehlgeschlagen"
+retry = "Erneut versuchen"
+sending = "%{count} werden gesendet"
+unknown_error = "unbekannter Fehler"
+
+[mail.reading]
+empty = "Wähle eine Nachricht"
+no_content = "(kein Inhalt)"
+no_subject = "(kein Betreff)"
+recipients_self = "ich"
+system_message = " · Systemnachricht"
+to = "an "
+
+[mail.reading.toolbar]
+archive = "Archivieren"
+delete = "Löschen"
+forward = "Weiterleiten"
+label = "Label"
+reply = "Antworten"
+reply_all = "Allen antworten"
+snooze = "Zurückstellen"
+snoozed = "Zurückgestellt"
+star = "Markieren"
+starred = "Markiert"
+trash = "In den Papierkorb verschieben"
+
+[mail.snooze]
+back = "Zurück"
+confirm = "Zurückstellen"
+empty_summary = "—"
+eve = "EVE"
+pick_date = "Datum & Uhrzeit wählen…"
+snooze_until = "Zurückstellen bis"
+summary_eyebrow = "ZURÜCKSTELLEN BIS"
+time = "ZEIT"
+unsnooze = "Zurückstellung aufheben"
+
+[mail.snooze.preset]
+later_today = "Später heute"
+later_today_hint = "18:00 EVE"
+next_week = "Nächste Woche"
+next_week_hint = "Mo 09:00"
+this_weekend = "Dieses Wochenende"
+this_weekend_hint = "Sa 09:00"
+tomorrow = "Morgen"
+tomorrow_hint = "09:00 EVE"
+
+[mail.switcher]
+character_unread = "%{count} ungelesen"
+fallback = "Mail"
+row_unread = "%{corp}  ·  %{count} ungelesen"
+switch_character = "Charakter wechseln · %{count} ungelesen"

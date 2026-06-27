@@ -1,0 +1,147 @@
+[mail.compose]
+body_placeholder = "Rédigez votre message…"
+cc = "Cc"
+cc_field = "Cc"
+discard = "Abandonner"
+forward_prefix = "Tr : "
+from = "DE"
+from_option = "%{name} · %{corp}"
+from_unknown = "Inconnu"
+generate_link = "GÉNÉRER UN LIEN"
+insert = "Insérer"
+quote_intro = "De %{sender} :"
+recipient_placeholder = "Rechercher des personnages ou des corporations…"
+reply_prefix = "Re : "
+send = "Envoyer"
+subject = "Objet"
+subject_placeholder = "—"
+title_new = "Nouveau message"
+to_field = "À"
+
+[mail.compose.link_kind]
+character = "Personnage"
+corporation = "Corporation"
+http = "http://"
+solar_system = "Système solaire"
+station = "Station"
+
+[mail.compose.link_placeholder]
+character = "Rechercher des personnages…"
+corporation = "Rechercher des corporations…"
+http = "exemple.com/chemin"
+solar_system = "Rechercher des systèmes solaires…"
+station = "Rechercher des stations…"
+
+[mail.draft]
+no_recipients = "(aucun destinataire)"
+no_subject = "(aucun objet)"
+
+[mail.folder]
+archive = "Archives"
+drafts = "Brouillons"
+fallback = "Dossier"
+inbox = "Boîte de réception"
+sent = "Envoyés"
+snoozed = "En attente"
+starred = "Suivis"
+trash = "Corbeille"
+unified = "Toutes les boîtes"
+
+[mail.folder_pane]
+drag_hint = "Faites glisser un message ici pour l’étiqueter"
+folders_header = "Dossiers"
+labels_header = "Libellés"
+mailboxes_combined = "%{count} boîtes combinées"
+no_custom_labels = "Aucun libellé personnalisé"
+unified_header = "Unifié"
+
+[mail.header]
+compose = "Rédiger"
+messages = "%{count} messages · "
+unread = "%{count} non lus"
+
+[mail.labels]
+apply_header = "Appliquer les libellés"
+cancel = "Annuler"
+color = "Couleur"
+create = "Créer un libellé"
+eyebrow = "Libellé de courrier"
+name = "Nom"
+name_placeholder = "ex. Coalition"
+new = "Nouveau libellé"
+new_label = "Nouveau libellé…"
+no_labels = "Aucun libellé pour l’instant."
+preview = "Aperçu du libellé"
+
+[mail.labels.delete]
+body = "Supprimer « %{name} » le retire de chaque message, ici et dans EVE."
+confirm = "Supprimer"
+eyebrow = "Libellé de courrier"
+title = "Supprimer le libellé ?"
+
+[mail.list]
+no_drafts = "Aucun brouillon."
+no_messages = "Aucun message."
+no_search_results = "Aucun message ne correspond à cette recherche."
+no_subject = "(aucun objet)"
+search_placeholder = "Rechercher dans le courrier"
+
+[mail.list.bucket]
+this_month = "Ce mois-ci"
+today = "Aujourd’hui"
+yesterday = "Hier"
+
+[mail.outbox]
+dismiss = "Ignorer"
+failed = "%{count} échec(s)"
+retry = "Réessayer"
+sending = "%{count} en cours d’envoi"
+unknown_error = "erreur inconnue"
+
+[mail.reading]
+empty = "Sélectionnez un message"
+no_content = "(aucun contenu)"
+no_subject = "(aucun objet)"
+recipients_self = "moi"
+system_message = " · Message système"
+to = "à "
+
+[mail.reading.toolbar]
+archive = "Archiver"
+delete = "Supprimer"
+forward = "Transférer"
+label = "Libeller"
+reply = "Répondre"
+reply_all = "Répondre à tous"
+snooze = "Mettre en attente"
+snoozed = "En attente"
+star = "Suivre"
+starred = "Suivi"
+trash = "Mettre à la corbeille"
+
+[mail.snooze]
+back = "Retour"
+confirm = "Mettre en attente"
+empty_summary = "—"
+eve = "EVE"
+pick_date = "Choisir la date et l’heure…"
+snooze_until = "En attente jusqu’au"
+summary_eyebrow = "EN ATTENTE JUSQU’AU"
+time = "HEURE"
+unsnooze = "Retirer de l’attente"
+
+[mail.snooze.preset]
+later_today = "Plus tard aujourd’hui"
+later_today_hint = "18:00 EVE"
+next_week = "La semaine prochaine"
+next_week_hint = "Lun 09:00"
+this_weekend = "Ce week-end"
+this_weekend_hint = "Sam 09:00"
+tomorrow = "Demain"
+tomorrow_hint = "09:00 EVE"
+
+[mail.switcher]
+character_unread = "%{count} non lus"
+fallback = "Courrier"
+row_unread = "%{corp}  ·  %{count} non lus"
+switch_character = "Changer de personnage · %{count} non lus"

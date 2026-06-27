@@ -1,0 +1,125 @@
+[calendar.agenda]
+all_day = "終日"
+empty = "今後の予定はありません。"
+event_count_one = "%{count} 件のイベント"
+event_count_other = "%{count} 件のイベント"
+owner_line = "%{owner} · %{kind}"
+pod_tag = "POD"
+
+[calendar.detail]
+attendees = "参加者"
+date = "日付"
+important = "重要"
+owner = "オーナー"
+owner_value = "%{owner} · %{kind}"
+pilot = "カレンダー"
+pod = "Pod"
+provenance_esi = "ESI · GET /characters/%{character}/calendar/%{event}"
+provenance_pod = "Pod 由来のオーバーレイ — ESI のカレンダーイベントではありません。"
+provenance_pod_source = "Pod 由来のオーバーレイ · %{source} — ESI のカレンダーイベントではありません。"
+replied = "%{invited} 件中 %{replied} 件が返信済み"
+when = "日時"
+when_all_day = "終日 · EVE"
+when_local = "%{base} · %{local}"
+when_range = "%{start} – %{end} EVE"
+when_single = "%{start} EVE"
+when_unknown = "不明"
+your_response = "あなたの返信"
+
+[calendar.legend]
+event_count_one = "%{count} 件のイベント"
+event_count_other = "%{count} 件のイベント"
+owner = "オーナー"
+pilots = "パイロット"
+summary_eve = "%{events} · EVE 時刻"
+summary_local = "%{events} · EVE + 現地時刻"
+
+[calendar.month]
+more = "他 +%{count} 件"
+
+[calendar.nav]
+agenda_subtitle = "%{month} %{day} から"
+agenda_title = "アジェンダ"
+day_subtitle = "%{year} · EVE / UTC"
+today = "今日"
+week_subtitle = "%{year} · 週"
+year_subtitle = "年"
+
+[calendar.overlay]
+contract_body = "%{party} 宛てのコントラクトが失効します。再出品するか期限切れにしてください。"
+contract_body_generic = "再出品するか期限切れにしてください。"
+contract_fallback = "コントラクト"
+contract_title = "コントラクト失効 — %{label}"
+extraction_arrival_body = "採掘チャンクが到着し、破砕の準備が整います。"
+extraction_arrival_title = "%{moon} — チャンク到着"
+extraction_decay_body = "先に起爆しなければチャンクは自然に破砕します。"
+extraction_decay_title = "%{moon} — 破砕"
+industry_body = "%{activity} ジョブ、%{runs} 回。"
+industry_body_cost = "%{activity} ジョブ、%{runs} 回。コスト %{cost} ISK。"
+industry_title = "%{label} ×%{runs} %{verb} — %{activity}"
+market_body = "オーダーが失効する前に再出品または価格変更してください。"
+market_side_buy = "買い"
+market_side_sell = "売り"
+market_title = "%{side}オーダー失効 — %{item} ×%{volume}"
+moon_fallback = "ムーン %{id}"
+owner_name = "Pod"
+skill_body = "キュー項目のトレーニングが完了します。"
+skill_body_sp = "キュー項目のトレーニングが完了します。+%{sp} SP。"
+skill_fallback = "スキル %{id}"
+skill_title = "%{skill} %{level} 完了"
+type_fallback = "タイプ %{id}"
+
+[calendar.overlay.verb]
+cancelled = "キャンセル"
+completes = "完了"
+delivered = "納品"
+paused = "一時停止"
+
+[calendar.owner]
+alliance = "アライアンス"
+character = "個人"
+corporation = "コーポレーション"
+eve_server = "EVE サーバー"
+faction = "ファクション"
+pod = "Pod · 由来"
+
+[calendar.owner_short]
+alliance = "アライアンス"
+character = "個人"
+corporation = "コープ"
+eve_server = "EVE"
+faction = "ファクション"
+pod = "Pod"
+
+[calendar.response]
+accepted = "承諾"
+declined = "辞退"
+not_responded = "返信なし"
+tentative = "未定"
+
+[calendar.response_pill]
+accepted = "参加"
+declined = "不参加"
+not_responded = "返信なし"
+tentative = "たぶん"
+
+[calendar.shell]
+all_day = "終日"
+reauthenticate = "再認証"
+today = "今日"
+unauthorized_many = "%{count} 人のパイロットのカレンダーが認証されていません: %{names}。"
+unauthorized_one = "%{name} のカレンダーは認証されておらず、統合ビューから非表示になっています。"
+
+[calendar.switcher]
+all_pilots = "全パイロット"
+all_pilots_count = "全パイロット · %{count} カレンダー"
+combined = "%{count} カレンダーを統合"
+fallback = "カレンダー"
+source = "カレンダーソース"
+
+[calendar.view]
+agenda = "アジェンダ"
+day = "日"
+month = "月"
+week = "週"
+year = "年"

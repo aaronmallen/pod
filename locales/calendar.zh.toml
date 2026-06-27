@@ -1,0 +1,125 @@
+[calendar.agenda]
+all_day = "全天"
+empty = "没有即将到来的事件。"
+event_count_one = "%{count} 个事件"
+event_count_other = "%{count} 个事件"
+owner_line = "%{owner} · %{kind}"
+pod_tag = "POD"
+
+[calendar.detail]
+attendees = "参与者"
+date = "日期"
+important = "重要"
+owner = "所有者"
+owner_value = "%{owner} · %{kind}"
+pilot = "日历"
+pod = "Pod"
+provenance_esi = "ESI · GET /characters/%{character}/calendar/%{event}"
+provenance_pod = "Pod 派生的叠加项 — 并非 ESI 日历事件。"
+provenance_pod_source = "Pod 派生的叠加项 · %{source} — 并非 ESI 日历事件。"
+replied = "%{replied} / %{invited} 已回复"
+when = "时间"
+when_all_day = "全天 · EVE"
+when_local = "%{base} · %{local}"
+when_range = "%{start} – %{end} EVE"
+when_single = "%{start} EVE"
+when_unknown = "未知"
+your_response = "你的回复"
+
+[calendar.legend]
+event_count_one = "%{count} 个事件"
+event_count_other = "%{count} 个事件"
+owner = "所有者"
+pilots = "飞行员"
+summary_eve = "%{events} · EVE 时间"
+summary_local = "%{events} · EVE + 本地时间"
+
+[calendar.month]
+more = "+%{count} 更多"
+
+[calendar.nav]
+agenda_subtitle = "自 %{month} %{day} 起"
+agenda_title = "议程"
+day_subtitle = "%{year} · EVE / UTC"
+today = "今天"
+week_subtitle = "%{year} · 周"
+year_subtitle = "年"
+
+[calendar.overlay]
+contract_body = "致 %{party} 的合同即将失效。重新挂出或任其到期。"
+contract_body_generic = "重新挂出或任其到期。"
+contract_fallback = "合同"
+contract_title = "合同到期 — %{label}"
+extraction_arrival_body = "采矿块已到达，可以进行碎裂。"
+extraction_arrival_title = "%{moon} — 采矿块到达"
+extraction_decay_body = "若未提前引爆，采矿块将自然碎裂。"
+extraction_decay_title = "%{moon} — 碎裂"
+industry_body = "%{activity}作业，%{runs} 次。"
+industry_body_cost = "%{activity}作业，%{runs} 次。成本 %{cost} ISK。"
+industry_title = "%{label} ×%{runs} %{verb} — %{activity}"
+market_body = "在订单失效前重新挂出或重新定价。"
+market_side_buy = "买入"
+market_side_sell = "卖出"
+market_title = "%{side}订单到期 — %{item} ×%{volume}"
+moon_fallback = "卫星 %{id}"
+owner_name = "Pod"
+skill_body = "队列项目完成训练。"
+skill_body_sp = "队列项目完成训练。+%{sp} SP。"
+skill_fallback = "技能 %{id}"
+skill_title = "%{skill} %{level} 完成"
+type_fallback = "类型 %{id}"
+
+[calendar.overlay.verb]
+cancelled = "已取消"
+completes = "完成"
+delivered = "已交付"
+paused = "已暂停"
+
+[calendar.owner]
+alliance = "联盟"
+character = "个人"
+corporation = "军团"
+eve_server = "EVE 服务器"
+faction = "势力"
+pod = "Pod · 派生"
+
+[calendar.owner_short]
+alliance = "联盟"
+character = "个人"
+corporation = "军团"
+eve_server = "EVE"
+faction = "势力"
+pod = "Pod"
+
+[calendar.response]
+accepted = "已接受"
+declined = "已拒绝"
+not_responded = "未回复"
+tentative = "待定"
+
+[calendar.response_pill]
+accepted = "参加"
+declined = "不参加"
+not_responded = "未回复"
+tentative = "也许"
+
+[calendar.shell]
+all_day = "全天"
+reauthenticate = "重新认证"
+today = "今天"
+unauthorized_many = "%{count} 位飞行员的日历未授权：%{names}。"
+unauthorized_one = "%{name} 的日历未授权，已从合并视图中隐藏。"
+
+[calendar.switcher]
+all_pilots = "所有飞行员"
+all_pilots_count = "所有飞行员 · %{count} 个日历"
+combined = "已合并 %{count} 个日历"
+fallback = "日历"
+source = "日历来源"
+
+[calendar.view]
+agenda = "议程"
+day = "日"
+month = "月"
+week = "周"
+year = "年"

@@ -1,0 +1,21 @@
+[splash.status]
+checking_update = "正在检查更新…"
+downloading_update = "正在下载更新…"
+installing = "正在安装 v%{version}…"
+ready = "就绪。"
+restarting = "正在重启…"
+starting_up = "正在启动…"
+
+[splash.update]
+available = "Pod 的新版本已就绪"
+eyebrow = "有可用更新"
+later = "稍后"
+update_and_restart = "更新并重启"
+
+[splash.version]
+current = "v%{version}"
+update = "更新 · v%{version}"
+
+[splash.view]
+error = "无法启动 Pod：%{error}"
+retry = "重试"

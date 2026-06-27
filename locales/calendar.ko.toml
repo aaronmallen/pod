@@ -1,0 +1,125 @@
+[calendar.agenda]
+all_day = "종일"
+empty = "예정된 이벤트가 없습니다."
+event_count_one = "이벤트 %{count}개"
+event_count_other = "이벤트 %{count}개"
+owner_line = "%{owner} · %{kind}"
+pod_tag = "POD"
+
+[calendar.detail]
+attendees = "참석자"
+date = "날짜"
+important = "중요"
+owner = "소유자"
+owner_value = "%{owner} · %{kind}"
+pilot = "캘린더"
+pod = "Pod"
+provenance_esi = "ESI · GET /characters/%{character}/calendar/%{event}"
+provenance_pod = "Pod 파생 오버레이 — ESI 캘린더 이벤트가 아닙니다."
+provenance_pod_source = "Pod 파생 오버레이 · %{source} — ESI 캘린더 이벤트가 아닙니다."
+replied = "%{invited}명 중 %{replied}명 응답"
+when = "시간"
+when_all_day = "종일 · EVE"
+when_local = "%{base} · %{local}"
+when_range = "%{start} – %{end} EVE"
+when_single = "%{start} EVE"
+when_unknown = "알 수 없음"
+your_response = "내 응답"
+
+[calendar.legend]
+event_count_one = "이벤트 %{count}개"
+event_count_other = "이벤트 %{count}개"
+owner = "소유자"
+pilots = "파일럿"
+summary_eve = "%{events} · EVE 시간"
+summary_local = "%{events} · EVE + 로컬 시간"
+
+[calendar.month]
+more = "+%{count}개 더"
+
+[calendar.nav]
+agenda_subtitle = "%{month} %{day}부터"
+agenda_title = "아젠다"
+day_subtitle = "%{year} · EVE / UTC"
+today = "오늘"
+week_subtitle = "%{year} · 주"
+year_subtitle = "연도"
+
+[calendar.overlay]
+contract_body = "%{party}에 대한 계약이 만료됩니다. 다시 등록하거나 만료되도록 두세요."
+contract_body_generic = "다시 등록하거나 만료되도록 두세요."
+contract_fallback = "계약"
+contract_title = "계약 만료 — %{label}"
+extraction_arrival_body = "채굴 청크가 도착하여 분쇄할 준비가 되었습니다."
+extraction_arrival_title = "%{moon} — 청크 도착"
+extraction_decay_body = "먼저 폭파하지 않으면 청크가 자연 분쇄됩니다."
+extraction_decay_title = "%{moon} — 분쇄"
+industry_body = "%{activity} 작업, %{runs}회 실행."
+industry_body_cost = "%{activity} 작업, %{runs}회 실행. 비용 %{cost} ISK."
+industry_title = "%{label} ×%{runs} %{verb} — %{activity}"
+market_body = "주문이 만료되기 전에 다시 등록하거나 가격을 재조정하세요."
+market_side_buy = "구매"
+market_side_sell = "판매"
+market_title = "%{side} 주문 만료 — %{item} ×%{volume}"
+moon_fallback = "위성 %{id}"
+owner_name = "Pod"
+skill_body = "대기열 항목의 훈련이 완료됩니다."
+skill_body_sp = "대기열 항목의 훈련이 완료됩니다. +%{sp} SP."
+skill_fallback = "스킬 %{id}"
+skill_title = "%{skill} %{level} 완료"
+type_fallback = "유형 %{id}"
+
+[calendar.overlay.verb]
+cancelled = "취소됨"
+completes = "완료"
+delivered = "전달됨"
+paused = "일시 중지됨"
+
+[calendar.owner]
+alliance = "얼라이언스"
+character = "개인"
+corporation = "코퍼레이션"
+eve_server = "EVE 서버"
+faction = "팩션"
+pod = "Pod · 파생"
+
+[calendar.owner_short]
+alliance = "얼라이언스"
+character = "개인"
+corporation = "코퍼"
+eve_server = "EVE"
+faction = "팩션"
+pod = "Pod"
+
+[calendar.response]
+accepted = "수락함"
+declined = "거절함"
+not_responded = "응답 없음"
+tentative = "미정"
+
+[calendar.response_pill]
+accepted = "참석"
+declined = "불참"
+not_responded = "응답 없음"
+tentative = "아마도"
+
+[calendar.shell]
+all_day = "종일"
+reauthenticate = "다시 인증"
+today = "오늘"
+unauthorized_many = "%{count}명 파일럿의 캘린더가 인증되지 않았습니다: %{names}."
+unauthorized_one = "%{name}님의 캘린더가 인증되지 않아 통합 보기에서 숨겨졌습니다."
+
+[calendar.switcher]
+all_pilots = "모든 파일럿"
+all_pilots_count = "모든 파일럿 · 캘린더 %{count}개"
+combined = "캘린더 %{count}개 통합"
+fallback = "캘린더"
+source = "캘린더 소스"
+
+[calendar.view]
+agenda = "아젠다"
+day = "일"
+month = "월"
+week = "주"
+year = "연도"

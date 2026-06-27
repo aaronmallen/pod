@@ -1,0 +1,61 @@
+[shell.command_palette]
+add_character = "添加角色"
+compose_mail = "撰写邮件"
+create_stockpile = "创建库存目标"
+escape_hint = "ESC"
+manage_skill_plans = "管理技能计划"
+no_matches = "无匹配项"
+open_settings = "打开设置"
+placeholder = "跳转到任意位置…  试试“planner”、“budget”"
+sync_now = "立即同步"
+toggle_high_contrast = "切换高对比度"
+
+[shell.command_palette.kind]
+character = "角色"
+command = "命令"
+corporation = "军团"
+section = "分区"
+tab = "标签页"
+
+[shell.notification]
+extraction_cracked_fallback = "可以开采"
+extraction_cracked_title = "卫星矿块已碎裂"
+extraction_scheduled_title = "已安排采集"
+industry_fallback = "作业"
+industry_ready = "%{product} 已就绪"
+industry_title = "工业作业完成"
+killmail_destroyed = "%{ship} 已被摧毁"
+killmail_ship_fallback = "舰船"
+killmail_title = "新的 killmail"
+mail_body = "来自 %{name}"
+mail_title_fallback = "新的 EVE 邮件"
+skill_body = "训练完成"
+skill_fallback = "技能"
+skill_title = "%{skill} 已完成"
+
+[shell.notifications]
+footer_total = "共 %{count} 项"
+footer_unread = "%{count} 项未读"
+mark_all_read = "全部标为已读"
+title = "通知"
+
+[shell.status]
+mutations = "变更"
+starting_up = "正在启动…"
+
+[shell.takeover]
+confirm = "%{hostname} 上次活动于 %{last_active}。接管将覆盖它仍打开的任何未保存更改。是否继续？"
+read_only = "在 %{hostname} 上打开 — 请在那里关闭，或进行接管。"
+
+[shell.window]
+app = "Pod"
+compare_skills = "Pod — 比较技能"
+compose_mail = "Pod — 撰写邮件"
+contract = "Pod — 合同"
+event = "Pod — 事件"
+init_error = "无法启动 Pod：%{error}"
+killmail = "Pod — Killmail"
+manage_skill_plans = "Pod — 管理技能计划"
+skill_plan_editor = "Pod — 技能计划编辑器"
+stockpile_editor = "Pod — 库存目标编辑器"
+titled = "Pod — %{title}"

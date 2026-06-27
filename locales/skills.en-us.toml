@@ -1,0 +1,298 @@
+[skills.compare_header]
+add_pilot = "ADD PILOT"
+compare = "Compare"
+no_matches = "No matches"
+pilots = "%{count} pilots"
+search_placeholder = "Search pilots…"
+sp_value = "%{sp} SP"
+
+[skills.compare_matrix]
+at_v = "%{count}×V"
+rank = "×%{rank}"
+
+[skills.compare_summary]
+skills_at_iv = "Skills at IV+"
+skills_at_v = "Skills at V"
+skills_trained = "Skills trained"
+sp_value = "%{sp} SP"
+total_sp = "Total SP"
+
+[skills.editor]
+col_primary = "Pri"
+col_secondary = "Sec"
+col_skill = "Skill"
+col_sp = "SP"
+col_time = "Time / Cumul."
+cumulative_time = "cum %{time}"
+empty_action = "Open skill picker"
+empty_subtitle = "Add your first skill using the skill picker."
+empty_title = "No skills in this plan yet"
+note_placeholder = "Add a note…"
+prereq_badge = "prereq"
+sp_unit = "SP"
+
+[skills.editor_header]
+add_skills = "Add skills"
+export = "Export"
+hide_picker = "Hide picker"
+import = "Import"
+name_placeholder = "Untitled plan"
+save = "Save"
+
+[skills.editor_picker]
+add = "Add"
+loading_certificates = "Loading certificates…"
+loading_modules = "Loading modules…"
+loading_ships = "Loading ships…"
+loading_skills = "Loading skills…"
+no_certificates_match = "No certificates match your search"
+no_modules_match = "No modules match your search"
+no_ships_match = "No ships match your search"
+no_skills_match = "No skills match your search"
+proficiency_adv = "Adv"
+proficiency_basic = "Basic"
+proficiency_elite = "Elite"
+proficiency_std = "Std"
+search_certificates = "Search certificates…"
+search_modules = "Search modules…"
+search_ships = "Search ships…"
+search_skills = "Search skills…"
+tab_certs = "Certs"
+tab_modules = "Modules"
+tab_ships = "Ships"
+tab_skills = "Skills"
+
+[skills.editor_remap]
+after_step = "After step %{step}"
+applied_at_start = "Applied at start of plan"
+neural_remap = "NEURAL REMAP"
+remap_here = "+ REMAP HERE"
+
+[skills.editor_stats]
+completes = "Completes"
+steps = "Steps"
+total_sp = "Total SP"
+training_time = "Training time"
+
+[skills.format]
+days = "%{n}d"
+hours = "%{n}h"
+minutes = "%{n}m"
+seconds = "%{n}s"
+
+[skills.header]
+compare = "Compare"
+empty = "Empty"
+eve_value = "%{eta} EVE"
+manage_plans = "Manage Plans"
+queue_completes_label = "Queue completes"
+queue_label = "Queue · %{count} %{noun}"
+skill = "skill"
+skills = "skills"
+sp_value = "%{sp} SP"
+total_sp_label = "Total skill points"
+
+[skills.hero]
+attributes = "Attributes"
+completes_at = "Completes at"
+eve_time = "EVE Time"
+progress = "Progress"
+rank = "×%{rank}"
+sp_rate = "%{per_min} SP/min · %{per_day}K/day"
+sp_ratio = "%{now} / %{to} SP"
+
+[skills.hero_active]
+currently_training = "Currently training"
+remaining = "REMAINING"
+
+[skills.hero_idle]
+inactive_eyebrow = "Training inactive · queue empty"
+inactive_headline = "No skill is currently training"
+inactive_supporting = "Apply a skill plan to start training."
+paused_eyebrow = "Training paused · %{count} %{noun} queued"
+paused_headline = "Training is paused"
+paused_supporting = "Resume training in EVE to continue the queue."
+
+[skills.import_export]
+append = "Append"
+cancel = "Cancel"
+from_clipboard = "From clipboard"
+from_file = "From file…"
+import_plan = "Import plan"
+import_prompt = "Replace the current plan, or append the imported skills to the end?"
+replace = "Replace"
+to_clipboard = "To clipboard"
+to_file = "To file…"
+
+[skills.manager]
+cancel = "Cancel"
+character_plural = "characters"
+character_singular = "character"
+characters = "Characters"
+copy_to = "Copy to"
+copy_to_character = "Copy to character"
+delete = "Delete"
+delete_confirm = "Delete?"
+header_summary = "%{plan_count} %{plan_word} across %{char_count} %{char_word}"
+new_plan = "New plan"
+no_characters = "No characters"
+no_plans_for = "No plans for %{name}"
+no_plans_hint = "Create one with “New plan”, or copy a plan here from another character."
+open = "Open"
+plan_meta = "%{skill_count} %{skill_word} · edited %{edited}"
+plan_plural = "plans"
+plan_singular = "plan"
+skill_plural = "skills"
+skill_singular = "skill"
+time_days_ago = "%{count}d ago"
+time_hours_ago = "%{count}h ago"
+time_just_now = "just now"
+time_minutes_ago = "%{count}m ago"
+title = "Manage skill plans"
+
+[skills.panel]
+tab_attributes = "Attributes"
+tab_browse = "Browse"
+tab_plans = "Plans"
+
+[skills.panel_attributes]
+attr_charisma = "Charisma"
+attr_intelligence = "Intelligence"
+attr_memory = "Memory"
+attr_perception = "Perception"
+attr_short_charisma = "Cha"
+attr_short_intelligence = "Int"
+attr_short_memory = "Mem"
+attr_short_perception = "Per"
+attr_short_willpower = "Wil"
+attr_willpower = "Willpower"
+awaiting = "Neural attributes will appear once synced."
+pair_combat = "Combat"
+pair_drones = "Drones"
+pair_engineering = "Engineering"
+pair_navigation = "Navigation"
+pair_social = "Social"
+pair_trade = "Trade"
+rate_grid_title = "Training rate by attribute pair"
+rate_pair = "SP/hr · %{primary}+%{secondary}"
+recommendation_completes = "Queue completes in %{duration}"
+recommendation_optimal = "Already optimal. No remap improves your current queue."
+recommendation_out_of_spec = "Your current attributes are out of spec; suggestion shown is the fastest legal allocation."
+recommendation_saves = "Saves %{duration} vs current"
+recommendation_title = "Fastest remap for your current queue"
+remap_bonus_one = "%{count} bonus remap available"
+remap_bonus_other = "%{count} bonus remaps available"
+remap_cooldown_available = "available now"
+remap_cooldown_days = "cooldown %{days}d"
+remap_last_ago = "last remap %{days}d ago"
+remap_last_none = "no prior remap"
+remap_status = "%{last} · annual %{cooldown}"
+remap_title = "Neural remap"
+role_primary = "Primary"
+role_secondary = "Secondary"
+section_summary = "%{total} pts allocated · base"
+section_title = "Neural attributes"
+
+[skills.panel_browser]
+group_summary = "%{trained}/%{total} · %{sp} SP"
+prereq_chip = "req · %{name} %{level}"
+queued_marker = "+%{count} queued"
+search_placeholder = "Search skills…"
+
+[skills.panel_plans]
+cancel = "Cancel"
+card_subtitle_one = "%{count} skill · %{updated}"
+card_subtitle_other = "%{count} skills · %{updated}"
+confirm = "Confirm"
+delete_prompt = "Delete?"
+empty_body = "Create your first plan to start optimizing your skill queue."
+empty_title = "No skill plans yet"
+from_queue = "From queue"
+from_selected = "From selected"
+loading = "Loading plans…"
+new_plan = "New plan"
+open = "Open"
+
+[skills.plan]
+draft_from_selection = "Plan from selection"
+eta = "%{day} %{month} %{year} · %{hour}:%{minute}"
+export_dialog_title = "Export skill plan"
+export_file_base = "skill-plan"
+file_filter_json = "JSON"
+file_filter_plan = "Plan"
+group_other = "Other"
+import_dialog_title = "Import skill plan"
+month_apr = "Apr"
+month_aug = "Aug"
+month_dec = "Dec"
+month_feb = "Feb"
+month_jan = "Jan"
+month_jul = "Jul"
+month_jun = "Jun"
+month_mar = "Mar"
+month_may = "May"
+month_nov = "Nov"
+month_oct = "Oct"
+month_sep = "Sep"
+skill_fallback = "Skill %{id}"
+untitled = "Untitled plan"
+
+[skills.plan_math]
+no_remaps_available = "No neural remaps available. Next remap accrues in %{count} days."
+
+[skills.queue]
+col_completes = "Completes"
+col_duration = "Duration"
+col_skill = "Skill"
+col_sp = "SP"
+next = "Next"
+sp = "SP"
+unknown_skill = "Unknown skill"
+
+[skills.queue_empty]
+body = "Apply a skill plan to start training."
+eyebrow = "Queue · 0 skills"
+title = "Empty queue"
+
+[skills.queue_footer]
+clear = "Clear"
+create_plan = "Create plan"
+finishes = "finishes %{eta} EVE"
+select_hint = "⇧ / ⌘-click to select"
+selected = "%{count} selected"
+total = "Total · %{count} skills"
+
+[skills.summary_attr]
+already_optimal = "Already optimal"
+current = "CURRENT"
+heading = "ATTRIBUTE OPTIMIZATION"
+no_remap_available = "No remap available"
+proposed = "PROPOSED"
+remap_available = "Remap available now"
+
+[skills.summary_implant]
+heading = "IMPLANT EFFECT"
+implants_save = "Implants save %{time}"
+no_effect = "No training-time effect"
+with_implants = "WITH IMPLANTS"
+without = "WITHOUT"
+
+[skills.summary_injector]
+caption = "To inject the remaining %{sp} at your current total SP band."
+heading = "SKILL INJECTORS"
+large = "LARGE"
+pill_label = "%{size} · %{sp} SP ea."
+small = "SMALL"
+
+[skills.summary_time]
+by_attribute_pair = "TIME BY ATTRIBUTE PAIR"
+by_skill_group = "TIME BY SKILL GROUP"
+
+[skills.summary_totals]
+completes = "Completes %{eta}"
+steps = "%{count} steps"
+
+[skills.warning]
+empty = "Training inactive · skill queue is empty"
+low_queue = "Low queue · less than 24h of training remains"
+paused = "Training paused · %{count} %{noun} queued"

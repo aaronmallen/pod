@@ -1,0 +1,298 @@
+[skills.compare_header]
+add_pilot = "添加飞行员"
+compare = "对比"
+no_matches = "无匹配项"
+pilots = "%{count} 名飞行员"
+search_placeholder = "搜索飞行员…"
+sp_value = "%{sp} SP"
+
+[skills.compare_matrix]
+at_v = "%{count}×V"
+rank = "×%{rank}"
+
+[skills.compare_summary]
+skills_at_iv = "IV+ 级技能"
+skills_at_v = "V 级技能"
+skills_trained = "已训练技能"
+sp_value = "%{sp} SP"
+total_sp = "总 SP"
+
+[skills.editor]
+col_primary = "主"
+col_secondary = "副"
+col_skill = "技能"
+col_sp = "SP"
+col_time = "时间 / 累计"
+cumulative_time = "累计 %{time}"
+empty_action = "打开技能选择器"
+empty_subtitle = "使用技能选择器添加你的第一个技能。"
+empty_title = "此计划中尚无技能"
+note_placeholder = "添加备注…"
+prereq_badge = "前置"
+sp_unit = "SP"
+
+[skills.editor_header]
+add_skills = "添加技能"
+export = "导出"
+hide_picker = "隐藏选择器"
+import = "导入"
+name_placeholder = "未命名计划"
+save = "保存"
+
+[skills.editor_picker]
+add = "添加"
+loading_certificates = "正在加载证书…"
+loading_modules = "正在加载装备…"
+loading_ships = "正在加载舰船…"
+loading_skills = "正在加载技能…"
+no_certificates_match = "没有证书匹配你的搜索"
+no_modules_match = "没有装备匹配你的搜索"
+no_ships_match = "没有舰船匹配你的搜索"
+no_skills_match = "没有技能匹配你的搜索"
+proficiency_adv = "进阶"
+proficiency_basic = "基础"
+proficiency_elite = "精英"
+proficiency_std = "标准"
+search_certificates = "搜索证书…"
+search_modules = "搜索装备…"
+search_ships = "搜索舰船…"
+search_skills = "搜索技能…"
+tab_certs = "证书"
+tab_modules = "装备"
+tab_ships = "舰船"
+tab_skills = "技能"
+
+[skills.editor_remap]
+after_step = "在第 %{step} 步之后"
+applied_at_start = "在计划开始时应用"
+neural_remap = "神经重映射"
+remap_here = "+ 在此重映射"
+
+[skills.editor_stats]
+completes = "完成"
+steps = "步骤"
+total_sp = "总 SP"
+training_time = "训练时间"
+
+[skills.format]
+days = "%{n}天"
+hours = "%{n}小时"
+minutes = "%{n}分钟"
+seconds = "%{n}秒"
+
+[skills.header]
+compare = "对比"
+empty = "空"
+eve_value = "%{eta} EVE"
+manage_plans = "管理计划"
+queue_completes_label = "队列完成"
+queue_label = "队列 · %{count} %{noun}"
+skill = "技能"
+skills = "技能"
+sp_value = "%{sp} SP"
+total_sp_label = "总技能点"
+
+[skills.hero]
+attributes = "属性"
+completes_at = "完成于"
+eve_time = "EVE 时间"
+progress = "进度"
+rank = "×%{rank}"
+sp_rate = "%{per_min} SP/分 · %{per_day}K/天"
+sp_ratio = "%{now} / %{to} SP"
+
+[skills.hero_active]
+currently_training = "正在训练"
+remaining = "剩余"
+
+[skills.hero_idle]
+inactive_eyebrow = "训练未激活 · 队列为空"
+inactive_headline = "当前没有技能正在训练"
+inactive_supporting = "应用一个技能计划以开始训练。"
+paused_eyebrow = "训练已暂停 · 队列中有 %{count} %{noun}"
+paused_headline = "训练已暂停"
+paused_supporting = "在 EVE 中恢复训练以继续队列。"
+
+[skills.import_export]
+append = "追加"
+cancel = "取消"
+from_clipboard = "从剪贴板"
+from_file = "从文件…"
+import_plan = "导入计划"
+import_prompt = "替换当前计划，还是将导入的技能追加到末尾？"
+replace = "替换"
+to_clipboard = "到剪贴板"
+to_file = "到文件…"
+
+[skills.manager]
+cancel = "取消"
+character_plural = "角色"
+character_singular = "角色"
+characters = "角色"
+copy_to = "复制到"
+copy_to_character = "复制到角色"
+delete = "删除"
+delete_confirm = "删除？"
+header_summary = "%{plan_count} %{plan_word}，分布于 %{char_count} %{char_word}"
+new_plan = "新建计划"
+no_characters = "无角色"
+no_plans_for = "%{name} 没有计划"
+no_plans_hint = "使用“新建计划”创建一个，或从其他角色复制一个计划到这里。"
+open = "打开"
+plan_meta = "%{skill_count} %{skill_word} · 编辑于 %{edited}"
+plan_plural = "计划"
+plan_singular = "计划"
+skill_plural = "技能"
+skill_singular = "技能"
+time_days_ago = "%{count}天前"
+time_hours_ago = "%{count}小时前"
+time_just_now = "刚刚"
+time_minutes_ago = "%{count}分钟前"
+title = "管理技能计划"
+
+[skills.panel]
+tab_attributes = "属性"
+tab_browse = "浏览"
+tab_plans = "计划"
+
+[skills.panel_attributes]
+attr_charisma = "魅力"
+attr_intelligence = "智力"
+attr_memory = "记忆"
+attr_perception = "感知"
+attr_short_charisma = "Cha"
+attr_short_intelligence = "Int"
+attr_short_memory = "Mem"
+attr_short_perception = "Per"
+attr_short_willpower = "Wil"
+attr_willpower = "意志"
+awaiting = "神经属性将在同步后显示。"
+pair_combat = "战斗"
+pair_drones = "无人机"
+pair_engineering = "工程"
+pair_navigation = "导航"
+pair_social = "社交"
+pair_trade = "贸易"
+rate_grid_title = "按属性对划分的训练速率"
+rate_pair = "SP/小时 · %{primary}+%{secondary}"
+recommendation_completes = "队列将在 %{duration} 内完成"
+recommendation_optimal = "已是最优。没有重映射能改善你当前的队列。"
+recommendation_out_of_spec = "你当前的属性不符合规范；所示建议为最快的合法分配方案。"
+recommendation_saves = "相比当前节省 %{duration}"
+recommendation_title = "针对你当前队列的最快重映射"
+remap_bonus_one = "有 %{count} 次额外重映射可用"
+remap_bonus_other = "有 %{count} 次额外重映射可用"
+remap_cooldown_available = "现在可用"
+remap_cooldown_days = "冷却 %{days}天"
+remap_last_ago = "上次重映射在 %{days}天前"
+remap_last_none = "无先前重映射"
+remap_status = "%{last} · 年度 %{cooldown}"
+remap_title = "神经重映射"
+role_primary = "主"
+role_secondary = "副"
+section_summary = "已分配 %{total} 点 · 基础"
+section_title = "神经属性"
+
+[skills.panel_browser]
+group_summary = "%{trained}/%{total} · %{sp} SP"
+prereq_chip = "需要 · %{name} %{level}"
+queued_marker = "+%{count} 已排队"
+search_placeholder = "搜索技能…"
+
+[skills.panel_plans]
+cancel = "取消"
+card_subtitle_one = "%{count} 个技能 · %{updated}"
+card_subtitle_other = "%{count} 个技能 · %{updated}"
+confirm = "确认"
+delete_prompt = "删除？"
+empty_body = "创建你的第一个计划以开始优化技能队列。"
+empty_title = "尚无技能计划"
+from_queue = "来自队列"
+from_selected = "来自所选"
+loading = "正在加载计划…"
+new_plan = "新建计划"
+open = "打开"
+
+[skills.plan]
+draft_from_selection = "从所选创建计划"
+eta = "%{year} %{month} %{day} · %{hour}:%{minute}"
+export_dialog_title = "导出技能计划"
+export_file_base = "skill-plan"
+file_filter_json = "JSON"
+file_filter_plan = "计划"
+group_other = "其他"
+import_dialog_title = "导入技能计划"
+month_apr = "4月"
+month_aug = "8月"
+month_dec = "12月"
+month_feb = "2月"
+month_jan = "1月"
+month_jul = "7月"
+month_jun = "6月"
+month_mar = "3月"
+month_may = "5月"
+month_nov = "11月"
+month_oct = "10月"
+month_sep = "9月"
+skill_fallback = "技能 %{id}"
+untitled = "未命名计划"
+
+[skills.plan_math]
+no_remaps_available = "没有可用的神经重映射。下次重映射将在 %{count} 天后累积。"
+
+[skills.queue]
+col_completes = "完成"
+col_duration = "时长"
+col_skill = "技能"
+col_sp = "SP"
+next = "下一个"
+sp = "SP"
+unknown_skill = "未知技能"
+
+[skills.queue_empty]
+body = "应用一个技能计划以开始训练。"
+eyebrow = "队列 · 0 个技能"
+title = "空队列"
+
+[skills.queue_footer]
+clear = "清除"
+create_plan = "创建计划"
+finishes = "完成于 %{eta} EVE"
+select_hint = "⇧ / ⌘-点击以选择"
+selected = "已选 %{count} 个"
+total = "总计 · %{count} 个技能"
+
+[skills.summary_attr]
+already_optimal = "已是最优"
+current = "当前"
+heading = "属性优化"
+no_remap_available = "无可用重映射"
+proposed = "建议"
+remap_available = "现在可重映射"
+
+[skills.summary_implant]
+heading = "植入体效果"
+implants_save = "植入体节省 %{time}"
+no_effect = "对训练时间无影响"
+with_implants = "使用植入体"
+without = "不使用"
+
+[skills.summary_injector]
+caption = "在你当前的总 SP 区间注入剩余的 %{sp}。"
+heading = "技能注入器"
+large = "大型"
+pill_label = "%{size} · 每个 %{sp} SP"
+small = "小型"
+
+[skills.summary_time]
+by_attribute_pair = "按属性对划分的时间"
+by_skill_group = "按技能组划分的时间"
+
+[skills.summary_totals]
+completes = "完成于 %{eta}"
+steps = "%{count} 个步骤"
+
+[skills.warning]
+empty = "训练未激活 · 技能队列为空"
+low_queue = "队列不足 · 剩余训练时间少于 24 小时"
+paused = "训练已暂停 · 队列中有 %{count} %{noun}"

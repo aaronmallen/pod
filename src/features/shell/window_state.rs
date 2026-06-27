@@ -63,8 +63,6 @@ struct FlatGeometry {
   plan_window_y: Option<f32>,
   #[serde(default)]
   skills_left_pane_width: Option<f32>,
-  #[serde(default)]
-  wallet_right_rail_width: Option<f32>,
   width: f32,
   x: f32,
   y: f32,
@@ -109,7 +107,6 @@ impl FlatGeometry {
       ("plan.picker", self.plan_picker_pane_width),
       ("plan.summary", self.plan_summary_pane_width),
       ("skills.left", self.skills_left_pane_width),
-      ("wallet.right_rail", self.wallet_right_rail_width),
     ] {
       if let Some(value) = value {
         state.panes.insert(key.to_owned(), value);
@@ -141,7 +138,11 @@ fn load_from(path: &Path) -> UiState {
   if let Ok(flat) = serde_json::from_slice::<FlatGeometry>(&bytes) {
     return flat.into_keyed();
   }
-  serde_json::from_slice(&bytes).unwrap_or_default()
+  let mut state: UiState = serde_json::from_slice(&bytes).unwrap_or_default();
+  // The wallet right-rail pane was removed; drop its orphaned width so existing
+  // files shed the dead key on their next coalesced save.
+  state.panes.remove("wallet.right_rail");
+  state
 }
 
 fn save_to(path: &Path, state: &UiState) {
@@ -169,7 +170,6 @@ mod tests {
       },
     );
     state.panes.insert("skills.left".to_owned(), 240.0);
-    state.panes.insert("wallet.right_rail".to_owned(), 320.0);
     state
   }
 
@@ -178,11 +178,10 @@ mod tests {
 
     use super::*;
 
-    const PANE_KEYS: [&str; 8] = [
+    const PANE_KEYS: [&str; 7] = [
       "skills.left",
       "mail.folder",
       "mail.message_list",
-      "wallet.right_rail",
       "plan.picker",
       "plan.summary",
       "assets.sidebar",
@@ -248,11 +247,11 @@ mod tests {
     fn it_defaults_the_new_maps_when_an_old_file_omits_them() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path().join("window.json");
-      std::fs::write(&path, br#"{"panes":{"wallet.right_rail":320.0},"windows":{}}"#).unwrap();
+      std::fs::write(&path, br#"{"panes":{"skills.left":320.0},"windows":{}}"#).unwrap();
 
       let state = load_from(&path);
 
-      assert_eq!(state.panes.get("wallet.right_rail"), Some(&320.0));
+      assert_eq!(state.panes.get("skills.left"), Some(&320.0));
       assert_eq!(state.flags, BTreeMap::new());
       assert_eq!(state.lists, BTreeMap::new());
     }
@@ -310,7 +309,6 @@ mod tests {
           "skills_left_pane_width":240.0,
           "mail_folder_pane_width":180.0,
           "mail_message_list_width":300.0,
-          "wallet_right_rail_width":320.0,
           "plan_picker_pane_width":280.0,
           "plan_summary_pane_width":260.0,
           "assets_sidebar_width":220.0,
@@ -324,7 +322,6 @@ mod tests {
       assert_eq!(state.panes.get("skills.left"), Some(&240.0));
       assert_eq!(state.panes.get("mail.folder"), Some(&180.0));
       assert_eq!(state.panes.get("mail.message_list"), Some(&300.0));
-      assert_eq!(state.panes.get("wallet.right_rail"), Some(&320.0));
       assert_eq!(state.panes.get("plan.picker"), Some(&280.0));
       assert_eq!(state.panes.get("plan.summary"), Some(&260.0));
       assert_eq!(state.panes.get("assets.sidebar"), Some(&220.0));
@@ -386,7 +383,7 @@ mod tests {
       let state = load_from(&path);
 
       assert_eq!(state.panes.get("skills.left"), Some(&240.0));
-      assert_eq!(state.panes.get("wallet.right_rail"), None);
+      assert_eq!(state.panes.get("mail.folder"), None);
     }
 
     #[test]
@@ -429,6 +426,22 @@ mod tests {
       let state = load_from(&path);
 
       assert_eq!(state, UiState::default());
+    }
+
+    #[test]
+    fn it_self_heals_an_existing_files_orphaned_wallet_right_rail_key() {
+      let dir = tempfile::tempdir().unwrap();
+      let path = dir.path().join("window.json");
+      std::fs::write(
+        &path,
+        br#"{"panes":{"skills.left":240.0,"wallet.right_rail":320.0},"windows":{}}"#,
+      )
+      .unwrap();
+
+      let state = load_from(&path);
+
+      assert_eq!(state.panes.get("skills.left"), Some(&240.0));
+      assert_eq!(state.panes.get("wallet.right_rail"), None);
     }
   }
 

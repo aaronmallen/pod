@@ -55,33 +55,10 @@ const MARKET_FEE_REF_TYPES: &[&str] = &["brokers_fee", "transaction_tax"];
 
 pub const PAGE_SIZE: usize = 50;
 
-const RECENT_ACTIVITY_LIMIT: usize = 8;
-
-const RIGHT_RAIL_DEFAULT_WIDTH: f32 = 280.0;
-
-const RIGHT_RAIL_PANE_KEY: &str = "wallet.right_rail";
-
 /// Fraction of the ledger a scroll must reach before the next cursor page is
 /// fetched. The window only ever materializes the viewport's rows, so this only
 /// gates how early the next DB page starts streaming in behind the scroll.
 const SCROLL_LOAD_THRESHOLD: f32 = 0.8;
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct CategoryFlow {
-  pub income: f64,
-  pub ref_type: String,
-  pub spend: f64,
-}
-
-impl CategoryFlow {
-  pub fn label(&self) -> String {
-    humanize_ref_type(&self.ref_type)
-  }
-
-  pub fn total(&self) -> f64 {
-    self.income + self.spend
-  }
-}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Composition {
@@ -134,13 +111,6 @@ impl CorpWalletSection {
   }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct JournalFlow {
-  pub income: f64,
-  pub net: f64,
-  pub spend: f64,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Loaded {
   chips: loaders::BudgetChips,
@@ -155,7 +125,6 @@ pub struct Loaded {
   market_total: i64,
   net_worth_series: Vec<NetWorthPoint>,
   periods: Vec<CharacterWalletPeriodSummary>,
-  right_rail_width: f32,
   roster: Vec<RosterPilot>,
   wallet_sections: Vec<CorpWalletSection>,
 }
@@ -300,9 +269,6 @@ pub enum Message {
   MoreLoaded(Box<MorePage>),
   PaneSettled(&'static str, f32),
   PickerToggled,
-  RailDragEnd,
-  RailDragged(f32),
-  RailDragStart,
   ReauthRequested(i64),
   ScopeSelected(Scope),
   SearchChanged(String),
@@ -589,7 +555,6 @@ pub struct State {
   net_worth_series: Vec<NetWorthPoint>,
   periods: Vec<CharacterWalletPeriodSummary>,
   picker_open: bool,
-  right_rail: PaneDrag,
   roster: Vec<RosterPilot>,
   search: String,
   side_filter: Side,
@@ -665,11 +630,6 @@ impl State {
       net_worth_series: Vec::new(),
       periods: Vec::new(),
       picker_open: false,
-      right_rail: PaneDrag::new(
-        RIGHT_RAIL_DEFAULT_WIDTH,
-        crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH,
-      )
-      .right_anchored(true),
       roster: Vec::new(),
       search: String::new(),
       side_filter: Side::default(),
@@ -687,8 +647,6 @@ impl State {
 
   pub fn with_restored_panes(mut self, ui: &window_state::UiState) -> Self {
     let host_width = ui.host_width("main", crate::ui::style::spacing::layout::WINDOW_DEFAULT_WIDTH);
-    self.right_rail =
-      PaneDrag::from_store(ui, RIGHT_RAIL_PANE_KEY, RIGHT_RAIL_DEFAULT_WIDTH, host_width).right_anchored(true);
     self.budget_inspector = PaneDrag::from_store(
       ui,
       BUDGET_INSPECTOR_PANE_KEY,
@@ -702,7 +660,6 @@ impl State {
   }
 
   pub fn set_pane_host_width(&mut self, host_width: f32) {
-    self.right_rail.set_host_width(host_width);
     self.budget_inspector.set_host_width(host_width);
   }
 
@@ -991,10 +948,6 @@ impl State {
     self.budget_selected
   }
 
-  pub(super) fn category_flows(&self) -> &[CategoryFlow] {
-    &self.derived.category_flows
-  }
-
   pub fn corp_divisions(&self) -> &[CorpDivision] {
     &self.corp_divisions
   }
@@ -1033,19 +986,6 @@ impl State {
 
   pub fn has_contracts(&self) -> bool {
     !self.contracts.is_empty()
-  }
-
-  pub(super) fn journal_flow(&self) -> JournalFlow {
-    self.derived.journal_flow
-  }
-
-  pub(super) fn recent_activity(&self) -> Vec<&JournalEntry> {
-    self
-      .derived
-      .recent_activity_indices
-      .iter()
-      .map(|&index| &self.journal[index])
-      .collect()
   }
 
   /// Resolves the per-window contract loader source for `contract_id`: the active corporation scope
@@ -1144,21 +1084,10 @@ impl State {
       .map(|(index, _)| index)
       .collect();
 
-    let matched: Vec<&JournalEntry> = journal_indices.iter().map(|&index| &self.journal[index]).collect();
-    let journal_flow = journal_flow(&matched);
-    let category_flows = category_flows(&matched);
-
-    let mut recent_activity_indices = journal_indices.clone();
-    recent_activity_indices.sort_by(|&a, &b| self.journal[b].date.cmp(&self.journal[a].date));
-    recent_activity_indices.truncate(RECENT_ACTIVITY_LIMIT);
-
     self.derived = Derived {
-      category_flows,
       contract_indices,
-      journal_flow,
       journal_indices,
       market_indices,
-      recent_activity_indices,
     };
   }
 
@@ -1310,12 +1239,9 @@ enum ContractLoad {
 /// of those vecs must be followed by `recompute_derived()` or the indices go stale (out-of-bounds panic or wrong rows).
 #[derive(Debug, Default)]
 struct Derived {
-  category_flows: Vec<CategoryFlow>,
   contract_indices: Vec<usize>,
-  journal_flow: JournalFlow,
   journal_indices: Vec<usize>,
   market_indices: Vec<usize>,
-  recent_activity_indices: Vec<usize>,
 }
 
 pub fn load(db: &Database) -> Task<Message> {
@@ -2162,18 +2088,6 @@ fn handle_rail(state: &mut State, message: Message) -> Task<Message> {
       state.budget_inspector.start();
       Task::none()
     }
-    Message::RailDragEnd => {
-      state.right_rail.end();
-      Task::done(Message::PaneSettled(RIGHT_RAIL_PANE_KEY, state.right_rail.ratio()))
-    }
-    Message::RailDragged(x) => {
-      state.right_rail.drag_to(x);
-      Task::none()
-    }
-    Message::RailDragStart => {
-      state.right_rail.start();
-      Task::none()
-    }
     _ => Task::none(),
   }
 }
@@ -2897,7 +2811,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
         market_total,
         net_worth_series,
         periods,
-        right_rail_width,
         roster,
         wallet_sections,
       } = *loaded;
@@ -2913,9 +2826,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.market_total = market_total;
       state.net_worth_series = net_worth_series;
       state.periods = periods;
-      if !state.right_rail.is_active() {
-        state.right_rail.set_ratio_from_store(right_rail_width);
-      }
       state.roster = roster;
       state.wallet_sections = wallet_sections;
       state.loading_more = false;
@@ -2944,12 +2854,10 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       state.picker_open = !state.picker_open;
       Task::none()
     }
-    msg @ (Message::BudgetInspectorDragEnd
-    | Message::BudgetInspectorDragged(_)
-    | Message::BudgetInspectorDragStart
-    | Message::RailDragEnd
-    | Message::RailDragged(_)
-    | Message::RailDragStart) => handle_rail(state, msg),
+    msg
+    @ (Message::BudgetInspectorDragEnd | Message::BudgetInspectorDragged(_) | Message::BudgetInspectorDragStart) => {
+      handle_rail(state, msg)
+    }
     Message::ReauthRequested(_) => Task::none(),
     Message::ScopeSelected(scope) => handle_scope_selected(state, db, scope),
     msg @ (Message::BudgetFilterCleared
@@ -3033,11 +2941,6 @@ fn is_escape_pressed(event: &iced::Event) -> bool {
 
 pub fn subscription(state: &State) -> iced::Subscription<Message> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
-  if state.right_rail.is_active() {
-    subs.push(iced::event::listen_with(|event, _status, _id| {
-      crate::ui::components::resizable_pane::drag_event(event, Message::RailDragged, Message::RailDragEnd)
-    }));
-  }
   if state.budget_inspector.is_active() {
     subs.push(iced::event::listen_with(|event, _status, _id| {
       crate::ui::components::resizable_pane::drag_event(
@@ -3176,12 +3079,6 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
 
   let net_worth_series = load_net_worth_series(&db, scope, &scope_ids, &corporations).await;
 
-  let right_rail_width = window_state::load()
-    .panes
-    .get(RIGHT_RAIL_PANE_KEY)
-    .copied()
-    .unwrap_or(RIGHT_RAIL_DEFAULT_WIDTH);
-
   // The budget is always the single All budget; the wallet scope only filters the
   // ledger rows, never which budget the chips/picker resolve against.
   let chips = loaders::load_budget_chips(&db, crate::store::model::BudgetScope::All).await;
@@ -3199,7 +3096,6 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
     market_total,
     net_worth_series,
     periods,
-    right_rail_width,
     roster,
     wallet_sections,
   }
@@ -3884,37 +3780,6 @@ fn is_known_income_ref_type(ref_type: &str) -> bool {
   )
 }
 
-pub fn journal_flow(entries: &[&JournalEntry]) -> JournalFlow {
-  let mut flow = JournalFlow::default();
-  for entry in entries {
-    match entry.amount {
-      Some(amount) if amount > 0.0 => flow.income += amount,
-      Some(amount) if amount < 0.0 => flow.spend += -amount,
-      _ => {}
-    }
-  }
-  flow.net = flow.income - flow.spend;
-  flow
-}
-
-pub fn category_flows(entries: &[&JournalEntry]) -> Vec<CategoryFlow> {
-  let mut by_type: std::collections::HashMap<&str, CategoryFlow> = std::collections::HashMap::new();
-  for entry in entries {
-    let bucket = by_type.entry(entry.ref_type.as_str()).or_insert_with(|| CategoryFlow {
-      ref_type: entry.ref_type.clone(),
-      ..CategoryFlow::default()
-    });
-    match entry.amount {
-      Some(amount) if amount > 0.0 => bucket.income += amount,
-      Some(amount) if amount < 0.0 => bucket.spend += -amount,
-      _ => {}
-    }
-  }
-  let mut flows: Vec<CategoryFlow> = by_type.into_values().filter(|flow| flow.total() > 0.0).collect();
-  flows.sort_by(|a, b| b.total().total_cmp(&a.total()));
-  flows
-}
-
 fn market_matches(entry: &MarketEntry, sign: SignFilter, side: Side, query: &str) -> bool {
   match sign {
     SignFilter::In if entry.is_buy => return false,
@@ -4069,7 +3934,6 @@ mod tests {
       market_total: 0,
       net_worth_series: Vec::new(),
       periods: Vec::new(),
-      right_rail_width: 280.0,
       roster: Vec::new(),
       wallet_sections: Vec::new(),
     }
@@ -4834,73 +4698,6 @@ mod tests {
     }
   }
 
-  mod category_flows {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_drops_categories_with_no_signed_movement() {
-      let entries = [
-        journal_entry(1, None, "unknown", "No amount"),
-        journal_entry(1, Some(0.0), "unknown", "Zero"),
-        journal_entry(1, Some(75.0), "bounty_prizes", "Bounty"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 1);
-      assert_eq!(flows[0].ref_type, "bounty_prizes");
-    }
-
-    #[test]
-    fn it_groups_by_ref_type_and_orders_by_combined_magnitude() {
-      let entries = [
-        journal_entry(1, Some(100.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(50.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(-1_000.0), "market_transaction", "Buy"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 2);
-      assert_eq!(flows[0].ref_type, "market_transaction");
-      assert_eq!(flows[0].spend, 1_000.0);
-      assert_eq!(flows[0].income, 0.0);
-      assert_eq!(flows[1].ref_type, "bounty_prizes");
-      assert_eq!(flows[1].income, 150.0);
-      assert_eq!(flows[1].total(), 150.0);
-    }
-
-    #[test]
-    fn it_humanizes_the_ref_type_label() {
-      let entries = [journal_entry(1, Some(10.0), "agent_mission_reward", "Mission")];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows[0].label(), "Agent Mission Reward");
-    }
-
-    #[test]
-    fn it_splits_a_single_category_into_in_and_out() {
-      let entries = [
-        journal_entry(1, Some(300.0), "corporation_account_withdrawal", "In"),
-        journal_entry(1, Some(-100.0), "corporation_account_withdrawal", "Out"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flows = super::category_flows(&refs);
-
-      assert_eq!(flows.len(), 1);
-      assert_eq!(flows[0].income, 300.0);
-      assert_eq!(flows[0].spend, 100.0);
-      assert_eq!(flows[0].total(), 400.0);
-    }
-  }
-
   mod composition_stack {
     use pretty_assertions::assert_eq;
 
@@ -5213,7 +5010,6 @@ mod tests {
           market_total: 1,
           net_worth_series: vec![nw_point("2026-06-01", 150.0), nw_point("2026-06-02", 175.0)],
           periods: vec![period(1, 100.0, 40.0)],
-          right_rail_width: 280.0,
           roster: vec![pilot(1, Some(100.0)), pilot(2, Some(50.0))],
           wallet_sections: vec![],
         })),
@@ -5250,49 +5046,6 @@ mod tests {
         state.active = scope;
         let _el: Element<'_, Message> = view(&state, Utc::now());
       }
-    }
-  }
-
-  mod journal_flow {
-    use pretty_assertions::assert_eq;
-
-    use super::*;
-
-    #[test]
-    fn it_ignores_null_and_zero_amounts() {
-      let entries = [
-        journal_entry(1, None, "unknown", "No amount"),
-        journal_entry(1, Some(0.0), "zero", "Zero"),
-        journal_entry(1, Some(-100.0), "tax", "Tax"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flow = super::journal_flow(&refs);
-
-      assert_eq!(flow.income, 0.0);
-      assert_eq!(flow.spend, 100.0);
-      assert_eq!(flow.net, -100.0);
-    }
-
-    #[test]
-    fn it_is_zero_for_an_empty_page() {
-      assert_eq!(super::journal_flow(&[]), JournalFlow::default());
-    }
-
-    #[test]
-    fn it_sums_income_and_spend_and_nets_them() {
-      let entries = [
-        journal_entry(1, Some(1_000.0), "bounty_prizes", "Bounty"),
-        journal_entry(1, Some(250.0), "agent_mission_reward", "Mission"),
-        journal_entry(1, Some(-400.0), "market_transaction", "Buy"),
-      ];
-      let refs: Vec<&JournalEntry> = entries.iter().collect();
-
-      let flow = super::journal_flow(&refs);
-
-      assert_eq!(flow.income, 1_250.0);
-      assert_eq!(flow.spend, 400.0);
-      assert_eq!(flow.net, 850.0);
     }
   }
 
@@ -6283,9 +6036,9 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
 
-      let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 320.0), &db);
+      let _ = update(&mut state, Message::PaneSettled(BUDGET_INSPECTOR_PANE_KEY, 320.0), &db);
 
-      assert!(!state.right_rail.is_active());
+      assert!(!state.budget_inspector.is_active());
     }
 
     #[tokio::test]
@@ -6331,7 +6084,6 @@ mod tests {
           market_total: 0,
           net_worth_series: vec![],
           periods: vec![],
-          right_rail_width: 280.0,
           roster: vec![pilot(7, Some(10.0))],
           wallet_sections: vec![],
         })),
@@ -6396,20 +6148,6 @@ mod tests {
 
       let _ = update(&mut state, Message::TabSelected(Tab::Journal), &db);
       assert_eq!(state.tab_scroll_offset(), 0.0);
-    }
-
-    #[tokio::test]
-    async fn it_resizes_the_right_rail_through_a_drag() {
-      let db = crate::store::open_test().await.unwrap();
-      let mut state = State::new(crate::config::FeatureFlags::default());
-      let start = state.right_rail.width();
-
-      let _ = update(&mut state, Message::RailDragStart, &db);
-      let _ = update(&mut state, Message::RailDragged(500.0), &db);
-      let _ = update(&mut state, Message::RailDragged(540.0), &db);
-      let _ = update(&mut state, Message::RailDragEnd, &db);
-
-      assert_eq!(state.right_rail.width(), start - 40.0);
     }
 
     #[tokio::test]
@@ -6686,7 +6424,7 @@ mod tests {
       let mut state = State::new(crate::config::FeatureFlags::default());
       let before = state.tab;
 
-      let _ = update(&mut state, Message::PaneSettled(RIGHT_RAIL_PANE_KEY, 360.0), &db);
+      let _ = update(&mut state, Message::PaneSettled(BUDGET_INSPECTOR_PANE_KEY, 360.0), &db);
 
       assert_eq!(state.tab, before);
     }

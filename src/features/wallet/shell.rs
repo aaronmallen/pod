@@ -27,8 +27,6 @@ use crate::{
       icon::Icon,
       modal_overlay::stable_overlay,
       positioned_dropdown::positioned_dropdown,
-      resizable_pane::pane_handle,
-      rule,
       segmented::segment_button,
       tab_select,
       table_cell::TableCell,
@@ -171,19 +169,11 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       .into();
   }
 
-  let panes = Row::with_children(vec![
-    center(state, now),
-    pane_handle(Message::RailDragStart),
-    right_rail(state, now),
-  ])
-  .width(Length::Fill)
-  .height(Length::Fill);
-
   // The tab strip is hoisted directly under the header (mirroring Industry and
   // Assets) so the bar never shifts position; the net-worth hero now lives below
   // the strip inside the ledger column. This is also the surface the future
   // Budget tab mounts onto.
-  Column::with_children(vec![tabs(state), panes.into()])
+  Column::with_children(vec![tabs(state), center(state, now)])
     .width(Length::Fill)
     .height(Length::Fill)
     .into()
@@ -1610,214 +1600,6 @@ fn no_source_state<'a>(title: &str, detail: &str) -> Element<'a, Message> {
     .align_y(Vertical::Center)
     .padding(spacing::SPACE_6)
     .into()
-}
-
-fn right_rail(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let flow = state.journal_flow();
-  let categories = state.category_flows();
-
-  let net = flow.net;
-  let summary_section = Column::with_children(vec![
-    section_label("Flow"),
-    summary_row("Income", Some(flow.income), color::status::ONLINE, "+"),
-    summary_row("Spend", Some(flow.spend), color::status::DANGER, "-"),
-    rule::horizontal(),
-    summary_row(
-      "Net",
-      Some(net),
-      if net >= 0.0 {
-        color::status::ONLINE
-      } else {
-        color::status::DANGER
-      },
-      if net >= 0.0 { "+" } else { "-" },
-    ),
-  ])
-  .spacing(spacing::SPACE_2)
-  .padding(spacing::SPACE_3_5)
-  .width(Length::Fill);
-
-  let mut sections: Vec<Element<'_, Message>> = vec![summary_section.into()];
-  sections.push(recent_activity(state, now));
-  if !categories.is_empty() {
-    sections.push(category_breakdown(categories));
-  }
-
-  let summary = Column::with_children(sections).width(Length::Fill);
-
-  container(
-    scrollable(summary)
-      .style(crate::ui::style::control::scrollbar)
-      .width(Length::Fill)
-      .height(Length::Fill),
-  )
-  .width(Length::Fixed(state.right_rail.width()))
-  .height(Length::Fill)
-  .style(sunken_pane)
-  .into()
-}
-
-fn recent_activity(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
-  let recent = state.recent_activity();
-
-  let mut children: Vec<Element<'_, Message>> = vec![section_label("Recent activity")];
-  if recent.is_empty() {
-    children.push(
-      text("No recent activity.")
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM)
-        .style(typography::colored(color::text::tertiary()))
-        .into(),
-    );
-  } else {
-    children.extend(recent.into_iter().map(|entry| recent_activity_row(entry, now)));
-  }
-
-  Column::with_children(children)
-    .spacing(spacing::SPACE_2_5)
-    .padding(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
-}
-
-fn recent_activity_row<'a>(entry: &'a JournalEntry, now: DateTime<Utc>) -> Element<'a, Message> {
-  let amount_color = if entry.is_income() {
-    color::status::ONLINE
-  } else {
-    color::status::DANGER
-  };
-  let sign = if entry.is_income() { "+" } else { "-" };
-
-  let title = Row::with_children(vec![
-    text(party_label(entry).to_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .width(Length::Fill)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(format!("{sign}{}", fmt_isk(entry.amount.map(f64::abs))))
-      .font(typography::mono::MEDIUM)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(amount_color))
-      .into(),
-  ])
-  .align_y(Vertical::Center);
-
-  let meta = Row::with_children(vec![
-    text(super::humanize_ref_type(&entry.ref_type))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .width(Length::Fill)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-    text(fmt_relative(&entry.date, now))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::tertiary()))
-      .into(),
-  ])
-  .align_y(Vertical::Center);
-
-  Column::with_children(vec![title.into(), meta.into()])
-    .spacing(spacing::UNIT)
-    .width(Length::Fill)
-    .into()
-}
-
-fn section_label<'a>(label: &str) -> Element<'a, Message> {
-  eyebrow_text(label, None).into()
-}
-
-fn category_breakdown<'a>(categories: &[super::CategoryFlow]) -> Element<'a, Message> {
-  let max_total = categories
-    .iter()
-    .map(super::CategoryFlow::total)
-    .fold(0.0_f64, f64::max)
-    .max(1.0);
-
-  let mut children: Vec<Element<'a, Message>> = vec![section_label("By category")];
-  children.extend(categories.iter().map(|category| category_bar(category, max_total)));
-
-  Column::with_children(children)
-    .spacing(spacing::SPACE_2_5)
-    .padding(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
-}
-
-fn category_bar<'a>(category: &super::CategoryFlow, max_total: f64) -> Element<'a, Message> {
-  let total = category.total();
-  let header = Row::with_children(vec![
-    text(category.label())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .width(Length::Fill)
-      .style(typography::colored(color::text::PRIMARY))
-      .into(),
-    text(fmt_isk(Some(total)))
-      .font(typography::mono::REGULAR)
-      .size(typography::size::XS_PLUS)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .align_y(Vertical::Center);
-
-  let width_fraction = (total / max_total).clamp(0.0, 1.0);
-  let filled = (width_fraction * 1000.0) as u16;
-  let empty = 1000_u16.saturating_sub(filled);
-  let income_portion = (category.income.max(0.0) / total.max(1.0) * f64::from(filled)) as u16;
-  let spend_portion = filled.saturating_sub(income_portion);
-
-  let bar = container(
-    Row::with_children(vec![
-      bar_segment(income_portion, color::status::ONLINE),
-      bar_segment(spend_portion, color::status::DANGER),
-      bar_segment(empty, iced::Color::TRANSPARENT),
-    ])
-    .width(Length::Fill),
-  )
-  .width(Length::Fill)
-  .height(Length::Fixed(3.0))
-  .style(|_| container::Style {
-    background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.1))),
-    border: Border {
-      radius: 1.5.into(),
-      ..Border::default()
-    },
-    ..container::Style::default()
-  });
-
-  Column::with_children(vec![header.into(), bar.into()])
-    .spacing(spacing::UNIT)
-    .width(Length::Fill)
-    .into()
-}
-
-fn bar_segment<'a>(portion: u16, fill: iced::Color) -> Element<'a, Message> {
-  if portion == 0 {
-    return Space::new().width(Length::FillPortion(0)).into();
-  }
-  container(Space::new().width(Length::Fill).height(Length::Fill))
-    .width(Length::FillPortion(portion))
-    .height(Length::Fill)
-    .style(move |_| container::Style {
-      background: Some(Background::Color(fill)),
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn summary_row<'a>(label: &str, value: Option<f64>, value_color: iced::Color, sign: &str) -> Element<'a, Message> {
-  Row::with_children(vec![
-    eyebrow_text(label, None).width(Length::Fill).into(),
-    text(format!("{sign}{}", fmt_isk(value.map(f64::abs))))
-      .font(typography::mono::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(value_color))
-      .into(),
-  ])
-  .align_y(Vertical::Center)
-  .into()
 }
 
 #[cfg(test)]

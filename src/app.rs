@@ -9917,7 +9917,7 @@ mod tests {
     #[test]
     fn it_routes_feature_messages_to_a_no_op_without_a_runtime() {
       let mut app = test_app();
-      let _ = update(&mut app, Message::Wallet(wallet::Message::RailDragEnd));
+      let _ = update(&mut app, Message::Wallet(wallet::Message::BudgetInspectorDragEnd));
       let _ = update(
         &mut app,
         Message::Assets(assets::Message::SearchChanged("x".to_owned())),

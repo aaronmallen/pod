@@ -446,6 +446,9 @@ tag = "Tag"
 title = "Add tag"
 type_to_create = "Type to create a new tag"
 
+[common.chart]
+liquid = "Liquid"
+
 [common.color_picker]
 clear = "Clear color"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "The id of the label to remove. Required when `action` 
 manage_labels_labels = "The full set of label ids the mail should carry. Required when `action` is `set_labels`."
 manage_labels_mail_id = "The id of the mail whose labels to set. Required when `action` is `set_labels`."
 manage_labels_name = "The label name. Required (and must be non-blank) when `action` is `create_label`; ignored otherwise."
+ping = "Health check: returns pong and echoes an optional message, proving the agent can reach Pod."
 planner_create = "Creates a saved industry plan. Required `types` is an array of {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}."
 planner_create_name = "A human-readable name for the plan."
 planner_create_product_type_id = "The type id of the plan's final product."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "New EVE mail"
 skill_body = "Training complete"
 skill_fallback = "Skill"
 skill_title = "%{skill} finished"
+wallet_gap_title = "Wallet balance gap detected"
 
 [shell.notifications]
 empty_history_subtitle = "No past notifications"

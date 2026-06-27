@@ -5,16 +5,15 @@
 // never got wrapped in `t!()`, so untranslated pockets were invisible. This scan closes that gap and
 // emits a `file:line` worklist of everything still hard-coded.
 //
-// DORMANT BY DESIGN. Both tests are `#[ignore]`d so a plain `cargo test` / `mise run test` stays green
-// during the migration. Run the detector (and read the worklist) with:
+// LIVE CI GATE. Both tests run under a plain `cargo test` / `mise run test`; either one fails with a
+// `file:line` worklist the moment a user-facing literal slips in outside `t!(...)`. To read the worklist
+// in isolation:
 //
-//   cargo test --test i18n_no_hardcoded -- --ignored --nocapture
+//   cargo test --test i18n_no_hardcoded -- --nocapture
 //
 // or run a single one:
 //
-//   cargo test --test i18n_no_hardcoded -- --ignored no_hardcoded_user_facing_strings
-//
-// The migration's final verification task flips these from `#[ignore]` to live CI gates.
+//   cargo test --test i18n_no_hardcoded no_hardcoded_user_facing_strings
 //
 // WHAT IT SCANS (user-facing UI contexts holding a *direct* string literal, not a `t!(...)` call):
 //   * function calls   — `text("...")`, `set_title("...")`, `placeholder("...")`
@@ -594,7 +593,6 @@ fn render(violations: &[Violation]) -> String {
 }
 
 #[test]
-#[ignore = "dormant migration worklist; run with: cargo test --test i18n_no_hardcoded -- --ignored"]
 fn no_hardcoded_user_facing_strings() {
   let mut violations = collect(|file, src, out| {
     scan_field_contexts(file, src, out);
@@ -607,21 +605,20 @@ fn no_hardcoded_user_facing_strings() {
   assert!(
     violations.is_empty(),
     "found {} user-facing string literal(s) outside `t!(...)`. Wrap each in `t!(\"feature.section.key\")` \
-     and add the key to the locales. Worklist:\n\n{}",
+      and add the key to the locales. Worklist:\n\n{}",
     violations.len(),
     render(&violations)
   );
 }
 
 #[test]
-#[ignore = "dormant migration worklist; run with: cargo test --test i18n_no_hardcoded -- --ignored"]
 fn no_hardcoded_month_or_weekday_arrays() {
   let violations = collect(scan_date_literals);
 
   assert!(
     violations.is_empty(),
     "found {} hard-coded month/weekday name literal(s). Consolidate these duplicated date arrays into \
-     one shared `t!()`-backed helper. Worklist:\n\n{}",
+      one shared `t!()`-backed helper. Worklist:\n\n{}",
     violations.len(),
     render(&violations)
   );

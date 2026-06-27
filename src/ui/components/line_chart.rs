@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use chrono::NaiveDate;
 use iced::{
   Color, Point, Rectangle, Renderer, Size, Theme,
@@ -24,7 +26,7 @@ pub struct LineChart<'a, Message> {
   hover: Option<f32>,
   line_color: Color,
   liquid_color: Color,
-  liquid_label: &'a str,
+  liquid_label: Cow<'a, str>,
   on_hover: Box<dyn Fn(Option<f32>) -> Message + 'a>,
   pad_bottom: f32,
   pad_top: f32,
@@ -49,7 +51,7 @@ impl<'a, Message> LineChart<'a, Message> {
       hover: None,
       line_color,
       liquid_color: color::accent::PLASMA,
-      liquid_label: "Liquid",
+      liquid_label: t!("common.chart.liquid"),
       on_hover: Box::new(on_hover),
       pad_bottom: 24.0,
       pad_top: 14.0,
@@ -78,7 +80,7 @@ impl<'a, Message> LineChart<'a, Message> {
   }
 
   pub fn liquid(mut self, label: &'a str, dot: Color) -> Self {
-    self.liquid_label = label;
+    self.liquid_label = Cow::Borrowed(label);
     self.liquid_color = dot;
     self
   }
@@ -283,7 +285,7 @@ impl<'a, Message> LineChart<'a, Message> {
         self.liquid_color,
       );
       frame.fill_text(canvas::Text {
-        content: self.liquid_label.to_owned(),
+        content: self.liquid_label.to_string(),
         position: Point::new(card_x + 22.0, row_y),
         color: color::text::secondary(),
         size: 9.0.into(),

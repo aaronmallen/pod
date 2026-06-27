@@ -446,6 +446,9 @@ tag = "タグ"
 title = "タグを追加"
 type_to_create = "入力して新しいタグを作成"
 
+[common.chart]
+liquid = "流動"
+
 [common.color_picker]
 clear = "色をクリア"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "削除するラベルの id。`action` が `delete_lab
 manage_labels_labels = "メールに付与するラベル id の完全なセット。`action` が `set_labels` の場合は必須。"
 manage_labels_mail_id = "ラベルを設定するメールの id。`action` が `set_labels` の場合は必須。"
 manage_labels_name = "ラベル名。`action` が `create_label` の場合は必須（空白不可）。それ以外の場合は無視されます。"
+ping = "ヘルスチェック: pong を返し、任意のメッセージをそのまま返して、エージェントが Pod に到達できることを確認します。"
 planner_create = "保存されるインダストリープランを作成します。必須の `types` は {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?} の配列です。"
 planner_create_name = "プランの分かりやすい名前。"
 planner_create_product_type_id = "プランの最終製品のタイプ id。"
@@ -1859,6 +1863,7 @@ mail_title_fallback = "新しい EVE メール"
 skill_body = "トレーニング完了"
 skill_fallback = "スキル"
 skill_title = "%{skill} 完了"
+wallet_gap_title = "ウォレット残高のギャップを検出しました"
 
 [shell.notifications]
 empty_history_subtitle = "過去の通知はありません"

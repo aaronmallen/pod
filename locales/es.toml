@@ -446,6 +446,9 @@ tag = "Etiqueta"
 title = "Añadir etiqueta"
 type_to_create = "Escribe para crear una nueva etiqueta"
 
+[common.chart]
+liquid = "Líquido"
+
 [common.color_picker]
 clear = "Quitar color"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "El id de la etiqueta a eliminar. Obligatorio cuando `a
 manage_labels_labels = "El conjunto completo de ids de etiqueta que debe llevar el correo. Obligatorio cuando `action` es `set_labels`."
 manage_labels_mail_id = "El id del correo cuyas etiquetas se van a establecer. Obligatorio cuando `action` es `set_labels`."
 manage_labels_name = "El nombre de la etiqueta. Obligatorio (y no puede estar en blanco) cuando `action` es `create_label`; se ignora en caso contrario."
+ping = "Comprobación de estado: devuelve pong y refleja un mensaje opcional, demostrando que el agente puede comunicarse con Pod."
 planner_create = "Crea un plan de industria guardado. El `types` obligatorio es un array de {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}."
 planner_create_name = "Un nombre legible para el plan."
 planner_create_product_type_id = "El id de tipo del producto final del plan."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "Nuevo EVE mail"
 skill_body = "Entrenamiento completado"
 skill_fallback = "Habilidad"
 skill_title = "%{skill} finalizada"
+wallet_gap_title = "Hueco en el saldo de la billetera detectado"
 
 [shell.notifications]
 empty_history_subtitle = "Sin notificaciones anteriores"

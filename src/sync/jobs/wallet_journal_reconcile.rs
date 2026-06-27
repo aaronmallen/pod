@@ -125,7 +125,7 @@ async fn emit_gaps(
           destination: NotificationDestination::Wallet,
           sub: None,
         },
-        title: "Wallet balance gap detected".to_owned(),
+        title: t!("shell.notification.wallet_gap_title").into_owned(),
       },
     )
     .await?;

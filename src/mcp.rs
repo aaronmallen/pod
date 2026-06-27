@@ -81,7 +81,7 @@ fn writes(registry: &Registry, tool: &str) -> bool {
 fn ping_tool() -> McpTool {
   McpTool::new(
     "ping",
-    "Health check: returns pong and echoes an optional message, proving the agent can reach Pod.",
+    t!("mcp.tools.ping").into_owned(),
     Permission::Read,
     |_db, args: Value| async move {
       let message = args.get("message").and_then(Value::as_str).unwrap_or("pong");

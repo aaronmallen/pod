@@ -446,6 +446,9 @@ tag = "Тег"
 title = "Добавить тег"
 type_to_create = "Введите текст, чтобы создать новый тег"
 
+[common.chart]
+liquid = "Наличные"
+
 [common.color_picker]
 clear = "Сбросить цвет"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "Идентификатор метки для удал�
 manage_labels_labels = "Полный набор идентификаторов меток, которые должно нести письмо. Обязателен, когда `action` равно `set_labels`."
 manage_labels_mail_id = "Идентификатор письма, метки которого задаются. Обязателен, когда `action` равно `set_labels`."
 manage_labels_name = "Имя метки. Обязательно (и не должно быть пустым), когда `action` равно `create_label`; иначе игнорируется."
+ping = "Проверка работоспособности: возвращает pong и повторяет необязательное сообщение, подтверждая, что агент может связаться с Pod."
 planner_create = "Создаёт сохранённый промышленный план. Обязательный `types` — это массив {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}."
 planner_create_name = "Понятное человеку имя плана."
 planner_create_product_type_id = "Идентификатор типа конечного продукта плана."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "Новое письмо EVE"
 skill_body = "Обучение завершено"
 skill_fallback = "Навык"
 skill_title = "%{skill} завершён"
+wallet_gap_title = "Обнаружен разрыв в балансе кошелька"
 
 [shell.notifications]
 empty_history_subtitle = "Нет прошлых уведомлений"

@@ -446,6 +446,9 @@ tag = "Étiquette"
 title = "Ajouter une étiquette"
 type_to_create = "Saisissez pour créer une nouvelle étiquette"
 
+[common.chart]
+liquid = "Liquide"
+
 [common.color_picker]
 clear = "Effacer la couleur"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "L’id du libellé à retirer. Requis lorsque `action`
 manage_labels_labels = "L’ensemble complet des ids de libellés que le message doit porter. Requis lorsque `action` vaut `set_labels`."
 manage_labels_mail_id = "L’id du message dont définir les libellés. Requis lorsque `action` vaut `set_labels`."
 manage_labels_name = "Le nom du libellé. Requis (et non vide) lorsque `action` vaut `create_label` ; ignoré sinon."
+ping = "Vérification de l’état : renvoie pong et répète un message facultatif, prouvant que l’agent peut joindre Pod."
 planner_create = "Crée un plan d’industrie enregistré. Le paramètre requis `types` est un tableau de {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}."
 planner_create_name = "Un nom lisible pour le plan."
 planner_create_product_type_id = "L’id de type du produit final du plan."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "Nouveau message EVE"
 skill_body = "Entraînement terminé"
 skill_fallback = "Compétence"
 skill_title = "%{skill} terminée"
+wallet_gap_title = "Écart de solde de portefeuille détecté"
 
 [shell.notifications]
 empty_history_subtitle = "Aucune notification passée"

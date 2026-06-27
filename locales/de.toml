@@ -446,6 +446,9 @@ tag = "Tag"
 title = "Tag hinzufügen"
 type_to_create = "Tippen, um einen neuen Tag zu erstellen"
 
+[common.chart]
+liquid = "Liquide"
+
 [common.color_picker]
 clear = "Farbe entfernen"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "Die ID des zu entfernenden Labels. Erforderlich, wenn 
 manage_labels_labels = "Die vollständige Menge der Label-IDs, die die Mail tragen soll. Erforderlich, wenn `action` gleich `set_labels` ist."
 manage_labels_mail_id = "Die ID der Mail, deren Labels gesetzt werden sollen. Erforderlich, wenn `action` gleich `set_labels` ist."
 manage_labels_name = "Der Label-Name. Erforderlich (und darf nicht leer sein), wenn `action` gleich `create_label` ist; andernfalls ignoriert."
+ping = "Funktionsprüfung: gibt pong zurück und spiegelt eine optionale Nachricht wider und belegt damit, dass der Agent Pod erreichen kann."
 planner_create = "Erstellt einen gespeicherten Industrieplan. Das erforderliche `types` ist ein Array aus {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?}."
 planner_create_name = "Ein menschenlesbarer Name für den Plan."
 planner_create_product_type_id = "Die Typ-ID des Endprodukts des Plans."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "Neue EVE-Mail"
 skill_body = "Training abgeschlossen"
 skill_fallback = "Skill"
 skill_title = "%{skill} abgeschlossen"
+wallet_gap_title = "Lücke im Wallet-Saldo erkannt"
 
 [shell.notifications]
 empty_history_subtitle = "Keine vergangenen Benachrichtigungen"

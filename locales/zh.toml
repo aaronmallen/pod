@@ -446,6 +446,9 @@ tag = "标签"
 title = "添加标签"
 type_to_create = "输入以创建新标签"
 
+[common.chart]
+liquid = "流动"
+
 [common.color_picker]
 clear = "清除颜色"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "要移除的标签的 id。当 `action` 为 `delete_la
 manage_labels_labels = "邮件应携带的完整标签 id 集合。当 `action` 为 `set_labels` 时必填。"
 manage_labels_mail_id = "要设置标签的邮件的 id。当 `action` 为 `set_labels` 时必填。"
 manage_labels_name = "标签名称。当 `action` 为 `create_label` 时必填（且不能为空白）；否则忽略。"
+ping = "健康检查：返回 pong 并回显可选消息，证明代理能够连接到 Pod。"
 planner_create = "创建一个已保存的工业计划。必填的 `types` 是 {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?} 的数组。"
 planner_create_name = "便于阅读的计划名称。"
 planner_create_product_type_id = "该计划最终产物的类型 id。"
@@ -1859,6 +1863,7 @@ mail_title_fallback = "新的 EVE 邮件"
 skill_body = "训练完成"
 skill_fallback = "技能"
 skill_title = "%{skill} 已完成"
+wallet_gap_title = "检测到钱包余额缺口"
 
 [shell.notifications]
 empty_history_subtitle = "没有历史通知"

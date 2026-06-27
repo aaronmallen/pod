@@ -446,6 +446,9 @@ tag = "태그"
 title = "태그 추가"
 type_to_create = "입력하여 새 태그 생성"
 
+[common.chart]
+liquid = "유동"
+
 [common.color_picker]
 clear = "색상 지우기"
 hex_label = "HEX"
@@ -1031,6 +1034,7 @@ manage_labels_label_id = "제거할 라벨의 id입니다. `action`이 `delete_l
 manage_labels_labels = "메일이 가져야 할 라벨 id의 전체 집합입니다. `action`이 `set_labels`일 때 필수입니다."
 manage_labels_mail_id = "라벨을 설정할 메일의 id입니다. `action`이 `set_labels`일 때 필수입니다."
 manage_labels_name = "라벨 이름입니다. `action`이 `create_label`일 때 필수이며(공백일 수 없음), 그 외에는 무시됩니다."
+ping = "상태 확인: pong을 반환하고 선택적 메시지를 그대로 돌려주어 에이전트가 Pod에 도달할 수 있음을 증명합니다."
 planner_create = "저장된 산업 플랜을 생성합니다. 필수 `types`는 {type_id, me?, te?, built?, use_stock?, facility_system?, facility_structure?} 배열입니다."
 planner_create_name = "플랜의 사람이 읽을 수 있는 이름입니다."
 planner_create_product_type_id = "플랜 최종 산출물의 유형 id입니다."
@@ -1859,6 +1863,7 @@ mail_title_fallback = "새 EVE 메일"
 skill_body = "훈련 완료"
 skill_fallback = "스킬"
 skill_title = "%{skill} 완료"
+wallet_gap_title = "지갑 잔액 공백 감지됨"
 
 [shell.notifications]
 empty_history_subtitle = "지난 알림이 없습니다"

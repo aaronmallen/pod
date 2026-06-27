@@ -145,6 +145,15 @@ impl From<(i64, CorporationInfo)> for Model {
   }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeedCorporation {
+  pub faction_id: Option<i64>,
+  pub home_station_id: Option<i64>,
+  pub id: i64,
+  pub name: String,
+  pub ticker: String,
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

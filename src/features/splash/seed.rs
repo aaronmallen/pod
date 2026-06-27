@@ -14,7 +14,8 @@ use crate::{
     model::{
       AbyssalModuleStat, AgentType, Bloodline, Certificate, CertificateSkill, Constellation,
       DogmaAttribute as DogmaAttributeMeta, Faction, ItemCategory, ItemGroup, ItemType, MarketGroup, Moon, NpcAgent,
-      NpcAgentSkill, NpcCorporationDivision, Race, Region, ShipMastery, SkillMetadata, SolarSystem, Station,
+      NpcAgentSkill, NpcCorporationDivision, Race, Region, SeedCorporation, ShipMastery, SkillMetadata, SolarSystem,
+      Station,
     },
     repo::{assets, org, sde, skills},
   },
@@ -971,9 +972,9 @@ async fn seed_npc_corporation_divisions(db: &Database, path: &Path) -> Result<()
 async fn seed_npc_corporations(db: &Database, path: &Path) -> Result<(), String> {
   let entries: HashMap<i64, SdeNpcCorporationEntry> = read_yaml(path).await?;
 
-  let records: Vec<org::SeedCorporation> = entries
+  let records: Vec<SeedCorporation> = entries
     .into_iter()
-    .map(|(id, e)| org::SeedCorporation {
+    .map(|(id, e)| SeedCorporation {
       faction_id: e.faction_id,
       home_station_id: e.station_id,
       id,

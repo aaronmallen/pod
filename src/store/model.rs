@@ -196,7 +196,7 @@ pub use character_telemetry::Model as CharacterTelemetry;
 pub use character_wallet_journal::Model as CharacterWalletJournal;
 pub use character_wallet_transaction::Model as CharacterWalletTransaction;
 pub use constellation::Model as Constellation;
-pub use corporation::Model as Corporation;
+pub use corporation::{Model as Corporation, SeedCorporation};
 pub use corporation_abyssal_item::Model as CorporationAbyssalItem;
 pub use corporation_asset::Model as CorporationAsset;
 pub use corporation_blueprint::Model as CorporationBlueprint;

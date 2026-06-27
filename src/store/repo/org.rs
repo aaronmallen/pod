@@ -7,7 +7,7 @@ use crate::store::{
   model::{
     Alliance, Character, Corporation, CorporationContact, CorporationContactLabel, CorporationKillEntry,
     CorporationKillmailAttacker, CorporationKillmailItem, CorporationMemberRole, CorporationMiningExtraction,
-    CorporationStanding, Faction, OwnedCorporation, Station,
+    CorporationStanding, Faction, OwnedCorporation, SeedCorporation, Station,
     corporation_card::{CardRow, CardRowSql, CardTag, TagRowSql},
   },
   repo::{
@@ -36,15 +36,6 @@ const SEARCH_SELECT: &str = "\
   LEFT JOIN alliances al ON al.id = oc.alliance_id \
   LEFT JOIN characters ceo ON ceo.id = oc.ceo_id \
   LEFT JOIN stations hq ON hq.id = oc.home_station_id";
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct SeedCorporation {
-  pub faction_id: Option<i64>,
-  pub home_station_id: Option<i64>,
-  pub id: i64,
-  pub name: String,
-  pub ticker: String,
-}
 
 pub async fn all_corporations(db: &Database) -> Result<Vec<Corporation>, Error> {
   let rows = sqlx::query_as::<_, Corporation>(

@@ -1310,6 +1310,7 @@ struct JournalActivity {
   context_id: Option<i64>,
   context_id_type: Option<String>,
   date: String,
+  division: Option<i64>,
   id: i64,
   owner: BudgetOwner,
   ref_type: String,
@@ -1377,9 +1378,13 @@ fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> Budge
 /// only when a counter-leg actually exists in another owned wallet, so legs are
 /// grouped by `(ref_type, id)` — *not* the bare id, which collides a character
 /// and corp sharing an EVE id — and a group is an internal transfer only when it
-/// holds exactly two legs of opposite sign in two distinct owners. The exactly
-/// two requirement rejects 3+-leg pile-ups, and the distinct-owner requirement
-/// rejects two legs that landed in the same wallet, so neither is mis-paired.
+/// holds exactly two legs of opposite sign in two distinct wallets. A wallet is
+/// `(owner, division)`: a corporation's wallet is its division (ADR-0040), so two
+/// divisions of one corporation moving ISK between themselves are distinct
+/// wallets and pair correctly, while two legs in the very same wallet do not. The
+/// exactly-two requirement rejects 3+-leg pile-ups, and the distinct-wallet
+/// requirement rejects two legs that landed in the same wallet, so neither is
+/// mis-paired.
 // Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
 // follow-on tasks. Exercised by unit tests until then.
 #[allow(dead_code)]
@@ -1405,9 +1410,9 @@ fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
       continue;
     }
     let opposite_signs = amounts[0].signum() != amounts[1].signum() && amounts.iter().all(|a| *a != 0.0);
-    let distinct_owners = legs[0].owner != legs[1].owner;
+    let distinct_wallets = (legs[0].owner, legs[0].division) != (legs[1].owner, legs[1].division);
     let cancels = (amounts[0] + amounts[1]).abs() < TRANSFER_NET_EPSILON;
-    if opposite_signs && distinct_owners && cancels {
+    if opposite_signs && distinct_wallets && cancels {
       ids.insert(journal_id);
     }
   }
@@ -1618,6 +1623,7 @@ async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
         context_id: row.context_id(),
         context_id_type: row.context_id_type().clone(),
         date: row.date().clone(),
+        division: None,
         id: row.id(),
         owner,
         ref_type: row.ref_type().clone(),
@@ -1648,6 +1654,7 @@ async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
           context_id: row.context_id(),
           context_id_type: row.context_id_type().clone(),
           date: row.date().clone(),
+          division: Some(division.division()),
           id: row.id(),
           owner,
           ref_type: row.ref_type().clone(),
@@ -3010,6 +3017,7 @@ mod tests {
         context_id: None,
         context_id_type: None,
         date: "2026-06-01T00:00:00Z".to_owned(),
+        division: None,
         id,
         owner,
         ref_type: ref_type.to_owned(),
@@ -3085,8 +3093,23 @@ mod tests {
         context_id: None,
         context_id_type: None,
         date: "2026-06-01T00:00:00Z".to_owned(),
+        division: None,
         id,
         owner,
+        ref_type: ref_type.to_owned(),
+        text: String::new(),
+      }
+    }
+
+    fn corp_division_row(id: i64, corporation_id: i64, division: i64, ref_type: &str, amount: f64) -> JournalActivity {
+      JournalActivity {
+        amount: Some(amount),
+        context_id: None,
+        context_id_type: None,
+        date: "2026-06-01T00:00:00Z".to_owned(),
+        division: Some(division),
+        id,
+        owner: BudgetOwner::Corporation(corporation_id),
         ref_type: ref_type.to_owned(),
         text: String::new(),
       }
@@ -3107,6 +3130,39 @@ mod tests {
       let ids = internal_transfer_ids(&rows);
 
       assert_eq!(ids, std::collections::HashSet::from([900]));
+    }
+
+    #[test]
+    fn it_detects_a_transfer_between_two_divisions_of_one_corporation() {
+      // The regression ADR-0040 exists to prevent: one corporation moves ISK
+      // between two of its own wallet divisions, so both legs share the corp
+      // owner and the same EVE id (1, ref_type corporation_account_withdrawal),
+      // differing only by division. A corporation's wallet is its division, so
+      // the two legs are distinct wallets and must pair and net to zero. Before
+      // the (owner, division) distinct-wallet key they collided under one owner
+      // and were left counted as real spend and income.
+      let rows = vec![
+        corp_division_row(1, 98, 1, "corporation_account_withdrawal", -25.0),
+        corp_division_row(1, 98, 2, "corporation_account_withdrawal", 25.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert_eq!(ids, std::collections::HashSet::from([1]));
+    }
+
+    #[test]
+    fn it_ignores_two_legs_in_the_same_corporation_division() {
+      // Two legs that landed in the very same corp wallet (same owner AND same
+      // division) are one wallet, not a transfer between wallets.
+      let rows = vec![
+        corp_division_row(1, 98, 3, "corporation_account_withdrawal", 25.0),
+        corp_division_row(1, 98, 3, "corporation_account_withdrawal", -25.0),
+      ];
+
+      let ids = internal_transfer_ids(&rows);
+
+      assert!(ids.is_empty());
     }
 
     #[test]

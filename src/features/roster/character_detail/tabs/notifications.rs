@@ -461,6 +461,43 @@ mod tests {
     }
   }
 
+  mod category_label {
+    use super::*;
+
+    #[test]
+    fn it_maps_every_known_category_to_a_nonempty_label() {
+      for category in [
+        "war",
+        "fw",
+        "combat",
+        "incursion",
+        "corp",
+        "sovereignty",
+        "structure",
+        "moon",
+        "contact",
+        "contract",
+        "clone",
+        "standing",
+        "insurance",
+        "market",
+        "reward",
+        "industry",
+        "mission",
+      ] {
+        assert!(!category_label(category).is_empty(), "{category} should map to a label");
+      }
+    }
+
+    #[test]
+    fn it_falls_back_to_the_system_label_for_an_unknown_category() {
+      let fallback = category_label("not-a-real-category");
+
+      assert!(!fallback.is_empty());
+      assert_eq!(fallback, category_label("another-unknown"));
+    }
+  }
+
   mod body {
     use super::*;
 

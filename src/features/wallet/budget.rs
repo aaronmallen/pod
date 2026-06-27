@@ -4,8 +4,8 @@ use crate::{
   features::wallet::budget_engine as math,
   store::{
     Database,
-    model::BudgetScope,
-    repo::budget::{self, NewCategory, NewGroup, TargetInput},
+    model::{BudgetScope, NewCategory, NewGroup, TargetInput},
+    repo::budget,
   },
 };
 
@@ -1375,7 +1375,8 @@ mod tests {
     use super::*;
     use crate::store::{
       self,
-      repo::budget::{NewGroup, create_group, list_categories, list_groups},
+      model::NewGroup,
+      repo::budget::{create_group, list_categories, list_groups},
     };
 
     async fn seed_group(db: &Database, name: &str) -> i64 {
@@ -1927,7 +1928,8 @@ mod tests {
     use super::*;
     use crate::store::{
       self,
-      repo::budget::{NewCategory, NewGroup, TargetInput, create_category, create_group, set_target},
+      model::{NewCategory, NewGroup, TargetInput},
+      repo::budget::{create_category, create_group, set_target},
     };
 
     async fn category_with_target(db: &Database, group_id: i64, name: &str, amount: f64) -> i64 {
@@ -2021,7 +2023,8 @@ mod tests {
     use super::*;
     use crate::store::{
       self,
-      repo::budget::{NewCategory, NewGroup, create_category, create_group},
+      model::{NewCategory, NewGroup},
+      repo::budget::{create_category, create_group},
     };
 
     #[tokio::test]
@@ -2063,9 +2066,9 @@ mod tests {
     use super::*;
     use crate::store::{
       self,
-      model::{Alliance, Bloodline, Character, Corporation, Gender, OwnerType, Race},
+      model::{Alliance, Bloodline, Character, Corporation, Gender, NewCategory, NewGroup, OwnerType, Race},
       repo::{
-        budget::{NewCategory, NewGroup, create_category, create_group},
+        budget::{create_category, create_group},
         character::insert_with_org,
         finance, infra,
       },

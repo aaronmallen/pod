@@ -11,7 +11,7 @@ use crate::{
   },
   store::{
     Database,
-    model::{BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, Rule, RuleCondition, RuleField, RuleOp},
+    model::{BudgetEntryKind, BudgetOwner, BudgetScope, MatchMode, NewRule, Rule, RuleCondition, RuleField, RuleOp},
     repo::{
       budget as budget_repo, industry as industry_repo,
       industry::{PlanSegment, PlanTree, PlanType},
@@ -169,7 +169,7 @@ fn budget_set_rule_tool() -> McpTool {
             .len() as i64;
           let created = budget_repo::create_rule(
             &db,
-            &budget_repo::NewRule {
+            &NewRule {
               category_id,
               enabled,
               match_mode,
@@ -569,7 +569,14 @@ async fn require_plan(db: &Database, plan_id: i64) -> Result<(), ToolError> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{config::McpPerms, mcp::tool::Registry, store::repo::character};
+  use crate::{
+    config::McpPerms,
+    mcp::tool::Registry,
+    store::{
+      model::{NewCategory, NewGroup},
+      repo::character,
+    },
+  };
 
   async fn database() -> Database {
     crate::store::open_test().await.expect("open a migrated test database")
@@ -596,7 +603,7 @@ mod tests {
   async fn seed_category(db: &Database, name: &str) -> i64 {
     let group = budget_repo::create_group(
       db,
-      &budget_repo::NewGroup {
+      &NewGroup {
         name: "Ops".to_owned(),
         position: 0,
         scope: BudgetScope::All,
@@ -606,7 +613,7 @@ mod tests {
     .unwrap();
     budget_repo::create_category(
       db,
-      &budget_repo::NewCategory {
+      &NewCategory {
         group_id: group.id(),
         name: name.to_owned(),
         note: None,
@@ -851,7 +858,7 @@ mod tests {
       let db = database().await;
       let group = budget_repo::create_group(
         &db,
-        &budget_repo::NewGroup {
+        &NewGroup {
           name: "Ops".to_owned(),
           position: 0,
           scope: BudgetScope::All,
@@ -861,7 +868,7 @@ mod tests {
       .unwrap();
       let category = budget_repo::create_category(
         &db,
-        &budget_repo::NewCategory {
+        &NewCategory {
           group_id: group.id(),
           name: "Fuel".to_owned(),
           note: None,

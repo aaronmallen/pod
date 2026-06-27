@@ -2,9 +2,6 @@ pub mod assets;
 // Consumed by the Industry Blueprints sync + UI in a follow-up; the storage layer lands first.
 pub mod blueprints;
 pub mod budget;
-// Test-only coverage for the one-time `0104_backfill_split_owner_assignments` migration.
-#[cfg(test)]
-mod budget_backfill_migration;
 pub mod calendar;
 pub mod character;
 pub mod finance;

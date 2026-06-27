@@ -1761,7 +1761,7 @@ async fn persist_rule_draft(
     }
     None => crate::store::repo::budget::create_rule(
       db,
-      &crate::store::repo::budget::NewRule {
+      &crate::store::model::NewRule {
         category_id,
         enabled,
         match_mode,
@@ -7447,7 +7447,7 @@ mod tests {
       let scope = crate::store::model::BudgetScope::All;
       let group = crate::store::repo::budget::create_group(
         &db,
-        &crate::store::repo::budget::NewGroup {
+        &crate::store::model::NewGroup {
           name: "Bills".to_owned(),
           position: 0,
           scope,
@@ -7457,7 +7457,7 @@ mod tests {
       .unwrap();
       let category = crate::store::repo::budget::create_category(
         &db,
-        &crate::store::repo::budget::NewCategory {
+        &crate::store::model::NewCategory {
           group_id: group.id,
           name: "SRP".to_owned(),
           note: None,
@@ -7499,7 +7499,7 @@ mod tests {
       let scope = crate::store::model::BudgetScope::All;
       let group = crate::store::repo::budget::create_group(
         &db,
-        &crate::store::repo::budget::NewGroup {
+        &crate::store::model::NewGroup {
           name: "Bills".to_owned(),
           position: 0,
           scope,
@@ -7509,7 +7509,7 @@ mod tests {
       .unwrap();
       let category = crate::store::repo::budget::create_category(
         &db,
-        &crate::store::repo::budget::NewCategory {
+        &crate::store::model::NewCategory {
           group_id: group.id,
           name: "SRP".to_owned(),
           note: None,
@@ -7521,7 +7521,7 @@ mod tests {
       .unwrap();
       let created = crate::store::repo::budget::create_rule(
         &db,
-        &crate::store::repo::budget::NewRule {
+        &crate::store::model::NewRule {
           category_id: category.id,
           enabled: true,
           match_mode: MatchMode::All,

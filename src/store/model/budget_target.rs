@@ -1,6 +1,16 @@
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
+// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
+// unit tests until then.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct TargetInput {
+  pub amount: f64,
+  pub by_date: Option<String>,
+  pub kind: String,
+}
+
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
 pub struct Model {
   #[getset(get_copy = "pub")]

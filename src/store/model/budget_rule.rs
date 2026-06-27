@@ -1,4 +1,7 @@
 use getset::{CopyGetters, Getters};
+use sqlx::FromRow;
+
+use crate::store::model::BudgetScope;
 
 const FIELD_AMOUNT: &str = "amount";
 
@@ -43,6 +46,18 @@ pub enum MatchMode {
   #[default]
   All,
   Any,
+}
+
+// Budget automation rule storage (child A); consumed by the matching engine in child B and the
+// inspector UI in child C. Exercised only by unit tests until then.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewRule {
+  pub category_id: i64,
+  pub enabled: bool,
+  pub match_mode: MatchMode,
+  pub name: String,
+  pub position: i64,
+  pub scope: BudgetScope,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -98,6 +113,24 @@ pub struct RuleCondition {
   pub value: String,
   #[getset(get = "pub")]
   pub value2: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub(crate) struct RuleConditionRow {
+  pub field: String,
+  pub op: String,
+  pub rule_id: i64,
+  pub value: String,
+  pub value2: Option<String>,
+}
+
+#[derive(Clone, Debug, FromRow, PartialEq)]
+pub(crate) struct RuleRow {
+  pub category_id: i64,
+  pub enabled: i64,
+  pub id: i64,
+  pub match_mode: String,
+  pub name: String,
 }
 
 impl MatchMode {
@@ -173,6 +206,17 @@ impl RuleOp {
       OP_NOT_CONTAINS => RuleOp::NotContains,
       OP_STARTS_WITH => RuleOp::StartsWith,
       _ => RuleOp::Contains,
+    }
+  }
+}
+
+impl RuleConditionRow {
+  pub(crate) fn into_condition(self) -> RuleCondition {
+    RuleCondition {
+      field: RuleField::from_key(&self.field),
+      op: RuleOp::from_key(&self.op),
+      value: self.value,
+      value2: self.value2,
     }
   }
 }

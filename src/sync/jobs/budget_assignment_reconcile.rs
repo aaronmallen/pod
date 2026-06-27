@@ -25,12 +25,10 @@ mod tests {
       self, Database, images,
       model::{
         Alliance, Bloodline, BudgetCategory, BudgetCategoryGroup, BudgetEntryKind, BudgetOwner, BudgetScope, Character,
-        Corporation, Gender, Race,
+        Corporation, Gender, NewCategory, NewGroup, Race,
       },
       repo::{
-        budget::{
-          NewCategory, NewGroup, create_category, create_group, list_entry_assignments, upsert_entry_assignment,
-        },
+        budget::{create_category, create_group, list_entry_assignments, upsert_entry_assignment},
         character, org,
       },
     },

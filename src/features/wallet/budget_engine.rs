@@ -1246,9 +1246,11 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
 // until then.
 #[allow(dead_code)]
 pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> {
-  use crate::store::repo::budget::{
-    NewCategory, NewGroup, create_category, create_group, is_scope_seeded, list_groups, mark_scope_seeded,
-    upsert_ref_type_map,
+  use crate::store::{
+    model::{NewCategory, NewGroup},
+    repo::budget::{
+      create_category, create_group, is_scope_seeded, list_groups, mark_scope_seeded, upsert_ref_type_map,
+    },
   };
 
   // Seed a scope's starter budget exactly once. The persisted marker means
@@ -3177,7 +3179,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::store::{self, repo::budget};
+    use crate::store::{self, model::NewGroup, repo::budget};
 
     #[tokio::test]
     async fn it_seeds_starter_groups_categories_and_the_default_ref_type_map() {
@@ -3248,7 +3250,7 @@ mod tests {
       // Simulate a scope seeded before the marker existed: groups present, no marker.
       budget::create_group(
         &db,
-        &budget::NewGroup {
+        &NewGroup {
           name: "Pre-existing".to_owned(),
           position: 0,
           scope: BudgetScope::All,
@@ -4488,7 +4490,10 @@ mod tests {
       position: i64,
       needle: &str,
     ) {
-      use crate::store::repo::budget::{NewRule, create_rule, replace_rule_conditions};
+      use crate::store::{
+        model::NewRule,
+        repo::budget::{create_rule, replace_rule_conditions},
+      };
       let created = create_rule(
         db,
         &NewRule {
@@ -4609,7 +4614,10 @@ mod tests {
       )
       .await;
       {
-        use crate::store::repo::budget::{NewRule, create_rule, replace_rule_conditions};
+        use crate::store::{
+          model::NewRule,
+          repo::budget::{create_rule, replace_rule_conditions},
+        };
         let created = create_rule(
           &db,
           &NewRule {

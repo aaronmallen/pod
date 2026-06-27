@@ -1,6 +1,18 @@
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
+use crate::store::model::BudgetScope;
+
+// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
+// unit tests until then.
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewGroup {
+  pub name: String,
+  pub position: i64,
+  pub scope: BudgetScope,
+}
+
 #[derive(Clone, CopyGetters, Debug, FromRow, Getters, PartialEq)]
 pub struct Model {
   #[getset(get = "pub")]

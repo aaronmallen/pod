@@ -9,7 +9,6 @@ use crate::store::{
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn create_category(db: &Database, category: &NewCategory) -> Result<BudgetCategory, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, BudgetCategory>(
@@ -31,7 +30,6 @@ pub async fn create_category(db: &Database, category: &NewCategory) -> Result<Bu
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn create_group(db: &Database, group: &NewGroup) -> Result<BudgetCategoryGroup, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, BudgetCategoryGroup>(
@@ -83,7 +81,6 @@ pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_categories WHERE id = ?")
     .bind(id)
@@ -94,7 +91,7 @@ pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
 
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn delete_entry_assignment(
   db: &Database,
   scope: BudgetScope,
@@ -313,7 +310,6 @@ pub async fn reconcile_split_owner_assignments(db: &Database) -> Result<u64, Err
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_category_groups WHERE id = ?")
     .bind(id)
@@ -334,7 +330,7 @@ pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub async fn delete_target(db: &Database, category_id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_targets WHERE category_id = ?")
     .bind(category_id)
@@ -345,7 +341,6 @@ pub async fn delete_target(db: &Database, category_id: i64) -> Result<(), Error>
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn list_assignments(db: &Database, category_id: i64) -> Result<Vec<BudgetAssignment>, Error> {
   let rows = sqlx::query_as::<_, BudgetAssignment>(
     "SELECT id, category_id, month, assigned FROM budget_assignments WHERE category_id = ? ORDER BY month",
@@ -358,7 +353,6 @@ pub async fn list_assignments(db: &Database, category_id: i64) -> Result<Vec<Bud
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetCategory>, Error> {
   let rows = sqlx::query_as::<_, BudgetCategory>(
     "SELECT id, group_id, name, note, tone, position, created_at, updated_at \
@@ -371,7 +365,6 @@ pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetC
 }
 
 // Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
-#[allow(dead_code)]
 pub async fn is_scope_seeded(db: &Database, scope: BudgetScope) -> Result<bool, Error> {
   let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM budget_scope_seeded WHERE scope_kind = ? AND scope_id IS ?")
     .bind(scope.scope_kind())
@@ -382,7 +375,6 @@ pub async fn is_scope_seeded(db: &Database, scope: BudgetScope) -> Result<bool, 
 }
 
 // Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
-#[allow(dead_code)]
 pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -399,7 +391,6 @@ pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), 
 
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
 pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetEntryAssignment>, Error> {
   let rows = sqlx::query_as::<_, BudgetEntryAssignment>(
     "SELECT id, scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at \
@@ -415,7 +406,6 @@ pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn list_groups(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetCategoryGroup>, Error> {
   let rows = sqlx::query_as::<_, BudgetCategoryGroup>(
     "SELECT id, scope_kind, scope_id, name, position, created_at, updated_at \
@@ -431,7 +421,6 @@ pub async fn list_groups(db: &Database, scope: BudgetScope) -> Result<Vec<Budget
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn list_ref_type_maps(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetRefTypeMap>, Error> {
   let rows = sqlx::query_as::<_, BudgetRefTypeMap>(
     "SELECT id, scope_kind, scope_id, ref_type, category_id FROM budget_ref_type_maps \
@@ -495,7 +484,6 @@ pub async fn list_rules(db: &Database, scope: BudgetScope) -> Result<Vec<Rule>, 
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn load_target(db: &Database, category_id: i64) -> Result<Option<BudgetTarget>, Error> {
   let row = sqlx::query_as::<_, BudgetTarget>(
     "SELECT category_id, kind, amount, by_date FROM budget_targets WHERE category_id = ?",
@@ -508,7 +496,7 @@ pub async fn load_target(db: &Database, category_id: i64) -> Result<Option<Budge
 
 // Budget activity math (B2): the global Ready-to-Assign basis. Consumed by the Budget Plan UI.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn scope_assigned_total(db: &Database, scope: BudgetScope) -> Result<f64, Error> {
   let total: Option<f64> = sqlx::query_scalar(
     "SELECT SUM(a.assigned) FROM budget_assignments a \
@@ -525,7 +513,6 @@ pub async fn scope_assigned_total(db: &Database, scope: BudgetScope) -> Result<f
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn set_target(db: &Database, category_id: i64, target: &TargetInput) -> Result<BudgetTarget, Error> {
   let row = sqlx::query_as::<_, BudgetTarget>(
     "INSERT INTO budget_targets (category_id, kind, amount, by_date) VALUES (?, ?, ?, ?) \
@@ -543,7 +530,6 @@ pub async fn set_target(db: &Database, category_id: i64, target: &TargetInput) -
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE budget_category_groups SET name = ?, updated_at = ? WHERE id = ?")
@@ -557,7 +543,6 @@ pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Erro
 
 // Budget automation rule storage (child A): rewrite the priority order by persisting each rule's new
 // position from its index in `ordered_ids`, in one transaction (cf. skills::reorder_entries).
-#[allow(dead_code)]
 pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let mut tx = db.writer().begin().await?;
@@ -601,7 +586,6 @@ pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -622,7 +606,6 @@ pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE budget_category_groups SET name = ?, position = ?, updated_at = ? WHERE id = ?")
@@ -655,7 +638,6 @@ pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn upsert_assignment(
   db: &Database,
   category_id: i64,
@@ -677,7 +659,6 @@ pub async fn upsert_assignment(
 
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
 pub async fn owner_holds_entry(
   db: &Database,
   owner: BudgetOwner,
@@ -711,7 +692,6 @@ pub async fn owner_holds_entry(
 
 // Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
-#[allow(dead_code)]
 pub async fn upsert_entry_assignment(
   db: &Database,
   scope: BudgetScope,
@@ -745,7 +725,6 @@ pub async fn upsert_entry_assignment(
 
 // Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
 // unit tests until then.
-#[allow(dead_code)]
 pub async fn upsert_ref_type_map(
   db: &Database,
   scope: BudgetScope,

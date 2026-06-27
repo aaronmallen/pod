@@ -129,7 +129,7 @@ pub async fn upsert_race(db: &Database, race: &Race) -> Result<(), Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get_dogma_attribute(db: &Database, attribute_id: i64) -> Result<Option<DogmaAttribute>, Error> {
   let row = sqlx::query_as::<_, DogmaAttribute>(
     "SELECT attribute_id, default_value, description, display_name, high_is_good, icon_id, name, published, \
@@ -230,7 +230,7 @@ pub async fn upsert_many_dogma_attributes(db: &Database, attributes: &[DogmaAttr
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_item_categories(db: &Database) -> Result<Vec<ItemCategory>, Error> {
   let rows = sqlx::query_as::<_, ItemCategory>("SELECT id, NULL AS icon_id, name, published FROM item_categories")
     .fetch_all(&db.0)
@@ -239,7 +239,7 @@ pub async fn all_item_categories(db: &Database) -> Result<Vec<ItemCategory>, Err
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_item_groups(db: &Database) -> Result<Vec<ItemGroup>, Error> {
   let rows =
     sqlx::query_as::<_, ItemGroup>("SELECT category_id, NULL AS icon_id, id, name, published FROM item_groups")
@@ -259,7 +259,7 @@ pub async fn all_item_types(db: &Database) -> Result<Vec<ItemType>, Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_market_groups(db: &Database) -> Result<Vec<MarketGroup>, Error> {
   let rows = sqlx::query_as::<_, MarketGroup>(
     "SELECT description, 0 AS has_types, NULL AS icon_id, id, name, \
@@ -271,7 +271,7 @@ pub async fn all_market_groups(db: &Database) -> Result<Vec<MarketGroup>, Error>
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_type_names(db: &Database) -> Result<Vec<(i64, String)>, Error> {
   let rows = sqlx::query_as::<_, (i64, String)>("SELECT id, name FROM item_types")
     .fetch_all(&db.0)
@@ -280,7 +280,7 @@ pub async fn all_type_names(db: &Database) -> Result<Vec<(i64, String)>, Error> 
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_type_volumes(db: &Database) -> Result<Vec<(i64, Option<f64>, Option<f64>)>, Error> {
   let rows = sqlx::query_as::<_, (i64, Option<f64>, Option<f64>)>("SELECT id, packaged_volume, volume FROM item_types")
     .fetch_all(&db.0)
@@ -317,7 +317,7 @@ pub async fn type_details_for(db: &Database, type_ids: &[i64]) -> Result<Vec<(i6
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get_item_category(db: &Database, id: i64) -> Result<Option<ItemCategory>, Error> {
   let row =
     sqlx::query_as::<_, ItemCategory>("SELECT id, NULL AS icon_id, name, published FROM item_categories WHERE id = ?")
@@ -408,7 +408,7 @@ pub async fn insert_item_type_with_hierarchy(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_item_category(db: &Database, category: &ItemCategory) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO item_categories (id, name, published) VALUES (?, ?, ?) \
@@ -423,7 +423,7 @@ pub async fn upsert_item_category(db: &Database, category: &ItemCategory) -> Res
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_item_group(db: &Database, group: &ItemGroup) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO item_groups (id, category_id, name, published) VALUES (?, ?, ?, ?) \
@@ -442,7 +442,7 @@ pub async fn upsert_item_group(db: &Database, group: &ItemGroup) -> Result<(), E
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_item_type(db: &Database, item_type: &ItemType) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO item_types \
@@ -606,7 +606,7 @@ pub async fn upsert_many_item_types(db: &Database, item_types: &[ItemType]) -> R
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_constellations(db: &Database) -> Result<Vec<Constellation>, Error> {
   let rows = sqlx::query_as::<_, Constellation>(
     "SELECT id, name, position_x, position_y, position_z, region_id FROM constellations",
@@ -617,7 +617,7 @@ pub async fn all_constellations(db: &Database) -> Result<Vec<Constellation>, Err
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_regions(db: &Database) -> Result<Vec<Region>, Error> {
   let rows = sqlx::query_as::<_, Region>("SELECT description, id, name FROM regions")
     .fetch_all(&db.0)
@@ -626,7 +626,7 @@ pub async fn all_regions(db: &Database) -> Result<Vec<Region>, Error> {
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn all_solar_systems(db: &Database) -> Result<Vec<SolarSystem>, Error> {
   let rows = sqlx::query_as::<_, SolarSystem>(
     "SELECT constellation_id, id, name, position_x, position_y, position_z, \
@@ -764,7 +764,7 @@ pub async fn get_structure(db: &Database, id: i64) -> Result<Option<Structure>, 
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn inaccessible_structures_for_owner(
   db: &Database,
   owner_id: i64,
@@ -858,7 +858,7 @@ pub async fn insert_station_with_geography(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn is_structure_inaccessible(
   db: &Database,
   owner_id: i64,
@@ -898,7 +898,7 @@ pub async fn mark_inaccessible_structure(
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn moon_with_system(db: &Database, id: i64) -> Result<Option<(String, i64, f64)>, Error> {
   let row = sqlx::query_as::<_, (String, i64, f64)>(
     "SELECT moons.name, moons.solar_system_id, solar_systems.security_status \
@@ -964,7 +964,7 @@ pub async fn catalog_types(db: &Database, type_ids: &[i64]) -> Result<Vec<Catalo
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn product_categories(db: &Database) -> Result<Vec<(i64, String, String)>, Error> {
   let rows = sqlx::query_as::<_, (i64, String, String)>(
     "SELECT t.id, g.name, c.name FROM item_types t \
@@ -1043,7 +1043,7 @@ pub async fn upsert_solar_system(db: &Database, system: &SolarSystem) -> Result<
 }
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn upsert_station(db: &Database, station: &Station) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO stations \
@@ -1367,7 +1367,7 @@ pub async fn upsert_structure(db: &Database, structure: &Structure) -> Result<()
 }
 
 // Phase-2 reprocess-value accessor; consumed by the reprocess-vs-sell feature in a follow-up.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn materials_for_type(db: &Database, type_id: i64) -> Result<Vec<(i64, i64)>, Error> {
   let rows = sqlx::query_as::<_, (i64, i64)>(
     "SELECT material_type_id, quantity FROM type_materials WHERE type_id = ? ORDER BY material_type_id",
@@ -1379,7 +1379,7 @@ pub async fn materials_for_type(db: &Database, type_id: i64) -> Result<Vec<(i64,
 }
 
 // Phase-2 reprocess-value accessor; consumed by the reprocess-vs-sell feature in a follow-up.
-#[allow(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn materials_for_types(db: &Database, type_ids: &[i64]) -> Result<Vec<TypeMaterial>, Error> {
   if type_ids.is_empty() {
     return Ok(Vec::new());

@@ -9,12 +9,12 @@ use crate::{
   config::Settings,
   i18n::Language,
   ui::{
-    components::{anchored_dropdown::AnchoredDropdown, icon::Icon, rule, toggle},
+    components::{icon::Icon, rule, toggle},
     style::{color, control, radius, spacing, typography},
   },
 };
 
-const LANGUAGE_POPOVER_WIDTH: f32 = 360.0;
+const LANGUAGE_GRID_COLUMNS: usize = 3;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const PRESET_HEIGHT: f32 = 78.0;
 const READOUT_MAX_WIDTH: f32 = 640.0;
@@ -75,14 +75,12 @@ pub enum Message {
   HighContrastToggled(bool),
   LanguageChangeCanceled,
   LanguageChanged(Language),
-  LanguagePickerToggled,
   LanguageRestartConfirmed,
   ScaleChanged(u8),
 }
 
 #[derive(Debug, Default)]
 pub struct State {
-  language_picker_open: bool,
   pending_language: Option<Language>,
 }
 
@@ -127,16 +125,11 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       state.pending_language = None;
       Outcome::None
     }
-    // Picking a language never applies live: it parks a pending selection so the panel can surface the
+    // Picking a card never applies live: it parks a pending selection so the panel can surface the
     // restart confirmation. Re-picking the running language clears the pending state (a no-op). The
     // applied switch + re-seed lands on the confirm action below.
     Message::LanguageChanged(language) => {
-      state.language_picker_open = false;
       state.pending_language = (language != settings.accessibility().language()).then_some(language);
-      Outcome::None
-    }
-    Message::LanguagePickerToggled => {
-      state.language_picker_open = !state.language_picker_open;
       Outcome::None
     }
     // The restart-gated apply (ADR-0041): persist the pending language and emit the outcome the app
@@ -206,13 +199,16 @@ fn panel_header<'a>() -> Element<'a, Message> {
 fn panel_body(state: &State, settings: &Settings) -> Element<'static, Message> {
   let scale = clamp_scale(*settings.accessibility().scale());
   let high_contrast = *settings.accessibility().high_contrast();
-  let language = settings.accessibility().language();
+  // The grid highlights the language the panel would switch to: the parked pending choice if a switch
+  // is staged, otherwise the language Pod is actually running. The head/footer track the same value.
+  let running_language = settings.accessibility().language();
+  let selected_language = state.pending_language.unwrap_or(running_language);
 
-  let language_head = language_section_head(state.pending_language.is_some());
-  let language_picker = language_dropdown(language, state.language_picker_open);
+  let language_head = language_section_head(state.pending_language, selected_language);
+  let language_grid = language_grid(selected_language);
   let language_footer = match state.pending_language {
     Some(pending) => language_confirm_row(pending),
-    None => language_resting_note(),
+    None => language_resting_note(running_language),
   };
 
   let section = section_head(
@@ -239,7 +235,7 @@ fn panel_body(state: &State, settings: &Settings) -> Element<'static, Message> {
   let inner = container(
     Column::with_children(vec![
       language_head,
-      language_picker,
+      language_grid,
       language_footer,
       section,
       presets,
@@ -296,7 +292,7 @@ fn section_head<'a>(label: &'a str, note: &'a str, chip: &'a str) -> Element<'a,
     .into()
 }
 
-fn live_chip(label: &str) -> Element<'_, Message> {
+fn live_chip(label: &str) -> Element<'static, Message> {
   let dot = container(Space::new())
     .width(Length::Fixed(6.0))
     .height(Length::Fixed(6.0))
@@ -338,7 +334,8 @@ fn live_chip(label: &str) -> Element<'_, Message> {
 
 // The language section head mirrors `section_head` but trades the green live chip for an amber
 // "restart required" pill when a switch is pending — the language change applies on restart, not live.
-fn language_section_head(pending: bool) -> Element<'static, Message> {
+// With nothing pending it shows a live chip reading the running language's `<native> · <code>`.
+fn language_section_head(pending: Option<Language>, selected: Language) -> Element<'static, Message> {
   let micro = text(super::i18n::tr_static("settings.accessibility.language_section_label"))
     .font(typography::mono::MEDIUM)
     .size(typography::size::XS_PLUS)
@@ -351,11 +348,12 @@ fn language_section_head(pending: bool) -> Element<'static, Message> {
     .spacing(spacing::UNIT)
     .width(Length::Fill);
 
-  let mut children: Vec<Element<'static, Message>> = vec![identity.into()];
-  if pending {
-    children.push(restart_chip());
-  }
-  let row = Row::with_children(children)
+  let right = if pending.is_some() {
+    restart_chip()
+  } else {
+    live_chip(&format!("{} \u{00b7} {}", selected.native_label(), selected.esi_code()))
+  };
+  let row = Row::with_children(vec![identity.into(), right])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_3_5);
 
@@ -411,93 +409,37 @@ fn restart_chip() -> Element<'static, Message> {
     .into()
 }
 
-fn language_dropdown(current: Language, open: bool) -> Element<'static, Message> {
-  let trigger = language_trigger(current);
-  let popover = open.then(|| language_popover(current));
+// A three-column grid of selectable language cards (one per ESI language). Iced has no grid widget,
+// so the nine languages are chunked into rows of three, the trailing row padded with spacers to keep
+// the columns aligned. Mirrors the wizard's language step for a consistent card idiom.
+fn language_grid(selected: Language) -> Element<'static, Message> {
+  let rows: Vec<Element<'static, Message>> = Language::ALL
+    .chunks(LANGUAGE_GRID_COLUMNS)
+    .map(|chunk| {
+      let mut cells: Vec<Element<'static, Message>> = chunk
+        .iter()
+        .map(|&language| language_card(language, language == selected))
+        .collect();
+      while cells.len() < LANGUAGE_GRID_COLUMNS {
+        cells.push(Space::new().width(Length::Fill).into());
+      }
+      Row::with_children(cells)
+        .spacing(spacing::SPACE_3)
+        .width(Length::Fill)
+        .into()
+    })
+    .collect();
 
-  AnchoredDropdown::new(trigger, popover)
-    .popover_width(LANGUAGE_POPOVER_WIDTH)
-    .on_dismiss(Message::LanguagePickerToggled)
-    .into()
-}
-
-fn language_trigger(current: Language) -> Element<'static, Message> {
-  let native = text(current.native_label())
-    .font(typography::body::MEDIUM)
-    .size(typography::size::LG)
-    .style(typography::colored(color::text::PRIMARY));
-  let code = language_code_tag(current.esi_code(), false);
-  let identity = Row::with_children(vec![native.into(), code])
-    .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2_5)
-    .width(Length::Fill);
-
-  let chevron = Icon::chevron_down()
-    .size(typography::size::MD)
-    .color(color::text::secondary())
-    .render();
-
-  let row = Row::with_children(vec![identity.into(), chevron])
-    .align_y(Vertical::Center)
+  Column::with_children(rows)
     .spacing(spacing::SPACE_3)
-    .width(Length::Fill);
-
-  let cell = container(row)
     .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_3,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::SPACE_3,
-      left: spacing::SPACE_3_5,
-    })
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::SUNKEN)),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: radius::CARD.into(),
-      },
-      ..container::Style::default()
-    });
-
-  button(cell)
-    .padding(0)
-    .width(Length::Fill)
-    .on_press(Message::LanguagePickerToggled)
-    .style(|_, _| button::Style {
-      background: Some(Background::Color(iced::Color::TRANSPARENT)),
-      ..button::Style::default()
-    })
     .into()
 }
 
-fn language_popover(current: Language) -> Element<'static, Message> {
-  let mut options: Vec<Element<'static, Message>> = Vec::with_capacity(Language::ALL.len());
-  for language in Language::ALL {
-    options.push(language_option(language, language == current));
-  }
-
-  let list = Column::with_children(options)
-    .spacing(spacing::SPACE_2)
-    .width(Length::Fill);
-
-  container(list)
-    .width(Length::Fill)
-    .padding(spacing::SPACE_2)
-    .style(|_| container::Style {
-      background: Some(Background::Color(color::surface::BASE)),
-      border: Border {
-        color: color::rule_strong(),
-        width: 1.0,
-        radius: radius::CARD.into(),
-      },
-      shadow: crate::ui::style::shadow::CARD,
-      ..container::Style::default()
-    })
-    .into()
-}
-
-fn language_option(language: Language, selected: bool) -> Element<'static, Message> {
+// One selectable card: the native name + uppercase ESI code pill on the top row, the muted English
+// region/label + a plasma check-circle (when selected) on the bottom. Selected cards tint plasma and
+// gain a plasma border; picking one parks it pending rather than applying live.
+fn language_card(language: Language, selected: bool) -> Element<'static, Message> {
   let native_color = if selected {
     color::text::PRIMARY
   } else {
@@ -507,64 +449,96 @@ fn language_option(language: Language, selected: bool) -> Element<'static, Messa
     .font(typography::body::MEDIUM)
     .size(typography::size::MD)
     .style(typography::colored(native_color));
+  let code = language_code_tag(language.esi_code(), selected);
+  let top = Row::with_children(vec![native.into(), Space::new().width(Length::Fill).into(), code])
+    .align_y(Vertical::Center)
+    .spacing(spacing::SPACE_2);
+
   let label = text(language.label())
     .font(typography::body::REGULAR)
     .size(typography::size::SM)
     .style(typography::colored(color::text::secondary()));
-  let identity = Column::with_children(vec![native.into(), label.into()])
-    .spacing(spacing::UNIT)
-    .width(Length::Fill);
-
-  let mut row_children: Vec<Element<'static, Message>> =
-    vec![identity.into(), language_code_tag(language.esi_code(), selected)];
+  let mut bottom_children: Vec<Element<'static, Message>> = vec![label.into(), Space::new().width(Length::Fill).into()];
   if selected {
-    row_children.push(
-      Icon::check()
-        .size(typography::size::SM)
-        .color(color::accent::PLASMA)
-        .render(),
-    );
+    bottom_children.push(language_check());
   }
-  let row = Row::with_children(row_children)
+  let bottom = Row::with_children(bottom_children)
     .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2_5)
+    .spacing(spacing::SPACE_2);
+
+  let content = Column::with_children(vec![top.into(), bottom.into()])
+    .spacing(spacing::UNIT + 1.0)
     .width(Length::Fill);
 
-  let cell = container(row)
-    .width(Length::Fill)
-    .padding(Padding {
-      top: spacing::SPACE_2_5,
-      right: spacing::SPACE_3,
-      bottom: spacing::SPACE_2_5,
-      left: spacing::SPACE_3,
-    })
-    .style(move |_| container::Style {
-      background: Some(Background::Color(if selected {
-        color::with_alpha(color::accent::PLASMA, 0.1)
-      } else {
-        iced::Color::TRANSPARENT
-      })),
-      border: Border {
-        color: if selected {
-          color::accent::PLASMA
-        } else {
-          iced::Color::TRANSPARENT
-        },
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..container::Style::default()
-    });
+  let cell = container(content).width(Length::Fill).padding(Padding {
+    top: spacing::SPACE_3_5,
+    right: spacing::SPACE_3_5,
+    bottom: spacing::SPACE_3_5 - 1.0,
+    left: spacing::SPACE_3_5,
+  });
+
+  let (background, border) = if selected {
+    (color::with_alpha(color::accent::PLASMA, 0.1), color::accent::PLASMA)
+  } else {
+    (color::surface::SUNKEN, color::rule())
+  };
+  let shadow = if selected {
+    iced::Shadow {
+      color: color::with_alpha(color::accent::PLASMA, 0.12),
+      offset: iced::Vector::ZERO,
+      blur_radius: 3.0,
+    }
+  } else {
+    iced::Shadow::default()
+  };
 
   button(cell)
     .padding(0)
     .width(Length::Fill)
     .on_press(Message::LanguageChanged(language))
-    .style(|_, _| button::Style {
-      background: Some(Background::Color(iced::Color::TRANSPARENT)),
-      ..button::Style::default()
+    .style(move |_, status| {
+      // Hover firms the border on resting cards; the selected card keeps its plasma edge.
+      let border_color = match (selected, status) {
+        (true, _) => border,
+        (false, button::Status::Hovered) => color::rule_strong(),
+        (false, _) => border,
+      };
+      button::Style {
+        background: Some(Background::Color(background)),
+        border: Border {
+          color: border_color,
+          width: 1.0,
+          radius: radius::NAV_CARD.into(),
+        },
+        text_color: color::text::PRIMARY,
+        shadow,
+        ..button::Style::default()
+      }
     })
     .into()
+}
+
+// The selected-card affordance: a small plasma circle with a dark check, bottom-right of the card.
+fn language_check() -> Element<'static, Message> {
+  container(
+    Icon::check()
+      .size(10.0)
+      .color(color::on_fill(color::accent::PLASMA))
+      .render(),
+  )
+  .width(Length::Fixed(16.0))
+  .height(Length::Fixed(16.0))
+  .align_x(Horizontal::Center)
+  .align_y(Vertical::Center)
+  .style(|_| container::Style {
+    background: Some(Background::Color(color::accent::PLASMA)),
+    border: Border {
+      radius: 8.0.into(),
+      ..Border::default()
+    },
+    ..container::Style::default()
+  })
+  .into()
 }
 
 fn language_code_tag(code: &'static str, selected: bool) -> Element<'static, Message> {
@@ -602,14 +576,27 @@ fn language_code_tag(code: &'static str, selected: bool) -> Element<'static, Mes
     .into()
 }
 
-// Resting state: a quiet note explaining the language is sent to ESI and that a restart applies it.
-fn language_resting_note() -> Element<'static, Message> {
-  let note = text(super::i18n::tr_static("settings.accessibility.language_resting_note"))
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary()));
+// Resting state: a quiet, globe-marked note explaining the language is sent to ESI as the
+// `Accept-Language` header and that a restart applies a change. The marker reuses the ESI-data glyph
+// the wizard's language step uses, since there is no globe in the icon set.
+fn language_resting_note(running: Language) -> Element<'static, Message> {
+  let icon = Icon::market().size(15.0).color(color::text::secondary()).render();
+  let note = text(
+    t!(
+      "settings.accessibility.language_resting_note",
+      code => running.esi_code()
+    )
+    .into_owned(),
+  )
+  .font(typography::body::REGULAR)
+  .size(typography::size::SM)
+  .style(typography::colored(color::text::secondary()));
 
-  container(note)
+  let row = Row::with_children(vec![icon, note.into()])
+    .spacing(spacing::SPACE_2_5)
+    .align_y(Vertical::Top);
+
+  container(row)
     .width(Length::Fill)
     .padding(Padding {
       top: spacing::SPACE_3,
@@ -629,9 +616,11 @@ fn language_resting_note() -> Element<'static, Message> {
     .into()
 }
 
-// Pending state: the restart-gated confirmation (ADR-0041). The confirm button emits
-// `LanguageRestartConfirmed`, which is where the persist + re-seed + relaunch is wired.
+// Pending state: the amber, restart-gated confirmation (ADR-0041). The confirm button emits
+// `LanguageRestartConfirmed`, which is where the persist + re-seed + relaunch is wired; the cancel
+// ghost backs out by clearing the pending selection.
 fn language_confirm_row(pending: Language) -> Element<'static, Message> {
+  let marker = Icon::clock().size(16.0).color(color::status::WARNING).render();
   let heading = text(
     t!(
       "settings.accessibility.language_dirty_heading",
@@ -645,7 +634,7 @@ fn language_confirm_row(pending: Language) -> Element<'static, Message> {
   let blurb = text(
     t!(
       "settings.accessibility.language_dirty_blurb",
-      native => format!("{} ({})", pending.native_label(), pending.esi_code())
+      code => pending.esi_code()
     )
     .into_owned(),
   )
@@ -660,7 +649,7 @@ fn language_confirm_row(pending: Language) -> Element<'static, Message> {
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_2_5);
 
-  let row = Row::with_children(vec![identity.into(), actions.into()])
+  let row = Row::with_children(vec![marker, identity.into(), actions.into()])
     .align_y(Vertical::Center)
     .spacing(spacing::SPACE_3_5)
     .width(Length::Fill);
@@ -1484,21 +1473,9 @@ mod tests {
 
       assert!(state.pending_language.is_none());
     }
-
-    #[test]
-    fn toggling_the_language_picker_flips_it_open_and_shut() {
-      let mut state = State::default();
-      let mut settings = Settings::default();
-
-      update(&mut state, Message::LanguagePickerToggled, &mut settings);
-      assert!(state.language_picker_open);
-
-      update(&mut state, Message::LanguagePickerToggled, &mut settings);
-      assert!(!state.language_picker_open);
-    }
   }
 
-  mod language_popover {
+  mod language_grid {
     use std::collections::HashSet;
 
     use pretty_assertions::assert_eq;
@@ -1506,7 +1483,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_offers_every_one_of_the_nine_languages() {
+    fn it_offers_a_card_for_every_one_of_the_nine_languages() {
       let offered: HashSet<&'static str> = Language::ALL.iter().map(|language| language.native_label()).collect();
 
       assert_eq!(offered.len(), 9);
@@ -1514,8 +1491,8 @@ mod tests {
     }
 
     #[test]
-    fn it_builds_the_popover_for_a_selected_language() {
-      let _el: Element<'static, Message> = language_popover(Language::Ja);
+    fn it_builds_the_grid_for_a_selected_language() {
+      let _el: Element<'static, Message> = language_grid(Language::Ja);
     }
   }
 

@@ -44,6 +44,7 @@ pub enum JobKind {
   MarketPrices,
   NetWorthSnapshot,
   TokenAudit,
+  WalletJournalReconcile,
 }
 
 impl JobKind {
@@ -83,6 +84,7 @@ impl JobKind {
     JobKind::MarketPrices,
     JobKind::NetWorthSnapshot,
     JobKind::TokenAudit,
+    JobKind::WalletJournalReconcile,
   ];
 
   pub fn for_subject(subject: Subject) -> Vec<JobKind> {
@@ -121,7 +123,11 @@ impl JobKind {
         JobKind::CharacterAbyssals,
         JobKind::CorporationAbyssals,
       ],
-      Self::CharacterWallet | Self::CorporationWallet => &[JobKind::MarketPrices, JobKind::BudgetAssignmentReconcile],
+      Self::CharacterWallet | Self::CorporationWallet => &[
+        JobKind::MarketPrices,
+        JobKind::BudgetAssignmentReconcile,
+        JobKind::WalletJournalReconcile,
+      ],
       Self::CharacterProfile => &[JobKind::AssetSync, JobKind::CharacterWallet],
       Self::CorporationProfile => &[JobKind::AssetSync, JobKind::CorporationWallet],
       Self::MarketPrices => &[JobKind::NetWorthSnapshot],
@@ -250,9 +256,11 @@ impl JobKind {
       | Self::CharacterNotifications
       | Self::CharacterTelemetry
       | Self::CorporationKillmails => Duration::from_secs(300),
-      Self::BudgetAssignmentReconcile | Self::KillmailDetailBackfill | Self::KillmailReconcile | Self::MarketPrices => {
-        Duration::from_secs(6 * 3600)
-      }
+      Self::BudgetAssignmentReconcile
+      | Self::KillmailDetailBackfill
+      | Self::KillmailReconcile
+      | Self::MarketPrices
+      | Self::WalletJournalReconcile => Duration::from_secs(6 * 3600),
       Self::NetWorthSnapshot => Duration::from_secs(24 * 3600),
       // Re-validate every stored token and re-check feature scopes every 20 minutes (tunable). A
       // revoked refresh token or a newly-enabled feature needing an ungranted scope is caught within
@@ -311,7 +319,8 @@ impl JobKind {
       | Self::KillmailReconcile
       | Self::MarketPrices
       | Self::NetWorthSnapshot
-      | Self::TokenAudit => &[],
+      | Self::TokenAudit
+      | Self::WalletJournalReconcile => &[],
     }
   }
 }
@@ -429,6 +438,7 @@ async fn run_shared_job(ctx: &JobCtx<'_>) -> Result<Outcome, clients::Error> {
     JobKind::MarketPrices => super::jobs::market_prices::run(ctx).await,
     JobKind::NetWorthSnapshot => super::jobs::net_worth_snapshot::run(ctx).await,
     JobKind::TokenAudit => super::jobs::token_audit::run(ctx).await,
+    JobKind::WalletJournalReconcile => super::jobs::wallet_journal_reconcile::run(ctx).await,
     _ => Ok(Outcome::synced()),
   }
 }
@@ -449,6 +459,7 @@ mod tests {
         assert!(JobKind::KillmailReconcile.is_global());
         assert!(JobKind::MarketPrices.is_global());
         assert!(JobKind::NetWorthSnapshot.is_global());
+        assert!(JobKind::WalletJournalReconcile.is_global());
 
         assert!(!JobKind::AssetSync.is_global());
         assert!(!JobKind::CharacterAbyssals.is_global());
@@ -525,8 +536,22 @@ mod tests {
         for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
           assert_eq!(
             gather.on_success_triggers(),
-            [JobKind::MarketPrices, JobKind::BudgetAssignmentReconcile],
-            "{gather:?} chains prices (then the snapshot) and the post-sync budget reconcile",
+            [
+              JobKind::MarketPrices,
+              JobKind::BudgetAssignmentReconcile,
+              JobKind::WalletJournalReconcile
+            ],
+            "{gather:?} chains prices (then the snapshot), the budget reconcile, and the gap-detection reconcile",
+          );
+        }
+      }
+
+      #[test]
+      fn it_chains_the_gap_detection_reconcile_off_every_wallet_sync() {
+        for gather in [JobKind::CharacterWallet, JobKind::CorporationWallet] {
+          assert!(
+            gather.on_success_triggers().contains(&JobKind::WalletJournalReconcile),
+            "{gather:?} must re-run balance-continuity gap detection after the re-fetch settles",
           );
         }
       }
@@ -623,6 +648,7 @@ mod tests {
               | JobKind::MarketPrices
               | JobKind::NetWorthSnapshot
               | JobKind::TokenAudit
+              | JobKind::WalletJournalReconcile
           );
 
           assert_eq!(

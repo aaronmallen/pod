@@ -18,11 +18,14 @@ static KILLMAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/notif
 static MAIL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/mail.svg");
 static MOON_ICON: &[u8] = include_bytes!("../../../assets/images/icons/moon.svg");
 static SKILL_ICON: &[u8] = include_bytes!("../../../assets/images/icons/skills.svg");
+static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.svg");
 
 pub fn accent(kind: NotificationKind) -> iced::Color {
   match kind {
     NotificationKind::Calendar | NotificationKind::ExtractionScheduled => color::accent::PLASMA,
-    NotificationKind::ExtractionCracked | NotificationKind::Industry => color::status::WARNING,
+    NotificationKind::ExtractionCracked | NotificationKind::Industry | NotificationKind::WalletGap => {
+      color::status::WARNING
+    }
     NotificationKind::Killmail => color::status::DANGER,
     NotificationKind::Mail | NotificationKind::Skill => color::accent::PLASMA,
   }
@@ -69,6 +72,7 @@ pub fn kind_label(kind: NotificationKind) -> &'static str {
     NotificationKind::Killmail => "Killmail",
     NotificationKind::Mail => "New mail",
     NotificationKind::Skill => "Skill complete",
+    NotificationKind::WalletGap => "Wallet gap",
   }
 }
 
@@ -182,6 +186,7 @@ fn icon_for(kind: NotificationKind) -> &'static [u8] {
     NotificationKind::Killmail => KILLMAIL_ICON,
     NotificationKind::Mail => MAIL_ICON,
     NotificationKind::Skill => SKILL_ICON,
+    NotificationKind::WalletGap => WALLET_ICON,
   }
 }
 

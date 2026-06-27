@@ -368,6 +368,9 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     // global industry cost-index refresh (a cheap public sync feeding the planner on demand), and the
     // global token audit.
     JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
+    // Balance-continuity gap detection reads the journal the wallet syncs populate, so it runs while
+    // any wallet/journal reader is enabled.
+    JobKind::WalletJournalReconcile => &[SubFeature::Wallets, SubFeature::Journal],
   };
   owners.to_vec()
 }

@@ -148,7 +148,8 @@ impl DetailDataType {
       | JobKind::KillmailReconcile
       | JobKind::MarketPrices
       | JobKind::NetWorthSnapshot
-      | JobKind::TokenAudit => None,
+      | JobKind::TokenAudit
+      | JobKind::WalletJournalReconcile => None,
     }
   }
 }

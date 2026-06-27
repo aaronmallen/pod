@@ -1220,8 +1220,6 @@ pub async fn append_wallet_journal(db: &Database, entries: &[CharacterWalletJour
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
-#[allow(dead_code)]
 pub async fn wallet_journal(db: &Database, character_id: i64) -> Result<Vec<CharacterWalletJournal>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletJournal>(
     "SELECT amount, balance, character_id, context_id, context_id_type, date, description, \

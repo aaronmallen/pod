@@ -29,6 +29,8 @@ const KIND_MAIL: &str = "mail";
 
 const KIND_SKILL: &str = "skill";
 
+const KIND_WALLET_GAP: &str = "wallet_gap";
+
 const OWNER_CHARACTER: &str = "character";
 
 const OWNER_CORPORATION: &str = "corporation";
@@ -102,6 +104,7 @@ pub enum NotificationKind {
   Killmail,
   Mail,
   Skill,
+  WalletGap,
 }
 
 #[allow(dead_code)]
@@ -188,6 +191,7 @@ impl NotificationKind {
       NotificationKind::Killmail => KIND_KILLMAIL,
       NotificationKind::Mail => KIND_MAIL,
       NotificationKind::Skill => KIND_SKILL,
+      NotificationKind::WalletGap => KIND_WALLET_GAP,
     }
   }
 
@@ -202,6 +206,7 @@ impl NotificationKind {
       KIND_KILLMAIL => Some(NotificationKind::Killmail),
       KIND_MAIL => Some(NotificationKind::Mail),
       KIND_SKILL => Some(NotificationKind::Skill),
+      KIND_WALLET_GAP => Some(NotificationKind::WalletGap),
       _ => None,
     }
   }
@@ -324,6 +329,7 @@ mod tests {
           NotificationKind::Killmail,
           NotificationKind::Mail,
           NotificationKind::Skill,
+          NotificationKind::WalletGap,
         ] {
           assert_eq!(NotificationKind::from_key(kind.as_str()), Some(kind));
         }

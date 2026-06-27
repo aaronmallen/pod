@@ -1978,6 +1978,7 @@ mod tests {
       seed_ledger(&db, "MarketPrices", Some(&future), None).await;
       seed_ledger(&db, "NetWorthSnapshot", Some(&future), None).await;
       seed_ledger(&db, "TokenAudit", Some(&future), None).await;
+      seed_ledger(&db, "WalletJournalReconcile", Some(&future), None).await;
 
       let (_handle, mut events, _images) = spawn_engine_with_db(db, server.uri()).await;
 

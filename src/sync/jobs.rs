@@ -33,3 +33,4 @@ pub mod names;
 pub mod net_worth_snapshot;
 pub mod resolve;
 pub mod token_audit;
+pub mod wallet_journal_reconcile;

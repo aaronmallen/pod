@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+#MISE description="Check i18n locale parity (missing/orphan/placeholder drift across the nine locales)"
+
+set -e
+
+cargo test --test i18n_parity --all-features

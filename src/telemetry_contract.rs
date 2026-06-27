@@ -36,14 +36,14 @@ use serde::{Deserialize, Serialize};
 /// The §6.3 golden session envelope (all streams ON), verbatim.
 ///
 /// Shared with the TypeScript Worker tests via the same path
-/// (`test/fixtures/telemetry/session_all_streams.json`).
-pub const SESSION_ALL_STREAMS_FIXTURE: &str = include_str!("../test/fixtures/telemetry/session_all_streams.json");
+/// (`tests/fixtures/telemetry/session_all_streams.json`).
+pub const SESSION_ALL_STREAMS_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/session_all_streams.json");
 
 /// The §6.4 golden crash envelope, verbatim.
 ///
 /// Shared with the TypeScript Worker tests via the same path
-/// (`test/fixtures/telemetry/crash_batch.json`).
-pub const CRASH_BATCH_FIXTURE: &str = include_str!("../test/fixtures/telemetry/crash_batch.json");
+/// (`tests/fixtures/telemetry/crash_batch.json`).
+pub const CRASH_BATCH_FIXTURE: &str = include_str!("../tests/fixtures/telemetry/crash_batch.json");
 
 /// The integer contract version baked into every envelope (`schema`). The Worker
 /// rejects (400) any envelope whose `schema` exceeds the version it knows.
@@ -455,7 +455,7 @@ mod tests {
 ///    its `sample_payload`).
 ///
 /// These tests pin all three to the SAME committed golden fixtures
-/// (`test/fixtures/telemetry/*.json`). The Worker source and D1 migration are
+/// (`tests/fixtures/telemetry/*.json`). The Worker source and D1 migration are
 /// `include_str!`d so a textual edit to either that breaks the contract fails
 /// `cargo test` here, not just the worker's vitest suite. The settings preview's
 /// `sample_payload` is private to its module (and that module is owned

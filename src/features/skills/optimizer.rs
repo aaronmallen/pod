@@ -164,9 +164,9 @@ mod tests {
     };
     use crate::clients::esi::models::{character, universe};
 
-    const ATTRIBUTES_FIXTURE: &str = include_str!("../../../test/fixtures/esi/character_attributes.json");
+    const ATTRIBUTES_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/character_attributes.json");
 
-    const IMPLANT_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_9899.json");
+    const IMPLANT_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/universe_types_9899.json");
 
     const CHARISMA_BONUS_ID: i32 = 175;
 

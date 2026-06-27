@@ -42,7 +42,7 @@ mod tests {
 
     use super::*;
 
-    const DYNAMIC_ITEM_FIXTURE: &str = include_str!("../../../test/fixtures/esi/dogma_dynamic_item.json");
+    const DYNAMIC_ITEM_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/dogma_dynamic_item.json");
 
     #[tokio::test]
     async fn it_returns_http_error_on_4xx() {

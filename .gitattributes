@@ -1,5 +1,5 @@
 # Normalize all text to LF on every platform. Golden test fixtures
-# (test/fixtures/telemetry/*.json) and worker sources are compared byte-for-byte
+# (tests/fixtures/telemetry/*.json) and worker sources are compared byte-for-byte
 # in cross-platform tests; CRLF on a Windows checkout breaks those assertions.
 * text=auto eol=lf
 

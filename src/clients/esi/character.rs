@@ -594,7 +594,7 @@ mod tests {
 
       use super::*;
 
-      const ATTRIBUTES_FIXTURE: &str = include_str!("../../../test/fixtures/esi/character_attributes.json");
+      const ATTRIBUTES_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/character_attributes.json");
 
       #[tokio::test]
       async fn it_defaults_remap_fields_for_a_never_remapped_pilot() {

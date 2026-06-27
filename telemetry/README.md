@@ -36,7 +36,7 @@ grep -rIn -e CF-Connecting-IP -e 'request\.cf' src/   # → no matches
 
 The closed-world validator (`src/contract.ts`) accepts **exactly** the frozen
 golden contract pinned by the shared fixtures
-`../test/fixtures/telemetry/session_all_streams.json` and `crash_batch.json`
+`../tests/fixtures/telemetry/session_all_streams.json` and `crash_batch.json`
 (the same files the Rust contract crate `src/telemetry_contract.rs` asserts).
 Any unknown key anywhere is a rejection.
 
@@ -178,10 +178,10 @@ aube test               # vitest run
    curl -i -X POST https://pod.aaronmallen.dev/telemetry/v1/ingest \
      -H 'Content-Type: application/json' \
      -H "X-Pod-Telemetry-Key: $KEY" \
-     --data @../test/fixtures/telemetry/session_all_streams.json   # → 204
+     --data @../tests/fixtures/telemetry/session_all_streams.json   # → 204
    curl -i -X POST https://pod.aaronmallen.dev/telemetry/v1/ingest \
      -H 'Content-Type: application/json' \
-     --data @../test/fixtures/telemetry/session_all_streams.json   # → 401 (no key)
+     --data @../tests/fixtures/telemetry/session_all_streams.json   # → 401 (no key)
    curl -i https://pod.aaronmallen.dev/telemetry/v1/ingest          # → 405 (GET)
    ```
 

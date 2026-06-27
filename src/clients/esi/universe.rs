@@ -190,9 +190,9 @@ mod tests {
 
     use super::*;
 
-    const TYPE_3300_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_3300.json");
+    const TYPE_3300_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/universe_types_3300.json");
 
-    const TYPE_9899_FIXTURE: &str = include_str!("../../../test/fixtures/esi/universe_types_9899.json");
+    const TYPE_9899_FIXTURE: &str = include_str!("../../../tests/fixtures/esi/universe_types_9899.json");
 
     fn attr_value(item: &ItemType, attribute_id: i32) -> Option<f64> {
       item

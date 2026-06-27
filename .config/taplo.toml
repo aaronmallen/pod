@@ -6,6 +6,7 @@ exclude = [
   ".mise-data/**",
   "coverage/**",
   "target/**",
+  "Cargo.toml",
 ]
 include = ["**/*.toml"]
 

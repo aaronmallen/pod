@@ -1,0 +1,2034 @@
+#!/usr/bin/env python3
+#MISE description="Seed the local dev database with fake data for screenshots/demos"
+"""Seed the pod dev database with rich, realistic FAKE data tied to the 4 characters.
+
+Stdlib only. Every documented screen (assets, wallet, characters, industry, mail,
+calendar, skills, notifications) is populated for screenshots. All synthetic rows
+reference real EVE SDE ids already in the target db so the app resolves names.
+
+See the domain specs in the dispatch brief; this script follows them literally.
+"""
+
+import argparse
+import datetime as dt
+import json
+import os
+import random
+import shutil
+import sqlite3
+import sys
+import time
+
+# ---------------------------------------------------------------------------
+# Constants / synthetic id bases
+# ---------------------------------------------------------------------------
+
+DEFAULT_DB = "/Users/aaron/.local/share/pod/pod.db"
+PLAYER_CORP_FALLBACK = 98834061
+
+NOW = dt.datetime(2026, 6, 28, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+# Synthetic id bases. Every seeded row's id sits in a band far above any real EVE id
+# space (the largest is asset item_ids at ~1.5e12; wallet-journal ESI ids reach ~2.6e10;
+# character_notifications ~2.4e9). Offsetting all bands by 1e14 guarantees the idempotent
+# "DELETE WHERE id >= base" reset can NEVER touch a real synced row -- even one that lands
+# in the db later -- so re-runs against a db with real data are non-destructive. All values
+# stay below 2^53 (~9.007e15) for safe i64/float round-tripping. The per-band offsets below
+# are preserved verbatim so every cross-reference (mail sub-tables, killmail child rows,
+# journal<->transaction links, per-char strides) stays internally consistent.
+SYNTH_BASE = 100_000_000_000_000  # 1e14
+BASE_KILLMAIL = SYNTH_BASE + 9_100_000_000
+BASE_CHAR_JOB = SYNTH_BASE + 9_200_000_000
+BASE_CORP_JOB = SYNTH_BASE + 9_200_500_000
+BASE_CHAR_BP = SYNTH_BASE + 9_300_000_000
+BASE_CORP_BP = SYNTH_BASE + 9_300_500_000
+BASE_EXTRACTION_STRUCT = SYNTH_BASE + 9_900_000_000
+BASE_CORP_ASSET = SYNTH_BASE + 9_400_000_000
+BASE_STOCKPILE = SYNTH_BASE + 9_600_000
+BASE_STOCKPILE_ITEM = SYNTH_BASE + 9_600_500
+BASE_CHAR_JOURNAL = SYNTH_BASE + 9_800_000_000
+BASE_CHAR_TXN = SYNTH_BASE + 9_810_000_000
+BASE_CORP_JOURNAL = SYNTH_BASE + 9_820_000_000
+BASE_CORP_TXN = SYNTH_BASE + 9_830_000_000
+BASE_MARKET_ORDER = SYNTH_BASE + 9_500_000_000
+BASE_CORP_CONTRACT = SYNTH_BASE + 9_700_000_000
+BASE_CORP_CONTRACT_ITEM = SYNTH_BASE + 9_700_500_000
+BASE_CHAR_NW = SYNTH_BASE + 9_960_000_000
+BASE_CORP_NW = SYNTH_BASE + 9_970_000_000
+BASE_NOTIFICATION = SYNTH_BASE + 9_000_000
+BASE_CHAR_NOTIF = SYNTH_BASE + 2_400_900_000
+BASE_MAIL = SYNTH_BASE + 402_700_000
+BASE_CALENDAR = SYNTH_BASE + 9_950_000_000
+BASE_JUMP_CLONE = SYNTH_BASE + 174_000_000
+
+
+# ---------------------------------------------------------------------------
+# rng / date / misc helpers
+# ---------------------------------------------------------------------------
+
+def iso_z(when):
+    """ISO8601 UTC with trailing Z, second precision: 'YYYY-MM-DDTHH:MM:SSZ'."""
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_offset(when):
+    """RFC3339 with fractional seconds + offset: 'YYYY-MM-DDTHH:MM:SS.ffffff+00:00'."""
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+
+
+def date_only(when):
+    """Plain DATE 'YYYY-MM-DD'."""
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def days_ago(rng, lo, hi, base=NOW):
+    secs = rng.randint(lo * 86400, hi * 86400)
+    return base - dt.timedelta(seconds=secs)
+
+
+def days_ahead(rng, lo, hi, base=NOW):
+    secs = rng.randint(lo * 86400, hi * 86400)
+    return base + dt.timedelta(seconds=secs)
+
+
+def hexhash(rng):
+    return "".join(rng.choice("0123456789abcdef") for _ in range(40))
+
+
+def jitter(rng, value, frac=0.10):
+    return value * (1.0 + rng.uniform(-frac, frac))
+
+
+def weighted_sample(rng, pool, n):
+    """Sample n distinct items from pool, weighting earlier (common) items higher."""
+    if not pool:
+        return []
+    n = min(n, len(pool))
+    weights = [max(1.0, len(pool) - i) for i in range(len(pool))]
+    chosen = []
+    items = list(pool)
+    w = list(weights)
+    for _ in range(n):
+        total = sum(w)
+        r = rng.uniform(0, total)
+        acc = 0.0
+        for idx, weight in enumerate(w):
+            acc += weight
+            if r <= acc:
+                chosen.append(items.pop(idx))
+                w.pop(idx)
+                break
+    return chosen
+
+
+def query(conn, sql, params=()):
+    cur = conn.execute(sql, params)
+    return cur.fetchall()
+
+
+def market_price(conn, type_id):
+    row = conn.execute(
+        "SELECT average_price FROM market_prices WHERE type_id=?", (type_id,)
+    ).fetchone()
+    if row and row[0]:
+        return float(row[0])
+    return 1000.0
+
+
+# ---------------------------------------------------------------------------
+# id-pool loader
+# ---------------------------------------------------------------------------
+
+def load_pools(conn):
+    """Build all id pools at runtime from the live db. Each is a list of tuples."""
+    p = {}
+
+    def q(name, sql, params=()):
+        try:
+            p[name] = query(conn, sql, params)
+        except sqlite3.Error:
+            p[name] = []
+
+    q("ship_hulls", """
+        SELECT it.id, it.name, ig.name AS grp
+        FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        JOIN item_categories ic ON ic.id=ig.category_id
+        WHERE ic.id=6 AND it.published=1
+          AND ig.name IN ('Frigate','Destroyer','Cruiser','Battlecruiser','Battleship',
+            'Assault Frigate','Interceptor','Strategic Cruiser','Covert Ops','Interdictor')
+        ORDER BY ig.name, it.id LIMIT 40""")
+
+    p["capsule"] = 670
+
+    q("modules", """
+        SELECT it.id, it.name, ig.name AS grp
+        FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        JOIN item_categories ic ON ic.id=ig.category_id
+        WHERE ic.id=7 AND it.published=1
+          AND ig.name IN ('Energy Weapon','Hybrid Weapon','Projectile Weapon','Shield Booster',
+            'Armor Repair Unit','Afterburner','Warp Scrambler','Damage Control','Shield Extender',
+            'Capacitor Booster')
+        ORDER BY ig.name LIMIT 40""")
+
+    q("ammo", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.category_id=8 AND it.published=1 LIMIT 20""")
+
+    q("drones", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.category_id=18 AND it.published=1 LIMIT 12""")
+
+    q("rigs", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.name LIKE 'Rig %' AND it.published=1 LIMIT 20""")
+
+    q("subsystems", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        JOIN item_categories ic ON ic.id=ig.category_id
+        WHERE ic.id=32 AND it.published=1 LIMIT 20""")
+
+    q("pvp_systems", """
+        SELECT id, name FROM solar_systems
+        WHERE name IN ('Tama','Amamake','Rancer','Old Man Star','Hek')""")
+
+    q("low_null_systems", """
+        SELECT id, name FROM solar_systems
+        WHERE security_status < 0.45 ORDER BY id LIMIT 40""")
+
+    # industry blueprint pools
+    q("mfg_bp", """
+        SELECT bap.blueprint_type_id, bap.product_type_id
+        FROM blueprint_activity_products bap
+        WHERE bap.activity_id=1 AND bap.blueprint_type_id IN
+          (691,950,944,940,687,974,971,688,2487,2184,819)
+        ORDER BY bap.blueprint_type_id""")
+
+    q("mfg_bp_broad", """
+        SELECT bap.blueprint_type_id, bap.product_type_id
+        FROM blueprint_activity_products bap
+        JOIN item_types bt ON bt.id=bap.blueprint_type_id
+        WHERE bap.activity_id=1 AND bt.name LIKE '%Blueprint%'
+        ORDER BY bap.blueprint_type_id LIMIT 16""")
+
+    q("reaction_bp", """
+        SELECT bap.blueprint_type_id, bap.product_type_id
+        FROM blueprint_activity_products bap
+        WHERE bap.activity_id=11 ORDER BY bap.blueprint_type_id LIMIT 8""")
+
+    q("invention_bp", """
+        SELECT bap.blueprint_type_id, bap.product_type_id
+        FROM blueprint_activity_products bap
+        WHERE bap.activity_id=8 AND bap.blueprint_type_id IN (691,687,974,688)
+        ORDER BY bap.blueprint_type_id LIMIT 5""")
+
+    q("moons", """
+        SELECT m.id, m.solar_system_id FROM moons m
+        JOIN solar_systems ss ON ss.id=m.solar_system_id
+        WHERE ss.security_status BETWEEN 0.1 AND 0.5 ORDER BY m.id LIMIT 12""")
+
+    q("stations", """
+        SELECT id, system_id FROM stations
+        WHERE id IN (60003760,60003466,60004588,60005686,60011866,60008494,60015200,60015249)""")
+
+    # assets
+    q("asset_ships", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        JOIN market_prices mp ON mp.type_id=it.id
+        WHERE ig.category_id=6 AND it.published=1
+          AND it.name IN ('Caracal','Catalyst','Drake','Hurricane','Megathron','Retriever',
+            'Rifter','Tengu','Venture','Vexor')""")
+
+    q("asset_charges", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.category_id=8 AND it.published=1
+          AND it.name IN ('Antimatter Charge M','Barrage M','Caldari Navy Antimatter Charge M',
+            'Mjolnir Light Missile','Nova Heavy Missile','Republic Fleet EMP M','Scourge Heavy Missile')""")
+
+    q("asset_modules", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        JOIN market_prices mp ON mp.type_id=it.id
+        WHERE ig.category_id=7 AND it.published=1
+          AND it.name IN ('Damage Control II','10MN Afterburner II','Medium Shield Extender II',
+            'Warp Scrambler II','Heavy Missile Launcher II','125mm Railgun II','Large Shield Booster II')""")
+
+    q("containers", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.name IN ('Secure Cargo Container','Audit Log Secure Container','Freight Container')
+          AND it.published=1
+          AND it.name IN ('Station Container','Giant Secure Container','Huge Secure Container',
+            'Large Secure Container','Giant Freight Container','Huge Freight Container')""")
+
+    q("minerals", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN item_groups ig ON ig.id=it.group_id
+        WHERE ig.name='Mineral' AND it.published=1 AND it.id IN (34,35,36,37,38,39,40,11399)""")
+
+    q("build_components", """
+        SELECT it.id, it.name FROM item_types it
+        JOIN market_prices mp ON mp.type_id=it.id
+        WHERE it.published=1 AND it.name IN ('Construction Blocks',
+          'Fernite Carbide Composite Armor Plate','Nanomechanical Microprocessor',
+          'R.A.M.- Starship Tech','Sustained Shield Emitter','Morphite')""")
+
+    # finance
+    q("station_region", """
+        SELECT st.id, c.region_id FROM stations st
+        JOIN solar_systems ss ON ss.id=st.system_id
+        JOIN constellations c ON c.id=ss.constellation_id
+        WHERE st.id IN (60003760,60008494,60011866,60004588,60005686)""")
+
+    q("tradeable", """
+        SELECT it.id, mp.average_price FROM item_types it
+        JOIN market_prices mp ON mp.type_id=it.id
+        WHERE it.published=1 AND mp.average_price BETWEEN 100 AND 50000000
+          AND it.market_group_id IS NOT NULL
+        ORDER BY mp.average_price DESC LIMIT 60""")
+
+    # standings / contacts / clones
+    q("factions", """
+        SELECT id, name FROM factions
+        WHERE id IN (500001,500002,500003,500004,500010,500011) ORDER BY id""")
+
+    q("npc_corps", """
+        SELECT id, name FROM corporations
+        WHERE id BETWEEN 1000000 AND 1999999
+          AND id IN (1000002,1000004,1000005,1000006,1000044,1000045,1000172) ORDER BY id""")
+
+    q("npc_agents", """
+        SELECT id, name FROM npc_agents
+        WHERE level IS NOT NULL AND corporation_id BETWEEN 1000000 AND 1999999 LIMIT 6""")
+
+    q("implants5", """
+        SELECT id, name FROM item_types
+        WHERE name LIKE '%Improved%' AND group_id=745 ORDER BY id""")
+
+    q("hub_stations", """
+        SELECT id, name FROM stations
+        WHERE id IN (60003760,60008494,60011866,60004588,60005686)""")
+
+    return p
+
+
+# ---------------------------------------------------------------------------
+# context: characters, corp, summary counters
+# ---------------------------------------------------------------------------
+
+class Ctx:
+    def __init__(self, conn, rng, pools):
+        self.conn = conn
+        self.rng = rng
+        self.pools = pools
+        self.counts = {}
+        chars = query(conn, "SELECT id, name, corporation_id FROM characters ORDER BY id")
+        self.chars = [{"id": c[0], "name": c[1], "corp": c[2]} for c in chars]
+        self.char_by_id = {c["id"]: c for c in self.chars}
+
+        # main corp = a char-corp >= 98000000 (player corp); else most common.
+        player = [c["corp"] for c in self.chars if c["corp"] and c["corp"] >= 98_000_000]
+        if player:
+            self.main_corp = player[0]
+        elif self.chars:
+            corps = [c["corp"] for c in self.chars]
+            self.main_corp = max(set(corps), key=corps.count)
+        else:
+            self.main_corp = PLAYER_CORP_FALLBACK
+        # installer / director = first char in the main corp
+        members = [c for c in self.chars if c["corp"] == self.main_corp]
+        self.director = members[0] if members else (self.chars[0] if self.chars else None)
+
+    def bump(self, table, n=1):
+        self.counts[table] = self.counts.get(table, 0) + n
+
+    def name_of(self, cid):
+        c = self.char_by_id.get(cid)
+        return c["name"] if c else "Pilot %d" % cid
+
+
+# ---------------------------------------------------------------------------
+# reset
+# ---------------------------------------------------------------------------
+
+SYNTH_RANGES = [
+    ("character_killmails", "killmail_id", BASE_KILLMAIL),
+    ("killmail_attackers", "killmail_id", BASE_KILLMAIL),
+    ("killmail_items", "killmail_id", BASE_KILLMAIL),
+    ("corporation_killmails", "killmail_id", BASE_KILLMAIL),
+    ("corporation_killmail_attackers", "killmail_id", BASE_KILLMAIL),
+    ("corporation_killmail_items", "killmail_id", BASE_KILLMAIL),
+    ("character_industry_jobs", "job_id", BASE_CHAR_JOB),
+    ("corporation_industry_jobs", "job_id", BASE_CORP_JOB),
+    ("character_blueprints", "item_id", BASE_CHAR_BP),
+    ("corporation_blueprints", "item_id", BASE_CORP_BP),
+    ("corporation_mining_extractions", "structure_id", BASE_EXTRACTION_STRUCT),
+    ("corporation_assets", "item_id", BASE_CORP_ASSET),
+    ("stockpile_items", "id", BASE_STOCKPILE_ITEM),
+    ("stockpiles", "id", BASE_STOCKPILE),
+    ("character_wallet_journal", "id", BASE_CHAR_JOURNAL),
+    ("character_wallet_transaction", "transaction_id", BASE_CHAR_TXN),
+    ("corporation_wallet_journal", "id", BASE_CORP_JOURNAL),
+    ("corporation_wallet_transaction", "transaction_id", BASE_CORP_TXN),
+    ("market_orders", "order_id", BASE_MARKET_ORDER),
+    ("corporation_contract_items", "contract_id", BASE_CORP_CONTRACT),
+    ("corporation_contracts", "contract_id", BASE_CORP_CONTRACT),
+    ("character_net_worth_snapshot", "id", BASE_CHAR_NW),
+    ("corporation_net_worth_snapshot", "id", BASE_CORP_NW),
+    ("notifications", "id", BASE_NOTIFICATION),
+    ("character_notifications", "notification_id", BASE_CHAR_NOTIF),
+    ("character_mail", "mail_id", BASE_MAIL),
+    ("character_mail_body", "mail_id", BASE_MAIL),
+    ("character_mail_recipients", "mail_id", BASE_MAIL),
+    ("character_mail_label_membership", "mail_id", BASE_MAIL),
+    ("character_calendar", "event_id", BASE_CALENDAR),
+    ("character_calendar_attendees", "event_id", BASE_CALENDAR),
+    ("character_jump_clones", "jump_clone_id", BASE_JUMP_CLONE),
+]
+
+# character-scoped tables with composite PKs (no synthetic id band) that are
+# currently empty -> clear all rows for the 4 chars on every run.
+CHAR_SCOPED_CLEAR = [
+    ("character_standings", "character_id"),
+    ("character_clone_implants", "character_id"),
+    ("character_contacts", "character_id"),
+]
+
+
+def clear_synth_ranges(ctx):
+    """Always-run clearing of the synthetic id bands so re-runs are idempotent."""
+    conn = ctx.conn
+    char_ids = [c["id"] for c in ctx.chars]
+    for table, col, base in SYNTH_RANGES:
+        conn.execute("DELETE FROM %s WHERE %s >= ?" % (table, col), (base,))
+    # char-scoped composite-PK tables: clear seeded rows for our chars.
+    for table, col in CHAR_SCOPED_CLEAR:
+        if char_ids:
+            conn.execute(
+                "DELETE FROM %s WHERE %s IN (%s)"
+                % (table, col, ",".join("?" * len(char_ids))),
+                char_ids,
+            )
+
+
+def reset_augment(ctx):
+    """--reset: additionally clear augment-style tables (synthetic contact labels)."""
+    conn = ctx.conn
+    char_ids = [c["id"] for c in ctx.chars]
+    # remove the synthetic 'alts' contact-label rows we add for the 3 non-Pod-Dev chars
+    for cid in char_ids:
+        if cid != (ctx.director["id"] if ctx.director else None):
+            conn.execute(
+                "DELETE FROM character_contact_labels WHERE character_id=? AND label_id=1",
+                (cid,),
+            )
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN: killmails
+# ---------------------------------------------------------------------------
+
+# EVE inventory slot flags
+HIGH = [27, 28, 29, 30]
+MID = [19, 20, 21, 22]
+LOW = [11, 12, 13, 14]
+RIG = [92, 93, 94]
+SUBSYS = [125, 126, 127, 128, 129]
+DRONE = 87
+CARGO = 5
+IMPLANT = 89
+
+
+def _build_fit_items(ctx, killmail_id, lens_char, is_t3c, is_pod, total_value):
+    """Return a coherent list of item dicts for a fit. value sums tracked by caller."""
+    rng = ctx.rng
+    pools = ctx.pools
+    items = []
+    ord_n = [0]
+
+    def add(type_id, flag, qty, value, dropped):
+        items.append({
+            "ordinal": ord_n[0],
+            "type_id": type_id,
+            "flag": flag,
+            "destroyed": 0 if dropped else qty,
+            "dropped": qty if dropped else 0,
+            "value": value,
+        })
+        ord_n[0] += 1
+
+    if is_pod:
+        for imp in (pools["implants5"] or [])[:5]:
+            add(imp[0], IMPLANT, 1, jitter(rng, 12_000_000.0), rng.random() < 0.3)
+        return items
+
+    mods = pools["modules"]
+    rigs = pools["rigs"]
+    drones = pools["drones"]
+    ammo = pools["ammo"]
+    subs = pools["subsystems"]
+
+    def pick(pool):
+        return rng.choice(pool)[0] if pool else 34
+
+    # high
+    for f in HIGH[:3]:
+        add(pick(mods), f, 1, jitter(rng, total_value * 0.05), rng.random() < 0.5)
+    # mid
+    for f in MID[:3]:
+        add(pick(mods), f, 1, jitter(rng, total_value * 0.04), rng.random() < 0.5)
+    # low
+    for f in LOW[:3]:
+        add(pick(mods), f, 1, jitter(rng, total_value * 0.04), rng.random() < 0.5)
+    # rigs
+    for f in RIG[:rng.randint(2, 3)]:
+        add(pick(rigs), f, 1, jitter(rng, total_value * 0.03), rng.random() < 0.4)
+    # ammo / cargo
+    for _ in range(rng.randint(1, 3)):
+        add(pick(ammo), CARGO, rng.randint(100, 5000), jitter(rng, total_value * 0.01),
+            rng.random() < 0.6)
+    # drones
+    if rng.random() < 0.6:
+        for _ in range(rng.randint(1, 3)):
+            add(pick(drones), DRONE, rng.randint(1, 5), jitter(rng, total_value * 0.02),
+                rng.random() < 0.5)
+    # subsystems for T3C
+    if is_t3c and subs:
+        for f in SUBSYS[:rng.randint(4, 5)]:
+            add(pick(subs), f, 1, jitter(rng, total_value * 0.06), rng.random() < 0.3)
+    return items
+
+
+def _build_attackers(ctx, is_kill, lens_char, final_blow_self):
+    """Return (attacker rows list, total damage). One final_blow=1."""
+    rng = ctx.rng
+    pools = ctx.pools
+    n = 1 if rng.random() < 0.25 else rng.randint(2, 8)
+    hulls = pools["ship_hulls"]
+    attackers = []
+    self_ordinal = None
+    if is_kill:
+        # one attacker is the lens char itself
+        self_ordinal = rng.randint(0, n - 1)
+    for i in range(n):
+        is_self = (i == self_ordinal)
+        if is_self:
+            acid = lens_char["id"]
+            corp = lens_char["corp"]
+            alliance = None
+        else:
+            acid = rng.randint(90_000_000, 2_120_000_000)
+            corp = rng.choice([98654335, 98668272, 1000044, 1000045, 1000172,
+                               rng.randint(98_000_000, 98_999_999)])
+            alliance = rng.choice([None, None, 99003581, 99001105, 99010079])
+        attackers.append({
+            "ordinal": i,
+            "attacker_character_id": acid,
+            "corporation_id": corp,
+            "alliance_id": alliance,
+            "ship_type_id": rng.choice(hulls)[0] if hulls else 587,
+            "damage_done": rng.randint(200, 9000),
+            "final_blow": 0,
+        })
+    # assign exactly one final blow
+    if is_kill and final_blow_self and self_ordinal is not None:
+        fb = self_ordinal
+    else:
+        fb = rng.randrange(n)
+    attackers[fb]["final_blow"] = 1
+    total_dmg = sum(a["damage_done"] for a in attackers)
+    return attackers, total_dmg, fb
+
+
+def _gen_killmail(ctx, kid, lens_char, is_kill):
+    """Generate one killmail's data (parent row + attackers + items)."""
+    rng = ctx.rng
+    pools = ctx.pools
+    hulls = pools["ship_hulls"]
+    systems = (pools["pvp_systems"] or []) + (pools["low_null_systems"] or [])
+    system_id = rng.choice(systems)[0] if systems else 30002813
+
+    is_pod = (not is_kill) and rng.random() < 0.18
+    if is_pod:
+        ship_type_id = pools["capsule"]
+        grp = "Capsule"
+    else:
+        hull = rng.choice(hulls) if hulls else (587, "Rifter", "Frigate")
+        ship_type_id = hull[0]
+        grp = hull[2] if len(hull) > 2 else "Frigate"
+    is_t3c = grp == "Strategic Cruiser"
+
+    # value by hull class
+    if is_pod:
+        total_value = jitter(rng, rng.uniform(50_000_000, 400_000_000))
+    elif grp in ("Frigate", "Assault Frigate", "Interceptor", "Covert Ops"):
+        total_value = jitter(rng, rng.uniform(5_000_000, 50_000_000))
+    elif grp in ("Destroyer", "Interdictor"):
+        total_value = jitter(rng, rng.uniform(15_000_000, 80_000_000))
+    elif grp in ("Cruiser",):
+        total_value = jitter(rng, rng.uniform(80_000_000, 300_000_000))
+    elif grp in ("Battlecruiser",):
+        total_value = jitter(rng, rng.uniform(150_000_000, 400_000_000))
+    elif grp in ("Strategic Cruiser",):
+        total_value = jitter(rng, rng.uniform(800_000_000, 2_000_000_000))
+    elif grp in ("Battleship",):
+        total_value = jitter(rng, rng.uniform(300_000_000, 900_000_000))
+    else:
+        total_value = jitter(rng, rng.uniform(50_000_000, 200_000_000))
+
+    # final blow on lens char (kills only): ~50% of kills
+    final_blow_self = is_kill and rng.random() < 0.5
+    attackers, total_dmg, fb = _build_attackers(ctx, is_kill, lens_char, final_blow_self)
+    parent_final_blow = 1 if (is_kill and attackers[fb]["attacker_character_id"] == lens_char["id"]) else 0
+
+    items = _build_fit_items(ctx, kid, lens_char, is_t3c, is_pod, total_value)
+    dropped_value = sum(i["value"] for i in items if i["dropped"] > 0)
+    value_destroyed = max(0.0, total_value - dropped_value)
+
+    kt = days_ago(rng, 1, 60)
+    kill_time = iso_z(kt)
+    synced_at = iso_offset(kt + dt.timedelta(hours=rng.randint(1, 48)))
+
+    if is_kill:
+        victim_id = rng.randint(90_000_000, 2_120_000_000)
+        victim_corp = rng.choice([98654335, 98668272, 1000044, 1000045,
+                                  rng.randint(98_000_000, 98_999_999)])
+    else:
+        victim_id = lens_char["id"]
+        victim_corp = lens_char["corp"]
+
+    return {
+        "killmail_id": kid,
+        "kill_hash": hexhash(rng),
+        "is_kill": 1 if is_kill else 0,
+        "ship_type_id": ship_type_id,
+        "victim_id": victim_id,
+        "victim_corp_id": victim_corp,
+        "system_id": system_id,
+        "value_isk": round(total_value, 2),
+        "value_destroyed_isk": round(value_destroyed, 2),
+        "attacker_count": len(attackers),
+        "final_blow": parent_final_blow,
+        "kill_time": kill_time,
+        "synced_at": synced_at,
+        "victim_damage_taken": total_dmg,
+        "attackers": attackers,
+        "items": items,
+    }
+
+
+def seed_killmails(ctx):
+    conn = ctx.conn
+    rng = ctx.rng
+    counter = [0]
+
+    def next_kid():
+        counter[0] += 1
+        return BASE_KILLMAIL + counter[0]
+
+    pod_dev_kills = []  # killmails for the player-corp char, fan out to corp
+
+    for ch in ctx.chars:
+        n_total = rng.randint(20, 30)
+        n_loss = int(n_total * rng.uniform(0.60, 0.70))
+        flags = [False] * n_loss + [True] * (n_total - n_loss)  # False=loss, True=kill
+        rng.shuffle(flags)
+        for is_kill in flags:
+            kid = next_kid()
+            km = _gen_killmail(ctx, kid, ch, is_kill)
+            _insert_char_killmail(ctx, ch["id"], km)
+            if ch["corp"] == ctx.main_corp:
+                pod_dev_kills.append(km)
+
+    # corp killmails: Pod Dev's kills/losses + a few corp-only.
+    corp = ctx.main_corp
+    director = ctx.director
+    shared = pod_dev_kills[:]  # all of them are corp-visible
+    for km in shared:
+        _insert_corp_killmail(ctx, corp, km)
+    # a few corp-only kills (other corp members)
+    for _ in range(rng.randint(3, 6)):
+        kid = next_kid()
+        is_kill = rng.random() < 0.4
+        km = _gen_killmail(ctx, kid, director, is_kill)
+        # corp-only loss victim is a corp member (Pod Dev)
+        if not is_kill:
+            km["victim_id"] = director["id"]
+            km["victim_corp_id"] = corp
+        _insert_corp_killmail(ctx, corp, km)
+
+
+def _insert_char_killmail(ctx, char_id, km):
+    conn = ctx.conn
+    conn.execute(
+        """INSERT INTO character_killmails
+        (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id,
+         victim_corp_id, system_id, value_isk, attacker_count, final_blow, kill_time,
+         synced_at, value_destroyed_isk, value_source, value_recheck_count, value_final,
+         victim_alliance_id, victim_damage_taken)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (char_id, km["killmail_id"], km["kill_hash"], km["is_kill"], km["ship_type_id"],
+         km["victim_id"], km["victim_corp_id"], km["system_id"], km["value_isk"],
+         km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"],
+         km["value_destroyed_isk"], "zkill", 0, 1, None, km["victim_damage_taken"]),
+    )
+    ctx.bump("character_killmails")
+    for a in km["attackers"]:
+        conn.execute(
+            """INSERT INTO killmail_attackers
+            (character_id, killmail_id, ordinal, attacker_character_id, corporation_id,
+             alliance_id, ship_type_id, damage_done, final_blow)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (char_id, km["killmail_id"], a["ordinal"], a["attacker_character_id"],
+             a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
+             a["final_blow"]),
+        )
+        ctx.bump("killmail_attackers")
+    for it in km["items"]:
+        conn.execute(
+            """INSERT INTO killmail_items
+            (character_id, killmail_id, ordinal, type_id, flag, quantity_destroyed,
+             quantity_dropped, value_isk)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (char_id, km["killmail_id"], it["ordinal"], it["type_id"], it["flag"],
+             it["destroyed"], it["dropped"], round(it["value"], 2)),
+        )
+        ctx.bump("killmail_items")
+
+
+def _insert_corp_killmail(ctx, corp_id, km):
+    conn = ctx.conn
+    conn.execute(
+        """INSERT INTO corporation_killmails
+        (corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id,
+         victim_corp_id, victim_alliance_id, victim_damage_taken, system_id, value_isk,
+         value_destroyed_isk, value_source, value_recheck_count, value_final,
+         attacker_count, final_blow, kill_time, synced_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (corp_id, km["killmail_id"], km["kill_hash"], km["is_kill"], km["ship_type_id"],
+         km["victim_id"], km["victim_corp_id"], None, km["victim_damage_taken"],
+         km["system_id"], km["value_isk"], km["value_destroyed_isk"], "zkill", 0, 1,
+         km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"]),
+    )
+    ctx.bump("corporation_killmails")
+    for a in km["attackers"]:
+        conn.execute(
+            """INSERT INTO corporation_killmail_attackers
+            (corporation_id, killmail_id, ordinal, attacker_character_id,
+             attacker_corporation_id, alliance_id, ship_type_id, damage_done, final_blow)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (corp_id, km["killmail_id"], a["ordinal"], a["attacker_character_id"],
+             a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
+             a["final_blow"]),
+        )
+        ctx.bump("corporation_killmail_attackers")
+    for it in km["items"]:
+        conn.execute(
+            """INSERT INTO corporation_killmail_items
+            (corporation_id, killmail_id, ordinal, type_id, flag, quantity_destroyed,
+             quantity_dropped, value_isk)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (corp_id, km["killmail_id"], it["ordinal"], it["type_id"], it["flag"],
+             it["destroyed"], it["dropped"], round(it["value"], 2)),
+        )
+        ctx.bump("corporation_killmail_items")
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN: industry
+# ---------------------------------------------------------------------------
+
+# ESI job activity ids
+ACT_MANUFACTURING = 1
+ACT_TE = 3
+ACT_ME = 4
+ACT_COPY = 5
+ACT_INVENTION = 8
+ACT_REACTION = 9
+
+
+def _station_id(ctx):
+    stations = ctx.pools["stations"]
+    return ctx.rng.choice(stations)[0] if stations else 60003760
+
+
+def _bp_for_activity(ctx, activity_id):
+    """Return (blueprint_type_id, product_type_id) appropriate for activity."""
+    rng = ctx.rng
+    pools = ctx.pools
+    if activity_id == ACT_REACTION and pools["reaction_bp"]:
+        bp = rng.choice(pools["reaction_bp"])
+        return bp[0], bp[1]
+    if activity_id == ACT_INVENTION and pools["invention_bp"]:
+        bp = rng.choice(pools["invention_bp"])
+        return bp[0], bp[1]
+    pool = pools["mfg_bp"] or pools["mfg_bp_broad"]
+    if pool:
+        bp = rng.choice(pool)
+        return bp[0], bp[1]
+    return 691, 587
+
+
+def _make_job(ctx, job_id, owner_kind, owner_id, installer_id, activity_id, kind):
+    """kind in {active, delivered, ready, paused, cancelled}."""
+    rng = ctx.rng
+    bp_type, product_type = _bp_for_activity(ctx, activity_id)
+    station = _station_id(ctx)
+    runs = rng.randint(1, 200) if activity_id == ACT_MANUFACTURING else (
+        rng.randint(1, 10) if activity_id in (ACT_COPY, ACT_INVENTION) else
+        rng.randint(1, 50))
+    duration = rng.randint(3600, 864000)
+    cost = round(rng.uniform(1000, 5_000_000), 2)
+    probability = round(rng.uniform(0.26, 0.62), 2) if activity_id == ACT_INVENTION else None
+    licensed_runs = rng.randint(1, 10) if activity_id in (ACT_COPY, ACT_INVENTION) else None
+    bp_base = BASE_CHAR_BP if owner_kind == "char" else BASE_CORP_BP
+    blueprint_id = bp_base + (job_id % 1_000_000)
+
+    completed_char = None
+    completed_date = None
+    pause_date = None
+    successful = None
+    status = kind
+
+    if kind in ("delivered", "ready", "cancelled"):
+        end = days_ago(rng, 1, 30)
+        start = end - dt.timedelta(seconds=duration)
+        if kind in ("delivered", "ready"):
+            completed_char = installer_id
+            completed_date = iso_z(end)
+            successful = runs if activity_id != ACT_INVENTION else rng.randint(0, runs)
+    elif kind == "paused":
+        end = days_ahead(rng, 1, 15)
+        start = end - dt.timedelta(seconds=duration)
+        pause_date = iso_z(days_ago(rng, 0, 2))
+    else:  # active
+        end = days_ahead(rng, 0, 14)
+        # ensure start is in the recent past
+        start = end - dt.timedelta(seconds=duration)
+        if start > NOW:
+            start = days_ago(rng, 1, 5)
+            end = start + dt.timedelta(seconds=duration)
+
+    return {
+        "job_id": job_id,
+        "owner_id": owner_id,
+        "activity_id": activity_id,
+        "blueprint_id": blueprint_id,
+        "blueprint_location_id": station,
+        "blueprint_type_id": bp_type,
+        "completed_character_id": completed_char,
+        "completed_date": completed_date,
+        "cost": cost,
+        "duration": duration,
+        "end_date": iso_z(end),
+        "facility_id": station,
+        "installer_id": installer_id,
+        "licensed_runs": licensed_runs,
+        "output_location_id": station,
+        "pause_date": pause_date,
+        "probability": probability,
+        "product_type_id": product_type if activity_id != ACT_COPY else None,
+        "runs": runs,
+        "start_date": iso_z(start),
+        "station_id": station,
+        "status": status,
+        "successful_runs": successful,
+    }
+
+
+def _insert_char_job(ctx, char_id, j):
+    ctx.conn.execute(
+        """INSERT INTO character_industry_jobs
+        (job_id, character_id, activity_id, blueprint_id, blueprint_location_id,
+         blueprint_type_id, completed_character_id, completed_date, cost, duration,
+         end_date, facility_id, installer_id, licensed_runs, output_location_id,
+         pause_date, probability, product_type_id, runs, start_date, station_id,
+         status, successful_runs)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (j["job_id"], char_id, j["activity_id"], j["blueprint_id"],
+         j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
+         j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
+         j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
+         j["probability"], j["product_type_id"], j["runs"], j["start_date"],
+         j["station_id"], j["status"], j["successful_runs"]),
+    )
+    ctx.bump("character_industry_jobs")
+
+
+def _insert_corp_job(ctx, corp_id, j):
+    ctx.conn.execute(
+        """INSERT INTO corporation_industry_jobs
+        (job_id, corporation_id, activity_id, blueprint_id, blueprint_location_id,
+         blueprint_type_id, completed_character_id, completed_date, cost, duration,
+         end_date, facility_id, installer_id, licensed_runs, output_location_id,
+         pause_date, probability, product_type_id, runs, start_date, station_id,
+         status, successful_runs)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (j["job_id"], corp_id, j["activity_id"], j["blueprint_id"],
+         j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
+         j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
+         j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
+         j["probability"], j["product_type_id"], j["runs"], j["start_date"],
+         j["station_id"], j["status"], j["successful_runs"]),
+    )
+    ctx.bump("corporation_industry_jobs")
+
+
+def seed_industry_jobs(ctx):
+    rng = ctx.rng
+    activities = [ACT_MANUFACTURING, ACT_TE, ACT_ME, ACT_COPY, ACT_INVENTION, ACT_REACTION]
+    jid = [0]
+
+    def next_char_jid():
+        jid[0] += 1
+        return BASE_CHAR_JOB + jid[0]
+
+    for ch in ctx.chars:
+        n_total = rng.randint(12, 18)
+        n_active = rng.randint(9, 12)
+        n_finished = rng.randint(3, 5)
+        kinds = (["active"] * n_active
+                 + ["delivered", "ready"] * (n_finished // 2 + 1)
+                 + ["paused"])
+        kinds = kinds[:n_total]
+        # ensure activity coverage
+        act_cycle = activities[:]
+        for i, kind in enumerate(kinds):
+            activity = act_cycle[i % len(act_cycle)] if i < len(act_cycle) else rng.choice(activities)
+            j = _make_job(ctx, next_char_jid(), "char", ch["id"], ch["id"], activity, kind)
+            _insert_char_job(ctx, ch["id"], j)
+
+    # corp jobs
+    cjid = [0]
+
+    def next_corp_jid():
+        cjid[0] += 1
+        return BASE_CORP_JOB + cjid[0]
+
+    director = ctx.director["id"] if ctx.director else ctx.chars[0]["id"]
+    corp = ctx.main_corp
+    n_corp = rng.randint(10, 16)
+    corp_acts = ([ACT_MANUFACTURING] * 5 + [ACT_REACTION] * 3 + [ACT_INVENTION]
+                 + [ACT_TE, ACT_ME, ACT_COPY] + [ACT_MANUFACTURING] * 4)
+    corp_kinds = (["active"] * (n_corp - 4) + ["delivered", "ready", "paused", "active"])
+    rng.shuffle(corp_kinds)
+    for i in range(n_corp):
+        activity = corp_acts[i % len(corp_acts)]
+        kind = corp_kinds[i % len(corp_kinds)]
+        j = _make_job(ctx, next_corp_jid(), "corp", corp, director, activity, kind)
+        _insert_corp_job(ctx, corp, j)
+
+
+def seed_blueprints(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    bp_pool = (pools["mfg_bp"] or []) + (pools["reaction_bp"] or []) + (pools["invention_bp"] or [])
+    if not bp_pool:
+        bp_pool = [(691, 587)]
+    stations = pools["stations"]
+    iid = [0]
+
+    def next_char_bp():
+        iid[0] += 1
+        return BASE_CHAR_BP + iid[0]
+
+    for ch in ctx.chars:
+        n = rng.randint(25, 40)
+        n_bpo = int(n * 0.40)
+        for i in range(n):
+            bp = rng.choice(bp_pool)
+            loc = rng.choice(stations)[0] if stations else 60003760
+            is_bpo = i < n_bpo
+            if is_bpo:
+                quantity, runs, me, te = -1, -1, 10, 20
+            else:
+                quantity = -2
+                runs = rng.choice([1, 2, 5, 10, 30, 60, 120, 300])
+                me = rng.randint(0, 10)
+                te = rng.choice([0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20])
+            ctx.conn.execute(
+                """INSERT INTO character_blueprints
+                (item_id, character_id, type_id, location_id, location_flag, quantity,
+                 material_efficiency, time_efficiency, runs)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (next_char_bp(), ch["id"], bp[0], loc, "Hangar", quantity, me, te, runs),
+            )
+            ctx.bump("character_blueprints")
+
+    # corp blueprints: ~80% BPO
+    ciid = [0]
+
+    def next_corp_bp():
+        ciid[0] += 1
+        return BASE_CORP_BP + ciid[0]
+
+    corp = ctx.main_corp
+    n = rng.randint(30, 50)
+    n_bpo = int(n * 0.80)
+    for i in range(n):
+        bp = rng.choice(bp_pool)
+        loc = rng.choice(stations)[0] if stations else 60003760
+        flag = rng.choice(["CorpDeliveries", "CorpSAG1", "CorpSAG2", "CorpSAG3"])
+        is_bpo = i < n_bpo
+        if is_bpo:
+            quantity, runs, me = -1, -1, 10
+            te = rng.choice([20, 0])
+        else:
+            quantity = -2
+            runs = rng.choice([2, 3, 10, 25, 60, 120])
+            me = rng.randint(0, 10)
+            te = rng.choice([0, 2, 10, 20])
+        ctx.conn.execute(
+            """INSERT INTO corporation_blueprints
+            (item_id, corporation_id, type_id, location_id, location_flag, quantity,
+             material_efficiency, time_efficiency, runs)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (next_corp_bp(), corp, bp[0], loc, flag, quantity, me, te, runs),
+        )
+        ctx.bump("corporation_blueprints")
+
+
+def seed_extractions(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    moons = list(pools["moons"])
+    if not moons:
+        return
+    corp = ctx.main_corp
+    # 2-3 structures
+    n_struct = min(3, max(2, len(moons) // 2))
+    structs = [BASE_EXTRACTION_STRUCT + i + 1 for i in range(n_struct)]
+    # state recipe: spread Extracting / Imminent / Ready / Fractured
+    states = (["extracting"] * 3 + ["imminent"] * 2 + ["ready"] * 2 + ["fractured"])
+    rng.shuffle(states)
+    moon_idx = 0
+    rows = 0
+    target = rng.randint(5, 9)
+    for state in states:
+        if rows >= target or moon_idx >= len(moons):
+            break
+        moon = moons[moon_idx]
+        moon_idx += 1
+        struct = rng.choice(structs)
+        if state == "extracting":
+            arrival = days_ahead(rng, 3, 10)
+        elif state == "imminent":
+            arrival = NOW + dt.timedelta(seconds=rng.randint(3600, 80000))
+        elif state == "ready":
+            arrival = days_ago(rng, 0, 1)
+        else:  # fractured
+            arrival = days_ago(rng, 3, 6)
+        decay = arrival + dt.timedelta(days=2)
+        if state == "fractured":
+            decay = days_ago(rng, 0, 1)
+        start = arrival - dt.timedelta(days=rng.randint(7, 21))
+        try:
+            ctx.conn.execute(
+                """INSERT INTO corporation_mining_extractions
+                (corporation_id, structure_id, moon_id, chunk_arrival_time,
+                 extraction_start_time, natural_decay_time)
+                VALUES (?,?,?,?,?,?)""",
+                (corp, struct, moon[0], iso_z(arrival), iso_z(start), iso_z(decay)),
+            )
+            ctx.bump("corporation_mining_extractions")
+            rows += 1
+        except sqlite3.IntegrityError:
+            pass  # duplicate (corp,struct,moon) PK; skip
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN: assets (corp assets + stockpiles + stockpile_items)
+# ---------------------------------------------------------------------------
+
+CORP_ASSET_STATION = 60003760  # Jita IV-4
+
+
+def seed_assets(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    corp = ctx.main_corp
+    iid = [0]
+
+    def next_item():
+        iid[0] += 1
+        return BASE_CORP_ASSET + iid[0]
+
+    charges = pools["asset_charges"] or [(230, "Antimatter Charge M")]
+    minerals = pools["minerals"] or [(34, "Tritanium")]
+    modules = pools["asset_modules"] or [(2048, "Damage Control II")]
+    components = pools["build_components"] or [(3828, "Construction Blocks")]
+    containers = pools["containers"] or [(17366, "Station Container")]
+    ships = pools["asset_ships"] or [(587, "Rifter")]
+
+    stations = [s[0] for s in pools["stations"] if s[0] in (60003760, 60015200, 60015249)]
+    if CORP_ASSET_STATION not in stations:
+        stations = [CORP_ASSET_STATION] + stations
+    # mostly Jita
+    station_plan = [CORP_ASSET_STATION, CORP_ASSET_STATION] + stations[1:2]
+
+    def insert_asset(item_id, type_id, location_id, location_type, location_flag,
+                     quantity, is_singleton=0, container_id=None, depth=0,
+                     is_container=0, name=None):
+        ctx.conn.execute(
+            """INSERT INTO corporation_assets
+            (item_id, corporation_id, type_id, location_id, location_type, location_flag,
+             quantity, is_singleton, is_blueprint_copy, container_id, depth, is_container, name)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (item_id, corp, type_id, location_id, location_type, location_flag,
+             quantity, is_singleton, None, container_id, depth, is_container, name),
+        )
+        ctx.bump("corporation_assets")
+
+    container_specs = [
+        ("Jita Ammo Reserve", "ammo", "CorpSAG1"),
+        ("Capital Build Mats", "minerals", "CorpSAG1"),
+        ("PvP Doctrine Modules", "modules", "CorpSAG2"),
+        ("Advanced Components", "components", "CorpSAG3"),
+    ]
+
+    for station in station_plan:
+        # named containers with children
+        for cname, kind, flag in container_specs:
+            cont_type = rng.choice(containers)[0]
+            cont_id = next_item()
+            insert_asset(cont_id, cont_type, station, "station", flag, 1,
+                         is_singleton=1, depth=0, is_container=1, name=cname)
+            n_child = rng.randint(8, 15)
+            for _ in range(n_child):
+                child_id = next_item()
+                if kind == "ammo":
+                    t = rng.choice(charges)[0]
+                    qty = rng.randint(5000, 50000)
+                elif kind == "minerals":
+                    t = rng.choice(minerals)[0]
+                    qty = rng.randint(500_000, 5_000_000)
+                elif kind == "modules":
+                    t = rng.choice(modules)[0]
+                    qty = rng.randint(10, 80)
+                else:
+                    t = rng.choice(components)[0]
+                    qty = rng.randint(50, 2000)
+                insert_asset(child_id, t, cont_id, "item", "AutoFit", qty,
+                             is_singleton=0, container_id=cont_id, depth=1, is_container=0)
+
+        # assembled corp ships at depth 0
+        for _ in range(rng.randint(4, 6)):
+            ship = rng.choice(ships)
+            insert_asset(next_item(), ship[0], station, "station", "CorpSAG2", 1,
+                         is_singleton=1, depth=0, is_container=0,
+                         name="Corp %s" % ship[1])
+
+        # loose top-level fungible stacks
+        for _ in range(rng.randint(10, 20)):
+            kind = rng.choice(["ammo", "minerals"])
+            if kind == "ammo":
+                t = rng.choice(charges)[0]
+                qty = rng.randint(2000, 40000)
+            else:
+                t = rng.choice(minerals)[0]
+                qty = rng.randint(200_000, 4_000_000)
+            insert_asset(next_item(), t, station, "station",
+                         rng.choice(["CorpDeliveries", "CorpSAG1"]), qty,
+                         is_singleton=0, depth=0, is_container=0)
+
+    # stockpiles
+    sid = [0]
+
+    def next_sp():
+        sid[0] += 1
+        return BASE_STOCKPILE + sid[0]
+
+    siid = [0]
+
+    def next_sp_item():
+        siid[0] += 1
+        return BASE_STOCKPILE_ITEM + siid[0]
+
+    pod_dev_name = ctx.director["name"] if ctx.director else "Pod Dev"
+    ammo_ids = [c[0] for c in charges]
+    mineral_ids = [m[0] for m in minerals]
+    module_ids = [m[0] for m in modules]
+    # a type we did NOT seed into assets (so it reads "under") - pick a tradeable
+    not_seeded = 11399 if 11399 not in mineral_ids + ammo_ids + module_ids else 209
+
+    stockpile_specs = [
+        ("Jita Ammo Reserve", "corp:PODEV", ammo_ids, 50000, [not_seeded]),
+        ("Capital Build Mats", "corp:PODEV", mineral_ids, 5_000_000, []),
+        ("PvP Doctrine Modules", "corp:PODEV", module_ids, 50, [not_seeded]),
+        ("Mineral Buffer", None, mineral_ids, 3_000_000, []),
+        ("Personal Ammo - %s" % pod_dev_name, pod_dev_name, ammo_ids, 30000, []),
+    ]
+    for name, scope, type_ids, target, extra in stockpile_specs:
+        sp_id = next_sp()
+        ctx.conn.execute(
+            "INSERT INTO stockpiles (id, name, location_id, character_scope) VALUES (?,?,?,?)",
+            (sp_id, name, CORP_ASSET_STATION, scope),
+        )
+        ctx.bump("stockpiles")
+        chosen = weighted_sample(rng, type_ids, min(len(type_ids), rng.randint(3, 5)))
+        for t in chosen:
+            tq = int(target * rng.uniform(0.5, 1.5))
+            ctx.conn.execute(
+                "INSERT INTO stockpile_items (id, stockpile_id, type_id, target_quantity) VALUES (?,?,?,?)",
+                (next_sp_item(), sp_id, t, tq),
+            )
+            ctx.bump("stockpile_items")
+        for t in extra:
+            ctx.conn.execute(
+                "INSERT INTO stockpile_items (id, stockpile_id, type_id, target_quantity) VALUES (?,?,?,?)",
+                (next_sp_item(), sp_id, t, target),
+            )
+            ctx.bump("stockpile_items")
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN: finance
+# ---------------------------------------------------------------------------
+
+# real net worth anchors from TARGET (latest 2026-06-28). asset_value held flat.
+CHAR_NW_ANCHOR = {
+    2124386674: 180798.49,
+    2124457086: 1917725.07,
+    2124475947: 6004.52,
+    2124475968: 6805.22,
+}
+CORP_NW_ANCHOR = 2100490000.0
+
+
+def _char_wallet_end_balance(char_id):
+    """Plausible ending wallet balance for the char's liquid series."""
+    nw = CHAR_NW_ANCHOR.get(char_id, 500000.0)
+    # liquid is a fraction of net worth (rest is assets)
+    return max(50000.0, nw * 0.6)
+
+
+def seed_finance(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    tradeable = pools["tradeable"] or [(34, 5.0)]
+    station_region = {s[0]: s[1] for s in pools["station_region"]}
+    hub_stations = list(station_region.keys()) or [60003760]
+    npc_corps = [1000044, 1000045, 1000172]
+
+    # --- character wallet journal + transactions ---
+    for ci, ch in enumerate(ctx.chars):
+        cid = ch["id"]
+        jbase = BASE_CHAR_JOURNAL + ci * 100000
+        tbase = BASE_CHAR_TXN + ci * 100000
+        jc = [0]
+        tc = [0]
+        end_balance = _char_wallet_end_balance(cid)
+        balance = end_balance
+        # generate dated entries newest-first so larger id == newer
+        n_txn = rng.randint(25, 40)
+        dates = sorted([days_ago(rng, 1, 90) for _ in range(n_txn)], reverse=True)
+        for d in dates:
+            tp = rng.choice(tradeable)
+            type_id, avg = tp[0], float(tp[1])
+            unit = jitter(rng, avg)
+            qty = rng.randint(1, 2000)
+            gross = unit * qty
+            is_buy = rng.random() < 0.5
+            station = rng.choice(hub_stations)
+            jc[0] += 1
+            journal_id = jbase + jc[0]
+            tc[0] += 1
+            txn_id = tbase + tc[0]
+            if is_buy:
+                amount = -gross
+            else:
+                amount = gross
+            # market_transaction journal row paired to the txn
+            ctx.conn.execute(
+                """INSERT INTO character_wallet_journal
+                (id, character_id, date, description, ref_type, amount, balance,
+                 context_id, context_id_type, first_party_id, reason, second_party_id,
+                 tax, tax_receiver_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (journal_id, cid, iso_z(d),
+                 "Market: %s %s" % (qty, "bought" if is_buy else "sold"),
+                 "market_transaction", round(amount, 2), round(balance, 2),
+                 txn_id, "market_transaction_id", cid, None, station, None, None),
+            )
+            ctx.bump("character_wallet_journal")
+            ctx.conn.execute(
+                """INSERT INTO character_wallet_transaction
+                (transaction_id, character_id, client_id, date, is_buy, is_personal,
+                 journal_ref_id, location_id, quantity, type_id, unit_price)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (txn_id, cid, rng.choice(npc_corps + [rng.randint(90_000_000, 2_120_000_000)]),
+                 iso_z(d), 1 if is_buy else 0, 1, journal_id, station, qty, type_id,
+                 round(unit, 2)),
+            )
+            ctx.bump("character_wallet_transaction")
+            balance -= amount  # walk backwards in time
+            # tax for sells
+            if not is_buy:
+                tax = gross * 0.045
+                jc[0] += 1
+                ctx.conn.execute(
+                    """INSERT INTO character_wallet_journal
+                    (id, character_id, date, description, ref_type, amount, balance,
+                     context_id, context_id_type, first_party_id, reason, second_party_id,
+                     tax, tax_receiver_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (jbase + jc[0], cid, iso_z(d), "Sales tax", "transaction_tax",
+                     round(-tax, 2), round(balance, 2), None, None, cid, None, None,
+                     None, None),
+                )
+                ctx.bump("character_wallet_journal")
+                balance += tax
+        # a few non-market journal rows (bounties, donations, fees)
+        for _ in range(rng.randint(8, 16)):
+            d = days_ago(rng, 1, 90)
+            ref = rng.choice(["bounty_prizes", "player_donation", "brokers_fee",
+                              "insurance", "skill_purchase", "jump_clone_activation_fee",
+                              "agent_mission_reward", "daily_goal_payouts"])
+            if ref in ("bounty_prizes", "player_donation", "insurance",
+                       "agent_mission_reward", "daily_goal_payouts"):
+                amount = rng.uniform(50_000, 5_000_000)
+            else:
+                amount = -rng.uniform(10_000, 1_000_000)
+            jc[0] += 1
+            ctx.conn.execute(
+                """INSERT INTO character_wallet_journal
+                (id, character_id, date, description, ref_type, amount, balance,
+                 context_id, context_id_type, first_party_id, reason, second_party_id,
+                 tax, tax_receiver_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (jbase + jc[0], cid, iso_z(d), "-", ref, round(amount, 2),
+                 round(balance, 2), None, None, cid, None,
+                 rng.choice(npc_corps), None, None),
+            )
+            ctx.bump("character_wallet_journal")
+
+        # --- market orders for this char ---
+        for _ in range(rng.randint(8, 15)):
+            tp = rng.choice(tradeable)
+            type_id, avg = tp[0], float(tp[1])
+            station = rng.choice(hub_stations)
+            region = station_region.get(station, 10000002)
+            is_buy = rng.random() < 0.5
+            vol_total = rng.randint(10, 5000)
+            vol_remain = rng.randint(1, vol_total)
+            state = rng.choices(["open", "expired", "cancelled"], weights=[70, 15, 15])[0]
+            if is_buy:
+                price = jitter(rng, avg * 0.95)
+                escrow = price * vol_remain
+                rng_str = rng.choice(["station", "solarsystem", "1", "5", "10", "region"])
+            else:
+                price = jitter(rng, avg * 1.05)
+                escrow = 0.0
+                rng_str = "region"
+            ctx.counts_order = ctx.counts.get("market_orders", 0)
+            order_id = BASE_MARKET_ORDER + (ctx.counts.get("market_orders", 0)
+                                            + (ci * 1000)) + rng.randint(1, 999)
+            # ensure uniqueness via a monotonic counter
+            order_id = BASE_MARKET_ORDER + _next_order(ctx)
+            ctx.conn.execute(
+                """INSERT INTO market_orders
+                (order_id, character_id, type_id, region_id, location_id, is_buy_order,
+                 price, volume_remain, volume_total, escrow, range, duration, issued, state)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (order_id, cid, type_id, region, station, 1 if is_buy else 0,
+                 round(price, 2), vol_remain, vol_total, round(escrow, 2), rng_str,
+                 rng.choice([1, 3, 7, 14, 30, 90]), iso_z(days_ago(rng, 0, 30)), state),
+            )
+            ctx.bump("market_orders")
+
+    # --- corp wallet journal + transactions (division 1 mostly) ---
+    corp = ctx.main_corp
+    director = ctx.director["id"] if ctx.director else ctx.chars[0]["id"]
+    cjc = [0]
+    ctxn = [0]
+    corp_balance = CORP_NW_ANCHOR
+    n = rng.randint(30, 50)
+    dates = sorted([days_ago(rng, 1, 90) for _ in range(n)], reverse=True)
+    for d in dates:
+        division = 1 if rng.random() < 0.7 else rng.randint(2, 7)
+        roll = rng.random()
+        cjc[0] += 1
+        journal_id = BASE_CORP_JOURNAL + cjc[0]
+        if roll < 0.4:
+            # market transaction pair
+            tp = rng.choice(tradeable)
+            type_id, avg = tp[0], float(tp[1])
+            unit = jitter(rng, avg)
+            qty = rng.randint(10, 5000)
+            gross = unit * qty
+            is_buy = rng.random() < 0.5
+            amount = -gross if is_buy else gross
+            ctxn[0] += 1
+            txn_id = BASE_CORP_TXN + ctxn[0]
+            ctx.conn.execute(
+                """INSERT INTO corporation_wallet_journal
+                (id, corporation_id, division, date, description, ref_type, amount,
+                 balance, context_id, context_id_type, first_party_id, reason,
+                 second_party_id, tax, tax_receiver_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (journal_id, corp, division, iso_z(d), "Market transaction",
+                 "market_transaction", round(amount, 2),
+                 round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
+                 txn_id, "market_transaction_id", director, None, corp, None, None),
+            )
+            ctx.bump("corporation_wallet_journal")
+            ctx.conn.execute(
+                """INSERT INTO corporation_wallet_transaction
+                (transaction_id, corporation_id, division, client_id, date, is_buy,
+                 journal_ref_id, location_id, quantity, type_id, unit_price)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (txn_id, corp, division, rng.randint(90_000_000, 2_120_000_000), iso_z(d),
+                 1 if is_buy else 0, journal_id, 60003760, qty, type_id, round(unit, 2)),
+            )
+            ctx.bump("corporation_wallet_transaction")
+            if division == 1:
+                corp_balance -= amount
+        else:
+            ref = rng.choice(["market_escrow", "bounty_prizes", "daily_goal_payouts",
+                              "player_donation", "corporation_account_withdrawal",
+                              "contract_reward_deposited_corp", "ess_escrow_transfer",
+                              "transaction_tax"])
+            if ref in ("bounty_prizes", "daily_goal_payouts", "player_donation",
+                       "contract_reward_deposited_corp", "ess_escrow_transfer"):
+                amount = rng.uniform(1_000_000, 50_000_000)
+            else:
+                amount = -rng.uniform(1_000_000, 30_000_000)
+            ctx.conn.execute(
+                """INSERT INTO corporation_wallet_journal
+                (id, corporation_id, division, date, description, ref_type, amount,
+                 balance, context_id, context_id_type, first_party_id, reason,
+                 second_party_id, tax, tax_receiver_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (journal_id, corp, division, iso_z(d), "-", ref, round(amount, 2),
+                 round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
+                 None, None, director, None, corp, None, None),
+            )
+            ctx.bump("corporation_wallet_journal")
+            if division == 1:
+                corp_balance -= amount
+
+    # --- corp contracts ---
+    seed_corp_contracts(ctx, tradeable, hub_stations)
+
+    # --- net worth snapshots ---
+    seed_net_worth(ctx)
+
+
+_ORDER_COUNTER = {"n": 0}
+
+
+def _next_order(ctx):
+    _ORDER_COUNTER["n"] += 1
+    return _ORDER_COUNTER["n"]
+
+
+def seed_corp_contracts(ctx, tradeable, hub_stations):
+    rng = ctx.rng
+    corp = ctx.main_corp
+    director = ctx.director["id"] if ctx.director else ctx.chars[0]["id"]
+    director_name = ctx.director["name"] if ctx.director else "Pod Dev"
+    cc = [0]
+    rec = [0]
+
+    def next_contract():
+        cc[0] += 1
+        return BASE_CORP_CONTRACT + cc[0]
+
+    def next_record():
+        rec[0] += 1
+        return BASE_CORP_CONTRACT_ITEM + rec[0]
+
+    n = rng.randint(8, 12)
+    types = (["item_exchange"] * (n - 4) + ["courier", "courier", "auction", "item_exchange"])
+    rng.shuffle(types)
+    for i in range(n):
+        ctype = types[i % len(types)]
+        cid = next_contract()
+        issued = days_ago(rng, 1, 30)
+        if ctype == "courier":
+            status = rng.choice(["finished", "outstanding", "in_progress"])
+            price = None
+            reward = round(rng.uniform(5_000_000, 100_000_000), 2)
+            collateral = round(rng.uniform(50_000_000, 1_500_000_000), 2)
+            volume = round(rng.uniform(1000, 30000), 3)
+            expired = issued + dt.timedelta(days=3)
+            days_complete = rng.randint(3, 7)
+            start_loc = 60003760
+            end_loc = rng.choice([60008494, 60011866, 60004588, 60005686])
+        else:
+            status = rng.choices(["finished", "outstanding"], weights=[70, 30])[0]
+            price = round(rng.uniform(250000, 500_000_000), 2)
+            reward = None
+            collateral = None
+            volume = round(rng.uniform(10, 20000), 3)
+            expired = issued + dt.timedelta(days=28)
+            days_complete = 0
+            start_loc = 60003760
+            end_loc = 60003760
+        accepted = None
+        completed = None
+        acceptor = None
+        acceptor_name = None
+        if status in ("finished", "in_progress"):
+            accepted = iso_z(issued + dt.timedelta(hours=rng.randint(1, 200)))
+            acceptor = corp
+            acceptor_name = "Pod Developers"
+            if status == "finished":
+                completed = accepted
+        ctx.conn.execute(
+            """INSERT INTO corporation_contracts
+            (corporation_id, contract_id, type, status, issuer_id, issuer_name,
+             assignee_id, assignee_name, acceptor_id, acceptor_name, price, reward,
+             collateral, volume, for_corporation, date_issued, date_expired,
+             date_completed, title, availability, days_to_complete, start_location_id,
+             end_location_id, date_accepted, issuer_corporation_id)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (corp, cid, ctype, status, director, director_name, corp, "Pod Developers",
+             acceptor, acceptor_name, price, reward, collateral, volume, 1,
+             iso_z(issued), iso_z(expired), completed,
+             rng.choice(["", "Doctrine Resupply", "Loot Buyback", "Ship Delivery"]),
+             rng.choice(["public", "personal", "corporation"]), days_complete,
+             start_loc, end_loc, accepted, corp),
+        )
+        ctx.bump("corporation_contracts")
+        # items only for item_exchange / auction
+        if ctype in ("item_exchange", "auction"):
+            for _ in range(rng.randint(2, 8)):
+                tp = rng.choice(tradeable)
+                qty = rng.randint(1, 100)
+                ctx.conn.execute(
+                    """INSERT INTO corporation_contract_items
+                    (corporation_id, contract_id, record_id, type_id, quantity,
+                     raw_quantity, is_singleton, is_included, value_isk)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (corp, cid, next_record(), tp[0], qty, None, 0, 1,
+                     round(float(tp[1]) * qty, 2)),
+                )
+                ctx.bump("corporation_contract_items")
+
+
+def seed_net_worth(ctx):
+    rng = ctx.rng
+    nw_id = [0]
+
+    def next_char_nw():
+        nw_id[0] += 1
+        return BASE_CHAR_NW + nw_id[0]
+
+    cnw_id = [0]
+
+    def next_corp_nw():
+        cnw_id[0] += 1
+        return BASE_CORP_NW + cnw_id[0]
+
+    # character snapshots: ~90 days, trend gently up to the real anchor.
+    for ch in ctx.chars:
+        cid = ch["id"]
+        anchor = CHAR_NW_ANCHOR.get(cid, 500000.0)
+        asset_anchor = anchor * 0.4
+        liquid_anchor = anchor - asset_anchor
+        for back in range(89, -1, -1):
+            d = NOW - dt.timedelta(days=back)
+            # growth factor: older days slightly lower
+            growth = 1.0 - (back / 90.0) * rng.uniform(0.15, 0.30)
+            liquid = max(0.0, round(liquid_anchor * growth, 2))
+            asset_value = max(0.0, round(asset_anchor * growth, 2))
+            escrow = round(rng.uniform(0, asset_anchor * 0.05), 2) if rng.random() < 0.3 else 0.0
+            net = round(liquid + asset_value + escrow, 2)
+            ctx.conn.execute(
+                """INSERT INTO character_net_worth_snapshot
+                (id, character_id, date, liquid, asset_value, escrow, net_worth)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(character_id, date) DO UPDATE SET
+                  liquid=excluded.liquid, asset_value=excluded.asset_value,
+                  escrow=excluded.escrow, net_worth=excluded.net_worth""",
+                (next_char_nw(), cid, date_only(d), liquid, asset_value, escrow, net),
+            )
+            ctx.bump("character_net_worth_snapshot")
+
+    # corp snapshots
+    corp = ctx.main_corp
+    for back in range(89, -1, -1):
+        d = NOW - dt.timedelta(days=back)
+        growth = 1.0 - (back / 90.0) * rng.uniform(0.10, 0.25)
+        liquid = round(CORP_NW_ANCHOR * growth, 2)
+        ctx.conn.execute(
+            """INSERT INTO corporation_net_worth_snapshot
+            (id, corporation_id, date, liquid, net_worth)
+            VALUES (?,?,?,?,?)
+            ON CONFLICT(corporation_id, date) DO UPDATE SET
+              liquid=excluded.liquid, net_worth=excluded.net_worth""",
+            (next_corp_nw(), corp, date_only(d), liquid, liquid),
+        )
+        ctx.bump("corporation_net_worth_snapshot")
+
+
+# ---------------------------------------------------------------------------
+# DOMAIN: standings, jump clones, calendar, mail, notifications, contacts
+# ---------------------------------------------------------------------------
+
+def seed_standings(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    factions = pools["factions"]
+    npc_corps = pools["npc_corps"]
+    agents = pools["npc_agents"]
+    for ch in ctx.chars:
+        cid = ch["id"]
+        rows = []
+        for f in weighted_sample(rng, factions, min(5, len(factions))):
+            rows.append((f[0], "faction", round(rng.uniform(-6.0, 9.0), 2), f[1]))
+        for c in weighted_sample(rng, npc_corps, min(6, len(npc_corps))):
+            rows.append((c[0], "npc_corp", round(rng.uniform(-3.0, 8.0), 2), c[1]))
+        for a in weighted_sample(rng, agents, min(4, len(agents))):
+            rows.append((a[0], "agent", round(rng.uniform(0.0, 7.0), 2), a[1]))
+        seen = set()
+        for from_id, ftype, standing, fname in rows:
+            if from_id in seen:
+                continue
+            seen.add(from_id)
+            ctx.conn.execute(
+                """INSERT INTO character_standings
+                (character_id, from_id, from_type, standing, from_name)
+                VALUES (?,?,?,?,?)""",
+                (cid, from_id, ftype, standing, fname),
+            )
+            ctx.bump("character_standings")
+
+
+def seed_clones(ctx):
+    rng = ctx.rng
+    pools = ctx.pools
+    hubs = pools["hub_stations"]
+    implants = pools["implants5"]
+    for ci, ch in enumerate(ctx.chars):
+        cid = ch["id"]
+        # active clone implants: 5 attribute implants, clone_id NULL
+        for imp in implants:
+            ctx.conn.execute(
+                """INSERT INTO character_clone_implants
+                (character_id, clone_id, type_id, name, icon)
+                VALUES (?,?,?,?,?)""",
+                (cid, None, imp[0], imp[1], None),
+            )
+            ctx.bump("character_clone_implants")
+        # 2-3 jump clones
+        n_clones = rng.randint(2, 3)
+        clone_names = ["PvP Clone", "Hauler Clone", "Learning Clone", ""]
+        for k in range(n_clones):
+            jc_id = BASE_JUMP_CLONE + ci * 100 + k + 1
+            station = rng.choice(hubs) if hubs else (60003760, "Jita IV - Moon 4")
+            ctx.conn.execute(
+                """INSERT INTO character_jump_clones
+                (character_id, jump_clone_id, location_id, location_type, location_name, name)
+                VALUES (?,?,?,?,?,?)""",
+                (cid, jc_id, station[0], "station", station[1],
+                 rng.choice(clone_names)),
+            )
+            ctx.bump("character_jump_clones")
+            # implants in the jump clone (subset)
+            for imp in weighted_sample(rng, implants, rng.randint(3, 5)):
+                try:
+                    ctx.conn.execute(
+                        """INSERT INTO character_clone_implants
+                        (character_id, clone_id, type_id, name, icon)
+                        VALUES (?,?,?,?,?)""",
+                        (cid, jc_id, imp[0], imp[1], None),
+                    )
+                    ctx.bump("character_clone_implants")
+                except sqlite3.IntegrityError:
+                    pass
+
+
+def seed_calendar(ctx):
+    rng = ctx.rng
+    corp = ctx.main_corp
+    ev = [0]
+
+    def next_event():
+        ev[0] += 1
+        return BASE_CALENDAR + ev[0]
+
+    for ci, ch in enumerate(ctx.chars):
+        cid = ch["id"]
+        n = rng.randint(5, 8)
+        # ensure at least one future corp not_responded event for the action-needed query
+        ensured = False
+        for i in range(n):
+            eid = next_event()
+            future = rng.random() < 0.5
+            when = (days_ahead(rng, 0, 20) if future else days_ago(rng, 0, 20))
+            if not ensured and i == 0:
+                # future corp event, not_responded
+                when = days_ahead(rng, 1, 10)
+                owner_type = "corporation"
+                owner_id = corp
+                owner_name = "Pod Developers"
+                response = "not_responded"
+                ensured = True
+            else:
+                owner_type = rng.choice(["character", "character", "corporation"])
+                if owner_type == "character":
+                    owner_id = cid
+                    owner_name = ch["name"]
+                else:
+                    owner_id = corp
+                    owner_name = "Pod Developers"
+                response = rng.choice(["accepted", "declined", "tentative", "not_responded"])
+            ctx.conn.execute(
+                """INSERT INTO character_calendar
+                (character_id, event_id, timestamp, duration_minutes, importance,
+                 owner_id, owner_name, owner_type, response, title, body, fetched_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (cid, eid, iso_z(when), rng.choice([30, 60, 120]),
+                 1 if rng.random() < 0.3 else 0, owner_id, owner_name, owner_type,
+                 response, rng.choice(["CTA: Home Defense Fleet", "Corp Mining Op",
+                 "Roam: Lowsec PvP", "Strat Op", "Newbro Welcome", "Market Monday"]),
+                 "Form up in Jita, Ansiblex jump to staging. o7",
+                 iso_offset(NOW)),
+            )
+            ctx.bump("character_calendar")
+            # attendees on some events
+            if rng.random() < 0.5:
+                attendees = [cid] + [c["id"] for c in ctx.chars if c["id"] != cid]
+                for aid in weighted_sample(rng, [(a,) for a in attendees], rng.randint(3, 4)):
+                    ctx.conn.execute(
+                        """INSERT INTO character_calendar_attendees
+                        (character_id, event_id, attendee_id, event_response)
+                        VALUES (?,?,?,?)""",
+                        (cid, eid, aid[0],
+                         rng.choice(["accepted", "declined", "tentative"])),
+                    )
+                    ctx.bump("character_calendar_attendees")
+
+
+def seed_mail(ctx):
+    rng = ctx.rng
+    chars = ctx.chars
+    char_ids = [c["id"] for c in chars]
+    mid = [0]
+
+    def next_mail():
+        mid[0] += 1
+        return BASE_MAIL + mid[0]
+
+    subjects = ["Fleet Op Tonight", "Doctrine Update", "Welcome to the corp",
+                "Market opportunity", "Re: Mining schedule", "PvP roam Saturday",
+                "Standing fleet reminder", "Loot split"]
+    bodies = ["Form up at 20:00 EVE in Jita. Bring your Ferox.<br>o7",
+              "New doctrine posted in the corp bulletin. Please refit.",
+              "Glad to have you. Read the rules channel and set standings.",
+              "Cheap Caracals on contract, grab them while they last.",
+              "Mining op moved to Sunday, same system.",
+              "Roam forms 19:00, staging is Hek. Comms up.",
+              "Standing fleet still active, ping for boosts.",
+              "Loot split done, ISK sent to your wallet."]
+
+    for ch in chars:
+        cid = ch["id"]
+        n = rng.randint(6, 12)
+        for i in range(n):
+            mail_id = next_mail()
+            roll = rng.random()
+            ts = days_ago(rng, 0, 30)
+            if roll < 0.35:
+                # sent mail (from owner)
+                from_id = cid
+                from_name = ch["name"]
+                is_read = 1
+                label = 2
+                from_corp = 0
+                from_system = 0
+                others = [c for c in chars if c["id"] != cid]
+                recipient = rng.choice(others) if others else ch
+                recipients = [(recipient["id"], "character", recipient["name"])]
+            elif roll < 0.55:
+                # corp bulletin
+                from_id = ctx.main_corp
+                from_name = "Pod Developers"
+                is_read = rng.choice([0, 1])
+                label = 4
+                from_corp = 1
+                from_system = 0
+                recipients = [(ctx.main_corp, "corporation", "Pod Developers")]
+            else:
+                # received from another char
+                others = [c for c in chars if c["id"] != cid]
+                sender = rng.choice(others) if others else ch
+                from_id = sender["id"]
+                from_name = sender["name"]
+                is_read = rng.choice([0, 0, 1])  # weight unread
+                label = 1
+                from_corp = 0
+                from_system = 0
+                recipients = [(cid, "character", ch["name"])]
+            ctx.conn.execute(
+                """INSERT INTO character_mail
+                (character_id, mail_id, from_id, from_name, subject, timestamp, is_read,
+                 has_attachment, important, from_corp, from_system)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (cid, mail_id, from_id, from_name, rng.choice(subjects), iso_z(ts),
+                 is_read, 1 if rng.random() < 0.15 else 0,
+                 1 if rng.random() < 0.2 else 0, from_corp, from_system),
+            )
+            ctx.bump("character_mail")
+            ctx.conn.execute(
+                "INSERT INTO character_mail_body (character_id, mail_id, body) VALUES (?,?,?)",
+                (cid, mail_id, rng.choice(bodies)),
+            )
+            ctx.bump("character_mail_body")
+            for rid, rtype, rname in recipients:
+                ctx.conn.execute(
+                    """INSERT INTO character_mail_recipients
+                    (character_id, mail_id, recipient_id, recipient_type, recipient_name)
+                    VALUES (?,?,?,?,?)""",
+                    (cid, mail_id, rid, rtype, rname),
+                )
+                ctx.bump("character_mail_recipients")
+            ctx.conn.execute(
+                "INSERT INTO character_mail_label_membership (character_id, mail_id, label_id) VALUES (?,?,?)",
+                (cid, mail_id, label),
+            )
+            ctx.bump("character_mail_label_membership")
+
+
+def seed_notifications(ctx):
+    rng = ctx.rng
+    corp = ctx.main_corp
+    nid = [0]
+
+    def next_notif():
+        nid[0] += 1
+        return BASE_NOTIFICATION + nid[0]
+
+    char_kinds = [
+        ("killmail", "character_detail", "New killmail", "Buzzard destroyed"),
+        ("mail", "mail", "New mail", "You have a new EVE mail"),
+        ("calendar", "calendar", "Calendar event", "Fleet op starts soon"),
+        ("industry", "industry", "Job completed", "Manufacturing run ready"),
+        ("skill", "skills", "Skill trained", "Gunnery V complete"),
+    ]
+    for ch in ctx.chars:
+        cid = ch["id"]
+        for kind, dest, title, body in weighted_sample(
+                rng, char_kinds, rng.randint(3, 4)):
+            seq = next_notif()
+            created = days_ago(rng, 0, 15)
+            read_at = None if rng.random() < 0.5 else iso_offset(created + dt.timedelta(hours=2))
+            dedup = "%s:%d:%d" % (kind, cid, seq)
+            ctx.conn.execute(
+                """INSERT INTO notifications
+                (id, kind, owner_type, owner_id, dedup_key, title, body, target_dest,
+                 target_char, target_sub, created_at, read_at, suppressed)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (BASE_NOTIFICATION + seq, kind, "character", cid, dedup, title, body,
+                 dest, cid, None, iso_offset(created), read_at, 0),
+            )
+            ctx.bump("notifications")
+
+    # corp-owned extraction/industry notifications
+    corp_kinds = [
+        ("extraction_scheduled", "industry", "Extraction scheduled",
+         "Moon chunk arriving soon"),
+        ("extraction_cracked", "industry", "Extraction ready", "Moon chunk fractured"),
+        ("industry", "industry", "Corp job done", "Reaction batch complete"),
+    ]
+    for kind, dest, title, body in corp_kinds:
+        seq = next_notif()
+        created = days_ago(rng, 0, 10)
+        read_at = None if rng.random() < 0.6 else iso_offset(created + dt.timedelta(hours=3))
+        dedup = "%s:corp:%d:%d" % (kind, corp, seq)
+        ctx.conn.execute(
+            """INSERT INTO notifications
+            (id, kind, owner_type, owner_id, dedup_key, title, body, target_dest,
+             target_char, target_sub, created_at, read_at, suppressed)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (BASE_NOTIFICATION + seq, kind, "corporation", corp, dedup, title, body,
+             dest, None, None, iso_offset(created), read_at, 0),
+        )
+        ctx.bump("notifications")
+
+    # raw ESI character_notifications
+    notif_types = [
+        ("KillReportVictim", "level: 5\nmessage: ''"),
+        ("KillReportFinalBlow", "killMailID: 136076545\nvictimShipTypeID: 29986"),
+        ("InsurancePayoutMsg", "amount: 1500000\npayout: 1"),
+        ("InsuranceIssuedMsg", "level: 3"),
+        ("ContactAdd", "level: 10\nmessage: ''"),
+        ("SeasonalChallengeCompleted", "challenge: 5"),
+        ("CloneActivationMsg2", "corpID: 98834061"),
+        ("CorpTaxChangeMsg", "newTaxRate: 5"),
+        ("CorpAppInvitedMsg", "corpID: 98834061"),
+        ("ExpertSystemExpired", "expertSystem: 1"),
+        ("JumpCloneDeletedMsg2", "locationID: 60003760"),
+    ]
+    cnid_base = [0]
+
+    def next_cnotif():
+        cnid_base[0] += 1
+        return BASE_CHAR_NOTIF + cnid_base[0]
+
+    for ch in ctx.chars:
+        cid = ch["id"]
+        for nt, text in weighted_sample(rng, notif_types, rng.randint(8, 11)):
+            ts = days_ago(rng, 0, 30)
+            ctx.conn.execute(
+                """INSERT INTO character_notifications
+                (character_id, notification_id, notif_type, sender_id, sender_type,
+                 timestamp, is_read, text, synced_at)
+                VALUES (?,?,?,?,?,?,?,?,?)""",
+                (cid, next_cnotif(), nt,
+                 rng.choice([ctx.main_corp, 1000125, cid]),
+                 rng.choice(["corporation", "character"]), iso_z(ts),
+                 rng.choice([0, 1]), text, iso_offset(NOW)),
+            )
+            ctx.bump("character_notifications")
+
+
+def seed_contacts(ctx):
+    rng = ctx.rng
+    chars = ctx.chars
+    director_id = ctx.director["id"] if ctx.director else None
+    # ensure 'alts' label exists for the 3 non-director chars (Pod Dev already has label 1)
+    for ch in chars:
+        if ch["id"] == director_id:
+            continue
+        ctx.conn.execute(
+            """INSERT OR IGNORE INTO character_contact_labels
+            (character_id, label_id, label_name) VALUES (?,?,?)""",
+            (ch["id"], 1, "alts"),
+        )
+
+    for ch in chars:
+        cid = ch["id"]
+        # cross-add the other 3 chars
+        for other in chars:
+            if other["id"] == cid:
+                continue
+            ctx.conn.execute(
+                """INSERT INTO character_contacts
+                (character_id, contact_id, contact_type, standing, is_watched,
+                 is_blocked, label_ids, contact_name)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                (cid, other["id"], "character", 10.0, 1, 0, "[1]", other["name"]),
+            )
+            ctx.bump("character_contacts")
+        # corp contact
+        ctx.conn.execute(
+            """INSERT INTO character_contacts
+            (character_id, contact_id, contact_type, standing, is_watched,
+             is_blocked, label_ids, contact_name)
+            VALUES (?,?,?,?,?,?,?,?)""",
+            (cid, ctx.main_corp, "corporation", 10.0, 0, 0, "[]", "Pod Developers"),
+        )
+        ctx.bump("character_contacts")
+        # misc contacts incl a blocked/negative one
+        used = set([c["id"] for c in chars] + [ctx.main_corp])
+        for _ in range(rng.randint(4, 8)):
+            misc_id = rng.randint(90_000_000, 2_120_000_000)
+            if misc_id in used:
+                continue
+            used.add(misc_id)
+            blocked = rng.random() < 0.2
+            standing = round(rng.uniform(-10.0, -2.0), 1) if blocked else round(
+                rng.uniform(-5.0, 10.0), 1)
+            try:
+                ctx.conn.execute(
+                    """INSERT INTO character_contacts
+                    (character_id, contact_id, contact_type, standing, is_watched,
+                     is_blocked, label_ids, contact_name)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                    (cid, misc_id, "character", standing, 0, 1 if blocked else 0, "[]",
+                     "Pilot %d" % misc_id),
+                )
+                ctx.bump("character_contacts")
+            except sqlite3.IntegrityError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Seed the local dev database with fake data for screenshots/demos.")
+    parser.add_argument("--db", default=DEFAULT_DB, help="path to the pod sqlite db")
+    parser.add_argument("--reset", action="store_true",
+                        help="also clear augment-style tables before seeding")
+    parser.add_argument("--no-backup", action="store_true",
+                        help="skip the pre-write backup copy")
+    parser.add_argument("--seed", type=int, default=1337, help="RNG seed")
+    args = parser.parse_args()
+
+    db_path = os.path.abspath(args.db)
+    if not os.path.exists(db_path):
+        print("error: db not found: %s" % db_path, file=sys.stderr)
+        sys.exit(1)
+
+    backup_path = None
+    if not args.no_backup:
+        backup_path = "%s.seed-backup-%d" % (db_path, int(time.time()))
+        shutil.copy2(db_path, backup_path)
+        print("backup: %s" % backup_path)
+
+    rng = random.Random(args.seed)
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    try:
+        conn.execute("BEGIN")
+        pools = load_pools(conn)
+        ctx = Ctx(conn, rng, pools)
+        if not ctx.chars:
+            raise RuntimeError("no characters in db; nothing to seed")
+
+        # idempotency: always clear synthetic ranges first
+        clear_synth_ranges(ctx)
+        if args.reset:
+            reset_augment(ctx)
+
+        seed_killmails(ctx)
+        seed_industry_jobs(ctx)
+        seed_blueprints(ctx)
+        seed_extractions(ctx)
+        seed_assets(ctx)
+        seed_finance(ctx)
+        seed_standings(ctx)
+        seed_clones(ctx)
+        seed_calendar(ctx)
+        seed_mail(ctx)
+        seed_notifications(ctx)
+        seed_contacts(ctx)
+
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        print("error: seeding failed, rolled back: %s" % exc, file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        conn.close()
+        sys.exit(1)
+
+    # summary
+    print()
+    print("seeded tables (table -> rows inserted):")
+    for table in sorted(ctx.counts):
+        print("  %-38s %d" % (table, ctx.counts[table]))
+    print()
+    print("main corp: %d (%s); director/installer: %s" % (
+        ctx.main_corp, "Pod Developers",
+        ctx.director["name"] if ctx.director else "?"))
+    if backup_path:
+        print("backup: %s" % backup_path)
+    conn.close()
+
+
+if __name__ == "__main__":
+    main()

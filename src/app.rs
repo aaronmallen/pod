@@ -103,8 +103,6 @@ const POPOVER_LEFT: f32 = spacing::SPACE_3_5;
 
 const PULSE_INTERVAL: Duration = Duration::from_millis(450);
 
-/// Grace window before a rail flyout closes after the pointer leaves the icon, so the cursor can
-/// cross the gap into the flyout without it snapping shut.
 const RAIL_HOVER_GRACE: Duration = Duration::from_millis(160);
 
 const REACQUIRE_INTERVAL: Duration = Duration::from_secs(30);
@@ -121,8 +119,6 @@ const SCALE_MAX: u8 = 150;
 
 const SCALE_MIN: u8 = 85;
 
-/// Cadence of the periodic telemetry flush (spec §7.4). Each tick re-reads the
-/// live config, gates per-stream, and fires one fire-and-forget POST.
 const TELEMETRY_FLUSH_INTERVAL: Duration = Duration::from_secs(60);
 
 const TRASH_PURGE_INTERVAL: Duration = Duration::from_secs(4 * 60 * 60);
@@ -148,19 +144,12 @@ const TICK_CALENDAR_RELOAD: u64 = 2;
 
 const TICK_INDUSTRY_RELOAD: u64 = 5;
 
-/// Cadence (in 1-second ticks) for the idle notification detector sweep. The pulse already runs the
-/// detectors after every relevant sync; this slower standing sweep catches the time-threshold events
-/// (skill / industry / extraction-cracked) that mature on the wall clock with no fresh sync.
 const TICK_NOTIFICATIONS: u64 = 10;
 
-/// How many toasts may be visible at once. Surfacing more drops the oldest (it still lands in the
-/// center), matching the design's "cap visible, newest kept".
 const TOAST_CAP: usize = 3;
 
-/// A toast's lifetime before it auto-dismisses, unless a hover pauses the countdown.
 const TOAST_MS: Duration = Duration::from_secs(15);
 
-/// How often the toast tick subscription ages the live toasts while any are visible.
 const TOAST_TICK: Duration = Duration::from_millis(100);
 
 const ZERO_GEOMETRY: WindowGeometry = WindowGeometry {
@@ -189,15 +178,10 @@ struct App {
   calendar_events: WindowStates<calendar::EventWindow>,
   character_detail: Option<character_detail::State>,
   roster: Option<roster::State>,
-  /// Monotonic count of 1-second clock ticks, used to stagger the periodic interactive-DB checks
-  /// across ticks (see the `TICK_*` cadences) instead of firing them all on every tick.
   clock_tick: u64,
   coalescer: WriteCoalescer,
   compare: Option<(window::Id, skills_compare::State)>,
   composes: WindowStates<mail::compose::Draft>,
-  /// Whether the data-loss confirmation gate is open. `true` means the first "Take over" click has
-  /// been received but the share has not yet been claimed — the forceful claim fires only on the
-  /// second explicit confirmation.
   confirm_force_takeover: bool,
   contracts: WindowStates<contract_detail::State>,
   corporation_detail: Option<corporation_detail::State>,
@@ -205,9 +189,6 @@ struct App {
   engine_state: EngineState,
   esi_connected: bool,
   industry: Option<industry::State>,
-  /// Session-lived cache of the planner's static catalog (recipes, names, icons), built once on the first
-  /// planner load and handed to every later Industry navigation so the costly "Loading build catalog" build
-  /// runs at most once per app session. The cheap per-entry data (prices, owned blueprints) is always refreshed.
   industry_catalog: Option<industry::StaticCatalog>,
   init_error: Option<String>,
   keyboard_focus: FocusTracker,
@@ -216,39 +197,18 @@ struct App {
   last_synced: Option<DateTime<Utc>>,
   mail: Option<mail::State>,
   mail_unread: i64,
-  /// The detached single-instance Manage Plans window: id-keyed roster master/detail. `None` when closed;
-  /// re-opening focuses the existing window rather than spawning a second.
   manage_plans: Option<(window::Id, skill_plan_manager::State)>,
-  /// The embedded MCP automation server. `None` until the store is ready; thereafter its lifecycle
-  /// is reconciled against the live [`config::McpConfig`] (off by default) via [`mcp::Server::apply`].
   mcp_server: Option<mcp::Server>,
-  /// Trailing-debounce floor for the heavy roster reload. `None` lets the next dirty pulse reload
-  /// immediately; `Some` holds the earliest instant another reload may fire, so a sync burst that
-  /// keeps re-marking `roster_dirty` collapses into one reload per [`ROSTER_RELOAD_DEBOUNCE`] window.
   next_roster_reload: Option<Instant>,
-  /// `None` arms the purge for the very next clock tick (fires once shortly after launch); `Some`
-  /// holds the earliest instant it may run again.
   next_trash_purge: Option<Instant>,
-  /// Cached surfaced notifications (newest-first) backing the center panel, refreshed by the sync
-  /// pulse and on panel open. `notification_names` resolves each owner to its display "who" line.
   notifications: Vec<store::model::Notification>,
   notification_names: std::collections::HashMap<store::model::NotificationOwner, String>,
   notifications_dirty: bool,
-  /// History-tab page accumulator (newest-first), grown one keyset page at a time as the user scrolls.
-  /// Distinct from `notifications` (the live New-tab source) so paging arbitrarily deep never disturbs
-  /// the New tab or the bell badge.
   notifications_history: Vec<store::model::Notification>,
-  /// Keyset cursor positioned just past the last accumulated History row; `None` requests the newest page.
   notifications_history_cursor: Option<store::model::HistoryCursor>,
-  /// Monotonic generation bumped whenever the History accumulator resets (panel open or newer rows
-  /// arrive). An in-flight page tagged with a stale generation is dropped so it can't append to the
-  /// freshly-reset accumulator.
   notifications_history_epoch: u64,
-  /// Whether another older History page may exist (the last fetch filled a full page).
   notifications_history_has_more: bool,
-  /// Guards against a second concurrent History page fetch while one is already in flight.
   notifications_history_loading: bool,
-  /// Last absolute vertical scroll offset of the History list, fed back into the windowed view.
   notifications_history_scroll: f32,
   notifications_panel_open: bool,
   notifications_tab: NotificationTab,
@@ -277,11 +237,7 @@ struct App {
   sync_popover_open: bool,
   sync_session: Option<store::sync_session::SyncSession>,
   sync_tick: bool,
-  /// The fire-and-forget telemetry sender; `Some` only in builds where the ingest
-  /// endpoint was baked in ("telemetry built"), driving the flush tick + exit flush.
   telemetry: Option<clients::telemetry::Sender>,
-  /// Live bottom-right toasts (newest-surfaced notifications), capped at [`TOAST_CAP`]. Each entry
-  /// tracks its own remaining lifetime and hover-pause state; the toast tick subscription ages them.
   toasts: Vec<ToastEntry>,
   ui_state: UiState,
   updater: Option<updater::Handle>,
@@ -329,8 +285,6 @@ struct HolderInfo {
   machine_id: String,
 }
 
-/// A live bottom-right toast. `remaining` counts down from [`TOAST_MS`] each toast tick while not
-/// `paused`; the toast is dismissed when it reaches zero. `paused` is set while the cursor hovers it.
 #[derive(Clone, Debug)]
 struct ToastEntry {
   notification: store::model::Notification,
@@ -381,16 +335,11 @@ enum Message {
   Nav(rail::Destination),
   NavTo(rail::Destination, Option<&'static str>),
   NotificationActivated(i64),
-  /// One more keyset page of History finished loading; carries the rows and a per-owner "who" map for
-  /// the freshly-paged rows. An empty `epoch` is rejected against the live one so a page captured before
-  /// a reset (newer rows arrived) never appends to the fresh accumulator.
   NotificationsHistoryPageLoaded {
     epoch: u64,
     rows: Vec<store::model::Notification>,
     who: std::collections::HashMap<store::model::NotificationOwner, String>,
   },
-  /// The History list scrolled; carries the absolute offset (fed back into the windowed view) and the
-  /// relative offset (0..1), used to trigger the next page once the user nears the bottom.
   NotificationsHistoryScrolled {
     absolute: f32,
     relative: f32,
@@ -455,9 +404,6 @@ enum PaletteMessage {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows, gating the stale-image scan to load/sync
-  /// messages instead of running it after every feature interaction (scroll, hover, filter). Each feature reports
-  /// its own data-loading variants via `Message::loads_data`.
   fn affects_images(&self) -> bool {
     match self {
       Message::Assets(msg) => msg.loads_data(),
@@ -838,7 +784,6 @@ pub fn run() -> iced::Result {
 
 fn apply_log_level(level: config::LogLevel) {
   let filter = file_filter(level);
-  // Handle is absent before init_tracing runs or in no-logfile sessions — silently skip.
   let Some(handle) = file_filter_reload_handle().get() else {
     return;
   };
@@ -958,9 +903,6 @@ fn install_panic_hook() {
 #[cfg(test)]
 fn install_panic_hook() {}
 
-/// Emits a single ERROR event capturing a panic's payload, location, and backtrace under the
-/// `pod::lifecycle` target. Split out from the hook closure so a test can drive it through a
-/// capturing subscriber without touching the global panic hook.
 fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
   let message = info
     .payload()
@@ -1015,13 +957,6 @@ fn blank<'a>() -> Element<'a, Message> {
     .into()
 }
 
-/// Stands up the process-global telemetry collector, returning the live `Sender` only when an
-/// ingest endpoint was baked in (release builds); everywhere else it stays a structural no-op.
-///
-/// On the live-sender branch it initializes the global collector and fire-and-forgets any buffered
-/// crash records (spec mmmzstpq §8.4). With no baked endpoint it instead deletes any stale crash
-/// buffer so a dev build never accumulates an unread crash file. Must run before `boot` shadows
-/// `settings` with the window settings.
 fn init_telemetry(settings: &config::Settings) -> Option<clients::telemetry::Sender> {
   let sender = clients::telemetry::Endpoint::from_env()
     .and_then(clients::telemetry::Sender::new)
@@ -1030,7 +965,6 @@ fn init_telemetry(settings: &config::Settings) -> Option<clients::telemetry::Sen
         &settings.storage().machine_id().clone().unwrap_or_default(),
         *settings.telemetry(),
       );
-      // The sender exists here only when an endpoint was baked in, so `has_endpoint` is true.
       if let Some(buffer) = crash::buffer_path() {
         crash::deliver(sender, &buffer, *settings.telemetry(), true);
       }
@@ -1045,8 +979,6 @@ fn init_telemetry(settings: &config::Settings) -> Option<clients::telemetry::Sen
   sender
 }
 
-/// Publishes the update-checker's state receiver into the process-global slot the rail later reads,
-/// when an updater handle exists and the lock is uncontended. A no-op without a handle.
 fn subscribe_updater(handle: Option<&updater::Handle>) {
   if let Some(handle) = handle
     && let Ok(mut guard) = UPDATER_RECEIVER.lock()
@@ -1174,18 +1106,12 @@ fn boot() -> (App, Task<Message>) {
     windows: registry,
     wizard: first_run.then(wizard::State::default),
   };
-  // First run holds the store/SDE seed until the wizard finishes; only the splash path boots now.
   let boot = if first_run { Task::none() } else { start_boot(&mut app) };
   let task = Task::batch([open_task.map(Message::WindowOpened), boot]);
 
   (app, task)
 }
 
-/// Kicks off startup. When an updater handle exists the splash runs the update preflight FIRST (it
-/// enters `CheckingUpdate` and queries the updater), so a bricked release can be updated past before
-/// any store-open/seed work runs; the preflight always resolves within `preflight::TIMEOUT` and the
-/// fall-through paths start the boot via `begin_boot`. Without an updater (dev/unsigned builds) there
-/// is nothing to resolve `CheckingUpdate`, so it skips the preflight and opens the store immediately.
 fn start_boot(app: &mut App) -> Task<Message> {
   match app.updater.clone() {
     Some(handle) => {
@@ -1264,9 +1190,6 @@ async fn open_store_inner() -> Result<StoreReady, String> {
   // network) share in Sync mode plus lease file IO. Run it on a blocking thread so a stalled or slow
   // mount can't wedge the async boot worker — the first window renders independent of this finishing.
   let prepared = tokio::task::spawn_blocking(prepare_store).await.map_err(store_err)??;
-  // One-writer/many-readers over a single database file: open_pools returns interactive, sync, and
-  // housekeeping handles that all clone the same reader pool + single writer connection, so a sync
-  // write-storm can never starve the interactive roster read. See store::open_pools.
   let pools = store::open_pools(&prepared.database_path).await.map_err(store_err)?;
   let http = http::Client::builder(http::Cache::new(pools.interactive.clone())).build();
   Ok(StoreReady {
@@ -1313,9 +1236,6 @@ fn run_take_over(ready: StoreReady, session: store::sync_session::SyncSession, f
   })
 }
 
-/// Runs the lease claim now that the pools are closed. The stale-aware `take_over` declines a
-/// still-live foreign holder (mapping to `Failed` so the resolver re-parks); the forceful path always
-/// claims on success. Either way no file remains open across the `publish_database` swap.
 fn claim_lease(session: &store::sync_session::SyncSession, force: bool) -> TakeOverOutcome {
   let claimed = if force {
     session.force_take_over(Utc::now())
@@ -1337,10 +1257,6 @@ fn claim_lease(session: &store::sync_session::SyncSession, force: bool) -> TakeO
   }
 }
 
-/// Builds a `StoreReady` whose pools are opened against the working-copy file after the take-over
-/// swap, so no connection from the boot-time pools straddles the `publish_database` file swap. On a
-/// successful claim the file now holds the freshly pulled canonical copy; on a declined or failed
-/// claim the unchanged working copy is reopened so the app keeps functioning.
 async fn reopen_after_take_over_inner(
   session: &store::sync_session::SyncSession,
   lease: Option<HolderInfo>,
@@ -1359,8 +1275,6 @@ async fn reopen_after_take_over_inner(
   })
 }
 
-/// Resolves a stable per-machine identity for the lease, persisting a freshly generated id so the
-/// same machine reclaims its own lease (rather than colliding with itself) on the next launch.
 fn persist_machine_id(settings: &mut config::Settings) -> String {
   let had_id = settings.storage().machine_id().is_some();
   let machine_id = settings.storage_mut().machine_id_or_generate();
@@ -1450,8 +1364,6 @@ async fn forward_sync_events(mut events: tokio::sync::mpsc::Receiver<sync::Event
     .await;
 }
 
-/// Builds a dedicated ESI client whose HTTP cache is backed by the sync pool, keeping sync
-/// cache reads/writes off the interactive pool and avoiding contention with UI queries.
 fn build_sync_esi(sync_db: store::Database, language: crate::i18n::Language) -> Result<Arc<esi::Client>, String> {
   let sync_http = http::Client::builder(http::Cache::new(sync_db)).build();
   Ok(Arc::new(
@@ -1592,8 +1504,6 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
       app.killmails.remove(id);
     }
     Window::MailCompose => {
-      // The OS already tore the window down, so save the in-flight draft (if non-empty) without
-      // re-issuing a close, then drop the per-window state.
       let save = compose_save_on_drop(app, id);
       app.composes.remove(id);
       return Task::batch([save, shutdown_if_last_window(app)]);
@@ -1611,8 +1521,6 @@ fn on_window_closed(app: &mut App, id: window::Id) -> Task<Message> {
   shutdown_if_last_window(app)
 }
 
-/// Persists a compose window's draft (if non-empty) when the OS reports it closed, refreshing the
-/// main-view Drafts list. Used by `on_window_closed`, which must not re-issue a `window::close`.
 fn compose_save_on_drop(app: &App, id: window::Id) -> Task<Message> {
   match (
     app.composes.get(id).and_then(mail::compose::Draft::pending_save),
@@ -1648,9 +1556,6 @@ fn shutdown(app: &mut App) -> Task<Message> {
     .chain(Task::batch([iced::exit(), exit_process()]))
 }
 
-/// The periodic flush tick: hand the live buffer to the gated single flush. The
-/// gating (master + per-stream), assembly, and drain all happen inside
-/// [`telemetry::flush`]; nothing is sent when telemetry is structurally absent.
 fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
   if let Some(sender) = app.telemetry.as_ref() {
     telemetry::flush(sender);
@@ -1658,10 +1563,6 @@ fn handle_telemetry_flush_tick(app: &App) -> Task<Message> {
   Task::none()
 }
 
-/// The exit flush: one best-effort final [`telemetry::flush`] before the process
-/// exits. It is the same fire-and-forget path as the periodic tick (drain, gate,
-/// then spawn the POST), so it never janks quit; the chained `exit_process`
-/// backstop still guarantees the process leaves within its budget.
 fn flush_telemetry_on_exit(app: &App) {
   if let Some(sender) = app.telemetry.as_ref() {
     telemetry::flush(sender);
@@ -1719,8 +1620,6 @@ pub fn restart() {
   std::process::exit(0);
 }
 
-/// On a clean exit in sync mode, flushes the working copy back to the share and releases the lease
-/// before the process exits, so the next launch sees a current canonical copy and an unheld share.
 fn shutdown_storage(app: &mut App) -> Task<Message> {
   if !holding_lease(app) {
     return Task::none();
@@ -1773,8 +1672,6 @@ fn record_window_geometry(app: &mut App, id: window::Id, geometry: WindowGeometr
   let Some(key) = window_key(app, id) else {
     return;
   };
-  // environment.window_size (§8.2): the primary window's logical size feeds the
-  // once-per-process environment stream. A no-op unless telemetry is built.
   if matches!(app.windows.kind(id), Some(Window::Main)) {
     telemetry::set_window_size(geometry.width as u32, geometry.height as u32);
   }
@@ -1782,9 +1679,6 @@ fn record_window_geometry(app: &mut App, id: window::Id, geometry: WindowGeometr
   app.coalescer.request(app.ui_state.clone(), Instant::now());
 }
 
-// environment.screen_size (§8.2): the result of the `window::monitor_size` probe
-// dispatched when the main window opens. A missing probe leaves the "unknown"
-// sentinel; a no-op unless telemetry is built.
 fn handle_main_screen_size_probed(size: Option<Size>) -> Task<Message> {
   if let Some(size) = size {
     telemetry::set_screen_size(size.width as u32, size.height as u32);
@@ -1926,8 +1820,6 @@ fn industry_required_scopes() -> Vec<&'static str> {
   registry::descriptor(config::Feature::Industry).scopes.to_vec()
 }
 
-/// Whether the industry planner may offer the pilot/clone assignment picker: the clone/implant data it reads is
-/// gated behind BOTH the Skills and Clone-Monitoring features (never Industry), so both must be enabled.
 fn industry_assign_pilots(app: &App) -> bool {
   app
     .runtime
@@ -2122,10 +2014,6 @@ fn drain_roster_dirty(app: &mut App) -> Option<Task<Message>> {
   drain_roster_dirty_at(app, Instant::now())
 }
 
-/// Trailing-debounced drain of the roster-reload flag. During a sync burst `roster_dirty` is re-set
-/// on every `Finished` event, so without a floor the 450ms pulse would re-fire the heavy reload
-/// ~2x/s. Holding the dirty flag until [`ROSTER_RELOAD_DEBOUNCE`] has elapsed collapses the burst
-/// into one reload per window; the flag stays set so a later pulse reloads once the window opens.
 fn drain_roster_dirty_at(app: &mut App, now: Instant) -> Option<Task<Message>> {
   if !app.roster_dirty || app.roster.is_none() {
     return None;
@@ -2327,10 +2215,6 @@ fn main_view(app: &App) -> Element<'_, Message> {
     Message::ToggleNotificationsPanel,
     Message::Palette(PaletteMessage::Open),
   );
-  // In sub-rail mode a persistent sub-section column sits inboard of the edge rail (between the rail
-  // and the content), mirrored to whichever side the rail is docked. Decision: every view keeps its
-  // own in-view tab strip even in sub-rail mode; hiding it per view would mean threading cascade_mode
-  // through six feature view signatures, which is more invasive than the duplicate strip is worth.
   let sub_rail_element = (cascade_mode == config::CascadeMode::SubRail)
     .then(|| {
       rail::sub_rail(
@@ -2430,21 +2314,10 @@ const NOTIFICATIONS_PANEL_MAX_HEIGHT: f32 = 560.0;
 
 const NOTIFICATIONS_TAB_STRIP_HEIGHT: f32 = 40.0;
 
-/// Estimated pixel height of one History notification row, used by the windowed list's offset math.
-/// Rows are content-driven (title + a "who · when" line), so this is an estimate; overscan absorbs the
-/// variance.
 const NOTIFICATIONS_HISTORY_ROW_HEIGHT: f32 = 64.0;
 
-/// Fraction of the History list a scroll must reach (0..1) before the next keyset page is requested.
-/// Mirrors the mail list's load-more threshold so a page is fetched a little before the true bottom.
 const NOTIFICATIONS_HISTORY_SCROLL_THRESHOLD: f32 = 0.85;
 
-/// The notification center panel: a card flying out beside the rail, bottom-aligned to the bell. A
-/// header with the title and a "Mark all read" button sits above a New/History tab strip. The New tab
-/// filters to unread notifications; the History tab lists every loaded notification newest-first (the
-/// repo already orders them). A later task will repoint History at a paginated source, so the row
-/// rendering is factored out of the tab shell. Each row marks itself read and deep-links on click;
-/// opening the panel never auto-reads. A footer "Clear all" + total stays available.
 fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<'_, Message> {
   let unread = app.notifications_unread;
   let new_count = app
@@ -2452,8 +2325,6 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     .iter()
     .filter(|notification| notification.read_at().is_none())
     .count();
-  // History tracks the keyset-paged accumulator; New tracks the live unread set. The footer "total"
-  // mirrors whichever tab is active so the count matches what the body actually renders.
   let history_count = app.notifications_history.len();
   let total = match app.notifications_tab {
     NotificationTab::New => new_count,
@@ -2476,9 +2347,6 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
 
   let body = notifications_tab_body(app, app.notifications_tab);
 
-  // Footer shows only the running count for the active tab (no controls): "N unread" on New,
-  // "N total" on History, matching notifications.jsx. It hides whenever the active tab renders no
-  // rows, mirroring the mockup's `shown.length > 0` guard.
   let mut children: Vec<Element<'_, Message>> = vec![header.into(), tabs, rule_line(), body];
   if let Some(footer_label) = notifications_footer_label(app.notifications_tab, total, history_count) {
     children.push(rule_line());
@@ -2514,8 +2382,6 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     config::NavLocation::Left => Horizontal::Left,
     config::NavLocation::Right => Horizontal::Right,
   };
-  // Clear the nav rail so the panel flies out to its side (like the cascade
-  // sub-rail) instead of covering it.
   let (pad_left, pad_right) = match nav_location {
     config::NavLocation::Left => (rail::RAIL_WIDTH + POPOVER_LEFT, POPOVER_LEFT),
     config::NavLocation::Right => (POPOVER_LEFT, rail::RAIL_WIDTH + POPOVER_LEFT),
@@ -2534,10 +2400,6 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
     .into()
 }
 
-/// The notification panel footer is a single, control-free count line (notifications.jsx has no
-/// "Clear all" button): "N unread" on the New tab, "N total" on History. `total` is the active tab's
-/// count; `history_count` gates History visibility. Returns `None` when the active tab renders no
-/// rows, mirroring the mockup's `shown.length > 0` guard.
 fn notifications_footer_label(tab: NotificationTab, total: usize, history_count: usize) -> Option<String> {
   match tab {
     NotificationTab::New => (total > 0).then(|| t!("shell.notifications.footer_unread", count => total).into_owned()),
@@ -2592,8 +2454,6 @@ fn notifications_tab_body(app: &App, active: NotificationTab) -> Element<'_, Mes
   }
 }
 
-/// The New tab: the live unread set drawn from the refresh-loaded `notifications` list. Bounded by the
-/// refresh limit and the unread count, so it renders in one shrink-scrollable column without paging.
 fn notifications_new_body(app: &App) -> Element<'_, Message> {
   let rows: Vec<Element<'_, Message>> = app
     .notifications
@@ -2618,9 +2478,6 @@ fn notifications_new_body(app: &App) -> Element<'_, Message> {
   .into()
 }
 
-/// The History tab: the keyset-paged accumulator, windowed and infinite-scrolled. Each scroll past the
-/// load-more threshold emits `NotificationsHistoryScrolled`, which requests the next page once no fetch
-/// is in flight and an older page may exist.
 fn notifications_history_body(app: &App) -> Element<'_, Message> {
   if app.notifications_history.is_empty() {
     return notifications_empty_state(
@@ -2714,7 +2571,6 @@ fn rule_line<'a>() -> Element<'a, Message> {
     .into()
 }
 
-/// A compact relative timestamp ("now", "5m", "3h", "2d") from a stored RFC3339 `created_at`.
 fn relative_time(created_at: &str, now: DateTime<Utc>) -> String {
   let Ok(when) = DateTime::parse_from_rfc3339(created_at) else {
     return String::new();
@@ -2822,16 +2678,11 @@ fn read_only_banner_label(hostname: &str) -> String {
   t!("shell.takeover.read_only", hostname => hostname).into_owned()
 }
 
-/// Data-loss warning shown before a forceful take-over: surfaces how recently the holder was seen so
-/// the user can judge whether it is plausibly dead before clobbering its in-flight work on the share.
 fn read_only_confirm_label(hostname: &str, last_active: &str) -> String {
   t!("shell.takeover.confirm", hostname => hostname, last_active => last_active).into_owned()
 }
 
 fn route_view(app: &App) -> Element<'_, Message> {
-  // performance load_ms (§8.3): close the nav->first-paint timer the moment the
-  // just-navigated route first renders centrally. Keyed by the same token
-  // `navigate()` armed it with; a no-op for re-paints and unless telemetry is built.
   telemetry::record_view_loaded(telemetry::route_token(app.route.name()));
   match app.route {
     Route::Assets => assets_route_view(app),
@@ -2949,10 +2800,6 @@ fn expected_job_stats(app: &App) -> JobStats {
   sync_popover::job_stats(&roster(app), &app.status, &feature_flags(app))
 }
 
-// Regroup the shared `JobStats` — itself derived from the one freshness function the popover and chip
-// both consume — back into the `FreshnessSummary` the calm chip headline reads. The chip never recounts
-// jobs; it only renders the buckets. `errors` (persistent `Failed`) is split out of `JobStats::attention`
-// upstream, so the chip carries it alongside the summary and folds it back into its attention headline.
 fn chip_freshness(stats: &JobStats) -> FreshnessSummary {
   let catching_up = stats
     .total
@@ -3294,8 +3141,6 @@ fn subscription(app: &App) -> Subscription<Message> {
   Subscription::batch(subs)
 }
 
-// The per-feature screen subscriptions, armed only for the screens that are currently built. Split
-// out of `subscription` so its open/lease/panel timer wiring stays the readable core.
 fn data_subscriptions(app: &App) -> Vec<Subscription<Message>> {
   let mut subs = Vec::new();
   if let Some(state) = &app.assets {
@@ -3364,8 +3209,6 @@ fn map_palette_closed_unfocused(event: iced::Event, _status: iced::event::Status
 
 fn theme(app: &App, id: window::Id) -> iced::Theme {
   match app.windows.kind(id) {
-    // Custom-chrome windows still on the legacy path. Each kind drops out of this arm when its
-    // own conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(Window::Killmail | Window::Splash) => splash_theme(),
     _ => pod_theme(),
   }
@@ -3375,10 +3218,6 @@ fn title(app: &App, id: window::Id) -> String {
   window_title(app, id)
 }
 
-/// Kind-aware OS title for the window `id`: one arm per `Window` kind so each conversion task
-/// fills in its own window's title on its own line. Multi-instance kinds derive their title from
-/// that window's per-id state; single-instance kinds use a constant. Unregistered ids fall back to
-/// the bare app name.
 fn window_title(app: &App, id: window::Id) -> String {
   match app.windows.kind(id) {
     Some(Window::CalendarEvent) => app
@@ -3490,16 +3329,6 @@ fn transition_to_main(app: &mut App) -> Task<Message> {
   Task::batch([close, open_task.map(Message::WindowOpened)])
 }
 
-/// Opens a real native-chrome OS window of `kind` and registers its id synchronously.
-///
-/// This is the single source of native-window open boilerplate. It builds an opaque, decorated,
-/// resizable `window::Settings`, restores persisted geometry when `kind.state_key()` is `Some(..)`
-/// (otherwise centers at `default_size`), calls `window::open`, and records `id -> kind` in the
-/// registry. `window::open` resolves the id immediately, so callers get it back directly with NO
-/// deferred `*WindowReady` round-trip.
-///
-/// Returns `(id, open_task)`: the caller seeds its per-window state under `id` and batches
-/// `open_task` (already mapped to `Message::WindowOpened`) alongside any loader it kicks off.
 fn open_native_window(app: &mut App, kind: Window, default_size: Size) -> (window::Id, Task<Message>) {
   let (size, position) = restored_geometry(&app.ui_state, kind, default_size);
   let settings = window::Settings {
@@ -3597,10 +3426,6 @@ fn close_editor_window(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([window::close(id), reload])
 }
 
-/// Opens a detached native-chrome killmail window. The window opens via the shared native-window
-/// helper (native frame, OS title bar, centered default geometry), registering the kind and seeding
-/// the per-id state synchronously. Unlimited instances coexist, duplicates included, because every
-/// open mints a fresh id.
 fn open_killmail_window(app: &mut App, source: killmail_detail::Source, killmail_id: i64) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3637,10 +3462,6 @@ fn close_killmail_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens a detached contract window with native chrome. `open_native_window` mints the id
-/// synchronously, so registration, state seeding, and the loader kickoff all happen here with no
-/// ready-message indirection. Unlimited instances coexist, duplicates included, because every open
-/// mints a fresh id; geometry is never persisted, so each window opens centered at the default size.
 fn open_contract_window(app: &mut App, source: contract_detail::Source, contract_id: i64) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3676,10 +3497,6 @@ fn close_contract_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens the detached Manage Plans window with native chrome, or focuses the existing one when already
-/// open (single-instance). The shared native-window helper mints the id synchronously, so registration,
-/// state seeding, and the roster loader all happen here with no ready-message indirection. Geometry
-/// persists across launches via the window's `state_key` + `restored_geometry`.
 fn open_manage_plans_window(app: &mut App) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3811,8 +3628,6 @@ async fn copy_plan_to_character(
   skill_plan_editor::persist_onto_character(db, target_character_id, None, &plan).await
 }
 
-/// Switches the Skills active character to the plan owner, opens the pinned editor on `seed`, and
-/// closes the Manage Plans window so the editor takes over.
 fn open_plan_from_manager(app: &mut App, character_id: i64, seed: skill_plan_editor::Seed) -> Task<Message> {
   let close = match app.manage_plans.take() {
     Some((id, _)) => {
@@ -3844,18 +3659,11 @@ fn close_manage_plans_window(app: &mut App, id: window::Id) -> Task<Message> {
   window::close(id)
 }
 
-/// Opens a detached Stockpile Editor window with native chrome. `open_native_window` mints the id
-/// synchronously, so registration, per-window `Editor` seeding, and the on-open scope resolve all
-/// happen here with no `*WindowReady` round-trip. Multi-instance: every open mints a fresh id (New,
-/// Edit, and import-prefill can coexist), and geometry is never persisted, so each opens centered at
-/// the default size.
 fn open_stockpile_editor_window(app: &mut App, seed: assets::EditorSeed) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
   let editor = assets::Editor::from_seed(seed);
-  // Seed the live pilot preview as soon as the window opens, before the user edits the scope, mirroring
-  // the former on-open scope resolve.
   let scope = editor.scope_query().to_owned();
   let resolve = stockpile_scope_resolve(runtime, scope);
   let size = Size::new(
@@ -3873,9 +3681,6 @@ fn open_stockpile_editor_window(app: &mut App, seed: assets::EditorSeed) -> Task
   ])
 }
 
-/// Routes a per-window editor message to its window's [`Editor`], applies it, and dispatches the
-/// reported follow-up (item/location/scope search, save, or close). Save and Close both close the
-/// window; Save first persists and reloads the main view's stockpile grid.
 fn handle_stockpile_editor(app: &mut App, id: window::Id, msg: assets::Message) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3906,8 +3711,6 @@ fn handle_stockpile_editor(app: &mut App, id: window::Id, msg: assets::Message) 
   }
 }
 
-/// Re-tags an `assets::Message` produced by a stockpile editor search helper so the result routes back
-/// to the originating editor window instead of the main assets view.
 fn reroute_to_stockpile_editor(id: window::Id, msg: Message) -> Message {
   match msg {
     Message::Assets(assets) => Message::StockpileEditor(id, assets),
@@ -3915,9 +3718,6 @@ fn reroute_to_stockpile_editor(id: window::Id, msg: Message) -> Message {
   }
 }
 
-/// Saves a detached editor and reloads the main view's stockpile grid. Unlike the retired in-place
-/// save, the reload routes to the main assets state (the editor window is closing) via a top-level
-/// `Assets(StockpilesReloaded)`.
 fn stockpile_save_window(runtime: &Runtime, editor: assets::Editor) -> Task<Message> {
   let db = runtime.db.clone();
   let esi = Arc::clone(&runtime.esi);
@@ -3935,10 +3735,6 @@ fn close_stockpile_editor_window(app: &mut App, id: window::Id) -> Task<Message>
   window::close(id)
 }
 
-/// Opens the detached Import-Multibuy window with native chrome. Single-instance: any already-open
-/// import window is closed first so a fresh paste starts clean, and `Window::StockpileImport` carries
-/// a `state_key`, so `open_native_window` restores its persisted size/position. Confirming a paste in
-/// this window opens a prefilled Stockpile Editor window (a window spawning another window).
 fn open_stockpile_import_window(app: &mut App) -> Task<Message> {
   if app.runtime.is_none() {
     return Task::none();
@@ -3958,9 +3754,6 @@ fn open_stockpile_import_window(app: &mut App) -> Task<Message> {
   Task::batch([close_existing, open_task])
 }
 
-/// Routes a per-window import message to its window's [`ImportPanel`], applies it, and dispatches the
-/// reported follow-up. Resolve runs the multibuy resolver; Confirm opens a prefilled editor window and
-/// closes the import window; Close just closes the window.
 fn handle_stockpile_import(app: &mut App, id: window::Id, msg: assets::Message) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -3982,8 +3775,6 @@ fn handle_stockpile_import(app: &mut App, id: window::Id, msg: assets::Message) 
   }
 }
 
-/// Re-tags an `assets::Message` produced by the import resolver so the result routes back to the
-/// originating import window instead of the main assets view.
 fn reroute_to_stockpile_import(id: window::Id, msg: Message) -> Message {
   match msg {
     Message::Assets(assets) => Message::StockpileImport(id, assets),
@@ -3997,10 +3788,6 @@ fn close_stockpile_import_window(app: &mut App, id: window::Id) -> Task<Message>
   window::close(id)
 }
 
-/// Opens a detached Mail Compose window with native chrome. `open_native_window` mints the id
-/// synchronously, so registration, state seeding, and the draft loader all happen here with no
-/// ready-message indirection. Unlimited instances coexist, duplicates included, because every open
-/// mints a fresh id; geometry is never persisted, so each window opens centered at the default size.
 fn open_compose_window(app: &mut App, seed: mail::compose::Seed) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -4021,8 +3808,6 @@ fn open_compose_window(app: &mut App, seed: mail::compose::Seed) -> Task<Message
   Task::batch([open_task, load.map(move |msg| Message::Compose(id, msg))])
 }
 
-/// Opens a compose window seeded for a persisted draft `draft_id`; the row is loaded into the window
-/// once it exists (routed per-window via `Compose(id, DraftLoaded)`).
 fn open_draft_window(app: &mut App, draft_id: i64) -> Task<Message> {
   let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) else {
     return Task::none();
@@ -4036,14 +3821,10 @@ fn open_draft_window(app: &mut App, draft_id: i64) -> Task<Message> {
   )
 }
 
-/// Routes a per-window compose message to its window's [`Draft`], applies it, and dispatches the
-/// reported follow-up (recipient/link search, send, or close). Close auto-saves a non-empty draft
-/// then closes the window; Send enqueues the mail, deletes the draft by id, and closes the window.
 fn handle_compose(app: &mut App, id: window::Id, msg: mail::Message) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
-  // A persisted-draft load and a save-completed id thread back per window, outside the Effect path.
   match msg {
     mail::Message::DraftLoaded(row) => {
       if let (Some(row), Some(draft)) = (*row, app.composes.get_mut(id)) {
@@ -4078,15 +3859,12 @@ fn handle_compose(app: &mut App, id: window::Id, msg: mail::Message) -> Task<Mes
   }
 }
 
-/// Closes a compose window without saving its draft (the explicit Discard path).
 fn discard_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
   app.composes.remove(id);
   app.windows.remove(id);
   window::close(id)
 }
 
-/// Completes a successful send: deletes the persisted draft (if any) by id, closes the window, and
-/// refreshes the main-view Drafts/Sent listing.
 fn compose_send_completed(app: &mut App, id: window::Id) -> Task<Message> {
   let sent_draft_id = app.composes.get(id).and_then(mail::compose::Draft::sent_draft_id);
   let delete = match (sent_draft_id, app.runtime.as_ref()) {
@@ -4100,7 +3878,6 @@ fn compose_send_completed(app: &mut App, id: window::Id) -> Task<Message> {
   Task::batch([delete, close_compose_window(app, id), reload])
 }
 
-/// Saves a compose window's draft (if non-empty) then closes it, refreshing the main-view Drafts list.
 fn close_compose_window(app: &mut App, id: window::Id) -> Task<Message> {
   let save = match (
     app.composes.get(id).and_then(mail::compose::Draft::pending_save),
@@ -4194,8 +3971,6 @@ fn compose_link_search(
   )
 }
 
-/// Refreshes the main mail view after a compose window saves or sends, so the Drafts/Sent listing and
-/// folder badges reflect the change.
 fn reload_main_mail(app: &App) -> Task<Message> {
   match (app.mail.as_ref(), app.runtime.as_ref()) {
     (Some(state), Some(runtime)) => mail::reload(&runtime.db, state.active()).map(Message::Mail),
@@ -4206,8 +3981,6 @@ fn reload_main_mail(app: &App) -> Task<Message> {
 fn update(app: &mut App, message: Message) -> Task<Message> {
   let span = tracing::trace_span!(target: "pod::ui", "update", message = message.variant_name());
   let _entered = span.enter();
-  // Only a load/sync message can introduce new image-bearing rows; gating here keeps the staleness scan off the
-  // per-frame interaction path (scroll, hover, filter).
   let recheck_images = message.affects_images();
   let task = match dispatch_feature(app, message) {
     Ok(task) => task,
@@ -4413,8 +4186,6 @@ fn handle_palette(app: &mut App, message: PaletteMessage) -> Task<Message> {
 
 fn palette_open(app: &mut App) -> Task<Message> {
   app.palette = Some(command_palette::State::default());
-  // The palette's own field owns text focus; clear the global tracker so a still-focused page input
-  // can't keep stealing the focus-gated `/` while the palette is up.
   app.keyboard_focus.set_focused(None);
   iced::widget::operation::focus(command_palette::input_id())
 }
@@ -4464,9 +4235,6 @@ fn palette_command(app: &mut App, command: PaletteCommand) -> Task<Message> {
   }
 }
 
-/// Resolves the from-character for a palette-launched compose: the mail view's default sender when a
-/// mail view is open, otherwise the active / first owned character. `None` only when no character is
-/// owned, in which case the command no-ops.
 fn palette_compose_from(app: &App) -> Option<i64> {
   if let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) {
     return Some(from);
@@ -4483,8 +4251,6 @@ fn toggle_high_contrast(app: &mut App) -> Task<Message> {
     runtime.settings.accessibility_mut().set_high_contrast(enabled);
     config::save(&runtime.settings);
   }
-  // The Settings screen builds its own accessibility copy on open; rebuild it so a live screen mirrors
-  // the toggle instead of showing the pre-toggle value.
   if let (Some(runtime), Some(_)) = (app.runtime.as_ref(), app.settings.as_ref()) {
     app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
   }
@@ -4528,8 +4294,6 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
   if let assets::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }
-  // The stockpile editor is a detached window: New/Edit/import-confirm open one instead of mutating an
-  // in-place holder. Edit and import-confirm read from the main assets state first.
   match msg {
     assets::Message::StockpileNew => return open_stockpile_editor_window(app, assets::EditorSeed::Blank),
     assets::Message::StockpileEditStarted(id) => {
@@ -4541,8 +4305,6 @@ fn handle_assets(app: &mut App, msg: assets::Message) -> Task<Message> {
       }
       return open_stockpile_editor_window(app, assets::EditorSeed::FromCard(Box::new(card)));
     }
-    // The import multibuy panel is its own single-instance native window now, so the main view's
-    // "Import multibuy" button opens it instead of toggling an in-place overlay.
     assets::Message::StockpileImportOpened => return open_stockpile_import_window(app),
     _ => {}
   }
@@ -4610,9 +4372,6 @@ fn handle_mail_unread_counted(app: &mut App, unread: i64) -> Task<Message> {
   Task::none()
 }
 
-/// Runs a bridged MCP tool call to completion off the UI thread and replies to the waiting agent
-/// through the request's one-shot. The tool is gated against the live config's permissions, so a
-/// call whose permission is disabled is refused without touching the database.
 fn handle_mcp(app: &mut App, request: mcp::McpRequest) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     request.reply(Err(mcp::tool::ToolError::Internal(
@@ -4626,9 +4385,6 @@ fn handle_mcp(app: &mut App, request: mcp::McpRequest) -> Task<Message> {
   Task::none()
 }
 
-/// An MCP write tool reported that it changed the database, so reload whatever the open view shows.
-/// Marks the roster dirty and lifts the reload debounce so the refresh fires now, then drives the
-/// same per-view drains a sync pulse runs.
 // The MCP write signal is intentionally coarse and kind-agnostic: an agent wrote something, but we
 // don't know what. Force every open data view dirty (not just the roster) so the drain below actually
 // reloads the currently-open assets/wallet/character-detail view instead of waiting for the next sync.
@@ -4660,8 +4416,6 @@ fn handle_mcp_data_changed(app: &mut App) -> Task<Message> {
   Task::batch(tasks)
 }
 
-/// Reconciles the embedded MCP listener with the live config, generating and persisting a bearer
-/// token the first time the server is enabled without one. A no-op when the runtime is absent.
 fn sync_mcp_server(app: &mut App) {
   let Some(runtime) = app.runtime.as_mut() else {
     return;
@@ -4716,9 +4470,6 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
     task = Task::batch(vec![task, migrate_storage(request.previous, next)]);
   }
 
-  // Keep the long-lived runtime settings' industry defaults in lock-step with the settings screen, so
-  // the planner (which reads `runtime.settings` when it opens) honors a freshly-changed default without
-  // waiting for a restart. Feature/accessibility sections sync via their own paths below.
   if let Some(runtime) = app.runtime.as_mut() {
     let industry = *state.settings().industry();
     *runtime.settings.industry_mut() = industry;
@@ -4735,9 +4486,6 @@ fn handle_settings(app: &mut App, msg: settings::Message) -> Task<Message> {
       return Task::batch(vec![task, refresh_all_windows(app)]);
     }
     settings::Outcome::UiChanged => {
-      // The rail reads its side and order from `ui_config`, which prefers the live settings screen
-      // and falls back to the runtime; keep the runtime copy in lock-step so windows that read it
-      // stay honest, then redraw every window to re-dock and reorder the rail live.
       let ui = state.settings().ui().clone();
       if let Some(runtime) = app.runtime.as_mut() {
         *runtime.settings.ui_mut() = ui;
@@ -4836,9 +4584,6 @@ fn apply_language_change(app: &mut App, language: crate::i18n::Language, task: T
 }
 
 fn language_change_action(app: &App, language: crate::i18n::Language) -> LanguageChangeAction {
-  // A confirmed change to the already-running language is a no-op: nothing to re-seed or re-sync, and a
-  // needless restart would be a hostile surprise. The accessibility tab already guards same-language
-  // selections, so this is a defensive second gate at the apply boundary.
   if app.accessibility.language() == language {
     LanguageChangeAction::Ignore
   } else {
@@ -4846,9 +4591,6 @@ fn language_change_action(app: &App, language: crate::i18n::Language) -> Languag
   }
 }
 
-/// Pushes a just-changed feature set out to the runtime sync engine and every open feature screen
-/// (calendar, industry, character detail), reloading the active one and falling back to Characters
-/// when the current route's feature was disabled out from under it. A no-op without a runtime.
 fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, base: Task<Message>) -> Task<Message> {
   let Some(runtime) = app.runtime.as_mut() else {
     return base;
@@ -4900,8 +4642,6 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
     tasks.push(Task::done(Message::Industry(industry::Message::FeaturesChanged(flags))));
   }
 
-  // A feature disabled while its screen is open leaves the route stranded with its rail icon gone;
-  // fall back to Characters so the now-unreachable route can't linger.
   if registry::feature_for_destination(route.destination()).is_some_and(|feature| !enabled.contains(&feature)) {
     navigate(app, Route::Characters);
   }
@@ -4909,9 +4649,6 @@ fn propagate_feature_change(app: &mut App, updated: crate::config::Settings, bas
   Task::batch(tasks)
 }
 
-/// Runs the Settings Industry tab's facility search through the same live ESI search the planner uses.
-/// Mirrors the planner's debounce + min-char gate, stamping `generation` so the tab can drop stale
-/// responses, and degrades to a no-op when no runtime (and therefore no authenticated character) exists.
 fn settings_facility_search(app: &App, activity: i64, generation: u64, query: String) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -4940,15 +4677,11 @@ fn settings_facility_search(app: &App, activity: i64, generation: u64, query: St
   )
 }
 
-/// Persists a player structure picked as a Settings default so it survives in the locally known
-/// facility set, exactly as the planner pins picked structures.
 fn settings_facility_pin(app: &App, pin: industry::PinnedStructure) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
   };
   let db = runtime.db.clone();
-  // The tab already shows the picked facility from the user's selection, so the pin only persists; an
-  // empty `SelectionsResolved` is a benign no-op completion message.
   Task::perform(async move { industry::pin_facility(db, pin).await }, |()| {
     Message::Settings(settings::Message::Industry(
       settings::industry_tab::Message::SelectionsResolved(Vec::new()),
@@ -4964,9 +4697,6 @@ fn refresh_all_windows(app: &App) -> Task<Message> {
   Task::batch(app.windows.ids().map(|id| window::size(id).discard()))
 }
 
-/// Routes the storage tab's "Sync now" action, always reporting an outcome rather than silently
-/// no-opping: read-only sessions delegate to take-over, otherwise it pushes when dirty and pulls
-/// when the share has advanced.
 fn sync_now(app: &mut App) -> Task<Message> {
   let Some(session) = app.sync_session.clone() else {
     return Task::none();
@@ -5019,9 +4749,6 @@ fn handle_sync_now_resolved(app: &mut App, outcome: SyncNowOutcome) -> Task<Mess
   }
 }
 
-/// Routes the storage tab's "Export logs" action, building the diagnostics zip on a blocking thread
-/// so the UI stays responsive. Log files (including the live current-day file) are read read-only,
-/// never truncated.
 fn export_logs(
   log_dir: std::path::PathBuf,
   start: DateTime<Utc>,
@@ -5048,8 +4775,6 @@ async fn export_log_bundle(
   save_log_bundle(default_name, bytes).await
 }
 
-/// Prompts for a save location via the native dialog and writes the zip there. Stubbed to a no-op
-/// under `cfg(test)` so tests never open a real file dialog.
 async fn save_log_bundle(default_name: String, bytes: Vec<u8>) -> Result<Option<std::path::PathBuf>, String> {
   #[cfg(not(test))]
   {
@@ -5094,9 +4819,6 @@ async fn export_data_archive(
 ) -> Result<Option<std::path::PathBuf>, String> {
   let default_name = settings::data_export::default_file_name(Utc::now());
 
-  // Stage a self-contained snapshot of the live working file: checkpoint_into folds the WAL in so
-  // the bundled pod.db carries no -wal/-shm trail. This works in both Direct and Sync modes because
-  // the resolved DB path always points at the live file Pod is writing.
   let staging = tempfile::Builder::new()
     .prefix("pod-export-")
     .suffix(".db")
@@ -5113,14 +4835,11 @@ async fn export_data_archive(
   .await
   .map_err(|err| err.to_string())??;
 
-  // Keep the staging file alive until the archive bytes are built, then drop it.
   drop(staging);
 
   save_data_archive(default_name, bytes).await
 }
 
-/// Prompts for a save location via the native dialog and writes the archive there. Stubbed to a
-/// no-op under `cfg(test)` so tests never open a real file dialog.
 async fn save_data_archive(default_name: String, bytes: Vec<u8>) -> Result<Option<std::path::PathBuf>, String> {
   #[cfg(not(test))]
   {
@@ -5143,10 +4862,6 @@ async fn save_data_archive(default_name: String, bytes: Vec<u8>) -> Result<Optio
   }
 }
 
-/// Drives the confirmed import: re-reads the archive, atomically restores its database into place,
-/// merges the archived config while preserving this machine's identity, and on success quits Pod so
-/// the next launch re-seeds from the restored database (ADR-0038's quit-and-reopen). A restore
-/// failure surfaces through `DataImportFinished(Err)` and leaves the live data untouched.
 fn import_data(
   path: std::path::PathBuf,
   storage: config::StorageConfig,
@@ -5156,8 +4871,6 @@ fn import_data(
   Task::perform(
     import_data_archive(path, storage, machine_id, local_settings),
     |result| match result {
-      // Success: quit through the existing shutdown chain so the restored database takes effect on the
-      // next launch (the checkpoint there is a no-op or re-establishes the restored canonical).
       Ok(()) => Message::Quit,
       Err(error) => Message::Settings(settings::Message::Storage(
         settings::storage_tab::Message::DataImportFinished(Err(error)),
@@ -5176,8 +4889,6 @@ async fn import_data_archive(
     .await
     .map_err(|err| format!("Couldn't read {}: {err}", path.display()))?;
 
-  // Re-validate the picked archive on the restore path: the UI version-guarded it for the confirm
-  // modal, but the bytes are re-read here so the restore never trusts a stale parse.
   let parsed = tokio::task::spawn_blocking(move || settings::data_export::read_archive(&bytes))
     .await
     .map_err(|err| err.to_string())??;
@@ -5188,7 +4899,6 @@ async fn import_data_archive(
     ));
   }
 
-  // Stage the archived pod.db to a tempfile so the atomic restore publishes a real on-disk file.
   let staging = tempfile::Builder::new()
     .prefix("pod-import-")
     .suffix(".db")
@@ -5199,8 +4909,6 @@ async fn import_data_archive(
     .await
     .map_err(|err| format!("Couldn't stage the archived database: {err}"))?;
 
-  // Atomically replace the live database (backing up the prior state first); Sync mode acquires the
-  // lease and bumps the generation so the next launch re-seeds the working copy from the canonical.
   let now = Utc::now();
   let restore_storage = storage.clone();
   let restore_machine_id = machine_id.clone();
@@ -5212,12 +4920,8 @@ async fn import_data_archive(
   .map_err(|err| err.to_string())?
   .map_err(|err| err.to_string())?;
 
-  // Hold the staging file until the restore has copied it into place.
   drop(staging);
 
-  // Merge the archived portable settings over this machine's identity, then persist so the next
-  // launch reads features/ui/accessibility/industry from the archive while keeping local paths,
-  // machine_id, and tokens.
   let config_text =
     String::from_utf8(parsed.config).map_err(|err| format!("The archived settings aren't valid UTF-8: {err}"))?;
   let archived: config::Settings =
@@ -5228,8 +4932,6 @@ async fn import_data_archive(
   Ok(())
 }
 
-/// Routes the storage tab's "Release lock" up to the lifecycle lease engine, force-releasing the
-/// lease on the share so another machine can take over. A no-op unless this instance holds it.
 fn release_lock(app: &App) -> Task<Message> {
   if !holding_lease(app) {
     return Task::none();
@@ -5247,9 +4949,6 @@ fn release_lock(app: &App) -> Task<Message> {
   })
 }
 
-/// Migrates the on-disk database layout after the storage configuration crossed (or could have
-/// crossed) the Direct/Sync boundary. Driven async because a Sync→Direct consolidation must run a
-/// WAL checkpoint; the change takes effect on next launch, when bootstrap resolves the new layout.
 fn migrate_storage(previous: config::StorageConfig, next: config::StorageConfig) -> Task<Message> {
   let old_mode = previous.storage_mode();
   let new_mode = next.storage_mode();
@@ -5287,11 +4986,6 @@ const INBOX_LABEL_ID: i64 = 1;
 /// by this name; created on demand at snooze time by the mail feature.
 const SNOOZED_LABEL_NAME: &str = "Snoozed";
 
-/// Reverses the snooze-time label flip for each mail the scheduler woke this tick: drop the Snoozed
-/// label and restore Inbox membership, mirroring the move back to EVE via a `mail.set_labels`
-/// outbox row. Because the scheduler wakes *every* expired snooze regardless of when it elapsed,
-/// this also covers backdated wakes — a mail whose wake time passed while Pod was closed gets its
-/// flip enqueued on the next launch tick.
 fn handle_snoozes_woken(app: &App, woken: Vec<(i64, i64)>) -> Task<Message> {
   if woken.is_empty() {
     return Task::none();
@@ -5387,8 +5081,6 @@ fn handle_store_opened(app: &mut App, ready: StoreReady) -> Task<Message> {
   ])
 }
 
-/// Pushes a working copy left ahead of the share by a prior crashed session (local generation >
-/// share generation) on the next same-machine launch, so the unsynced changes reach the canonical copy.
 fn recover_unsynced_changes(app: &App) -> Task<Message> {
   if !holding_lease(app) {
     return Task::none();
@@ -5423,9 +5115,6 @@ fn handle_sync_pulse(app: &mut App) -> Task<Message> {
   Task::batch(tasks)
 }
 
-/// Runs the notification detector sweep when a relevant sync (or the idle cadence) has marked the
-/// notifications dirty, refreshing the cached list/unread and surfacing toasts. A pure-UI refresh
-/// (panel open, mark-read) takes the same path with `run_detectors = false`.
 fn drain_notifications_dirty(app: &mut App) -> Option<Task<Message>> {
   if !app.notifications_dirty {
     return None;
@@ -5471,8 +5160,6 @@ fn owned_corporation_ids(app: &App) -> Vec<i64> {
     .collect()
 }
 
-/// Whether a finished sync job feeds one of the seven notification detectors, gating the dirty flag
-/// so the detector sweep only runs after sync activity that could surface a new event.
 fn is_notification_source(kind: JobKind) -> bool {
   matches!(
     kind,
@@ -5494,8 +5181,6 @@ fn handle_notifications_refreshed(app: &mut App, snapshot: notifications::Snapsh
     unread,
     who,
   } = snapshot;
-  // Newer rows arrived if the live list's newest id differs from what History currently shows on top.
-  // Reset History to the first page so the new rows appear at the top without corrupting the cursor.
   let newest_changed = list.first().map(store::model::Notification::id)
     != app.notifications_history.first().map(store::model::Notification::id);
   app.notifications = list;
@@ -5504,17 +5189,12 @@ fn handle_notifications_refreshed(app: &mut App, snapshot: notifications::Snapsh
   for notification in surfaced {
     enqueue_toast(app, notification);
   }
-  // Only reset once History has actually materialized a page: while the first page is still in flight
-  // (accumulator empty) that load already targets the newest page, so resetting would just discard it.
   if app.notifications_panel_open && newest_changed && !app.notifications_history.is_empty() {
     return reset_notifications_history(app);
   }
   Task::none()
 }
 
-/// Clears the History accumulator and re-requests the newest keyset page, bumping the epoch so any
-/// in-flight older page is dropped on arrival. Returns the first-page fetch task (or none without a
-/// runtime). Driven on panel open and whenever a refresh surfaces a newer head row.
 fn reset_notifications_history(app: &mut App) -> Task<Message> {
   app.notifications_history.clear();
   app.notifications_history_cursor = None;
@@ -5525,8 +5205,6 @@ fn reset_notifications_history(app: &mut App) -> Task<Message> {
   load_more_notifications_history(app)
 }
 
-/// Fetches the next keyset History page past the current cursor and resolves "who" names for it. Guards
-/// against a second concurrent fetch and against fetching once the last page has been seen.
 fn load_more_notifications_history(app: &mut App) -> Task<Message> {
   if app.notifications_history_loading || !app.notifications_history_has_more {
     return Task::none();
@@ -5561,8 +5239,6 @@ fn handle_notifications_history_page_loaded(
   rows: Vec<store::model::Notification>,
   who: std::collections::HashMap<store::model::NotificationOwner, String>,
 ) -> Task<Message> {
-  // Drop a page captured before a reset (newer rows arrived / panel reopened): its rows belong to a
-  // stale cursor walk and would duplicate or interleave against the fresh accumulator.
   if epoch != app.notifications_history_epoch {
     return Task::none();
   }
@@ -5571,8 +5247,6 @@ fn handle_notifications_history_page_loaded(
   if let Some(cursor) = store::model::HistoryCursor::from_page(&rows) {
     app.notifications_history_cursor = Some(cursor);
   }
-  // Merge freshly-resolved "who" names so the paged rows render their author line; the live refresh map
-  // already holds names for the New-tab rows.
   app.notification_names.extend(who);
   app.notifications_history.extend(rows);
   Task::none()
@@ -5598,7 +5272,6 @@ fn enqueue_toast(app: &mut App, notification: store::model::Notification) {
     remaining: TOAST_MS,
     who,
   });
-  // Cap visible toasts at the newest few; the dropped ones still live in the center.
   let overflow = app.toasts.len().saturating_sub(TOAST_CAP);
   if overflow > 0 {
     app.toasts.drain(0..overflow);
@@ -5608,8 +5281,6 @@ fn enqueue_toast(app: &mut App, notification: store::model::Notification) {
 fn handle_toggle_notifications_panel(app: &mut App) -> Task<Message> {
   app.notifications_panel_open = !app.notifications_panel_open;
   if app.notifications_panel_open {
-    // Opening reads the latest surfaced rows without re-scanning sources, and never auto-marks read,
-    // and loads the first keyset page of History so it is ready when the user switches tabs.
     Task::batch([refresh_notifications(app, false), reset_notifications_history(app)])
   } else {
     Task::none()
@@ -5618,8 +5289,6 @@ fn handle_toggle_notifications_panel(app: &mut App) -> Task<Message> {
 
 fn handle_close_notifications_panel(app: &mut App) -> Task<Message> {
   app.notifications_panel_open = false;
-  // Drop the History page accumulator so a reopen starts from the newest page rather than re-showing a
-  // deep, possibly stale scroll position. The epoch bump invalidates any page still in flight.
   app.notifications_history.clear();
   app.notifications_history_cursor = None;
   app.notifications_history_has_more = false;
@@ -5696,7 +5365,6 @@ fn navigate_to_notification_target(app: &mut App, target: &store::model::Notific
   match target.destination {
     NotificationDestination::Assets => navigate_to_assets(app),
     NotificationDestination::Calendar => navigate_to_calendar(app, target.character),
-    // No corp-detail nav destination exists, so a character-less killmail lands on the roster.
     NotificationDestination::CharacterDetail => match target.character {
       Some(id) => navigate_to_character_detail(app, id),
       None => handle_nav(app, rail::Destination::Characters),
@@ -5723,8 +5391,6 @@ fn handle_toast_tick(app: &mut App) -> Task<Message> {
 }
 
 fn handle_toast_dismissed(app: &mut App, id: i64) -> Task<Message> {
-  // The X dismisses the toast and marks the row read: it stays visible in the center as read history
-  // and, because mark_read stamps read_at durably, never re-toasts on a later detector pass.
   app.toasts.retain(|toast| toast.notification.id() != id);
   mark_notification_read(app, id)
 }
@@ -5740,8 +5406,6 @@ fn holding_lease(app: &App) -> bool {
   app.sync_session.is_some() && app.read_only.is_none()
 }
 
-/// Symmetric inverse of `holding_lease`: exactly one of the two is true whenever a sync session is
-/// active. The `sync_session` guard ensures this returns `false` outside of networked-share mode.
 fn parked(app: &App) -> bool {
   app.sync_session.is_some() && app.read_only.is_some()
 }
@@ -5856,12 +5520,6 @@ fn push_task(session: store::sync_session::SyncSession) -> Task<Message> {
   })
 }
 
-/// Polls for lease re-acquisition on each `REACQUIRE_INTERVAL` tick while this instance is parked.
-/// This automatic path stays stale-aware: a `HeldBy` response (foreign holder still fresh) maps to
-/// `TakeOverOutcome::Failed` — re-parked in the resolver — so only the explicit user-confirmed
-/// take-over ever overrides lease freshness. The take-over runs through [`run_take_over`], which
-/// closes the working-copy pools before the swap and reopens them after, so the runtime is dropped
-/// here to release its pool clones first.
 fn handle_reacquire_lease(app: &mut App) -> Task<Message> {
   if !parked(app) {
     return Task::none();
@@ -5889,9 +5547,6 @@ fn handle_cancel_take_over(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-/// Performs the explicit, user-confirmed forceful take-over. Unlike the stale-aware automatic
-/// re-acquire, this displaces even a still-live foreign holder — the confirmation gate is the only
-/// path that overrides lease freshness — so the share is clobbered unconditionally on success.
 fn handle_confirm_take_over(app: &mut App) -> Task<Message> {
   app.confirm_force_takeover = false;
   if app.read_only.is_none() {
@@ -5900,9 +5555,6 @@ fn handle_confirm_take_over(app: &mut App) -> Task<Message> {
   start_take_over(app, true)
 }
 
-/// Opens the data-loss confirmation gate rather than claiming immediately. The forceful claim is
-/// deferred to [`handle_confirm_take_over`] so the user first sees the holder's last-active age and
-/// the clobber warning; a still-live writer is never displaced on a single accidental click.
 fn handle_take_over(app: &mut App) -> Task<Message> {
   if app.read_only.is_none() || app.sync_session.is_none() {
     return Task::none();
@@ -5911,14 +5563,6 @@ fn handle_take_over(app: &mut App) -> Task<Message> {
   Task::none()
 }
 
-/// Applies a resolved take-over by installing the pools [`run_take_over`] reopened against the
-/// working-copy file (after closing the boot-time pools and performing the swap), then rebuilding the
-/// runtime. Both outcomes install fresh pools so the app is never left with closed handles:
-///
-/// * `Claimed` — the working copy now holds the freshly pulled canonical copy; the lease is nulled so
-///   [`build_runtime_inner`] starts read-write with the real sync engine.
-/// * `Failed` — no swap happened (declined or errored); the unchanged working copy is reopened and the
-///   app stays parked read-only with the inert engine, per ADR-0024.
 fn handle_take_over_resolved(app: &mut App, outcome: TakeOverOutcome, mut ready: StoreReady) -> Task<Message> {
   app.confirm_force_takeover = false;
   match outcome {
@@ -5964,19 +5608,12 @@ fn handle_updater_state_changed(app: &mut App, state: updater::State) -> Task<Me
     app.updater_toast_dismissed = false;
     app.updater_state = state.clone();
   }
-  // While the splash is still running the preflight, the same updater states drive the splash phases
-  // (the post-boot banner/toast above is for the running app and stays unchanged). The preflight watch
-  // already maps `CheckingUpdate` resolutions, so here we mainly carry the `Updating` flow — download
-  // progress and the restart — and guarantee an `Error` never strands the splash.
   if app.splash.is_some() {
     return drive_splash_preflight(app, &state);
   }
   Task::none()
 }
 
-/// Maps a live updater state onto the splash while it is in the update preflight. `UpdateAvailable`
-/// during `CheckingUpdate` shows the prompt; `Downloading`/`ReadyToRestart` during `Updating` advance
-/// the progress and trigger the restart; any `Error` falls through to boot so the splash never hangs.
 fn drive_splash_preflight(app: &mut App, state: &updater::State) -> Task<Message> {
   let phase = match app.splash.as_ref() {
     Some(splash) => &splash.phase,
@@ -5987,8 +5624,6 @@ fn drive_splash_preflight(app: &mut App, state: &updater::State) -> Task<Message
     updater::State::UpdateAvailable {
       version,
     } if *phase == splash::Phase::CheckingUpdate => {
-      // The update view uses the design's wider 760x484 layout, so grow the splash window only when an
-      // update is actually offered; the loader keeps the compact SPLASH size.
       let resize = match app.windows.id_for(Window::Splash) {
         Some(id) => window::resize(
           id,
@@ -6081,9 +5716,6 @@ fn handle_auth(app: &mut App, msg: auth::Message) -> Task<Message> {
     None => None,
   };
   if let Some(subject) = enrolled {
-    // The session handler cleared any persisted needs-reauth flag, so re-enrolling now picks up the
-    // full granted job set instead of just the public ones; run_now makes those revived jobs due so
-    // a re-authorized entity's parked sync resumes promptly without an app restart.
     runtime.sync.enroll(subject);
     runtime.sync.run_now(subject);
     runtime.sync.discover();
@@ -6141,7 +5773,6 @@ fn handle_calendar(app: &mut App, msg: calendar::Message) -> Task<Message> {
     return update(app, Message::ReauthCharacter(id));
   }
 
-  // Opening an event is promoted to a detached native window rather than handled inline.
   if let calendar::Message::EventOpened(character_id, event_id) = msg {
     return open_calendar_event_window(app, character_id, event_id);
   }
@@ -6153,10 +5784,6 @@ fn handle_calendar(app: &mut App, msg: calendar::Message) -> Task<Message> {
   calendar::update(state, msg, &runtime.db, app.now).map(Message::Calendar)
 }
 
-/// Opens a detached native-chrome calendar-event window. The window is multi-instance: every open
-/// mints a fresh `window::Id`, so several event windows can coexist (duplicates included). The event
-/// and its owning pilot are resolved from the live calendar at open time, the per-window state is
-/// seeded synchronously, and the attendee tally loads in the background routed by id.
 fn open_calendar_event_window(app: &mut App, character_id: i64, event_id: i64) -> Task<Message> {
   let (Some(calendar), Some(runtime)) = (app.calendar.as_ref(), app.runtime.as_ref()) else {
     return Task::none();
@@ -6181,9 +5808,6 @@ fn open_calendar_event_window(app: &mut App, character_id: i64, event_id: i64) -
   ])
 }
 
-/// Routes a per-window calendar-event message to its [`EventWindow`] and applies it (attendee load,
-/// optimistic RSVP write, or write acknowledgement). An RSVP write also refreshes the main calendar so
-/// the underlying grid reflects the new response once the local mirror flips.
 fn handle_calendar_event(app: &mut App, id: window::Id, msg: calendar::EventMessage) -> Task<Message> {
   let Some(runtime) = app.runtime.as_ref() else {
     return Task::none();
@@ -6278,8 +5902,6 @@ fn handle_corporation_detail(app: &mut App, msg: corporation_detail::Message) ->
   }
 }
 
-/// Captures the modal's current search generation and stamps it onto the async result so a stale response
-/// arriving after the user has typed again is discarded by the handler rather than clobbering newer results.
 fn contact_entity_search(state: &character_detail::State, runtime: &Runtime, query: String) -> Task<Message> {
   use crate::features::roster::entity_search;
 
@@ -6350,9 +5972,6 @@ fn owned_pilot_ids(app: &App) -> Vec<i64> {
     .collect()
 }
 
-/// Which staggered interactive-DB checks are due on a given 1-second tick. Each check runs only on
-/// the ticks where `tick % cadence == offset`, so the ~7 per-second queries are spread across ticks
-/// (and the low-urgency ones stretched to multi-second cadences) instead of all firing every tick.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ClockChecks {
   calendar_attention: bool,
@@ -6383,9 +6002,6 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
   app.clock_tick = app.clock_tick.wrapping_add(1);
   drain_due_save(app, Instant::now());
 
-  // Stagger the periodic interactive-DB checks across ticks (see the `TICK_*` cadences) so the ~7
-  // queries no longer all fire on every 1s tick and starve the reader pool. `trash_purge_tick`
-  // carries its own multi-hour floor, so it stays on every tick (the gate is a cheap time compare).
   let due = ClockChecks::for_tick(app.clock_tick);
   let mut tasks: Vec<Task<Message>> = vec![trash_purge_tick(app)];
   if due.snooze_wake {
@@ -6406,8 +6022,6 @@ fn handle_clock_tick(app: &mut App) -> Task<Message> {
   if due.industry_reload {
     tasks.push(industry_clock_reload(app));
   }
-  // The standing sweep catches time-threshold events (skill / industry / extraction-cracked) that
-  // mature on the wall clock with no fresh sync; the pulse drains the flag and runs the detectors.
   if due.notifications {
     app.notifications_dirty = true;
   }
@@ -6469,21 +6083,13 @@ fn handle_nav_to(app: &mut App, destination: rail::Destination, sub_section: Opt
   let Some(id) = sub_section else {
     return nav;
   };
-  // A disabled feature lands on Characters instead; honor that fallback and skip the sub-section.
   if app.route.destination() != destination {
     return nav;
   }
   Task::batch([nav, select_sub_section(app, destination, id)])
 }
 
-// Sets the freshly-navigated feature's inner tab from a catalog sub-section id, then reuses that
-// feature's own tab-selection handler to load the tab's data. The id is applied directly to state so
-// the tab is correct even before a runtime exists; the load handler is a no-op until one does.
 fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -> Task<Message> {
-  // usage sub_section (§8.1): central dispatcher, keyed by the parameter-free
-  // `{destination}.{id}` token from the static nav-catalog id. The Telemetry
-  // settings sub-section is excluded (§7.6) so inspecting telemetry never emits
-  // a usage event. A no-op unless telemetry is built.
   if let Some(token) = sub_section_token(destination, id) {
     telemetry::record_sub_section(token);
   }
@@ -6494,17 +6100,11 @@ fn select_sub_section(app: &mut App, destination: rail::Destination, id: &str) -
     rail::Destination::Industry => select_industry_sub_section(app, id),
     rail::Destination::Settings => select_settings_sub_section(app, id),
     rail::Destination::Wallet => select_wallet_sub_section(app, id),
-    // Skills' "queue" surface is the default landing view, so nav alone shows it; "compare" is a
-    // separate window the Skills view opens via OpenCompare, so reuse that handler here.
     rail::Destination::Skills => select_skills_sub_section(app, id),
     rail::Destination::Mail => Task::none(),
   }
 }
 
-/// The stable `sub_section` usage token for a rail destination + nav-catalog id
-/// (§8.1), or `None` for excluded sub-sections that must emit no usage event
-/// (the Telemetry settings pane, §7.6). The destination token mirrors the
-/// lowercased `Route::name()` so it stays in lock-step with `view_open` tokens.
 fn sub_section_token(destination: rail::Destination, id: &str) -> Option<String> {
   // Inspecting telemetry never emits telemetry (§7.6).
   if matches!(destination, rail::Destination::Settings) && id == "telemetry" {
@@ -6514,8 +6114,6 @@ fn sub_section_token(destination: rail::Destination, id: &str) -> Option<String>
   Some(format!("{destination}.{id}"))
 }
 
-/// The stable, parameter-free token for a rail destination, lowercased to match
-/// the route tokens `view_open` emits.
 fn destination_token(destination: rail::Destination) -> &'static str {
   match destination {
     rail::Destination::Assets => "assets",
@@ -6595,8 +6193,6 @@ fn select_skills_sub_section(app: &mut App, id: &str) -> Task<Message> {
   }
 }
 
-// The catalog sub-section id of the active tab on the current route, so the flyout can highlight the
-// open tab. Destinations without inner tabs (Mail) have no active sub-section.
 fn active_sub_section(app: &App) -> Option<&'static str> {
   match app.route.destination() {
     rail::Destination::Assets => app.assets.as_ref().map(|state| state.active_tab().id()),
@@ -6617,8 +6213,6 @@ fn handle_rail_hover(app: &mut App, destination: Option<rail::Destination>) -> T
       Task::none()
     }
     None => {
-      // Defer the close so the pointer can cross into the flyout; a re-entry bumps the generation
-      // and strands this expiry.
       app.rail_hover_gen = app.rail_hover_gen.wrapping_add(1);
       let generation = app.rail_hover_gen;
       Task::perform(async move { tokio::time::sleep(RAIL_HOVER_GRACE).await }, move |()| {
@@ -6722,8 +6316,6 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
     return Task::none();
   };
 
-  // The facility picker's live ESI search and structure-pin persistence need the runtime's esi/sso/db,
-  // so they are seamed here rather than in the pure planner reducer (mirrors stockpile location search).
   let task = match msg {
     industry::Message::Planner(industry::PlannerMessage::FacilitySearchChanged {
       ref query,
@@ -6760,8 +6352,6 @@ fn handle_industry(app: &mut App, msg: industry::Message) -> Task<Message> {
     _ => industry::update(state, msg, &runtime.db, app.now).map(Message::Industry),
   };
 
-  // Hoist the static catalog the state captured on its first planner load into the session cache, so the next
-  // Industry navigation reuses it instead of rebuilding from scratch.
   if app.industry_catalog.is_none()
     && let Some(catalog) = app.industry.as_ref().and_then(industry::State::planner_catalog)
   {
@@ -6779,8 +6369,6 @@ fn handle_mail(app: &mut App, msg: mail::Message) -> Task<Message> {
   if let mail::Message::ReauthRequested(id) = msg {
     return update(app, Message::ReauthCharacter(id));
   }
-  // Compose lives in detached windows: open one for new/reply/forward/draft instead of mutating an
-  // in-place holder. Reply/forward read the open render from the main mail state.
   match msg {
     mail::Message::ComposeOpened => {
       let Some(from) = app.mail.as_ref().and_then(mail::State::default_from) else {
@@ -6906,9 +6494,6 @@ fn handle_restart_sync(app: &mut App) -> Task<Message> {
   if !app.engine_state.is_stopped() {
     return Task::none();
   }
-  // The supervisor outlives any single engine and stays parked after it gives up, so the live Handle
-  // still reaches it. Signalling restart_sync resets the circuit breaker and respawns a fresh engine
-  // over the same command/event channels — no Runtime rebuild and no re-threaded Handle.
   let Some(runtime) = app.runtime.as_ref() else {
     tracing::warn!(
       target: "pod::lifecycle",
@@ -6937,8 +6522,6 @@ fn apply_engine_lifecycle(app: &mut App, event: &sync::Event) {
         reason: Some(reason.clone()),
       };
     }
-    // A respawn (auto or manual) means the engine is live again; leave the settled-state early return
-    // behind and recompute Running/Idle from the in-flight job stats.
     sync::Event::Restarted {
       ..
     } => {
@@ -7054,9 +6637,6 @@ fn on_window_opened(app: &App, id: window::Id) -> Task<Message> {
     // Transparent custom-chrome windows need the OS drop-shadow suppressed. Each kind leaves this
     // arm when its conversion task promotes it to a native window; `Window::Splash` stays for good.
     Some(Window::Killmail | Window::Splash) => disable_shadow(id),
-    // Probe the main window's monitor once so the environment stream can report
-    // screen_size (§8.2); the result lands on Message::MainScreenSizeProbed well
-    // before the first telemetry flush.
     Some(Window::Main) => window::monitor_size(id).map(Message::MainScreenSizeProbed),
     _ => Task::none(),
   }
@@ -7123,12 +6703,8 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
     },
     splash::Message::ExpandComplete => transition_to_main(app),
     splash::Message::Retry => retry_seed(app),
-    // The preflight resolved with no update, a check error, or its timeout — fall through to boot.
     splash::Message::UpdateNotAvailable | splash::Message::UpdateFailed(_) => begin_boot(app),
-    // The user chose to skip the offered update — fall through to boot.
     splash::Message::Later => begin_boot(app),
-    // The user chose to install the update: move the splash into `Updating` and drive the updater.
-    // Download/install progress and the eventual restart land via `handle_updater_state_changed`.
     splash::Message::Update => {
       let advance = match app.splash.as_mut() {
         Some(state) => splash::update(state, splash::Message::Update).map(Message::Splash),
@@ -7144,10 +6720,6 @@ fn update_splash(app: &mut App, message: splash::Message) -> Task<Message> {
 }
 
 fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
-  // Finish: persist the assembled draft (language + features + storage) to config.toml, then restart
-  // into the normal boot path. config now exists, so `should_run_wizard` is false next launch and boot
-  // takes the splash path. The relaunch reuses the same shared restart mechanism as the language
-  // switch; persistence is split into `complete_wizard` so it can be exercised without exiting.
   if matches!(message, wizard::Message::Complete) {
     if let Some(state) = app.wizard.as_ref() {
       complete_wizard(state.settings());
@@ -7156,9 +6728,6 @@ fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
     return Task::none();
   }
 
-  // A language pick re-renders the whole wizard in that language on the next frame: the view resolves
-  // every `t!` against the active locale, so applying it here (before the next view) is what makes the
-  // rail, headers, and footer reflect the chosen language live, with no config write until Finish.
   let relocalize = matches!(message, wizard::Message::SelectLanguage(_));
   if let Some(state) = app.wizard.as_mut() {
     wizard::update(state, message);
@@ -7169,9 +6738,6 @@ fn update_wizard(app: &mut App, message: wizard::Message) -> Task<Message> {
   Task::none()
 }
 
-// Persists the wizard's assembled settings to config.toml and pre-creates the configured storage
-// directories (db / log / cache) so the relaunched boot finds them in place. Split out from the
-// restart so the persist+create outcome is testable without exiting the process.
 fn complete_wizard(settings: &config::Settings) {
   let storage = settings.storage();
   for dir in [
@@ -7312,7 +6878,6 @@ mod tests {
     }
   }
 
-  /// Feature flags with exactly `feature` enabled (all its children on) and every other group off.
   fn only(feature: config::Feature) -> config::FeatureFlags {
     let mut flags = config::FeatureFlags::default();
     for candidate in config::Feature::ALL {
@@ -7510,8 +7075,6 @@ mod tests {
     use super::*;
     use crate::services::telemetry;
 
-    /// Every route name as a `view_open` token. The same lowercased token feeds
-    /// `performance.views[].name`, so checking it once covers both.
     const ROUTES: [Route; 10] = [
       Route::Assets,
       Route::Calendar,
@@ -7525,11 +7088,6 @@ mod tests {
       Route::Wallet,
     ];
 
-    /// The privacy AC (§8.1): every usage/sub_section token is free of spaces,
-    /// `/`, `@`, and digits, and casing is pinned (lowercased). Covers the whole
-    /// emitted token universe: route `view_open` tokens, the destination
-    /// prefixes of `sub_section` tokens, and every nav-catalog sub-section id
-    /// (the `{destination}.{id}` suffix).
     #[test]
     fn every_usage_token_is_free_of_spaces_slash_at_and_digits() {
       for route in ROUTES {
@@ -7548,12 +7106,10 @@ mod tests {
           "destination token `{token}` violates the shape invariant"
         );
       }
-      // Settings is reachable as a sub_section destination but is not reorderable.
       assert!(telemetry::is_well_formed_token(destination_token(
         rail::Destination::Settings
       )));
 
-      // Every catalog sub-section id, assembled into the real `{dest}.{id}` token.
       let destinations = [
         rail::Destination::Assets,
         rail::Destination::Calendar,
@@ -7579,12 +7135,9 @@ mod tests {
       }
     }
 
-    /// §7.6: inspecting the Telemetry settings sub-section emits NO usage event,
-    /// so its token is excluded at the call site.
     #[test]
     fn the_telemetry_sub_section_is_excluded_from_usage() {
       assert_eq!(sub_section_token(rail::Destination::Settings, "telemetry"), None);
-      // A neighbouring settings sub-section is still captured.
       assert_eq!(
         sub_section_token(rail::Destination::Settings, "features"),
         Some("settings.features".to_owned())
@@ -7599,9 +7152,6 @@ mod tests {
     fn it_forces_every_open_data_view_dirty() {
       let mut app = featured_app();
 
-      // No runtime, so the data-view drains short-circuit before touching the dirty flag, leaving the
-      // forced-dirty marks set for inspection (the roster drain is the pre-existing path and is not
-      // asserted here because it flips its own flag before bailing on the missing runtime).
       let _task = handle_mcp_data_changed(&mut app);
 
       assert!(app.assets.as_ref().unwrap().is_dirty(), "open assets view reloads");
@@ -7618,8 +7168,6 @@ mod tests {
 
     #[test]
     fn init_telemetry_stays_a_no_op_without_a_baked_endpoint() {
-      // Tests carry no baked ingest endpoint, so `Endpoint::from_env` is `None` and the collector
-      // stays a structural no-op; the function still returns cleanly down its dev-build branch.
       let settings = config::Settings::default();
 
       assert!(
@@ -7630,8 +7178,6 @@ mod tests {
 
     #[test]
     fn subscribe_updater_is_a_no_op_without_a_handle() {
-      // No updater handle means nothing is published into the global receiver slot; the call must
-      // simply return without touching the lock's contents.
       subscribe_updater(None);
     }
   }
@@ -7997,8 +7543,6 @@ mod tests {
 
     use super::*;
 
-    /// Collects the `message` field of every captured event into a shared buffer so a test can
-    /// assert what was logged through tracing.
     #[derive(Clone, Default)]
     struct CaptureLayer {
       messages: Arc<Mutex<Vec<String>>>,
@@ -8024,10 +7568,6 @@ mod tests {
       }
     }
 
-    // Routes the events emitted by `emit` through the real file filter for `log_level` and reports
-    // whether any survived. Mirrors the live wiring: the file layer that ships to disk wraps exactly
-    // `file_filter(log_level)`. The `tracing` macros bake their target into a static callsite, so the
-    // caller passes a closure that emits at a literal target rather than a runtime `&str`.
     fn passes_file_filter(log_level: config::LogLevel, emit: impl FnOnce()) -> bool {
       let layer = CaptureLayer::default();
       let messages = layer.messages.clone();
@@ -8055,8 +7595,6 @@ mod tests {
 
     #[test]
     fn it_hides_the_demoted_http_site_until_verbose() {
-      // The chronically noisy http per-request site was demoted to TRACE so it only surfaces at
-      // Verbose; it logs under the dedicated `pod::http` target.
       let emit = || tracing::trace!(target: "pod::http", "request completed");
 
       assert!(
@@ -8075,8 +7613,6 @@ mod tests {
 
     #[test]
     fn it_hides_the_demoted_resolve_site_until_verbose() {
-      // The chronically noisy resolve cache-hit site was demoted to TRACE so it only surfaces at
-      // Verbose; its target is the module path it logs from.
       let emit = || tracing::trace!(target: "pod::sync::jobs::resolve", "resolved item type from db");
 
       assert!(
@@ -8095,8 +7631,6 @@ mod tests {
 
     #[test]
     fn it_pins_sqlx_query_logging_to_warn_or_higher() {
-      // Build the real file filter and route events through it so a regression that loosens
-      // `sqlx::query` to DEBUG/TRACE fails this test instead of silently flooding the field log.
       let captured = |level: tracing::Level| -> bool {
         let layer = CaptureLayer::default();
         let messages = layer.messages.clone();
@@ -8131,13 +7665,10 @@ mod tests {
       let layer = CaptureLayer::default();
       let messages = layer.messages.clone();
 
-      // Install a hook that drives the same `log_panic` path the production hook uses, scoped to a
-      // capturing subscriber, then restore the previous hook so the test harness is unaffected.
       let previous = std::panic::take_hook();
       std::panic::set_hook(Box::new(log_panic));
 
       tracing::subscriber::with_default(registry().with(layer), || {
-        // A panic raised from a sync-style closure, caught so it does not abort the test.
         let _ = std::panic::catch_unwind(|| {
           fn run_sync_job() {
             panic!("simulated sync engine crash");
@@ -8649,13 +8180,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_card_reauth_after_toggling_requests_every_enabled_scope_through_the_real_dispatch() {
-      // Full repro of the user flow with no runtime, so the auth Start is deferred into
-      // `pending_auth` and we can read the exact feature set it carries.
       let db = crate::store::open_test().await.unwrap();
       let mut app = test_app();
       app.settings = Some(settings::State::new(config::Settings::default(), db));
 
-      // Disable then re-enable Mail and Skills through the real settings handler.
       for feature in [config::Feature::Mail, config::Feature::SkillMonitoring] {
         for value in [false, true] {
           let _ = handle_settings(
@@ -8665,7 +8193,6 @@ mod tests {
         }
       }
 
-      // Drive the card / context-menu re-auth message through the top-level dispatch.
       let _ = update(&mut app, Message::Roster(roster::Message::ReauthCharacterRequested(7)));
 
       let Some(auth::Message::Start(flags)) = app.pending_auth.clone() else {
@@ -8905,8 +8432,6 @@ mod tests {
 
     #[test]
     fn a_reauth_from_a_403_state_requests_the_full_enabled_feature_scope_set() {
-      // No runtime, so the auth Start is deferred and we can inspect its feature set without
-      // opening a browser. With Mail and Skills both enabled, a single re-auth must request both.
       let mut app = test_app();
 
       let _ = handle_reauth_character(&mut app, 7);
@@ -9118,8 +8643,6 @@ mod tests {
       assert!(result.is_err(), "a missing live database surfaces an error");
     }
 
-    /// Builds an in-memory `.zip` data archive carrying the given database bytes, config text, and Pod
-    /// version, reusing the production `read_archive` format so the import path is exercised end to end.
     fn import_archive(db: &[u8], config: &str, version: &str) -> Vec<u8> {
       use std::io::{Cursor, Write};
 
@@ -9156,7 +8679,6 @@ mod tests {
 
     #[tokio::test]
     async fn import_data_archive_restores_the_database_and_persists_the_merged_config() {
-      // Keep config::save off the real user config by pointing XDG_CONFIG_HOME at a tempdir.
       let config_home = tempfile::tempdir().unwrap();
       // SAFETY: tests run single-threaded enough here; only this test touches XDG_CONFIG_HOME.
       unsafe {
@@ -9359,7 +8881,6 @@ mod tests {
         "the runtime color engine reflects the high-contrast toggle"
       );
 
-      // The engine flag is process-global; leave it as it was found for any sibling tests.
       color::set_high_contrast(false);
     }
 
@@ -9415,7 +8936,6 @@ mod tests {
       let networked = *state.settings().storage().network();
       app.runtime = Some(runtime);
 
-      // Flipping the sync toggle stages a storage migration request the handler must drain.
       let _ = settings::update(
         &mut state,
         settings::Message::Storage(settings::storage_tab::Message::SyncToggled(!networked)),
@@ -9444,7 +8964,6 @@ mod tests {
       app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
       app.runtime = Some(runtime);
 
-      // A player-owned structure (id past the NPC-station range) is pinned, not just persisted.
       let facility = crate::ui::components::facility_combobox::FacilityRef {
         cost_index: Some(0.05),
         id: 1_030_000_000_001,
@@ -9642,8 +9161,6 @@ mod tests {
       app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
       app.runtime = Some(runtime);
 
-      // Picking an NPC station as the Manufacturing default persists it; the planner reads the runtime
-      // copy on open, so it must mirror the change immediately (not only after a restart).
       let facility = crate::ui::components::facility_combobox::FacilityRef {
         cost_index: Some(0.05),
         id: 60_003_760,
@@ -10194,9 +9711,6 @@ mod tests {
 
     #[tokio::test]
     async fn re_enabling_a_feature_restores_its_scopes_to_the_live_reauth_set() {
-      // Reproduces the disable -> re-enable -> re-auth flow: a toggle must reach the running
-      // runtime so that a later re-auth (which reads the live enabled set) requests the restored
-      // feature's scopes, even with the settings screen closed.
       let runtime = test_runtime().await;
       let mut app = test_app();
       app.settings = Some(settings::State::new(runtime.settings.clone(), runtime.db.clone()));
@@ -10215,7 +9729,6 @@ mod tests {
       );
       toggle(&mut app, true);
 
-      // Close the settings screen so the enabled set resolves from the running runtime, not the panel.
       app.settings = None;
       let flags = feature_flags(&app);
 
@@ -10449,7 +9962,6 @@ mod tests {
 
     #[test]
     fn it_writes_a_config_with_the_chosen_language_and_storage_then_clears_should_run_wizard() {
-      // Keep config::save off the real user config by pointing XDG_CONFIG_HOME at a tempdir.
       let config_home = tempfile::tempdir().unwrap();
       // SAFETY: only this test touches XDG_CONFIG_HOME within its body.
       unsafe {
@@ -10905,17 +10417,12 @@ mod tests {
       infra::http_cache_upsert(&pools.interactive, &HttpCacheEntry::new(b"x".to_vec(), 0, url))
         .await
         .unwrap();
-      // Fold the WAL into the main .db so the published copy is self-contained.
       sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .execute(pools.interactive.writer())
         .await
         .unwrap();
     }
 
-    /// Closes the working-copy pools, claims, and reopens in the exact order [`run_take_over`] does in
-    /// production (minus the iced `Task` wrapper). The close-before-swap ordering is what lets the
-    /// `publish_database` overwrite succeed on Windows, whose mandatory file locking would otherwise
-    /// reject the in-place replace of the still-open `.db` with `PermissionDenied`.
     async fn close_then_take_over(
       ready: StoreReady,
       session: &store::sync_session::SyncSession,
@@ -10947,8 +10454,6 @@ mod tests {
       write_generation(&marker, 4).unwrap();
       let ready = ready_for(&session).await;
 
-      // Mirror production: the pools are closed *before* the swap so no OS handle straddles the
-      // `publish_database` overwrite, then reopened against the pulled file.
       let (outcome, reopened) = close_then_take_over(ready, &session, false).await;
 
       assert_eq!(outcome, TakeOverOutcome::Claimed);
@@ -10980,7 +10485,6 @@ mod tests {
       seed(&canonical, "https://esi.example/pulled").await;
       write_generation(&sidecar, 9).unwrap();
       write_generation(&marker, 4).unwrap();
-      // A still-fresh foreign holder makes the stale-aware claim decline, so no swap happens.
       let share = dir.path().join("share");
       store::lease::LeaseManager::new("machine-holder".to_owned(), "studio-mac".to_owned(), 99, 0)
         .heartbeat(&share, Utc::now())
@@ -11306,7 +10810,6 @@ mod tests {
       );
       let _ = handle_calendar_event(&mut app, first, calendar::EventMessage::RsvpWritten);
 
-      // The second window is untouched and still titled by its own subject.
       assert_eq!(window_title(&app, second), "Pod \u{2014} Op Beta");
     }
 
@@ -11855,7 +11358,6 @@ mod tests {
       let _ = open_stockpile_import_window(&mut app);
       let _ = open_stockpile_import_window(&mut app);
 
-      // Single-instance: the second open closes the first, leaving exactly one registered.
       assert_eq!(app.windows.ids_for(Window::StockpileImport).count(), 1);
     }
 
@@ -11908,8 +11410,6 @@ mod tests {
       app.runtime = Some(test_runtime().await);
       app.windows.register(window::Id::unique(), Window::Main);
       let id = open(&mut app);
-      // Resolve a paste so the panel holds a match, then confirm it. (The resolver itself runs against
-      // ESI, so the panel is seeded directly via the resolved message the resolver would emit.)
       let _ = handle_stockpile_import(
         &mut app,
         id,
@@ -11918,7 +11418,6 @@ mod tests {
 
       let _ = handle_stockpile_import(&mut app, id, assets::Message::StockpileImportConfirmed);
 
-      // The import window is gone and a prefilled editor window took its place.
       assert!(app.stockpile_imports.get(id).is_none());
       assert_eq!(app.windows.ids_for(Window::StockpileEditor).count(), 1);
     }
@@ -12375,13 +11874,11 @@ mod tests {
       app.roster = Some(roster::State::new());
       let start = Instant::now();
 
-      // First drain in the burst reloads immediately and arms the trailing-debounce floor.
       app.roster_dirty = true;
       let _ = drain_roster_dirty_at(&mut app, start);
       assert!(!app.roster_dirty, "the first dirty pulse reloads and clears the flag");
       assert!(app.next_roster_reload.is_some(), "the reload arms a debounce floor");
 
-      // A later Finished event inside the window re-marks the roster, but a pulse must not reload yet.
       app.roster_dirty = true;
       let _ = drain_roster_dirty_at(&mut app, start + Duration::from_millis(450));
       assert!(
@@ -12409,7 +11906,6 @@ mod tests {
 
     #[test]
     fn it_staggers_the_clock_checks_so_they_do_not_all_fire_on_one_tick() {
-      // No single tick should carry every staggered check; the whole point is to spread the load.
       for tick in 0..30u64 {
         let due = ClockChecks::for_tick(tick);
         let firing = [
@@ -12432,8 +11928,6 @@ mod tests {
 
     #[test]
     fn it_keeps_user_facing_checks_fresh_within_their_cadence() {
-      // Snooze, mail, and calendar freshness must still fire at least once across any short window so
-      // there is no behavioral regression in wake/unread/attention promptness.
       let window: Vec<ClockChecks> = (0..6).map(ClockChecks::for_tick).collect();
       assert!(
         window.iter().any(|c| c.snooze_wake),
@@ -12455,7 +11949,6 @@ mod tests {
         window.iter().any(|c| c.calendar_reload),
         "calendar reload still fires regularly"
       );
-      // Industry jobs are long-lived, so its reload is the rarest but must still recur.
       let long_window: Vec<ClockChecks> = (0..10).map(ClockChecks::for_tick).collect();
       assert!(
         long_window.iter().any(|c| c.industry_reload),
@@ -13110,8 +12603,6 @@ mod tests {
         .find(|entry| entry.label == "Compare")
         .expect("a Compare result");
 
-      // The Compare surface is a separate window, so the palette entry must carry the Skills
-      // "compare" sub-section that select_sub_section turns into skills::Message::OpenCompare.
       assert_eq!(
         compare.action,
         command_palette::Action::NavTo(
@@ -13125,8 +12616,6 @@ mod tests {
     fn it_routes_the_skills_compare_sub_section_through_open_compare() {
       let mut app = featured_app();
 
-      // With no synced pilots there are no seed ids, so OpenCompare's guard leaves the window
-      // closed — but reaching that guard (rather than the old Skills no-op) is the wiring under test.
       let _ = handle_nav_to(&mut app, rail::Destination::Skills, Some("compare"));
 
       assert_eq!(app.route.destination(), rail::Destination::Skills);
@@ -13176,7 +12665,6 @@ mod tests {
         .position(|e| e.action == command_palette::Action::Command(command_palette::Command::CreateStockpile))
         .expect("a Create stockpile command result");
 
-      // Without a runtime the open helper no-ops, but activating the palette entry must still close it.
       let _ = update(&mut app, Message::Palette(PaletteMessage::Activate(index)));
 
       assert!(app.palette.is_none(), "activating a window command closes the palette");
@@ -13186,7 +12674,6 @@ mod tests {
     fn it_dispatches_the_window_commands_without_a_runtime() {
       let mut app = test_app();
 
-      // The open helpers all early-return without a runtime; dispatching must not panic.
       let _ = palette_command(&mut app, command_palette::Command::ComposeMail);
       let _ = palette_command(&mut app, command_palette::Command::CreateStockpile);
       let _ = palette_command(&mut app, command_palette::Command::ManageSkillPlans);
@@ -13514,13 +13001,11 @@ mod tests {
       });
       app.editor = Some((window::Id::unique(), skill_plan_editor::State::new(1)));
 
-      // Holding the lease arms the heartbeat, periodic-pull, and periodic-push timers.
       let (_dir, session) = temp_sync_session();
       app.sync_session = Some(session);
       app.read_only = None;
       let _ = subscription(&app);
 
-      // A parked (read-only) session arms the re-acquire timer instead.
       app.read_only = Some(HolderInfo {
         hostname: "studio-mac".to_owned(),
         last_active: Utc::now(),
@@ -13565,21 +13050,17 @@ mod tests {
       let mut app = ready_app();
       app.runtime = Some(test_runtime().await);
 
-      // CharacterChanged navigates, selects the pilot, and batches an update with a reload.
       let _ = handle_character_detail(&mut app, character_detail::Message::CharacterChanged(7));
       assert_eq!(app.route, Route::CharacterDetail(7));
       assert_eq!(app.selected_character, Some(7));
 
-      // ReauthRequested reroutes to the app-level reauth flow.
       let _ = handle_character_detail(&mut app, character_detail::Message::ReauthRequested(7));
 
-      // ContactEntityInput batches the modal update with a debounced entity search task.
       let _ = handle_character_detail(
         &mut app,
         character_detail::Message::ContactEntityInput("jita".to_owned()),
       );
 
-      // Any other message falls through to the plain feature update.
       let _ = handle_character_detail(&mut app, character_detail::Message::PickerToggled);
     }
 
@@ -13755,8 +13236,6 @@ mod tests {
 
     #[test]
     fn it_empties_the_new_tab_but_retains_history_after_mark_all_read() {
-      // Marking all read flips every row's read_at; the New tab filters on read_at.is_none() while
-      // History is unconditional, so the same row set empties New but stays in History.
       let marked: Vec<store::model::Notification> = vec![unread_notification(1), unread_notification(2)]
         .into_iter()
         .map(|notification| store::model::Notification {
@@ -13778,9 +13257,6 @@ mod tests {
 
     #[test]
     fn it_drops_read_rows_from_the_new_tab_after_mark_all_read() {
-      // The real handler must stamp read_at on the cached rows so the New tab (read_at.is_none())
-      // empties on the next render — not just update the DB. This is the regression the design fix
-      // targets: previously the badge zeroed but the rows lingered in New.
       let mut app = ready_app();
       app.notifications = vec![unread_notification(1), unread_notification(2)];
       app.notifications_unread = 2;
@@ -13801,8 +13277,6 @@ mod tests {
 
     #[test]
     fn it_shows_a_count_only_footer_without_a_clear_all_control() {
-      // notifications.jsx has no "Clear all" button: the footer is a single count line, "N unread"
-      // on New and "N total" on History, and it hides when the active tab has nothing to show.
       assert_eq!(
         notifications_footer_label(NotificationTab::New, 3, 9),
         Some("3 unread".to_owned()),
@@ -13833,14 +13307,12 @@ mod tests {
         .notification_names
         .insert(store::model::NotificationOwner::Character(1), "Pilot 1".to_owned());
 
-      // New is empty (the only row is read) -> "all caught up". History renders the paged accumulator.
       app.notifications_tab = NotificationTab::New;
       let _ = notifications_panel(&app, config::NavLocation::Left);
       app.notifications_history = vec![read_notification(1)];
       app.notifications_tab = NotificationTab::History;
       let _ = notifications_panel(&app, config::NavLocation::Left);
 
-      // History empty state when nothing is paged in.
       app.notifications.clear();
       app.notifications_history.clear();
       let _ = notifications_panel(&app, config::NavLocation::Left);
@@ -13854,7 +13326,6 @@ mod tests {
 
     use super::*;
 
-    // A History row with a controllable id and created_at, so cursor and ordering assertions are exact.
     fn history_notification(id: i64, created_at: &str) -> store::model::Notification {
       store::model::Notification {
         created_at: created_at.to_owned(),
@@ -13862,7 +13333,6 @@ mod tests {
       }
     }
 
-    // A full keyset page, so `has_more` flips true exactly when the fetch fills the page.
     fn full_page() -> Vec<store::model::Notification> {
       (0..store::repo::notifications::HISTORY_PAGE_SIZE)
         .map(|i| history_notification(i, &format!("2026-06-01T00:00:{:02}+00:00", i % 60)))
@@ -13946,7 +13416,6 @@ mod tests {
       app.notifications_history_loading = true;
       app.notifications_history_has_more = true;
 
-      // A page tagged with the pre-reset epoch must not append to the freshly-reset accumulator.
       let page = vec![history_notification(9, "2026-06-09T00:00:00+00:00")];
       let _ = handle_notifications_history_page_loaded(&mut app, 4, page, HashMap::new());
 
@@ -13968,7 +13437,6 @@ mod tests {
         .notifications_history
         .push(history_notification(1, "2026-06-01T00:00:00+00:00"));
 
-      // A shallow scroll records the offset but requests no page.
       let _ = handle_notifications_history_scrolled(&mut app, 120.0, 0.10);
       assert_eq!(app.notifications_history_scroll, 120.0, "the offset is tracked");
       assert!(!app.notifications_history_loading, "a shallow scroll triggers no fetch");
@@ -13980,11 +13448,9 @@ mod tests {
       app.notifications_history_has_more = true;
       app.notifications_history_loading = true;
 
-      // A deep scroll while loading must not kick off a second concurrent fetch.
       let task = load_more_notifications_history(&mut app);
 
       assert!(app.notifications_history_loading);
-      // The guard short-circuits to an empty task.
       let _ = task;
     }
 
@@ -14035,7 +13501,6 @@ mod tests {
       app.notifications_history = vec![history_notification(1, "2026-06-01T00:00:00+00:00")];
       let before = app.notifications_history_epoch;
 
-      // A refresh whose newest row (id 2) differs from History's head (id 1) resets History.
       let snapshot = crate::features::shell::notifications::Snapshot {
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
@@ -14062,7 +13527,6 @@ mod tests {
       app.notifications_history = vec![history_notification(2, "2026-06-02T00:00:00+00:00")];
       let before = app.notifications_history_epoch;
 
-      // The refresh's newest row matches History's head, so no reset is needed.
       let snapshot = crate::features::shell::notifications::Snapshot {
         list: vec![history_notification(2, "2026-06-02T00:00:00+00:00")],
         surfaced: Vec::new(),
@@ -14168,7 +13632,6 @@ mod tests {
       let _ = dispatch_window_lifecycle(&mut app, Message::UpdaterDismissToast);
       let _ = dispatch_window_lifecycle(&mut app, Message::WindowOpened(window::Id::unique()));
 
-      // An unmatched message falls through to a no-op task.
       let _ = dispatch_window_lifecycle(&mut app, Message::ClockTick);
     }
 
@@ -14186,8 +13649,6 @@ mod tests {
         Message::Window(id, window::Event::Resized(Size::new(640.0, 480.0))),
       );
 
-      // Quitting with no windows registered tears the app down; the returned task is dropped here
-      // (never run by the iced runtime), so no real exit happens.
       let _ = dispatch_window_lifecycle(&mut app, Message::Quit);
     }
   }
@@ -14405,7 +13866,6 @@ mod tests {
 
       let _ = handle_compose(&mut app, id, mail::Message::DraftLoaded(Box::new(None)));
 
-      // An unknown id falls through to a no-op.
       let _ = handle_compose(&mut app, window::Id::unique(), mail::Message::PickerToggled);
     }
 
@@ -14717,7 +14177,6 @@ mod tests {
       let _ = handle_assets(&mut app, assets::Message::PaneSettled("assets.left", 0.4));
       assert_eq!(app.ui_state.panes.get("assets.left"), Some(&0.4));
 
-      // Without a runtime, the stockpile-window openers short-circuit to a no-op.
       let _ = handle_assets(&mut app, assets::Message::StockpileNew);
       let _ = handle_assets(&mut app, assets::Message::StockpileEditStarted(1));
       let _ = handle_assets(&mut app, assets::Message::StockpileImportOpened);
@@ -14752,7 +14211,6 @@ mod tests {
       );
       assert_eq!(app.ui_state.lists.get("order"), Some(&vec!["a".to_owned()]));
 
-      // ContractSelected with no matching source is a no-op; ReauthRequested reroutes through update.
       let _ = handle_wallet(&mut app, wallet::Message::ContractSelected(404));
       let _ = handle_wallet(&mut app, wallet::Message::ReauthRequested(1));
     }

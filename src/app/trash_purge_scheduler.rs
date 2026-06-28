@@ -1,7 +1,3 @@
-//! Auto-purges mail that has sat in Trash for 30+ days by reusing the manual
-//! permanent-delete path (`mail.delete` outbox + optimistic local purge) — no
-//! separate ESI call is made.
-
 use chrono::{DateTime, Duration, Utc};
 
 use crate::store::{

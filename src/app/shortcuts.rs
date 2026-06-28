@@ -49,9 +49,6 @@ pub enum PaletteKey {
 }
 
 impl PaletteKey {
-  /// Maps a key event to a palette action. `open` is whether the palette is already up and
-  /// `text_focused` whether a page text input holds focus; the `/` open key is suppressed while a text
-  /// input is focused so typing a slash never pops the palette.
   pub fn for_event(event: &iced::Event, open: bool, text_focused: bool) -> Option<PaletteKey> {
     let iced::Event::Keyboard(keyboard::Event::KeyPressed {
       key, ..

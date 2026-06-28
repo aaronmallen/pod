@@ -9,7 +9,6 @@ use crate::{
 pub struct ItemValue {
   pub destroyed: f64,
   pub dropped: f64,
-  /// Full stack value for this line (destroyed + dropped), not destroyed-only.
   pub value_isk: f64,
 }
 

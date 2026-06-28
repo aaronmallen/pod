@@ -4,7 +4,6 @@ use iced::window;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Window {
-  // Registered by the foundation task; first constructed by the Calendar-detail conversion task.
   CalendarEvent,
   Compare,
   Contract,
@@ -16,7 +15,6 @@ pub enum Window {
   SkillPlanEditor,
   Splash,
   StockpileEditor,
-  // Registered by the foundation task; first constructed by the Stockpile-Import conversion task.
   StockpileImport,
 }
 
@@ -39,9 +37,6 @@ impl Window {
   }
 }
 
-// The id-keyed per-window state map ships ahead of its first instantiation: the Killmail pilot and the
-// Contract/Stockpile/Mail child windows, none of which exist yet, each hold one `WindowStates<S>` so
-// duplicates of a kind coexist.
 #[derive(Debug)]
 pub struct WindowStates<S> {
   states: HashMap<window::Id, S>,

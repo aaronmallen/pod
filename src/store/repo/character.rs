@@ -1221,7 +1221,6 @@ pub async fn contacts(db: &Database, character_id: i64) -> Result<CharacterConta
   Ok(CharacterContacts::resolved(&images::default_store(), contacts, labels))
 }
 
-/// The keyset-paginated contact labels: small per-character lookup set, fetched once and shared across pages.
 pub async fn contact_labels(db: &Database, character_id: i64) -> Result<Vec<CharacterContactLabel>, Error> {
   let labels = sqlx::query_as::<_, CharacterContactLabel>(
     "SELECT character_id, label_id, label_name FROM character_contact_labels \
@@ -1233,9 +1232,6 @@ pub async fn contact_labels(db: &Database, character_id: i64) -> Result<Vec<Char
   Ok(labels)
 }
 
-/// Fetches one keyset page of contacts ordered by `sort`/`dir`, optionally filtered to a single `contact_type`
-/// (the address-book facet), starting after `cursor`. The keyset compares `(sort column, contact_id)` so the page
-/// is stable across loads; the caller derives the next cursor from the last returned row.
 // Filter, cursor, and limit parameters of a keyset-paginated query; bundling them would only move the fields.
 #[allow(clippy::too_many_arguments)]
 pub async fn contacts_page(
@@ -1465,8 +1461,6 @@ pub async fn killmails_needing_detail_backfill_count(db: &Database) -> Result<i6
   Ok(count)
 }
 
-/// Rows in either child table count as backfilled, so an item-less structure kill stops being
-/// selected once its attacker rows land rather than being re-fetched forever.
 pub async fn killmails_needing_detail_backfill(db: &Database, limit: i64) -> Result<Vec<(i64, i64, String)>, Error> {
   let rows = sqlx::query_as::<_, (i64, i64, String)>(
     "SELECT character_id, killmail_id, kill_hash FROM character_killmails k \
@@ -2305,7 +2299,6 @@ mod tests {
       .await
       .unwrap();
 
-      // Two share a timestamp so the killmail_id tiebreaker is exercised.
       upsert_killmail(db, &kill(100, "2024-03-01T00:00:00Z")).await.unwrap();
       upsert_killmail(db, &kill(101, "2024-02-01T00:00:00Z")).await.unwrap();
       upsert_killmail(db, &kill(102, "2024-02-01T00:00:00Z")).await.unwrap();
@@ -2500,14 +2493,12 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_roster(&db).await;
 
-      // The scout's single active-training entry yields a queued count of 1.
       let scout = search(&db, &parse("tag:pvp"), NOW).await.unwrap();
       assert_eq!(
         scout[0].training.as_ref().map(|training| training.queued_count),
         Some(1)
       );
 
-      // A paused multi-skill queue: undated head plus two trailing entries → count 3.
       let paused: Vec<CharacterSkillqueue> = (0..3)
         .map(|position| CharacterSkillqueue {
           character_id: COBALT_RECRUIT,
@@ -2533,7 +2524,6 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_roster(&db).await;
 
-      // RED_BARON has no skillqueue rows; the head join misses, so training is absent.
       let rows = search(&db, &parse("name:baron"), NOW).await.unwrap();
       assert_eq!(rows.len(), 1);
       assert!(rows[0].training.is_none());
@@ -2705,8 +2695,6 @@ mod tests {
     async fn it_names_the_entities_when_a_corporation_fk_violates_at_commit() {
       let db = store::open_test().await.unwrap();
       let character = make_character();
-      // Persist a DIFFERENT corp than the character's own (90_000_001), leaving the deferred
-      // characters.corporation_id FK dangling so the commit 787s — the shape of the NPC-CEO bug.
       let mut other_corp = Corporation::new(90_000_002, "Other Corporation", "OTHR");
       other_corp.set_ceo_id(12_345_678);
       other_corp.set_creator_id(12_345_678);

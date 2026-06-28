@@ -168,19 +168,16 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     self
   }
 
-  /// Sets the search-input handler used by [`FacilityCombobox::popover`].
   pub fn on_input(mut self, on_input: impl Fn(String) -> M + 'a) -> Self {
     self.on_input = Some(Box::new(on_input));
     self
   }
 
-  /// Sets the row-selection handler used by [`FacilityCombobox::popover`].
   pub fn on_pick(mut self, on_pick: impl Fn(FacilityRef) -> M + 'a) -> Self {
     self.on_pick = Some(Box::new(on_pick));
     self
   }
 
-  /// Sets the message emitted when the [`FacilityCombobox::trigger`] button is pressed (open/close).
   pub fn on_toggle(mut self, message: M) -> Self {
     self.on_toggle = Some(message);
     self
@@ -221,8 +218,6 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
     self
   }
 
-  /// The always-visible field showing the selected facility as a two-line card (or the empty placeholder).
-  /// Pressing it toggles the [`FacilityCombobox::popover`] open; the popover (not this button) owns the search input.
   pub fn trigger(self) -> Element<'a, M> {
     let card: Element<'a, M> = match &self.selection {
       Some(facility) => selected_card(facility),
@@ -266,9 +261,6 @@ impl<'a, M: Clone + 'static> FacilityCombobox<'a, M> {
       .into()
   }
 
-  /// The floating results popover: a search input, a result-count chip, the result rows, and an optional
-  /// clear/"Ask each install" footer. Hosts anchor this under the [`FacilityCombobox::trigger`] button so
-  /// the two read as one combobox.
   pub fn popover(self) -> Element<'a, M> {
     let Self {
       highlight,

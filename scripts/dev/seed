@@ -526,7 +526,7 @@ def _build_attackers(ctx, is_kill, lens_char, final_blow_self):
         else:
             acid = rng.randint(90_000_000, 2_120_000_000)
             corp = rng.choice([98654335, 98668272, 1000044, 1000045, 1000172,
-                               rng.randint(98_000_000, 98_999_999)])
+                              rng.randint(98_000_000, 98_999_999)])
             alliance = rng.choice([None, None, 99003581, 99001105, 99010079])
         attackers.append({
             "ordinal": i,
@@ -670,35 +670,35 @@ def _insert_char_killmail(ctx, char_id, km):
     conn.execute(
         """INSERT INTO character_killmails
         (character_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id,
-         victim_corp_id, system_id, value_isk, attacker_count, final_blow, kill_time,
-         synced_at, value_destroyed_isk, value_source, value_recheck_count, value_final,
-         victim_alliance_id, victim_damage_taken)
+        victim_corp_id, system_id, value_isk, attacker_count, final_blow, kill_time,
+        synced_at, value_destroyed_isk, value_source, value_recheck_count, value_final,
+        victim_alliance_id, victim_damage_taken)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (char_id, km["killmail_id"], km["kill_hash"], km["is_kill"], km["ship_type_id"],
-         km["victim_id"], km["victim_corp_id"], km["system_id"], km["value_isk"],
-         km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"],
-         km["value_destroyed_isk"], "zkill", 0, 1, None, km["victim_damage_taken"]),
+        km["victim_id"], km["victim_corp_id"], km["system_id"], km["value_isk"],
+        km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"],
+        km["value_destroyed_isk"], "zkill", 0, 1, None, km["victim_damage_taken"]),
     )
     ctx.bump("character_killmails")
     for a in km["attackers"]:
         conn.execute(
             """INSERT INTO killmail_attackers
             (character_id, killmail_id, ordinal, attacker_character_id, corporation_id,
-             alliance_id, ship_type_id, damage_done, final_blow)
+            alliance_id, ship_type_id, damage_done, final_blow)
             VALUES (?,?,?,?,?,?,?,?,?)""",
             (char_id, km["killmail_id"], a["ordinal"], a["attacker_character_id"],
-             a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
-             a["final_blow"]),
+            a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
+            a["final_blow"]),
         )
         ctx.bump("killmail_attackers")
     for it in km["items"]:
         conn.execute(
             """INSERT INTO killmail_items
             (character_id, killmail_id, ordinal, type_id, flag, quantity_destroyed,
-             quantity_dropped, value_isk)
+            quantity_dropped, value_isk)
             VALUES (?,?,?,?,?,?,?,?)""",
             (char_id, km["killmail_id"], it["ordinal"], it["type_id"], it["flag"],
-             it["destroyed"], it["dropped"], round(it["value"], 2)),
+            it["destroyed"], it["dropped"], round(it["value"], 2)),
         )
         ctx.bump("killmail_items")
 
@@ -708,35 +708,35 @@ def _insert_corp_killmail(ctx, corp_id, km):
     conn.execute(
         """INSERT INTO corporation_killmails
         (corporation_id, killmail_id, kill_hash, is_kill, ship_type_id, victim_id,
-         victim_corp_id, victim_alliance_id, victim_damage_taken, system_id, value_isk,
-         value_destroyed_isk, value_source, value_recheck_count, value_final,
-         attacker_count, final_blow, kill_time, synced_at)
+        victim_corp_id, victim_alliance_id, victim_damage_taken, system_id, value_isk,
+        value_destroyed_isk, value_source, value_recheck_count, value_final,
+        attacker_count, final_blow, kill_time, synced_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (corp_id, km["killmail_id"], km["kill_hash"], km["is_kill"], km["ship_type_id"],
-         km["victim_id"], km["victim_corp_id"], None, km["victim_damage_taken"],
-         km["system_id"], km["value_isk"], km["value_destroyed_isk"], "zkill", 0, 1,
-         km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"]),
+        km["victim_id"], km["victim_corp_id"], None, km["victim_damage_taken"],
+        km["system_id"], km["value_isk"], km["value_destroyed_isk"], "zkill", 0, 1,
+        km["attacker_count"], km["final_blow"], km["kill_time"], km["synced_at"]),
     )
     ctx.bump("corporation_killmails")
     for a in km["attackers"]:
         conn.execute(
             """INSERT INTO corporation_killmail_attackers
             (corporation_id, killmail_id, ordinal, attacker_character_id,
-             attacker_corporation_id, alliance_id, ship_type_id, damage_done, final_blow)
+            attacker_corporation_id, alliance_id, ship_type_id, damage_done, final_blow)
             VALUES (?,?,?,?,?,?,?,?,?)""",
             (corp_id, km["killmail_id"], a["ordinal"], a["attacker_character_id"],
-             a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
-             a["final_blow"]),
+            a["corporation_id"], a["alliance_id"], a["ship_type_id"], a["damage_done"],
+            a["final_blow"]),
         )
         ctx.bump("corporation_killmail_attackers")
     for it in km["items"]:
         conn.execute(
             """INSERT INTO corporation_killmail_items
             (corporation_id, killmail_id, ordinal, type_id, flag, quantity_destroyed,
-             quantity_dropped, value_isk)
+            quantity_dropped, value_isk)
             VALUES (?,?,?,?,?,?,?,?)""",
             (corp_id, km["killmail_id"], it["ordinal"], it["type_id"], it["flag"],
-             it["destroyed"], it["dropped"], round(it["value"], 2)),
+            it["destroyed"], it["dropped"], round(it["value"], 2)),
         )
         ctx.bump("corporation_killmail_items")
 
@@ -847,17 +847,17 @@ def _insert_char_job(ctx, char_id, j):
     ctx.conn.execute(
         """INSERT INTO character_industry_jobs
         (job_id, character_id, activity_id, blueprint_id, blueprint_location_id,
-         blueprint_type_id, completed_character_id, completed_date, cost, duration,
-         end_date, facility_id, installer_id, licensed_runs, output_location_id,
-         pause_date, probability, product_type_id, runs, start_date, station_id,
-         status, successful_runs)
+        blueprint_type_id, completed_character_id, completed_date, cost, duration,
+        end_date, facility_id, installer_id, licensed_runs, output_location_id,
+        pause_date, probability, product_type_id, runs, start_date, station_id,
+        status, successful_runs)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (j["job_id"], char_id, j["activity_id"], j["blueprint_id"],
-         j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
-         j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
-         j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
-         j["probability"], j["product_type_id"], j["runs"], j["start_date"],
-         j["station_id"], j["status"], j["successful_runs"]),
+        j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
+        j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
+        j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
+        j["probability"], j["product_type_id"], j["runs"], j["start_date"],
+        j["station_id"], j["status"], j["successful_runs"]),
     )
     ctx.bump("character_industry_jobs")
 
@@ -866,17 +866,17 @@ def _insert_corp_job(ctx, corp_id, j):
     ctx.conn.execute(
         """INSERT INTO corporation_industry_jobs
         (job_id, corporation_id, activity_id, blueprint_id, blueprint_location_id,
-         blueprint_type_id, completed_character_id, completed_date, cost, duration,
-         end_date, facility_id, installer_id, licensed_runs, output_location_id,
-         pause_date, probability, product_type_id, runs, start_date, station_id,
-         status, successful_runs)
+        blueprint_type_id, completed_character_id, completed_date, cost, duration,
+        end_date, facility_id, installer_id, licensed_runs, output_location_id,
+        pause_date, probability, product_type_id, runs, start_date, station_id,
+        status, successful_runs)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (j["job_id"], corp_id, j["activity_id"], j["blueprint_id"],
-         j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
-         j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
-         j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
-         j["probability"], j["product_type_id"], j["runs"], j["start_date"],
-         j["station_id"], j["status"], j["successful_runs"]),
+        j["blueprint_location_id"], j["blueprint_type_id"], j["completed_character_id"],
+        j["completed_date"], j["cost"], j["duration"], j["end_date"], j["facility_id"],
+        j["installer_id"], j["licensed_runs"], j["output_location_id"], j["pause_date"],
+        j["probability"], j["product_type_id"], j["runs"], j["start_date"],
+        j["station_id"], j["status"], j["successful_runs"]),
     )
     ctx.bump("corporation_industry_jobs")
 
@@ -895,8 +895,8 @@ def seed_industry_jobs(ctx):
         n_active = rng.randint(9, 12)
         n_finished = rng.randint(3, 5)
         kinds = (["active"] * n_active
-                 + ["delivered", "ready"] * (n_finished // 2 + 1)
-                 + ["paused"])
+                + ["delivered", "ready"] * (n_finished // 2 + 1)
+                + ["paused"])
         kinds = kinds[:n_total]
         # ensure activity coverage
         act_cycle = activities[:]
@@ -916,7 +916,7 @@ def seed_industry_jobs(ctx):
     corp = ctx.main_corp
     n_corp = rng.randint(10, 16)
     corp_acts = ([ACT_MANUFACTURING] * 5 + [ACT_REACTION] * 3 + [ACT_INVENTION]
-                 + [ACT_TE, ACT_ME, ACT_COPY] + [ACT_MANUFACTURING] * 4)
+                + [ACT_TE, ACT_ME, ACT_COPY] + [ACT_MANUFACTURING] * 4)
     corp_kinds = (["active"] * (n_corp - 4) + ["delivered", "ready", "paused", "active"])
     rng.shuffle(corp_kinds)
     for i in range(n_corp):
@@ -956,7 +956,7 @@ def seed_blueprints(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_blueprints
                 (item_id, character_id, type_id, location_id, location_flag, quantity,
-                 material_efficiency, time_efficiency, runs)
+                material_efficiency, time_efficiency, runs)
                 VALUES (?,?,?,?,?,?,?,?,?)""",
                 (next_char_bp(), ch["id"], bp[0], loc, "Hangar", quantity, me, te, runs),
             )
@@ -988,7 +988,7 @@ def seed_blueprints(ctx):
         ctx.conn.execute(
             """INSERT INTO corporation_blueprints
             (item_id, corporation_id, type_id, location_id, location_flag, quantity,
-             material_efficiency, time_efficiency, runs)
+            material_efficiency, time_efficiency, runs)
             VALUES (?,?,?,?,?,?,?,?,?)""",
             (next_corp_bp(), corp, bp[0], loc, flag, quantity, me, te, runs),
         )
@@ -1033,7 +1033,7 @@ def seed_extractions(ctx):
             ctx.conn.execute(
                 """INSERT INTO corporation_mining_extractions
                 (corporation_id, structure_id, moon_id, chunk_arrival_time,
-                 extraction_start_time, natural_decay_time)
+                extraction_start_time, natural_decay_time)
                 VALUES (?,?,?,?,?,?)""",
                 (corp, struct, moon[0], iso_z(arrival), iso_z(start), iso_z(decay)),
             )
@@ -1074,15 +1074,15 @@ def seed_assets(ctx):
     station_plan = [CORP_ASSET_STATION, CORP_ASSET_STATION] + stations[1:2]
 
     def insert_asset(item_id, type_id, location_id, location_type, location_flag,
-                     quantity, is_singleton=0, container_id=None, depth=0,
-                     is_container=0, name=None):
+                    quantity, is_singleton=0, container_id=None, depth=0,
+                    is_container=0, name=None):
         ctx.conn.execute(
             """INSERT INTO corporation_assets
             (item_id, corporation_id, type_id, location_id, location_type, location_flag,
-             quantity, is_singleton, is_blueprint_copy, container_id, depth, is_container, name)
+            quantity, is_singleton, is_blueprint_copy, container_id, depth, is_container, name)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (item_id, corp, type_id, location_id, location_type, location_flag,
-             quantity, is_singleton, None, container_id, depth, is_container, name),
+            quantity, is_singleton, None, container_id, depth, is_container, name),
         )
         ctx.bump("corporation_assets")
 
@@ -1099,7 +1099,7 @@ def seed_assets(ctx):
             cont_type = rng.choice(containers)[0]
             cont_id = next_item()
             insert_asset(cont_id, cont_type, station, "station", flag, 1,
-                         is_singleton=1, depth=0, is_container=1, name=cname)
+                        is_singleton=1, depth=0, is_container=1, name=cname)
             n_child = rng.randint(8, 15)
             for _ in range(n_child):
                 child_id = next_item()
@@ -1116,14 +1116,14 @@ def seed_assets(ctx):
                     t = rng.choice(components)[0]
                     qty = rng.randint(50, 2000)
                 insert_asset(child_id, t, cont_id, "item", "AutoFit", qty,
-                             is_singleton=0, container_id=cont_id, depth=1, is_container=0)
+                            is_singleton=0, container_id=cont_id, depth=1, is_container=0)
 
         # assembled corp ships at depth 0
         for _ in range(rng.randint(4, 6)):
             ship = rng.choice(ships)
             insert_asset(next_item(), ship[0], station, "station", "CorpSAG2", 1,
-                         is_singleton=1, depth=0, is_container=0,
-                         name="Corp %s" % ship[1])
+                        is_singleton=1, depth=0, is_container=0,
+                        name="Corp %s" % ship[1])
 
         # loose top-level fungible stacks
         for _ in range(rng.randint(10, 20)):
@@ -1135,8 +1135,8 @@ def seed_assets(ctx):
                 t = rng.choice(minerals)[0]
                 qty = rng.randint(200_000, 4_000_000)
             insert_asset(next_item(), t, station, "station",
-                         rng.choice(["CorpDeliveries", "CorpSAG1"]), qty,
-                         is_singleton=0, depth=0, is_container=0)
+                        rng.choice(["CorpDeliveries", "CorpSAG1"]), qty,
+                        is_singleton=0, depth=0, is_container=0)
 
     # stockpiles
     sid = [0]
@@ -1249,23 +1249,23 @@ def seed_finance(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_wallet_journal
                 (id, character_id, date, description, ref_type, amount, balance,
-                 context_id, context_id_type, first_party_id, reason, second_party_id,
-                 tax, tax_receiver_id)
+                context_id, context_id_type, first_party_id, reason, second_party_id,
+                tax, tax_receiver_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (journal_id, cid, iso_z(d),
-                 "Market: %s %s" % (qty, "bought" if is_buy else "sold"),
-                 "market_transaction", round(amount, 2), round(balance, 2),
-                 txn_id, "market_transaction_id", cid, None, station, None, None),
+                "Market: %s %s" % (qty, "bought" if is_buy else "sold"),
+                "market_transaction", round(amount, 2), round(balance, 2),
+                txn_id, "market_transaction_id", cid, None, station, None, None),
             )
             ctx.bump("character_wallet_journal")
             ctx.conn.execute(
                 """INSERT INTO character_wallet_transaction
                 (transaction_id, character_id, client_id, date, is_buy, is_personal,
-                 journal_ref_id, location_id, quantity, type_id, unit_price)
+                journal_ref_id, location_id, quantity, type_id, unit_price)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (txn_id, cid, rng.choice(npc_corps + [rng.randint(90_000_000, 2_120_000_000)]),
-                 iso_z(d), 1 if is_buy else 0, 1, journal_id, station, qty, type_id,
-                 round(unit, 2)),
+                iso_z(d), 1 if is_buy else 0, 1, journal_id, station, qty, type_id,
+                round(unit, 2)),
             )
             ctx.bump("character_wallet_transaction")
             balance -= amount  # walk backwards in time
@@ -1276,12 +1276,12 @@ def seed_finance(ctx):
                 ctx.conn.execute(
                     """INSERT INTO character_wallet_journal
                     (id, character_id, date, description, ref_type, amount, balance,
-                     context_id, context_id_type, first_party_id, reason, second_party_id,
-                     tax, tax_receiver_id)
+                    context_id, context_id_type, first_party_id, reason, second_party_id,
+                    tax, tax_receiver_id)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (jbase + jc[0], cid, iso_z(d), "Sales tax", "transaction_tax",
-                     round(-tax, 2), round(balance, 2), None, None, cid, None, None,
-                     None, None),
+                    round(-tax, 2), round(balance, 2), None, None, cid, None, None,
+                    None, None),
                 )
                 ctx.bump("character_wallet_journal")
                 balance += tax
@@ -1292,7 +1292,7 @@ def seed_finance(ctx):
                               "insurance", "skill_purchase", "jump_clone_activation_fee",
                               "agent_mission_reward", "daily_goal_payouts"])
             if ref in ("bounty_prizes", "player_donation", "insurance",
-                       "agent_mission_reward", "daily_goal_payouts"):
+                      "agent_mission_reward", "daily_goal_payouts"):
                 amount = rng.uniform(50_000, 5_000_000)
             else:
                 amount = -rng.uniform(10_000, 1_000_000)
@@ -1300,12 +1300,12 @@ def seed_finance(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_wallet_journal
                 (id, character_id, date, description, ref_type, amount, balance,
-                 context_id, context_id_type, first_party_id, reason, second_party_id,
-                 tax, tax_receiver_id)
+                context_id, context_id_type, first_party_id, reason, second_party_id,
+                tax, tax_receiver_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (jbase + jc[0], cid, iso_z(d), "-", ref, round(amount, 2),
-                 round(balance, 2), None, None, cid, None,
-                 rng.choice(npc_corps), None, None),
+                round(balance, 2), None, None, cid, None,
+                rng.choice(npc_corps), None, None),
             )
             ctx.bump("character_wallet_journal")
 
@@ -1335,11 +1335,11 @@ def seed_finance(ctx):
             ctx.conn.execute(
                 """INSERT INTO market_orders
                 (order_id, character_id, type_id, region_id, location_id, is_buy_order,
-                 price, volume_remain, volume_total, escrow, range, duration, issued, state)
+                price, volume_remain, volume_total, escrow, range, duration, issued, state)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (order_id, cid, type_id, region, station, 1 if is_buy else 0,
-                 round(price, 2), vol_remain, vol_total, round(escrow, 2), rng_str,
-                 rng.choice([1, 3, 7, 14, 30, 90]), iso_z(days_ago(rng, 0, 30)), state),
+                round(price, 2), vol_remain, vol_total, round(escrow, 2), rng_str,
+                rng.choice([1, 3, 7, 14, 30, 90]), iso_z(days_ago(rng, 0, 30)), state),
             )
             ctx.bump("market_orders")
 
@@ -1370,22 +1370,22 @@ def seed_finance(ctx):
             ctx.conn.execute(
                 """INSERT INTO corporation_wallet_journal
                 (id, corporation_id, division, date, description, ref_type, amount,
-                 balance, context_id, context_id_type, first_party_id, reason,
-                 second_party_id, tax, tax_receiver_id)
+                balance, context_id, context_id_type, first_party_id, reason,
+                second_party_id, tax, tax_receiver_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (journal_id, corp, division, iso_z(d), "Market transaction",
-                 "market_transaction", round(amount, 2),
-                 round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
-                 txn_id, "market_transaction_id", director, None, corp, None, None),
+                "market_transaction", round(amount, 2),
+                round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
+                txn_id, "market_transaction_id", director, None, corp, None, None),
             )
             ctx.bump("corporation_wallet_journal")
             ctx.conn.execute(
                 """INSERT INTO corporation_wallet_transaction
                 (transaction_id, corporation_id, division, client_id, date, is_buy,
-                 journal_ref_id, location_id, quantity, type_id, unit_price)
+                journal_ref_id, location_id, quantity, type_id, unit_price)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (txn_id, corp, division, rng.randint(90_000_000, 2_120_000_000), iso_z(d),
-                 1 if is_buy else 0, journal_id, 60003760, qty, type_id, round(unit, 2)),
+                1 if is_buy else 0, journal_id, 60003760, qty, type_id, round(unit, 2)),
             )
             ctx.bump("corporation_wallet_transaction")
             if division == 1:
@@ -1396,19 +1396,19 @@ def seed_finance(ctx):
                               "contract_reward_deposited_corp", "ess_escrow_transfer",
                               "transaction_tax"])
             if ref in ("bounty_prizes", "daily_goal_payouts", "player_donation",
-                       "contract_reward_deposited_corp", "ess_escrow_transfer"):
+                      "contract_reward_deposited_corp", "ess_escrow_transfer"):
                 amount = rng.uniform(1_000_000, 50_000_000)
             else:
                 amount = -rng.uniform(1_000_000, 30_000_000)
             ctx.conn.execute(
                 """INSERT INTO corporation_wallet_journal
                 (id, corporation_id, division, date, description, ref_type, amount,
-                 balance, context_id, context_id_type, first_party_id, reason,
-                 second_party_id, tax, tax_receiver_id)
+                balance, context_id, context_id_type, first_party_id, reason,
+                second_party_id, tax, tax_receiver_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (journal_id, corp, division, iso_z(d), "-", ref, round(amount, 2),
-                 round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
-                 None, None, director, None, corp, None, None),
+                round(corp_balance if division == 1 else rng.uniform(0, 5_000_000), 2),
+                None, None, director, None, corp, None, None),
             )
             ctx.bump("corporation_wallet_journal")
             if division == 1:
@@ -1485,17 +1485,17 @@ def seed_corp_contracts(ctx, tradeable, hub_stations):
         ctx.conn.execute(
             """INSERT INTO corporation_contracts
             (corporation_id, contract_id, type, status, issuer_id, issuer_name,
-             assignee_id, assignee_name, acceptor_id, acceptor_name, price, reward,
-             collateral, volume, for_corporation, date_issued, date_expired,
-             date_completed, title, availability, days_to_complete, start_location_id,
-             end_location_id, date_accepted, issuer_corporation_id)
+            assignee_id, assignee_name, acceptor_id, acceptor_name, price, reward,
+            collateral, volume, for_corporation, date_issued, date_expired,
+            date_completed, title, availability, days_to_complete, start_location_id,
+            end_location_id, date_accepted, issuer_corporation_id)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (corp, cid, ctype, status, director, director_name, corp, "Pod Developers",
-             acceptor, acceptor_name, price, reward, collateral, volume, 1,
-             iso_z(issued), iso_z(expired), completed,
-             rng.choice(["", "Doctrine Resupply", "Loot Buyback", "Ship Delivery"]),
-             rng.choice(["public", "personal", "corporation"]), days_complete,
-             start_loc, end_loc, accepted, corp),
+            acceptor, acceptor_name, price, reward, collateral, volume, 1,
+            iso_z(issued), iso_z(expired), completed,
+            rng.choice(["", "Doctrine Resupply", "Loot Buyback", "Ship Delivery"]),
+            rng.choice(["public", "personal", "corporation"]), days_complete,
+            start_loc, end_loc, accepted, corp),
         )
         ctx.bump("corporation_contracts")
         # items only for item_exchange / auction
@@ -1506,10 +1506,10 @@ def seed_corp_contracts(ctx, tradeable, hub_stations):
                 ctx.conn.execute(
                     """INSERT INTO corporation_contract_items
                     (corporation_id, contract_id, record_id, type_id, quantity,
-                     raw_quantity, is_singleton, is_included, value_isk)
+                    raw_quantity, is_singleton, is_included, value_isk)
                     VALUES (?,?,?,?,?,?,?,?,?)""",
                     (corp, cid, next_record(), tp[0], qty, None, 0, 1,
-                     round(float(tp[1]) * qty, 2)),
+                    round(float(tp[1]) * qty, 2)),
                 )
                 ctx.bump("corporation_contract_items")
 
@@ -1630,7 +1630,7 @@ def seed_clones(ctx):
                 (character_id, jump_clone_id, location_id, location_type, location_name, name)
                 VALUES (?,?,?,?,?,?)""",
                 (cid, jc_id, station[0], "station", station[1],
-                 rng.choice(clone_names)),
+                rng.choice(clone_names)),
             )
             ctx.bump("character_jump_clones")
             # implants in the jump clone (subset)
@@ -1685,14 +1685,14 @@ def seed_calendar(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_calendar
                 (character_id, event_id, timestamp, duration_minutes, importance,
-                 owner_id, owner_name, owner_type, response, title, body, fetched_at)
+                owner_id, owner_name, owner_type, response, title, body, fetched_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (cid, eid, iso_z(when), rng.choice([30, 60, 120]),
-                 1 if rng.random() < 0.3 else 0, owner_id, owner_name, owner_type,
-                 response, rng.choice(["CTA: Home Defense Fleet", "Corp Mining Op",
-                 "Roam: Lowsec PvP", "Strat Op", "Newbro Welcome", "Market Monday"]),
-                 "Form up in Jita, Ansiblex jump to staging. o7",
-                 iso_offset(NOW)),
+                1 if rng.random() < 0.3 else 0, owner_id, owner_name, owner_type,
+                response, rng.choice(["CTA: Home Defense Fleet", "Corp Mining Op",
+                "Roam: Lowsec PvP", "Strat Op", "Newbro Welcome", "Market Monday"]),
+                "Form up in Jita, Ansiblex jump to staging. o7",
+                iso_offset(NOW)),
             )
             ctx.bump("character_calendar")
             # attendees on some events
@@ -1704,7 +1704,7 @@ def seed_calendar(ctx):
                         (character_id, event_id, attendee_id, event_response)
                         VALUES (?,?,?,?)""",
                         (cid, eid, aid[0],
-                         rng.choice(["accepted", "declined", "tentative"])),
+                        rng.choice(["accepted", "declined", "tentative"])),
                     )
                     ctx.bump("character_calendar_attendees")
 
@@ -1772,11 +1772,11 @@ def seed_mail(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_mail
                 (character_id, mail_id, from_id, from_name, subject, timestamp, is_read,
-                 has_attachment, important, from_corp, from_system)
+                has_attachment, important, from_corp, from_system)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (cid, mail_id, from_id, from_name, rng.choice(subjects), iso_z(ts),
-                 is_read, 1 if rng.random() < 0.15 else 0,
-                 1 if rng.random() < 0.2 else 0, from_corp, from_system),
+                is_read, 1 if rng.random() < 0.15 else 0,
+                1 if rng.random() < 0.2 else 0, from_corp, from_system),
             )
             ctx.bump("character_mail")
             ctx.conn.execute(
@@ -1826,17 +1826,17 @@ def seed_notifications(ctx):
             ctx.conn.execute(
                 """INSERT INTO notifications
                 (id, kind, owner_type, owner_id, dedup_key, title, body, target_dest,
-                 target_char, target_sub, created_at, read_at, suppressed)
+                target_char, target_sub, created_at, read_at, suppressed)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (BASE_NOTIFICATION + seq, kind, "character", cid, dedup, title, body,
-                 dest, cid, None, iso_offset(created), read_at, 0),
+                dest, cid, None, iso_offset(created), read_at, 0),
             )
             ctx.bump("notifications")
 
     # corp-owned extraction/industry notifications
     corp_kinds = [
         ("extraction_scheduled", "industry", "Extraction scheduled",
-         "Moon chunk arriving soon"),
+        "Moon chunk arriving soon"),
         ("extraction_cracked", "industry", "Extraction ready", "Moon chunk fractured"),
         ("industry", "industry", "Corp job done", "Reaction batch complete"),
     ]
@@ -1848,10 +1848,10 @@ def seed_notifications(ctx):
         ctx.conn.execute(
             """INSERT INTO notifications
             (id, kind, owner_type, owner_id, dedup_key, title, body, target_dest,
-             target_char, target_sub, created_at, read_at, suppressed)
+            target_char, target_sub, created_at, read_at, suppressed)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (BASE_NOTIFICATION + seq, kind, "corporation", corp, dedup, title, body,
-             dest, None, None, iso_offset(created), read_at, 0),
+            dest, None, None, iso_offset(created), read_at, 0),
         )
         ctx.bump("notifications")
 
@@ -1882,12 +1882,12 @@ def seed_notifications(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_notifications
                 (character_id, notification_id, notif_type, sender_id, sender_type,
-                 timestamp, is_read, text, synced_at)
+                timestamp, is_read, text, synced_at)
                 VALUES (?,?,?,?,?,?,?,?,?)""",
                 (cid, next_cnotif(), nt,
-                 rng.choice([ctx.main_corp, 1000125, cid]),
-                 rng.choice(["corporation", "character"]), iso_z(ts),
-                 rng.choice([0, 1]), text, iso_offset(NOW)),
+                rng.choice([ctx.main_corp, 1000125, cid]),
+                rng.choice(["corporation", "character"]), iso_z(ts),
+                rng.choice([0, 1]), text, iso_offset(NOW)),
             )
             ctx.bump("character_notifications")
 
@@ -1915,7 +1915,7 @@ def seed_contacts(ctx):
             ctx.conn.execute(
                 """INSERT INTO character_contacts
                 (character_id, contact_id, contact_type, standing, is_watched,
-                 is_blocked, label_ids, contact_name)
+                is_blocked, label_ids, contact_name)
                 VALUES (?,?,?,?,?,?,?,?)""",
                 (cid, other["id"], "character", 10.0, 1, 0, "[1]", other["name"]),
             )
@@ -1924,7 +1924,7 @@ def seed_contacts(ctx):
         ctx.conn.execute(
             """INSERT INTO character_contacts
             (character_id, contact_id, contact_type, standing, is_watched,
-             is_blocked, label_ids, contact_name)
+            is_blocked, label_ids, contact_name)
             VALUES (?,?,?,?,?,?,?,?)""",
             (cid, ctx.main_corp, "corporation", 10.0, 0, 0, "[]", "Pod Developers"),
         )
@@ -1943,10 +1943,10 @@ def seed_contacts(ctx):
                 ctx.conn.execute(
                     """INSERT INTO character_contacts
                     (character_id, contact_id, contact_type, standing, is_watched,
-                     is_blocked, label_ids, contact_name)
+                    is_blocked, label_ids, contact_name)
                     VALUES (?,?,?,?,?,?,?,?)""",
                     (cid, misc_id, "character", standing, 0, 1 if blocked else 0, "[]",
-                     "Pilot %d" % misc_id),
+                    "Pilot %d" % misc_id),
                 )
                 ctx.bump("character_contacts")
             except sqlite3.IntegrityError:

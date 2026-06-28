@@ -17,6 +17,9 @@ const NETWORK_MAGICS: [i64; 5] = [
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FsKind {
   Local,
+  // Only the macOS (fstype-name) and Linux (magic) classifiers and the unit tests construct this; a
+  // target with neither classifier (e.g. Windows) never builds it, so expect the dead-variant lint there.
+  #[cfg_attr(not(any(target_os = "macos", target_os = "linux", test)), expect(dead_code))]
   Network,
 }
 

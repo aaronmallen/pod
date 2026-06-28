@@ -6,7 +6,10 @@ use iced::{
 
 use crate::{
   services::updater::State,
-  ui::style::{color, control, radius, shadow, spacing, typography},
+  ui::{
+    components::button::{Button, Size},
+    style::{color, control, radius, shadow, spacing, typography},
+  },
 };
 
 const BANNER_PAD_X: f32 = spacing::SPACE_3_5;
@@ -211,15 +214,7 @@ fn action_button<'a, M>(action: Action, on_press: M) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
-  button(
-    text(action.label())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(control::padding())
-  .on_press(on_press)
-  .style(control::primary_button)
-  .into()
+  Button::primary(action.label()).size(Size::Sm).on_press(on_press).into()
 }
 
 fn dismiss_button<'a, M>(on_press: M) -> Element<'a, M>

@@ -7,7 +7,11 @@ use iced::{
 use crate::{
   store::model::Tag,
   ui::{
-    components::{chip::Chip, color_picker, rule},
+    components::{
+      button::{Button, Size},
+      chip::Chip,
+      color_picker, rule,
+    },
     style::{color, radius, shadow, spacing, typography},
   },
 };
@@ -399,14 +403,9 @@ where
       color: Some(color::text::tertiary()),
     });
 
-  let cancel = button(
-    text(t!("common.add_tag_modal.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(crate::ui::style::control::padding())
-  .on_press(on_message(AddTagMessage::Close))
-  .style(crate::ui::style::control::ghost_button);
+  let cancel = Button::ghost(t!("common.add_tag_modal.cancel").into_owned())
+    .size(Size::Sm)
+    .on_press(on_message(AddTagMessage::Close));
 
   let row = Row::with_children(vec![
     container(hint).align_y(Vertical::Center).into(),

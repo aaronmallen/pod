@@ -16,7 +16,7 @@ use iced::{
   alignment::{Horizontal, Vertical},
   futures::SinkExt as _,
   keyboard,
-  widget::{Column, Row, Space, Stack, button, container, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, Stack, container, mouse_area, scrollable, text},
   window,
 };
 use shortcuts::{Chord, FocusTracker};
@@ -50,6 +50,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
+      button::{Button, Size as ButtonSize},
       esi_status::esi_status,
       eve_time::eve_time,
       notification_row::notification_row,
@@ -2455,7 +2456,7 @@ fn notifications_panel(app: &App, nav_location: config::NavLocation) -> Element<
       .style(typography::colored(color::text::PRIMARY))
       .into(),
     Space::new().width(Length::Fill).into(),
-    mark_all_read_button(unread > 0).into(),
+    mark_all_read_button(unread > 0),
   ])
   .align_y(Vertical::Center)
   .spacing(spacing::SPACE_2);
@@ -2535,32 +2536,11 @@ fn notifications_footer_label(tab: NotificationTab, total: usize, history_count:
   }
 }
 
-fn mark_all_read_button<'a>(enabled: bool) -> button::Button<'a, Message> {
-  let color = if enabled {
-    color::text::PRIMARY
-  } else {
-    color::text::tertiary()
-  };
-  let button = button(
-    text(t!("shell.notifications.mark_all_read"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::XS_PLUS)
-      .style(move |_| text::Style {
-        color: Some(color),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::UNIT,
-    right: spacing::SPACE_2,
-    bottom: spacing::UNIT,
-    left: spacing::SPACE_2,
-  })
-  .style(control::ghost_button);
-  if enabled {
-    button.on_press(Message::MarkAllNotificationsRead)
-  } else {
-    button
-  }
+fn mark_all_read_button<'a>(enabled: bool) -> Element<'a, Message> {
+  Button::ghost(t!("shell.notifications.mark_all_read").into_owned())
+    .size(ButtonSize::Sm)
+    .on_press_maybe(enabled.then_some(Message::MarkAllNotificationsRead))
+    .into()
 }
 
 fn static_text(value: std::borrow::Cow<'static, str>) -> &'static str {
@@ -2777,22 +2757,12 @@ fn sde_stale_banner<'a>() -> Element<'a, Message> {
 fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -> Element<'static, Message> {
   let (message, actions): (String, Element<'static, Message>) = if confirming {
     let last_active = status::format_since((now - holder.last_active).num_seconds().max(0) as u64);
-    let confirm = button(
-      text(t!("shell.takeover.take_over_anyway").into_owned())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::SM),
-    )
-    .padding(control::padding())
-    .on_press(Message::ConfirmTakeOver)
-    .style(control::danger_button);
-    let cancel = button(
-      text(t!("common.cancel").into_owned())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::SM),
-    )
-    .padding(control::padding())
-    .on_press(Message::CancelTakeOver)
-    .style(control::ghost_button);
+    let confirm = Button::danger(t!("shell.takeover.take_over_anyway").into_owned())
+      .size(ButtonSize::Sm)
+      .on_press(Message::ConfirmTakeOver);
+    let cancel = Button::ghost(t!("common.cancel").into_owned())
+      .size(ButtonSize::Sm)
+      .on_press(Message::CancelTakeOver);
     (
       read_only_confirm_label(&holder.hostname, &last_active),
       Row::new()
@@ -2803,14 +2773,9 @@ fn read_only_banner(holder: &HolderInfo, confirming: bool, now: DateTime<Utc>) -
         .into(),
     )
   } else {
-    let action = button(
-      text(t!("shell.takeover.take_over").into_owned())
-        .font(typography::body::MEDIUM)
-        .size(typography::size::SM),
-    )
-    .padding(control::padding())
-    .on_press(Message::TakeOver)
-    .style(control::primary_button);
+    let action = Button::primary(t!("shell.takeover.take_over").into_owned())
+      .size(ButtonSize::Sm)
+      .on_press(Message::TakeOver);
     (read_only_banner_label(&holder.hostname), action.into())
   };
 
@@ -3035,10 +3000,7 @@ fn status_affordance(state: &EngineState) -> Option<Element<'static, Message>> {
     } => (t!("shell.takeover.take_over").into_owned(), Message::TakeOver),
     EngineState::Idle | EngineState::Running => return None,
   };
-  let action = button(text(label).font(typography::body::MEDIUM).size(typography::size::XS))
-    .padding(control::padding())
-    .on_press(message)
-    .style(control::primary_button);
+  let action = Button::primary(label).size(ButtonSize::Sm).on_press(message);
   Some(
     container(action)
       .padding(region_padding())

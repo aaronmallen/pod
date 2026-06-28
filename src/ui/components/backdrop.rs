@@ -3,12 +3,7 @@ use iced::{
   widget::{Space, button},
 };
 
-const SCRIM: Color = Color {
-  r: 8.0 / 255.0,
-  g: 9.0 / 255.0,
-  b: 11.0 / 255.0,
-  a: 0.6,
-};
+use crate::ui::style::color;
 
 pub fn backdrop<'a, M>(on_press: M) -> Element<'a, M>
 where
@@ -19,7 +14,7 @@ where
     .height(Length::Fill)
     .on_press(on_press)
     .style(|_, _| button::Style {
-      background: Some(SCRIM.into()),
+      background: Some(color::state::SCRIM.into()),
       ..button::Style::default()
     })
     .into()

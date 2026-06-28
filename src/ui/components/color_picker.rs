@@ -124,10 +124,7 @@ where
   M: Clone + 'a,
 {
   let fill = current.and_then(hex_to_color).unwrap_or(Color::TRANSPARENT);
-  let border_color = Color {
-    a: 0.5,
-    ..fill
-  };
+  let border_color = color::with_alpha(fill, 0.5);
 
   let swatch = button(Space::new())
     .width(Length::Fixed(SWATCH_SIZE))
@@ -468,10 +465,7 @@ where
   let border_color = if selected {
     color::accent::PLASMA
   } else {
-    Color {
-      a: 0.5,
-      ..fill
-    }
+    color::with_alpha(fill, 0.5)
   };
   let ring = if selected {
     Shadow {

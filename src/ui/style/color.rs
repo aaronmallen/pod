@@ -42,6 +42,12 @@ pub mod chart {
     b: 0.86,
     a: 1.0,
   };
+  pub const WORMHOLE: Color = Color {
+    r: 0.725,
+    g: 0.545,
+    b: 0.851,
+    a: 1.0,
+  };
 
   pub fn series(index: usize) -> Color {
     const PALETTE: [Color; 5] = [
@@ -63,6 +69,12 @@ pub mod state {
     g: 0.0,
     b: 0.0,
     a: 0.4,
+  };
+  pub const SCRIM: Color = Color {
+    r: 8.0 / 255.0,
+    g: 9.0 / 255.0,
+    b: 11.0 / 255.0,
+    a: 0.6,
   };
 }
 

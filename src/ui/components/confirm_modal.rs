@@ -1,12 +1,12 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use crate::ui::{
-  components::rule,
-  style::{color, control, radius, shadow, spacing, typography},
+  components::{button::Button, rule},
+  style::{color, radius, shadow, spacing, typography},
 };
 
 const FOOTER_PAD_X: f32 = 16.0;
@@ -56,22 +56,8 @@ where
         left: HEADER_PAD_X,
       });
 
-  let cancel = button(
-    text(t!("common.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(on_cancel)
-  .style(control::ghost_button);
-  let confirm = button(
-    text(confirm_label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(on_confirm)
-  .style(control::danger_button);
+  let cancel = Button::ghost(t!("common.cancel").into_owned()).on_press(on_cancel);
+  let confirm = Button::danger(text::IntoFragment::into_fragment(confirm_label).into_owned()).on_press(on_confirm);
 
   let footer = container(
     Row::with_children(vec![

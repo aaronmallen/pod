@@ -8,14 +8,14 @@ use chrono::{DateTime, Utc};
 use iced::{
   Element, Length, Padding, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, mouse_area, text},
+  widget::{Column, Row, Space, container, mouse_area, text},
 };
 
 use crate::{
   features::shell::window_chrome,
   ui::{
-    components::{eve_time::eve_time, status::dot, status_bar::status_bar},
-    style::{color, control, spacing, typography},
+    components::{button::Button, eve_time::eve_time, status::dot, status_bar::status_bar},
+    style::{color, spacing, typography},
   },
 };
 
@@ -219,14 +219,7 @@ fn error_view<'a>(error: &str) -> Element<'a, Message> {
       color: Some(color::status::DANGER),
     });
 
-  let retry = button(
-    text(t!("splash.view.retry").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::Retry)
-  .style(control::primary_button);
+  let retry = Button::primary(t!("splash.view.retry").into_owned()).on_press(Message::Retry);
 
   Column::with_children(vec![message.into(), retry.into()])
     .align_x(Horizontal::Center)
@@ -285,22 +278,8 @@ fn update_view<'a>(state: &'a State) -> Element<'a, Message> {
     .align_x(Horizontal::Left)
     .spacing(spacing::SPACE_2);
 
-  let later = button(
-    text(t!("splash.update.later").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::Later)
-  .style(control::ghost_button);
-  let update = button(
-    text(t!("splash.update.update_and_restart").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::Update)
-  .style(control::primary_button);
+  let later = Button::ghost(t!("splash.update.later").into_owned()).on_press(Message::Later);
+  let update = Button::primary(t!("splash.update.update_and_restart").into_owned()).on_press(Message::Update);
 
   let actions = Row::with_children(vec![later.into(), update.into()]).spacing(spacing::SPACE_2_5);
 

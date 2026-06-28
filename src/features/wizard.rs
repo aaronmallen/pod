@@ -16,7 +16,8 @@ use crate::{
   i18n::Language,
   ui::{
     components::{
-      eve_time::eve_time, icon::Icon, progress_bar::progress_bar, rule, status::dot, status_bar::status_bar, toggle,
+      button::Button, eve_time::eve_time, icon::Icon, progress_bar::progress_bar, rule, status::dot,
+      status_bar::status_bar, toggle,
     },
     style::{color, control, radius, spacing, typography},
   },
@@ -1320,14 +1321,7 @@ fn features_body(state: &State, group: Group) -> Element<'_, Message> {
   } else {
     t!("wizard.features.enable_all").into_owned()
   };
-  let bulk = button(
-    text(bulk_label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::Features(features_tab::Message::GroupToggled(group, !all_on)))
-  .style(control::ghost_button);
+  let bulk = Button::ghost(bulk_label).on_press(Message::Features(features_tab::Message::GroupToggled(group, !all_on)));
 
   let right = Row::with_children(vec![count.into(), bulk.into()])
     .align_y(Vertical::Center)
@@ -1484,22 +1478,9 @@ fn storage_path_row(state: &State, kind: PathKind) -> Element<'_, Message> {
     .on_input(move |next| Message::StoragePathEdited(kind, next))
     .on_submit(Message::StoragePathSubmitted(kind));
 
-  let browse = button(
-    text(t!("settings.storage.browse").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::StorageBrowse(kind))
-  .style(control::ghost_button);
+  let browse = Button::ghost(t!("settings.storage.browse").into_owned()).on_press(Message::StorageBrowse(kind));
 
-  let mut reset = button(
-    text(t!("settings.storage.default_button").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .style(control::ghost_button);
+  let mut reset = Button::ghost(t!("settings.storage.default_button").into_owned());
   if overridden {
     reset = reset.on_press(Message::StorageReset(kind));
   }
@@ -1673,9 +1654,7 @@ fn storage_sync_row<'a>(checked: bool) -> Element<'a, Message> {
 }
 
 fn footer(state: &State) -> Element<'_, Message> {
-  let mut back = button(footer_label(t!("wizard.footer.back").into_owned()))
-    .padding(control::padding())
-    .style(control::ghost_button);
+  let mut back = Button::ghost(t!("wizard.footer.back").into_owned());
   if !state.is_first() {
     back = back.on_press(Message::Back);
   }
@@ -1687,26 +1666,20 @@ fn footer(state: &State) -> Element<'_, Message> {
 
   if !state.is_last() {
     children.push(
-      button(footer_label(t!("wizard.footer.skip").into_owned()))
-        .padding(control::padding())
+      Button::ghost(t!("wizard.footer.skip").into_owned())
         .on_press(Message::Skip)
-        .style(control::ghost_button)
         .into(),
     );
   }
 
   if state.is_last() {
     children.push(
-      button(footer_label(t!("wizard.footer.open").into_owned()))
-        .padding(control::padding())
+      Button::primary(t!("wizard.footer.open").into_owned())
         .on_press(Message::Complete)
-        .style(control::primary_button)
         .into(),
     );
   } else {
-    let mut next = button(footer_label(next_label(state)))
-      .padding(control::padding())
-      .style(control::primary_button);
+    let mut next = Button::primary(next_label(state));
     if state.can_advance() {
       next = next.on_press(Message::Next);
     }
@@ -1735,10 +1708,6 @@ fn footer(state: &State) -> Element<'_, Message> {
   ])
   .width(Length::Fill)
   .into()
-}
-
-fn footer_label<'a>(label: String) -> iced::widget::Text<'a> {
-  text(label).font(typography::body::MEDIUM).size(typography::size::MD)
 }
 
 fn next_label(state: &State) -> String {

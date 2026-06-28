@@ -12,13 +12,6 @@ use crate::ui::{
 const LIST_HEIGHT: f32 = 230.0;
 const PILL_RADIUS: f32 = 3.0;
 const SEARCH_MIN_CHARS: usize = 3;
-/// Wormhole-band tint (design `#B98BD9`) for J-space security pills.
-const WORMHOLE: Color = Color {
-  r: 0.725,
-  g: 0.545,
-  b: 0.851,
-  a: 1.0,
-};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FacilityRef {
@@ -536,7 +529,10 @@ fn sec_pill<'a, M: 'a>(security_status: Option<f64>) -> Element<'a, M> {
     return Space::new().into();
   };
   let (label, band) = if sec <= -0.9 {
-    (t!("common.facility_combobox.jspace").into_owned(), WORMHOLE)
+    (
+      t!("common.facility_combobox.jspace").into_owned(),
+      color::chart::WORMHOLE,
+    )
   } else if sec <= 0.0 {
     (format!("{sec:.1}"), color::status::DANGER)
   } else if sec < 0.5 {

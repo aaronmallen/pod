@@ -27,6 +27,8 @@ Click the bell to open the notification center.
 
 The center is a card that flies out beside the rail, bottom-aligned to the bell.
 
+![The notification center flying out beside the navigation rail](/docs/img/notifications/notification-center.png)
+
 The header reads "Notifications" with a "Mark all read" button. The button marks
 every item read at once and is disabled when nothing is unread.
 
@@ -70,6 +72,7 @@ These events generate a notification:
 - A killmail lands for one of your characters or corporations.
 - A corporation moon extraction is scheduled.
 - A moon chunk fractures and is ready to mine.
+- A wallet balance gap is detected.
 
 A notification only fires for a feature you have enabled. If you turn off Mail,
 for example, Pod stops raising mail notifications. The first time Pod sees a
@@ -83,6 +86,8 @@ bottom-right corner. Up to three toasts stack at once; a fourth pushes the
 oldest out, though that item still lands in the center. Each toast leads with a
 colored icon tile keyed to its kind, then the same title and body as its center
 row, with an "x" to dismiss it.
+
+![Two notification toasts stacked in the bottom-right corner](/docs/img/notifications/notifications.png)
 
 A toast clears itself after 15 seconds. Hover it and the countdown pauses, so a
 toast you are reading does not vanish under the pointer. Click the body of a

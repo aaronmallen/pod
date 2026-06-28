@@ -66,23 +66,16 @@ impl AttrValues {
   }
 }
 
-/// The keyboard modifier intent applied to a queue-row click.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ClickKind {
-  /// No modifier: select only this row (or toggle off if it is the lone selection).
   #[default]
   Plain,
-  /// Shift: select a contiguous range from the anchor, replacing the selection.
   Range,
-  /// Shift + Ctrl/Cmd: merge the contiguous range from the anchor into the selection.
   RangeMerge,
-  /// Ctrl/Cmd: toggle this row, keeping the rest of the selection.
   Toggle,
 }
 
 impl ClickKind {
-  /// Derives the click intent from the active modifier flags. `command` is
-  /// Cmd on macOS and Ctrl on Windows/Linux.
   pub fn from_modifiers(command: bool, shift: bool) -> Self {
     match (command, shift) {
       (true, true) => ClickKind::RangeMerge,
@@ -146,13 +139,10 @@ impl QueueSelection {
     self.anchor = None;
   }
 
-  /// The selected queue positions, ordered to match `order` (queue order).
   pub fn ordered(&self, order: &[i64]) -> Vec<i64> {
     order.iter().copied().filter(|p| self.selected.contains(p)).collect()
   }
 
-  /// Drops any selected positions that no longer appear in the live queue,
-  /// and resets the anchor if it vanished.
   pub fn prune(&mut self, order: &[i64]) {
     self.selected.retain(|p| order.contains(p));
     if self.anchor.is_some_and(|a| !order.contains(&a)) {
@@ -160,8 +150,6 @@ impl QueueSelection {
     }
   }
 
-  /// Applies a click on `position` given the modifier intent. `order` is the
-  /// full list of queue positions in queue order (used for range selection).
   pub fn apply(&mut self, position: i64, kind: ClickKind, order: &[i64]) {
     match kind {
       ClickKind::Plain => {
@@ -234,9 +222,6 @@ struct QueueItemSp {
   sp_to: u64,
 }
 
-/// The contiguous run of queue positions between the anchor and `position`
-/// (inclusive), in queue order. Falls back to just `position` when there is no
-/// anchor or either endpoint is absent from the queue.
 fn range_positions(anchor: Option<i64>, position: i64, order: &[i64]) -> Vec<i64> {
   let target = match order.iter().position(|p| *p == position) {
     Some(idx) => idx,

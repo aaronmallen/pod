@@ -336,13 +336,8 @@ fn sender_avatar(sender_id: i64, name: &str, portrait: Option<std::path::PathBuf
   .view::<Message>()
 }
 
-/// Base body text size, matching the surrounding reading-pane copy.
 const BODY_SIZE: f32 = typography::size::MD;
 
-/// A flat run of body text carrying the styling that was active while it accumulated.
-///
-/// EVE mail markup is converted into a flat list of these spans by [`parse_stored_body`]; the
-/// view then maps each one onto an iced [`span`].
 #[derive(Clone, Debug, Default, PartialEq)]
 struct BodySpan {
   text: String,
@@ -351,11 +346,9 @@ struct BodySpan {
   bold: bool,
   italic: bool,
   underline: bool,
-  /// Link text is styled (plasma + underline) but inert — clicks are deliberately not wired up.
   link: bool,
 }
 
-/// The resolved style in effect at a point in the body.
 #[derive(Clone, Debug)]
 struct BodyStyle {
   size: f32,
@@ -379,7 +372,6 @@ impl Default for BodyStyle {
   }
 }
 
-/// One frame on the forgiving style stack: the tag that opened it and the style it established.
 #[derive(Clone, Debug)]
 struct StyleFrame {
   tag: String,
@@ -398,7 +390,6 @@ fn body_paragraphs(mail: &MailRender) -> Element<'_, Message> {
       .into();
   }
 
-  // Links carry no payload — they render styled but inert, so the span link type is `()`.
   let spans: Vec<iced::widget::text::Span<'_, ()>> = spans
     .into_iter()
     .map(|s| {
@@ -477,7 +468,6 @@ fn parse_stored_body(html: &str) -> Vec<BodySpan> {
   spans
 }
 
-/// Interprets a single `<...>` token, mutating the style stack and emitting spans as needed.
 fn apply_tag(raw: &str, stack: &mut Vec<StyleFrame>, spans: &mut Vec<BodySpan>, buffer: &mut String) {
   let inner = raw.trim_start_matches('<').trim_end_matches('>').trim();
   let lower = inner.to_ascii_lowercase();
@@ -490,8 +480,6 @@ fn apply_tag(raw: &str, stack: &mut Vec<StyleFrame>, spans: &mut Vec<BodySpan>, 
 
   match name {
     "br" => buffer.push('\n'),
-    // Block tags break only on their close, so `<p>a</p><p>b</p>` yields `a\nb\n` without a
-    // leading or doubled newline.
     "p" | "div" if closing => buffer.push('\n'),
     "p" | "div" => {}
     "b" | "i" | "u" | "font" | "a" => {
@@ -502,13 +490,10 @@ fn apply_tag(raw: &str, stack: &mut Vec<StyleFrame>, spans: &mut Vec<BodySpan>, 
         push_style(stack, name, inner);
       }
     }
-    // `<loc>` is a transparent location wrapper, and unknown tags are dropped — neither disturbs
-    // the surrounding text.
     _ => {}
   }
 }
 
-/// Pushes a style frame for an opening `b`/`i`/`u`/`font`/`a` tag, inheriting the parent style.
 fn push_style(stack: &mut Vec<StyleFrame>, name: &str, inner: &str) {
   let mut style = stack
     .last()
@@ -546,7 +531,6 @@ fn pop_style(stack: &mut Vec<StyleFrame>, name: &str) {
   }
 }
 
-/// Flushes the active buffer into a span carrying the current top-of-stack style.
 fn flush(stack: &[StyleFrame], spans: &mut Vec<BodySpan>, buffer: &mut String) {
   if buffer.is_empty() {
     return;
@@ -565,7 +549,6 @@ fn flush(stack: &[StyleFrame], spans: &mut Vec<BodySpan>, buffer: &mut String) {
   });
 }
 
-/// Extracts a `name="value"` (or `name='value'`) attribute value from a raw tag's inner text.
 fn attr_value(inner: &str, attr: &str) -> Option<String> {
   let lower = inner.to_ascii_lowercase();
   let mut search = 0;
@@ -595,7 +578,6 @@ mod tests {
 
   use super::*;
 
-  /// Concatenates the rendered text of every span, preserving order and breaks.
   fn rendered(html: &str) -> String {
     parse_stored_body(html).iter().map(|s| s.text.as_str()).collect()
   }
@@ -684,7 +666,6 @@ mod tests {
 
   #[test]
   fn it_tolerates_interleaved_loc_and_anchor_closes_with_a_stray_char() {
-    // Mirrors the real sample: the stray `v` lands after `</loc>` but before `</a>`.
     let html = r##"<a href="http://x">https://pod.aaronmallen.de</loc>v</a>"##;
     let spans = parse_stored_body(html);
     assert_eq!(rendered(html), "https://pod.aaronmallen.dev");
@@ -796,7 +777,6 @@ mod tests {
 
     #[test]
     fn it_renders_a_snoozed_system_message_addressed_to_me() {
-      // A zero sender id flags a system message, and a blank recipient display resolves to "me".
       let render = render(0, "mailing_list", "  ", false);
       let _el: Element<'_, Message> = super::super::pane(Some(&render), true, false);
     }

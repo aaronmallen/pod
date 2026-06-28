@@ -21,9 +21,6 @@ use crate::{
 
 const BODY_WIDTH: f32 = 580.0;
 
-/// The scrollable card body for a detached calendar-event window. The native frame and OS title bar
-/// replace the old modal chrome and close button, so this renders only the event content (accent bar,
-/// header block, meta grid, body, respond controls, attendees, provenance) on the base surface.
 pub(super) fn body(window: &EventWindow) -> Element<'_, EventMessage> {
   let event = &window.event;
   let owner = event.owner_kind();

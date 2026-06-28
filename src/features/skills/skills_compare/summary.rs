@@ -136,7 +136,6 @@ fn heads_row(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// Marks every column tied for the strict top value (value > 0). Ties all lead.
 fn leaders(values: &[f64]) -> Vec<bool> {
   let max = values.iter().copied().fold(0.0_f64, f64::max);
   if max <= 0.0 {

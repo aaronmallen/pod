@@ -31,7 +31,6 @@ static WALLET_ICON: &[u8] = include_bytes!("../../../assets/images/icons/wallet.
 static SECTIONS: &[Section] = &[
   Section {
     destination: Destination::Characters,
-    // The Destination enum keeps the Characters identity; this screen reads "Roster" to users.
     label_override: Some("nav.roster.label"),
     kicker: "nav.roster.kicker",
     sub_sections: &[
@@ -277,10 +276,7 @@ static SECTIONS: &[Section] = &[
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Section {
   pub destination: Destination,
-  // i18n key overriding the cascade header text without touching the rail icon's `Destination`
-  // identity. `None` falls back to `Destination::label()`.
   label_override: Option<&'static str>,
-  // i18n key for the cascade header's kicker line.
   kicker: &'static str,
   pub sub_sections: &'static [SubSection],
 }
@@ -309,10 +305,7 @@ impl Section {
 pub struct SubSection {
   pub icon: &'static [u8],
   pub id: &'static str,
-  // i18n key for the sub-section's rail label.
   label: &'static str,
-  // A sub-section that is really its own top-level route rather than an in-view tab. The mechanism
-  // exists for the deep-nav consumer to special-case; no entry uses it today.
   pub route: Option<Destination>,
 }
 
@@ -372,7 +365,6 @@ mod tests {
     fn it_overrides_the_characters_cascade_label_to_roster() {
       let section = section(Destination::Characters).expect("characters section");
 
-      // The cascade header reads "Roster" while the rail icon keeps the Characters identity.
       assert_eq!(section.label(), "Roster");
       assert_eq!(section.icon(), Destination::Characters.icon());
     }
@@ -385,8 +377,6 @@ mod tests {
 
     #[test]
     fn no_sub_section_carries_a_route_today() {
-      // The route marker is a mechanism for the deep-nav consumer; no sub-section is its own
-      // top-level route yet, so every entry must stay `None` until one genuinely is.
       for section in SECTIONS {
         for sub in section.sub_sections {
           assert_eq!(
@@ -491,10 +481,6 @@ mod tests {
         .collect()
     }
 
-    // Each `catalog_id` match below is exhaustive over its enum, so adding or removing a variant
-    // fails to compile until the catalog is updated in lock-step. The accompanying assertion proves
-    // the catalog lists exactly those ids in order.
-
     #[test]
     fn assets_tabs_match_one_to_one() {
       fn catalog_id(tab: assets::Tab) -> &'static str {
@@ -569,9 +555,6 @@ mod tests {
 
     #[test]
     fn settings_categories_match_one_to_one() {
-      // About is a genuine Settings tab but is deliberately excluded from the cascade catalog, so
-      // the catalog ids are the `Category` variants MINUS About. The exhaustive match still forces a
-      // catalog review whenever a variant is added or removed.
       fn catalog_id(category: settings::Category) -> Option<&'static str> {
         match category {
           settings::Category::About => None,

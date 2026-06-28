@@ -106,15 +106,12 @@ pub enum Message {
   ToggleColorPicker(i64),
 }
 
-// Both registries fetched in a single load so the entity and asset sections refresh together.
 #[derive(Clone, Debug)]
 pub struct Loaded {
   asset_tags: Vec<Tag>,
   tags: Vec<Tag>,
 }
 
-// Which registry the tabbed layout is currently showing. The two registries never mix, so the tab selector
-// swaps the whole body between them.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Registry {
   Asset,
@@ -142,8 +139,6 @@ impl SortMode {
   }
 }
 
-// Per-section UI state. The entity and asset registries each own one so their filter, sort, edit, picker, and
-// drag interactions never bleed across sections.
 #[derive(Debug, Default)]
 struct Section {
   dragging: Option<i64>,
@@ -264,7 +259,6 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, iced::Task<Messa
   (Outcome::None, task)
 }
 
-/// Dispatches the registry-scoped messages to the entity or asset section.
 fn update_section_message(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::AddTag => add_tag(&state.db, &mut state.entity, None),
@@ -292,7 +286,6 @@ fn update_section_message(state: &mut State, message: Message) -> iced::Task<Mes
   }
 }
 
-/// Dispatches the asset-registry messages to the asset section.
 fn update_asset_message(state: &mut State, message: Message) -> iced::Task<Message> {
   match message {
     Message::AssetAddTag => add_tag(&state.db, &mut state.asset, Some(TAG_SCOPE_ASSET)),
@@ -316,37 +309,30 @@ fn update_asset_message(state: &mut State, message: Message) -> iced::Task<Messa
     Message::AssetSortSelected(mode) => sort_selected(&mut state.asset, mode),
     Message::AssetStartEditing(tag_id) => start_editing(&mut state.asset, tag_id),
     Message::AssetToggleColorPicker(tag_id) => toggle_color_picker(&mut state.asset, state.cursor, tag_id),
-    // All registry-scoped variants are handled above; the parent dispatcher
-    // routes the remaining cross-cutting messages.
     _ => iced::Task::none(),
   }
 }
 
-/// Clears the picker and removes the color from the given tag.
 fn clear_color(db: &Option<Database>, section: &mut Section, tag_id: i64) -> iced::Task<Message> {
   section.picker = None;
   recolor(db, section, tag_id, None)
 }
 
-/// Clears the picker and applies a new color to the given tag.
 fn apply_recolor(db: &Option<Database>, section: &mut Section, tag_id: i64, hex: String) -> iced::Task<Message> {
   section.picker = None;
   recolor(db, section, tag_id, Some(hex))
 }
 
-/// Cancels the in-progress tag edit for the section.
 fn cancel_edit(section: &mut Section) -> iced::Task<Message> {
   section.editing = None;
   iced::Task::none()
 }
 
-/// Updates the filter query for the section.
 fn set_query(section: &mut Section, query: String) -> iced::Task<Message> {
   section.query = query;
   iced::Task::none()
 }
 
-/// Updates the new-tag draft for the section.
 fn set_new_tag(section: &mut Section, value: String) -> iced::Task<Message> {
   section.new_tag = value;
   iced::Task::none()
@@ -608,8 +594,6 @@ pub fn badge(state: &State) -> String {
   colored.to_string()
 }
 
-// Maps a section's interactions onto the right message variants so one set of view helpers can render either
-// the entity or the asset registry.
 struct Msgs {
   add_tag: fn() -> Message,
   clear_color: fn(i64) -> Message,
@@ -719,8 +703,6 @@ pub fn view<'a>(state: &'a State, _settings: &'a Settings) -> Element<'a, Messag
 
 const TAB_STRIP_HEIGHT: f32 = 44.0;
 
-// The tab selector that swaps the body between the character/entity registry and the asset registry. The two
-// never mix, so only the active registry's section renders below.
 fn registry_tabs(state: &State) -> Element<'_, Message> {
   let tabs = vec![
     registry_tab(
@@ -1563,9 +1545,6 @@ mod tests {
 
   #[tokio::test]
   async fn name_taken_matches_the_repo_key_case_and_whitespace_insensitively() {
-    // The in-memory create/rename guard must agree with the store's `(scope, lower(name))` key:
-    // ASCII-case- and trim-insensitive. A padded, differently-cased re-entry of an existing name is
-    // "taken" (so add/rename no-ops instead of racing the store), while a genuinely new name is not.
     let state = state_with(&["Main", "Alt"]).await;
     let alt_id = state.entity.tags[1].id();
 
@@ -1774,11 +1753,9 @@ mod tests {
     let asset_first = state.asset.tags[0].id();
     let _ = update(&mut state, Message::ToggleColorPicker(first));
     {
-      // The entity registry is the default active tab, so its picker renders here.
       let _el: Element<'_, Message> = view(&state, &settings);
     }
 
-    // Switch to the asset registry tab and open its picker so the asset branch renders too.
     let _ = update(&mut state, Message::RegistrySelected(Registry::Asset));
     let _ = update(&mut state, Message::AssetToggleColorPicker(asset_first));
     let _el: Element<'_, Message> = view(&state, &settings);
@@ -1833,8 +1810,6 @@ mod tests {
     );
   }
 
-  // --- Asset section: scoped CRUD + reorder isolation from the entity registry. ---
-
   #[tokio::test]
   async fn asset_add_tag_clears_the_field_and_targets_the_asset_scope() {
     let mut state = State::new(store::open_test().await.unwrap());
@@ -1846,8 +1821,6 @@ mod tests {
     assert_eq!(outcome, Outcome::None);
     assert!(state.asset.new_tag.is_empty(), "the asset create field clears");
 
-    // The dispatched write runs on the iced executor, which tests do not drive, so persist directly to
-    // confirm the scoped repo call lands in the asset registry and never the entity one.
     infra::create_scoped(&db, "Salvage", None, None, TAG_SCOPE_ASSET)
       .await
       .unwrap();

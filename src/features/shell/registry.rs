@@ -9,15 +9,11 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Descriptor {
   pub jobs: &'static [JobKind],
-  /// `None` when the feature has no top-level nav-rail entry (lives inside character detail only).
   pub rail: Option<Destination>,
   pub scopes: &'static [&'static str],
-  /// `None` when the feature is a top-level screen rather than a character-detail tab.
   pub tab: Option<Tab>,
 }
 
-/// The registry entry for a single sub-feature; the group [`Descriptor`] is the roll-up over the
-/// children returned by [`Feature::sub_features`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SubDescriptor {
   pub jobs: &'static [JobKind],
@@ -320,7 +316,6 @@ pub fn feature_for_job(job: JobKind) -> Option<Feature> {
 ///
 /// Returns empty for the feature-less maintenance jobs that always run (character/corp profiles).
 pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
-  // Every asset reader needs the asset table the AssetSync job populates.
   const ASSET_READERS: &[SubFeature] = &[
     SubFeature::Inventory,
     SubFeature::Abyssals,
@@ -328,10 +323,8 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     SubFeature::Values,
     SubFeature::Tracker,
   ];
-  // Every wallet reader needs the wallet/journal the wallet jobs populate.
   const CHAR_WALLET_READERS: &[SubFeature] = &[SubFeature::Wallets, SubFeature::Journal, SubFeature::Transactions];
   const CORP_WALLET_READERS: &[SubFeature] = &[SubFeature::Wallets, SubFeature::Journal];
-  // Valuation maintenance feeds both the asset Values surface and the wallet net-worth surfaces.
   const VALUATION_READERS: &[SubFeature] = &[
     SubFeature::Wallets,
     SubFeature::Journal,
@@ -364,12 +357,7 @@ pub fn sub_features_for_job(job: JobKind) -> Vec<SubFeature> {
     JobKind::CorporationWallet => CORP_WALLET_READERS,
     JobKind::CorporationMiningExtractions | JobKind::CorporationStructures => &[SubFeature::Extractions],
     JobKind::MarketPrices | JobKind::NetWorthSnapshot => VALUATION_READERS,
-    // The maintenance jobs that always run belong to no sub-feature: the character/corp profiles, the
-    // global industry cost-index refresh (a cheap public sync feeding the planner on demand), and the
-    // global token audit.
     JobKind::CharacterProfile | JobKind::CorporationProfile | JobKind::IndustryCostIndices | JobKind::TokenAudit => &[],
-    // Balance-continuity gap detection reads the journal the wallet syncs populate, so it runs while
-    // any wallet/journal reader is enabled.
     JobKind::WalletJournalReconcile => &[SubFeature::Wallets, SubFeature::Journal],
   };
   owners.to_vec()
@@ -497,8 +485,6 @@ mod tests {
     use super::*;
     use crate::config::FeatureFlags;
 
-    // The skill-queue card (`is_sub_enabled(SkillQueue)`) and the Skills rail tab
-    // (`feature_for_destination(Skills)` filtered by the enabled feature set) must follow ONE toggle.
     fn rail_skills_visible(flags: &FeatureFlags) -> bool {
       feature_for_destination(Destination::Skills).is_some_and(|feature| flags.is_enabled(feature))
     }
@@ -616,9 +602,6 @@ mod tests {
 
     #[test]
     fn the_descriptor_jobs_partition_one_to_one_for_the_group_roll_up() {
-      // The SubDescriptor::jobs field exists only to roll the group descriptor up; it stays a
-      // one-to-one partition. Shared ownership for scheduling lives in `sub_features_for_job`, which
-      // the next module relaxes to a SET.
       let mut seen: HashSet<JobKind> = HashSet::new();
 
       for sub in SubFeature::ALL {
@@ -647,7 +630,6 @@ mod tests {
       JobKind::TokenAudit,
     ];
 
-    /// Flags with exactly `sub` enabled and every other sub-feature off.
     fn only(sub: SubFeature) -> FeatureFlags {
       let mut flags = FeatureFlags::default();
       for candidate in SubFeature::ALL {
@@ -681,9 +663,6 @@ mod tests {
 
     #[test]
     fn a_per_group_jobs_owners_all_live_in_that_group() {
-      // Per-feature jobs (everything but the cross-group valuation maintenance) must have owners that
-      // all roll up to the group its descriptor names, so the finer ownership never contradicts the
-      // coarse `feature_for_job` mapping.
       const CROSS_GROUP: [JobKind; 2] = [JobKind::MarketPrices, JobKind::NetWorthSnapshot];
 
       for &job in JobKind::ALL {
@@ -705,8 +684,6 @@ mod tests {
 
     #[test]
     fn the_valuation_jobs_feed_both_assets_and_wallet() {
-      // The valuation maintenance jobs are genuinely cross-group: they keep running while EITHER an
-      // asset valuation surface or a wallet net-worth surface is enabled.
       for job in [JobKind::MarketPrices, JobKind::NetWorthSnapshot] {
         let groups: HashSet<Feature> = sub_features_for_job(job).into_iter().map(SubFeature::group).collect();
         assert!(
@@ -730,7 +707,6 @@ mod tests {
 
     #[test]
     fn a_shared_job_runs_until_its_last_owner_is_disabled() {
-      // AssetSync survives as long as ANY asset reader is on, and stops only when all are off.
       let mut flags = only(SubFeature::Stockpiles);
       assert!(
         JobKind::AssetSync.is_feature_enabled(&flags),
@@ -752,7 +728,6 @@ mod tests {
       assert!(owners.contains(&SubFeature::Journal));
       assert!(owners.contains(&SubFeature::Transactions));
 
-      // Disabling Journal alone leaves the wallet job running for the other readers.
       let mut flags = FeatureFlags::default();
       flags.set_sub_enabled(SubFeature::Journal, false);
       flags.set_sub_enabled(SubFeature::Transactions, false);
@@ -800,8 +775,6 @@ mod tests {
 
     #[test]
     fn every_sub_feature_has_a_scope_or_is_explicitly_scope_free() {
-      // Budget derives everything from already-synced local data, so it requests no scope; every
-      // other sub-feature (the asset Tracker still shares CHARACTER_ASSETS) must request at least one.
       const SCOPE_FREE: [SubFeature; 1] = [SubFeature::Budget];
 
       for sub in SubFeature::ALL {

@@ -11,6 +11,7 @@ const ACCENT_WIDTH: f32 = 3.0;
 
 pub(super) const MIN_BLOCK_MINUTES: i64 = 30;
 
+// Awaiting the proportional day/week timeline layout; the current grids scale by hour_height instead.
 #[expect(dead_code)]
 pub(super) const MINUTES_PER_DAY: i64 = 1440;
 
@@ -18,9 +19,7 @@ pub(super) const MINUTES_PER_DAY: i64 = 1440;
 pub(super) struct Packed<'a> {
   pub end_minute: i64,
   pub event: &'a CalendarEvent,
-  /// Zero-based column index within the overlap cluster.
   pub lane: usize,
-  /// Total columns in the cluster; callers divide available width by this to size each lane.
   pub lanes: usize,
   pub start_minute: i64,
 }
@@ -93,10 +92,6 @@ pub(super) fn month_matrix(year: i32, month0: u32, week_start: CalendarWeekStart
   (0..42).map(|offset| grid_start + Duration::days(offset)).collect()
 }
 
-/// Assigns lane indices to timed events so overlapping events tile side by side.
-///
-/// Events are sorted by start time, grouped into clusters of mutually-overlapping spans, then each
-/// cluster is packed greedily: each span takes the first lane whose previous occupant has ended.
 pub(super) fn pack_day<'a>(items: &[&'a CalendarEvent]) -> Vec<Packed<'a>> {
   let mut spans: Vec<Packed<'a>> = items
     .iter()

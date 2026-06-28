@@ -106,9 +106,6 @@ impl Category {
     }
   }
 
-  /// The rail-cascade glyph shown before each category label, mirroring the navigation rail so the
-  /// Settings sidebar reads consistently with the rest of the app. Driving this off the enum keeps a
-  /// future `Category` variant a single new arm.
   fn icon(self) -> Icon {
     match self {
       Category::About => Icon::help(),
@@ -269,11 +266,6 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
       (Outcome::None, Task::none())
     }
     Message::Features(msg) => {
-      // usage feature_toggle (§8.1): record the persisted on/off keyed by a
-      // stable per-feature config token before dispatching. Only the actual
-      // toggle messages emit; the telemetry switches live in `TelemetryConfig`
-      // (not the feature flags), so they never route here. A no-op unless
-      // telemetry is built.
       record_feature_toggle(&msg);
       (
         features_tab::update(&mut state.features, msg, &mut state.settings),
@@ -304,9 +296,6 @@ pub fn update(state: &mut State, message: Message) -> (Outcome, Task<Message>) {
     Message::ResetToDefaults => {
       let active = state.active;
       reset_active(state);
-      // Resetting the scale must re-scale every open window, not just persist; only the
-      // AccessibilityChanged outcome makes the app hoist the new scale factor live. The UI category
-      // re-docks and reorders the rail live the same way via UiChanged.
       let outcome = match active {
         Category::Accessibility => Outcome::AccessibilityChanged,
         Category::Mcp => Outcome::McpChanged,
@@ -438,8 +427,6 @@ fn categories_pane(state: &State) -> Element<'_, Message> {
     rows.push(category_row(state, category, badge_for(state, category)));
   }
 
-  // Push About to the bottom of the rail and fence it off from the working categories so it reads as
-  // a separate, always-available surface rather than another preference group.
   rows.push(Space::new().height(Length::Fill).into());
   rows.push(
     container(rule::horizontal())
@@ -592,8 +579,6 @@ fn badge_for(state: &State, category: Category) -> String {
 }
 
 fn active_panel(state: &State) -> Element<'_, Message> {
-  // A disabled Industry feature must never render its panel, even if it was the active category when
-  // the feature was switched off; fall back to the default category in that case.
   let industry_off = !state.settings.features().is_enabled(config::Feature::Industry);
   let active = if state.active == Category::Industry && industry_off {
     Category::default()
@@ -688,24 +673,19 @@ mod tests {
 
     use crate::services::telemetry::is_well_formed_token;
 
-    // A group master toggle keys off the group's stable token.
     let (token, on) = feature_toggle_event(&Message::GroupToggled(features_tab::Group::Wallet, false)).unwrap();
     assert_eq!(token, "wallet");
     assert!(!on);
 
-    // A sub-feature toggle dots `group.sub`, matching the §6 contract examples.
     let (token, on) = feature_toggle_event(&Message::SubToggled(config::SubFeature::Budget, true)).unwrap();
     assert_eq!(token, "wallet.budget");
     assert!(on);
 
-    // A single-Feature cascade keys off the group's legacy key.
     let (token, _) = feature_toggle_event(&Message::Toggled(config::Feature::AssetTracking, true)).unwrap();
     assert_eq!(token, "asset_tracking");
 
-    // Search emits nothing.
     assert!(feature_toggle_event(&Message::SearchChanged("x".to_owned())).is_none());
 
-    // Every derivable token satisfies the usage-token shape invariant.
     for sub in config::SubFeature::ALL {
       let (token, _) = feature_toggle_event(&Message::SubToggled(sub, true)).unwrap();
       assert!(is_well_formed_token(&token), "sub token `{token}` is malformed");

@@ -1,6 +1,3 @@
-//! Bundles the daily `pod.YYYY-MM-DD.log` JSONL files for a UTC range into a zip with a diagnostics manifest. Days
-//! fully inside the range are copied whole; the partial days at each edge are filtered line by line on their timestamp.
-
 use std::{
   io::{BufRead, BufReader, Cursor, Write},
   path::{Path, PathBuf},
@@ -101,7 +98,6 @@ pub fn default_file_name(start: DateTime<Utc>, end: DateTime<Utc>) -> String {
   )
 }
 
-/// Resolves a preset to a UTC range; presets (notably `Today`'s midnight) are anchored in local time first.
 pub fn range_for_preset(preset: RangePreset, now: DateTime<Local>) -> (DateTime<Utc>, DateTime<Utc>) {
   let start = match preset {
     RangePreset::Last24Hours => now - Duration::hours(24),
@@ -160,8 +156,6 @@ fn render_manifest(
   out
 }
 
-/// Picks the daily files overlapping the range, flagging a file `boundary` when its UTC day only partly overlaps so
-/// `stream_lines` filters it per line; fully-interior days are copied whole.
 fn select_files(log_dir: &Path, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<SelectedFile> {
   let Ok(entries) = std::fs::read_dir(log_dir) else {
     return Vec::new();
@@ -211,7 +205,6 @@ fn stream_lines<W: Write + std::io::Seek>(
     let line =
       line.map_err(|err| t!("settings.log_export.error_read_file", name => file.name, error => err).into_owned())?;
     if file.boundary {
-      // On a boundary day, drop lines outside the range — and any line whose timestamp won't parse.
       match line_timestamp(&line) {
         Some(ts) if ts >= start && ts < end => {}
         _ => continue,
@@ -282,7 +275,6 @@ mod tests {
     fn it_includes_interior_files_whole_filters_boundary_days_and_skips_the_rest() {
       let dir = tempfile::tempdir().unwrap();
       let path = dir.path();
-      // Boundary start day: only the 07:00 and 08:00 lines fall in range.
       write_log(
         path,
         "pod.2026-06-09.log",
@@ -292,15 +284,12 @@ mod tests {
           &line_at("2026-06-09T08:00:00Z"),
         ],
       );
-      // Interior day: included whole, no per-line filtering.
       write_log(
         path,
         "pod.2026-06-10.log",
         &[&line_at("2026-06-10T01:00:00Z"), &line_at("2026-06-10T23:00:00Z")],
       );
-      // Fully before the range.
       write_log(path, "pod.2026-06-08.log", &[&line_at("2026-06-08T12:00:00Z")]);
-      // Fully at/after the range end.
       write_log(path, "pod.2026-06-11.log", &[&line_at("2026-06-11T01:00:00Z")]);
 
       let bytes = build_zip(path, utc(2026, 6, 9, 6), utc(2026, 6, 11, 0), &diagnostics()).unwrap();

@@ -91,9 +91,6 @@ pub enum Message {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows (roster portraits), so the shell should
-  /// recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
-  /// per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(self, Message::Loaded(_))
   }
@@ -147,8 +144,6 @@ impl State {
     self.active
   }
 
-  /// The queue positions of every computed row, in queue order. Used as the
-  /// stable key space for the multi-selection.
   fn queue_order(&self) -> Vec<i64> {
     self.computed.items.iter().map(|item| item.queue_position).collect()
   }
@@ -686,7 +681,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(42);
 
-      // A slow load for pilot 7 lands after the user has already switched to pilot 42.
       let _ = update(
         &mut state,
         Message::Loaded(Box::new(Loaded {
@@ -1018,7 +1012,6 @@ mod tests {
 
       let _ = update(&mut state, Message::CreatePlanFromSelection, &db);
 
-      // The selection survives the action; the seed carries queue-ordered positions.
       assert_eq!(state.selection.ordered(&state.queue_order()), vec![0, 2]);
     }
 

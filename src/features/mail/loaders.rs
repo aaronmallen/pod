@@ -246,7 +246,6 @@ async fn load_standard_folder_counts(db: &Database, character_id: i64, now: &str
         .await
         .unwrap_or_default(),
     ),
-    // Drafts has no unread concept; the badge shows the total stored drafts for the character.
     drafts: mail::count_drafts_for_character(db, character_id).await.unwrap_or(0),
     inbox: mail::visible_unread_count(db, character_id, now).await.unwrap_or(0),
     sent: 0,
@@ -349,7 +348,6 @@ mod tests {
     let db = store::open_test().await.unwrap();
     seed_character(&db, CHAR).await;
     store_mail(&db, 1, 95_000_001, false).await;
-    // Mirror sync: synthesized system labels live alongside a real user label.
     mail::replace_labels_for_character(
       &db,
       CHAR,
@@ -383,7 +381,6 @@ mod tests {
       vec!["Fleet"]
     );
 
-    // A mail tagged with both a system label and a user label only shows the user chip.
     let resolved = resolve_message_labels(&db, CHAR, &[1, 8, 7000]).await;
     assert_eq!(
       resolved,

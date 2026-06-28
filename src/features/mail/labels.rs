@@ -47,15 +47,10 @@ const SWATCH_SIZE: f32 = 11.0;
 /// never be shown as user labels in the folder pane or as row/reading chips.
 pub(crate) const SYSTEM_LABEL_IDS: [i64; 4] = [1, 2, 4, 8];
 
-/// The well-known EVE Inbox system label id. Snoozing pulls a mail out of the Inbox box by
-/// removing this membership; waking restores it.
 pub(crate) const INBOX_LABEL_ID: i64 = 1;
 
-/// The name of the user label that mirrors Pod's snooze state into EVE. It is created on demand
-/// (no per-character persisted id) and resolved from the catalog by this name.
 pub(crate) const SNOOZED_LABEL_NAME: &str = "Snoozed";
 
-/// A muted blue swatch for the auto-created Snoozed label.
 const SNOOZED_LABEL_COLOR: &str = "#6688cc";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -99,7 +94,6 @@ struct SetPayload {
   previous: Vec<i64>,
 }
 
-/// Whether `id` is an EVE system label that should be hidden from the label UI.
 pub(crate) fn is_system_label(id: i64) -> bool {
   SYSTEM_LABEL_IDS.contains(&id)
 }
@@ -204,8 +198,6 @@ async fn resolve_or_create_snoozed_label(db: &Database, character_id: i64) -> i6
   label_id
 }
 
-/// Computes a label set by removing `remove` (when present) and adding `add` (when absent),
-/// preserving the order of the surviving labels and appending the addition last.
 fn flip_set(current: &[i64], remove: i64, add: i64) -> Vec<i64> {
   let mut next: Vec<i64> = current.iter().copied().filter(|id| *id != remove).collect();
   if !next.contains(&add) {
@@ -214,9 +206,6 @@ fn flip_set(current: &[i64], remove: i64, add: i64) -> Vec<i64> {
   next
 }
 
-/// Snooze-side label flip: pull the mail out of the Inbox box (remove system label 1) and into the
-/// Snoozed box (add the Snoozed label, creating it if missing). Writes the optimistic local mirror
-/// and enqueues a `mail.set_labels` outbox row mirroring the move to EVE.
 pub(super) async fn enqueue_snooze_flip(db: Database, character_id: i64, mail_id: i64) {
   let snoozed_id = resolve_or_create_snoozed_label(&db, character_id).await;
   let previous = mail::membership(&db, character_id, mail_id).await.unwrap_or_default();
@@ -237,10 +226,6 @@ pub(super) async fn enqueue_snooze_flip(db: Database, character_id: i64, mail_id
   enqueue(&db, character_id, "mail.set_labels", &payload, Some(&dedupe)).await;
 }
 
-/// Wake-side label flip: the inverse of [`enqueue_snooze_flip`]. Drops the Snoozed label (when the
-/// catalog still carries one) and restores Inbox membership, returning the mail to the Inbox box.
-/// A no-op write is skipped so a mail that was never snooze-flipped (or already back in Inbox)
-/// leaves the outbox untouched.
 pub(super) async fn enqueue_wake_flip(db: Database, character_id: i64, mail_id: i64) {
   let catalog = mail::labels(&db, character_id).await.unwrap_or_default();
   let snoozed_id = catalog
@@ -668,7 +653,6 @@ mod tests {
       assert!(!is_system_label(7000));
       assert!(!is_system_label(0));
       assert!(!is_system_label(-1));
-      // EVE system label bits are exactly 1/2/4/8 — other small ids are user labels.
       assert!(!is_system_label(3));
       assert!(!is_system_label(16));
     }
@@ -822,7 +806,6 @@ mod tests {
 
     #[test]
     fn it_is_a_no_op_set_when_nothing_changes() {
-      // Already out of Inbox and already labelled Snoozed: the surviving set equals the input.
       assert_eq!(flip_set(&[7], INBOX_LABEL_ID, 7), vec![7]);
     }
   }
@@ -978,7 +961,6 @@ mod tests {
       seed_inbox_label(&db, 42).await;
       mail::add_membership(&db, 42, 7, INBOX_LABEL_ID).await.unwrap();
 
-      // Never snoozed: already in Inbox, no Snoozed label — waking changes nothing.
       enqueue_wake_flip(db.clone(), 42, 7).await;
 
       assert_eq!(pending_set_labels(&db).await, 0);

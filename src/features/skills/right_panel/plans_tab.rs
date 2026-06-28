@@ -111,10 +111,6 @@ pub fn view(state: &State, selection_count: usize) -> Element<'_, Message> {
   }
 
   if state.plans.is_empty() {
-    // The empty-state component already renders its own centered "New plan" /
-    // "From queue" pair, so the full footer (which renders the same pair) is
-    // omitted here to avoid duplicate buttons. Only the "From selected"
-    // affordance is surfaced, and only when a selection exists.
     let mut children: Vec<Element<'_, Message>> = vec![empty_state::empty_state()];
     if shows_empty_state_from_selected(selection_count) {
       children.push(from_selected_footer(selection_count));
@@ -162,11 +158,6 @@ fn footer<'a>(selection_count: usize) -> Element<'a, Message> {
     .into()
 }
 
-/// Whether the empty state should surface the "From selected" affordance.
-///
-/// The empty state never renders the duplicate "New plan" / "From queue" pair
-/// (the empty-state component already provides them), so the only conditional
-/// footer button is "From selected", shown when a skill selection exists.
 fn shows_empty_state_from_selected(selection_count: usize) -> bool {
   selection_count > 0
 }
@@ -189,8 +180,6 @@ async fn load_plans(db: Database, character_id: i64) -> Vec<PlanRow> {
 
   let plans = skills::for_character(&db, character_id).await.unwrap_or_default();
 
-  // Fetch the character's trained levels once for the whole loader so remaining
-  // counts reflect per-character progress without an N+1 over plans.
   let trained: std::collections::HashMap<i64, u8> = character::skills(&db, character_id)
     .await
     .unwrap_or_default()
@@ -315,9 +304,6 @@ mod tests {
 
     #[test]
     fn it_hides_the_from_selected_footer_without_a_selection() {
-      // No selection => only the empty-state component renders, so its centered
-      // "New plan" / "From queue" pair is the *only* button pair (no duplicate
-      // footer pair).
       assert_eq!(shows_empty_state_from_selected(0), false);
     }
 
@@ -345,9 +331,6 @@ mod tests {
       let mut state = State::new();
       state.loaded = true;
 
-      // With no selection the empty state omits the footer entirely, so the
-      // "New plan" / "From queue" pair appears exactly once (in the empty-state
-      // component itself).
       assert!(!shows_empty_state_from_selected(0));
       let _el: Element<'_, Message> = view(&state, 0);
     }

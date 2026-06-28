@@ -54,8 +54,6 @@ pub(super) fn matrix(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// Marks every column tied for the strict top average (value > 0). Ties all lead; an all-zero
-/// group has no leader.
 fn avg_leaders(averages: &[f64]) -> Vec<bool> {
   let max = averages.iter().copied().fold(0.0_f64, f64::max);
   if max <= 0.0 {
@@ -294,8 +292,6 @@ fn label_skill(skill: &SkillCatalogEntry) -> Element<'_, Message> {
   .into()
 }
 
-/// Marks every column tied for the top trained level (level > 0). Ties all lead; an untrained
-/// skill (every level 0) has no leader.
 fn level_leaders(levels: &[u8]) -> Vec<bool> {
   let max = levels.iter().copied().max().unwrap_or(0);
   if max == 0 {
@@ -314,8 +310,6 @@ fn mastery_bar<'a>(fraction: f32, accent: Color, leader: bool) -> Element<'a, Me
   .into()
 }
 
-/// A caret pinned to the tip of the bar fill marking a leading pilot. Non-leaders reserve the same
-/// height so cells in a row stay aligned.
 fn mastery_marker<'a>(fraction: f32, accent: Color, leader: bool) -> Element<'a, Message> {
   if !leader {
     return container(Space::new())

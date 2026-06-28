@@ -123,15 +123,10 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       settings.accessibility_mut().set_high_contrast(enabled);
       Outcome::AccessibilityChanged
     }
-    // Backing out of a pending switch: drop the pending selection so the panel reverts to the running
-    // language with no persist and no restart. Harmless when nothing is pending.
     Message::LanguageChangeCanceled => {
       state.pending_language = None;
       Outcome::None
     }
-    // Picking a card never applies live: it parks a pending selection so the panel can surface the
-    // restart confirmation. Re-picking the running language clears the pending state (a no-op). The
-    // applied switch + re-seed lands on the confirm action below.
     Message::LanguageChanged(language) => {
       state.pending_language = (language != settings.accessibility().language()).then_some(language);
       Outcome::None
@@ -203,8 +198,6 @@ fn panel_header<'a>() -> Element<'a, Message> {
 fn panel_body(state: &State, settings: &Settings) -> Element<'static, Message> {
   let scale = clamp_scale(*settings.accessibility().scale());
   let high_contrast = *settings.accessibility().high_contrast();
-  // The grid highlights the language the panel would switch to: the parked pending choice if a switch
-  // is staged, otherwise the language Pod is actually running. The head/footer track the same value.
   let running_language = settings.accessibility().language();
   let selected_language = state.pending_language.unwrap_or(running_language);
 
@@ -336,9 +329,6 @@ fn live_chip(label: &str) -> Element<'static, Message> {
     .into()
 }
 
-// The language section head mirrors `section_head` but trades the green live chip for an amber
-// "restart required" pill when a switch is pending — the language change applies on restart, not live.
-// With nothing pending it shows a live chip reading the running language's `<native> · <code>`.
 fn language_section_head(pending: Option<Language>, selected: Language) -> Element<'static, Message> {
   let micro = text(super::i18n::tr_static("settings.accessibility.language_section_label"))
     .font(typography::mono::MEDIUM)
@@ -440,9 +430,6 @@ fn language_grid(selected: Language) -> Element<'static, Message> {
     .into()
 }
 
-// One selectable card: the native name + uppercase ESI code pill on the top row, the muted English
-// region/label + a plasma check-circle (when selected) on the bottom. Selected cards tint plasma and
-// gain a plasma border; picking one parks it pending rather than applying live.
 fn language_card(language: Language, selected: bool) -> Element<'static, Message> {
   let native_color = if selected {
     color::text::PRIMARY
@@ -501,7 +488,6 @@ fn language_card(language: Language, selected: bool) -> Element<'static, Message
     .width(Length::Fill)
     .on_press(Message::LanguageChanged(language))
     .style(move |_, status| {
-      // Hover firms the border on resting cards; the selected card keeps its plasma edge.
       let border_color = match (selected, status) {
         (true, _) => border,
         (false, button::Status::Hovered) => color::rule_strong(),
@@ -522,7 +508,6 @@ fn language_card(language: Language, selected: bool) -> Element<'static, Message
     .into()
 }
 
-// The selected-card affordance: a small plasma circle with a dark check, bottom-right of the card.
 fn language_check() -> Element<'static, Message> {
   container(
     Icon::check()
@@ -580,9 +565,6 @@ fn language_code_tag(code: &'static str, selected: bool) -> Element<'static, Mes
     .into()
 }
 
-// Resting state: a quiet, globe-marked note explaining the language is sent to ESI as the
-// `Accept-Language` header and that a restart applies a change. The marker reuses the ESI-data glyph
-// the wizard's language step uses, since there is no globe in the icon set.
 fn language_resting_note(running: Language) -> Element<'static, Message> {
   let icon = Icon::market().size(15.0).color(color::text::secondary()).render();
   let note = text(
@@ -620,9 +602,6 @@ fn language_resting_note(running: Language) -> Element<'static, Message> {
     .into()
 }
 
-// Pending state: the amber, restart-gated confirmation (ADR-0041). The confirm button emits
-// `LanguageRestartConfirmed`, which is where the persist + re-seed + relaunch is wired; the cancel
-// ghost backs out by clearing the pending selection.
 fn language_confirm_row(pending: Language) -> Element<'static, Message> {
   let marker = Icon::clock().size(16.0).color(color::status::WARNING).render();
   let heading = text(
@@ -685,8 +664,6 @@ fn language_apply_button() -> Element<'static, Message> {
     .into()
 }
 
-// The escape hatch from a pending switch: a quiet secondary button that drops the pending selection
-// and reverts to the running language without persisting or restarting.
 fn language_cancel_button() -> Element<'static, Message> {
   Button::secondary(super::i18n::tr_static("settings.accessibility.language_cancel"))
     .size(Size::Sm)
@@ -1155,10 +1132,6 @@ fn fine_scale(scale: u8) -> Element<'static, Message> {
     .into()
 }
 
-// Milestone markers under the fine-scale slider: a tick + label at each preset,
-// spaced proportionally to its position in the 85-150% range so the markers line
-// up beneath the slider handle's travel. Each marker is clickable and jumps the
-// scale to that preset, mirroring the segmented preset row above.
 fn scale_ticks(scale: u8) -> Element<'static, Message> {
   let mut children: Vec<Element<'static, Message>> = Vec::with_capacity(PRESETS.len() * 2 - 1);
   let mut previous = SCALE_MIN;

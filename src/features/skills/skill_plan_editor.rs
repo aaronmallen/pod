@@ -3519,7 +3519,6 @@ mod tests {
     #[test]
     fn it_rebases_the_id_counter_below_a_loaded_repair_entry() {
       let mut state = State::new(42);
-      // A repaired under-expanded plan: one real positive id plus a synthetic negative repair id.
       let loaded = loaded_with(vec![edit_entry(7, 100, 5), edit_entry(-1, 200, 1)]);
 
       apply_loaded(&mut state, loaded);

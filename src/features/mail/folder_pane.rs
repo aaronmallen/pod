@@ -123,7 +123,6 @@ fn unified_section(state: &State, selected: Folder) -> Element<'_, Message> {
     .into()
 }
 
-/// The standard boxes that accept a dragged message row as a pure local move.
 fn is_drop_box(folder: StandardFolder) -> bool {
   matches!(
     folder,

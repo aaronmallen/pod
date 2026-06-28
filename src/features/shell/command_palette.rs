@@ -668,13 +668,11 @@ mod tests {
 
     #[test]
     fn it_builds_a_row_for_an_active_entry_with_an_icon() {
-      // The nav entry carries an icon and a detail line, so this exercises the icon + detail arms.
       let _row: Element<'_, ()> = row(nav_entry(), true, 0, |_| (), |_| ());
     }
 
     #[test]
     fn it_builds_a_row_for_an_inactive_iconless_entry() {
-      // The command entry has no icon, so this exercises the Space placeholder arm.
       let _row: Element<'_, ()> = row(command_entry(), false, 3, |_| (), |_| ());
     }
 
@@ -696,7 +694,6 @@ mod tests {
         selected: 0,
       };
 
-      // The empty-results branch renders the "No matches" placeholder.
       let _view: Element<'_, ()> = view(&state, Vec::new(), |_| (), |_| (), |_| (), ());
     }
   }

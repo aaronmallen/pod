@@ -32,32 +32,16 @@ use crate::{
   },
 };
 
-/// Rows fetched per page when the inbox/label listing is keyset-paginated.
-///
-/// Large enough to overfill a tall viewport on the first load, small enough that
-/// the per-row body/label/overlay enrichment in [`key_to_row`] stays cheap.
 pub(super) const MESSAGE_PAGE_SIZE: i64 = 60;
 
 const SNIPPET_MAX_CHARS: usize = 120;
 
-/// Nominal height of one message row, in pixels.
-///
-/// Mail rows are content-driven (a two-line subject, optional label chips), and the
-/// interleaved day-bucket headers are shorter, so this is only an estimate for the
-/// [`VirtualList`] offset math; overscan absorbs the variance.
 const ESTIMATED_ROW_HEIGHT: f32 = 88.0;
 
 const AVATAR_SIZE: f32 = 36.0;
 
 const INDICATOR_ICON_SIZE: f32 = 14.0;
 
-/// A date-separator bucket in the message list.
-///
-/// Relative buckets (Today/Yesterday) always win over the calendar buckets so a
-/// "yesterday" mail that fell in the previous calendar month still groups under
-/// Yesterday rather than a month header. Everything else lands in the current
-/// calendar month ([`DayBucket::ThisMonth`]) or, for older mail, a per-month
-/// header carrying its own year so headers stay accurate across year boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DayBucket {
   Today,
@@ -72,7 +56,6 @@ impl DayBucket {
       DayBucket::Today => t!("mail.list.bucket.today").into_owned(),
       DayBucket::Yesterday => t!("mail.list.bucket.yesterday").into_owned(),
       DayBucket::ThisMonth => t!("mail.list.bucket.this_month").into_owned(),
-      // `%B %Y` → "June 2026"; build a NaiveDate on the 1st of the month purely to format it.
       DayBucket::Month {
         year,
         month,
@@ -133,8 +116,6 @@ pub struct MessageRow {
   pub snippet: String,
   pub subject: String,
   pub time: String,
-  /// The raw RFC3339 send time, kept so the keyset paginator can build a cursor
-  /// from the last loaded row (`time` is only the formatted clock label).
   pub timestamp: String,
 }
 
@@ -157,21 +138,11 @@ impl SenderKind {
   }
 }
 
-/// The first screen of a folder: the first keyset page of the listing.
-///
-/// Inbox and label folders are keyset-paginated — their backing queries are
-/// unbounded and a large mailbox is the worst offender — so only `MESSAGE_PAGE_SIZE`
-/// rows are materialized up front; the rest load on scroll. The other folders
-/// (sent/drafts/overlay-backed/unified) are inherently bounded and load in one
-/// shot with no further pages.
 pub(super) struct FirstPage {
   pub has_more: bool,
   pub tail: Vec<MessageRow>,
 }
 
-/// One entry in the flattened, windowed message list. Section headers share the
-/// flat index space with the rows beneath them so the [`VirtualList`] windows over
-/// `[Header, Row, Row, Header, Row, …]` uniformly.
 enum ListItem<'a> {
   Header(String),
   Row(&'a MessageRow),
@@ -199,7 +170,6 @@ pub(super) async fn load_first_page(db: &Database, scope: Scope, folder: Folder)
     let tail_headers = match label_id {
       Some(label_id) => mail::visible_headers_for_label_page(db, id, label_id, &now_iso, None, MESSAGE_PAGE_SIZE).await,
       None => {
-        // The inbox hides a character's own sent mail (it lives in the Sent folder).
         let visible = mail::visible_headers_page(db, id, &now_iso, None, MESSAGE_PAGE_SIZE).await;
         filter_inbox_self_sent(visible, id)
       }
@@ -213,7 +183,6 @@ pub(super) async fn load_first_page(db: &Database, scope: Scope, folder: Folder)
     };
   }
 
-  // Bounded folders: a single fetch.
   let keys: Vec<MailKey> = if matches!(folder, Folder::Unified) {
     unified_keys(db, &now_iso).await
   } else {
@@ -234,7 +203,6 @@ pub(super) async fn load_first_page(db: &Database, scope: Scope, folder: Folder)
   }
 }
 
-/// One more keyset page of the inbox/label tail past `cursor`.
 pub(super) async fn load_messages_page(
   db: &Database,
   scope: Scope,
@@ -259,7 +227,6 @@ pub(super) async fn load_messages_page(
   headers_to_rows_owned(db, headers.unwrap_or_default(), now).await
 }
 
-/// One keyset page of search hits (subject/sender match) past `cursor`.
 pub(super) async fn load_search_page(
   db: &Database,
   scope: Scope,
@@ -271,9 +238,6 @@ pub(super) async fn load_search_page(
   let now_iso = now.to_rfc3339();
   let Scope::Character(id) = scope;
 
-  // The unified folder searches the roster-wide view; a label folder scopes to that
-  // label; every other folder searches the active character's visible mailbox
-  // (matching the prior in-memory behaviour).
   if matches!(folder, Folder::Unified) {
     let hits = mail::search_visible_unified_page(db, &now_iso, needle, cursor.as_ref(), MESSAGE_PAGE_SIZE)
       .await
@@ -326,7 +290,6 @@ fn paginated_label(folder: Folder) -> Option<Option<i64>> {
   }
 }
 
-/// Inbox hides a character's own sent mail (it lives in the Sent folder instead).
 fn filter_inbox_self_sent(
   visible: Result<Vec<CharacterMail>, store::Error>,
   character_id: i64,
@@ -502,7 +465,6 @@ fn subject_or_no_subject(subject: &str) -> String {
 
 fn day_bucket(timestamp: &str, now: DateTime<Utc>) -> DayBucket {
   let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) else {
-    // Unparseable timestamps land in the current month rather than vanish or crash.
     return DayBucket::ThisMonth;
   };
   let ts = ts.with_timezone(&Utc);
@@ -525,10 +487,6 @@ fn day_bucket(timestamp: &str, now: DateTime<Utc>) -> DayBucket {
   }
 }
 
-/// The per-row time label, tiered to match the row's [`DayBucket`]:
-/// `HH:MM` for Today/Yesterday, `Jun 18` for older mail in the current year, and
-/// `Dec 2 2025` for mail from a prior year. Both this and [`day_bucket`] are built
-/// from the same `now` so the tiers stay consistent.
 fn time_label(timestamp: &str, now: DateTime<Utc>) -> String {
   let Ok(ts) = DateTime::parse_from_rfc3339(timestamp) else {
     return timestamp.to_owned();
@@ -541,10 +499,8 @@ fn time_label(timestamp: &str, now: DateTime<Utc>) -> String {
   if is_recent {
     format!("{:02}:{:02}", ts.hour(), ts.minute())
   } else if day.year() == today.year() {
-    // "%b %-d" → "Jun 18"
     ts.format("%b %-d").to_string()
   } else {
-    // "%b %-d %Y" → "Dec 2 2025"
     ts.format("%b %-d %Y").to_string()
   }
 }
@@ -601,9 +557,6 @@ pub(super) fn pane(state: &State, width: f32) -> Element<'_, Message> {
     .into()
 }
 
-/// The Drafts read-path: a bounded list of locally persisted compose drafts. Drafts are not mail, so
-/// they bypass the mail listing entirely — a row opens its draft into the compose modal and carries
-/// its own delete action.
 fn draft_pane(state: &State, width: f32) -> Element<'_, Message> {
   let drafts = state.drafts();
 
@@ -697,12 +650,6 @@ fn draft_row(row: &super::draft::DraftRow) -> Element<'_, Message> {
     .into()
 }
 
-/// Flatten the current listing into the [`VirtualList`] index space.
-///
-/// When a search is active the source is the bounded search-results accumulator
-/// ([`State::all_messages`]); otherwise it is the day-bucketed listing
-/// ([`State::messages`]). Day-bucket section headers are interleaved as ordinary
-/// indexable items so windowing places them at the right offsets.
 fn flatten(state: &State) -> Vec<ListItem<'_>> {
   let searching = !state.search().trim().is_empty();
   if searching {
@@ -1011,8 +958,6 @@ mod tests {
 
     use super::*;
 
-    /// Describe a flat item for assertions: `"#Label"` for a header, the mail id
-    /// (as a string) for a row.
     fn describe(item: &ListItem<'_>) -> String {
       match item {
         ListItem::Header(label) => format!("#{label}"),
@@ -1043,8 +988,6 @@ mod tests {
 
     #[test]
     fn it_emits_an_ordered_month_header_per_distinct_calendar_month() {
-      // Rows arrive newest-first, so consecutive distinct buckets become headers in
-      // that order — including a year boundary (January 2026 before December 2025).
       let rows = vec![
         row(
           1,
@@ -1104,9 +1047,7 @@ mod tests {
 
     assert_eq!(day_bucket("2026-06-15T09:00:00Z", now), DayBucket::Today);
     assert_eq!(day_bucket("2026-06-14T23:00:00Z", now), DayBucket::Yesterday);
-    // Earlier in the current calendar month → This Month, not a month header.
     assert_eq!(day_bucket("2026-06-10T09:00:00Z", now), DayBucket::ThisMonth);
-    // An older month carries its own month + year.
     assert_eq!(
       day_bucket("2026-05-20T09:00:00Z", now),
       DayBucket::Month {
@@ -1121,19 +1062,15 @@ mod tests {
         month: 12
       }
     );
-    // Unparseable timestamps fall back gracefully to the current month.
     assert_eq!(day_bucket("not-a-date", now), DayBucket::ThisMonth);
   }
 
   #[test]
   fn it_prefers_relative_buckets_over_calendar_buckets_across_a_month_boundary() {
-    // "Now" is the 1st of the month; yesterday is in the previous calendar month,
-    // but the row must still group under Yesterday, not a month header.
     let now = Utc.with_ymd_and_hms(2026, 6, 1, 8, 0, 0).unwrap();
 
     assert_eq!(day_bucket("2026-06-01T07:00:00Z", now), DayBucket::Today);
     assert_eq!(day_bucket("2026-05-31T23:00:00Z", now), DayBucket::Yesterday);
-    // Two days back in the previous month is a month header, not This Month.
     assert_eq!(
       day_bucket("2026-05-30T09:00:00Z", now),
       DayBucket::Month {
@@ -1155,7 +1092,6 @@ mod tests {
   fn it_formats_the_clock_label_for_recent_mail() {
     let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
 
-    // Today and yesterday keep HH:MM.
     assert_eq!(time_label("2026-06-15T09:07:00Z", now), "09:07");
     assert_eq!(time_label("2026-06-14T22:45:00Z", now), "22:45");
   }
@@ -1164,10 +1100,8 @@ mod tests {
   fn it_formats_an_older_row_as_a_date_tier() {
     let now = Utc.with_ymd_and_hms(2026, 6, 15, 14, 0, 0).unwrap();
 
-    // Earlier in the current year → "Jun 18" style (no year).
     assert_eq!(time_label("2026-06-18T09:07:00Z", now), "Jun 18");
     assert_eq!(time_label("2026-05-02T09:07:00Z", now), "May 2");
-    // A prior year carries the year → "Dec 2 2025".
     assert_eq!(time_label("2025-12-02T09:07:00Z", now), "Dec 2 2025");
   }
 
@@ -1209,7 +1143,6 @@ mod tests {
       month: 6,
     };
 
-    // Newer months sort ahead of older ones, spanning the year boundary correctly.
     assert!(jun_2026 < jan_2026);
     assert!(jan_2026 < dec_2025);
 
@@ -1259,11 +1192,6 @@ mod tests {
 
     const LABEL: i64 = 5000;
 
-    /// The full first-page listing as a flat Vec.
-    ///
-    /// In these small fixtures a page never overflows, so this reconstructs the
-    /// whole folder the way the UI sees it and lets the folder-derivation
-    /// assertions stay focused on *which* mail is visible.
     async fn load_messages(db: &Database, scope: Scope, folder: Folder) -> Vec<MessageRow> {
       load_first_page(db, scope, folder).await.tail
     }

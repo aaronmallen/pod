@@ -130,7 +130,6 @@ pub fn state_path() -> Option<PathBuf> {
   dir_spec::state_home().map(|path| path.join("pod/window.json"))
 }
 
-/// Loads window state, first attempting to migrate a legacy flat-geometry file before falling back to the current keyed format.
 fn load_from(path: &Path) -> UiState {
   let Ok(bytes) = std::fs::read(path) else {
     return UiState::default();

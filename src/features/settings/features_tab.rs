@@ -188,12 +188,8 @@ pub enum Group {
 }
 
 impl Group {
-  // Made `pub` so the first-run wizard's Features phase can derive one sub-step per display group
-  // (`src/features/wizard.rs`); the settings tab and the wizard share the same group catalog.
   pub const ALL: [Group; 4] = [Group::Characters, Group::Industry, Group::Wallet, Group::Assets];
 
-  /// The count of this group's displayed children that are currently enabled, over the group's total
-  /// child count. Shared with the first-run wizard's per-group Features step header.
   pub fn enabled_over_total(self, settings: &Settings) -> (usize, usize) {
     let subs = self.sub_features();
     let flags = settings.features();
@@ -201,8 +197,6 @@ impl Group {
     (enabled, subs.len())
   }
 
-  // Made `pub` so the first-run wizard's per-group Features step can title each sub-step with the same
-  // display-group label the settings tab uses.
   pub fn title(self) -> &'static str {
     match self {
       Group::Assets => "Assets",
@@ -453,10 +447,6 @@ fn feature_list<'a>(state: &'a State, settings: &'a Settings) -> Element<'a, Mes
     .into()
 }
 
-/// Renders one display group's feature toggle rows (no master header), reusing the same catalog,
-/// dependency locking, and toggle widgets the settings tab draws. The first-run wizard's per-group
-/// Features step frames these rows under its own step header and bulk control, so the wizard and the
-/// settings tab show byte-identical feature rows over the same `Settings.features`.
 pub fn group_rows<'a>(group: Group, settings: &'a Settings) -> Element<'a, Message> {
   let rows: Vec<Element<'a, Message>> = group
     .sub_features()
@@ -495,8 +485,6 @@ fn group_block<'a>(group: Group, state: &'a State, settings: &'a Settings) -> Op
 
 fn master_row<'a>(group: Group, state: GroupState) -> Element<'a, Message> {
   let on = state.is_on();
-  // Plasma-blue master-toggle header: the group title carries the accent so each of the four groups
-  // reads as a section header that also toggles its whole displayed child list on or off.
   let title = text(group.title())
     .font(typography::body::MEDIUM)
     .size(typography::size::LG)
@@ -686,8 +674,6 @@ mod tests {
 
     #[test]
     fn it_reflects_state_across_a_display_group_that_spans_several_features() {
-      // The Characters group folds in Skill Queue, Mail, and Calendar, which are standalone top-level
-      // Features in the model. Its state must roll up across all of them, not just one Feature.
       let mut settings = Settings::default();
       assert_eq!(GroupState::of(Group::Characters, &settings), GroupState::Full);
 
@@ -784,8 +770,6 @@ mod tests {
 
     #[test]
     fn the_characters_master_cascades_to_mail_calendar_and_skill_queue() {
-      // Mail, Calendar, and Skill Queue are standalone top-level Features in the model but render
-      // under the Characters group; the master must cascade to all of them at the display layer.
       let mut state = state();
       let mut settings = Settings::default();
 
@@ -825,7 +809,6 @@ mod tests {
 
     #[test]
     fn enabling_the_wallet_master_satisfies_budgets_coupling() {
-      // Render order keeps Budget last, after Journal, so a whole-group enable leaves Budget on.
       let mut state = state();
       let mut settings = Settings::default();
       for &sub in Group::Wallet.sub_features() {

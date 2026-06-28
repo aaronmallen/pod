@@ -45,7 +45,6 @@ impl Language {
     Language::ALL.into_iter().find(|language| language.esi_code() == code)
   }
 
-  /// The display label, in the language's own script, for the selector UI.
   pub fn native_label(self) -> &'static str {
     match self {
       Language::De => "Deutsch",
@@ -75,7 +74,6 @@ impl Language {
     }
   }
 
-  /// The English display label for the selector UI.
   pub fn label(self) -> String {
     match self {
       Language::De => t!("language.name.de").into_owned(),

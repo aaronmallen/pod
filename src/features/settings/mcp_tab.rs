@@ -79,31 +79,23 @@ pub enum ConnectAgent {
   Gemini,
 }
 
-/// Whether the named app's native chat client can connect, or whether the user must use a different
-/// supported tool instead.
 #[derive(Clone, Copy, Debug)]
 enum Support {
-  /// The native chat app connects, via the named bridge/mechanism.
-  Connectable { via: &'static str },
-  /// The native chat app cannot connect to a local server; use `use_instead` instead.
+  Connectable {
+    via: &'static str,
+  },
   NativeUnsupported {
     note: &'static str,
     use_instead: &'static str,
   },
 }
 
-/// Verified per-agent metadata for the Connect-an-agent tabs.
 #[derive(Clone, Copy, Debug)]
 struct AgentMeta {
-  /// The label shown in the snippet card header (the config file name).
   file: &'static str,
-  /// A short trailing line of caveats (Node.js / verify-first / relaunch).
   needs: &'static str,
-  /// The display name for the tab.
   name: &'static str,
-  /// Where the config file lives / how to open it.
   path: &'static str,
-  /// The honest connectivity state for this app.
   support: Support,
 }
 
@@ -230,7 +222,6 @@ fn clamp_port(raw: &str) -> u16 {
 fn config_snippet(agent: ConnectAgent, port: u16, token: &str) -> String {
   let url = format!("http://{BIND_ADDRESS}:{port}/mcp");
   match agent {
-    // OpenAI Codex CLI — TOML, static bearer header.
     ConnectAgent::ChatGpt => {
       format!("[mcp_servers.pod]\nurl = \"{url}\"\nhttp_headers = {{ Authorization = \"Bearer {token}\" }}")
     }
@@ -239,7 +230,6 @@ fn config_snippet(agent: ConnectAgent, port: u16, token: &str) -> String {
     ConnectAgent::Claude => format!(
       "{{\n  \"mcpServers\": {{\n    \"pod\": {{\n      \"command\": \"npx\",\n      \"args\": [\"-y\", \"mcp-remote\", \"{url}\", \"--allow-http\",\n               \"--header\", \"Authorization:${{POD_AUTH_HEADER}}\"],\n      \"env\": {{ \"POD_AUTH_HEADER\": \"Bearer {token}\" }}\n    }}\n  }}\n}}"
     ),
-    // Antigravity — native Streamable-HTTP MCP entry (no bridge).
     ConnectAgent::Gemini => format!(
       "{{\n  \"mcpServers\": {{\n    \"pod\": {{\n      \"serverUrl\": \"{url}\",\n      \"headers\": {{ \"Authorization\": \"Bearer {token}\" }}\n    }}\n  }}\n}}"
     ),

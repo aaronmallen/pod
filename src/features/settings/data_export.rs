@@ -24,16 +24,12 @@ use crate::features::settings::log_export::Diagnostics;
 /// import side can refuse archives it does not understand.
 pub const ARCHIVE_VERSION: u32 = 1;
 
-/// Entry name for the self-contained database snapshot inside the archive.
 pub const DATABASE_NAME: &str = "pod.db";
 
-/// Entry name for the bundled config file inside the archive.
 pub const CONFIG_NAME: &str = "config.toml";
 
-/// Entry name for the machine-parseable manifest inside the archive.
 pub const MANIFEST_JSON_NAME: &str = "manifest.json";
 
-/// Entry name for the human-readable manifest inside the archive.
 const MANIFEST_TXT_NAME: &str = "MANIFEST.txt";
 
 /// The machine-parseable archive manifest. Serialized to `manifest.json` and parsed back by the
@@ -44,19 +40,12 @@ const MANIFEST_TXT_NAME: &str = "MANIFEST.txt";
 /// avoids pulling in that feature.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Manifest {
-  /// Archive layout version (see `ARCHIVE_VERSION`).
   pub archive_version: u32,
-  /// `arch` the archive was produced on (`std::env::consts::ARCH`).
   pub arch: String,
-  /// When the archive was built, as an RFC 3339 UTC timestamp.
   pub created_at: String,
-  /// Pod version that produced the archive (`CARGO_PKG_VERSION`).
   pub pod_version: String,
-  /// `os` the archive was produced on (`std::env::consts::OS`).
   pub os: String,
-  /// Summary of the storage paths the archive was captured from.
   pub storage: StoragePaths,
-  /// Stats for each file included in the archive.
   pub files: Vec<IncludedFile>,
 }
 
@@ -74,7 +63,6 @@ impl Manifest {
   }
 }
 
-/// Storage-path summary captured into the manifest so an archive records where it came from.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StoragePaths {
   pub cache_dir: String,
@@ -94,7 +82,6 @@ impl From<&Diagnostics> for StoragePaths {
   }
 }
 
-/// Per-entry stats recorded in the manifest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IncludedFile {
   pub bytes: u64,
@@ -148,7 +135,6 @@ pub fn build_archive(db_snapshot: &Path, config_bytes: &[u8], diagnostics: &Diag
   Ok(buf)
 }
 
-/// Suggested file name for a saved data archive, bracketed by the build timestamp.
 pub fn default_file_name(now: DateTime<Utc>) -> String {
   format!("pod-data-{}.zip", now.format("%Y%m%dT%H%M%SZ"))
 }
@@ -160,35 +146,19 @@ pub fn default_file_name(now: DateTime<Utc>) -> String {
 /// schema cannot be downgraded. The import UI maps these to "ok / will migrate / incompatible".
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VersionVerdict {
-  /// Archive Pod version matches this build exactly; restore as-is.
   Ok,
-  /// Archive is from an older Pod; restore is safe and migrations run forward on next launch.
   WillMigrate,
-  /// Archive is from a newer Pod (higher major version); refuse — the schema can't be downgraded.
   Incompatible,
 }
 
-/// An archive parsed out of its `.zip` container: the raw `pod.db` and `config.toml` bytes, the
-/// parsed `manifest.json`, and the version-guard verdict the import confirm modal displays. The
-/// import join (T7) consumes the bytes to restore and reads `verdict` to gate the restore.
 #[derive(Clone, Debug)]
 pub struct ParsedArchive {
-  /// Raw bytes of the self-contained `pod.db` snapshot entry.
   pub database: Vec<u8>,
-  /// Raw bytes of the bundled `config.toml` entry.
   pub config: Vec<u8>,
-  /// The parsed machine-readable manifest.
   pub manifest: Manifest,
-  /// Compatibility verdict comparing the archive's Pod version against this build.
   pub verdict: VersionVerdict,
 }
 
-/// Opens a data archive, extracts and validates its entries, and computes the version-guard verdict.
-///
-/// Reads the `.zip` from `bytes`, requiring `pod.db`, `config.toml`, and a parseable `manifest.json`;
-/// a missing or corrupt entry is rejected with a clear `String` error so nothing is partially
-/// applied. The returned `verdict` reflects ADR-0038's policy: an older/equal archive restores
-/// (migrations run forward), a newer-major archive is `Incompatible` and the import must refuse.
 pub fn read_archive(bytes: &[u8]) -> Result<ParsedArchive, String> {
   let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
     .map_err(|err| t!("settings.data_export.error_open_archive", error => err).into_owned())?;
@@ -451,8 +421,6 @@ mod tests {
       build_archive(&db, b"[storage]\nnetwork = false\n", &diagnostics()).unwrap()
     }
 
-    /// Rebuilds a `.zip` from the given entries, used to fabricate archives missing an entry or
-    /// carrying a tampered manifest.
     fn zip_from(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
       let mut buf = Vec::new();
       {
@@ -499,8 +467,6 @@ mod tests {
 
     #[test]
     fn the_extracted_database_opens_as_a_sqlite_snapshot() {
-      // Round-trip is covered by the build_archive suite; here we only assert read_archive
-      // surfaces the same db bytes the writer embedded, by length-matching a fabricated entry.
       let db = b"not a real db but round-tripped".to_vec();
       let bytes = zip_from(&[
         (DATABASE_NAME, db.clone()),

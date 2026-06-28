@@ -40,7 +40,6 @@ const SQLITE_MAX_BIND_PARAMS: usize = 999;
 #[derive(Clone, Debug)]
 pub enum Progress {
   Complete,
-  /// Seed failed but usable reference data already exists, so the app can proceed with stale data.
   Degraded(String),
   Error(String),
   Step(String),
@@ -56,8 +55,6 @@ struct BlueprintActivityMetaRow {
   time: i64,
 }
 
-/// One `(blueprint_type_id, activity_id, type_id, quantity)` row destined for either the products or the
-/// materials table.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct BlueprintActivityRow {
   activity_id: i64,
@@ -1213,8 +1210,6 @@ async fn seed_npc_agents(db: &Database, path: &Path, language: Language) -> Resu
     .map_err(|e| e.to_string())
 }
 
-/// Maps an SDE blueprint activity name to its EVE activity id. Unknown activities are skipped so future
-/// SDE additions never abort a seed.
 fn blueprint_activity_id(name: &str) -> Option<i64> {
   match name {
     "manufacturing" => Some(1),
@@ -1233,8 +1228,6 @@ fn is_build_activity(activity_id: i64) -> bool {
   activity_id == 1 || activity_id == 11
 }
 
-/// Flattens the parsed `blueprints.yaml` into the product and material rows destined for their
-/// respective tables, keyed by `(blueprint_type_id, activity_id)`.
 fn build_blueprint_rows(
   entries: HashMap<i64, SdeBlueprintEntry>,
 ) -> (
@@ -1295,8 +1288,6 @@ async fn seed_blueprints(db: &Database, path: &Path) -> Result<(), String> {
   Ok(())
 }
 
-/// Bulk-inserts blueprint activity rows into `table`, where `type_column` is the table's third column
-/// (`product_type_id` or `material_type_id`). Re-seeds replace existing rows via the primary key.
 async fn insert_blueprint_rows(
   db: &Database,
   table: &str,
@@ -1328,7 +1319,6 @@ async fn insert_blueprint_rows(
   tx.commit().await.map_err(|e| e.to_string())
 }
 
-/// Bulk-inserts rows into `blueprint_activity_meta`. Re-seeds replace existing rows via the primary key.
 async fn insert_blueprint_meta_rows(db: &Database, rows: &[BlueprintActivityMetaRow]) -> Result<(), String> {
   if rows.is_empty() {
     return Ok(());
@@ -2831,8 +2821,6 @@ mod tests {
     use super::*;
     use crate::store;
 
-    /// A two-blueprint fixture: a manufacturing blueprint that makes a Rifter from minerals, and a
-    /// reaction blueprint that makes a moon material. Exercises both activity kinds and both tables.
     const FIXTURE: &str = "\
 939:
   activities:
@@ -3664,10 +3652,6 @@ mod tests {
 
     const BUILD: &str = "20240101.1";
 
-    // A multi-language SDE fixture for several localized reference tables. Some records ship an `fr`
-    // column (exercising the chosen-language path), some omit it (exercising the en fallback), and the
-    // 9999 region omits every language (exercising the pre-existing unwrap_or_default empty-string
-    // semantics for an Option-wrapped name).
     async fn write_localized_fixture(dir: &Path) {
       write_yaml(
         dir,
@@ -3685,7 +3669,6 @@ mod tests {
       write_yaml(
         dir,
         "types.yaml",
-        // 596 ships an fr name + description; 597 ships only en (fallback).
         "596: { groupID: 25, name: { en: Impairor, fr: Châtieur }, \
         description: { en: A rookie ship., fr: Un vaisseau de débutant. }, published: true }\n\
         597: { groupID: 25, name: { en: Reaper }, description: { en: A rookie ship. }, published: true }\n",
@@ -3708,7 +3691,6 @@ mod tests {
       write_yaml(
         dir,
         "factions.yaml",
-        // 500001 ships an fr name; 500024 ships only en (fallback).
         "500001: { name: { en: Caldari State, fr: État Caldari }, isUnique: true }\n\
         500024: { name: { en: Generic } }\n",
       )
@@ -3722,7 +3704,6 @@ mod tests {
       write_yaml(
         dir,
         "mapRegions.yaml",
-        // 10000002 ships an fr name; 10000003 ships only en (fallback); 9999 ships neither (empty).
         "10000002: { name: { en: The Forge, fr: La Forge } }\n\
         10000003: { name: { en: Domain } }\n\
         9999: {}\n",
@@ -3786,9 +3767,6 @@ mod tests {
       sqlx::query_scalar(query).fetch_one(&db.0).await.unwrap()
     }
 
-    // Seeds the fixture in English, then re-seeds the same database in French against the same SDE
-    // build, so the only thing that changes is the language and the re-seed is driven entirely by the
-    // composite_version/marker mismatch.
     async fn seed_then_reseed(dir: &Path, marker: &Path) -> Database {
       let db = store::open_test().await.unwrap();
       let (mut tx, _rx) = channel();

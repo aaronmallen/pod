@@ -39,8 +39,6 @@ const FROM_PORTRAIT_SIZE: f32 = 22.0;
 
 const LINK_POPOVER_WIDTH: f32 = 320.0;
 
-/// What a per-window compose needs the app dispatcher (which owns the runtime + window lifetime) to do
-/// after a message is applied. State-only edits return [`Effect::None`].
 #[derive(Clone, Debug)]
 pub enum Effect {
   Discard,
@@ -50,8 +48,6 @@ pub enum Effect {
   Send,
 }
 
-/// How a freshly-opened compose window is seeded. `Draft` opens blank and then loads the persisted
-/// row id into the window once it exists.
 #[derive(Clone, Debug)]
 pub enum Seed {
   Blank { from_character_id: i64 },
@@ -60,7 +56,6 @@ pub enum Seed {
 }
 
 impl Seed {
-  /// The draft row id to load after the window opens, for a `Draft` seed; `None` for blank/reply.
   pub fn draft_id(&self) -> Option<i64> {
     match self {
       Seed::Draft {
@@ -80,8 +75,6 @@ pub struct Draft {
   pub error: Option<String>,
   pub from_character_id: i64,
   pub from_picker_open: bool,
-  /// The `mail_drafts` row id once this compose has been persisted; threaded back so every later
-  /// save updates the same row and a successful send deletes it by id.
   pub id: Option<i64>,
   pub kind: Kind,
   pub link: Option<LinkPopover>,
@@ -177,8 +170,6 @@ impl Draft {
     !self.to.is_empty() && !self.subject.trim().is_empty()
   }
 
-  /// A draft worth persisting: anything typed into the subject, body, or recipients. A blank new
-  /// compose closed without input is discarded rather than saved.
   pub(super) fn is_empty(&self) -> bool {
     self.subject.trim().is_empty() && self.body.text().trim().is_empty() && self.to.is_empty() && self.cc.is_empty()
   }
@@ -231,8 +222,6 @@ impl Draft {
     self.insert_text(&wrapped);
   }
 
-  /// Replaces the current body selection with `text` (or inserts at the cursor when nothing is
-  /// selected). A paste edit overwrites any active selection in iced's editor.
   pub(super) fn insert_text(&mut self, text: &str) {
     self
       .body
@@ -260,14 +249,10 @@ impl Draft {
     self.id = id;
   }
 
-  /// The sent draft's persisted row id (when it had one), so the app can delete it on a successful
-  /// send.
   pub fn sent_draft_id(&self) -> Option<i64> {
     self.id
   }
 
-  /// The persist input paired with the existing row id, when the compose is non-empty and worth
-  /// saving. `None` for a blank compose, which is discarded rather than saved.
   pub fn pending_save(&self) -> Option<(Option<i64>, DraftInput)> {
     if self.is_empty() {
       return None;
@@ -293,8 +278,6 @@ impl Draft {
   }
 }
 
-/// The window title for a compose: distinguishes a reply/forward from a new mail by subject so two
-/// open composes are tellable apart.
 pub fn window_title(draft: &Draft) -> String {
   let subject = draft.subject.trim();
   if subject.is_empty() {
@@ -304,7 +287,6 @@ pub fn window_title(draft: &Draft) -> String {
   }
 }
 
-/// Loads a persisted draft row for an open compose window, routed back as a `DraftLoaded`.
 pub fn load_draft(db: &Database, draft_id: i64) -> Task<Message> {
   let db = db.clone();
   Task::perform(async move { mail::draft(&db, draft_id).await.ok().flatten() }, |row| {
@@ -312,12 +294,7 @@ pub fn load_draft(db: &Database, draft_id: i64) -> Task<Message> {
   })
 }
 
-/// Applies a per-window compose message to a single window's [`Draft`] and reports the follow-up the
-/// app dispatcher must run. Mirrors the former single-instance compose handlers, minus the holder
-/// bookkeeping now owned per-window by the app.
 pub fn update(draft: &mut Draft, message: Message) -> Effect {
-  // Recipient + link field edits are pure state mutations; the only ones needing async are the search
-  // inputs, surfaced via the dedicated branches below.
   match &message {
     Message::ComposeToInput(value) => {
       let value = value.clone();
@@ -481,9 +458,6 @@ pub fn send(db: &Database, draft: &Draft) -> Task<Message> {
   Task::perform(enqueue_send(db, draft), Message::ComposeSent)
 }
 
-/// Renders the compose as the body of a native-chrome window: an in-content header (matching the
-/// Compare/SkillPlanEditor convention) stacked above the compose form. The OS frame supplies the
-/// title bar; the kind-aware OS title reuses [`window_title`].
 pub fn view<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a, Message> {
   let title = text(window_title(draft))
     .font(typography::body::MEDIUM)
@@ -532,8 +506,6 @@ impl LinkKind {
     LinkKind::Station,
   ];
 
-  /// The entity-search category for searchable kinds; `None` for the plain `http` kind, which takes
-  /// a typed URL rather than an entity search.
   pub(super) fn category(self) -> Option<crate::features::roster::entity_search::EntityCategory> {
     use crate::features::roster::entity_search::EntityCategory;
     match self {
@@ -566,8 +538,6 @@ impl LinkKind {
     }
   }
 
-  /// Builds the markup link for an entity result of this kind. Returns `None` for `http`, which is
-  /// built from the typed URL instead of a picked entity.
   pub(super) fn link_for(self, id: i64, name: String) -> Option<Link> {
     match self {
       LinkKind::Character => Some(Link::character(id, name)),
@@ -581,8 +551,6 @@ impl LinkKind {
   }
 }
 
-/// The toolbar "Generate Link" popover state: the selected kind, the typed query, and the live
-/// entity-search results for searchable kinds.
 #[derive(Clone, Debug, Default)]
 pub struct LinkPopover {
   pub kind: LinkKind,
@@ -596,8 +564,6 @@ impl LinkPopover {
     matches!(self.kind, LinkKind::Http) && !self.url.trim().is_empty()
   }
 
-  /// The markup for an http link from the typed URL, normalising a bare host to an `http://` URL so
-  /// the emitted href is always absolute.
   pub(super) fn http_link(&self) -> Option<Link> {
     let raw = self.url.trim();
     if raw.is_empty() {
@@ -692,8 +658,6 @@ impl Recipient {
 pub struct SendPayload {
   pub body: String,
   pub from_character_id: i64,
-  /// The synthetic, negative mail id of the optimistic Sent-folder row written at enqueue time. The
-  /// `mail.send` handler purges this row when the ESI send permanently fails (compensate).
   pub optimistic_mail_id: i64,
   pub recipients: Vec<Recipient>,
   pub subject: String,
@@ -1318,8 +1282,6 @@ fn from_dropdown<'a>(draft: &'a Draft, roster: &'a [RosterPilot]) -> Element<'a,
     .into()
 }
 
-/// The "Discard" footer affordance: closes the window without saving a draft. The native title-bar
-/// close button auto-saves a non-empty draft; this is the explicit throw-away path.
 fn discard_button<'a>() -> Element<'a, Message> {
   let button = container(
     text(t!("mail.compose.discard"))

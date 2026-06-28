@@ -144,12 +144,8 @@ pub struct PendingMove {
 /// `PendingMove` so the path-move flow and the import flow never share state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingImport {
-  /// The picked archive path, re-opened by the async restore once the user confirms.
   path: PathBuf,
-  /// Pod version recorded in the archive's manifest, surfaced in the modal.
   pod_version: String,
-  /// Compatibility verdict; `WillMigrate` adds a forward-migration note (`Incompatible` never reaches
-  /// here — it is refused before a modal is shown).
   verdict: VersionVerdict,
 }
 
@@ -162,8 +158,6 @@ pub struct MigrationRequest {
   pub previous: StorageConfig,
 }
 
-/// Live sync/lease state observed from the lifecycle engine in `app.rs` and fed down into the view.
-/// The tab itself owns no sync machinery — it only renders this snapshot and routes actions back up.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SyncStatus {
   holder: Option<String>,
@@ -397,7 +391,6 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
   }
 }
 
-/// Opens a folder picker and applies the chosen destination for the path kind.
 fn browse(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
   state.error = None;
   let Some(to) = pick_folder(kind, settings) else {
@@ -407,7 +400,6 @@ fn browse(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome
   apply_destination(state, kind, to, settings)
 }
 
-/// Dismisses a pending move and resyncs the draft to the live path.
 fn cancel_move(state: &mut State, settings: &mut Settings) -> Outcome {
   if let Some(pending) = state.pending.take() {
     sync_draft(state, pending.kind, settings);
@@ -415,7 +407,6 @@ fn cancel_move(state: &mut State, settings: &mut Settings) -> Outcome {
   Outcome::None
 }
 
-/// Confirms a validated archive import and requests the restore.
 fn confirm_data_import(state: &mut State) -> Outcome {
   let Some(pending) = state.data_import_confirm.take() else {
     return Outcome::None;
@@ -427,7 +418,6 @@ fn confirm_data_import(state: &mut State) -> Outcome {
   }
 }
 
-/// Commits a confirmed move, syncing the draft and surfacing any failure.
 fn confirm_move(state: &mut State, settings: &mut Settings) -> Outcome {
   let Some(pending) = state.pending.take() else {
     return Outcome::None;
@@ -445,7 +435,6 @@ fn confirm_move(state: &mut State, settings: &mut Settings) -> Outcome {
   }
 }
 
-/// Clears the in-flight data export and records any error.
 fn finish_data_export(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
   state.data_export_pending = false;
   if let Err(error) = result {
@@ -454,10 +443,7 @@ fn finish_data_export(state: &mut State, result: Result<Option<PathBuf>, String>
   Outcome::None
 }
 
-/// Clears the in-flight data import and records any error.
 fn finish_data_import(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
-  // The success path quits the app to re-seed from the restored database, so an Ok here only
-  // lands if the dialog was a no-op; either way the import is no longer in flight.
   state.data_import_pending = false;
   if let Err(error) = result {
     state.error = Some(error);
@@ -465,7 +451,6 @@ fn finish_data_import(state: &mut State, result: Result<Option<PathBuf>, String>
   Outcome::None
 }
 
-/// Clears the in-flight log export and records any error.
 fn finish_export(state: &mut State, result: Result<Option<PathBuf>, String>) -> Outcome {
   state.export_pending = false;
   if let Err(error) = result {
@@ -474,7 +459,6 @@ fn finish_export(state: &mut State, result: Result<Option<PathBuf>, String>) -> 
   Outcome::None
 }
 
-/// Begins a log export for the requested preset range.
 fn export_logs(state: &mut State, preset: RangePreset) -> Outcome {
   state.error = None;
   state.export_pending = true;
@@ -485,7 +469,6 @@ fn export_logs(state: &mut State, preset: RangePreset) -> Outcome {
   }
 }
 
-/// Applies a new log level, ignoring a reselection of the active level.
 fn log_level_changed(state: &mut State, level: LogLevel, settings: &mut Settings) -> Outcome {
   state.error = None;
   if settings.storage().log_level() == &level {
@@ -495,7 +478,6 @@ fn log_level_changed(state: &mut State, level: LogLevel, settings: &mut Settings
   Outcome::SetLogLevel(level)
 }
 
-/// Applies a submitted path draft, resyncing when it resolves without a prompt.
 fn path_submitted(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
   state.error = None;
   let draft = state.drafts.get(&kind).cloned().unwrap_or_default();
@@ -510,15 +492,11 @@ fn path_submitted(state: &mut State, kind: PathKind, settings: &mut Settings) ->
   outcome
 }
 
-/// Picks an archive and stages a confirm modal only when it validates.
 fn request_data_import(state: &mut State) -> Outcome {
   state.error = None;
   let Some(path) = pick_data_archive() else {
     return Outcome::None;
   };
-  // Read and version-guard the archive up front so the confirm modal exists only for a restorable
-  // archive — an incompatible or corrupt one is refused here and never offers a Replace action,
-  // and no data is touched until the user confirms.
   match validate_archive(&path) {
     Ok(pending) => {
       state.data_import_confirm = Some(pending);
@@ -531,7 +509,6 @@ fn request_data_import(state: &mut State) -> Outcome {
   }
 }
 
-/// Resets a path kind to its default directory and applies it.
 fn reset_to_default(state: &mut State, kind: PathKind, settings: &mut Settings) -> Outcome {
   state.error = None;
   let to = kind.default_dir();
@@ -539,7 +516,6 @@ fn reset_to_default(state: &mut State, kind: PathKind, settings: &mut Settings) 
   apply_destination(state, kind, to, settings)
 }
 
-/// Opens the resolved log directory in the file manager.
 fn reveal_log_dir(state: &mut State, settings: &Settings) -> Outcome {
   state.error = None;
   let dir = settings.storage().resolved_log_dir();
@@ -550,7 +526,6 @@ fn reveal_log_dir(state: &mut State, settings: &Settings) -> Outcome {
   Outcome::None
 }
 
-/// Repoints to the pending destination without moving the existing contents.
 fn skip_move(state: &mut State, settings: &mut Settings) -> Outcome {
   let Some(pending) = state.pending.take() else {
     return Outcome::None;
@@ -561,13 +536,9 @@ fn skip_move(state: &mut State, settings: &mut Settings) -> Outcome {
   Outcome::Persist
 }
 
-/// Flips the sync/network mode and stages the layout migration.
 fn sync_toggled(state: &mut State, value: bool, settings: &mut Settings) -> Outcome {
   let previous = settings.storage().clone();
   settings.storage_mut().set_network(value);
-  // Toggling sync flips the storage mode in place (the configured path is unchanged), so the
-  // database must migrate to the new layout: seed a working copy + sidecar when turning on,
-  // consolidate it back into a single file when turning off.
   state.migration = Some(MigrationRequest {
     previous,
   });
@@ -588,9 +559,6 @@ fn apply_destination(state: &mut State, kind: PathKind, to: PathBuf, settings: &
   }
 }
 
-/// Prompts for a `.zip` data archive to import. Stubbed to a no-op (returns `None`) under
-/// `cfg(test)` so the import update path can be exercised without opening a real file dialog,
-/// mirroring the export save stub in `app.rs`.
 fn pick_data_archive() -> Option<PathBuf> {
   #[cfg(not(test))]
   {
@@ -605,9 +573,6 @@ fn pick_data_archive() -> Option<PathBuf> {
   }
 }
 
-/// Reads the picked archive and runs the version guard, producing the pending-import the confirm
-/// modal renders. A missing/corrupt archive or a newer-major (incompatible) one is rejected with a
-/// clear message so the destructive confirm action is never offered for an archive Pod can't restore.
 fn validate_archive(path: &Path) -> Result<PendingImport, String> {
   let bytes = fs::read(path)
     .map_err(|err| t!("settings.storage.error_read_failed", path => path.display(), error => err).into_owned())?;
@@ -1894,9 +1859,6 @@ mod tests {
   mod move_flow {
     use super::*;
 
-    // Drives the confirm/skip/cancel UX against the Log kind, whose move is a plain synchronous
-    // directory relocate. The Database kind defers its file work to the async layout migration and
-    // is exercised separately in `database_migration`.
     fn populated_pending() -> (State, Settings, tempfile::TempDir, tempfile::TempDir, PathBuf) {
       let from = tempdir().unwrap();
       fs::write(from.path().join("pod.log"), b"data").unwrap();
@@ -2123,8 +2085,6 @@ mod tests {
 
     #[test]
     fn request_data_import_is_a_no_op_when_the_pick_dialog_is_stubbed() {
-      // pick_data_archive returns None under cfg(test), so the request clears any error and parks
-      // without opening a confirm modal.
       let mut state = state();
       let mut settings = Settings::default();
       state.error = Some("stale".to_owned());
@@ -2265,8 +2225,6 @@ mod tests {
       assert!(validate_archive(&path).is_err());
     }
 
-    /// Builds a `.zip` data archive carrying the given Pod version, reusing the export writer so the
-    /// import guard runs against the same on-disk format production produces.
     fn archive_with_version(version: &str) -> Vec<u8> {
       use std::io::{Cursor, Write};
 

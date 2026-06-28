@@ -82,7 +82,6 @@ pub const EMPTY_MAIL_SELECTION: i64 = 0;
 
 pub const RECIPIENT_SEARCH_MIN_CHARS: usize = 3;
 
-/// Load more once the viewport scrolls within this fraction of the bottom.
 const LIST_SCROLL_THRESHOLD: f32 = 0.85;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -156,8 +155,6 @@ pub enum Message {
   DraftLoaded(Box<Option<crate::store::model::MailDraft>>),
   DraftOpened(i64),
   DraftRowsLoaded(Vec<draft::DraftRow>),
-  /// An auto-save finished; the row id is threaded back onto the still-open compose so the next
-  /// save updates the same row and a send deletes it by id.
   DraftSaved(Option<i64>),
   DropTargetEntered(DropTarget),
   DropTargetLeft(DropTarget),
@@ -184,15 +181,12 @@ pub enum Message {
   ListPaneDragEnd,
   ListPaneDragStart,
   ListPaneDragged(f32),
-  /// The message list scrolled. `relative` (0.0–1.0) drives the load-more threshold;
-  /// `absolute` is the pixel offset stored to window the virtual list.
   ListScrolled {
     absolute: f32,
     relative: f32,
   },
   Loaded(Box<Loaded>),
   MarkedRead,
-  /// One more keyset page of the listing finished loading.
   MessagesPageLoaded {
     epoch: u64,
     rows: Vec<MessageRow>,
@@ -212,8 +206,6 @@ pub enum Message {
   ReplyAll(i64),
   ScopeSelected(Scope),
   SearchChanged(String),
-  /// One more keyset page of search results finished loading, tagged with the query
-  /// it was issued for so a stale page from a superseded query can be dropped.
   SearchPageLoaded {
     query: String,
     rows: Vec<MessageRow>,
@@ -246,9 +238,6 @@ pub enum Message {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows (roster portraits, mail sender portraits),
-  /// so the shell should recheck for stale images. Interaction-only messages return `false` to keep the staleness
-  /// scan off the per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(
       self,
@@ -290,8 +279,6 @@ pub enum StandardFolder {
   Trash,
 }
 
-/// Where a dragged message row can be dropped: onto one of the standard boxes (a pure local move)
-/// or onto a custom label (the existing tag behaviour).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DropTarget {
   Label(i64),
@@ -478,14 +465,11 @@ impl State {
     &self.drafts
   }
 
-  /// The default sender for a new compose window opened from this mail view (the active character).
   pub fn default_from(&self) -> Option<i64> {
     let Scope::Character(id) = self.active;
     Some(id)
   }
 
-  /// Builds the seed for a reply/reply-all/forward compose window from the currently-rendered mail.
-  /// `None` when no mail is open or the open render is for a different mail than `mail_id`.
   pub fn reply_seed(&self, mail_id: i64, kind: compose::Kind) -> Option<compose::Seed> {
     let render = self.render.as_ref()?;
     if render.mail.header.mail_id() != mail_id {
@@ -616,14 +600,10 @@ fn restore_pane(ui: &UiState, key: &str, default: f32, min: f32, host_width: f32
   PaneDrag::from_store_with_min(ui, key, default, min, host_width)
 }
 
-/// Persists a compose window's pending save (built from its [`compose::Draft`]) before the app exits,
-/// so a draft in flight at quit is present in Drafts on next launch. Awaited by the app's shutdown
-/// sequence rather than dispatched as a message, since the UI is tearing down.
 pub async fn persist_pending_draft(db: Database, id: Option<i64>, input: DraftInput) {
   let _ = draft::persist(db, id, input).await;
 }
 
-/// Deletes a persisted draft row by id, used by the app when a compose window sends successfully.
 pub async fn delete_draft(db: Database, id: i64) {
   draft::delete(db, id).await;
 }
@@ -663,14 +643,10 @@ fn reload_for(db: &Database, scope: Scope, folder: Folder) -> Task<Message> {
   })
 }
 
-/// Build a keyset cursor at a loaded row's position.
 fn cursor_of(row: &MessageRow) -> MailCursor {
   MailCursor::new(row.timestamp.clone(), row.mail_id)
 }
 
-/// Kick the first page of a search. Results stream into `all_messages`, the
-/// search-results accumulator that [`message_list::pane`] renders while a query is
-/// active.
 fn start_search(state: &mut State, db: &Database) -> Task<Message> {
   state.search_loading = true;
   let (db, scope, folder, needle) = (db.clone(), state.active, state.folder, state.search.clone());
@@ -910,8 +886,6 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
 fn update_navigation(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::ScopeSelected(scope) => {
-      // Compose lives in detached windows now, so navigating the main view never disturbs an open
-      // compose and no longer auto-saves a draft mid-edit.
       state.messages_page_epoch.next();
       state.active = scope;
       state.folder = Folder::Unified;
@@ -1024,15 +998,12 @@ fn handle_loaded(state: &mut State, loaded: Loaded, db: &Database) -> Task<Messa
     state.messages_has_more = messages_has_more;
     state.messages_loading = false;
     state.list_scroll_offset = 0.0;
-    // Archiving or trashing the open mail drops it from the reloaded folder; clear the reading pane (mirroring
-    // FolderSelected) so it stops rendering a mail no longer in the list.
     if let Some(selected) = state.selected
       && !state.messages.iter().any(|row| row.mail_id == selected)
     {
       state.selected = None;
       state.render = None;
     }
-    // A fresh folder load supersedes any in-flight search paging.
     state.all_messages.clear();
     state.search_cursor = None;
     state.search_has_more = false;
@@ -1218,8 +1189,6 @@ fn update_drafts(state: &mut State, message: Message, db: &Database) -> Task<Mes
       state.drafts = rows;
       Task::none()
     }
-    // A compose window's save completed; refresh the main-view Drafts list and folder badge. The
-    // persisted row id is threaded back to the originating window by the app, not here.
     Message::DraftSaved(_) => reload_drafts(state, db),
     _ => Task::none(),
   }
@@ -2484,7 +2453,6 @@ mod tests {
           .await
           .unwrap();
 
-        // A successful send deletes the persisted draft by id; verify the by-id delete path directly.
         delete_draft(db.clone(), id).await;
         assert_eq!(mail::count_drafts_for_character(&db, 42).await.unwrap(), 0);
       }
@@ -2626,7 +2594,6 @@ mod tests {
         state.messages = vec![list_row(7, 42, true)];
         state.messages_loading = true;
 
-        // The user scrolled (capturing the epoch) and then switched folders, which bumps the epoch.
         let stale_epoch = state.messages_page_epoch.current();
         let _ = update(
           &mut state,

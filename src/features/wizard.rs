@@ -54,26 +54,12 @@ fn tr_static(key: &str) -> &'static str {
 #[derive(Clone, Debug)]
 pub enum Message {
   Back,
-  // The Finish step's completion action. The app's wizard update consumes the draft `Settings`,
-  // persists it to config.toml (creating the configured storage dirs), then restarts into the normal
-  // boot path — config now exists, so the next launch skips the wizard and runs the splash.
   Complete,
-  // A per-group Features step toggle. The wizard routes this through the settings Features tab's own
-  // `update` over the draft `Settings.features`, dropping its persist outcome (config is written once
-  // at Finish), so the wizard and the settings tab mutate the same flag model.
   Features(features_tab::Message),
-  // The Features sub-step model derives its rail counts from the live feature flags the
-  // per-group step tasks will own; this is the seam they dispatch when a flag flips.
   JumpTo(usize),
   Next,
-  // Selecting a language re-renders the whole wizard in that language on the next frame, before any
-  // config is written (the view resolves keys against `pending_language`). The language grid
-  // dispatches this; the app's wizard update applies the locale so the next frame renders in it.
   SelectLanguage(Language),
   Skip,
-  // The slimmed Storage step's actions. Each writes only into the draft `Settings.storage` (a path
-  // override, the log level, or the sync flag) — first run has no data, so there is no migration,
-  // export, or relocation machinery behind any of these.
   StorageBrowse(PathKind),
   StorageLogLevel(LogLevel),
   StoragePathEdited(PathKind, String),
@@ -82,8 +68,6 @@ pub enum Message {
   StorageSyncToggled(bool),
 }
 
-/// One concrete position in the wizard. The flat step list is Welcome, Language, one
-/// [`Features`](Step::Features) step per [`Group`], then Storage and Finish; [`steps`] builds it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Step {
   Features(Group),
@@ -105,8 +89,6 @@ impl Step {
   }
 }
 
-/// A rail entry. Several [`Step`]s collapse into the single [`Features`](Phase::Features) phase, so
-/// the rail shows five rows while the flat step list is longer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Phase {
   Features,
@@ -146,9 +128,6 @@ impl Phase {
   }
 }
 
-/// The three directories the slimmed Storage step lets the user repoint, mapped onto the matching
-/// `StorageConfig` override. First run has no data to migrate, so each kind only reads the resolved
-/// path and writes the override — there is no relocation or migration behind it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PathKind {
   Cache,
@@ -201,7 +180,6 @@ impl PathKind {
     }
   }
 
-  // Writes only the path override (cleared to the default when it matches), never a relocation.
   fn set_dir(self, settings: &mut Settings, dir: Option<PathBuf>) {
     let storage = settings.storage_mut();
     match self {
@@ -215,20 +193,10 @@ impl PathKind {
 #[derive(Debug)]
 pub struct State {
   current: usize,
-  // The settings Features tab's own transient state (its search query), reused so the wizard's
-  // per-group Features steps render the identical toggle rows over the same flag model.
   features: features_tab::State,
-  // The in-progress language drives the rendered locale before any config write (ADR-0041 keeps the
-  // committed locale fixed mid-session). The language grid reads/writes this through
-  // `Message::SelectLanguage`; the app applies the locale so the next frame renders in it.
   pending_language: Language,
-  // The in-progress configuration the Features and Storage steps mutate. It is written to disk once
-  // at Finish (no per-step persistence), so the wizard owns its own draft instead of touching the
-  // live settings until the run completes.
   settings: Settings,
   steps: Vec<Step>,
-  // The editable path text per storage kind, kept in sync with the resolved override so a typed or
-  // browsed path round-trips through the field before it commits to `Settings.storage`.
   storage_drafts: HashMap<PathKind, String>,
 }
 
@@ -241,9 +209,6 @@ impl State {
     self.pending_language
   }
 
-  // The assembled draft, read by the Finish step's summary and consumed by the app's completion path
-  // (`Message::Complete`), which persists it to config.toml verbatim — language from the Language step,
-  // feature flags from the Features steps, and the storage overrides from the Storage step.
   pub fn settings(&self) -> &Settings {
     &self.settings
   }
@@ -256,8 +221,6 @@ impl State {
     self.current + 1 == self.steps.len()
   }
 
-  // A step can advance only when its body is satisfied. Welcome, Language, and Finish are always
-  // valid; the Features and Storage step tasks tighten this seam against their own state.
   fn can_advance(&self) -> bool {
     match self.current_step() {
       Step::Features(_) | Step::Storage => true,
@@ -265,8 +228,6 @@ impl State {
     }
   }
 
-  // The rail jumps only to phases at or before the furthest-reached one. A phase is reachable once
-  // its first step index has been visited (or passed).
   fn reachable(&self, phase: Phase) -> bool {
     self
       .first_index_of(phase)
@@ -300,7 +261,6 @@ impl Default for State {
   }
 }
 
-/// The flat step list: Welcome, Language, one step per feature [`Group`], then Storage and Finish.
 fn steps() -> Vec<Step> {
   let mut steps = vec![Step::Welcome, Step::Language];
   steps.extend(Group::ALL.into_iter().map(Step::Features));
@@ -319,9 +279,6 @@ pub fn update(state: &mut State, message: Message) {
       // before delegating here, so the wizard state itself has nothing left to mutate.
     }
     Message::Features(message) => {
-      // Route through the settings Features tab's own update so the catalog, cascade rules, and
-      // dependency locking stay in one place. The persist outcome is dropped: the wizard writes the
-      // whole draft once at Finish rather than after each toggle.
       let _ = features_tab::update(&mut state.features, message, &mut state.settings);
     }
     Message::JumpTo(index) => {
@@ -365,15 +322,11 @@ pub fn update(state: &mut State, message: Message) {
       commit_path(state, kind, kind.default_dir());
     }
     Message::StorageSyncToggled(value) => {
-      // First run has no database to migrate, so flipping sync only records the network flag — there
-      // is no MigrationRequest, working-copy seed, or consolidation behind it.
       state.settings.storage_mut().set_network(value);
     }
   }
 }
 
-// Commits a chosen directory to the draft override (cleared to the default when it matches) and
-// resyncs the field to the resolved path. No relocation runs — first run has nothing to move.
 fn commit_path(state: &mut State, kind: PathKind, dir: PathBuf) {
   let dir = if paths_equal(&dir, &kind.default_dir()) {
     None
@@ -396,9 +349,6 @@ fn paths_equal(a: &std::path::Path, b: &std::path::Path) -> bool {
   }
 }
 
-/// Opens a folder picker rooted at the kind's current directory. Stubbed to a no-op (`None`) under
-/// `cfg(test)` so the storage update path can be exercised without opening a real dialog, mirroring
-/// the settings storage tab's own test stub.
 fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
   #[cfg(not(test))]
   {
@@ -418,7 +368,6 @@ fn pick_folder(kind: PathKind, settings: &Settings) -> Option<PathBuf> {
 }
 
 pub fn view(state: &State) -> Element<'_, Message> {
-  // The rail sits beside the content column; a Row lays them out left-to-right.
   let shell = Row::with_children(vec![rail(state), content(state)])
     .width(Length::Fill)
     .height(Length::Fill);
@@ -661,8 +610,6 @@ fn content(state: &State) -> Element<'_, Message> {
   container(column).width(Length::Fill).height(Length::Fill).into()
 }
 
-// The per-step body seam. Each arm renders one step's content; the Features and Storage steps still
-// render the shared placeholder until their sibling tasks fill them in.
 fn step_body(state: &State) -> Element<'_, Message> {
   match state.current_step() {
     Step::Features(group) => features_body(state, group),
@@ -673,8 +620,6 @@ fn step_body(state: &State) -> Element<'_, Message> {
   }
 }
 
-// The shared step header: a Plasma eyebrow over a large title and an optional lede, with an optional
-// right-aligned readout. Mirrors firstrun.jsx's StepHeader so every step shares the same masthead.
 fn step_header<'a>(
   eyebrow: String,
   title: String,
@@ -823,10 +768,6 @@ fn benefit_card<'a>(icon: Icon, title: String, description: String) -> Element<'
     .into()
 }
 
-// The Finish step: a plasma check mark, the "you're all set" masthead, a two-up summary of the
-// choices (enabled features over the catalog total, customized-vs-default storage paths with the
-// resolved database location), a language readout, and a privacy footnote. Mirrors firstrun.jsx's
-// FinishStep; the footer's primary button dispatches `Message::Complete` to persist and restart.
 fn finish_body(state: &State) -> Element<'_, Message> {
   let settings = state.settings();
 
@@ -894,8 +835,6 @@ fn finish_body(state: &State) -> Element<'_, Message> {
   container(column).max_width(BENEFIT_CARD_MAX_WIDTH).into()
 }
 
-// The total enabled sub-features over the catalog size, summed across the display groups. The Finish
-// summary reads this as the "N of M features" headline.
 fn finish_enabled_over_total(settings: &Settings) -> (usize, usize) {
   Group::ALL
     .into_iter()
@@ -1300,9 +1239,6 @@ fn language_note<'a>(selected: Language) -> Element<'a, Message> {
     .into()
 }
 
-// One Features sub-step: the group's title under a `Features · N of M` eyebrow, an on-count and an
-// Enable-all/Disable-all bulk control on the right, then the settings Features tab's own toggle rows
-// for that group (mapped into the wizard's message space). The rows mutate the shared draft flags.
 fn features_body(state: &State, group: Group) -> Element<'_, Message> {
   let settings = &state.settings;
   let (on, total) = group.enabled_over_total(settings);
@@ -1366,16 +1302,10 @@ fn features_body(state: &State, group: Group) -> Element<'_, Message> {
   container(column).max_width(LANGUAGE_GRID_MAX_WIDTH).into()
 }
 
-// The zero-based position of a display group among the Features sub-steps, used for the
-// `Features · N of M` sub-progress in the step header.
 fn features_position(group: Group) -> usize {
   Group::ALL.iter().position(|&candidate| candidate == group).unwrap_or(0)
 }
 
-// The slimmed Storage step: a path row per directory (db / log / cache) with a Browse picker and a
-// reset-to-default, a verbosity selector on the log row, and a sync toggle on the database row. Every
-// control writes only into the draft `Settings.storage` — first run has no data, so no migration,
-// export, or relocation flow is reachable from here.
 fn storage_body(state: &State) -> Element<'_, Message> {
   let settings = &state.settings;
 

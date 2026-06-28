@@ -117,9 +117,6 @@ pub enum EventMessage {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows (roster portraits), so the shell should
-  /// recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
-  /// per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(self, Message::Loaded(_))
   }
@@ -199,9 +196,6 @@ impl State {
     self.cursor
   }
 
-  /// Resolves the data a detached event window needs from the live calendar: the event itself plus
-  /// the owning pilot's display name. Returns `None` when the (character, event) pair is no longer
-  /// visible (e.g. the scope changed before the click resolved).
   pub fn event_for(&self, character_id: i64, event_id: i64) -> Option<(CalendarEvent, Option<String>)> {
     let event = self
       .visible_events()
@@ -279,9 +273,6 @@ impl State {
   }
 }
 
-/// Per-window state for a detached calendar-event window: the resolved event, its loaded attendee
-/// tally (once the endpoint resolves), the owning pilot's display name, whether to mirror EVE times
-/// into local time, and the response value last seen locally (used to compensate an RSVP write).
 #[derive(Clone, Debug)]
 pub struct EventWindow {
   attendees: Option<AttendeeTally>,
@@ -412,17 +403,12 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   shell::shell(state, now)
 }
 
-/// Loads the attendee tally for a freshly opened event window. The result threads back as
-/// [`EventMessage::AttendeesLoaded`], routed to that window by its `window::Id` in the app shell.
 pub fn load_event_attendees(db: &Database, character_id: i64, event_id: i64) -> Task<EventMessage> {
   Task::perform(load_attendees(db.clone(), character_id, event_id), |tally| {
     EventMessage::AttendeesLoaded(Box::new(tally))
   })
 }
 
-/// Applies a per-window event message to its [`EventWindow`]: adopting a loaded attendee tally,
-/// optimistically flipping the local response and enqueuing the RSVP write, or absorbing the
-/// write-completed acknowledgement. RSVP writes need the database, so this returns the follow-up task.
 pub fn event_window_update(window: &mut EventWindow, message: EventMessage, db: &Database) -> Task<EventMessage> {
   match message {
     EventMessage::AttendeesLoaded(tally) => {
@@ -447,8 +433,6 @@ pub fn event_window_update(window: &mut EventWindow, message: EventMessage, db: 
   }
 }
 
-/// The detached event window's content: an in-content header (subject as the OS-mirrored title plus a
-/// close affordance) above the scrollable event card.
 pub fn event_window_view(window: &EventWindow) -> Element<'_, EventMessage> {
   shell::event_window(window)
 }
@@ -589,9 +573,6 @@ mod tests {
     }
   }
 
-  /// A combined-scope state with an authorized pilot, an unauthorized pilot, and a spread of events
-  /// on the cursor day (timed, overlapping, all-day, instant, and a pod overlay) plus a later event,
-  /// exercising every view's render branches.
   fn populated() -> State {
     let granted = granted_str();
     let roster = vec![pilot(1, Some(&granted)), pilot(2, None)];
@@ -629,13 +610,11 @@ mod tests {
       let _ = update(&mut state, Message::CursorPrev, &db, n);
       let _ = update(&mut state, Message::CursorToday, &db, n);
       let _ = update(&mut state, Message::DatePicked(n, View::Day), &db, n);
-      // EventOpened is intercepted by the app shell to spawn a window, so its update arm is a no-op.
       let _ = update(&mut state, Message::EventOpened(1, 10), &db, n);
       let _ = update(&mut state, Message::PickerToggled, &db, n);
       let _ = update(&mut state, Message::ReauthRequested(1), &db, n);
       let _ = update(&mut state, Message::ScopeSelected(Scope::Mine(1)), &db, n);
 
-      // A load that matches the active scope is adopted; a stale one is dropped.
       let fresh = Loaded {
         events: Vec::new(),
         roster: Vec::new(),

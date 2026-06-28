@@ -9,8 +9,6 @@ const ASSETS_SEARCH: &str = "pod.focus-search.assets";
 // registry and the live input agree.
 const CHARACTERS_SEARCH: &str = "roster-search-input";
 const INDUSTRY_SEARCH: &str = "pod.focus-search.industry";
-// Mail exposes search in compose recipients and the label manager as well; the message
-// list search is the primary target because it filters the inbox the destination opens on.
 const MAIL_SEARCH: &str = "pod.focus-search.mail";
 const SETTINGS_SEARCH: &str = "pod.focus-search.settings";
 const SKILLS_SEARCH: &str = "pod.focus-search.skills";

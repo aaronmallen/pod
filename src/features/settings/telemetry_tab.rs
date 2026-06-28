@@ -45,9 +45,6 @@ const PREVIEW_MAX_WIDTH: f32 = 660.0;
 const SAMPLE_SESSION: &str = "s_1a2b3c4d";
 const SAMPLE_SENT_AT: &str = "2026-06-25T14:32:08Z";
 
-/// The four toggleable streams, in render order. Each maps to a
-/// [`crate::config::TelemetryConfig`] flag and a row of explanatory copy. The
-/// `title`/`desc` fields are i18n keys, resolved to localized text at render.
 const STREAMS: [Stream; 4] = [
   Stream {
     id: StreamId::Usage,
@@ -71,8 +68,6 @@ const STREAMS: [Stream; 4] = [
   },
 ];
 
-/// The hard trust boundary: data the pipeline can never transmit, on or off.
-/// These are i18n keys, resolved to localized text at render.
 const NEVER_COLLECTED: [&str; 6] = [
   "settings.telemetry.never_names",
   "settings.telemetry.never_tokens",
@@ -82,7 +77,6 @@ const NEVER_COLLECTED: [&str; 6] = [
   "settings.telemetry.never_ip",
 ];
 
-/// One toggleable telemetry stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamId {
   Usage,
@@ -92,7 +86,6 @@ pub enum StreamId {
 }
 
 impl StreamId {
-  /// Whether this stream is currently enabled on the shared settings.
   fn is_on(self, settings: &Settings) -> bool {
     let telemetry = settings.telemetry();
     match self {
@@ -103,7 +96,6 @@ impl StreamId {
     }
   }
 
-  /// Persist the new state of this stream onto the shared settings.
   fn set(self, settings: &mut Settings, value: bool) {
     match self {
       StreamId::Usage => settings.telemetry_mut().set_usage(value),
@@ -115,10 +107,8 @@ impl StreamId {
 }
 
 struct Stream {
-  /// i18n key for the stream's description copy.
   desc: &'static str,
   id: StreamId,
-  /// i18n key for the stream's title.
   title: &'static str,
 }
 
@@ -128,9 +118,6 @@ pub enum Message {
   StreamToggled(StreamId, bool),
 }
 
-/// Panel state. The derived anonymous id is cached once at construction from the
-/// machine id (never re-derived per frame, never persisted) so the read-only id
-/// card and the sample payload show the same hash the sender would compute.
 #[derive(Debug)]
 pub struct State {
   anon_id: String,
@@ -158,7 +145,6 @@ pub fn update(_state: &mut State, message: Message, settings: &mut Settings) -> 
   }
 }
 
-/// The rail badge: a live `Sharing` / `Off` indicator off the master switch.
 pub fn badge(settings: &Settings) -> String {
   if *settings.telemetry().enabled() {
     t!("settings.telemetry.status_sharing").into_owned()
@@ -167,11 +153,6 @@ pub fn badge(settings: &Settings) -> String {
   }
 }
 
-/// Build the representative [`Batch`] Pod would POST right now, reflecting the
-/// current stream choices. A session batch carries any subset of usage /
-/// performance / environment; disabled streams are omitted (`None`), and a
-/// session batch never carries a `crashes` key (§6.1). The `id` is the same
-/// derived anon hash the sender uses.
 fn sample_batch(anon_id: &str, settings: &Settings) -> Batch {
   let telemetry = settings.telemetry();
 
@@ -230,7 +211,6 @@ fn sample_batch(anon_id: &str, settings: &Settings) -> Batch {
   }
 }
 
-/// The pretty-printed JSON of [`sample_batch`] — what WOULD be sent.
 fn sample_payload(anon_id: &str, settings: &Settings) -> String {
   serde_json::to_string_pretty(&sample_batch(anon_id, settings)).unwrap_or_default()
 }
@@ -277,7 +257,6 @@ fn panel_header(settings: &Settings) -> Element<'_, Message> {
     .into()
 }
 
-/// The header-right `Sharing` / `Off` status pill.
 fn share_badge(settings: &Settings) -> Element<'_, Message> {
   let on = *settings.telemetry().enabled();
   let (fg, label) = if on {
@@ -485,8 +464,6 @@ fn stream_row<'a>(stream: &'a Stream, master_on: bool, settings: &'a Settings) -
   .spacing(spacing::UNIT)
   .width(Length::Fill);
 
-  // The master switch gates the lot: when sharing is off, the per-stream toggles freeze, mirroring
-  // the mockup's greyed `Gated` wrapper.
   let control = if master_on {
     toggle::toggle(on, Message::StreamToggled(stream.id, !on))
   } else {

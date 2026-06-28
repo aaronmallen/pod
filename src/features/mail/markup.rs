@@ -11,38 +11,22 @@
 //! leaf module (no DB, no UI, no async) so the compose panel and the read-side
 //! renderer share one markup contract. Callers resolve ids (and, for stations,
 //! the per-station type-id) from the SDE and hand them in here.
-//!
-//! The compose panel (task `uwqlrkzr-C`) is the first consumer; until it lands
-//! the public surface is unused, so the module allows dead code.
 
-/// `showinfo:` type-id for a character.
 pub const CHARACTER_TYPE_ID: i64 = 1377;
 
-/// `showinfo:` type-id for a corporation.
 pub const CORPORATION_TYPE_ID: i64 = 2;
 
-/// `showinfo:` type-id for a solar system.
 pub const SOLAR_SYSTEM_TYPE_ID: i64 = 5;
 
-/// A link the composer can embed in a mail body.
-///
-/// Each variant carries the display text shown to the reader and whatever ids
-/// are needed to build the underlying href. Construct via the helper
-/// constructors so the showinfo type-ids stay correct in one place.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Link {
-  /// A character entity link (`showinfo:1377//<character-id>`).
   Character { id: i64, name: String },
-  /// A corporation entity link (`showinfo:2//<corporation-id>`).
   Corporation { id: i64, name: String },
-  /// A plain web link (`<a href="URL">text</a>`).
   Http { url: String, text: String },
-  /// A solar-system entity link (`showinfo:5//<system-id>`).
   SolarSystem { id: i64, name: String },
 }
 
 impl Link {
-  /// Build a character link.
   pub fn character(id: i64, name: impl Into<String>) -> Self {
     Self::Character {
       id,
@@ -50,7 +34,6 @@ impl Link {
     }
   }
 
-  /// Build a corporation link.
   pub fn corporation(id: i64, name: impl Into<String>) -> Self {
     Self::Corporation {
       id,
@@ -58,7 +41,6 @@ impl Link {
     }
   }
 
-  /// Build a plain web link.
   pub fn http(url: impl Into<String>, text: impl Into<String>) -> Self {
     Self::Http {
       url: url.into(),
@@ -66,7 +48,6 @@ impl Link {
     }
   }
 
-  /// Build a solar-system link.
   pub fn solar_system(id: i64, name: impl Into<String>) -> Self {
     Self::SolarSystem {
       id,
@@ -74,7 +55,6 @@ impl Link {
     }
   }
 
-  /// Render this link as EVE wire markup (`<a href="...">text</a>`).
   pub fn to_markup(&self) -> String {
     match self {
       Self::Character {
@@ -97,22 +77,18 @@ impl Link {
   }
 }
 
-/// Wrap `text` in bold tags (`<b>text</b>`).
 pub fn bold(text: &str) -> String {
   format!("<b>{text}</b>")
 }
 
-/// Wrap `text` in italic tags (`<i>text</i>`).
 pub fn italic(text: &str) -> String {
   format!("<i>{text}</i>")
 }
 
-/// Build a `showinfo:` entity link: `<a href="showinfo:TYPEID//ITEMID">Name</a>`.
 fn showinfo_link(type_id: i64, item_id: i64, text: &str) -> String {
   format!("<a href=\"showinfo:{type_id}//{item_id}\">{text}</a>")
 }
 
-/// Build a plain web link: `<a href="URL">text</a>`.
 fn http_link(url: &str, text: &str) -> String {
   format!("<a href=\"{url}\">{text}</a>")
 }

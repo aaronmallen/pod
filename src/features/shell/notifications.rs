@@ -14,12 +14,8 @@ use crate::{
   sync::JobKind,
 };
 
-/// How many surfaced notifications the center caches and the bell badge counts over.
 const LIST_LIMIT: i64 = 200;
 
-/// A consistent read of notification state for the UI: the surfaced list (newest-first), the unread
-/// count, the notifications that surfaced for the first time on this pass (to pop as toasts), and a
-/// per-owner display name map so the row "who" line can be rendered without a second DB round-trip.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
   pub list: Vec<Notification>,
@@ -28,10 +24,6 @@ pub struct Snapshot {
   pub who: HashMap<NotificationOwner, String>,
 }
 
-/// Runs every detector (optionally), then reads back the surfaced list + unread count and resolves a
-/// display name per owner. `run_detectors` is `true` when the pulse should re-scan sources (after a
-/// relevant sync, or on the idle time-threshold cadence) and `false` for a pure UI refresh (panel
-/// open, mark-read) where re-scanning would be wasted work.
 pub async fn refresh(
   db: &Database,
   now: DateTime<Utc>,
@@ -58,14 +50,6 @@ pub async fn refresh(
   }
 }
 
-/// Drives the seven event detectors over the already-synced data for every owned subject and returns
-/// the notifications that surfaced for the first time this pass. Each detector dedups via
-/// `notifications::emit` (insert-if-absent) and watermarks the whole pre-existing history on a
-/// subject's first sync so it never floods. The time-threshold detectors (skill/industry/extraction-
-/// cracked) run every pass so an event that matured while the app sat idle still fires.
-///
-/// Errors from a single subject/detector are logged and skipped rather than aborting the sweep: one
-/// character's transient read failure must not silence every other notification.
 pub async fn detect(
   db: &Database,
   now: DateTime<Utc>,
@@ -144,9 +128,6 @@ async fn resolve_owner_names(
   names
 }
 
-/// Resolves a display name ("who") per distinct owner across an arbitrary slice of notifications, so a
-/// UI labelling freshly-paged History rows can fill the "who" line without a second DB round-trip.
-/// Each owner is looked up once even when many notifications share it.
 pub async fn resolve_names(db: &Database, notifications: &[Notification]) -> HashMap<NotificationOwner, String> {
   let mut names = HashMap::new();
   resolve_into(db, notifications, &mut names).await;
@@ -593,8 +574,6 @@ async fn extraction_cracked_detector(
   Ok(surfaced)
 }
 
-/// A stored RFC3339 timestamp has matured: it is at or before `now`. String comparison is exact for
-/// the RFC3339 timestamps both `chunk_arrival_time` and `finish_date` carry once normalised to UTC.
 fn crossed(timestamp: &str, now_rfc: &str) -> bool {
   match (
     DateTime::parse_from_rfc3339(timestamp),
@@ -732,8 +711,6 @@ mod tests {
       flags
     }
 
-    // The killmail row FKs to characters(id), which in turn FKs to races/bloodlines/corporations.
-    // Seed that minimal graph directly so the detector can read a real source row.
     async fn seed_character(db: &Database) {
       sqlx::query("INSERT INTO races (id, alliance_id, description, name) VALUES (1, 1, '', 'Caldari')")
         .execute(db.writer())
@@ -859,13 +836,10 @@ mod tests {
       assert_eq!(notifications::list(&db, 50).await.unwrap().len(), 1);
     }
 
-    // Bug 3: a kill attributable to both an owned character and its owned corporation must notify once,
-    // because the dedup_key is keyed on the killmail id alone.
     #[tokio::test]
     async fn it_notifies_once_when_owned_by_both_a_character_and_its_corporation() {
       let db = store::open_test().await.unwrap();
       seed_character(&db).await;
-      // First scan over empty history watermarks nothing real for either owner.
       killmail_detector(&db, NotificationOwner::Character(CHARACTER), &flags())
         .await
         .unwrap();
@@ -905,9 +879,6 @@ mod tests {
     }
   }
 
-  // The character-scoped detectors (mail/calendar/skill/industry) all FK to characters(id), which in
-  // turn FKs to races/bloodlines/corporations. Seed that minimal graph directly so the source readers
-  // can return real rows.
   async fn seed_character(db: &Database, character_id: i64) {
     sqlx::query(
       "INSERT INTO races (id, alliance_id, description, name) VALUES (1, 1, '', 'Caldari') ON CONFLICT DO NOTHING",
@@ -931,7 +902,6 @@ mod tests {
       .unwrap();
   }
 
-  // The corp-scoped extraction tables FK to corporations(id); seed just that parent row.
   async fn seed_corporation(db: &Database, corporation_id: i64) {
     sqlx::query(
       "INSERT INTO corporations (id, ceo_id, creator_id, member_count, name, tax_rate, ticker) \
@@ -1099,7 +1069,6 @@ mod tests {
     async fn it_ignores_a_future_arrival() {
       let db = store::open_test().await.unwrap();
       seed(&db, &[extraction(1001, 40_000, "2026-12-01T00:00:00+00:00")]).await;
-      // First scan over no matured rows watermarks nothing.
       extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
         .await
         .unwrap();
@@ -1122,7 +1091,6 @@ mod tests {
       extraction_cracked_detector(&db, CORPORATION, now(), &FeatureFlags::default())
         .await
         .unwrap();
-      // The same chunk's arrival has now passed relative to a later `now`.
       let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
         .unwrap()
         .with_timezone(&Utc);
@@ -1138,7 +1106,6 @@ mod tests {
       );
       assert_eq!(surfaced[0].owner(), NotificationOwner::Corporation(CORPORATION));
       assert_eq!(surfaced[0].title(), "Moon chunk fractured");
-      // No moons row was seeded, so the body falls back to the static label.
       assert_eq!(surfaced[0].body(), "Ready to mine");
       assert_eq!(surfaced[0].target().character, None);
     }
@@ -1228,7 +1195,6 @@ mod tests {
       extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
         .await
         .unwrap();
-      // Add a second arrival-less row: still nothing to schedule.
       seed(&db, &[no_arrival(1001, 40_000), no_arrival(1002, 40_001)]).await;
 
       let surfaced = extraction_scheduled_detector(&db, CORPORATION, &FeatureFlags::default())
@@ -1421,7 +1387,6 @@ mod tests {
       industry_detector(&db, NotificationOwner::Character(CHARACTER), &FeatureFlags::default())
         .await
         .unwrap();
-      // An active job is not done; a newly-delivered one is.
       industry::replace_for_character(
         &db,
         CHARACTER,
@@ -1587,7 +1552,6 @@ mod tests {
       seed_character(&db, CHARACTER).await;
       seed_mail(&db, 1, 999, Some("seed")).await;
       mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
-      // A mail whose author is the owner is a Sent-box copy and must not notify.
       seed_mail(&db, 2, CHARACTER, Some("My own message")).await;
 
       let surfaced = mail_detector(&db, CHARACTER, &FeatureFlags::default()).await.unwrap();
@@ -1672,7 +1636,6 @@ mod tests {
         &[entry(3300, 0, Some("2026-12-01T00:00:00+00:00")), entry(3301, 1, None)],
       )
       .await;
-      // First scan over no matured rows watermarks nothing real.
       skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
         .await
         .unwrap();
@@ -1693,7 +1656,6 @@ mod tests {
       skill_detector(&db, CHARACTER, now(), &FeatureFlags::default())
         .await
         .unwrap();
-      // The skill's finish_date has now passed relative to a later `now`.
       let later = DateTime::parse_from_rfc3339("2026-12-02T00:00:00+00:00")
         .unwrap()
         .with_timezone(&Utc);

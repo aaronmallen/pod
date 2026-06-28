@@ -59,9 +59,6 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   base.into()
 }
 
-/// The body of a detached calendar-event window: an in-content header carrying the event subject above
-/// the scrollable event card. The native frame and OS title bar supply the chrome, so there is no
-/// custom title bar or modal backdrop here.
 pub(super) fn event_window(window: &EventWindow) -> Element<'_, EventMessage> {
   let owner = window.owner_kind();
   let tint = owner.color();
@@ -170,8 +167,6 @@ fn content<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Message> {
     .into()
 }
 
-/// The sunken band beneath the header: owner/pilot legend on the left, an event count + timezone
-/// summary on the right. Mirrors the design's black status strip (kept out of the header itself).
 fn legend_bar<'a>(state: &'a State) -> Element<'a, Message> {
   let scope_label = if state.tweaks().color_by_pilot() {
     t!("calendar.legend.pilots").into_owned()
@@ -348,9 +343,6 @@ fn nav_button_style(status: button::Status) -> button::Style {
   }
 }
 
-/// The header date label, which differs per view: a "from" hint for Agenda, the full day for Day, a
-/// date range for Week, month + year for Month, and just the year for Year. Returns (title, optional
-/// subtitle) — the subtitle is rendered as a small uppercase mono line beneath.
 fn nav_period(state: &State) -> (String, Option<String>) {
   let cursor = state.cursor();
   match state.view() {

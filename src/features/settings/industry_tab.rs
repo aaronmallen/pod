@@ -17,14 +17,12 @@ use crate::{
   },
 };
 
-/// EVE ESI industry activity id for manufacturing.
 const MANUFACTURING_ACTIVITY_ID: i64 = 1;
 /// Facility ids at or above this are player-owned structures; below are NPC stations.
 ///
 /// Only structures need pinning (see `pin_for`); station ids are well-known and never persisted.
 const MIN_STRUCTURE_ID: i64 = 1_000_000_000_000;
 const PANEL_SIDE_PADDING: f32 = 36.0;
-/// EVE ESI industry activity id for reactions.
 const REACTION_ACTIVITY_ID: i64 = 11;
 
 const ACTIVITIES: [Activity; 2] = [
@@ -113,7 +111,6 @@ fn facility_ref(facility: &PlannerFacility, is_reaction: bool) -> FacilityRef {
   facility.to_ref(is_reaction)
 }
 
-/// Returns a pin only for player structures; NPC stations resolve from static data and yield `None`.
 fn pin_for(facility: &FacilityRef) -> Option<PinnedStructure> {
   (facility.id >= MIN_STRUCTURE_ID).then(|| PinnedStructure {
     id: facility.id,
@@ -172,7 +169,6 @@ pub fn update(state: &mut State, message: Message, settings: &mut Settings) -> O
       activity,
       query,
     } => {
-      // Typing into the always-visible trigger opens the picker for that activity, mirroring the planner.
       let picker = state.picker_mut(activity);
       picker.open = true;
       let generation = picker.search.set_query(query.clone());
@@ -292,8 +288,6 @@ fn activity_section(picker: &Picker, activity: Activity) -> Element<'_, Message>
     })
     .trigger();
 
-  // The facility popover floats below the trigger (width-matched) via AnchoredDropdown so opening it
-  // never pushes the sibling activity sections down — it overlays the content instead.
   let dropdown =
     AnchoredDropdown::new(trigger, picker.open.then(|| popover(picker, activity))).on_dismiss(Message::PickerToggled {
       activity: id,

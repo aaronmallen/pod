@@ -326,9 +326,6 @@ pub fn remaining_steps(steps: &[PlanStep], trained: &std::collections::HashMap<i
   remaining
 }
 
-/// Count the distinct skills a plan trains, deduplicated by `skill_id`.
-///
-/// A skill trained to level 5 occupies five stored steps but counts once.
 pub fn distinct_skills(steps: &[PlanStep]) -> usize {
   steps
     .iter()
@@ -1261,8 +1258,6 @@ mod tests {
 
     #[test]
     fn it_climbs_the_running_level_across_in_plan_steps() {
-      // A skill listed twice (e.g. a prereq expansion that also appears as an
-      // explicit wish) must not double-count an already-scheduled level.
       let steps = vec![step(3300, 1), step(3300, 2), step(3300, 2), step(3300, 3)];
 
       assert_eq!(
@@ -1289,9 +1284,6 @@ mod tests {
 
     #[test]
     fn it_matches_the_editor_steps_count_for_identical_inputs() {
-      // The editor derives its visible "Steps" stat from compute_plan rows:
-      // `rows.filter(|r| !r.skipped).count()`. Feed both paths the same plan
-      // and trained levels; the remaining helper must equal that count.
       let plan_steps = vec![
         step(3300, 1),
         step(3300, 2),
@@ -1366,7 +1358,6 @@ mod tests {
 
     #[test]
     fn the_distinct_count_is_below_the_stored_slot_count_for_an_expanded_plan() {
-      // The bug being fixed: 6 stored slots collapse to 2 distinct skills.
       let steps = vec![
         step(3300, 1),
         step(3300, 2),

@@ -54,9 +54,6 @@ pub enum Message {
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows (selected pilot portraits), so the shell
-  /// should recheck for stale images. Interaction-only messages return `false` to keep the staleness scan off the
-  /// per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(self, Message::DataLoaded(_) | Message::PilotAdded(_))
   }

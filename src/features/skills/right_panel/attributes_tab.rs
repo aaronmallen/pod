@@ -24,7 +24,6 @@ pub(super) const ATTR_ORDER: [Attribute; 5] = [
 ];
 pub(super) const WARNING: iced::Color = color::status::WARNING;
 
-/// Localized label for the attribute-pair category at the given grid index (Combat, Engineering, …).
 pub(super) fn pair_label(index: usize) -> String {
   match index {
     0 => t!("skills.panel_attributes.pair_combat"),

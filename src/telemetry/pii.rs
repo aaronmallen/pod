@@ -13,16 +13,12 @@
 //! id-keyword values and any long digit run are redacted, URLs keep only
 //! scheme + host, and oversized payloads are truncated rather than rejected.
 
-/// Maximum size, in bytes, of a scrubbed crash message.
 const MESSAGE_CAP_BYTES: usize = 2 * 1024;
 
-/// Maximum size, in bytes, of a single scrubbed backtrace frame.
 const FRAME_CAP_BYTES: usize = 1024;
 
-/// Maximum size, in bytes, of a single retained `context_log` line.
 const LOG_LINE_CAP_BYTES: usize = 1024;
 
-/// Maximum number of `context_log` lines retained after scrubbing.
 const MAX_LOG_LINES: usize = 20;
 
 /// Placeholder substituted for a redacted id value.
@@ -473,8 +469,6 @@ fn truncate_bytes(input: &str, cap: usize) -> String {
 mod tests {
   use super::*;
 
-  // --- §5.4 building-block coverage --------------------------------------
-
   #[test]
   fn strips_absolute_build_root_to_src() {
     let input = "/Users/aaron/src/github.com/aaronmallen/pod/src/features/wallet.rs:412";
@@ -513,21 +507,18 @@ mod tests {
   #[test]
   fn redacts_id_keyword_values_including_small_ids() {
     assert_eq!(scrub_text("character_id=90000001"), "character_id=<id>");
-    // race_id is small (< 7 digits) but the keyword rule still catches it.
     assert_eq!(scrub_text("race_id: 8"), "race_id: <id>");
     assert_eq!(scrub_text("\"owner_id\":98000123"), "\"owner_id\":<id>");
   }
 
   #[test]
   fn id_keyword_requires_word_boundary() {
-    // Not a real id keyword; must not be redacted by the keyword rule.
     assert_eq!(scrub_text("xrace_id 8"), "xrace_id 8");
   }
 
   #[test]
   fn redacts_any_long_digit_run() {
     assert_eq!(scrub_text("dropped frame for 2117209623"), "dropped frame for <id>");
-    // Short runs are preserved.
     assert_eq!(scrub_text("retry 3 of 10"), "retry 3 of 10");
   }
 
@@ -543,14 +534,10 @@ mod tests {
     assert_eq!(scrub_frame(&big).len(), FRAME_CAP_BYTES);
   }
 
-  // --- §5.5 context_log allow-list ---------------------------------------
-
   #[test]
   fn keeps_only_allowlisted_targets() {
     let lines = vec![
-      // benign, allow-listed
       "{\"level\":\"INFO\",\"target\":\"pod::nav\",\"message\":\"navigated\"}".to_owned(),
-      // dropped: carries PII via module-path target
       "{\"level\":\"INFO\",\"target\":\"pod::features::roster::auth\",\"message\":\"x\"}".to_owned(),
       "{\"level\":\"INFO\",\"target\":\"pod::lifecycle\",\"message\":\"x\"}".to_owned(),
     ];
@@ -593,7 +580,6 @@ mod tests {
     }
     let kept = scrub_context_log(&lines);
     assert_eq!(kept.len(), MAX_LOG_LINES);
-    // newest-wins: the last line must be present.
     assert!(kept.last().unwrap().contains("line 49"));
   }
 
@@ -614,27 +600,17 @@ mod tests {
     assert_eq!(kept.len(), 1);
   }
 
-  // --- ADVERSARIAL: real current log lines, nothing sensitive survives ----
-
-  /// character_name logged at auth (real target `pod::features::roster::auth`, which
-  /// has NO explicit `target:` so the default is the module path). The whole
-  /// line must be dropped — it is not on the target allow-list.
   #[test]
   fn adversarial_character_name_at_auth_is_dropped() {
-    // Mirrors src/features/auth.rs:189
-    // tracing::info!(character_id = signed.character_id, name = %signed.character_name, "character signed in");
     let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"INFO\",\"target\":\"pod::features::roster::auth\",\"character_id\":90000001,\"name\":\"Aaron Mallen\",\"message\":\"character signed in\"}";
     let kept = scrub_context_log(&[line.to_owned()]);
     assert!(kept.is_empty(), "auth line survived: {kept:?}");
-    // And it is NOT pod::auth in the allow-list either.
     assert!(!ALLOWED_TARGETS.contains(&"pod::auth"));
     assert!(!ALLOWED_TARGETS.contains(&"pod::features::roster::auth"));
     let joined = kept.join("");
     assert!(!joined.contains("Aaron"), "character_name leaked");
   }
 
-  /// hostname logged at app lifecycle (real target `pod::lifecycle`,
-  /// app.rs:1217). Dropped entirely.
   #[test]
   fn adversarial_hostname_at_lifecycle_is_dropped() {
     let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"WARN\",\"target\":\"pod::lifecycle\",\"hostname\":\"aarons-macbook-pro.local\",\"message\":\"the share is open elsewhere; opening read-only\"}";
@@ -643,8 +619,6 @@ mod tests {
     assert!(!kept.join("").contains("macbook"), "hostname leaked");
   }
 
-  /// free-text search query at entity_search (real target `pod::entity_search`,
-  /// entity_search.rs:159). Dropped entirely.
   #[test]
   fn adversarial_search_query_is_dropped() {
     let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"WARN\",\"target\":\"pod::entity_search\",\"query\":\"CCP Falcon\",\"message\":\"entity search failed\"}";
@@ -653,7 +627,6 @@ mod tests {
     assert!(!kept.join("").contains("Falcon"), "query leaked");
   }
 
-  /// A full ESI URL appearing in a crash message: only scheme+host survives.
   #[test]
   fn adversarial_full_esi_url_in_message_reduced_to_host() {
     let msg = "called `Result::unwrap()` on an `Err` value: request to https://esi.evetech.net/latest/characters/2117209623/assets/?page=3&token=secret failed";
@@ -664,11 +637,8 @@ mod tests {
     assert!(!scrubbed.contains("2117209623"), "id in url leaked: {scrubbed}");
   }
 
-  /// owner/structure/station/location/mail ids from sync, both as a crash
-  /// message and as buffered (but allow-listed-target) log lines, must redact.
   #[test]
   fn adversarial_sync_ids_in_message_redacted() {
-    // Mirrors interpolated panic text built from sync job fields.
     let msg = "sync failed owner_id=98000123 structure_id=1035466617946 station_id=60003760 location_id=1000000016 mail_id=438492011";
     let scrubbed = scrub_message(msg);
     for raw in ["98000123", "1035466617946", "60003760", "1000000016", "438492011"] {
@@ -680,8 +650,6 @@ mod tests {
     );
   }
 
-  /// The same sync ids, but smuggled into a benign allow-listed target's
-  /// message field — the field allow-list keeps the message, but §5.4 scrubs it.
   #[test]
   fn adversarial_sync_ids_smuggled_into_allowlisted_message() {
     let line = "{\"timestamp\":\"2026-06-25T00:00:00Z\",\"level\":\"DEBUG\",\"target\":\"pod::sde\",\"message\":\"resolved station_id=60003760 owner_id 98000123\"}";
@@ -694,8 +662,6 @@ mod tests {
     assert!(!msg.contains("60003760") && !msg.contains("98000123"));
   }
 
-  /// A real backtrace with mixed app + registry frames: app frames are
-  /// path-stripped, registry frames collapse to crate paths.
   #[test]
   fn adversarial_backtrace_strips_paths_and_collapses_registry() {
     let frames = vec![

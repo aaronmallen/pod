@@ -1,24 +1,3 @@
-//! Process-global telemetry collector + the single gated flush loop (spec
-//! mmmzstpq §4, §7.4).
-//!
-//! Capture sites call the cheap, non-blocking `record_*` free functions; they
-//! push one event into a process-global [`OnceLock`] buffer WITHOUT ever reading
-//! Settings (no per-event gating, no I/O). The whole subsystem is a structural
-//! no-op unless it was [`init`]ialized, which the app only does when the
-//! build-time ingest endpoint is configured ([`crate::clients::telemetry::Endpoint::from_env`]);
-//! it is also a no-op under `cfg(test)`.
-//!
-//! All gating happens once, later, at [`flush`]: that single function re-reads
-//! the live [`TelemetryConfig`] snapshot, drops the buffered events of any
-//! per-stream flag that is off (and POSTs nothing at all when the master switch
-//! is off), assembles a [`Batch`] of the enabled streams from the buffered data,
-//! hands it to the fire-and-forget [`Sender`], and clears the buffer regardless
-//! of send success (drop-on-failure bounds memory across offline spans). The
-//! `environment` stream is emitted only on the FIRST flush of the process.
-//!
-//! The wire shape is the frozen [`crate::telemetry_contract`]; this module
-//! reuses [`Batch`] verbatim and only buffers, gates, and assembles.
-
 use std::sync::{Mutex, OnceLock};
 
 use rand::Rng;
@@ -179,8 +158,6 @@ fn now_rfc3339() -> String {
   chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
-// ---- Capture: cheap, non-blocking, no Settings branch. ----------------------
-
 /// Record a view/route open at the central `navigate()` dispatcher. Also arms
 /// the nav->first-paint timer for this route (§8.3 `load_ms`), closed by the
 /// first [`record_view_loaded`] of the same route.
@@ -269,8 +246,6 @@ pub fn record_frame(heap_mb: u64) {
     buffers.heap_mb = buffers.heap_mb.max(heap_mb);
   });
 }
-
-// ---- Flush: the single gate. ------------------------------------------------
 
 /// The single gated flush (the app's periodic tick + the exit flush). Re-reads
 /// the live config snapshot, drains the buffer, and -- unless the master switch
@@ -478,8 +453,6 @@ fn normalize_locale(locale: &str) -> Option<String> {
   }
 }
 
-// ---- Stable usage tokens (§8.1): lowercase, no spaces/slash/at/digits. -------
-
 /// The stable, parameter-free usage token for a route, lowercased for
 /// consistency with the dotted `sub_section` tokens (§8.1). Pairs with
 /// [`crate::app`]'s `Route::name()` CamelCase constant so id-carrying variants
@@ -530,8 +503,6 @@ mod tests {
     config
   }
 
-  /// Build a collector directly (bypassing the global `OnceLock`) so each test
-  /// drives an isolated buffer + config snapshot.
   fn collector(config: TelemetryConfig) -> Collector {
     Collector {
       anon_id: anon_id("machine-test"),
@@ -553,8 +524,6 @@ mod tests {
     });
   }
 
-  // ---- §7.4: session tag is `s_` + exactly 8 lowercase hex. ----
-
   #[test]
   fn session_tag_is_s_plus_eight_lowercase_hex() {
     for _ in 0..64 {
@@ -569,25 +538,15 @@ mod tests {
     }
   }
 
-  // ---- Capture is a structural no-op under cfg(test). ----
-
   #[test]
   fn record_functions_are_a_no_op_under_cfg_test() {
-    // These run in a test build; even with an initialized global they must not
-    // push (the cfg(test) guard short-circuits before any buffer access).
     record_view_open("wallet");
     record_feature_toggle("skills.plan_optimizer", true);
     record_sub_section("market.orders");
     record_view_load("wallet", 142, 11);
     record_frame(84);
-    // No panic, no global mutation: capture stayed inert.
     assert!(COLLECTOR.get().is_none());
   }
-
-  // ---- record_* push the right events / entries onto the buffer. ----
-  //
-  // The free functions are cfg(test)-inert, so these assert the buffer push by
-  // driving the same shape directly (the production push path).
 
   #[test]
   fn usage_pushes_accumulate_view_open_and_feature_toggle() {
@@ -620,8 +579,6 @@ mod tests {
     assert_eq!(collector.buffers.lock().unwrap().heap_mb, 84);
   }
 
-  // ---- flush assembly: enabled streams + contract shape. ----
-
   #[test]
   fn assemble_builds_a_session_batch_matching_the_contract_shape() {
     let collector = collector(config(true, true, true, true));
@@ -648,14 +605,11 @@ mod tests {
     assert!(streams.environment.is_some(), "environment rides the first flush");
     assert!(streams.crashes.is_none(), "session batches never carry crashes");
 
-    // Buffer drained regardless of (no) send.
     let buffers = collector.buffers.lock().unwrap();
     assert!(buffers.usage.is_empty());
     assert!(buffers.views.is_empty());
     assert_eq!(buffers.heap_mb, 0);
   }
-
-  // ---- flush gates off-streams: a disabled stream's buffer is dropped. ----
 
   #[test]
   fn assemble_drops_the_buffered_events_of_an_off_stream() {
@@ -672,11 +626,8 @@ mod tests {
     assert!(batch.streams.performance.is_some());
     assert!(batch.streams.environment.is_none(), "environment off => omitted");
 
-    // The off stream's buffered events were drained, not retained.
     assert!(collector.buffers.lock().unwrap().usage.is_empty());
   }
-
-  // ---- flush no-ops (POSTs nothing) when the master switch is off. ----
 
   #[test]
   fn assemble_drains_and_posts_nothing_when_disabled() {
@@ -689,13 +640,10 @@ mod tests {
     });
 
     assert!(collector.assemble().is_none(), "master off => no batch");
-    // Drained-and-discarded so memory stays bounded across the disabled span.
     let buffers = collector.buffers.lock().unwrap();
     assert!(buffers.usage.is_empty());
     assert!(buffers.views.is_empty());
   }
-
-  // ---- environment rides only the first flush of the process. ----
 
   #[test]
   fn environment_is_emitted_only_on_the_first_flush() {
@@ -709,16 +657,11 @@ mod tests {
     assert!(second.streams.environment.is_none(), "environment is once-per-process");
   }
 
-  // ---- empty enabled streams => nothing to send. ----
-
   #[test]
   fn assemble_returns_none_when_no_enabled_stream_has_data() {
-    // environment off + empty usage/performance => nothing to POST.
     let collector = collector(config(true, true, true, false));
     assert!(collector.assemble().is_none());
   }
-
-  // ---- the assembled batch serializes onto the frozen contract. ----
 
   #[test]
   fn assembled_batch_round_trips_through_the_contract() {
@@ -733,32 +676,24 @@ mod tests {
 
     let json = serde_json::to_value(&batch).unwrap();
     let streams = json["streams"].as_object().unwrap();
-    // usage on, performance/environment off => only the usage key is present.
     assert!(streams.contains_key("usage"));
     assert!(!streams.contains_key("performance"));
     assert!(!streams.contains_key("environment"));
     assert!(!streams.contains_key("crashes"));
-    // feature_toggle carries `on`.
     assert_eq!(
       json["streams"]["usage"]["events"][0]["on"],
       serde_json::Value::Bool(true)
     );
 
-    // Full round-trip back through the contract type is lossless.
     let parsed: Batch = serde_json::from_value(json).unwrap();
     assert_eq!(parsed, batch);
   }
 
-  // ---- set_config refreshes the live snapshot the next flush gates on. ----
-
   #[test]
   fn set_config_on_an_uninitialized_global_is_inert() {
-    // No global collector in this isolated unit; set_config must not panic.
     set_config(config(false, false, false, false));
     assert!(COLLECTOR.get().is_none());
   }
-
-  // ---- token helpers: stable, lowercase, contract-shaped. ----
 
   #[test]
   fn route_token_lowercases_the_camelcase_route_name() {
@@ -784,8 +719,6 @@ mod tests {
     assert!(!is_well_formed_token("wallet2"));
   }
 
-  // ---- environment probing: version/locale reduction is major/language-only. ----
-
   #[test]
   fn major_component_keeps_only_the_leading_digit_run() {
     assert_eq!(major_component("15.5").as_deref(), Some("15"));
@@ -795,19 +728,14 @@ mod tests {
     assert_eq!(major_component(""), None);
   }
 
-  // ---- per-platform os_version_major parse seams (pure, host-independent). ----
-
   #[test]
   fn parse_sw_vers_trims_the_product_version_line() {
-    // macOS `sw_vers -productVersion` typically prints the bare version + newline.
     assert_eq!(parse_sw_vers("15.5\n").as_deref(), Some("15.5"));
     assert_eq!(parse_sw_vers("  14.4.1  ").as_deref(), Some("14.4.1"));
-    // Reducing the parsed value yields the major component.
     assert_eq!(
       major_component(&parse_sw_vers("15.5\n").unwrap()).as_deref(),
       Some("15")
     );
-    // Blank / whitespace-only output => nothing to parse.
     assert_eq!(parse_sw_vers(""), None);
     assert_eq!(parse_sw_vers("   \n"), None);
   }
@@ -816,9 +744,7 @@ mod tests {
   fn parse_windows_ver_extracts_the_token_after_the_version_marker() {
     let raw = "\r\nMicrosoft Windows [Version 10.0.19045.0]\r\n";
     assert_eq!(parse_windows_ver(raw).as_deref(), Some("10.0.19045.0]"));
-    // The major reduction stops at the first non-digit, dropping the trailing `]`.
     assert_eq!(major_component(&parse_windows_ver(raw).unwrap()).as_deref(), Some("10"));
-    // No "Version " marker => no token.
     assert_eq!(parse_windows_ver("some unexpected banner"), None);
     assert_eq!(parse_windows_ver(""), None);
   }
@@ -831,24 +757,18 @@ mod tests {
       major_component(&parse_os_release_version_id(release).unwrap()).as_deref(),
       Some("22")
     );
-    // Unquoted values (e.g. some rolling distros) are read verbatim.
     assert_eq!(parse_os_release_version_id("VERSION_ID=36\n").as_deref(), Some("36"));
-    // A rolling release with no numeric id still parses; the major reduction is
-    // what yields `None` for the caller.
     assert_eq!(
       parse_os_release_version_id("VERSION_ID=rolling").as_deref(),
       Some("rolling")
     );
     assert_eq!(major_component("rolling"), None);
-    // Missing key => no value.
     assert_eq!(parse_os_release_version_id("NAME=\"Arch Linux\"\n"), None);
     assert_eq!(parse_os_release_version_id(""), None);
   }
 
   #[test]
   fn os_version_major_probes_the_live_host_without_panicking() {
-    // Drives the real per-platform branch on the test host (the macOS `sw_vers`
-    // path here). Best-effort: either a numeric major or `None`, never empty.
     if let Some(major) = os_version_major() {
       assert!(
         major.chars().all(|c| c.is_ascii_digit()),
@@ -871,8 +791,6 @@ mod tests {
     assert_eq!(normalize_locale("EN").as_deref(), Some("en"));
     assert_eq!(normalize_locale("En-us").as_deref(), Some("en"));
     assert_eq!(normalize_locale("  en-US  ").as_deref(), Some("en"));
-    // `C` / `POSIX` carry no language; sys-locale's unix path can pass these
-    // through unchanged, so the guard must reject them.
     assert_eq!(normalize_locale("C"), None);
     assert_eq!(normalize_locale("POSIX"), None);
     assert_eq!(normalize_locale(""), None);
@@ -880,9 +798,6 @@ mod tests {
 
   #[test]
   fn locale_language_probes_the_live_host_without_panicking() {
-    // Drives the real sys-locale / env resolution on the test host. Best-effort:
-    // either `None` or a non-empty, lowercase, separator-free subtag, never a
-    // specific value, never a panic. Mirrors the os_version_major probe test.
     if let Some(language) = locale_language() {
       assert!(!language.is_empty());
       assert!(
@@ -903,8 +818,6 @@ mod tests {
     assert_eq!(env.arch, std::env::consts::ARCH);
     assert_eq!(env.window_size, UNKNOWN);
     assert_eq!(env.screen_size, UNKNOWN);
-    // os_version / locale are best-effort: either a probed value or the sentinel,
-    // but never empty.
     assert!(!env.os_version.is_empty());
     assert!(!env.locale.is_empty());
   }
@@ -916,8 +829,6 @@ mod tests {
     assert_eq!(env.screen_size, "3440x1440");
   }
 
-  // ---- load_ms timer: opened by view_open, closed by the first matching paint. ----
-
   #[test]
   fn nav_timer_records_a_view_load_on_the_first_paint_of_the_opened_route() {
     let collector = collector(config(true, true, true, true));
@@ -925,7 +836,6 @@ mod tests {
       let mut buffers = collector.buffers.lock().unwrap();
       buffers.nav_started = Some(("wallet".to_owned(), std::time::Instant::now()));
     }
-    // Simulate record_view_loaded("wallet") closing the armed timer.
     {
       let mut buffers = collector.buffers.lock().unwrap();
       let (opened, started) = buffers.nav_started.clone().unwrap();

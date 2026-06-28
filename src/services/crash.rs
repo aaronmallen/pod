@@ -440,8 +440,6 @@ mod tests {
 
   use super::*;
 
-  // The crash statics + ring are process-global; serialize the tests that touch
-  // them so they do not race each other's STATE/RING.
   static GLOBAL: StdMutex<()> = StdMutex::new(());
 
   fn lock() -> MutexGuard<'static, ()> {
@@ -480,8 +478,6 @@ mod tests {
     }
   }
 
-  // ---- the ring: bounded to 20, allow-list applied at ingest. ----
-
   #[test]
   fn ring_is_bounded_to_twenty_newest_lines() {
     let _guard = lock();
@@ -504,9 +500,7 @@ mod tests {
     let _ = RING.set(Mutex::new(Vec::new()));
     RING.get().unwrap().lock().unwrap().clear();
 
-    // pod::features::roster::auth carries character_name and is NOT allow-listed.
     ingest(r#"{"level":"INFO","target":"pod::features::roster::auth","name":"Aaron","message":"signed in"}"#);
-    // pod::nav is benign and allow-listed.
     ingest(r#"{"level":"INFO","target":"pod::nav","message":"navigated"}"#);
 
     let held = RING.get().unwrap().lock().unwrap().clone();
@@ -515,17 +509,12 @@ mod tests {
     assert!(!held.join("").contains("Aaron"), "dropped line never held");
   }
 
-  // ---- capture: writes a scrubbed NDJSON record, raw PII absent. ----
-
   #[test]
   fn capture_writes_a_scrubbed_ndjson_record() {
     let _guard = lock();
     let dir = tmp_dir();
     let buffer = dir.join(BUFFER_FILE);
 
-    // Drive capture's exact record-build + append path against a test-owned
-    // CrashState (so this test never depends on the process-global STATE, which
-    // a sibling test may have already claimed). Same scrubbing, same append.
     let state = state_with(&dir, config(true, true), true);
     let record = build_record(
       &state,
@@ -556,8 +545,6 @@ mod tests {
     }
   }
 
-  // ---- assemble: the crash Batch matches the contract. ----
-
   #[test]
   fn assemble_builds_a_crash_kind_batch_from_buffered_records() {
     let _guard = lock();
@@ -579,15 +566,12 @@ mod tests {
       "crashed_at from the record"
     );
 
-    // The envelope must round-trip through the frozen contract.
     let json = serde_json::to_value(&batch).unwrap();
     let streams = json["streams"].as_object().unwrap();
     assert_eq!(streams.keys().collect::<Vec<_>>(), vec!["crashes"]);
     let reparsed: Batch = serde_json::from_value(json).unwrap();
     assert_eq!(reparsed, batch);
   }
-
-  // ---- retention bound: age + size. ----
 
   #[test]
   fn retain_drops_records_older_than_the_age_cap() {
@@ -604,7 +588,6 @@ mod tests {
   #[test]
   fn retain_truncates_to_the_newest_records_under_the_size_cap() {
     let _guard = lock();
-    // Build many fresh records whose combined NDJSON exceeds the byte cap.
     let big = "x".repeat(2000);
     let count = (BUFFER_MAX_BYTES as usize / big.len()) + 50;
     let records: Vec<CrashRecord> = (0..count)
@@ -619,8 +602,6 @@ mod tests {
     assert!(!kept.is_empty(), "the newest records are kept");
   }
 
-  // ---- boot delivery: deletes-unsent when opted out / no endpoint. ----
-
   #[test]
   fn deliver_deletes_unsent_when_master_off() {
     let _guard = lock();
@@ -628,8 +609,6 @@ mod tests {
     let buffer = dir.join(BUFFER_FILE);
     std::fs::write(&buffer, "{\"crashed_at\":\"2026-06-24T22:14:03Z\"}\n").unwrap();
 
-    // No Sender is needed: the opted-out branch never POSTs. Endpoint::from_env
-    // is None in tests, so build the decision purely from the args.
     deliver_decision_only(&buffer, config(false, true), true);
     assert!(!buffer.exists(), "opted-out buffer must be deleted unsent");
     let _ = std::fs::remove_dir_all(&dir);
@@ -657,8 +636,6 @@ mod tests {
     let _ = std::fs::remove_dir_all(&dir);
   }
 
-  // The opted-out / no-endpoint branch of `deliver`, exercised without a live
-  // tokio runtime or Sender (which `Endpoint::from_env` can't build in tests).
   fn deliver_decision_only(buffer: &std::path::Path, config: TelemetryConfig, has_endpoint: bool) {
     if std::fs::read_to_string(buffer).is_err() {
       return;
@@ -667,12 +644,6 @@ mod tests {
       let _ = std::fs::remove_file(buffer);
     }
   }
-
-  // ---- the real `deliver`: drive every branch of the boot delivery. ----
-  //
-  // A `Sender` is built from the public `Endpoint` fields (no build-time env),
-  // pointed at a local wiremock server. The non-POST branches ignore the sender;
-  // the POST branch runs under a live tokio runtime against the mock.
 
   use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -687,15 +658,12 @@ mod tests {
     .expect("reqwest client builds")
   }
 
-  /// One serialized NDJSON record line for a fresh crash (passes the age bound).
   fn ndjson_line(message: &str) -> String {
     let mut line = serde_json::to_string(&record(message, &rfc3339_days_ago(1))).expect("record serializes");
     line.push('\n');
     line
   }
 
-  /// Wait (bounded) for `predicate` to hold, so the assertion does not race the
-  /// fire-and-forget `tokio::spawn` that `deliver` returns before completing.
   async fn wait_until(predicate: impl Fn() -> bool) {
     for _ in 0..200 {
       if predicate() {
@@ -707,15 +675,10 @@ mod tests {
 
   #[tokio::test]
   async fn deliver_is_a_no_op_when_the_buffer_is_absent() {
-    // No global lock: these drive `deliver` against a unique-per-test buffer
-    // path and a local Sender, touching neither the STATE nor RING statics (so
-    // holding a std Mutex across the awaits below would be both needless and a
-    // clippy `await_holding_lock`).
     let dir = tmp_dir();
     let buffer = dir.join(BUFFER_FILE); // never created
     let sender = sender_for("http://127.0.0.1:1/ingest");
 
-    // Unreadable/absent buffer: deliver returns immediately, nothing created.
     deliver(&sender, &buffer, config(true, true), true);
     assert!(!buffer.exists(), "no buffer => nothing to deliver, none created");
     let _ = std::fs::remove_dir_all(&dir);
@@ -728,7 +691,6 @@ mod tests {
     std::fs::write(&buffer, ndjson_line("boom")).unwrap();
     let sender = sender_for("http://127.0.0.1:1/ingest");
 
-    // master off / crashes off / no endpoint each take the delete-unsent path.
     deliver(&sender, &buffer, config(false, true), true);
     assert!(!buffer.exists(), "master off => deleted unsent");
 
@@ -746,8 +708,6 @@ mod tests {
   async fn deliver_clears_a_buffer_with_nothing_deliverable() {
     let dir = tmp_dir();
     let buffer = dir.join(BUFFER_FILE);
-    // Only malformed / blank lines survive parsing: assemble() yields None, so
-    // the buffer is cleared rather than POSTed.
     std::fs::write(&buffer, "not json\n\n{also bad}\n").unwrap();
     let sender = sender_for("http://127.0.0.1:1/ingest");
 
@@ -801,7 +761,6 @@ mod tests {
     let sender = sender_for(&format!("{}/ingest", server.uri()));
 
     deliver(&sender, &buffer, config(true, true), true);
-    // Give the spawned send time to complete (and NOT delete the buffer).
     let probe = buffer.clone();
     wait_until(move || !probe.exists()).await; // returns when the 200ms budget elapses
     assert!(
@@ -811,19 +770,14 @@ mod tests {
     let _ = std::fs::remove_dir_all(&dir);
   }
 
-  // ---- skip when crashes/master off or no endpoint (capture). ----
-
   #[test]
   fn capture_decision_skips_when_opted_out_or_no_endpoint() {
-    // Mirror capture's guard: it must skip when any of the three gates fail.
     let skip = |c: TelemetryConfig, endpoint: bool| !*c.enabled() || !*c.crashes() || !endpoint;
     assert!(skip(config(false, true), true), "master off => skip");
     assert!(skip(config(true, false), true), "crashes off => skip");
     assert!(skip(config(true, true), false), "no endpoint => skip");
     assert!(!skip(config(true, true), true), "all on + endpoint => write");
   }
-
-  // ---- session tag shape. ----
 
   #[test]
   fn session_tag_matches_the_worker_pattern() {

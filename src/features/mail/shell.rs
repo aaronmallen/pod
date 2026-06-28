@@ -1,7 +1,7 @@
 use iced::{
-  Background, Border, Element, Length, Padding,
+  Background, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, Stack, button, container, text},
+  widget::{Column, Row, Space, Stack, container, text},
 };
 
 use super::{
@@ -13,6 +13,7 @@ use crate::{
   ui::{
     components::{
       backdrop,
+      button::Button,
       confirm_modal::confirm_modal,
       eyebrow::eyebrow_text,
       forbidden,
@@ -22,7 +23,7 @@ use crate::{
       resizable_pane::pane_handle,
       rule,
     },
-    style::{color, radius, spacing, typography},
+    style::{color, spacing, typography},
   },
 };
 
@@ -200,48 +201,10 @@ fn folder_caption(state: &State) -> String {
 }
 
 fn compose_button<'a>() -> Element<'a, Message> {
-  let content = Row::with_children(vec![
-    Icon::pencil()
-      .size(14.0)
-      .color(color::text::secondary())
-      .render::<Message>(),
-    text(t!("mail.header.compose"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary()))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  button(content)
-    .padding(Padding {
-      top: spacing::SPACE_2,
-      bottom: spacing::SPACE_2,
-      left: spacing::SPACE_3 + 2.0,
-      right: spacing::SPACE_3 + 2.0,
-    })
+  Button::ghost(t!("mail.header.compose").into_owned())
+    .icon(Icon::pencil())
     .on_press(Message::ComposeOpened)
-    .style(|_, status| compose_button_style(status))
     .into()
-}
-
-fn compose_button_style(status: button::Status) -> button::Style {
-  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-  button::Style {
-    background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, if hovered { 0.18 } else { 0.1 }),
-      radius: radius::CONTROL.into(),
-      width: 1.0,
-    },
-    text_color: if hovered {
-      color::text::PRIMARY
-    } else {
-      color::text::secondary()
-    },
-    ..button::Style::default()
-  }
 }
 
 fn panes(state: &State) -> Element<'_, Message> {

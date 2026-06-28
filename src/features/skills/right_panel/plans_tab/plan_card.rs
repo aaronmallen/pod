@@ -1,13 +1,18 @@
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use super::{Message, PlanRow};
 use crate::ui::{
-  components::{chip::chip, rule},
-  style::{color, radius, spacing, typography},
+  components::{
+    button::{Button, Size},
+    chip::chip,
+    icon::Icon,
+    rule,
+  },
+  style::{color, spacing, typography},
 };
 
 pub fn plan_card<'a>(plan: &'a PlanRow, first: bool, confirm: bool) -> Element<'a, Message> {
@@ -106,149 +111,29 @@ fn confirm_row<'a>(plan_id: i64) -> Element<'a, Message> {
 }
 
 fn open_btn<'a>(plan_id: i64) -> Element<'a, Message> {
-  button(
-    text(t!("skills.panel_plans.open"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::PRIMARY),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::OpenPlan(plan_id))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: None,
-      border: Border {
-        color: if active {
-          color::accent::PLASMA
-        } else {
-          color::with_alpha(color::text::PRIMARY, 0.1)
-        },
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: if active {
-        color::accent::PLASMA
-      } else {
-        color::text::PRIMARY
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(t!("skills.panel_plans.open"))
+    .size(Size::Sm)
+    .on_press(Message::OpenPlan(plan_id))
+    .into()
 }
 
 fn delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
-  button(
-    text("\u{00d7}")
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      }),
-  )
-  .padding(Padding {
-    top: 5.0,
-    bottom: 5.0,
-    left: spacing::SPACE_2,
-    right: spacing::SPACE_2,
-  })
-  .on_press(Message::DeleteRequested(plan_id))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: None,
-      border: Border {
-        color: if active {
-          color::status::DANGER
-        } else {
-          Color::TRANSPARENT
-        },
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: if active {
-        color::status::DANGER
-      } else {
-        color::text::tertiary()
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::danger_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::DeleteRequested(plan_id))
+    .into()
 }
 
 fn confirm_delete_btn<'a>(plan_id: i64) -> Element<'a, Message> {
-  button(
-    text(t!("skills.panel_plans.confirm"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::status::DANGER),
-      }),
-  )
-  .padding(Padding {
-    top: 5.0,
-    bottom: 5.0,
-    left: spacing::SPACE_2,
-    right: spacing::SPACE_2,
-  })
-  .on_press(Message::DeleteConfirmed(plan_id))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: active.then(|| Background::Color(color::with_alpha(color::status::DANGER, 0.12))),
-      border: Border {
-        color: color::status::DANGER,
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: color::status::DANGER,
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::danger(t!("skills.panel_plans.confirm"))
+    .size(Size::Sm)
+    .on_press(Message::DeleteConfirmed(plan_id))
+    .into()
 }
 
 fn cancel_delete_btn<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("skills.panel_plans.cancel"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: 5.0,
-    bottom: 5.0,
-    left: spacing::SPACE_2,
-    right: spacing::SPACE_2,
-  })
-  .on_press(Message::DeleteCancelled)
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: None,
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, if active { 0.25 } else { 0.1 }),
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: if active {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(t!("skills.panel_plans.cancel"))
+    .size(Size::Sm)
+    .on_press(Message::DeleteCancelled)
+    .into()
 }

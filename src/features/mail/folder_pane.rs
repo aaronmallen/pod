@@ -1,7 +1,7 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::Vertical,
-  widget::{Column, Row, Space, button, container, mouse_area, scrollable, text},
+  widget::{Column, Row, Space, container, mouse_area, scrollable, text},
 };
 
 use super::{
@@ -9,7 +9,12 @@ use super::{
   loaders::{FolderLabel, StandardFolderCounts},
 };
 use crate::ui::{
-  components::{icon::Icon, rule, section_header::section_header as shared_section_header},
+  components::{
+    button::{Button, Size},
+    icon::Icon,
+    rule,
+    section_header::section_header as shared_section_header,
+  },
   style::{color, radius, spacing, typography},
 };
 
@@ -310,15 +315,9 @@ fn labels_section(labels: &[FolderLabel], dragging: bool, drop_target: Option<Dr
 }
 
 fn labels_header<'a>() -> Element<'a, Message> {
-  let add = button(
-    Icon::plus()
-      .size(14.0)
-      .color(color::text::secondary())
-      .render::<Message>(),
-  )
-  .padding(spacing::UNIT - 1.0)
-  .on_press(Message::LabelModalOpened)
-  .style(|_, status| add_button_style(status));
+  let add = Button::ghost_icon(Icon::plus())
+    .size(Size::Sm)
+    .on_press(Message::LabelModalOpened);
 
   let row = Row::with_children(vec![
     shared_section_header::<Message>(&t!("mail.folder_pane.labels_header"), None),
@@ -336,23 +335,6 @@ fn labels_header<'a>() -> Element<'a, Message> {
       right: 0.0,
     })
     .into()
-}
-
-fn add_button_style(status: button::Status) -> button::Style {
-  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-  button::Style {
-    background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
-    border: Border {
-      radius: radius::SUBTLE.into(),
-      ..Border::default()
-    },
-    text_color: if hovered {
-      color::accent::PLASMA
-    } else {
-      color::text::secondary()
-    },
-    ..button::Style::default()
-  }
 }
 
 fn label_row(label: &FolderLabel, over: bool) -> Element<'_, Message> {

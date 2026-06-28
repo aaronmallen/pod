@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use iced::{
-  Border, Element, Length, Padding,
-  alignment::Vertical,
-  widget::{Row, Space, button, text},
+  Element, Length,
+  widget::{Space, text},
 };
 
 use super::{Message, PickerPilot, State, fmt_duration, fmt_eta, fmt_sp, queue_remaining_seconds};
@@ -11,6 +10,7 @@ use crate::{
   features::{roster, shell::registry},
   ui::{
     components::{
+      button::{Button, Size},
       header::{header as header_band, header_divider, stat_block},
       icon::Icon,
       picker::{
@@ -18,7 +18,7 @@ use crate::{
         trigger_identity,
       },
     },
-    style::{color, radius, spacing, typography},
+    style::{color, spacing, typography},
   },
 };
 
@@ -64,86 +64,18 @@ pub(super) fn header<'a>(state: &'a State, now: DateTime<Utc>) -> Element<'a, Me
 }
 
 fn manage_plans_button<'a>() -> Element<'a, Message> {
-  let label = Row::with_children(vec![
-    Icon::plans().size(16.0).color(color::text::secondary()).render(),
-    text(t!("skills.header.manage_plans"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      })
-      .into(),
-  ])
-  .spacing(spacing::UNIT)
-  .align_y(Vertical::Center);
-
-  button(label)
-    .padding(Padding {
-      top: 7.0,
-      bottom: 7.0,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    })
+  Button::secondary(t!("skills.header.manage_plans"))
+    .icon(Icon::plans())
+    .size(Size::Sm)
     .on_press(Message::OpenManagePlans)
-    .style(|_, status| {
-      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-      button::Style {
-        background: None,
-        border: Border {
-          color: color::with_alpha(color::text::PRIMARY, if hover { 0.25 } else { 0.1 }),
-          radius: radius::CONTROL.into(),
-          width: 1.0,
-        },
-        text_color: if hover {
-          color::text::PRIMARY
-        } else {
-          color::text::secondary()
-        },
-        ..button::Style::default()
-      }
-    })
     .into()
 }
 
 fn compare_button<'a>() -> Element<'a, Message> {
-  let label = Row::with_children(vec![
-    Icon::compare().size(16.0).color(color::text::secondary()).render(),
-    text(t!("skills.header.compare"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      })
-      .into(),
-  ])
-  .spacing(spacing::UNIT)
-  .align_y(Vertical::Center);
-
-  button(label)
-    .padding(Padding {
-      top: 7.0,
-      bottom: 7.0,
-      left: spacing::SPACE_3,
-      right: spacing::SPACE_3,
-    })
+  Button::secondary(t!("skills.header.compare"))
+    .icon(Icon::compare())
+    .size(Size::Sm)
     .on_press(Message::OpenCompare)
-    .style(|_, status| {
-      let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-      button::Style {
-        background: None,
-        border: Border {
-          color: color::with_alpha(color::text::PRIMARY, if hover { 0.25 } else { 0.1 }),
-          radius: radius::CONTROL.into(),
-          width: 1.0,
-        },
-        text_color: if hover {
-          color::text::PRIMARY
-        } else {
-          color::text::secondary()
-        },
-        ..button::Style::default()
-      }
-    })
     .into()
 }
 

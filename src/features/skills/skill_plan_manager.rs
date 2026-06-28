@@ -10,7 +10,15 @@ use crate::{
     repo::{character, org, skills},
   },
   ui::{
-    components::{avatar::avatar, chip::chip, clip::clip_layer, eyebrow::eyebrow_text, header, icon::Icon},
+    components::{
+      avatar::avatar,
+      button::{Button, Size},
+      chip::chip,
+      clip::clip_layer,
+      eyebrow::eyebrow_text,
+      header,
+      icon::Icon,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -753,75 +761,15 @@ fn copy_menu_item<'a>(plan_id: i64, target: &RosterEntry) -> Element<'a, Message
 }
 
 fn new_plan_button<'a>(character_id: i64) -> Element<'a, Message> {
-  button(
-    text(t!("skills.manager.new_plan").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::accent::PLASMA),
-      }),
-  )
-  .padding(Padding {
-    top: 7.0,
-    right: spacing::SPACE_3,
-    bottom: 7.0,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::NewPlan(character_id))
-  .style(|_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(if hover {
-        color::with_alpha(color::accent::PLASMA, 0.16)
-      } else {
-        color::with_alpha(color::accent::PLASMA, 0.10)
-      })),
-      border: Border {
-        color: color::accent::PLASMA_MUTED,
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: color::accent::PLASMA,
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::primary(t!("skills.manager.new_plan").into_owned())
+    .icon(Icon::plus())
+    .size(Size::Sm)
+    .on_press(Message::NewPlan(character_id))
+    .into()
 }
 
 fn ghost_button<'a>(label: String, message: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: 6.0,
-    right: spacing::SPACE_2_5,
-    bottom: 6.0,
-    left: spacing::SPACE_2_5,
-  })
-  .on_press(message)
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: None,
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, if active { 0.25 } else { 0.1 }),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: if active {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(label).size(Size::Sm).on_press(message).into()
 }
 
 fn copy_to_button<'a>(plan_id: i64, enabled: bool, menu_open: bool) -> Element<'a, Message> {
@@ -893,75 +841,14 @@ fn copy_button_style(enabled: bool, menu_open: bool, status: button::Status) -> 
 }
 
 fn danger_button<'a>(label: String, message: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::status::DANGER),
-      }),
-  )
-  .padding(Padding {
-    top: 6.0,
-    right: spacing::SPACE_2_5,
-    bottom: 6.0,
-    left: spacing::SPACE_2_5,
-  })
-  .on_press(message)
-  .style(|_, status| {
-    let hover = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hover.then(|| Background::Color(color::with_alpha(color::status::DANGER, 0.12))),
-      border: Border {
-        color: color::status::DANGER,
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: color::status::DANGER,
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::danger(label).size(Size::Sm).on_press(message).into()
 }
 
 fn delete_button<'a>(plan_id: i64) -> Element<'a, Message> {
-  button(
-    text("\u{00d7}")
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::tertiary()),
-      }),
-  )
-  .padding(Padding {
-    top: 4.0,
-    right: spacing::SPACE_2,
-    bottom: 4.0,
-    left: spacing::SPACE_2,
-  })
-  .on_press(Message::RequestDelete(plan_id))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: None,
-      border: Border {
-        color: if active {
-          color::status::DANGER
-        } else {
-          iced::Color::TRANSPARENT
-        },
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: if active {
-        color::status::DANGER
-      } else {
-        color::text::tertiary()
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::danger_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::RequestDelete(plan_id))
+    .into()
 }
 
 fn portrait_tile<'a, M: 'a>(portrait: &images::ImageState, name: &str, box_size: f32) -> Element<'a, M> {

@@ -13,8 +13,14 @@ use crate::{
     repo::{infra, mail},
   },
   ui::{
-    components::{color_picker, icon::Icon, rule, text_input::TextInput},
-    style::{color, control, radius, shadow, spacing, typography},
+    components::{
+      button::{Button, Size},
+      color_picker,
+      icon::Icon,
+      rule,
+      text_input::TextInput,
+    },
+    style::{color, radius, shadow, spacing, typography},
   },
 };
 
@@ -306,15 +312,9 @@ pub(super) fn create_modal(draft: &LabelDraft) -> Element<'_, Message> {
     .style(|_| text::Style {
       color: Some(color::text::PRIMARY),
     });
-  let close = button(
-    Icon::close()
-      .size(16.0)
-      .color(color::text::secondary())
-      .render::<Message>(),
-  )
-  .padding(spacing::UNIT + 2.0)
-  .on_press(Message::LabelModalClosed)
-  .style(|_, status| ghost_icon_style(status));
+  let close = Button::ghost_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::LabelModalClosed);
   let header = container(
     Row::with_children(vec![
       Column::with_children(vec![eyebrow.into(), title.into()])
@@ -451,25 +451,10 @@ fn footer_row(draft: &LabelDraft) -> Element<'_, Message> {
   .align_y(Vertical::Center)
   .width(Length::Fill);
 
-  let cancel = button(
-    text(t!("mail.labels.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::LabelModalClosed)
-  .style(control::ghost_button);
+  let cancel = Button::ghost(t!("mail.labels.cancel").into_owned()).on_press(Message::LabelModalClosed);
 
-  let mut create = button(
-    text(t!("mail.labels.create"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .style(control::primary_button);
-  if draft.can_create() {
-    create = create.on_press(Message::LabelModalSubmitted);
-  }
+  let create = Button::primary(t!("mail.labels.create").into_owned())
+    .on_press_maybe(draft.can_create().then_some(Message::LabelModalSubmitted));
 
   Row::with_children(vec![preview.into(), cancel.into(), create.into()])
     .spacing(spacing::SPACE_2)
@@ -631,19 +616,6 @@ fn picker_row_style(applied: bool, status: button::Status) -> button::Style {
       radius: radius::SUBTLE.into(),
       ..Border::default()
     },
-    ..button::Style::default()
-  }
-}
-
-fn ghost_icon_style(status: button::Status) -> button::Style {
-  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-  button::Style {
-    background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.08))),
-    border: Border {
-      radius: radius::SUBTLE.into(),
-      ..Border::default()
-    },
-    text_color: color::text::PRIMARY,
     ..button::Style::default()
   }
 }

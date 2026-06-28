@@ -6,7 +6,11 @@ use iced::{
 
 use super::Message;
 use crate::ui::{
-  components::{icon::Icon, rule, status},
+  components::{
+    button::{Button, Size},
+    icon::Icon,
+    rule, status,
+  },
   style::{color, radius, spacing, typography},
 };
 
@@ -29,7 +33,7 @@ pub(super) fn header<'a>(plan_name: &'a str, dirty: bool, picker_open: bool) -> 
     Space::new().width(spacing::SPACE_2).into(),
     inert_trigger(t!("skills.editor_header.export").into_owned(), Message::ExportRequested),
     Space::new().width(spacing::SPACE_2).into(),
-    ghost_btn(picker_label.into_owned(), Message::PickerToggled),
+    secondary_btn(picker_label.into_owned(), Message::PickerToggled),
     Space::new().width(spacing::SPACE_2).into(),
     save_btn(dirty),
   ])
@@ -58,31 +62,10 @@ pub(super) fn header<'a>(plan_name: &'a str, dirty: bool, picker_open: bool) -> 
 }
 
 fn close_btn<'a>() -> Element<'a, Message> {
-  button(
-    text("\u{2190}")
-      .font(typography::mono::REGULAR)
-      .size(14.0)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: 6.0,
-    bottom: 6.0,
-    left: 10.0,
-    right: 10.0,
-  })
-  .on_press(Message::CloseRequested)
-  .style(|_, status| button::Style {
-    background: hover_bg(status),
-    border: Border {
-      radius: radius::CONTROL.into(),
-      ..Border::default()
-    },
-    text_color: color::text::secondary(),
-    ..button::Style::default()
-  })
-  .into()
+  Button::ghost("\u{2190}")
+    .size(Size::Sm)
+    .on_press(Message::CloseRequested)
+    .into()
 }
 
 fn dirty_dot<'a>(dirty: bool) -> Element<'a, Message> {
@@ -93,34 +76,8 @@ fn dirty_dot<'a>(dirty: bool) -> Element<'a, Message> {
   }
 }
 
-fn ghost_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
-  button(text(label).font(typography::body::REGULAR).size(13.0))
-    .padding(Padding {
-      top: 8.0,
-      bottom: 8.0,
-      left: 12.0,
-      right: 12.0,
-    })
-    .on_press(on_press)
-    .style(|_, status| button::Style {
-      background: hover_bg(status),
-      border: Border {
-        radius: radius::CONTROL.into(),
-        ..Border::default()
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    })
-    .into()
-}
-
-fn hover_bg(status: button::Status) -> Option<Background> {
-  match status {
-    button::Status::Hovered | button::Status::Pressed => {
-      Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
-    }
-    _ => None,
-  }
+fn secondary_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
+  Button::secondary(label).size(Size::Sm).on_press(on_press).into()
 }
 
 fn inert_trigger<'a>(label: String, on_press: Message) -> Element<'a, Message> {
@@ -187,35 +144,8 @@ fn name_input<'a>(plan_name: &'a str) -> Element<'a, Message> {
 }
 
 fn save_btn<'a>(dirty: bool) -> Element<'a, Message> {
-  let (label_color, bg) = if dirty {
-    (color::surface::BASE, color::accent::PLASMA)
-  } else {
-    (color::text::tertiary(), color::with_alpha(color::accent::PLASMA, 0.18))
-  };
-
-  button(
-    text(t!("skills.editor_header.save"))
-      .font(typography::body::MEDIUM)
-      .size(13.0)
-      .style(move |_| text::Style {
-        color: Some(label_color),
-      }),
-  )
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .on_press(Message::SaveRequested)
-  .style(move |_, _| button::Style {
-    background: Some(Background::Color(bg)),
-    border: Border {
-      radius: radius::CONTROL.into(),
-      ..Border::default()
-    },
-    text_color: label_color,
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(t!("skills.editor_header.save"))
+    .size(Size::Sm)
+    .on_press_maybe(dirty.then_some(Message::SaveRequested))
+    .into()
 }

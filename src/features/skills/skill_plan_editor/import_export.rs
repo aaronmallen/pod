@@ -9,7 +9,10 @@ use super::{IoPanel, Message};
 use crate::{
   features::skills::optimizer::Attributes,
   store::{Database, Error, model::SkillPlanEntry, repo::skills},
-  ui::style::{color, radius, spacing, typography},
+  ui::{
+    components::button::{Button, Size},
+    style::{color, radius, spacing, typography},
+  },
 };
 
 const DROPDOWN_WIDTH: f32 = 180.0;
@@ -483,57 +486,11 @@ fn prompt_overlay<'a>() -> Element<'a, Message> {
 }
 
 fn ghost_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
-  button(text(label).font(typography::body::REGULAR).size(typography::size::MD))
-    .padding(Padding {
-      top: 8.0,
-      bottom: 8.0,
-      left: 12.0,
-      right: 12.0,
-    })
-    .on_press(on_press)
-    .style(|_, status| button::Style {
-      background: match status {
-        button::Status::Hovered | button::Status::Pressed => {
-          Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06)))
-        }
-        _ => None,
-      },
-      border: Border {
-        radius: radius::CONTROL.into(),
-        ..Border::default()
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    })
-    .into()
+  Button::ghost(label).size(Size::Md).on_press(on_press).into()
 }
 
 fn primary_btn<'a>(label: String, on_press: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::surface::BASE),
-      }),
-  )
-  .padding(Padding {
-    top: 8.0,
-    bottom: 8.0,
-    left: 14.0,
-    right: 14.0,
-  })
-  .on_press(on_press)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::accent::PLASMA)),
-    border: Border {
-      radius: radius::CONTROL.into(),
-      ..Border::default()
-    },
-    text_color: color::surface::BASE,
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(label).size(Size::Md).on_press(on_press).into()
 }
 
 #[cfg(test)]

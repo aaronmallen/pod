@@ -1,15 +1,22 @@
 use iced::{
-  Background, Border, Element, Font, Length, Padding,
+  Background, Element, Font, Length, Padding,
   alignment::Vertical,
   font,
-  widget::{Column, Row, Space, button, container, rich_text, scrollable, span, text},
+  widget::{Column, Row, Space, container, rich_text, scrollable, span, text},
 };
 
 use super::{Message, ReadingRender, loaders::MessageLabel};
 use crate::{
   store::model::character_mail_view::MailRender,
   ui::{
-    components::{avatar::Avatar, chip::label_chip, empty_state::empty_state as shared_empty_state, icon::Icon, rule},
+    components::{
+      avatar::Avatar,
+      button::{Button, Size},
+      chip::label_chip,
+      empty_state::empty_state as shared_empty_state,
+      icon::Icon,
+      rule,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -50,17 +57,6 @@ fn opened(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<'
 fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<'_, Message> {
   let mail_id = render.mail.header.mail_id();
 
-  let star_tone = if render.is_starred {
-    color::accent::PLASMA
-  } else {
-    color::text::secondary()
-  };
-  let snooze_tone = if is_snoozed {
-    color::accent::PLASMA
-  } else {
-    color::text::secondary()
-  };
-
   let star_label = if render.is_starred {
     t!("mail.reading.toolbar.starred")
   } else {
@@ -83,13 +79,11 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     &t!("mail.reading.toolbar.reply"),
     Message::Reply(mail_id),
     false,
-    false,
   ));
   row = row.push(toolbar_button(
     Icon::reply_all(),
     &t!("mail.reading.toolbar.reply_all"),
     Message::ReplyAll(mail_id),
-    false,
     false,
   ));
   row = row.push(toolbar_button(
@@ -97,28 +91,24 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     &t!("mail.reading.toolbar.forward"),
     Message::Forward(mail_id),
     false,
-    false,
   ));
   row = row.push(toolbar_button(
     Icon::tag(),
     &t!("mail.reading.toolbar.label"),
     Message::LabelPickerOpened(mail_id),
-    !render.labels.is_empty(),
     false,
   ));
   row = row.push(toolbar_divider());
   row = row.push(toolbar_button(
-    Icon::star().color(star_tone),
+    Icon::star(),
     &star_label,
     Message::ToggleStar(mail_id),
-    render.is_starred,
     false,
   ));
   row = row.push(toolbar_button(
-    Icon::snooze().color(snooze_tone),
+    Icon::snooze(),
     &snooze_label,
     Message::SnoozeMenuToggled,
-    is_snoozed,
     false,
   ));
   row = row.push(toolbar_button(
@@ -126,9 +116,8 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     &t!("mail.reading.toolbar.archive"),
     Message::Archive(mail_id),
     false,
-    false,
   ));
-  row = row.push(toolbar_button(Icon::trash(), &trash_label, trash_message, false, true));
+  row = row.push(toolbar_button(Icon::trash(), &trash_label, trash_message, true));
   row = row.push(Space::new().width(Length::Fill));
   row = row.push(timestamp_stamp(render.mail.header.timestamp().clone()));
 
@@ -144,51 +133,14 @@ fn toolbar(render: &ReadingRender, is_snoozed: bool, in_trash: bool) -> Element<
     .into()
 }
 
-fn toolbar_button<'a>(icon: Icon, label: &str, message: Message, active: bool, danger: bool) -> Element<'a, Message> {
-  let tone = if active {
-    color::accent::PLASMA
-  } else if danger {
-    color::status::DANGER
+fn toolbar_button<'a>(icon: Icon, label: &str, message: Message, danger: bool) -> Element<'a, Message> {
+  let button = if danger {
+    Button::danger(label.to_owned())
   } else {
-    color::text::secondary()
+    Button::ghost(label.to_owned())
   };
 
-  let content = Row::with_children(vec![
-    icon.size(14.0).render::<Message>(),
-    text(label.to_owned())
-      .size(typography::size::MD - 1.0)
-      .font(typography::body::MEDIUM)
-      .style(move |_| text::Style {
-        color: Some(tone),
-      })
-      .into(),
-  ])
-  .spacing(spacing::UNIT + 2.0)
-  .align_y(Vertical::Center);
-
-  button(content)
-    .padding(Padding {
-      top: spacing::UNIT + 2.0,
-      bottom: spacing::UNIT + 2.0,
-      left: spacing::SPACE_2_5,
-      right: spacing::SPACE_2_5,
-    })
-    .on_press(message)
-    .style(|_, status| toolbar_button_style(status))
-    .into()
-}
-
-fn toolbar_button_style(status: button::Status) -> button::Style {
-  let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-  button::Style {
-    background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-    border: Border {
-      radius: 6.0.into(),
-      ..Border::default()
-    },
-    text_color: color::text::PRIMARY,
-    ..button::Style::default()
-  }
+  button.icon(icon).size(Size::Sm).on_press(message).into()
 }
 
 fn toolbar_divider<'a>() -> Element<'a, Message> {

@@ -325,7 +325,6 @@ impl SubFeature {
     }
   }
 
-  /// The TOML key for this sub-feature within its group's nested table.
   pub fn key(self) -> &'static str {
     match self {
       SubFeature::Abyssals => "abyssals",
@@ -622,10 +621,6 @@ impl McpConfig {
     *self == McpConfig::default()
   }
 
-  /// Returns the configured bearer token, generating and persisting one in-place when it is empty.
-  ///
-  /// Called on load so a config that has never set a token (or had it cleared) still presents a
-  /// usable secret the moment the server is enabled.
   pub fn token_or_generate(&mut self) -> String {
     if self.token.is_empty() {
       self.token = gen_token();
@@ -1064,7 +1059,6 @@ fn resolve_log_dir(state_home: Option<PathBuf>, fallback_root: PathBuf) -> PathB
   state_home.unwrap_or(fallback_root).join("pod").join("logs")
 }
 
-/// Locates the directory containing the bundled assets, preferring the dev manifest dir, then the per-platform packaged candidates (see [`select_resource_dir`]).
 pub fn resource_dir() -> PathBuf {
   let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
   if manifest.join("assets").is_dir() {
@@ -1356,7 +1350,6 @@ mod tests {
     fn a_legacy_config_with_budget_on_but_no_sources_loads_with_budget_off() {
       let mut flags = FeatureFlags::default();
 
-      // Mirror a hand-edited nested config that turned both activity sources off but left Budget on.
       flags.set_sub_enabled(SubFeature::Journal, false);
       flags.set_sub_enabled(SubFeature::Transactions, false);
       flags.set_sub_enabled(SubFeature::Budget, true);
@@ -2852,7 +2845,7 @@ mod tests {
     fn it_does_not_clobber_a_local_override_with_an_archived_default() {
       let mut local = Settings::default();
       local.accessibility.set_scale(150);
-      let archived = Settings::default(); // archived accessibility is still the default
+      let archived = Settings::default();
 
       let merged = merge_for_restore(&local, &archived);
 
@@ -2878,7 +2871,7 @@ mod tests {
     fn it_does_not_clobber_a_local_language_override_with_an_archived_en_us_default() {
       let mut local = Settings::default();
       local.accessibility.set_language(Language::Fr);
-      let archived = Settings::default(); // archived language is still the en-us default
+      let archived = Settings::default();
 
       let merged = merge_for_restore(&local, &archived);
 
@@ -2925,7 +2918,7 @@ mod tests {
 
     #[test]
     fn it_adopts_the_archived_machine_id_when_local_has_none() {
-      let local = Settings::default(); // machine_id is None
+      let local = Settings::default();
       let mut archived = Settings::default();
       archived.storage.set_machine_id(Some("foreign-machine".to_string()));
 
@@ -2936,7 +2929,7 @@ mod tests {
 
     #[test]
     fn it_adopts_the_archived_mcp_token_when_local_is_empty() {
-      let local = Settings::default(); // token is empty
+      let local = Settings::default();
       let mut archived = Settings::default();
       archived.mcp.set_token("foreign-token".to_string());
 

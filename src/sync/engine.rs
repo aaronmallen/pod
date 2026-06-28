@@ -1787,8 +1787,6 @@ mod tests {
         .await
         .unwrap();
       insert_journal(&db, 1, 7701, 999.0).await;
-      // Net worth is assets + wallet, so the snapshot serves either group; only with BOTH off does it
-      // stop enrolling.
       let flags: FeatureFlags = toml::from_str("wallet = false\nasset_tracking = false").unwrap();
       let http = http::Client::builder(http::Cache::new(db.clone())).build();
       let esi = Arc::new(esi::Client::with_base_url(http.clone(), server.uri()));
@@ -2183,8 +2181,6 @@ mod tests {
   mod is_permanent_failure {
     use super::*;
 
-    /// Builds a real `Error::Http` carrying the given status by exercising reqwest against a server
-    /// that returns it, so the classifier is tested against an authentic error rather than a mock.
     async fn http_error_with_status(status: u16) -> Error {
       let server = MockServer::start().await;
       Mock::given(method("GET"))
@@ -3087,8 +3083,6 @@ mod tests {
         "the give-up signal carries a human-meaningful reason, got {gave_up:?}"
       );
 
-      // Parking after give-up keeps the supervisor alive; dropping the last restart sender (app
-      // teardown) is what finally lets it exit.
       drop(restart_tx);
       tokio::time::timeout(Duration::from_secs(5), loop_handle)
         .await
@@ -3106,8 +3100,6 @@ mod tests {
       let reached_new_engine = Arc::new(AtomicU32::new(0));
       let reached_in_loop = Arc::clone(&reached_new_engine);
 
-      // A command enqueued before the first engine dies must still be deliverable to the respawned
-      // engine over the same receiver the supervisor owns.
       command_tx.send(Command::Drain).unwrap();
 
       let loop_handle = tokio::spawn(async move {
@@ -3115,8 +3107,6 @@ mod tests {
           let runs = Arc::clone(&runs_in_loop);
           let reached = Arc::clone(&reached_in_loop);
           Box::pin(async move {
-            // Panic on the first attempt (an unexpected death), then on the respawn prove the same
-            // receiver still carries the queued command before settling with a deliberate Shutdown.
             if runs.fetch_add(1, Ordering::SeqCst) == 0 {
               panic!("simulated engine panic");
             }
@@ -3171,8 +3161,6 @@ mod tests {
         super::super::supervise_loop(&events_tx, command_rx, restart_rx, move |_command_rx| {
           let runs = Arc::clone(&runs_in_loop);
           Box::pin(async move {
-            // Panic until the breaker trips, then on the manual respawn settle cleanly so the loop
-            // ends and the run count proves the restart reached a fresh engine attempt.
             if runs.fetch_add(1, Ordering::SeqCst) < RESPAWN_BREAKER_THRESHOLD {
               panic!("engine hot-loops");
             }
@@ -3217,8 +3205,6 @@ mod tests {
       let runs = Arc::new(AtomicU32::new(0));
       let runs_in_loop = Arc::clone(&runs);
 
-      // A manual restart sent while the supervisor is backing off should resume immediately and
-      // reset the streak rather than counting toward the breaker.
       restart_tx.send(()).unwrap();
 
       let loop_handle = tokio::spawn(async move {

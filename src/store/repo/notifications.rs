@@ -11,7 +11,6 @@ use crate::store::{
 /// meaningful history without unbounded growth.
 const NOTIFICATION_RETENTION_DAYS: i64 = 90;
 
-/// Default keyset page size for the History view. A caller may request a different limit.
 pub const HISTORY_PAGE_SIZE: i64 = 50;
 
 // Notification storage repo (epic zyrmyrlk, spec A). Called by the detectors (spec B) and the
@@ -266,8 +265,6 @@ mod tests {
     }
   }
 
-  // Insert a surfaced row with an exact created_at so paging/prune boundaries are testable (emit()
-  // would stamp every row with now()). Returns the new row id.
   async fn seed_surfaced(db: &Database, dedup_key: &str, created_at: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(
       "INSERT INTO notifications \
@@ -311,7 +308,6 @@ mod tests {
 
       clear_all(&db).await.unwrap();
 
-      // Re-emitting the cleared key is a permanent no-op — the tombstone keeps the dedup_key occupied.
       assert_eq!(emit(&db, &sample("skill:1")).await.unwrap(), None);
       assert!(list(&db, 50).await.unwrap().is_empty());
       assert_eq!(unread_count(&db).await.unwrap(), 0);
@@ -323,7 +319,6 @@ mod tests {
       emit(&db, &sample("skill:1")).await.unwrap();
       clear_all(&db).await.unwrap();
 
-      // A distinct dedup_key was never tombstoned, so it surfaces exactly once.
       let fresh = emit(&db, &sample("skill:2")).await.unwrap();
 
       assert!(fresh.is_some(), "a new event still surfaces after a clear");
@@ -387,8 +382,6 @@ mod tests {
     #[tokio::test]
     async fn it_prunes_surfaced_rows_older_than_the_retention_window() {
       let db = store::open_test().await.unwrap();
-      // A row aged just past the window, plus a recent row and a watermark, all seeded directly so
-      // their created_at is controlled. A fresh emit() then triggers prune().
       let old = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS + 1)).to_rfc3339();
       let recent = (chrono::Utc::now() - chrono::Duration::days(1)).to_rfc3339();
       seed_surfaced(&db, "skill:old", &old).await;
@@ -415,7 +408,6 @@ mod tests {
         "the aged row leaves the center"
       );
       assert!(keys.contains(&"skill:recent".to_owned()), "a recent row survives");
-      // The watermark is exempt from prune: re-emitting its key is still a no-op.
       assert!(emit(&db, &sample("skill:wm")).await.unwrap().is_none());
     }
 
@@ -425,11 +417,8 @@ mod tests {
       let old = (chrono::Utc::now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS + 1)).to_rfc3339();
       seed_surfaced(&db, "skill:old", &old).await;
 
-      // A fresh emit triggers prune(), which tombstones (not deletes) the aged row.
       emit(&db, &sample("skill:trigger")).await.unwrap();
 
-      // Re-emitting the aged key is a permanent no-op: its tombstone still occupies the dedup_key, so
-      // the event can never re-surface or re-toast.
       assert_eq!(emit(&db, &sample("skill:old")).await.unwrap(), None);
       let keys = list(&db, 50)
         .await
@@ -661,7 +650,6 @@ mod tests {
 
     use super::*;
 
-    // Distinct, ordered created_at values so (created_at, id) boundaries are unambiguous.
     async fn seed_history(db: &Database) {
       for i in 0..5 {
         let created = format!("2026-06-{:02}T00:00:00+00:00", 20 - i);
@@ -725,8 +713,6 @@ mod tests {
 
       let first = list_page(&db, None, 2).await.unwrap();
       let cursor = HistoryCursor::from_page(&first).unwrap();
-      // A row newer than the cursor arrives between fetches; it sorts ahead of the cursor and must
-      // not reappear in the next (older) page.
       seed_surfaced(&db, "skill:new", "2026-06-21T00:00:00+00:00").await;
 
       let second = list_page(&db, Some(&cursor), 2).await.unwrap();
@@ -739,7 +725,6 @@ mod tests {
       );
     }
 
-    // Two rows sharing a created_at must still page cleanly via the id tiebreak.
     #[tokio::test]
     async fn it_breaks_created_at_ties_by_id() {
       let db = store::open_test().await.unwrap();
@@ -790,7 +775,6 @@ mod tests {
 
     use super::*;
 
-    // open_test() runs every embedded migration, so the keyset index exists only if 0105 applied.
     #[tokio::test]
     async fn it_creates_the_keyset_index() {
       let db = store::open_test().await.unwrap();

@@ -946,29 +946,18 @@ pub async fn market_prices_upsert_many(db: &Database, prices: &[MarketPrice]) ->
   Ok(())
 }
 
-/// Held types whose canonical type price is unresolved and should be refreshed from zKillboard.
-///
-/// Keyed off `source`, not the stored price value: a row is in the set when it is absent, when it
-/// was previously filled by zKill (so a non-zero zKill `average_price` is still re-fetched and does
-/// not go permanently stale), when ESI priced it to a resolved 0, or when ESI priced it via a
-/// reference `adjusted_price` alone (no `average_price`). That last clause pulls supercapital hulls
-/// — which ESI exposes only a lowball reference price for, never a market `average_price` — into the
-/// zKill currentPrice path so they value at their real worth instead of the reference figure.
-/// Blueprint copies are excluded. A type ESI ever priced with a real `average_price` stays out.
-pub async fn market_prices_zkill_gap_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
+/// Every held non-blueprint type_id, swept through zKillboard so zKill is the canonical price for
+/// each type it can value. The `held` CTE unions character and corporation assets and drops
+/// blueprint copies; the job overwrites every priced type with a `source='zkill'` row and leaves the
+/// existing ESI fallback row in place for any type zKill cannot price.
+pub async fn market_prices_zkill_sweep_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   let rows = sqlx::query_scalar::<_, i64>(
     "WITH held AS ( \
         SELECT DISTINCT type_id FROM character_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
         UNION \
         SELECT DISTINCT type_id FROM corporation_assets WHERE COALESCE(is_blueprint_copy, 0) = 0 \
       ) \
-      SELECT held.type_id FROM held \
-      LEFT JOIN market_prices mp ON mp.type_id = held.type_id \
-      WHERE mp.type_id IS NULL \
-        OR mp.source = 'zkill' \
-        OR (mp.source = 'esi' AND COALESCE(mp.adjusted_price, mp.average_price, 0) = 0) \
-        OR (mp.source = 'esi' AND mp.average_price IS NULL AND mp.adjusted_price IS NOT NULL) \
-      ORDER BY held.type_id",
+      SELECT type_id FROM held ORDER BY type_id",
   )
   .fetch_all(&db.0)
   .await?;
@@ -2433,6 +2422,62 @@ mod financials_tests {
 
       assert_eq!(row.asset_value, Some(30.0));
     }
+
+    #[tokio::test]
+    async fn it_values_a_blueprint_copy_at_zero_even_when_its_type_is_priced() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_asset(&db, 1, 1, 100, 3).await;
+      insert_price(&db, 100, Some(10.0), Some(8.0)).await;
+      sqlx::query(
+        "INSERT INTO character_assets \
+          (item_id, character_id, type_id, location_id, location_type, location_flag, quantity, is_blueprint_copy) \
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(2_i64)
+      .bind(1_i64)
+      .bind(200_i64)
+      .bind(60_003_760_i64)
+      .bind("station")
+      .bind("Hangar")
+      .bind(2_i64)
+      .bind(1_i64)
+      .execute(db.writer())
+      .await
+      .unwrap();
+      insert_price(&db, 200, Some(50.0), Some(50.0)).await;
+
+      let row = financials_get(&db, 1).await.unwrap().unwrap();
+
+      assert_eq!(row.asset_value, Some(30.0));
+    }
+
+    #[tokio::test]
+    async fn it_values_an_abyssal_item_from_its_muta_price_over_the_market_row() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 1).await;
+      insert_asset(&db, 7, 1, 47_777, 1).await;
+      insert_price(&db, 47_777, Some(10.0), Some(8.0)).await;
+      sqlx::query(
+        "INSERT INTO abyssal_items \
+          (item_id, character_id, type_id, source_type_id, mutator_type_id, synced_at, muta_price_isk) \
+          VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(7_i64)
+      .bind(1_i64)
+      .bind(47_777_i64)
+      .bind(1_i64)
+      .bind(2_i64)
+      .bind(0_i64)
+      .bind(500_000_000.0_f64)
+      .execute(db.writer())
+      .await
+      .unwrap();
+
+      let row = financials_get(&db, 1).await.unwrap().unwrap();
+
+      assert_eq!(row.asset_value, Some(500_000_000.0));
+    }
   }
 
   mod integration {
@@ -2866,7 +2911,7 @@ mod market_tests {
     }
   }
 
-  mod zkill_gap_type_ids {
+  mod zkill_sweep_type_ids {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -2910,52 +2955,52 @@ mod market_tests {
     }
 
     #[tokio::test]
-    async fn it_includes_absent_zkill_and_zero_esi_but_not_priced_or_blueprint_copies() {
+    async fn it_includes_a_market_traded_type_with_an_esi_average_price() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      // 100: absent from market_prices -> in the gap set
+      // zKill is canonical: a type ESI priced with both an adjusted and an average is still swept.
+      insert_char_asset(&db, 1, 700, None).await;
+      market_prices_upsert_many(&db, &[MarketPrice::esi(700, Some(1_000.0), Some(2_000.0))])
+        .await
+        .unwrap();
+
+      let swept = market_prices_zkill_sweep_type_ids(&db).await.unwrap();
+
+      assert_eq!(swept, vec![700]);
+    }
+
+    #[tokio::test]
+    async fn it_sweeps_every_held_non_blueprint_type_and_excludes_blueprint_copies() {
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      // 100: absent from market_prices
       insert_char_asset(&db, 1, 100, None).await;
-      // 200: market-traded, ESI average_price present -> excluded
+      // 200: market-traded, ESI average_price present -> now swept, not skipped
       insert_char_asset(&db, 2, 200, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(200, Some(5.0), Some(7.0))])
         .await
         .unwrap();
-      // 300: ESI row but resolved price 0 -> in the gap set
+      // 300: ESI row but resolved price 0
       insert_char_asset(&db, 3, 300, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(300, None, Some(0.0))])
         .await
         .unwrap();
-      // 400: corp-held type with an existing zkill row -> re-fetched even though non-zero
+      // 400: corp-held type with an existing zkill row -> re-swept
       insert_corp_asset(&db, 4, 400, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::zkill(400, 9_000.0)])
         .await
         .unwrap();
       // 500: blueprint copy -> excluded
       insert_char_asset(&db, 5, 500, Some(1)).await;
-      // 600: supercapital — ESI adjusted_price only, no average_price -> in the gap set
+      // 600: supercapital — ESI adjusted_price only, no average_price
       insert_char_asset(&db, 6, 600, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(600, Some(1_000.0), None)])
         .await
         .unwrap();
 
-      let gaps = market_prices_zkill_gap_type_ids(&db).await.unwrap();
+      let swept = market_prices_zkill_sweep_type_ids(&db).await.unwrap();
 
-      assert_eq!(gaps, vec![100, 300, 400, 600]);
-    }
-
-    #[tokio::test]
-    async fn it_excludes_a_market_traded_type_with_an_esi_average_price() {
-      let db = store::open_test().await.unwrap();
-      seed_character(&db, 42).await;
-      // ESI carried both an adjusted and an average price -> market-traded, stays out of the gap set
-      insert_char_asset(&db, 1, 700, None).await;
-      market_prices_upsert_many(&db, &[MarketPrice::esi(700, Some(1_000.0), Some(2_000.0))])
-        .await
-        .unwrap();
-
-      let gaps = market_prices_zkill_gap_type_ids(&db).await.unwrap();
-
-      assert!(gaps.is_empty());
+      assert_eq!(swept, vec![100, 200, 300, 400, 600]);
     }
   }
 }

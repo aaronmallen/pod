@@ -19,38 +19,38 @@ async fn run_with_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> Result<
     .collect();
   finance::market_prices_upsert_many(ctx.db, &prices).await?;
 
-  let filled = fill_gaps_from_zkill(ctx, zkill).await;
-  Ok(Outcome::from_rows(prices.len() + filled))
+  let swept = sweep_from_zkill(ctx, zkill).await;
+  Ok(Outcome::from_rows(prices.len() + swept))
 }
 
-async fn fill_gaps_from_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> usize {
-  let gaps = match finance::market_prices_zkill_gap_type_ids(ctx.db).await {
-    Ok(gaps) => gaps,
+async fn sweep_from_zkill(ctx: &JobCtx<'_>, zkill: &zkillboard::Client) -> usize {
+  let type_ids = match finance::market_prices_zkill_sweep_type_ids(ctx.db).await {
+    Ok(type_ids) => type_ids,
     Err(error) => {
-      tracing::warn!("market_prices: failed to select zKill gap set: {error}");
+      tracing::warn!("market_prices: failed to select zKill sweep set: {error}");
       return 0;
     }
   };
 
-  let mut filled = Vec::new();
-  for type_id in gaps {
+  let mut priced = Vec::new();
+  for type_id in type_ids {
     match zkill.prices(type_id).await {
-      Ok(Some(price)) => filled.push(MarketPrice::zkill(type_id, price)),
+      Ok(Some(price)) => priced.push(MarketPrice::zkill(type_id, price)),
       Ok(None) => {}
       Err(error) => tracing::warn!(type_id, "market_prices: zKill price fetch failed: {error}"),
     }
   }
 
-  if filled.is_empty() {
-    tracing::info!(gap_types = 0, "market_prices: filled zKill gap types");
+  if priced.is_empty() {
+    tracing::info!(zkill_types = 0, "market_prices: swept held types through zKill");
     return 0;
   }
-  let count = filled.len();
-  if let Err(error) = finance::market_prices_upsert_many(ctx.db, &filled).await {
-    tracing::warn!("market_prices: failed to upsert zKill gap prices: {error}");
+  let count = priced.len();
+  if let Err(error) = finance::market_prices_upsert_many(ctx.db, &priced).await {
+    tracing::warn!("market_prices: failed to upsert zKill sweep prices: {error}");
     return 0;
   }
-  tracing::info!(gap_types = count, "market_prices: filled zKill gap types");
+  tracing::info!(zkill_types = count, "market_prices: swept held types through zKill");
   count
 }
 
@@ -231,7 +231,7 @@ mod tests {
     }
   }
 
-  mod fill_gaps {
+  mod sweep_from_zkill {
     use pretty_assertions::assert_eq;
 
     use super::*;
@@ -268,8 +268,8 @@ mod tests {
 
     #[tokio::test]
     async fn it_fills_an_esi_adjusted_only_super_from_zkill_current_price() {
-      // A supercapital: ESI returns a lowball adjusted_price but no average_price. It must be pulled
-      // into the gap set and overwritten with the zKill currentPrice as a source='zkill' row.
+      // A supercapital: ESI returns a lowball adjusted_price but no average_price. The sweep
+      // overwrites it with the zKill currentPrice as a source='zkill' row.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -304,9 +304,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_never_fetches_a_market_traded_type_esi_priced_with_an_average() {
-      // A market-traded type carries an ESI average_price, so it must stay out of the gap set and
-      // keep its ESI row untouched even though zKill would return a price for it.
+    async fn it_sweeps_a_market_traded_type_with_an_esi_average_to_zkill() {
+      // zKill is canonical: a market-traded type carrying an ESI average_price is still swept and its
+      // ESI row overwritten with the zKill price as a source='zkill' row.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -330,9 +330,9 @@ mod tests {
 
       let rows = finance::market_prices_all(&db).await.unwrap();
       let row = find(&rows, 34);
-      assert_eq!(row.source(), "esi");
-      assert_eq!(row.adjusted_price(), Some(9.0));
-      assert_eq!(row.average_price(), Some(10.0));
+      assert_eq!(row.source(), "zkill");
+      assert_eq!(row.adjusted_price(), None);
+      assert_eq!(row.average_price(), Some(999.0));
     }
 
     #[tokio::test]
@@ -364,7 +364,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_keeps_the_esi_row_when_zkill_returns_no_price() {
+      // zKill cannot price the held type (empty snapshot), so the fresh ESI row is the fallback.
+      let esi_server = MockServer::start().await;
+      mount_prices(
+        &esi_server,
+        serde_json::json!([{ "average_price": 50.0, "type_id": 35 }]),
+      )
+      .await;
+      let zkill_server = MockServer::start().await;
+      mount_zkill_price(&zkill_server, 35, r#"{"typeID": 35}"#).await;
+      let db = store::open_test().await.unwrap();
+      seed_character(&db, 42).await;
+      insert_character_asset(&db, 1, 35, 0).await;
+      let http = http::Client::builder(http::Cache::new(db.clone())).build();
+      let esi = esi::Client::with_base_url(http.clone(), esi_server.uri());
+      let image = eve_image::Client::with_base_url(http.clone(), esi_server.uri());
+      let images_dir = tempfile::tempdir().unwrap();
+      let image_store = images::Store::new(images_dir.path().to_path_buf());
+      let ctx = ctx(&db, &esi, &image, &image_store);
+      let zkill = zkillboard::Client::with_base_url(http, zkill_server.uri());
+
+      run_with_zkill(&ctx, &zkill).await.unwrap();
+
+      let rows = finance::market_prices_all(&db).await.unwrap();
+      let row = find(&rows, 35);
+      assert_eq!(row.source(), "esi");
+      assert_eq!(row.average_price(), Some(50.0));
+    }
+
+    #[tokio::test]
     async fn it_lets_esi_reclaim_a_previously_zkill_row() {
+      // A type once priced by zKill that zKill can no longer price (empty snapshot) falls back to the
+      // ESI bulk row, so the row reverts to source='esi'.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -372,6 +404,7 @@ mod tests {
       )
       .await;
       let zkill_server = MockServer::start().await;
+      mount_zkill_price(&zkill_server, 671, r#"{"typeID": 671}"#).await;
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       insert_character_asset(&db, 1, 671, 0).await;
@@ -395,7 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_excludes_blueprint_copies_from_the_gap_set() {
+    async fn it_excludes_blueprint_copies_from_the_sweep() {
       let esi_server = MockServer::start().await;
       mount_prices(&esi_server, serde_json::json!([])).await;
       let zkill_server = MockServer::start().await;

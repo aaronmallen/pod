@@ -47,8 +47,6 @@ pub(super) fn surface(state: &State) -> Element<'_, Message> {
     .into()
 }
 
-/// The amber "Review & assign" banner: surfaces how many of the selected month's
-/// entries still need a category and jumps to the ledger filtered to them.
 fn review_banner(state: &State) -> Option<Element<'_, Message>> {
   let count = state.budget_review_total();
   if count == 0 {
@@ -698,8 +696,6 @@ fn group_header<'a>(
     .into()
   };
 
-  // In edit mode the group is itself draggable: a grip leads the (Fill) name area
-  // so the money columns stay aligned with the category rows below.
   let name_lead: Element<'a, Message> = if edit_mode {
     Row::with_children(vec![group_drag_grip(group.id), name_cell])
       .align_y(Vertical::Center)
@@ -728,8 +724,6 @@ fn group_header<'a>(
   ])
   .align_y(Vertical::Center);
 
-  // Highlight the header both when a category will drop into the group and when a
-  // dragged group will land before it.
   let over =
     drop_target == Some(BudgetDropTarget::Group(group.id)) || state.budget_group_drop_target() == Some(group.id);
   let header = container(row).width(Length::Fill).style(move |_| container::Style {
@@ -941,16 +935,12 @@ fn category_row<'a>(
       ..button::Style::default()
     });
 
-  // Track hover so the row's "View transactions →" link reveals only on hover.
   mouse_area(row_button)
     .on_enter(Message::BudgetCategoryHovered(Some(category.id)))
     .on_exit(Message::BudgetCategoryHovered(None))
     .into()
 }
 
-/// The edit-mode row container style: a transparent top border that turns plasma
-/// when a dragged category hovers over this row, matching the design's
-/// top-border drop indicator.
 fn category_drop_style(over: bool, selected: bool) -> container::Style {
   let background = if selected {
     Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.07)))
@@ -1064,7 +1054,6 @@ fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus, hovered:
   {
     head.push(due_pill(by));
   }
-  // The "View transactions →" link only reveals on row hover, mirroring the design.
   if hovered {
     head.push(Space::new().width(Length::Fill).into());
     head.push(view_transactions_link(
@@ -1093,8 +1082,6 @@ fn name_cell<'a>(category: &'a Category, status: &budget::TargetStatus, hovered:
   .into()
 }
 
-/// A plasma "View transactions →" affordance that filters the ledger to a
-/// category for the selected month and jumps to it.
 fn view_transactions_link<'a>(category_id: i64, label: &'a str) -> Element<'a, Message> {
   button(
     text(label)
@@ -1364,28 +1351,17 @@ fn available_cell<'a>(
     .into()
 }
 
-/// Whether the Move Money popover is open and sourced on `category_id` from the
-/// given `anchor`. The anchor disambiguates the row pill from the inspector
-/// button so only the trigger that opened the move floats the popover.
 fn move_open_for(state: &State, category_id: i64, anchor: BudgetMoveAnchor) -> bool {
   state
     .budget_move()
     .is_some_and(|open| open.from_id == category_id && open.anchor == anchor)
 }
 
-/// Destinations stay inert until the amount parses to a positive number, so a
-/// stray click cannot move 0 ISK.
-/// The transfer amount (ISK, rounded) and whether it is a usable positive
-/// amount, parsed from the Move Money draft. Split off [`move_money_popover`]
-/// so the parse/validity is unit-testable.
 fn move_amount_state(draft: &str) -> (f64, bool) {
   let amount = crate::ui::format::parse_isk(draft).round();
   (amount, amount > 0.0)
 }
 
-/// The destination groups offered by the Move Money popover: every group with at
-/// least one category other than the source, paired with those categories. Split
-/// off [`move_money_popover`] so the eligibility rule is unit-testable.
 fn eligible_move_dests(view: &budget::BudgetView, source_id: i64) -> Vec<(&str, Vec<&Category>)> {
   view
     .groups
@@ -1484,15 +1460,10 @@ fn move_money_popover<'a>(state: &'a State, source: &'a Category) -> Element<'a,
   .into()
 }
 
-/// The "All" prefill value: `max(0, available)`, formatted, so a negative
-/// available balance never seeds a negative transfer. Split off
-/// [`move_amount_field`] for unit testing.
 fn move_all_prefill(available: f64) -> String {
   crate::ui::format::fmt_isk(available.max(0.0))
 }
 
-/// "All" prefills `max(0, available)` so negative available does not seed a
-/// negative transfer.
 fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Message> {
   let input = text_input(super::i18n::tr_static("wallet.budget.amount_placeholder"), draft)
     .on_input(Message::BudgetMoveAmountChanged)
@@ -1527,9 +1498,6 @@ fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Me
     .align_y(Vertical::Center)
 }
 
-/// One destination row in the Move Money popover. `special` marks the
-/// "Ready to Assign" pool with a hollow square rather than a filled tone dot.
-/// `on_press` is `None` while the amount is invalid, leaving the row inert.
 fn move_dest_row<'a>(label: &str, tone: Color, special: bool, on_press: Option<Message>) -> Element<'a, Message> {
   let dot: Element<'a, Message> = if special {
     container(Space::new())
@@ -1681,8 +1649,6 @@ fn inspector_for<'a>(state: &'a State, category: &'a Category) -> Element<'a, Me
 
   let mut children: Vec<Element<'a, Message>> = vec![inspector_header(state, category, &status)];
 
-  // The bulk edit-mode table owns the inspector wholesale, so the Detail/Automation
-  // tab bar only shows for a normal single-category inspection.
   if state.budget_edit_mode() {
     if let Some(draft) = state.budget_editor() {
       children.push(category_editor(draft));
@@ -1903,8 +1869,6 @@ fn inspector_header<'a>(
     available_row.into(),
   ];
   if !state.budget_edit_mode() {
-    // Move money + Transactions sit side by side, each taking half the width
-    // (mirrors the design's `gap: 8` action row under the available figure).
     body.push(
       Row::with_children(vec![
         inspector_move_button(state, category),
@@ -1922,8 +1886,6 @@ fn inspector_header<'a>(
     .into()
 }
 
-/// Same Move Money popover as the Available pill but anchored to this button;
-/// renders only when this category's Inspector anchor is open.
 fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
   let open = move_open_for(state, category.id, BudgetMoveAnchor::Inspector);
   let on_press = if open {
@@ -1980,8 +1942,6 @@ fn inspector_move_button<'a>(state: &'a State, category: &'a Category) -> Elemen
     .into()
 }
 
-/// Outline button beside Move money that filters the ledger to this category for
-/// the selected month — the design's "Transactions" action. Plasma on hover.
 fn inspector_transactions_button<'a>(category_id: i64) -> Element<'a, Message> {
   button(
     Row::with_children(vec![
@@ -2949,8 +2909,6 @@ fn global_link<'a>(rule_count: usize, total_matched: usize) -> Element<'a, Messa
     .into()
 }
 
-/// Falls back through the user-given name, then the engine's auto-suggested name,
-/// then an "Untitled rule" placeholder.
 fn rule_display_name(state: &State, rule: &Rule) -> String {
   if !rule.name().is_empty() {
     return rule.name().clone();
@@ -2979,9 +2937,6 @@ fn character_name(state: &State, key: &str) -> Option<String> {
 const RULE_MODAL_WIDTH: f32 = 860.0;
 const RULE_PREVIEW_WIDTH: f32 = 332.0;
 
-/// Mounted over the wallet shell via `modal_overlay`, and also reused as the edit
-/// action of the global rules manager. Open it by seeding `State.budget_rule_editor`
-/// via [`Message::BudgetRuleEditOpened`]; renders nothing when that is `None`.
 pub(super) fn rule_editor_modal(state: &State) -> Element<'_, Message> {
   let Some(draft) = state.budget_rule_editor() else {
     return Space::new().into();
@@ -3019,10 +2974,6 @@ pub(super) fn rule_editor_modal(state: &State) -> Element<'_, Message> {
 
 const GLOBAL_RULES_MODAL_WIDTH: f32 = 760.0;
 
-/// The "Automation rules" manager: every rule across all envelopes in priority
-/// order, drag-to-reorder. Mounted over the wallet shell via `modal_overlay`; the
-/// edit action seeds `State.budget_rule_editor` so the editor stacks on top.
-/// Renders nothing unless `budget_global_rules_open` is set.
 pub(super) fn global_rules_modal(state: &State) -> Element<'_, Message> {
   let rules = state.budget_rules();
   let outflows = state.budget_match_targets();
@@ -3212,9 +3163,6 @@ fn global_rules_empty_state<'a>() -> Element<'a, Message> {
   .into()
 }
 
-/// The tone color and display name of the category a rule files into, or no
-/// tone and an empty label when it points at a category not in the active view.
-/// Split off [`global_rule_row`] for unit testing.
 fn global_rule_category_label<'a>(state: &'a State, rule: &Rule) -> (Option<&'a str>, String) {
   match state.budget().and_then(|view| view.category(rule.category_id())) {
     Some(category) => (category.tone.as_deref(), category.name.clone()),
@@ -4226,11 +4174,6 @@ fn save_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Message> {
     .into()
 }
 
-/// A select rendered as an `AnchoredDropdown`: a bordered trigger showing the
-/// current label that floats its option list when `open`. Clicking the trigger
-/// toggles the open select via [`Message::BudgetRuleSelectToggled`]; picking an
-/// option emits its own message (which closes the select). The dropdown also
-/// dismisses on outside click.
 fn select_dropdown<'a>(
   label: &str,
   options: Vec<Element<'a, Message>>,
@@ -4409,9 +4352,6 @@ fn match_mode_segment<'a>(active: MatchMode) -> Element<'a, Message> {
     .into()
 }
 
-/// Type options for the Type condition select: the humanized type tokens present
-/// in the loaded outflows (journal ref_types + the two market sides), de-duped and
-/// sorted by label.
 fn rule_type_options(state: &State) -> Vec<(String, String)> {
   let mut seen = std::collections::BTreeMap::new();
   for target in state.budget_match_targets() {
@@ -4451,8 +4391,6 @@ fn draft_to_rule(draft: &budget::RuleDraft) -> Rule {
   }
 }
 
-/// The live rules in priority order, including the slot of the rule being
-/// edited; the preview splices the draft into its real position from here.
 fn live_rules(state: &State) -> Vec<Rule> {
   state.budget_rules().to_vec()
 }

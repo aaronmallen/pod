@@ -610,11 +610,6 @@ struct Sparkline {
   values: Vec<f64>,
 }
 
-/// Map age values onto evenly-spaced, padded, y-inverted sparkline points.
-///
-/// The value range is padded by [`AGE_PAD`] on each end so the line never clips
-/// against the top or bottom edge. X is monotonic across `[0, width]`; Y is
-/// inverted (larger values sit higher) across `[0, height]`.
 fn sparkline_points(values: &[f64], width: f32, height: f32) -> Vec<Point> {
   let min = values.iter().copied().fold(f64::INFINITY, f64::min) - f64::from(AGE_PAD);
   let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max) + f64::from(AGE_PAD);
@@ -632,7 +627,6 @@ fn sparkline_points(values: &[f64], width: f32, height: f32) -> Vec<Point> {
     .collect()
 }
 
-/// Build an open polyline path that visits every point in order.
 fn polyline_path(points: &[Point]) -> canvas::Path {
   canvas::Path::new(|builder| {
     let mut points = points.iter();
@@ -1044,14 +1038,11 @@ mod tests {
     fn it_inverts_y_so_larger_values_sit_higher() {
       let points = sparkline_points(&[10.0, 30.0], 100.0, 50.0);
 
-      // Larger age -> smaller y (closer to the top of the canvas).
       assert!(points[1].y < points[0].y);
     }
 
     #[test]
     fn it_pads_the_range_so_extremes_never_touch_the_edges() {
-      // span = (max + AGE_PAD) - (min - AGE_PAD) = 20 + 2*3 = 26.
-      // min value y = height - ((10 - (10 - 3)) / 26) * height = 50 - (3/26)*50.
       let height = 50.0;
       let points = sparkline_points(&[10.0, 30.0], 100.0, height);
       let expected_low = height - (AGE_PAD / 26.0) * height;
@@ -1059,7 +1050,6 @@ mod tests {
 
       assert!((points[0].y - expected_low).abs() < 1e-3);
       assert!((points[1].y - expected_high).abs() < 1e-3);
-      // Neither extreme reaches the very top (0.0) or bottom (height).
       assert!(points[0].y < height && points[1].y > 0.0);
     }
 
@@ -1073,7 +1063,6 @@ mod tests {
 
     #[test]
     fn polyline_path_handles_empty_and_populated_inputs() {
-      // Building a path over points should not panic for either case.
       let _empty = polyline_path(&[]);
       let _line = polyline_path(&[Point::new(0.0, 0.0), Point::new(1.0, 1.0)]);
     }

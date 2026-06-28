@@ -41,9 +41,6 @@ pub struct ContractEntry {
   pub issuer: Option<String>,
   pub issuer_id: i64,
   pub issuer_image: PartyImage,
-  /// Names of the items contained in this contract (resolved from the SDE via
-  /// `type_id`), so the search box can match a contract by what it carries — not
-  /// just its parties/type/status. Populated at page-load time.
   pub item_names: Vec<String>,
   pub status: String,
   pub r#type: String,
@@ -113,7 +110,6 @@ impl JournalEntry {
     )
   }
 
-  /// The same enriched text drives both wallet search and rule matching.
   pub fn match_text(&self) -> String {
     crate::features::wallet::budget_engine::journal_match_text(
       &self.ref_type,
@@ -1165,7 +1161,6 @@ mod tests {
         reprocessing_stations_take: 0.0,
         services: "[]".to_owned(),
         system_id: 30_000_142,
-        // References a previously seeded item type so the station FK holds in tests.
         type_id: 34,
       };
       sde::insert_station_with_geography(db, &station, &system, &constellation, &region)

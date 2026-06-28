@@ -36,8 +36,6 @@ pub enum MoveDest {
   ReadyToAssign,
 }
 
-/// The Reflect flow chart's trailing window, mirroring the design's 3M/6M
-/// toggle. `SixMonths` is the default (the wireframe opens on 6).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum BudgetRange {
   #[default]
@@ -54,17 +52,12 @@ impl BudgetRange {
   }
 }
 
-/// The single active inline editor: which category's Assigned cell is open and
-/// the in-progress draft text. Only one cell edits at a time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditingCell {
   pub category_id: i64,
   pub draft: String,
 }
 
-/// The inspector's category/target editor working copy. Edits stay local until
-/// committed, so the draft mirrors every field the editor can change. Reused by
-/// B5's bulk edit mode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CategoryDraft {
   pub by_date: String,
@@ -80,7 +73,6 @@ pub struct CategoryDraft {
 }
 
 impl CategoryDraft {
-  /// Builds a fresh draft from a loaded category and its owning group.
   pub fn from_category(group_id: i64, position: i64, category: &Category) -> Self {
     use crate::ui::format::fmt_isk;
     CategoryDraft {
@@ -97,7 +89,6 @@ impl CategoryDraft {
     }
   }
 
-  /// The persistable category row for this draft.
   pub fn to_category_row(&self, created_at: String, updated_at: String) -> crate::store::model::BudgetCategory {
     crate::store::model::BudgetCategory {
       created_at,
@@ -111,7 +102,6 @@ impl CategoryDraft {
     }
   }
 
-  /// The target this draft would persist.
   pub fn to_target(&self) -> Target {
     Target {
       amount: self.target_amount,
@@ -121,9 +111,6 @@ impl CategoryDraft {
   }
 }
 
-/// Which advanced-mode select dropdown is open in the rule editor, by condition
-/// row index and slot. Only one is open at a time; the value-editor select is the
-/// field's keyed picker (Type/Character/Direction).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuleSelectKey {
   Field(usize),
@@ -131,10 +118,6 @@ pub enum RuleSelectKey {
   Value(usize),
 }
 
-/// The rule editor's working copy: a new or existing automation rule edited
-/// locally until committed. `rule_id` is `None` for a brand-new rule and
-/// `Some(id)` when editing an existing one. `conditions` carries the live,
-/// possibly-incomplete condition rows; inactive rows are dropped at match time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleDraft {
   pub category_id: i64,
@@ -149,8 +132,6 @@ pub struct RuleDraft {
 }
 
 impl RuleDraft {
-  /// A fresh draft filing into `category_id`, seeded with one empty text-contains
-  /// condition so the search box has a row to bind to.
   pub fn new(category_id: i64) -> Self {
     RuleDraft {
       category_id,
@@ -165,8 +146,6 @@ impl RuleDraft {
     }
   }
 
-  /// A draft seeded from an existing rule, opening advanced mode unless the rule
-  /// is a single text-contains condition (the search-box-first shape).
   pub fn from_rule(rule: &crate::store::model::Rule) -> Self {
     use crate::store::model::{RuleField, RuleOp};
     let conditions = rule.conditions().clone();
@@ -305,9 +284,6 @@ impl Target {
   }
 }
 
-/// A category's status against its target, mirroring `targetStatus` in
-/// `budget-data.jsx`: a 0.0–1.0 progress `pct`, the `needed` shortfall, the
-/// `state`, a descriptive `label`, and a per-month progress `month_label`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TargetStatus {
   pub label: String,
@@ -341,10 +317,6 @@ impl Category {
     target_status(&self.target, self.assigned, self.available(), month)
   }
 
-  /// The "Underfunded" quick-assign suggestion as of `month`: the assignment
-  /// that satisfies this month's target. Monthly targets raise the assignment to
-  /// the amount; dated goals top up only the paced slice; the other cumulative
-  /// targets top the available balance up to the amount.
   pub fn underfunded_assign(&self, month: &str) -> f64 {
     match self.target.kind {
       TargetKind::Monthly => self.assigned.max(self.target.amount),
@@ -380,9 +352,6 @@ pub struct GroupTotals {
   pub available: f64,
 }
 
-/// The fully-derived Budget Plan view-model for one scope and month: the
-/// envelope groups with live carry/activity figures and the budgetable pool's
-/// Ready-to-Assign / overspending top-line.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BudgetView {
   pub groups: Vec<Group>,
@@ -410,10 +379,6 @@ impl BudgetView {
       .next()
   }
 
-  /// Reorders the in-memory groups so `dragged` lands in `target_group`,
-  /// inserted before `before` (or appended when `before` is `None`), mirroring
-  /// the design's `moveCat`. A no-op when the drag would not change the order
-  /// (dropping a category onto itself). Returns `true` when the order changed.
   pub fn move_category(&mut self, dragged: i64, target_group: i64, before: Option<i64>) -> bool {
     if before == Some(dragged) {
       return false;
@@ -441,10 +406,6 @@ impl BudgetView {
     false
   }
 
-  /// Reorders the in-memory groups so `dragged` lands before `before` (or is
-  /// appended when `before` is `None`), mirroring [`move_category`] at the group
-  /// level. A no-op when the drag would not change the order (dropping a group
-  /// onto itself). Returns `true` when the order changed.
   pub fn move_group(&mut self, dragged: i64, before: Option<i64>) -> bool {
     if before == Some(dragged) {
       return false;
@@ -461,11 +422,6 @@ impl BudgetView {
   }
 }
 
-/// The fully-derived Reflect (reporting) view-model for one scope and month: the
-/// stat-band totals, the trailing monthly history (for the flow chart and
-/// age-of-ISK sparkline), the spend-by-category rows, and the target-health
-/// tally. All figures come from the live [`BudgetView`] and B2's history so the
-/// reports reflect Plan edits.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReflectView {
   pub age: f64,
@@ -479,9 +435,6 @@ pub struct ReflectView {
   pub tally: TargetTally,
 }
 
-/// One spend-by-category row for the Reflect view: the category's display name,
-/// tone, and the ISK spent this month (the absolute negative activity), already
-/// sorted descending by `spend`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpendRow {
   pub name: String,
@@ -489,9 +442,6 @@ pub struct SpendRow {
   pub tone: Option<String>,
 }
 
-/// A single "Needs attention" entry: a category that is underfunded or
-/// overspent, with the figure the design surfaces (shortfall for under, the
-/// negative available for over).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TargetAlert {
   pub amount: f64,
@@ -499,9 +449,6 @@ pub struct TargetAlert {
   pub over: bool,
 }
 
-/// The target-health tally for the Reflect view: how many categories are met
-/// (funded), underfunded, or overspent, plus the worst few that "need
-/// attention" with their shortfall (under) or overspend available (over).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TargetTally {
   pub attention: Vec<TargetAlert>,
@@ -516,10 +463,6 @@ impl ReflectView {
   }
 }
 
-/// Derives the Reflect view-model from a live [`BudgetView`] and a trailing
-/// `history` (oldest first, current month last). The stat band, spend rows, and
-/// target tally come from the current month's categories so they track Plan
-/// edits; the age-of-ISK figure and its delta come from the FIFO history.
 pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_engine::MonthFlow>) -> ReflectView {
   let mut assigned = 0.0;
   let mut income = 0.0;
@@ -589,8 +532,6 @@ pub fn reflect(view: &BudgetView, history: Vec<crate::features::wallet::budget_e
   }
 }
 
-/// A short month label (e.g. `Jun`) for a `YYYY-MM` key, used by the flow chart
-/// axis and the age delta caption. Falls back to the key verbatim.
 pub fn month_short_label(month: &str) -> String {
   match parse_month(month) {
     Some((_, mon)) => crate::ui::datefmt::month_short(mon as u32),
@@ -598,8 +539,6 @@ pub fn month_short_label(month: &str) -> String {
   }
 }
 
-/// Maps a category's stored `tone` slug to a render colour, matching the
-/// design's `toneColor`. Unknown or absent tones fall back to muted text.
 pub fn tone_color(tone: Option<&str>) -> iced::Color {
   use crate::ui::style::color;
   match tone {
@@ -612,20 +551,15 @@ pub fn tone_color(tone: Option<&str>) -> iced::Color {
   }
 }
 
-/// The tone slugs offered by the category editor, in the design's order.
 pub fn tone_options() -> [&'static str; 6] {
   ["plasma", "success", "warning", "danger", "info", "muted"]
 }
 
-/// The current UTC calendar month key (`YYYY-MM`).
 pub fn current_month() -> String {
   let now = Utc::now();
   format!("{:04}-{:02}", now.year(), now.month())
 }
 
-/// The month key `delta` months away from `month` (`YYYY-MM`). Negative steps
-/// move into the past; positive into the future. Returns `month` unchanged if it
-/// is not a valid key.
 pub fn shift_month(month: &str, delta: i32) -> String {
   let Some((year, mon)) = parse_month(month) else {
     return month.to_owned();
@@ -636,8 +570,6 @@ pub fn shift_month(month: &str, delta: i32) -> String {
   format!("{new_year:04}-{new_month:02}")
 }
 
-/// A human month label (e.g. `June 2026`) for a `YYYY-MM` key, or the key
-/// verbatim when it cannot be parsed.
 pub fn month_label(month: &str) -> String {
   match parse_month(month) {
     Some((year, mon)) => t!(
@@ -650,9 +582,6 @@ pub fn month_label(month: &str) -> String {
   }
 }
 
-/// A relative descriptor for a `YYYY-MM` key against the current UTC month:
-/// "This month" only when it *is* the current month, otherwise "Last month" /
-/// "Next month" or "N months ago" / "In N months". Empty when unparseable.
 pub fn month_relative_label(month: &str) -> String {
   let (Some((year, mon)), Some((current_year, current_mon))) = (parse_month(month), parse_month(&current_month()))
   else {
@@ -675,9 +604,6 @@ fn parse_month(month: &str) -> Option<(i32, i32)> {
   (1..=12).contains(&mon).then_some((year, mon))
 }
 
-/// The target status for an `assigned`/`available` pair as of `month`
-/// (`YYYY-MM`), ported from `targetStatus` in `budget-data.jsx`. `month` only
-/// affects dated goals, whose monthly `needed` is paced toward `by_date`.
 pub fn target_status(target: &Target, assigned: f64, available: f64, month: &str) -> TargetStatus {
   use crate::ui::format::fmt_isk;
 
@@ -764,11 +690,6 @@ pub fn target_status(target: &Target, assigned: f64, available: f64, month: &str
   }
 }
 
-/// This month's shortfall for a save-toward target. Open-ended goals demand the
-/// whole remainder; dated goals pace it across the months left until `by_date`,
-/// so `(amount - available) / months_remaining` shrinks as the goal funds and
-/// grows as the deadline nears, collapsing to the full remainder in and after
-/// the final month.
 fn goal_needed(target: &Target, available: f64, month: &str) -> f64 {
   let remainder = (target.amount - available).max(0.0);
   if target.kind != TargetKind::GoalBy {
@@ -818,16 +739,11 @@ fn progress(numerator: f64, denominator: f64) -> f64 {
   }
 }
 
-/// Loads the fully-derived Budget Plan view-model for `scope` and `month`,
-/// seeding the scope's starter envelopes on first use. Carry, activity and the
-/// budgetable pool come from the B2 math; assignments and targets from B1.
 pub async fn load(db: &Database, scope: BudgetScope, month: &str) -> BudgetView {
   // seed_scope is once-only (persisted marker), so deleting every group never
   // re-seeds the defaults on the next load.
   let _ = math::seed_scope(db, scope).await;
 
-  // One batched pass yields every month's activity, so the multi-month carry
-  // chain reads real per-month activity without a query per (category, month).
   let activity_by_month = math::activity_by_month(db, scope).await;
   let empty_month = std::collections::HashMap::new();
   let activity = activity_by_month.get(month).unwrap_or(&empty_month);
@@ -984,8 +900,6 @@ pub async fn persist_assignment(db: &Database, category_id: i64, month: &str, va
   let _ = budget::upsert_assignment(db, category_id, month, value.round()).await;
 }
 
-/// Auto-assigns the Ready-to-Assign pool to underfunded categories in order,
-/// persisting each top-up, exactly as the design's `autoAssign`.
 pub async fn auto_assign(db: &Database, view: &BudgetView) {
   let mut pool = view.ready_to_assign;
   for group in &view.groups {
@@ -1003,9 +917,6 @@ pub async fn auto_assign(db: &Database, view: &BudgetView) {
   }
 }
 
-/// Covers every overspent category by raising its assignment to clear the
-/// negative available, persisting each change, as the design's
-/// `coverOverspending`.
 pub async fn cover_overspending(db: &Database, view: &BudgetView) {
   for group in &view.groups {
     for category in &group.categories {
@@ -1056,8 +967,6 @@ pub async fn add_category(db: &Database, group_id: i64, position: i64) -> Option
   Some(category.id())
 }
 
-/// Creates an empty category group at the end of `scope`, seeded with a default
-/// name, and returns its new id.
 pub async fn add_group(db: &Database, scope: BudgetScope, position: i64) -> Option<i64> {
   budget::create_group(
     db,
@@ -1072,13 +981,10 @@ pub async fn add_group(db: &Database, scope: BudgetScope, position: i64) -> Opti
   .map(|group| group.id())
 }
 
-/// Deletes a category. The B1 schema cascades its target, assignments and
-/// ref-type maps.
 pub async fn delete_category(db: &Database, category_id: i64) {
   let _ = budget::delete_category(db, category_id).await;
 }
 
-/// Deletes a category group. The B1 schema cascades every category it holds.
 pub async fn delete_group(db: &Database, group_id: i64) {
   let _ = budget::delete_group(db, group_id).await;
 }
@@ -1106,9 +1012,6 @@ pub async fn persist_order(db: &Database, view: &BudgetView) {
   }
 }
 
-/// Persists the current group ordering: each group's `position` in display order
-/// so a drag-reorder of groups survives a reload. `update_group` writes only the
-/// name and position, so the scope fields are placeholders and never reach the row.
 pub async fn persist_group_order(db: &Database, view: &BudgetView) {
   let now = chrono::Utc::now().to_rfc3339();
   for (position, group) in view.groups.iter().enumerate() {
@@ -1125,12 +1028,10 @@ pub async fn persist_group_order(db: &Database, view: &BudgetView) {
   }
 }
 
-/// Renames a category group, preserving its position.
 pub async fn rename_group(db: &Database, group_id: i64, name: &str) {
   let _ = budget::rename_group(db, group_id, name).await;
 }
 
-/// Persists the category metadata edits and target from the inspector editor.
 pub async fn persist_category_edit(db: &Database, category: &crate::store::model::BudgetCategory, target: &Target) {
   let _ = budget::update_category(db, category).await;
   let _ = budget::set_target(
@@ -1631,7 +1532,6 @@ mod tests {
 
     #[test]
     fn it_measures_a_balance_target_against_available_not_assigned() {
-      // Balance targets track available; assigned alone does not satisfy them.
       let status = target_status(&target(TargetKind::Balance, 1_000.0), 100.0, 800.0, MONTH);
 
       assert_eq!(status.needed, 200.0);
@@ -1647,7 +1547,6 @@ mod tests {
 
     #[test]
     fn it_demands_the_whole_remainder_for_an_open_ended_goal() {
-      // A dateless goal is unchanged: the full shortfall is needed every month.
       let status = target_status(&target(TargetKind::Goal, 1_200.0), 0.0, 200.0, MONTH);
 
       assert_eq!(status.needed, 1_000.0);
@@ -1655,7 +1554,6 @@ mod tests {
 
     #[test]
     fn it_paces_a_dated_goal_across_the_months_until_due() {
-      // 1000 remaining over Jun..Dec inclusive (7 months) → ~142.86 per month.
       let status = target_status(&dated(1_200.0, "Dec 2026"), 0.0, 200.0, MONTH);
 
       assert_eq!(status.needed, 1_000.0 / 7.0);
@@ -1663,7 +1561,6 @@ mod tests {
 
     #[test]
     fn it_shrinks_the_dated_slice_as_the_goal_funds() {
-      // Same horizon, but 700 already available → only 500 left over 7 months.
       let status = target_status(&dated(1_200.0, "Dec 2026"), 0.0, 700.0, MONTH);
 
       assert_eq!(status.needed, 500.0 / 7.0);
@@ -1671,7 +1568,6 @@ mod tests {
 
     #[test]
     fn it_demands_the_full_remainder_in_the_final_month() {
-      // The deadline month itself is the last slice: pace divides by 1.
       let status = target_status(&dated(1_200.0, "Jun 2026"), 0.0, 200.0, MONTH);
 
       assert_eq!(status.needed, 1_000.0);
@@ -1679,7 +1575,6 @@ mod tests {
 
     #[test]
     fn it_demands_the_full_remainder_when_past_due() {
-      // A deadline already behind us clamps months_remaining to 1.
       let status = target_status(&dated(1_200.0, "Jan 2026"), 0.0, 200.0, MONTH);
 
       assert_eq!(status.needed, 1_000.0);
@@ -1694,7 +1589,6 @@ mod tests {
 
     #[test]
     fn it_paces_an_iso_dated_goal() {
-      // ISO YYYY-MM-DD is accepted alongside the editor's "Mon YYYY" form.
       let status = target_status(&dated(1_200.0, "2026-12-01"), 0.0, 200.0, MONTH);
 
       assert_eq!(status.needed, 1_000.0 / 7.0);
@@ -1714,7 +1608,7 @@ mod tests {
 
     fn dated_category(kind: TargetKind, amount: f64, assigned: f64, available: f64, by_date: Option<&str>) -> Category {
       Category {
-        activity: available - assigned, // carry 0: available = assigned + activity
+        activity: available - assigned,
         assigned,
         avg_assigned: 0.0,
         carry: 0.0,
@@ -1741,7 +1635,6 @@ mod tests {
 
     #[test]
     fn it_tops_a_balance_available_up_to_the_amount() {
-      // available 800, target 1000 → top up by 200 from the current assignment.
       let category = category(TargetKind::Balance, 1_000.0, 100.0, 800.0);
 
       assert_eq!(category.underfunded_assign(MONTH), 300.0);
@@ -1749,7 +1642,6 @@ mod tests {
 
     #[test]
     fn it_tops_a_dated_goal_by_only_the_paced_slice() {
-      // 1000 remaining over Jun..Dec (7 months); current assignment 50 → +1000/7.
       let category = dated_category(TargetKind::GoalBy, 1_200.0, 50.0, 200.0, Some("Dec 2026"));
 
       assert_eq!(category.underfunded_assign(MONTH), 50.0 + 1_000.0 / 7.0);
@@ -1797,8 +1689,6 @@ mod tests {
           first_party_id: None,
           id,
           reason: None,
-          // An unmapped ref_type: it sets the wallet balance (the pool) without
-          // routing any activity into a seeded envelope.
           ref_type: "unmapped_seed_ref".to_owned(),
           second_party_id: None,
           tax: None,
@@ -1816,7 +1706,6 @@ mod tests {
 
       let view = load(&db, BudgetScope::Character(1), "2026-06").await;
 
-      // Fresh scope: nothing assigned yet, so the whole pool is ready to assign.
       assert!(!view.groups.is_empty());
       assert_eq!(view.pool, 10_000.0);
       assert_eq!(view.ready_to_assign, 10_000.0);
@@ -1843,14 +1732,10 @@ mod tests {
       let view = load(&db, BudgetScope::Character(1), "2026-06").await;
       let category_id = view.first_category_id().unwrap();
 
-      // Assign ISK in the displayed month and in a future one. Ready-to-Assign is
-      // money-conserving and anchored to the displayed month's held availables, so
-      // a future-month envelope is not yet held against the current pool.
       persist_assignment(&db, category_id, "2026-06", 8_000.0).await;
       persist_assignment(&db, category_id, "2026-08", 8_000.0).await;
       let after = load(&db, BudgetScope::Character(1), "2026-06").await;
 
-      // 10_000 pool − 8_000 held in June = 2_000 free to assign.
       assert_eq!(after.ready_to_assign, 2_000.0);
     }
   }
@@ -1880,10 +1765,6 @@ mod tests {
 
     #[test]
     fn it_applies_real_activity_for_a_non_adjacent_prior_month() {
-      // Spend lands in N-2 (April), not the adjacent month. The carry into June
-      // must reflect that real April spend, not treat it as zero.
-      // April: 0 + 100 assigned − 70 spend = 30 available → carries 30.
-      // May:   30 + 0 assigned + 0 = 30 available → carries 30.
       let assignments = [assignment("2026-04", 100.0)];
       let activity = activity_map(&[("2026-04", -70.0)]);
 
@@ -1894,9 +1775,6 @@ mod tests {
 
     #[test]
     fn it_includes_a_month_with_activity_but_no_assignment() {
-      // May has spend but no assignment row; it still belongs in the chain.
-      // April: 0 + 100 − 0 = 100 → carries 100.
-      // May:   100 + 0 − 40 = 60 → carries 60.
       let assignments = [assignment("2026-04", 100.0)];
       let activity = activity_map(&[("2026-05", -40.0)]);
 
@@ -1907,8 +1785,6 @@ mod tests {
 
     #[test]
     fn it_resets_carry_to_zero_on_an_overspent_prior_month() {
-      // April overspends: 0 + 50 − 200 = −150 available → carries 0, and the
-      // 150 loss is absorbed by the pool (RTA), never by next month's carry.
       let assignments = [assignment("2026-04", 50.0)];
       let activity = activity_map(&[("2026-04", -200.0)]);
 
@@ -1978,8 +1854,6 @@ mod tests {
       let first = category_with_target(&db, group.id(), "First", 100.0).await;
       let second = category_with_target(&db, group.id(), "Second", 100.0).await;
 
-      // A pool of 150 with two 100-monthly targets: fill the first fully, the
-      // second partially. We feed a hand-built view so the pool is deterministic.
       let view = BudgetView {
         groups: vec![Group {
           categories: vec![category(first, 100.0), category(second, 100.0)],
@@ -2373,11 +2247,8 @@ mod tests {
     #[test]
     fn it_tallies_target_health_and_flags_attention() {
       let view = view_with(vec![
-        // Met: monthly target fully assigned.
         cat(1, "Met", 100.0, 0.0, TargetKind::Monthly, 100.0),
-        // Under: monthly target underfunded.
         cat(2, "Under", 40.0, 0.0, TargetKind::Monthly, 100.0),
-        // Over: negative available.
         cat(3, "Over", 0.0, -50.0, TargetKind::Monthly, 100.0),
       ]);
 

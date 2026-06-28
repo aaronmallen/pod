@@ -26,9 +26,6 @@ impl ClickKind {
   }
 }
 
-/// A multi-row selection keyed on `K`, driving the wallet ledger and the asset
-/// inventory click/shift-click/⌘-click selection model. `K` is the row key —
-/// `(owner, id)` for the ledger, the ESI `item_id` for the inventory.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowSelection<K = RowKey> {
   anchor: Option<K>,
@@ -62,7 +59,6 @@ impl<K: Copy + PartialEq> RowSelection<K> {
     self.anchor = None;
   }
 
-  /// The selected keys, ordered to match `order` (the live display order).
   pub fn ordered(&self, order: &[K]) -> Vec<K> {
     order
       .iter()
@@ -71,9 +67,6 @@ impl<K: Copy + PartialEq> RowSelection<K> {
       .collect()
   }
 
-  /// Drops selected keys that no longer appear in the live rows and resets the
-  /// anchor if it vanished, so a sync or filter change cannot leave a stale
-  /// selection pointing at rows the user can no longer see.
   pub fn prune(&mut self, order: &[K]) {
     self.selected.retain(|key| order.contains(key));
     if self.anchor.is_some_and(|a| !order.contains(&a)) {
@@ -81,8 +74,6 @@ impl<K: Copy + PartialEq> RowSelection<K> {
     }
   }
 
-  /// Applies a click on `key` given the modifier intent. `order` is the full list
-  /// of row keys in display order, used to resolve a contiguous range.
   pub fn apply(&mut self, key: K, kind: ClickKind, order: &[K]) {
     match kind {
       ClickKind::Plain => {
@@ -115,9 +106,6 @@ impl<K: Copy + PartialEq> RowSelection<K> {
   }
 }
 
-/// The contiguous range of keys between the anchor and `key` (inclusive) in
-/// display order. Falls back to just `key` when there is no anchor or either
-/// endpoint is missing from the live order.
 fn range_keys<K: Copy + PartialEq>(anchor: Option<K>, key: K, order: &[K]) -> Vec<K> {
   let Some(anchor) = anchor else {
     return vec![key];

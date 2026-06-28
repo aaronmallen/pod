@@ -56,9 +56,6 @@ const MARKET_FEE_REF_TYPES: &[&str] = &["brokers_fee", "transaction_tax"];
 
 pub const PAGE_SIZE: usize = 50;
 
-/// Fraction of the ledger a scroll must reach before the next cursor page is
-/// fetched. The window only ever materializes the viewport's rows, so this only
-/// gates how early the next DB page starts streaming in behind the scroll.
 const SCROLL_LOAD_THRESHOLD: f32 = 0.8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -91,10 +88,6 @@ impl CorpDivision {
   }
 }
 
-/// One accessible corporation's wallet, broken into its divisions, plus the
-/// pilot/role that grants the player read access — the "via · " attribution on
-/// the Wallets balances tab. Held for every owned corp so the All-scope view can
-/// render the full per-corp breakdown without re-querying on tab select.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CorpWalletSection {
   pub divisions: Vec<CorpDivision>,
@@ -134,34 +127,22 @@ pub struct Loaded {
 pub struct BudgetLoad {
   history: Vec<crate::features::wallet::budget_engine::MonthFlow>,
   scope: Scope,
-  /// A category id to select once the reloaded view lands, used after adding a
-  /// category so the new envelope opens in the inspector. `None` keeps the
-  /// current selection.
   select: Option<i64>,
   view: budget::BudgetView,
 }
 
-/// A live drop slot while a category is being dragged in Budget edit mode.
-/// `Category` drops the dragged envelope immediately before that row in its
-/// group; `Group` appends it to the end of that group.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BudgetDropTarget {
   Category(i64),
   Group(i64),
 }
 
-/// Which trigger opened the Move Money popover. Both the row's Available pill
-/// and the Inspector button open the same transfer, but only the trigger that
-/// opened it floats the popover, so the two `AnchoredDropdown`s never stack two
-/// copies for one source category.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BudgetMoveAnchor {
   Inspector,
   Pill,
 }
 
-/// Amount is prefilled with the source's `max(0, available)` when the popover
-/// opens, then edited freely until a destination commits the transfer.
 #[derive(Clone, Debug)]
 pub struct BudgetMove {
   pub amount_draft: String,
@@ -169,9 +150,6 @@ pub struct BudgetMove {
   pub from_id: i64,
 }
 
-/// The right-click menu over the selected ledger rows. `picking` flips the menu
-/// from its single "Assign to Budget" action to the reused envelope picker;
-/// `tab` records which tab's selection the bulk assign applies to.
 #[derive(Clone, Copy, Debug)]
 struct LedgerMenu {
   anchor: iced::Point,
@@ -275,27 +253,17 @@ pub enum Message {
   SearchChanged(String),
   SideFilterChanged(Side),
   SignFilterChanged(SignFilter),
-  /// `relative` is the 0.0–1.0 scroll fraction that drives the cursor-pagination threshold;
-  /// `absolute` is the pixel offset stored to window the visible ledger.
-  TabScrolled {
-    absolute: f32,
-    relative: f32,
-  },
+  TabScrolled { absolute: f32, relative: f32 },
   TabSelected(Tab),
   TimeframeSelected(Timeframe),
   UiFlagPersisted(String, bool),
-  // Emitted by sibling wallet-view tasks to set a persisted UI flag; today only the tests construct it.
   UiFlagSet(String, bool),
-  // Emitted by sibling wallet-view tasks to toggle a persisted UI list item; today only the tests construct it.
   UiListItemToggled(String, String),
   UiListPersisted(String, Vec<String>),
   WalletsSortSelected(WalletSort),
 }
 
 impl Message {
-  /// Whether handling this message can surface new image-bearing rows, so the shell should recheck for stale
-  /// icons/portraits. Interaction-only messages (scroll, hover, filter) return `false` to keep the staleness scan
-  /// off the per-frame path.
   pub fn loads_data(&self) -> bool {
     matches!(
       self,
@@ -303,8 +271,6 @@ impl Message {
     )
   }
 
-  /// Whether this message belongs to the Budget surface, routed to
-  /// [`handle_budget`] so the wallet dispatcher stays free of budget branching.
   fn is_budget(&self) -> bool {
     matches!(
       self,
@@ -459,9 +425,6 @@ pub struct BudgetDrill {
   pub market: Vec<MarketEntry>,
 }
 
-/// A ledger filter driven from the Budget tab: show only the entries of a given
-/// scope-keyed envelope (or the uncategorized ones) for a single month. Applies
-/// to both the Journal and Transactions tables.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BudgetFilter {
   pub kind: BudgetFilterKind,
@@ -490,8 +453,6 @@ pub enum SignFilter {
   Out,
 }
 
-/// Within-section ordering on the Wallets balances tab. Affects display only —
-/// it never mutates the underlying balance data.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum WalletSort {
   Ascending,
@@ -670,12 +631,10 @@ impl State {
     self.tab
   }
 
-  // Generic UI-flag accessor consumed by sibling wallet-view tasks; today only the tests use it.
   pub fn ui_flag(&self, key: &str, default: bool) -> bool {
     self.ui_flags.get(key).copied().unwrap_or(default)
   }
 
-  // Generic UI-list accessor consumed by sibling wallet-view tasks; today only the tests use it.
   pub fn ui_list(&self, key: &str) -> &[String] {
     self.ui_lists.get(key).map(Vec::as_slice).unwrap_or_default()
   }
@@ -731,8 +690,6 @@ impl State {
     }
   }
 
-  /// The per-tab `(id, name, missing-scopes)` forbidden gate for a per-character view whose pilot
-  /// lacks the active tab's read scopes; `None` for the combined view or an authorized pilot.
   pub(super) fn tab_scope_gate(&self) -> Option<(i64, &str, Vec<&'static str>)> {
     let Scope::Character(id) = self.active else {
       return None;
@@ -750,10 +707,6 @@ impl State {
     self.active_division
   }
 
-  /// The drill result to render, but only while it still matches the active
-  /// budget filter. A drill loaded for a now-changed (or cleared) filter is
-  /// stale and ignored, so the paged ledger takes over instead of showing the
-  /// prior category's rows.
   fn active_drill(&self) -> Option<&BudgetDrill> {
     let filter = self.budget_filter.as_ref()?;
     let drill = self.budget_drill.as_ref()?;
@@ -768,8 +721,6 @@ impl State {
     &self.budget_chips
   }
 
-  /// Resolution order: a manual per-entry override wins, else the first enabled
-  /// rule whose conditions match, else `None` (Ready-to-Assign).
   pub(super) fn budget_category_for(&self, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
     let resolution = &self.budget_chips.resolution;
     match kind {
@@ -795,10 +746,6 @@ impl State {
     self.budget_hovered_category
   }
 
-  /// How many ledger entries in the selected budget month still need a category
-  /// — the Review &amp; assign banner's count. Sourced from the DB
-  /// ([`budget::uncategorized_count_for_month`]) so it reflects every entry in
-  /// the month, not just the loaded page.
   pub(super) fn budget_review_total(&self) -> usize {
     self.budget_review_total
   }
@@ -889,11 +836,6 @@ impl State {
     self.budget_move.as_ref()
   }
 
-  /// Every loaded ledger row flattened into a rule match target, for the rule
-  /// editor's live preview and per-rule match counts. Includes both spending
-  /// (outflows) and income (inflows), since rules match either. Drawn from the
-  /// in-memory journal + market ledger (the loaded-and-paginated rows), mirroring
-  /// the scope of the uncategorized-count surface.
   pub(super) fn budget_match_targets(&self) -> Vec<crate::features::wallet::budget_engine::MatchTarget> {
     self
       .journal
@@ -927,8 +869,6 @@ impl State {
     self.budget_rule_editor.as_ref()
   }
 
-  /// The live automation rules in priority order, loaded into the chips'
-  /// resolution context.
   pub(super) fn budget_rules(&self) -> &[crate::store::model::Rule] {
     &self.budget_chips.resolution.rules
   }
@@ -985,9 +925,6 @@ impl State {
     !self.contracts.is_empty()
   }
 
-  /// Resolves the per-window contract loader source for `contract_id`: the active corporation scope
-  /// loads from the corporation, otherwise the row's owning character. Mirrors the old in-place
-  /// loader target now that contract detail opens in a detached window.
   pub fn contract_source(&self, contract_id: i64) -> Option<contract_detail::Source> {
     match contract_loader_target(self, contract_id) {
       Some(ContractLoad::Character(character_id)) => Some(contract_detail::Source::Character {
@@ -1096,9 +1033,6 @@ impl State {
     }
   }
 
-  // Owned corporations whose division wallets the All scope unions into the
-  // ledger; only the All view merges corp rows, so the keyed scopes contribute
-  // none here (the per-corp view loads its own divisions separately).
   fn corp_scope_ids(&self) -> Vec<i64> {
     match self.active {
       Scope::All => self.corporations.iter().map(|corp| corp.id).collect(),
@@ -1290,11 +1224,6 @@ fn reload_budget_chips(state: &State, db: &Database) -> Task<Message> {
   })
 }
 
-/// Loads the category drill straight from the store, independent of the ledger's
-/// paging cursor: every journal and market row in the filter's category+month,
-/// resolved through the same chips (override + rule + ref_type precedence) the
-/// envelope math uses, so the drilled set matches the math and is complete for a
-/// month never scrolled into the paged ledger.
 fn load_budget_drill(state: &State, db: &Database, filter: BudgetFilter) -> Task<Message> {
   let scope = state.budget_scope();
   let db = db.clone();
@@ -1347,9 +1276,6 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
     return Task::none();
   }
 
-  // The category drill is a complete DB-backed view, not the paged ledger, so
-  // scrolling it must not advance the ledger cursor (which would fetch rows the
-  // drill view never renders).
   if state.active_drill().is_some() {
     return Task::none();
   }
@@ -1412,8 +1338,6 @@ fn load_more(state: &mut State, db: &Database) -> Task<Message> {
         move |contracts| more_page(scope, tab, MorePage::contracts(contracts)),
       )
     }
-    // The Budget and Wallets tabs paginate nothing; their balance/envelope data
-    // is already fully in State, so there is no cursor to advance.
     Tab::Budget | Tab::Wallets => Task::none(),
   }
 }
@@ -1472,9 +1396,6 @@ fn budget_quick_assign(state: &mut State, db: &Database, category_id: i64, value
   })
 }
 
-/// Opens the Move Money popover anchored on `category_id`, selecting it and
-/// prefilling the amount with its `max(0, available)`. Blocked for past months,
-/// like inline assign. A no-op when the category is not in the current view.
 fn budget_open_move(state: &mut State, category_id: i64, anchor: BudgetMoveAnchor) -> Task<Message> {
   if state.budget_is_past() {
     return Task::none();
@@ -1497,10 +1418,6 @@ fn budget_open_move(state: &mut State, category_id: i64, anchor: BudgetMoveAncho
   Task::none()
 }
 
-/// Commits the open Move Money transfer to `to`, then reloads so RTA, carry and
-/// available re-derive. Amounts that do not parse to a positive whole ISK leave
-/// the popover open (the destination list is inert until the amount is valid),
-/// so a non-positive amount is a guarded no-op rather than a silent close.
 fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) -> Task<Message> {
   let Some((from_id, amount)) = state
     .budget_move
@@ -1522,9 +1439,6 @@ fn budget_commit_move(state: &mut State, db: &Database, to: budget::MoveDest) ->
   })
 }
 
-/// Opens the rule editor seeded from an existing rule by id. A no-op when the
-/// rule is no longer in the loaded set. Shared entry point reused by D's global
-/// rules manager.
 fn budget_open_rule_editor(state: &mut State, rule_id: i64) -> Task<Message> {
   if let Some(rule) = state.budget_rules().iter().find(|rule| rule.id() == rule_id) {
     state.budget_rule_editor = Some(budget::RuleDraft::from_rule(rule));
@@ -1539,11 +1453,6 @@ fn budget_open_global_rules(state: &mut State) -> Task<Message> {
   Task::none()
 }
 
-/// Commits a drag-reorder of the global rule list: removes the dragged rule and
-/// re-inserts it ahead of the drop-target rule, persists the new priority via A's
-/// reorder repo, then re-derives so the winning rule for contested entries updates
-/// immediately. A drop onto the dragged rule itself (or with nothing dragging) is a
-/// no-op.
 fn budget_rule_drop_released(state: &mut State, db: &Database) -> Task<Message> {
   let drop = state
     .budget_rule_dragging
@@ -1590,8 +1499,6 @@ fn budget_close_rule_select(state: &mut State) {
   }
 }
 
-/// Threads the simple search box into the draft's first text-contains condition,
-/// inserting one at the front when the rule has none yet.
 fn budget_set_rule_search(state: &mut State, value: String) {
   let Some(draft) = state.budget_rule_editor.as_mut() else {
     return;
@@ -1610,9 +1517,6 @@ fn budget_set_rule_search(state: &mut State, value: String) {
   }
 }
 
-/// Persists the open rule draft (create or update) then re-derives so matching
-/// outflows re-file into the category and the per-row chips refresh. A draft with
-/// no active condition is a guarded no-op (the Save button is also disabled).
 fn budget_commit_rule(state: &mut State, db: &Database) -> Task<Message> {
   let Some(draft) = state.budget_rule_editor.take() else {
     return Task::none();
@@ -1702,9 +1606,6 @@ async fn persist_rule_draft(
   }
 }
 
-/// The name a draft would persist: the user's name when set, else B's auto-suggestion,
-/// else a fallback. Resolves Type/Character labels from the journal humanizer and the
-/// roster.
 fn budget_effective_rule_name(state: &State, draft: &budget::RuleDraft) -> String {
   if draft.name_edited && !draft.name.trim().is_empty() {
     return draft.name.clone();
@@ -1745,8 +1646,6 @@ fn budget_character_name(state: &State, key: &str) -> Option<String> {
     })
 }
 
-/// Toggles a rule's enabled flag then re-derives so its effect appears/disappears
-/// across activity and chips.
 fn budget_toggle_rule(state: &mut State, db: &Database, rule_id: i64, enabled: bool) -> Task<Message> {
   let Some(mut rule) = state.budget_rules().iter().find(|rule| rule.id() == rule_id).cloned() else {
     return Task::none();
@@ -1759,8 +1658,6 @@ fn budget_toggle_rule(state: &mut State, db: &Database, rule_id: i64, enabled: b
   })
 }
 
-/// Deletes a rule (its conditions cascade) then re-derives. Closes the editor if it
-/// was editing the deleted rule.
 fn budget_delete_rule(state: &mut State, db: &Database, rule_id: i64) -> Task<Message> {
   if state
     .budget_rule_editor
@@ -1808,8 +1705,6 @@ fn budget_toggle_editor(state: &mut State) -> Task<Message> {
   Task::none()
 }
 
-/// Loads `category_id`'s editor draft from the current view so the inspector can
-/// edit its metadata and target. A no-op when the category is not in the view.
 fn budget_seed_editor(state: &mut State, category_id: i64) {
   let draft = state.budget.as_ref().and_then(|view| {
     view.groups.iter().find_map(|group| {
@@ -1840,9 +1735,6 @@ fn budget_commit_editor(state: &mut State, db: &Database) -> Task<Message> {
   })
 }
 
-/// The end position (count of existing categories) of `group_id` in the current
-/// view, so a freshly-added category appends after the rest. Zero when the group
-/// or view is absent.
 fn budget_group_end_position(state: &State, group_id: i64) -> i64 {
   let Some(view) = state.budget.as_ref() else {
     return 0;
@@ -1903,8 +1795,6 @@ fn budget_request_group_delete(state: &mut State, db: &Database, group_id: i64) 
     .as_ref()
     .and_then(|view| view.groups.iter().find(|group| group.id == group_id))
     .is_some_and(|group| group.categories.is_empty());
-  // Empty groups delete immediately; a populated group cascades its categories,
-  // so the first click arms a confirmation and the second click commits it.
   if !empty && state.budget_pending_group_delete != Some(group_id) {
     state.budget_pending_group_delete = Some(group_id);
     return Task::none();
@@ -1944,8 +1834,6 @@ fn budget_rename_group(state: &mut State, db: &Database, group_id: i64, name: St
 }
 
 fn budget_drop_released(state: &mut State, db: &Database) -> Task<Message> {
-  // One release message serves both drags; a group drag in progress routes to the
-  // group handler rather than the category-reorder path below.
   if state.budget_group_dragging.is_some() {
     return budget_group_drop_released(state, db);
   }
@@ -2008,9 +1896,6 @@ fn group_id_of_category(view: &budget::BudgetView, category_id: i64) -> Option<i
     .map(|group| group.id)
 }
 
-/// Runs a budget mutation, then reloads the derived view for the active scope and
-/// month. The mutation closure receives an owned DB handle, the budget scope, and
-/// the month key so it can persist whatever the message requires.
 fn budget_persist_then_reload<F>(state: &State, db: &Database, mutate: F) -> Task<Message>
 where
   F: FnOnce(
@@ -2089,9 +1974,6 @@ fn handle_rail(state: &mut State, message: Message) -> Task<Message> {
   }
 }
 
-/// Handles the `Message::Budget*` family. Split out of [`update`] so the wallet
-/// dispatcher does not absorb the budget surface's branching. Editor-field
-/// setters route through [`mutate_editor`] to keep this a flat dispatch.
 fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetAssignCancelled => {
@@ -2161,10 +2043,6 @@ fn handle_budget(state: &mut State, message: Message, db: &Database) -> Task<Mes
   }
 }
 
-/// The Automation tab + rule editor messages: opening/closing the editor, editing
-/// its draft, and committing/toggling/deleting rules through A's repo. Split off
-/// [`handle_budget`] to keep its complexity bounded; unmatched messages fall
-/// through to [`handle_budget_chip`].
 fn handle_budget_rule(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetRuleConditionAdded => budget_rule_condition_added(state),
@@ -2200,9 +2078,6 @@ fn handle_budget_rule(state: &mut State, message: Message, db: &Database) -> Tas
   }
 }
 
-/// The rule-editor field/drag messages, split off [`handle_budget_rule`] so the
-/// dispatcher's complexity stays bounded. Unmatched messages fall through to
-/// [`handle_budget_chip`].
 fn handle_budget_rule_editor(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetRuleDragStarted(rule_id) => {
@@ -2252,8 +2127,6 @@ fn handle_budget_rule_editor(state: &mut State, message: Message, db: &Database)
   }
 }
 
-/// Appends a default Party condition to the open rule draft. Split off
-/// [`handle_budget_rule`].
 fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
   if let Some(draft) = state.budget_rule_editor.as_mut() {
     draft
@@ -2263,8 +2136,6 @@ fn budget_rule_condition_added(state: &mut State) -> Task<Message> {
   Task::none()
 }
 
-/// Replaces a condition with a fresh default for the newly-chosen field, closing
-/// the open select. Split off [`handle_budget_rule`].
 fn budget_rule_condition_field_changed(state: &mut State, index: usize, field: RuleField) -> Task<Message> {
   budget_mutate_condition(state, index, |condition| {
     *condition = crate::features::wallet::budget_engine::new_condition(field);
@@ -2273,8 +2144,6 @@ fn budget_rule_condition_field_changed(state: &mut State, index: usize, field: R
   Task::none()
 }
 
-/// Sets a condition's operator, seeding the upper bound when switching to
-/// Between, then closes the open select. Split off [`handle_budget_rule`].
 fn budget_rule_condition_op_changed(state: &mut State, index: usize, op: RuleOp) -> Task<Message> {
   budget_mutate_condition(state, index, |condition| {
     condition.op = op;
@@ -2286,7 +2155,6 @@ fn budget_rule_condition_op_changed(state: &mut State, index: usize, op: RuleOp)
   Task::none()
 }
 
-/// Removes a condition, keeping at least one. Split off [`handle_budget_rule`].
 fn budget_rule_condition_removed(state: &mut State, index: usize) -> Task<Message> {
   if let Some(draft) = state.budget_rule_editor.as_mut()
     && draft.conditions.len() > 1
@@ -2297,9 +2165,6 @@ fn budget_rule_condition_removed(state: &mut State, index: usize) -> Task<Messag
   Task::none()
 }
 
-/// The per-entry chip messages (open/dismiss/assign the envelope picker and
-/// apply a reloaded chip set), split off [`handle_budget`] to keep its
-/// complexity bounded. Unmatched messages fall through to [`handle_budget_edit`].
 fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetChipAssigned(choice) => budget_chip_assigned(state, db, choice),
@@ -2317,15 +2182,9 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
     }
     Message::BudgetChipsReloaded(chips) => {
       state.budget_chips = *chips;
-      // An assignment can change which rows match an active category/uncategorized
-      // filter, so refresh the derived indices.
       if state.budget_filter.is_some() {
         state.recompute_derived();
       }
-      // A new chip resolution (manual assignment or rule change) can move rows in
-      // or out of needs-review, so re-derive the DB-sourced banner count. Every
-      // month change / sync path also funnels through a chips reload, keeping the
-      // count fresh from one chokepoint.
       reload_budget_review(state, db)
     }
     Message::BudgetReviewCounted(total) => {
@@ -2336,21 +2195,16 @@ fn handle_budget_chip(state: &mut State, message: Message, db: &Database) -> Tas
   }
 }
 
-/// Selects a category, clearing any open editor and — in edit mode — re-seeding
-/// the inspector editor from the selection. Split off [`handle_budget`].
 fn budget_select_category(state: &mut State, id: i64) -> Task<Message> {
   state.budget_selected = Some(id);
   state.budget_editor = None;
   state.budget_inspector_tab = budget::InspectorTab::Detail;
-  // In edit mode the inspector shows the category editor, so seed its draft
-  // from the freshly-selected category.
   if state.budget_edit_mode {
     budget_seed_editor(state, id);
   }
   Task::none()
 }
 
-/// Toggles a group's collapsed state. Split off [`handle_budget`].
 fn budget_toggle_group(state: &mut State, group_id: i64) -> Task<Message> {
   if !state.budget_collapsed.remove(&group_id) {
     state.budget_collapsed.insert(group_id);
@@ -2358,9 +2212,6 @@ fn budget_toggle_group(state: &mut State, group_id: i64) -> Task<Message> {
   Task::none()
 }
 
-/// Applies a freshly-loaded budget view, ignoring loads whose scope no longer
-/// matches the active one and re-seeding an open editor against the new
-/// positions. Split off [`handle_budget`] to keep its complexity bounded.
 fn budget_apply_loaded(state: &mut State, load: BudgetLoad) -> Task<Message> {
   let BudgetLoad {
     history,
@@ -2388,9 +2239,6 @@ fn budget_apply_loaded(state: &mut State, load: BudgetLoad) -> Task<Message> {
   Task::none()
 }
 
-/// Persists (or clears) the picked envelope for the open chip's entry, cascading
-/// the assignment to a market trade's journal twin so both rows stay in sync.
-/// Split off [`handle_budget`] to keep its complexity bounded.
 fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -> Task<Message> {
   let Some((owner, kind, entry_id)) = state.budget_picker.take() else {
     return Task::none();
@@ -2426,9 +2274,6 @@ fn budget_chip_assigned(state: &mut State, db: &Database, choice: Option<i64>) -
   )
 }
 
-/// The edit-mode messages (drag-drop reorder + group/category CRUD), split off
-/// [`handle_budget`] so the dispatcher's complexity stays bounded. Unmatched
-/// messages fall through to [`handle_budget_editor`].
 fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetCategoryAdded(group_id) => budget_add_category(state, db, group_id),
@@ -2445,16 +2290,11 @@ fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Tas
       if state.budget_dragging.is_some() {
         state.budget_drop_target = Some(target);
       } else if let (Some(_), BudgetDropTarget::Group(group_id)) = (state.budget_group_dragging, target) {
-        // A group drag reuses the group headers as drop targets; hovering one marks
-        // it as the group the dragged group will land before.
         state.budget_group_drop_target = Some(group_id);
       }
       Task::none()
     }
     Message::BudgetDropTargetLeft => {
-      // While a drag is active the last-entered target is preserved through the
-      // release, so leaving a row never clears it (the next enter replaces it).
-      // Only stale highlights outside a drag are cleared.
       if state.budget_dragging.is_none() && state.budget_group_dragging.is_none() {
         state.budget_drop_target = None;
         state.budget_group_drop_target = None;
@@ -2485,8 +2325,6 @@ fn handle_budget_edit(state: &mut State, message: Message, db: &Database) -> Tas
   }
 }
 
-/// The inspector category/target editor messages, split off [`handle_budget`] so
-/// neither dispatcher carries the whole budget message family.
 fn handle_budget_editor(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::BudgetEditorAmountChanged(text) => mutate_editor(state, |editor| {
@@ -2511,9 +2349,6 @@ fn mutate_editor(state: &mut State, edit: impl FnOnce(&mut budget::CategoryDraft
   Task::none()
 }
 
-/// Switches the active scope, resetting per-scope view and budget state and
-/// firing a fresh wallet (and, on the Budget tab, budget) reload. A no-op when
-/// the scope is unchanged. Split off [`update`] to keep its complexity bounded.
 fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task<Message> {
   state.picker_open = false;
   if scope == state.active {
@@ -2544,9 +2379,6 @@ fn handle_scope_selected(state: &mut State, db: &Database, scope: Scope) -> Task
   reload(db, scope, state.active_division).chain(budget_task)
 }
 
-/// The ledger multi-select messages (modifier tracking, row click/right-click,
-/// the context menu, and the bulk "Assign to Budget" action), split off
-/// [`update`] to keep its complexity bounded.
 fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Message> {
   match message {
     Message::LedgerModifiersChanged(modifiers) => {
@@ -2565,8 +2397,6 @@ fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Mes
       Task::none()
     }
     Message::LedgerRowRightPressed(kind, owner, entry_id) => {
-      // Right-clicking a row outside the current selection makes it the selection
-      // so the menu always acts on what the user pointed at.
       let key = (owner, entry_id);
       if !ledger_selection(state, kind).contains(key) {
         let order = ledger_order(state, kind);
@@ -2589,9 +2419,6 @@ fn handle_ledger(state: &mut State, message: Message, db: &Database) -> Task<Mes
       if let Some(menu) = state.ledger_menu.as_mut() {
         menu.picking = true;
       }
-      // The bulk picker reuses the per-row envelope chip set, so reload it on
-      // open (cheap scoped load) rather than only when empty: a renamed or
-      // deleted envelope would otherwise linger here too.
       reload_budget_chips(state, db)
     }
     Message::LedgerBulkAssignChosen(choice) => budget_bulk_assign(state, db, choice),
@@ -2613,8 +2440,6 @@ fn ledger_selection_mut(state: &mut State, kind: BudgetEntryKind) -> &mut select
   }
 }
 
-/// Drops selected rows that a reload or filter change has removed from the live
-/// ledgers so a stale selection never points at rows the user can no longer see.
 fn prune_ledger_selections(state: &mut State) {
   let journal_order = ledger_order(state, BudgetEntryKind::Journal);
   state.journal_selection.prune(&journal_order);
@@ -2635,13 +2460,6 @@ fn ledger_order(state: &State, kind: BudgetEntryKind) -> Vec<selection::RowKey> 
   }
 }
 
-/// Assigns (or clears) every selected row in the menu's tab in one action,
-/// mirroring the per-row chip so the bulk result is identical to acting on each row
-/// individually. Assigning loops the assign-plus-cascade path; clearing is
-/// authoritative DB-side across every owner of each event (including unsynced
-/// siblings the in-memory cascade cannot see), so no orphan copy survives and the
-/// reconciler has nothing to resurrect. Owner-keyed at the single All budget, so it
-/// is correct under every ledger filter.
 fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> Task<Message> {
   let Some(menu) = state.ledger_menu.take() else {
     return Task::none();
@@ -2655,9 +2473,6 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
   let order = ledger_order(state, kind);
   let selected = ledger_selection(state, kind).ordered(&order);
 
-  // Assigning expands each selected row to itself plus its in-memory cascade targets
-  // (journal twin and tax/fee rows); clearing leaves the selected rows as-is because
-  // the DB-side delete resolves the full event itself.
   let mut targets: Vec<(BudgetOwner, BudgetEntryKind, i64)> = Vec::new();
   for (owner, entry_id) in selected {
     targets.push((owner, kind, entry_id));
@@ -2691,9 +2506,6 @@ fn budget_bulk_assign(state: &mut State, db: &Database, choice: Option<i64>) -> 
   )
 }
 
-/// Switches the active corporation wallet division, reloading rows for it. A
-/// no-op outside a corporation scope or when the division is unchanged. Split
-/// off [`update`].
 fn handle_division_selected(state: &mut State, db: &Database, division: i64) -> Task<Message> {
   if !matches!(state.active, Scope::Corporation(_)) || division == state.active_division {
     return Task::none();
@@ -2703,8 +2515,6 @@ fn handle_division_selected(state: &mut State, db: &Database, division: i64) -> 
   reload(db, state.active, division)
 }
 
-/// Appends a freshly-paged set of rows, ignoring stale pages and marking the
-/// tab exhausted when nothing new arrived. Split off [`update`].
 fn handle_more_loaded(state: &mut State, page: MorePage) -> Task<Message> {
   state.loading_more = false;
   let MorePage {
@@ -2727,8 +2537,6 @@ fn handle_more_loaded(state: &mut State, page: MorePage) -> Task<Message> {
   Task::none()
 }
 
-/// Records the scroll offset and pages in more rows once the viewport nears the
-/// end of the list. Split off [`update`].
 fn handle_tab_scrolled(state: &mut State, db: &Database, absolute: f32, relative: f32) -> Task<Message> {
   state.tab_scroll_offset = absolute;
   if relative < SCROLL_LOAD_THRESHOLD {
@@ -2737,8 +2545,6 @@ fn handle_tab_scrolled(state: &mut State, db: &Database, absolute: f32, relative
   load_more(state, db)
 }
 
-/// Switches the active content tab, resetting its scroll/paging state and
-/// reloading the Budget surface when it is selected. Split off [`update`].
 fn handle_tab_selected(state: &mut State, db: &Database, tab: Tab) -> Task<Message> {
   state.tab = tab;
   state.tab_scroll_offset = 0.0;
@@ -2876,17 +2682,12 @@ pub fn update(state: &mut State, message: Message, db: &Database) -> Task<Messag
       // category's rows while the new DB-backed drill round-trips.
       state.budget_drill = None;
       state.tab_scroll_offset = 0.0;
-      // Land on the Journal provisionally so the drill opens immediately;
-      // `BudgetDrillLoaded` re-routes to Market once the DB-backed set shows the
-      // category's matches are entirely market trades.
       state.tab = Tab::Journal;
       state.recompute_derived();
       prune_ledger_selections(state);
       load_budget_drill(state, db, filter)
     }
     Message::BudgetDrillLoaded(drill) => {
-      // A drill that finished after its filter changed (or was cleared) is stale;
-      // store it anyway, but only route the tab when it is still the active one.
       let is_active = state.budget_filter.as_ref() == Some(&drill.filter);
       let route = budget_drill_tab(&drill);
       state.budget_drill = Some(*drill);
@@ -2924,8 +2725,6 @@ pub fn view(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   shell::shell(state, now)
 }
 
-/// True when `event` is an Escape key press, used by the modal-dismiss
-/// subscriptions to map the key to their cancel message.
 fn is_escape_pressed(event: &iced::Event) -> bool {
   matches!(
     event,
@@ -2960,9 +2759,6 @@ pub fn subscription(state: &State) -> iced::Subscription<Message> {
   iced::Subscription::batch(subs)
 }
 
-/// The Escape-to-dismiss subscriptions whose presence depends on which modal or
-/// overlay surface is open. Split off [`subscription`] to keep its complexity
-/// bounded.
 fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
   if state.budget_editing.is_some() {
@@ -2983,8 +2779,6 @@ fn escape_dismiss_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   subs
 }
 
-/// True when `event` is a left mouse-button release, used by the budget
-/// drag-and-drop surfaces to settle a drop.
 fn is_left_released(event: &iced::Event) -> bool {
   matches!(
     event,
@@ -2992,8 +2786,6 @@ fn is_left_released(event: &iced::Event) -> bool {
   )
 }
 
-/// The left-release subscriptions that settle an in-progress budget category or
-/// rule drag. Split off [`subscription`] to keep its complexity bounded.
 fn drag_release_subs(state: &State) -> Vec<iced::Subscription<Message>> {
   let mut subs: Vec<iced::Subscription<Message>> = Vec::new();
   if state.budget_dragging.is_some() || state.budget_group_dragging.is_some() {
@@ -3076,8 +2868,6 @@ async fn load_wallet(db: Database, scope: Scope, division: i64) -> Loaded {
 
   let net_worth_series = load_net_worth_series(&db, scope, &scope_ids, &corporations).await;
 
-  // The budget is always the single All budget; the wallet scope only filters the
-  // ledger rows, never which budget the chips/picker resolve against.
   let chips = loaders::load_budget_chips(&db, crate::store::model::BudgetScope::All).await;
 
   Loaded {
@@ -3274,10 +3064,6 @@ async fn load_wallet_sections(db: &Database) -> Vec<CorpWalletSection> {
   sections
 }
 
-/// Resolve the pilot and accounting role that grant read access to a corp's
-/// wallet: the corp's authorizing character, paired with the strongest
-/// wallet-read role they hold (Director, then Accountant, then Junior
-/// Accountant — the same precedence the corp-wallet sync gates on).
 async fn attribution(db: &Database, corp: &crate::store::model::OwnedCorporation) -> (Option<String>, Option<String>) {
   let Some(authorized_by) = corp.authorized_by() else {
     return (None, None);
@@ -3296,9 +3082,6 @@ async fn attribution(db: &Database, corp: &crate::store::model::OwnedCorporation
   (name, role)
 }
 
-/// The strongest wallet-read role (Director, then Accountant, then Junior
-/// Accountant) for which `holds` reports true, humanized for display. Split off
-/// [`attribution`] so the precedence is unit-testable without a database.
 fn strongest_accounting_role(holds: impl Fn(&str) -> bool) -> Option<String> {
   ACCOUNTING_ROLES
     .iter()
@@ -3327,7 +3110,6 @@ pub fn scope_liquid(state: &State) -> Option<f64> {
   }
 }
 
-/// Liquid ISK across every owned character and corporation, independent of the active scope.
 pub fn combined_liquid(state: &State) -> Option<f64> {
   let ids: std::collections::HashSet<i64> = state.roster.iter().map(|pilot| pilot.id).collect();
   let character_liquid = sum_option(
@@ -3447,11 +3229,6 @@ pub fn filtered_market(state: &State) -> Vec<&MarketEntry> {
     .collect()
 }
 
-/// Resolves which detail loader a clicked contract row needs.
-///
-/// Corporation scope always loads from the corp tables. Under character or all
-/// scope the row's own `character_id` is used, so an all-wallets list still
-/// loads each contract from the character that owns it.
 fn contract_loader_target(state: &State, contract_id: i64) -> Option<ContractLoad> {
   if let Scope::Corporation(corporation_id) = state.active {
     return Some(ContractLoad::Corporation(corporation_id));
@@ -3558,10 +3335,6 @@ fn budget_cascade_targets(
   targets
 }
 
-/// The same-owner records a market trade's assignment cascades onto: its journal
-/// twin plus its Transaction Tax and Broker's Fee rows, each only when it lacks
-/// a manual override. Returned tuples carry `owner` so callers compose
-/// cross-owner copies uniformly.
 fn owner_cascade_targets(
   state: &State,
   owner: BudgetOwner,
@@ -3618,9 +3391,6 @@ fn owner_cascade_targets(
   targets
 }
 
-/// The `transaction_id` a market row or its `market_transaction` journal twin
-/// refers to, used to find the trade's copies under other owners. `None` for any
-/// row that is not part of a market trade.
 fn cascade_transaction_id(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Option<i64> {
   match kind {
     BudgetEntryKind::Market => Some(entry_id),
@@ -3633,9 +3403,6 @@ fn cascade_transaction_id(state: &State, owner: BudgetOwner, kind: BudgetEntryKi
   }
 }
 
-/// Every owner *other* than `owner` whose wallet holds a market row for
-/// `transaction_id` — the corp (or character) a corp-on-behalf trade is mirrored
-/// into. Empty for a purely personal trade.
 fn cross_owners(state: &State, transaction_id: i64, owner: BudgetOwner) -> Vec<BudgetOwner> {
   let mut owners: Vec<BudgetOwner> = state
     .market
@@ -3656,13 +3423,6 @@ fn is_overridden(state: &State, owner: BudgetOwner, kind: BudgetEntryKind, entry
     .is_some()
 }
 
-/// The trading character and the corporation a market trade is mirrored into,
-/// when the same `transaction_id` exists in BOTH a character and a corporation
-/// wallet — i.e. a character traded on behalf of the corp. `None` for a purely
-/// personal trade (no corp copy) so the composite character+corp avatar is shown
-/// only for genuine dual-wallet trades, not for every character who belongs to a
-/// corp. Both copies of the trade render the same character-base, corp-badge
-/// avatar so the relationship reads identically wherever the trade appears.
 pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> Option<(i64, i64)> {
   let character_id = state.market.iter().find_map(|entry| match entry.owner {
     BudgetOwner::Character(id) if entry.transaction_id == transaction_id => Some(id),
@@ -3675,9 +3435,6 @@ pub(super) fn market_dual_wallet_owners(state: &State, transaction_id: i64) -> O
   Some((character_id, corporation_id))
 }
 
-/// Whether a market entry is the redundant corporation copy of a dual-wallet
-/// trade within `market` and should be hidden so the trade renders only once.
-/// See [`State::is_redundant_dual_wallet_copy`] for the full rationale.
 fn is_redundant_dual_wallet_copy(market: &[MarketEntry], entry: &MarketEntry) -> bool {
   if !matches!(entry.owner, BudgetOwner::Corporation(_)) {
     return false;
@@ -3691,9 +3448,6 @@ fn is_redundant_dual_wallet_copy(market: &[MarketEntry], entry: &MarketEntry) ->
   has_character_copy && has_corporation_copy
 }
 
-/// The tab a category drill should land on: Market when the matches are entirely
-/// market trades (an empty Journal would otherwise drill into a blank tab), else
-/// Journal.
 fn budget_drill_tab(drill: &BudgetDrill) -> Tab {
   if drill.journal.is_empty() && !drill.market.is_empty() {
     Tab::Market
@@ -3702,11 +3456,6 @@ fn budget_drill_tab(drill: &BudgetDrill) -> Tab {
   }
 }
 
-/// Whether a journal entry satisfies an active Budget filter: in the filter's
-/// month, and either assigned to the filtered category or — for the
-/// uncategorized filter — an unassigned entry (inflow or outflow) that still
-/// needs a category. Market-transaction journal twins are excluded; their trade
-/// is reviewed and assigned from the Transactions table instead.
 fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
   if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
@@ -3722,10 +3471,6 @@ fn journal_budget_match(entry: &JournalEntry, filter: &BudgetFilter, chips: &loa
   }
 }
 
-/// Whether a transaction satisfies an active Budget filter: in the filter's
-/// month, and either assigned to the filtered category or — for the
-/// uncategorized filter — an unassigned trade. Both buys and sells can be
-/// assigned to any category.
 fn market_budget_match(entry: &MarketEntry, filter: &BudgetFilter, chips: &loaders::BudgetChips) -> bool {
   if crate::features::wallet::budget_engine::month_key(&entry.date).as_deref() != Some(filter.month.as_str()) {
     return false;
@@ -4202,8 +3947,6 @@ mod tests {
 
     use super::*;
 
-    // The test ledger rows all belong to character 1, so their overrides key on
-    // that owner — matching the owner the chip/filter resolve from each row.
     fn chips(journal: &[(i64, i64)], market: &[(i64, i64)]) -> loaders::BudgetChips {
       let key = |entries: &[(i64, i64)]| {
         entries
@@ -4301,7 +4044,6 @@ mod tests {
       let mut fee = journal_entry(1, Some(-7.0), "brokers_fee", "Fee");
       fee.id = 13;
       fee.context_id = Some(500);
-      // A fee for a different trade must not be swept in.
       let mut other_fee = journal_entry(1, Some(-9.0), "brokers_fee", "Fee");
       other_fee.id = 14;
       other_fee.context_id = Some(999);
@@ -4355,7 +4097,6 @@ mod tests {
       fee.id = 13;
       fee.context_id = Some(500);
       state.journal = vec![tax, fee];
-      // The broker fee carries a manual override, so the cascade must skip it.
       state.budget_chips = chips(&[(13, 77)], &[]);
 
       let targets = budget_cascade_targets(&state, BudgetOwner::Character(1), BudgetEntryKind::Market, 500);
@@ -4414,8 +4155,6 @@ mod tests {
       corp.journal_ref_id = 20;
       corp.owner = BudgetOwner::Corporation(98_000_001);
       state.market = vec![character, corp];
-      // The corp's copy of the trade carries its own manual override, so the
-      // cross-owner cascade must skip it (its twin still co-assigns).
       let mut market_overrides = std::collections::HashMap::new();
       market_overrides.insert((BudgetOwner::Corporation(98_000_001), 500), 77);
       state.budget_chips = loaders::BudgetChips {
@@ -4507,7 +4246,6 @@ mod tests {
         BudgetOwner::Character(7),
         "the kept row is the character copy that carries the composite avatar",
       );
-      // The composite avatar still resolves for the surviving row.
       assert_eq!(
         market_dual_wallet_owners(&state, 500),
         Some((7, 98_000_001)),
@@ -4542,8 +4280,6 @@ mod tests {
       state.market = vec![character, corp_only];
       state.recompute_derived();
 
-      // A purely personal trade and a corp-only trade each survive as one row;
-      // neither is dropped because neither has a dual-wallet pair.
       let rows = filtered_market(&state);
       assert_eq!(rows.len(), 2);
       assert!(rows.iter().any(|row| row.transaction_id == 500));
@@ -4827,8 +4563,6 @@ mod tests {
       let mut entry = contract_entry(1, false, "finished", "item_exchange");
       entry.item_names = vec!["Rhea".to_owned(), "Tritanium".to_owned()];
 
-      // Case-insensitive substring on the item name surfaces the contract even
-      // when nothing in its type/status/parties matches.
       assert!(super::contract_matches(&entry, Side::All, "rhea"));
       assert!(super::contract_matches(&entry, Side::All, "trit"));
     }
@@ -6296,8 +6030,6 @@ mod tests {
     async fn it_renders_the_drill_view_independent_of_the_paged_ledger() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = State::new(crate::config::FeatureFlags::default());
-      // The paged ledger is empty (a past month never scrolled in), but the
-      // DB-backed drill still carries the category's rows.
       let filter = BudgetFilter {
         kind: BudgetFilterKind::Category(7),
         month: "2026-05".to_owned(),
@@ -6625,8 +6357,6 @@ mod tests {
     async fn it_drops_an_assigned_commit_for_a_past_month() {
       let db = crate::store::open_test().await.unwrap();
       let mut state = state_with_view();
-      // Simulate an editor opened while the month was current, then the month
-      // rolled into the past before the commit landed.
       state.budget_editing = Some(budget::EditingCell {
         category_id: 1,
         draft: crate::ui::format::fmt_isk(999.0),
@@ -6781,8 +6511,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = state_with_view();
 
-      // Each of these returns a persist+reload task; dispatching exercises the
-      // synchronous handler path. The editor edits drop the inline assign editor.
       let _ = update(&mut state, Message::BudgetAssignEditBegan(1), &db);
       let _ = update(&mut state, Message::BudgetAssignCommitted, &db);
       assert!(state.budget_editing().is_none());
@@ -6802,7 +6530,6 @@ mod tests {
 
       let open = state.budget_move().expect("move popover open");
       assert_eq!(open.from_id, 1);
-      // available = carry 200 + assigned 400 + activity −50 = 550.
       assert_eq!(open.amount_draft, crate::ui::format::fmt_isk(550.0));
       assert_eq!(state.budget_selected(), Some(1));
     }
@@ -6835,8 +6562,6 @@ mod tests {
       let mut state = state_with_view();
       let _ = update(&mut state, Message::BudgetMoveOpened(1, BudgetMoveAnchor::Pill), &db);
 
-      // Dispatching the commit runs the synchronous handler path (state mutation
-      // + persist task build) without executing the reload task.
       let _ = update(
         &mut state,
         Message::BudgetMoveCommitted(budget::MoveDest::ReadyToAssign),
@@ -6935,7 +6660,6 @@ mod tests {
         &db,
       );
 
-      // Leaving the row mid-drag must not drop the target the release will read.
       let _ = update(&mut state, Message::BudgetDropTargetLeft, &db);
 
       assert_eq!(state.budget_drop_target, Some(BudgetDropTarget::Category(1)));
@@ -7036,8 +6760,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = state_with_two_categories();
 
-      // Each builds a persist+reload task; dispatching exercises the synchronous
-      // handler path (state mutation, position lookup) without executing the task.
       let _ = update(&mut state, Message::BudgetCategoryAdded(10), &db);
       let _ = update(&mut state, Message::BudgetGroupAdded, &db);
 
@@ -7376,7 +7098,6 @@ mod tests {
       assert_eq!(state.budget_rule_drop_target(), Some(2));
 
       let _ = update(&mut state, Message::BudgetRuleDropTargetLeft, &db);
-      // The target only clears once the drag itself ends.
       assert_eq!(state.budget_rule_drop_target(), Some(2));
     }
 
@@ -7385,8 +7106,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = state_with_view();
 
-      // No drag is in progress, so entering a target is ignored and leaving one
-      // clears any stale target.
       let _ = update(&mut state, Message::BudgetRuleDropTargetEntered(2), &db);
       assert!(state.budget_rule_drop_target().is_none());
 
@@ -7593,10 +7312,6 @@ mod tests {
       let db = crate::store::open_test().await.unwrap();
       let mut state = journal_state();
 
-      // The cursor is tracked at the feature-root base (`shell` wraps it in a
-      // `mouse_area`), so the captured point lives in the overlay `Stack`'s
-      // coordinate space and the open menu must anchor at exactly that point —
-      // not offset by the header/tabs/hero above the inner table.
       let cursor = iced::Point::new(312.0, 188.0);
       state.ledger_cursor = Some(cursor);
 

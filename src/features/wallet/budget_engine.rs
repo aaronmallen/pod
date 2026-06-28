@@ -1,12 +1,3 @@
-//! Budget B2: activity derivation and the budgetable pool.
-//!
-//! Pure, DB-derived logic for the YNAB-style zero-based budget. This module owns
-//! the *math* — seeding a fresh scope's starter envelopes, mapping EVE journal
-//! `ref_type`s onto categories, summing monthly activity, rolling carry-over
-//! forward, and deriving the budgetable pool / Ready-to-Assign. Rendering
-//! (B3/B4), drag-and-drop CRUD (B5), and the assign/cover *writes* (B3) live
-//! elsewhere; B2 only provides figures.
-
 use std::collections::{HashMap, HashSet};
 
 use crate::store::{
@@ -22,16 +13,12 @@ const DIRECTION_OUT: &str = "out";
 const MARKET_BUY_TYPE: &str = "market_buy";
 const MARKET_SALE_TYPE: &str = "market_sale";
 
-/// A starter category in a seeded group: a stable `slug` (used to attach
-/// default `ref_type` maps without hard-coding row ids), a display `name`, and
-/// an optional `tone` for the eventual UI.
 struct SeedCategory {
   name: &'static str,
   slug: &'static str,
   tone: Option<&'static str>,
 }
 
-/// A starter group of categories, in the spirit of `budget-data.jsx` GROUPS.
 struct SeedGroup {
   cats: &'static [SeedCategory],
   name: &'static str,
@@ -93,11 +80,7 @@ const SEED_GROUPS: &[SeedGroup] = &[
   },
 ];
 
-/// Default mapping from EVE journal `ref_type` to a starter category slug. Built
-/// on the same `ref_type` vocabulary the wallet uses (`is_known_income_ref_type`
-/// & friends). User overrides in `budget_ref_type_maps` (B1) win over these.
 const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
-  // Income
   ("bounty_prizes", "income"),
   ("bounty_prize", "income"),
   ("agent_mission_reward", "income"),
@@ -107,20 +90,16 @@ const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
   ("project_reward", "income"),
   ("reprocessing_tax", "income"),
   ("ess_escrow_transfer", "income"),
-  // Trading
   ("market_transaction", "trading"),
   ("market_escrow", "trading"),
   ("market_provider_tax", "fees"),
-  // Fees
   ("brokers_fee", "fees"),
   ("broker_fee", "fees"),
   ("transaction_tax", "fees"),
-  // Corp tithe / tax
   ("corporation_account_withdrawal", "tithe"),
   ("corporation_dividend_payment", "tithe"),
   ("bounty_prizes_tax", "tithe"),
   ("industry_job_tax", "tithe"),
-  // Contracts
   ("contract_price_payment_corp", "contracts"),
   ("contract_price", "contracts"),
   ("contract_reward", "contracts"),
@@ -128,11 +107,9 @@ const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
   ("contract_collateral", "contracts"),
   ("contract_brokers_fee", "fees"),
   ("contract_deposit", "contracts"),
-  // Transfers
   ("player_donation", "transfers"),
   ("player_trading", "transfers"),
   ("corporation_payment", "transfers"),
-  // Industry
   ("manufacturing", "industry"),
   ("industry_job_refund", "industry"),
   ("structure_gate_jump", "industry"),
@@ -140,10 +117,6 @@ const DEFAULT_REF_TYPE_MAP: &[(&str, &str)] = &[
   ("office_rental_fee", "industry"),
 ];
 
-/// Default category slug for a market transaction by side — the canonical
-/// translation of the design's `defaultBudgetCatForMarket` (a buy is working
-/// capital flowing out, a sell is income flowing in) onto the seeded slug
-/// vocabulary. A per-entry assignment takes precedence over this default.
 const MARKET_BUY_SLUG: &str = "trading";
 
 const MARKET_SELL_SLUG: &str = "income";
@@ -198,8 +171,6 @@ const TRANSFER_NET_EPSILON: f64 = 0.5;
 /// is derived from a row's `ref_type` plus its signed amount (or market side),
 /// with internal-transfer status resolved dynamically by counter-leg matching —
 /// see [`internal_transfer_ids`].
-// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
-// follow-on tasks. Exercised by unit tests until then.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BudgetFlow {
   Expense,
@@ -209,9 +180,6 @@ pub enum BudgetFlow {
 }
 
 impl BudgetFlow {
-  /// Classifies a market trade by side: a buy spends working capital
-  /// ([`BudgetFlow::Expense`]); a sell brings ISK in ([`BudgetFlow::Income`]).
-  // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
   pub fn from_market(is_buy: bool) -> Self {
     if is_buy {
       BudgetFlow::Expense
@@ -229,7 +197,6 @@ impl BudgetFlow {
   /// amount falls to [`BudgetFlow::Income`] (it contributes nothing either way).
   /// Internal transfers are never returned here: that status is owner-aware and
   /// is layered on by [`classify_journal`].
-  // Budget flow taxonomy (child opkvvkkx). Exercised by unit tests until the RTA formula consumes it.
   pub fn from_ref_type(ref_type: &str, amount: f64) -> Self {
     if REFUND_REF_TYPES.contains(&ref_type) {
       return BudgetFlow::Refund;
@@ -242,13 +209,6 @@ impl BudgetFlow {
   }
 }
 
-/// A single category's month figures, derived live.
-///
-/// `available = carry + assigned + activity`. `activity` is the signed sum of
-/// journal `amount` mapped to this category for the month (positive = in,
-/// negative = out). `carry` is last month's positive available rolled forward.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CategoryMonth {
   pub activity: f64,
@@ -257,8 +217,6 @@ pub struct CategoryMonth {
 }
 
 impl CategoryMonth {
-  // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-  // until then.
   pub fn available(self) -> f64 {
     self.carry + self.assigned + self.activity
   }
@@ -277,34 +235,17 @@ pub struct MonthFlow {
   pub spend: f64,
 }
 
-/// The budgetable pool for a scope and the derived YNAB top-line figures.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PoolSummary {
-  /// Σ min(0, available) across the displayed month's categories (≤ 0); fuels
-  /// B3's Cover-overspending.
   pub overspent: f64,
-  /// Σ liquid balances of the scope's character + corp-division wallets.
   pub pool: f64,
-  /// pool − Σ max(0, available) across the scope's categories: the liquid ISK
-  /// not held in any envelope, conserving `pool = ready_to_assign + Σ held`.
   pub ready_to_assign: f64,
 }
 
-/// Returns the seed `(ref_type, slug)` defaults as an owned map for lookups and
-/// tests, deduplicated on `ref_type` (later entries win, though there are none).
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub fn default_ref_type_slugs() -> HashMap<&'static str, &'static str> {
   DEFAULT_REF_TYPE_MAP.iter().copied().collect()
 }
 
-/// Normalises an RFC3339 / `YYYY-MM-DD...` timestamp to its UTC calendar month
-/// key `YYYY-MM`. EVE journal dates are already UTC, so a lexical slice of the
-/// leading `YYYY-MM` is exact and avoids a parse on the hot path.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub fn month_key(date: &str) -> Option<String> {
   let bytes = date.as_bytes();
   if bytes.len() < 7 || bytes[4] != b'-' {
@@ -318,12 +259,6 @@ pub fn month_key(date: &str) -> Option<String> {
   }
 }
 
-/// Carry rolled into `month` from the prior month's available: YNAB rollover,
-/// where only a *positive* available carries forward (overspending does not
-/// follow ISK into next month as a positive balance). Returns 0 for the first
-/// month or any gap with no prior data.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub fn carry_from(prior_available: Option<f64>) -> f64 {
   prior_available.map_or(0.0, |available| available.max(0.0))
 }
@@ -335,8 +270,6 @@ pub fn carry_from(prior_available: Option<f64>) -> f64 {
 /// (0 for a brand-new category). Each subsequent month carries the prior month's
 /// `max(0, available)`. Gap months simply do not appear in `months`; the next
 /// present month carries from whatever the previous *present* month resolved to.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> {
   let mut out = Vec::with_capacity(months.len());
   let mut carry = seed_carry;
@@ -352,12 +285,6 @@ pub fn roll_carry(seed_carry: f64, months: &[(f64, f64)]) -> Vec<CategoryMonth> 
   out
 }
 
-/// Resolves a `ref_type` to a category id for a scope, overlaying the persisted
-/// user overrides (`maps`) on top of the seeded defaults (`slug_to_id` maps a
-/// default slug to its concrete category id for this scope). Returns `None` when
-/// neither an override nor a default applies (the flow is unmapped).
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub fn category_for_ref_type(
   ref_type: &str,
   overrides: &HashMap<String, i64>,
@@ -380,8 +307,6 @@ pub fn category_for_ref_type(
 /// no wallet row for the entry (e.g. a character-owned copy of a corp-only id).
 /// Such a row could never match the ledger and would sit silently inert, so it
 /// is skipped and `Ok(None)` returned rather than persisting a mis-owned row.
-// Per-entry budget assignment (child A); consumed by the Budget UI in child C. Exercised by unit
-// tests until then.
 pub async fn assign_entry(
   db: &Database,
   scope: BudgetScope,
@@ -399,18 +324,10 @@ pub async fn assign_entry(
     .map(Some)
 }
 
-// Dormant auto-categorization helper: the v1 derivation is manual-only, so this
-// feeds only the (test-exercised) `ResolutionContext::resolve` fallback path.
 fn market_default_slug(is_buy: bool) -> &'static str {
   if is_buy { MARKET_BUY_SLUG } else { MARKET_SELL_SLUG }
 }
 
-/// A scope's loaded resolution inputs — per-entry overrides (keyed by entry id
-/// within each entry kind), the per-`ref_type` map overlay, and the seeded
-/// slug→category map. Loaded once, then `resolve` runs in-memory so the
-/// derivation resolves thousands of entries without re-querying per entry.
-// Budget activity derivation (child B); consumed by the Budget Plan/Reflect UI and the per-entry
-// chip in child C. Exercised by unit tests until then.
 #[derive(Clone, Debug, Default)]
 pub struct ResolutionContext {
   pub journal_overrides: HashMap<(BudgetOwner, i64), i64>,
@@ -473,18 +390,6 @@ impl ResolutionContext {
     }
   }
 
-  /// The category an entry contributes its activity to, applying the first-run
-  /// disposition for the money-conserving income→Ready-to-Assign model.
-  ///
-  /// [`resolve_target`](Self::resolve_target) answers which category an entry
-  /// resolves to (a manual per-entry override, else a matching rule). For *income*
-  /// inflows that resolution is reinterpreted on first run: a rule/auto-derived
-  /// inflow assignment defaults to Ready-to-Assign (returns `None`, leaving the
-  /// ISK in the pool) rather than being filed into the envelope, because under the
-  /// new model genuine income belongs to the pool. An explicit per-entry *manual*
-  /// override is always honored, so a user who deliberately filed an inflow into a
-  /// category keeps it. Outflows, refunds, and internal transfers are unaffected:
-  /// they file wherever they resolve. See [`dispose_inflow_assignment`].
   pub fn resolve_for_activity(
     &self,
     entry_kind: BudgetEntryKind,
@@ -498,9 +403,6 @@ impl ResolutionContext {
     dispose_inflow_assignment(flow, manual, resolved)
   }
 
-  // Dormant auto-categorization path. The v1 derivation and chip are manual-only
-  // (they use `override_for`); this full-precedence resolver is retained, and
-  // exercised by unit tests, for a future opt-in auto-assign mode.
   pub fn resolve(
     &self,
     owner: BudgetOwner,
@@ -516,8 +418,6 @@ impl ResolutionContext {
         }
         category_for_ref_type(ref_type?, &self.ref_overrides, &self.slug_to_id)
       }
-      // Market entries carry a side, not a `ref_type`, so the per-`ref_type` map
-      // tier does not apply — they resolve by side once no per-entry override exists.
       BudgetEntryKind::Market => {
         if let Some(&id) = self.market_overrides.get(&(owner, entry_id)) {
           return Some(id);
@@ -551,8 +451,6 @@ impl ResolutionContext {
 ///   that ISK in the pool.
 /// - Every other flow ([`BudgetFlow::Expense`], [`BudgetFlow::Refund`],
 ///   [`BudgetFlow::InternalTransfer`]) files wherever it resolved, unchanged.
-// First-run income→RTA disposition (child rowluuus); consumed by the activity derivation. Exercised
-// by unit tests.
 pub fn dispose_inflow_assignment(flow: BudgetFlow, manual: Option<i64>, resolved: Option<i64>) -> Option<i64> {
   if manual.is_some() {
     return resolved;
@@ -563,19 +461,11 @@ pub fn dispose_inflow_assignment(flow: BudgetFlow, manual: Option<i64>, resolved
   resolved
 }
 
-/// How a matched outflow is classified in a rule editor's live preview, relative
-/// to the rest of the rule set, the manual override map, and the rule's target
-/// category.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PreviewStatus {
-  /// Already resolves to this rule's category anyway (no other rule claims it and
-  /// it is not manually pinned elsewhere).
   Already,
-  /// This rule wins — the entry will move into the target category.
   Assign,
-  /// Pinned by a manual per-entry assignment; rules never touch it.
   Manual,
-  /// A higher-priority *other* enabled rule claims it first.
   Preempted,
 }
 
@@ -629,9 +519,6 @@ impl MatchTarget {
     }
   }
 
-  /// Whether this entry matches a single condition. Text comparisons are
-  /// case-insensitive; `Text` joins every text field; amount conditions parse ISK
-  /// shorthand and compare against the absolute amount.
   pub fn matches_condition(&self, condition: &RuleCondition) -> bool {
     match condition.field() {
       RuleField::Amount => self.matches_amount(condition),
@@ -655,9 +542,6 @@ impl MatchTarget {
     }
   }
 
-  /// Whether this entry matches a rule: inactive conditions are dropped, then the
-  /// remaining conditions are joined by the rule's `match_mode`. A rule with no
-  /// active conditions matches nothing.
   pub fn matches_rule(&self, rule: &Rule) -> bool {
     let mut active = rule.conditions().iter().filter(|c| is_active_condition(c)).peekable();
     if active.peek().is_none() {
@@ -744,25 +628,10 @@ fn isk_value_parses(input: &str) -> bool {
   number.parse::<f64>().is_ok_and(f64::is_finite)
 }
 
-/// The number of supplied outflows a rule would catch. Inflows are never passed
-/// in (rules only touch spending), so the caller filters to outflows first.
 pub fn match_count(rule: &Rule, outflows: &[MatchTarget]) -> usize {
   outflows.iter().filter(|target| target.matches_rule(rule)).count()
 }
 
-/// Classifies every outflow a `draft` rule matches, predicting the verdict the
-/// engine reaches on save. `live_rules` are the live rules in priority order
-/// (including the slot of the rule being edited); the draft is spliced at its
-/// real position — substituted for its matching id, or appended when new — and
-/// the result is evaluated with the engine's first-enabled-match logic, so the
-/// preview agrees with [`rule_category_for`]. `manual` maps an outflow's index
-/// in `outflows` to its manually pinned category. `category_id` is the draft's
-/// target envelope.
-///
-/// - `Manual`: a manual override pins the entry.
-/// - `Preempted`: a higher-priority rule wins it for a different category.
-/// - `Already`: the draft wins, but the entry already targets this category.
-/// - `Assign`: the draft wins and moves it into the category.
 pub fn preview_entries(
   draft: &Rule,
   live_rules: &[Rule],
@@ -807,11 +676,6 @@ pub fn preview_entries(
     .collect()
 }
 
-/// A short auto-name suggestion derived from a rule's first active condition,
-/// for the editor's "name this rule" affordance. Type and character conditions
-/// need a resolver (`type_label`/`character_name`) to turn their stored id/key
-/// into a label; both default to the raw value when the resolver returns `None`.
-/// Returns an empty string when the rule has no active conditions.
 pub fn suggest_name(
   rule: &Rule,
   type_label: impl Fn(&str) -> Option<String>,
@@ -836,10 +700,6 @@ pub fn suggest_name(
   }
 }
 
-/// Humanizes an EVE journal `ref_type` (e.g. `daily_goal_payouts`) into its
-/// title-cased display label (`Daily Goal Payouts`). An empty `ref_type` renders
-/// as an em dash. Shared by the wallet's row label, the journal search text, and
-/// the rule engine's matchable text so all three see the same wording.
 pub fn humanize_ref_type(ref_type: &str) -> String {
   if ref_type.is_empty() {
     return "\u{2014}".to_owned();
@@ -857,10 +717,6 @@ pub fn humanize_ref_type(ref_type: &str) -> String {
     .join(" ")
 }
 
-/// The enriched searchable text for a journal entry: the humanized ref_type
-/// label ∪ reason ∪ description, joined by spaces. Shared by the rule matcher and
-/// the wallet's journal search so searching the label a user actually sees (e.g.
-/// "Daily") finds the row even though its raw `ref_type` is `daily_goal_payouts`.
 pub fn journal_match_text(ref_type: &str, reason: Option<&str>, description: &str) -> String {
   let mut parts: Vec<&str> = vec![ref_type, reason.unwrap_or(""), description];
   let label = humanize_ref_type(ref_type);
@@ -899,9 +755,6 @@ pub fn field_label(field: RuleField) -> &'static str {
   }
 }
 
-/// Every rule field in the editor's field-picker order, mirroring the design's
-/// vocabulary (Any text first, then Type, Party, Reference, Location, Item,
-/// Amount, Direction, Character).
 pub fn rule_fields() -> [RuleField; 9] {
   [
     RuleField::Text,
@@ -916,8 +769,6 @@ pub fn rule_fields() -> [RuleField; 9] {
   ]
 }
 
-/// The operators the editor offers for a given field, in menu order. The first
-/// entry is the field's default operator when a condition switches to it.
 pub fn ops_for_field(field: RuleField) -> &'static [RuleOp] {
   match field {
     RuleField::Amount => &[RuleOp::GreaterThan, RuleOp::LessThan, RuleOp::Between],
@@ -929,8 +780,6 @@ pub fn ops_for_field(field: RuleField) -> &'static [RuleOp] {
   }
 }
 
-/// The kind of value editor a field needs: drives whether the rule builder shows
-/// a free-text input, an amount input, or a fixed select.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FieldKind {
   Amount,
@@ -950,9 +799,6 @@ pub fn field_kind(field: RuleField) -> FieldKind {
   }
 }
 
-/// A fresh condition for `field`, seeded with the field's default operator and an
-/// empty value (Direction defaults to "out"; a Between amount seeds its upper
-/// bound). Mirrors the design's `newCondition`.
 pub fn new_condition(field: RuleField) -> RuleCondition {
   let op = ops_for_field(field).first().copied().unwrap_or(RuleOp::Contains);
   let value = if field == RuleField::Direction {
@@ -969,7 +815,6 @@ pub fn new_condition(field: RuleField) -> RuleCondition {
   }
 }
 
-/// The two direction options, as `(stored value, label)` pairs.
 pub fn direction_options() -> [(&'static str, &'static str); 2] {
   [
     (DIRECTION_OUT, super::i18n::tr_static("wallet.budget.direction_outflow")),
@@ -977,11 +822,6 @@ pub fn direction_options() -> [(&'static str, &'static str); 2] {
   ]
 }
 
-/// A one-line human summary of a rule's active conditions, joined by "and"/"or"
-/// per the rule's match mode (e.g. `Reference contains "Cerberus" or Item
-/// contains "Caracal"`). Returns "No conditions yet" for a rule with no active
-/// conditions. `type_label`/`character_name` resolve the stored id/key of Type
-/// and Character conditions; both fall back to the raw value when `None`.
 pub fn summarize_rule(
   rule: &Rule,
   type_label: impl Fn(&str) -> Option<String>,
@@ -1045,11 +885,6 @@ fn condition_text(
   }
 }
 
-/// A rule's effective category for a single ledger entry: the first enabled rule
-/// in priority order whose conditions match. Rules match both spending (outflows)
-/// and income (inflows) — a rule that files an inflow into a category returns it
-/// to that envelope and the derivation reserves it out of Ready-to-Assign. An
-/// empty rule set (or no match) yields `None`. Pure over a loaded rule list.
 fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
   rules
     .iter()
@@ -1057,11 +892,6 @@ fn rule_category_for(target: &MatchTarget, rules: &[Rule]) -> Option<i64> {
     .map(Rule::category_id)
 }
 
-/// Resolves a single ledger entry to its effective budget category for a scope,
-/// honoring the precedence: per-entry override → per-`ref_type` map → seed
-/// default. Journal entries resolve through their `ref_type`; market entries
-/// resolve through their side (`is_buy`). Returns `None` when nothing maps
-/// (e.g. an unseeded scope, or an unmapped `ref_type`).
 // Per-entry budget assignment (child A); consumed by the Budget derivation/UI in children B/C.
 // Exercised by unit tests until then.
 #[cfg_attr(not(test), expect(dead_code))]
@@ -1079,11 +909,6 @@ pub async fn resolve_entry_category(
     .resolve(owner, entry_kind, entry_id, ref_type, is_buy)
 }
 
-/// Aggregates signed journal `amount` by mapped category id for a set of
-/// entries, using `resolve` to map each entry — by its id and `ref_type` — to a
-/// category. The entry id lets per-entry overrides win over the `ref_type`
-/// default. Entries with no amount, or no resolved category, are skipped.
-/// Positive amounts add to activity (income/in), negative subtract (spend/out).
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
 #[cfg_attr(not(test), expect(dead_code))]
@@ -1131,12 +956,6 @@ pub fn pool_summary(pool: f64, availables: impl IntoIterator<Item = f64>) -> Poo
   }
 }
 
-/// The character ids whose journals/balances a scope covers.
-///
-/// `All` is every owned character; `Character(id)` is just that pilot;
-/// `Corporation` covers no character wallets (its money lives in divisions).
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn scope_character_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
   match scope {
     BudgetScope::All => character::all_owned(db)
@@ -1150,11 +969,6 @@ pub async fn scope_character_ids(db: &Database, scope: BudgetScope) -> Vec<i64> 
   }
 }
 
-/// The corporation ids whose division wallets a scope covers: every owned
-/// corporation for `All`, the one corporation for `Corporation`, and none for a
-/// single-character scope.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn scope_corporation_ids(db: &Database, scope: BudgetScope) -> Vec<i64> {
   match scope {
     BudgetScope::All => org::all_owned_corporations(db)
@@ -1171,8 +985,6 @@ pub async fn scope_corporation_ids(db: &Database, scope: BudgetScope) -> Vec<i64
 /// The budgetable pool: Σ liquid balances across the scope's character wallets
 /// plus the corp division wallets it covers (mirrors the wallet's `Scope`
 /// liquid roll-up). Missing balances are treated as 0.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
   let mut pool = 0.0;
   for id in scope_character_ids(db, scope).await {
@@ -1188,9 +1000,6 @@ pub async fn budgetable_pool(db: &Database, scope: BudgetScope) -> f64 {
   pool
 }
 
-/// The persisted `ref_type` → category-id overrides for a scope.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn ref_type_overrides(db: &Database, scope: BudgetScope) -> HashMap<String, i64> {
   crate::store::repo::budget::list_ref_type_maps(db, scope)
     .await
@@ -1200,11 +1009,6 @@ pub async fn ref_type_overrides(db: &Database, scope: BudgetScope) -> HashMap<St
     .collect()
 }
 
-/// Maps a seeded scope's default category slugs to their concrete row ids by
-/// matching seed category names. Used to resolve default `ref_type` mappings
-/// after seeding without persisting a slug column.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&'static str, i64> {
   let name_to_slug: HashMap<&str, &str> = SEED_GROUPS
     .iter()
@@ -1233,8 +1037,6 @@ pub async fn slug_to_category_id(db: &Database, scope: BudgetScope) -> HashMap<&
 /// `ref_type` map. Idempotent: a second call adds nothing. "Fresh" means the
 /// scope has no groups yet; once any group exists the seed is a no-op so a user
 /// who deletes a starter envelope never has it resurrected.
-// Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
-// until then.
 pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> {
   use crate::store::{
     model::{NewCategory, NewGroup},
@@ -1243,8 +1045,6 @@ pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> 
     },
   };
 
-  // Seed a scope's starter budget exactly once. The persisted marker means
-  // deleting every group never resurrects the defaults — the empty budget sticks.
   if is_scope_seeded(db, scope).await? {
     return Ok(());
   }
@@ -1292,9 +1092,6 @@ pub async fn seed_scope(db: &Database, scope: BudgetScope) -> Result<(), Error> 
   Ok(())
 }
 
-/// A journal row reduced to the fields the monthly derivation needs: its id (for
-/// per-entry overrides), `date`/`ref_type`/`amount` for the sum, and
-/// `context_id`/`context_id_type` for market-twin de-duplication.
 struct JournalActivity {
   amount: Option<f64>,
   context_id: Option<i64>,
@@ -1304,14 +1101,9 @@ struct JournalActivity {
   id: i64,
   owner: BudgetOwner,
   ref_type: String,
-  /// The enriched searchable text for rule matching: humanized ref_type label ∪
-  /// reason ∪ description.
   text: String,
 }
 
-/// Every in-scope journal and transaction row, flattened for the rule/override
-/// resolver, loaded once alongside the resolution context so both the monthly
-/// activity sum and the needs-review count resolve in-memory from one DB pass.
 struct ScopeLedger {
   context: ResolutionContext,
   journal_rows: Vec<JournalActivity>,
@@ -1343,14 +1135,6 @@ fn is_market_twin(row: &JournalActivity, ingested: &HashSet<i64>) -> bool {
     && row.context_id.is_some_and(|id| ingested.contains(&id))
 }
 
-/// The flow classification of a journal row, owner-aware for internal transfers.
-///
-/// A row whose journal id is in `transfer_ids` (an owner-aware internal transfer,
-/// see [`internal_transfer_ids`]) is [`BudgetFlow::InternalTransfer`] regardless
-/// of its ref_type; every other row classifies statically by ref_type and sign
-/// via [`BudgetFlow::from_ref_type`].
-// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
-// follow-on tasks. Exercised by unit tests until then.
 fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> BudgetFlow {
   if transfer_ids.contains(&row.id) {
     return BudgetFlow::InternalTransfer;
@@ -1374,8 +1158,6 @@ fn classify_journal(row: &JournalActivity, transfer_ids: &HashSet<i64>) -> Budge
 /// exactly-two requirement rejects 3+-leg pile-ups, and the distinct-wallet
 /// requirement rejects two legs that landed in the same wallet, so neither is
 /// mis-paired.
-// Budget flow taxonomy (child opkvvkkx); consumed by the RTA formula and needs-review count in
-// follow-on tasks. Exercised by unit tests until then.
 fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
   let mut legs_by_key: HashMap<(&str, i64), Vec<&JournalActivity>> = HashMap::new();
   for row in rows {
@@ -1407,13 +1189,6 @@ fn internal_transfer_ids(rows: &[JournalActivity]) -> HashSet<i64> {
   ids
 }
 
-/// Aggregates a scope's signed activity by category for a single UTC calendar
-/// `month` (`YYYY-MM`), unioning every in-scope character and covered
-/// corp-division journal with the matching wallet transactions. v1 is fully
-/// manual: only entries carrying an explicit per-entry override contribute to a
-/// category; everything else stays in Ready-to-Assign. Market trades are counted
-/// from the transaction source, and their journal twins are de-duplicated away
-/// so an assigned trade is counted once.
 // Budget activity math (B2); consumed by the Budget Plan/Reflect UI in B3+. Exercised by unit tests
 // until then.
 #[cfg_attr(not(test), expect(dead_code))]
@@ -1421,15 +1196,6 @@ pub async fn monthly_activity(db: &Database, scope: BudgetScope, month: &str) ->
   activity_by_month(db, scope).await.remove(month).unwrap_or_default()
 }
 
-/// Aggregates a scope's signed activity by category for *every* UTC calendar
-/// month in one batched pass, keyed `month → (category id → signed activity)`.
-/// Loads each in-scope wallet's journal and transactions once, then groups by
-/// month so the multi-month carry chain has real per-month activity without an
-/// O(history) query-per-month blow-up. Market-twin de-duplication and the
-/// owner-aware manual override resolution match [`monthly_activity`] exactly,
-/// applied independently within each month.
-// Budget activity math (B2); consumed by the carry chain in the Budget Plan UI. Exercised by unit
-// tests until then.
 pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<String, HashMap<i64, f64>> {
   let ScopeLedger {
     context,
@@ -1477,8 +1243,6 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     }
     let Some(amount) = row.amount else { continue };
     let target = MatchTarget::journal(row.owner, &row.ref_type, Some(amount), &row.text);
-    // First-run income→RTA disposition: a non-manual inflow defaults to
-    // Ready-to-Assign rather than being held in the rule-resolved envelope.
     if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Journal, row.id, flow, &target) {
       *by_month.entry(month).or_default().entry(category_id).or_insert(0.0) += amount;
     }
@@ -1502,8 +1266,6 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
     }
     let target = MatchTarget::market(tx.owner, tx.is_buy, tx.amount, &tx.item, &tx.location);
     let flow = BudgetFlow::from_market(tx.is_buy);
-    // First-run income→RTA disposition: a non-manual sell (inflow) defaults to
-    // Ready-to-Assign rather than being held in the rule-resolved envelope.
     if let Some(category_id) = context.resolve_for_activity(BudgetEntryKind::Market, tx.transaction_id, flow, &target) {
       *by_month
         .entry(month.clone())
@@ -1517,20 +1279,6 @@ pub async fn activity_by_month(db: &Database, scope: BudgetScope) -> HashMap<Str
   by_month
 }
 
-/// The number of ledger entries in `month` that still need a category — the
-/// Review &amp; assign banner's count, sourced from the DB so it reflects every
-/// entry in the month, not only the loaded page.
-///
-/// Only uncategorized *expenses* are reviewable: a row counts when it is an
-/// outflow ([`BudgetFlow::Expense`]) that [`ResolutionContext::resolve_target`]
-/// leaves unresolved (no manual override and no matching rule), matching the
-/// per-row chip the UI renders. Income posts to Ready-to-Assign and internal
-/// transfers move no money, so neither ever appears in the count. Journal
-/// market-transaction twins are excluded only when their trade was ingested from
-/// the Transactions side (mirroring [`is_market_twin`]), so a kept un-twinned
-/// market journal row stays reviewable. Market trades are de-duplicated by
-/// `transaction_id`, so a corp trade mirrored into a personal wallet counts once
-/// — consistent with [`activity_by_month`]'s de-dup.
 pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, month: &str) -> usize {
   let ScopeLedger {
     context,
@@ -1592,9 +1340,6 @@ pub async fn uncategorized_count_for_month(db: &Database, scope: BudgetScope, mo
 async fn load_scope_ledger(db: &Database, scope: BudgetScope) -> ScopeLedger {
   let context = ResolutionContext::load(db, scope).await;
 
-  // Item/location names back the rule engine's text matching for market rows;
-  // loaded once so per-month resolution stays in-memory. Empty when no rule
-  // touches them, so the lookups are harmless on the manual-only path.
   let (type_names, location_names) = match context.rules.is_empty() {
     true => (HashMap::new(), HashMap::new()),
     false => (type_names(db).await, location_names(db).await),
@@ -1694,18 +1439,6 @@ fn shift_month_key(month: &str, delta: i32) -> String {
   format!("{:04}-{:02}", zero_based.div_euclid(12), zero_based.rem_euclid(12) + 1)
 }
 
-/// The FIFO age-of-ISK, by month, for a scope's signed journal flows.
-///
-/// Models the wallet as a FIFO queue of timestamped ISK lots: every positive
-/// flow enqueues a lot dated on its journal day; every negative flow (a spend)
-/// consumes ISK from the oldest lot first. The age of each spent unit of ISK is
-/// the number of days between the lot it came from and the spend. A month's
-/// age-of-ISK is the ISK-quantity-weighted mean age (in days) of all ISK spent
-/// in that month — directly "how long ISK sat before being spent".
-///
-/// `flows` are `(date, signed amount)` in any order; they are sorted by day
-/// here. Spends with no ISK left to draw on (the queue is empty) contribute no
-/// age. Returns a map of month key (`YYYY-MM`) to weighted-mean spend age.
 fn fifo_ages_by_month<'a>(flows: impl IntoIterator<Item = (&'a str, f64)>) -> HashMap<String, f64> {
   let mut dated: Vec<(i64, String, f64)> = flows
     .into_iter()
@@ -1753,9 +1486,6 @@ fn fifo_ages_by_month<'a>(flows: impl IntoIterator<Item = (&'a str, f64)>) -> Ha
     .collect()
 }
 
-/// The scope's signed journal flows as `(date, amount)`, unioning every in-scope
-/// character journal and covered corp-division journal. Drives the trailing
-/// history and FIFO age-of-ISK without re-querying per month.
 async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, f64)> {
   let mut flows: Vec<(String, f64)> = Vec::new();
   for character_id in scope_character_ids(db, scope).await {
@@ -1781,7 +1511,6 @@ async fn scope_journal_flows(db: &Database, scope: BudgetScope) -> Vec<(String, 
 }
 
 /// Months with no data are still emitted as zeros so the Reflect charts always have a full series.
-// Budget reporting history (B4); consumed by the Budget Reflect UI. Exercised by unit tests.
 pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, months: usize) -> Vec<MonthFlow> {
   // income/spend are raw monthly cashflow (every journal movement), independent
   // of envelope assignment — the Reflect trend tracks money in/out, not budgeting.
@@ -1813,9 +1542,6 @@ pub async fn monthly_history(db: &Database, scope: BudgetScope, month: &str, mon
   out
 }
 
-/// Station and structure `id → name` map for resolving a row's location name.
-/// Shared by the ledger chip and the envelope math so an Item/Location rule
-/// matches the same rows in both. Loaded once per pass.
 pub(crate) async fn location_names(db: &Database) -> HashMap<i64, String> {
   let mut names = HashMap::new();
   for station in crate::store::repo::sde::all_stations(db).await.unwrap_or_default() {
@@ -1827,9 +1553,6 @@ pub(crate) async fn location_names(db: &Database) -> HashMap<i64, String> {
   names
 }
 
-/// Item-type `id → name` map for resolving a row's item name. Shared by the
-/// ledger chip and the envelope math so an Item/Location rule matches the same
-/// rows in both. Loaded once per pass.
 pub(crate) async fn type_names(db: &Database) -> HashMap<i64, String> {
   crate::store::repo::sde::all_item_types(db)
     .await
@@ -2195,8 +1918,6 @@ mod tests {
 
     #[test]
     fn it_resolves_an_inflow_a_rule_matches() {
-      // Income files into an envelope too — e.g. an inheritance returned to a
-      // "Windfall" category. The derivation reserves it out of Ready-to-Assign.
       let inflow = MatchTarget::journal(BudgetOwner::Character(1), "inheritance", Some(10.0), "Inheritance");
       let rules = vec![rule(
         10,
@@ -2231,21 +1952,16 @@ mod tests {
 
     #[test]
     fn it_clears_a_non_manual_inflow_to_ready_to_assign() {
-      // A rule filed this income into category 10; under the money-conserving
-      // model it defaults back to Ready-to-Assign (None) so the pool is not
-      // drawn down by the inflow.
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Income, None, Some(10)), None);
     }
 
     #[test]
     fn it_retains_a_manual_inflow_assignment() {
-      // The user explicitly pinned this income to category 7; their choice wins.
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Income, Some(7), Some(7)), Some(7));
     }
 
     #[test]
     fn it_leaves_non_income_flows_filing_where_they_resolve() {
-      // Expenses, refunds, and transfers are unaffected by the inflow disposition.
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Expense, None, Some(5)), Some(5));
       assert_eq!(dispose_inflow_assignment(BudgetFlow::Refund, None, Some(5)), Some(5));
       assert_eq!(
@@ -2256,9 +1972,6 @@ mod tests {
 
     #[test]
     fn it_disposes_through_the_resolution_context() {
-      // Two identical inflows: one carries a manual per-entry override, the other
-      // is only matched by a rule. The manual one is retained; the rule-derived
-      // one is cleared to Ready-to-Assign.
       let owner = BudgetOwner::Character(1);
       let rules = vec![rule(
         10,
@@ -2275,12 +1988,10 @@ mod tests {
       };
 
       let target = MatchTarget::journal(owner, "bounty", Some(10.0), "Bounty");
-      // Manual override on entry 100 is honored.
       assert_eq!(
         context.resolve_for_activity(BudgetEntryKind::Journal, 100, BudgetFlow::Income, &target),
         Some(10)
       );
-      // Entry 200 is only rule-matched (non-manual inflow) → Ready-to-Assign.
       assert_eq!(
         context.resolve_for_activity(BudgetEntryKind::Journal, 200, BudgetFlow::Income, &target),
         None
@@ -2719,9 +2430,6 @@ mod tests {
 
     #[test]
     fn it_rolls_positive_available_across_three_months() {
-      // Month 1: 0 carry + 100 assigned − 40 spend = 60 available.
-      // Month 2: 60 carry + 100 assigned − 40 spend = 120 available.
-      // Month 3: 120 carry + 0 assigned − 20 spend = 100 available.
       let months = roll_carry(0.0, &[(100.0, -40.0), (100.0, -40.0), (0.0, -20.0)]);
 
       assert_eq!(months[0].carry, 0.0);
@@ -2734,8 +2442,6 @@ mod tests {
 
     #[test]
     fn it_does_not_carry_a_negative_available_into_the_next_month() {
-      // Month 1: 0 + 50 − 200 = −150 available (overspent) → carries 0, not −150.
-      // Month 2: 0 carry + 100 assigned + 0 = 100 available.
       let months = roll_carry(0.0, &[(50.0, -200.0), (100.0, 0.0)]);
 
       assert_eq!(months[0].available(), -150.0);
@@ -2753,8 +2459,6 @@ mod tests {
 
     #[test]
     fn it_treats_a_gap_month_as_the_previous_present_month_rolling_forward() {
-      // A series with only the months that have data (Jan, then Mar; Feb is a
-      // gap and simply absent). Mar carries Jan's positive available.
       let months = roll_carry(0.0, &[(80.0, 0.0), (0.0, -30.0)]);
 
       assert_eq!(months[0].available(), 80.0);
@@ -2811,8 +2515,6 @@ mod tests {
 
     #[test]
     fn it_returns_none_when_the_default_slug_was_not_seeded() {
-      // The ref_type has a default slug, but that category does not exist in
-      // this scope (e.g. the user deleted it).
       let slug_to_id = HashMap::new();
       let overrides = HashMap::new();
 
@@ -2847,7 +2549,6 @@ mod tests {
     #[test]
     fn it_lets_the_entry_id_steer_resolution() {
       let entries = vec![(1, "bounty_prizes", Some(1_000.0)), (2, "bounty_prizes", Some(500.0))];
-      // Entry 2 is pinned to a different category despite the same ref_type.
       let resolve = |id: i64, _ref_type: &str| if id == 2 { Some(9) } else { Some(1) };
 
       let by_category = aggregate_activity(entries, resolve);
@@ -2879,7 +2580,6 @@ mod tests {
 
     #[test]
     fn it_derives_ready_to_assign_as_pool_minus_held_availables() {
-      // 600 held across three envelopes; the rest of the 1,000 liquid is free.
       let summary = pool_summary(1_000.0, [300.0, 200.0, 100.0]);
 
       assert_eq!(summary.pool, 1_000.0);
@@ -2889,7 +2589,6 @@ mod tests {
 
     #[test]
     fn it_conserves_liquid_across_ready_to_assign_and_held() {
-      // The invariant: pool = ready_to_assign + Σ max(0, available).
       let availables = [300.0, 250.0, 50.0];
       let summary = pool_summary(1_000.0, availables);
 
@@ -2899,17 +2598,14 @@ mod tests {
 
     #[test]
     fn it_excludes_overspent_envelopes_from_held_and_reports_them() {
-      // A negative available is overspend: it shows red and never inflates RTA.
       let summary = pool_summary(500.0, [300.0, -150.0, -50.0]);
 
       assert_eq!(summary.overspent, -200.0);
-      // ready = 500 − 300 held; the −200 overspend does not credit back into RTA.
       assert_eq!(summary.ready_to_assign, 200.0);
     }
 
     #[test]
     fn it_can_report_a_negative_ready_to_assign_when_over_held() {
-      // Holding more in envelopes than the liquid pool over-draws RTA.
       let summary = pool_summary(100.0, [80.0, 80.0]);
 
       assert_eq!(summary.ready_to_assign, -60.0);
@@ -2917,16 +2613,9 @@ mod tests {
 
     #[test]
     fn it_conserves_money_across_assign_spend_and_overspend() {
-      // Three envelopes after a month of activity (a transfer contributes no
-      // available, having been excluded upstream):
-      //   assigned-and-untouched: carry 0 + assigned 200 + activity 0   = 200
-      //   spent-down:             carry 0 + assigned 200 + activity −150 =  50
-      //   overspent:              carry 0 + assigned 100 + activity −180 = −80
       let availables = [200.0, 50.0, -80.0];
       let summary = pool_summary(1_000.0, availables);
 
-      // RTA reflects only the ISK still held (200 + 50); overspend is reported
-      // separately and never credits back into RTA.
       assert_eq!(summary.ready_to_assign, 750.0);
       assert_eq!(summary.overspent, -80.0);
 
@@ -3120,13 +2809,6 @@ mod tests {
 
     #[test]
     fn it_detects_a_transfer_between_two_divisions_of_one_corporation() {
-      // The regression ADR-0040 exists to prevent: one corporation moves ISK
-      // between two of its own wallet divisions, so both legs share the corp
-      // owner and the same EVE id (1, ref_type corporation_account_withdrawal),
-      // differing only by division. A corporation's wallet is its division, so
-      // the two legs are distinct wallets and must pair and net to zero. Before
-      // the (owner, division) distinct-wallet key they collided under one owner
-      // and were left counted as real spend and income.
       let rows = vec![
         corp_division_row(1, 98, 1, "corporation_account_withdrawal", -25.0),
         corp_division_row(1, 98, 2, "corporation_account_withdrawal", 25.0),
@@ -3139,8 +2821,6 @@ mod tests {
 
     #[test]
     fn it_ignores_two_legs_in_the_same_corporation_division() {
-      // Two legs that landed in the very same corp wallet (same owner AND same
-      // division) are one wallet, not a transfer between wallets.
       let rows = vec![
         corp_division_row(1, 98, 3, "corporation_account_withdrawal", 25.0),
         corp_division_row(1, 98, 3, "corporation_account_withdrawal", -25.0),
@@ -3153,10 +2833,6 @@ mod tests {
 
     #[test]
     fn it_does_not_collide_a_character_and_corp_sharing_an_eve_id() {
-      // Two unrelated single legs that happen to share EVE journal id 900: one a
-      // character donation in, one a corp donation out. The bare-id key would have
-      // paired and cancelled them; grouping by (ref_type, id) plus the
-      // distinct-owner pairing must still treat each as one standalone leg.
       let rows = vec![
         row(900, BudgetOwner::Character(1), "player_donation", 10.0),
         row(900, BudgetOwner::Corporation(98), "contract_price", -10.0),
@@ -3235,7 +2911,6 @@ mod tests {
       let maps = budget::list_ref_type_maps(&db, BudgetScope::All).await.unwrap();
       assert_eq!(maps.len(), DEFAULT_REF_TYPE_MAP.len());
 
-      // Every default ref_type resolves to a real, seeded category.
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
       let overrides = HashMap::new();
       for (ref_type, _) in DEFAULT_REF_TYPE_MAP {
@@ -3289,7 +2964,6 @@ mod tests {
     #[tokio::test]
     async fn it_adopts_a_legacy_seeded_scope_without_re_seeding() {
       let db = store::open_test().await.unwrap();
-      // Simulate a scope seeded before the marker existed: groups present, no marker.
       budget::create_group(
         &db,
         &NewGroup {
@@ -3336,9 +3010,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_lazy_seeds_an_unseeded_scope_on_first_assignment() {
-      // A fresh DB seeds a scope's categories in a deterministic order, so the
-      // income category id discovered on a probe DB is valid on a second fresh DB
-      // where `assign_entry` performs the lazy seed itself.
       let probe = store::open_test().await.unwrap();
       seed_scope(&probe, BudgetScope::Character(1)).await.unwrap();
       let income_id = slug_to_category_id(&probe, BudgetScope::Character(1)).await["income"];
@@ -3424,7 +3095,6 @@ mod tests {
       seed_scope(&db, BudgetScope::All).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
 
-      // Journal id 9 exists only in the corp wallet; no character holds it.
       finance::append_corporation_wallet_journal(
         &db,
         &[CorporationWalletJournal {
@@ -3512,7 +3182,6 @@ mod tests {
       seed_scope(&db, BudgetScope::All).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
 
-      // The same transaction_id 700 lands in BOTH the character and corp wallet.
       finance::append_wallet_transaction(
         &db,
         &[crate::store::model::CharacterWalletTransaction {
@@ -3596,9 +3265,6 @@ mod tests {
       seed_scope(&db, scope).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
-      // `manufacturing` defaults to the industry envelope; override entry 5 to income.
-      // Written through the storage primitive so this resolution test is independent
-      // of `assign_entry`'s wallet-ownership guard.
       budget::upsert_entry_assignment(
         &db,
         scope,
@@ -3632,9 +3298,6 @@ mod tests {
       seed_scope(&db, scope).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
-      // Two owners share EVE journal id 5; only the character's entry is overridden.
-      // Written through the storage primitive so this resolution test is independent
-      // of `assign_entry`'s wallet-ownership guard.
       budget::upsert_entry_assignment(
         &db,
         scope,
@@ -3659,7 +3322,6 @@ mod tests {
         .await,
         Some(slug_to_id["income"])
       );
-      // The corporation's same-id entry is untouched and falls back to its ref_type default.
       assert_eq!(
         resolve_entry_category(
           &db,
@@ -3682,7 +3344,6 @@ mod tests {
       seed_scope(&db, scope).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, scope).await;
 
-      // `bounty_prizes` seeds to income; remap the ref_type to fees with no per-entry override.
       budget::upsert_ref_type_map(&db, scope, "bounty_prizes", slug_to_id["fees"])
         .await
         .unwrap();
@@ -3882,7 +3543,6 @@ mod tests {
         &[
           journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
           journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-          // Unassigned — stays in Ready-to-Assign, never counted.
           journal(3, 1, "bounty_prizes", 500.0, "2026-06-20T00:00:00Z"),
         ],
       )
@@ -4048,8 +3708,6 @@ mod tests {
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      // A sale: a transaction row plus its journal twin. Assigning the transaction
-      // counts the trade once; the twin is suppressed so it cannot double-count.
       finance::append_wallet_transaction(&db, &[transaction(500, 1, false, 100.0, 10, "2026-06-05T00:00:00Z")])
         .await
         .unwrap();
@@ -4089,7 +3747,6 @@ mod tests {
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::Character(1)).await;
-      // A buy spends, so its signed amount is negative.
       finance::append_wallet_transaction(&db, &[transaction(600, 1, true, 100.0, 5, "2026-06-07T00:00:00Z")])
         .await
         .unwrap();
@@ -4194,7 +3851,6 @@ mod tests {
       use crate::store::{model::OwnerType, repo::infra};
 
       let db = store::open_test().await.unwrap();
-      // An owned character and an owned corporation, both in the All scope.
       seed_character(&db, 1).await;
       infra::upsert(&db, 1, OwnerType::Character, "tok", "rt", 9_999, None, None)
         .await
@@ -4223,8 +3879,6 @@ mod tests {
       seed_scope(&db, BudgetScope::All).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
 
-      // The character and the corporation both carry journal id 5 — the cross-owner
-      // collision. Each is assigned to a different category for its own owner.
       finance::append_wallet_journal(&db, &[journal(5, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z")])
         .await
         .unwrap();
@@ -4311,8 +3965,6 @@ mod tests {
       seed_scope(&db, BudgetScope::All).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
 
-      // One sell trade surfaces three times: the corp transaction, its mirror in the
-      // trader's personal wallet (same transaction_id 700), and the corp journal twin.
       finance::append_corporation_wallet_transaction(
         &db,
         &[CorporationWalletTransaction {
@@ -4356,8 +4008,6 @@ mod tests {
       )
       .await
       .unwrap();
-      // Both the corp transaction and its character mirror are assigned to the same
-      // category; the trade must still contribute exactly once, not twice or thrice.
       assign_entry(
         &db,
         BudgetScope::All,
@@ -4418,8 +4068,6 @@ mod tests {
       seed_scope(&db, BudgetScope::All).await.unwrap();
       let slug_to_id = slug_to_category_id(&db, BudgetScope::All).await;
 
-      // One internal transfer: the SAME EVE journal id 900 mirrored into the corp
-      // wallet (-10B leg) and the trading character's personal wallet (+10B leg).
       finance::append_corporation_wallet_journal(
         &db,
         &[CorporationWalletJournal {
@@ -4454,10 +4102,6 @@ mod tests {
       )
       .await
       .unwrap();
-      // Even when the inflow leg is filed into an envelope — exactly the bug shape
-      // that drove Ready-to-Assign negative — an internal transfer moves no ISK in
-      // or out of the user's holdings, so both legs are excluded from category
-      // activity entirely rather than reserved as a phantom inflow.
       assign_entry(
         &db,
         BudgetScope::All,
@@ -4517,7 +4161,6 @@ mod tests {
       assert_eq!(by_month["2026-04"].get(&slug_to_id["income"]), Some(&1_000.0));
       assert_eq!(by_month["2026-06"].get(&slug_to_id["fees"]), Some(&-120.0));
       assert!(!by_month.contains_key("2026-05"));
-      // The single-month wrapper agrees with the batched map for that month.
       assert_eq!(
         by_month["2026-04"],
         monthly_activity(&db, BudgetScope::Character(1), "2026-04").await
@@ -4573,7 +4216,6 @@ mod tests {
         .await
         .unwrap();
 
-      // No rules yet: the outflow stays in Ready-to-Assign.
       let before = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
       assert!(before.is_empty());
 
@@ -4642,10 +4284,6 @@ mod tests {
       )
       .await
       .unwrap();
-      // A disabled fee rule (ignored) plus an enabled inflow-only rule. The
-      // disabled rule leaves the fee in Ready-to-Assign; the enabled rule
-      // resolves the bounty to the income category, but the income→RTA
-      // disposition reinterprets that non-manual inflow back to Ready-to-Assign.
       text_rule(
         &db,
         BudgetScope::Character(1),
@@ -4689,8 +4327,6 @@ mod tests {
 
       let activity = monthly_activity(&db, BudgetScope::Character(1), "2026-06").await;
 
-      // Genuine income routes to Ready-to-Assign despite the matching rule, and
-      // the fee stays unassigned (disabled rule): neither files into an envelope.
       assert!(!activity.contains_key(&slug_to_id["income"]));
       assert!(!activity.contains_key(&slug_to_id["fees"]));
     }
@@ -4704,7 +4340,6 @@ mod tests {
       finance::append_wallet_journal(&db, &[journal(1, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z")])
         .await
         .unwrap();
-      // Two rules match; the lower position (higher priority) wins.
       text_rule(
         &db,
         BudgetScope::Character(1),
@@ -4748,11 +4383,8 @@ mod tests {
       finance::append_wallet_journal(
         &db,
         &[
-          // Income posts to Ready-to-Assign and is never reviewable.
           journal(1, 1, "bounty_prizes", 1_000.0, "2026-06-02T00:00:00Z"),
-          // An uncategorized outflow: the only reviewable row.
           journal(2, 1, "brokers_fee", -120.0, "2026-06-15T00:00:00Z"),
-          // A prior month's outflow never counts toward June.
           journal(3, 1, "brokers_fee", -500.0, "2026-05-30T00:00:00Z"),
         ],
       )
@@ -4828,10 +4460,6 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      // A buy surfaces as a transaction (an outflow/expense) plus its ingested
-      // market_transaction journal twin. The trade is reviewed from the
-      // Transactions side, so the twin is suppressed — only the transaction
-      // counts, once.
       finance::append_wallet_transaction(&db, &[transaction(500, 1, true, 100.0, 10, "2026-06-05T00:00:00Z")])
         .await
         .unwrap();
@@ -4888,8 +4516,6 @@ mod tests {
       .await
       .unwrap();
       seed_scope(&db, BudgetScope::All).await.unwrap();
-      // One unassigned buy (an expense) mirrored into both wallets under
-      // transaction_id 700. It is a single event needing one review, not two.
       finance::append_corporation_wallet_transaction(
         &db,
         &[CorporationWalletTransaction {
@@ -4936,8 +4562,6 @@ mod tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 1).await;
       seed_scope(&db, BudgetScope::Character(1)).await.unwrap();
-      // A market_transaction journal row whose trade was never ingested as a
-      // transaction is not a twin, so it stays reviewable as its own outflow.
       finance::append_wallet_journal(
         &db,
         &[linked_journal(
@@ -4991,8 +4615,6 @@ mod tests {
       .await
       .unwrap();
       seed_scope(&db, BudgetScope::All).await.unwrap();
-      // One internal transfer: journal id 900 mirrored into the corp wallet (out)
-      // and the character's wallet (in). Neither leg is reviewable.
       finance::append_corporation_wallet_journal(
         &db,
         &[CorporationWalletJournal {
@@ -5059,11 +4681,9 @@ mod tests {
       insert_with_org(db, &character, &bloodline, &race, &corp, Some(&alliance), None)
         .await
         .unwrap();
-      // A character credential is what marks the pilot "owned" for the All scope.
       infra::upsert(db, id, OwnerType::Character, "tok", "rt", 9_999, None, None)
         .await
         .unwrap();
-      // The character's liquid figure is the latest journal balance.
       finance::append_wallet_journal(
         db,
         &[store::model::CharacterWalletJournal {
@@ -5143,7 +4763,6 @@ mod tests {
       corp.set_member_count(1);
       corp.set_tax_rate(0.0);
       org::upsert_corporation(&db, &corp).await.unwrap();
-      // A corp is "owned" when it holds a corporation credential authorized by a member.
       infra::upsert(&db, corp_id, OwnerType::Corporation, "tok", "rt", 9_999, Some(1), None)
         .await
         .unwrap();
@@ -5161,7 +4780,6 @@ mod tests {
 
       let pool = budgetable_pool(&db, BudgetScope::All).await;
 
-      // 5_000 character liquid + 1_000 owned-corp division balance.
       assert_eq!(pool, 6_000.0);
     }
   }
@@ -5209,7 +4827,6 @@ mod tests {
 
     #[test]
     fn it_ages_spent_isk_against_the_oldest_lot_first() {
-      // Deposit 100 on Jan 1, then spend 100 on Jan 11 → every ISK is 10 days old.
       let ages = fifo_ages_by_month([("2026-01-01T00:00:00Z", 100.0), ("2026-01-11T00:00:00Z", -100.0)]);
 
       assert_eq!(ages.get("2026-01"), Some(&10.0));
@@ -5217,9 +4834,6 @@ mod tests {
 
     #[test]
     fn it_weights_age_by_isk_drawn_from_each_lot() {
-      // Two lots: 100 on day 0, 100 on day 10. Spend 150 on day 20:
-      //   100 from the day-0 lot (age 20) + 50 from the day-10 lot (age 10).
-      //   weighted mean = (100*20 + 50*10) / 150 = 2500/150 ≈ 16.67 days.
       let ages = fifo_ages_by_month([
         ("2026-03-01T00:00:00Z", 100.0),
         ("2026-03-11T00:00:00Z", 100.0),
@@ -5239,7 +4853,6 @@ mod tests {
 
     #[test]
     fn it_only_ages_isk_it_can_draw_from_the_queue() {
-      // Spend with an empty queue contributes nothing (no negative ages).
       let ages = fifo_ages_by_month([("2026-05-05T00:00:00Z", -100.0)]);
 
       assert_eq!(ages.get("2026-05"), None);
@@ -5247,8 +4860,6 @@ mod tests {
 
     #[test]
     fn it_sorts_flows_chronologically_before_aging() {
-      // Feed the spend before the deposit: the function must sort by day first,
-      // so the deposit on day 0 still ages by 10 days at the day-10 spend.
       let ages = fifo_ages_by_month([("2026-06-11T00:00:00Z", -100.0), ("2026-06-01T00:00:00Z", 100.0)]);
 
       assert_eq!(ages.get("2026-06"), Some(&10.0));
@@ -5334,7 +4945,6 @@ mod tests {
       assert_eq!(history.len(), 1);
       assert_eq!(history[0].income, 1_000.0);
       assert_eq!(history[0].spend, 400.0);
-      // 400 ISK drawn from the Jun-1 lot, spent Jun-11 → 10 days old.
       assert_eq!(history[0].age, 10.0);
     }
   }

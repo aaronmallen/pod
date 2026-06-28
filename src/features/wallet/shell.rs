@@ -98,8 +98,6 @@ pub(super) fn shell(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   stable_overlay(base, overlay_layers(state))
 }
 
-/// The overlay layers to mount above the ledger, in z-order (bottom first). Empty
-/// when no menu/modal is open, so `base` renders alone at child[0] of the Stack.
 fn overlay_layers(state: &State) -> Vec<Element<'_, Message>> {
   if state.picker_open {
     let dropdown = positioned_dropdown(header::picker_dropdown(state), PICKER_OVERLAY_TOP, PICKER_OVERLAY_LEFT);
@@ -175,10 +173,6 @@ fn body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
       .into();
   }
 
-  // The tab strip is hoisted directly under the header (mirroring Industry and
-  // Assets) so the bar never shifts position; the net-worth hero now lives below
-  // the strip inside the ledger column. This is also the surface the future
-  // Budget tab mounts onto.
   Column::with_children(vec![tabs(state), center(state, now)])
     .width(Length::Fill)
     .height(Length::Fill)
@@ -516,9 +510,6 @@ fn sign_control(state: &State) -> Element<'_, Message> {
 
 fn tab_body(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   match state.tab {
-    // The cursor is tracked at the feature-root base (see `shell`) so the
-    // bulk-assign menu anchors at the pointer in the overlay's coordinate space;
-    // these tables only render rows.
     Tab::Journal => journal_table(state, now),
     Tab::Market => market_table(state, now),
     Tab::Contracts => contracts_table(state, now),
@@ -539,12 +530,6 @@ fn journal_table(state: &State, now: DateTime<Utc>) -> Element<'_, Message> {
   windowed_ledger(state, entries, move |entry| journal_row(state, entry, now))
 }
 
-/// Window a flat list of filtered ledger entries: only the rows in and around
-/// the viewport are materialized, with spacers preserving scrollbar geometry.
-///
-/// The scroll offset comes from feature state; the next cursor page is fetched
-/// separately by the scroll handler, so the window always covers whatever subset
-/// of the loaded-and-filtered entries is currently on screen.
 fn windowed_ledger<'a, T, F>(state: &'a State, entries: Vec<&'a T>, render: F) -> Element<'a, Message>
 where
   F: Fn(&'a T) -> Element<'a, Message> + 'a,
@@ -778,12 +763,6 @@ fn market_row<'a>(state: &'a State, entry: &'a MarketEntry, now: DateTime<Utc>) 
   row_shell(cells, selected)
 }
 
-/// Renders the per-entry budget chip in one of two states: the assigned envelope
-/// (tone dot + name + caret), or an amber "+ Assign category" affordance when the
-/// entry is still uncategorized. Both open the picker on press; every entry —
-/// inflow or outflow — can be assigned to any category. The row's `owner`
-/// (character or corporation) keys the assignment so a corp row in All-Wallets
-/// routes to its own envelope under the owner-aware identity.
 fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, entry_id: i64) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let assigned = state.budget_category_for(owner, kind, entry_id);
@@ -811,7 +790,6 @@ fn budget_chip<'a>(state: &'a State, owner: BudgetOwner, kind: BudgetEntryKind, 
     .into()
 }
 
-/// A small round tone dot used by the budget chips and pills.
 fn budget_dot<'a>(tone: iced::Color) -> Element<'a, Message> {
   container(Space::new())
     .width(Length::Fixed(BUDGET_DOT_SIZE))
@@ -827,8 +805,6 @@ fn budget_dot<'a>(tone: iced::Color) -> Element<'a, Message> {
     .into()
 }
 
-/// The settled-envelope chip: tone dot + category name + caret, on a transparent
-/// pill that brightens on hover.
 fn assigned_chip<'a>(name: &str, tone: iced::Color, on_press: Message) -> Element<'a, Message> {
   button(
     Row::with_children(vec![
@@ -925,9 +901,6 @@ fn assign_affordance<'a>(on_press: Message) -> Element<'a, Message> {
   .into()
 }
 
-/// Approximates the widest picker row so the popover fits its envelope names
-/// rather than the narrow chip trigger: a glyph dot, the longest label, a
-/// checkmark, and the row/container padding, capped to a sane band.
 fn budget_picker_width(chips: &super::loaders::BudgetChips) -> f32 {
   const CHAR_WIDTH: f32 = 7.5;
   const CHROME: f32 = 72.0;
@@ -985,9 +958,6 @@ fn budget_picker_popover<'a>(state: &'a State, current: Option<i64>) -> Element<
   .into()
 }
 
-/// The category picker for the bulk "Assign to Budget" action: the same envelope
-/// rows as the per-row chip picker, but each emits [`Message::LedgerBulkAssignChosen`]
-/// so the chosen category applies to every selected row.
 fn bulk_assign_picker<'a>(state: &'a State, anchor: Point) -> Element<'a, Message> {
   let chips = state.budget_chips();
   let mut rows: Vec<Element<'a, Message>> = Vec::new();
@@ -1117,9 +1087,6 @@ fn budget_picker_row<'a>(label: &str, selected: bool, tint: iced::Color, on_pres
     .into()
 }
 
-/// A translucent Buy/Sell chip: a side-tinted pill with a faint fill, a 1px
-/// tinted border, and mono uppercase glyph text. Mirrors the tinted-pill pattern
-/// used in killmail/contract detail views (bg ~0.12 alpha, border ~0.30 alpha).
 fn side_badge<'a>(label: &'a str, tint: iced::Color, width: Length) -> Element<'a, Message> {
   let chip = container(
     text(label)
@@ -1882,9 +1849,6 @@ mod tests {
     fn the_closed_shell_already_mounts_the_base_inside_a_stack() {
       let state = populated_journal_state();
 
-      // Even with no menu open the root is the overlay Stack carrying the base
-      // alone, so the ledger never lives at a different tree position than it does
-      // while a menu is open.
       assert_eq!(root_children(&shell(&state, now())), 1);
     }
 
@@ -1893,7 +1857,6 @@ mod tests {
       let mut state = populated_journal_state();
       open_bulk_assign_menu(&mut state);
 
-      // Base + scrim backdrop + context menu, with the base still at child[0].
       assert_eq!(root_children(&shell(&state, now())), 3);
     }
 
@@ -1905,19 +1868,11 @@ mod tests {
       open_bulk_assign_menu(&mut closed);
       let open_tag = base_tag(&shell(&closed, now()));
 
-      // child[0]'s tag is unchanged across open/close, so Iced preserves the
-      // scrollable's internal offset and the list does not snap to the top.
       assert_eq!(closed_tag, open_tag);
     }
 
     #[test]
     fn the_ledger_base_tracks_the_cursor_at_the_feature_root() {
-      // On a selectable ledger tab the feature-root base is a cursor-tracking
-      // `mouse_area` (so the menu anchors at the pointer in the overlay's space),
-      // whereas a non-selectable tab leaves the base a bare container. The two
-      // bases therefore carry different tree tags; if the journal base ever
-      // regressed to a plain container, the cursor would no longer be tracked at
-      // the feature root and the menu would collapse toward the top-left.
       let mut wallets = populated_journal_state();
       wallets.tab = Tab::Wallets;
       let journal = populated_journal_state();

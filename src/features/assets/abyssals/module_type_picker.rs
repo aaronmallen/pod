@@ -7,7 +7,11 @@ use iced::{
 use crate::{
   features::assets::{Message, State},
   ui::{
-    components::rule,
+    components::{
+      button::{Button, Size},
+      icon::Icon,
+      rule,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -689,20 +693,10 @@ fn header(selected: Option<i64>) -> Element<'static, Message> {
   }
 
   items.push(
-    button(
-      text("\u{00d7}")
-        .font(typography::mono::REGULAR)
-        .size(typography::size::LG)
-        .style(|_| text::Style {
-          color: Some(color::text::secondary()),
-        }),
-    )
-    .on_press(Message::AbyssalTypeModalClosed)
-    .style(|_, _| button::Style {
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    })
-    .into(),
+    Button::secondary_icon(Icon::close())
+      .size(Size::Sm)
+      .on_press(Message::AbyssalTypeModalClosed)
+      .into(),
   );
 
   container(Row::with_children(items).align_y(Vertical::Center))
@@ -726,31 +720,10 @@ fn footer() -> Element<'static, Message> {
         })
         .width(Length::Fill)
         .into(),
-      button(
-        text(t!("assets.abyssals.picker_done").into_owned())
-          .font(typography::body::MEDIUM)
-          .size(typography::size::SM)
-          .style(|_| text::Style {
-            color: Some(color::surface::BASE),
-          }),
-      )
-      .padding(Padding {
-        top: spacing::SPACE_2,
-        right: spacing::SPACE_3 + spacing::UNIT,
-        bottom: spacing::SPACE_2,
-        left: spacing::SPACE_3 + spacing::UNIT,
-      })
-      .on_press(Message::AbyssalTypeModalClosed)
-      .style(|_, _| button::Style {
-        background: Some(Background::Color(color::accent::PLASMA)),
-        border: Border {
-          radius: radius::CONTROL.into(),
-          ..Border::default()
-        },
-        text_color: color::surface::BASE,
-        ..button::Style::default()
-      })
-      .into(),
+      Button::primary(t!("assets.abyssals.picker_done").into_owned())
+        .size(Size::Sm)
+        .on_press(Message::AbyssalTypeModalClosed)
+        .into(),
     ])
     .align_y(Vertical::Center),
   )

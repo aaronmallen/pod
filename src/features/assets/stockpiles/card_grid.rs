@@ -3,14 +3,17 @@ use std::collections::HashSet;
 use iced::{
   Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use super::{StockpileCard, card};
 use crate::{
   features::assets::{HEADER_SIDE_PADDING, Message, fmt_count},
   ui::{
-    components::icon::Icon,
+    components::{
+      button::{Button, Size},
+      icon::Icon,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -127,58 +130,18 @@ fn header<'a>(ready: usize, short: usize) -> Element<'a, Message> {
 }
 
 fn import_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("assets.stockpiles.import_multibuy").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 3.0,
-    right: spacing::SPACE_3,
-    bottom: spacing::UNIT + 3.0,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::StockpileImportOpened)
-  .style(|_, _| button::Style {
-    background: Some(iced::Background::Color(color::with_alpha(color::text::PRIMARY, 0.04))),
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.12),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  Button::secondary(t!("assets.stockpiles.import_multibuy").into_owned())
+    .size(Size::Sm)
+    .on_press(Message::StockpileImportOpened)
+    .into()
 }
 
 fn new_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("assets.stockpiles.new_stockpile_button").into_owned())
-      .font(typography::body::REGULAR)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 3.0,
-    right: spacing::SPACE_3,
-    bottom: spacing::UNIT + 3.0,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::StockpileNew)
-  .style(|_, _| button::Style {
-    border: Border {
-      color: color::with_alpha(color::text::PRIMARY, 0.28),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(t!("assets.stockpiles.new_stockpile_button").into_owned())
+    .icon(Icon::plus())
+    .size(Size::Sm)
+    .on_press(Message::StockpileNew)
+    .into()
 }
 
 #[cfg(test)]

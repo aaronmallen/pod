@@ -15,6 +15,7 @@ use crate::{
   },
   ui::{
     components::{
+      button::{Button, Size},
       context_menu::{self, Item},
       eyebrow::eyebrow,
       icon::Icon,
@@ -820,108 +821,20 @@ fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 fn modal_close_button<'a>() -> Element<'a, Message> {
-  button(
-    text("\u{2715}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 1.0,
-    right: spacing::SPACE_2,
-    bottom: spacing::UNIT + 1.0,
-    left: spacing::SPACE_2,
-  })
-  .on_press(Message::SaveFilterCancelled)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.12),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(Message::SaveFilterCancelled)
+    .into()
 }
 
 fn modal_secondary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  })
-  .on_press(message)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, if hovered { 0.28 } else { 0.1 }),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(label).size(Size::Sm).on_press(message).into()
 }
 
 fn modal_primary_button<'a>(label: String, enabled: bool) -> Element<'a, Message> {
-  let label_color = if enabled {
-    color::surface::BASE
-  } else {
-    color::text::tertiary()
-  };
-  let mut button = button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(move |_| text::Style {
-        color: Some(label_color),
-      }),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  });
-  if enabled {
-    button = button.on_press(Message::SaveFilterConfirmed);
-  }
-  button
-    .style(move |_, _| button::Style {
-      background: Some(Background::Color(if enabled {
-        color::accent::PLASMA
-      } else {
-        color::with_alpha(color::text::PRIMARY, 0.1)
-      })),
-      border: Border {
-        color: if enabled {
-          color::accent::PLASMA
-        } else {
-          color::with_alpha(color::text::PRIMARY, 0.1)
-        },
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    })
+  Button::primary(label)
+    .size(Size::Sm)
+    .on_press_maybe(enabled.then_some(Message::SaveFilterConfirmed))
     .into()
 }
 

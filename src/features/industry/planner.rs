@@ -1977,6 +1977,7 @@ mod view {
         anchored_dropdown::AnchoredDropdown,
         avatar::avatar,
         badge::badge,
+        button::{Button, Size},
         clip::clip_layer,
         facility_combobox::{FacilityCombobox, FacilityRef},
         icon::Icon,
@@ -4728,41 +4729,12 @@ mod view {
   }
 
   fn save_plan_button(planner: &Planner) -> Element<'_, Message> {
-    let enabled = planner.product().is_some();
-    let mut control = button(
-      Row::with_children(vec![
-        Icon::doc().color(color::accent::PLASMA).size(14.0).render::<Message>(),
-        text(t!("industry.planner.save_build_plan"))
-          .font(typography::body::MEDIUM)
-          .size(typography::size::MD)
-          .style(typography::colored(color::accent::PLASMA))
-          .into(),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center),
-    )
-    .width(Length::Fill)
-    .padding(spacing::SPACE_3)
-    .style(move |_, status| {
-      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-      button::Style {
-        background: Some(Background::Color(color::with_alpha(
-          color::accent::PLASMA,
-          if hovered { 0.22 } else { 0.14 },
-        ))),
-        border: Border {
-          color: color::accent::PLASMA,
-          radius: radius::CARD.into(),
-          width: 1.0,
-        },
-        text_color: color::accent::PLASMA,
-        ..button::Style::default()
-      }
-    });
-    if enabled {
-      control = control.on_press(Message::PlanSaveRequested);
-    }
-    control.into()
+    Button::primary(t!("industry.planner.save_build_plan").into_owned())
+      .icon(Icon::doc())
+      .size(Size::Md)
+      .block()
+      .on_press_maybe(planner.product().is_some().then_some(Message::PlanSaveRequested))
+      .into()
   }
 
   fn plan_row<'a>(planner: &'a Planner, plan: &'a SavedPlan) -> Element<'a, Message> {
@@ -4915,23 +4887,12 @@ mod view {
   }
 
   fn copy_button<'a>() -> Element<'a, Message> {
-    button(
-      Row::with_children(vec![
-        Icon::copy().color(color::text::PRIMARY).size(14.0).render::<Message>(),
-        text(t!("industry.planner.copy_shopping_list"))
-          .font(typography::body::MEDIUM)
-          .size(typography::size::MD)
-          .style(typography::colored(color::text::PRIMARY))
-          .into(),
-      ])
-      .spacing(spacing::SPACE_2)
-      .align_y(Vertical::Center),
-    )
-    .width(Length::Fill)
-    .padding(spacing::SPACE_3)
-    .on_press(Message::ShoppingListCopied)
-    .style(crate::ui::style::control::ghost_button)
-    .into()
+    Button::secondary(t!("industry.planner.copy_shopping_list").into_owned())
+      .icon(Icon::copy())
+      .size(Size::Md)
+      .block()
+      .on_press(Message::ShoppingListCopied)
+      .into()
   }
 
   fn detail_line<'a>(label: &str, value: &str, value_color: iced::Color, emphasized: bool) -> Element<'a, Message> {

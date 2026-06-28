@@ -22,6 +22,7 @@ use crate::{
       add_tag_modal::AddTagMessage,
       avatar::avatar,
       badge::badge,
+      button::{Button, Size},
       chip::Chip,
       empty_state::empty_state as shared_empty_state,
       eyebrow::eyebrow,
@@ -221,63 +222,10 @@ fn search_placeholder() -> &'static str {
 }
 
 fn save_filter_button<'a>(enabled: bool) -> Element<'a, Message> {
-  let (label_color, glyph_color) = if enabled {
-    (color::accent::PLASMA, color::accent::PLASMA)
-  } else {
-    (color::text::tertiary(), color::text::tertiary())
-  };
-
-  let content = Row::with_children(vec![
-    text("\u{2605}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::SM)
-      .style(typography::colored(glyph_color))
-      .into(),
-    text(t!("assets.inventory.save").into_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(label_color))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  let mut button = button(content).padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  });
-  if enabled {
-    button = button.on_press(Message::SaveFilterOpened);
-  }
-  button
-    .style(move |_, status| {
-      if !enabled {
-        return button::Style {
-          background: Some(Background::Color(color::surface::SUNKEN)),
-          border: Border {
-            color: color::with_alpha(color::text::PRIMARY, 0.1),
-            width: 1.0,
-            radius: radius::CONTROL.into(),
-          },
-          ..button::Style::default()
-        };
-      }
-      let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-      button::Style {
-        background: Some(Background::Color(color::with_alpha(
-          color::accent::PLASMA,
-          if hovered { 0.18 } else { 0.1 },
-        ))),
-        border: Border {
-          color: color::with_alpha(color::accent::PLASMA, if hovered { 0.6 } else { 0.4 }),
-          width: 1.0,
-          radius: radius::CONTROL.into(),
-        },
-        ..button::Style::default()
-      }
-    })
+  Button::primary(t!("assets.inventory.save").into_owned())
+    .icon(Icon::star())
+    .size(Size::Sm)
+    .on_press_maybe(enabled.then_some(Message::SaveFilterOpened))
     .into()
 }
 

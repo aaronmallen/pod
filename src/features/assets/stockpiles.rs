@@ -29,6 +29,7 @@ use crate::{
     components::{
       anchored_dropdown::AnchoredDropdown,
       avatar::avatar,
+      button::{Button, Size as BtnSize},
       context_menu::{self, Item},
       eyebrow::eyebrow,
       header,
@@ -775,33 +776,10 @@ fn small_button<'a>(label: &'a str, message: Message, text_color: iced::Color) -
 }
 
 fn modal_close_button<'a>(close: Message) -> Element<'a, Message> {
-  button(
-    text("\u{2715}")
-      .font(typography::mono::REGULAR)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 1.0,
-    bottom: spacing::UNIT + 1.0,
-    left: spacing::SPACE_2,
-    right: spacing::SPACE_2,
-  })
-  .on_press(close)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.12),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary_icon(Icon::close())
+    .size(BtnSize::Sm)
+    .on_press(close)
+    .into()
 }
 
 fn modal_footer<'a>(left: Option<Element<'a, Message>>, actions: Vec<Element<'a, Message>>) -> Element<'a, Message> {
@@ -883,32 +861,7 @@ fn modal_section<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 fn secondary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 3.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::UNIT + 3.0,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press(message)
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::text::PRIMARY, 0.05))),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.28),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(label).size(BtnSize::Sm).on_press(message).into()
 }
 
 /// The window title for a detached editor: distinguishes New from Edit so two open editors are
@@ -1663,43 +1616,12 @@ fn multibuy_copy_button<'a>(card_id: i64, copied: bool, enabled: bool) -> Elemen
   } else {
     t!("assets.stockpiles.copy").into_owned()
   };
-  let tint = if enabled {
-    color::accent::PLASMA
-  } else {
-    color::text::tertiary()
-  };
 
-  let content = Row::with_children(vec![
-    Icon::copy().size(typography::size::MD).color(tint).render(),
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(tint))
-      .into(),
-  ])
-  .spacing(spacing::SPACE_2)
-  .align_y(Vertical::Center);
-
-  let mut export = button(content)
-    .padding(Padding {
-      top: spacing::UNIT + 3.0,
-      right: spacing::SPACE_3_5,
-      bottom: spacing::UNIT + 3.0,
-      left: spacing::SPACE_3_5,
-    })
-    .style(move |_, _| button::Style {
-      background: Some(Background::Color(color::with_alpha(tint, 0.12))),
-      border: Border {
-        color: color::with_alpha(tint, 0.35),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    });
-  if enabled {
-    export = export.on_press(Message::StockpileMultibuyExportCopied(card_id));
-  }
-  export.into()
+  Button::primary(label)
+    .icon(Icon::copy())
+    .size(BtnSize::Sm)
+    .on_press_maybe(enabled.then_some(Message::StockpileMultibuyExportCopied(card_id)))
+    .into()
 }
 
 fn import_paste(panel: &ImportPanel) -> Element<'_, Message> {
@@ -1816,10 +1738,10 @@ fn import_shell_body<'a>(
   action_label: String,
   action_msg: Option<Message>,
 ) -> Element<'a, Message> {
-  let mut action = primary_button_owned(action_label);
-  if let Some(msg) = action_msg {
-    action = action.on_press(msg);
-  }
+  let action: Element<'a, Message> = Button::primary(action_label)
+    .size(BtnSize::Sm)
+    .on_press_maybe(action_msg)
+    .into();
 
   let content = modal_section(
     Column::with_children(vec![
@@ -1842,7 +1764,7 @@ fn import_shell_body<'a>(
         t!("assets.stockpiles.cancel").into_owned(),
         Message::StockpileImportClosed,
       ),
-      action.into(),
+      action,
     ],
   );
 
@@ -1865,30 +1787,6 @@ fn import_shell_body<'a>(
   .into()
 }
 
-fn primary_button_owned<'a>(label: String) -> button::Button<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::accent::PLASMA)),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 3.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::UNIT + 3.0,
-    left: spacing::SPACE_3_5,
-  })
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.35),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-}
-
 fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_editor::Style {
   text_editor::Style {
     background: Background::Color(color::surface::SUNKEN),
@@ -1904,29 +1802,7 @@ fn import_field_editor_style(_: &iced::Theme, _: text_editor::Status) -> text_ed
 }
 
 fn primary_button<'a>(label: String, message: Message) -> Element<'a, Message> {
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::accent::PLASMA)),
-  )
-  .padding(Padding {
-    top: spacing::UNIT + 3.0,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::UNIT + 3.0,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press(message)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))),
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.35),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(label).size(BtnSize::Sm).on_press(message).into()
 }
 
 fn field_label<'a>(label: &str) -> Element<'a, Message> {

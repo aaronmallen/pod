@@ -1,7 +1,7 @@
 ---
 title: The Interface
 section: Guide
-order: 2
+order: 3
 description: Learn your way around Pod's main window. The navigation rail, the working area, the status bar, the keyboard shortcuts, the command palette, the sync popover, and the update banner.
 ---
 

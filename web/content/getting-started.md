@@ -56,9 +56,15 @@ your browser can hand the callback back to a running Pod.
 
 ## First launch
 
-When you start Pod, it shows a splash screen while it gets ready. The splash
-runs the startup work before the main window opens, so you do not interact with
-the app yet.
+The very first time you open Pod, it runs a short setup wizard before anything
+else. The wizard collects your language, which features to run, and where Pod
+stores its files, then hands you straight into the app. It is a one-time step, so
+later launches skip it and go to the splash described below. The
+[Onboarding](/docs/onboarding/) page walks through every wizard screen.
+
+After you finish the wizard, and on every launch after that, Pod shows a splash
+screen while it gets ready. The splash runs the startup work before the main
+window opens, so you do not interact with the app yet.
 
 ![Pod splash screen showing startup progress](/docs/img/getting-started/splash.png)
 

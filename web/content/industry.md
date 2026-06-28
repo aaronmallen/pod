@@ -90,22 +90,11 @@ you whether the build turns a profit at current prices.
 The Planner opens cold with no product selected. The left pane shows a product
 search over the seeded build catalog. Type to filter by name and pick the item
 you want to build. Nothing auto-selects, so the first thing you do is choose a
-product. Once you pick one, the Planner builds the plan and fills in the rest of
-the panes.
-
-### Bill of materials and merged build order
-
-The bill of materials lists every raw input the plan needs once the tree is
-expanded down to materials you buy rather than build. Each line shows the item,
-the quantity needed, the on-hand amount when you have stock, the unit price, and
-the line total. The bill is searchable and collapsible, so a large build stays
-readable.
-
-The merged build order lists the jobs the plan runs. It collapses duplicate jobs
-that share the same item, ME, TE, and facility into one line and sums their
-demand, so you see one entry per distinct job instead of a repeated stack.
-Producer jobs list before the jobs that consume their output. Each line names the
-item, the runs, the ME and TE, and the facility.
+product. Once you pick one, the Planner builds the plan and stacks the rest of
+the work down the left side: the per-type build cards, the Material plan, the
+Bill of materials, the Needed blueprints, and the Build order. The sub-sections
+stack one below the next rather than hiding behind tabs, so you read the whole
+plan in a single scroll.
 
 ### Per-type build cards
 
@@ -131,6 +120,17 @@ covers NPC stations, your corporation's structures, and structures you have
 pinned. Picking a facility sets the cost index that the economics use for that
 type's jobs.
 
+### Material plan
+
+The Material plan is the grid that turns your build choices into a priced tree.
+The pane carries its name at the top, and each row shows a material, the quantity
+the plan needs, the unit price, and the subtotal, with a running material cost in
+the footer. Buildable rows expand in place, so a component sits above the inputs
+it consumes, and the pane hint points out that you can break an item down or
+right-click a row for more options.
+
+![The Material plan grid expanding the build tree into priced rows](/docs/img/industry/planner-material-plan.png)
+
 ### Breaking down to raw materials
 
 You do not have to expand the tree one component at a time. A break-down-all
@@ -149,6 +149,44 @@ two jobs that both want the same material draw from it in the order you toggle
 them, and the planner never counts the same unit twice or drops a needed quantity
 below zero. A line drawing from stock shows a stock chip in place of the toggle.
 
+### Bill of materials
+
+The bill of materials lists every raw input the plan needs once the tree is
+expanded down to materials you buy rather than build. Each line shows the item,
+the quantity needed, the on-hand amount when you have stock, the unit price, and
+the line total. The bill is searchable and collapsible, so a large build stays
+readable.
+
+![The Bill of materials listing every raw input the plan must buy](/docs/img/industry/planner-bill-of-materials.png)
+
+### Needed blueprints
+
+The Needed blueprints pane reads the merged build order and lists every blueprint
+the plan depends on, one row per distinct print. The section header counts the
+blueprints and tells you how many you still need to acquire, or reads all owned
+when your library already covers the plan. Each row pairs a blueprint icon with
+the item name, tags it as a Blueprint or, for a reaction, a Formula, and carries
+a manufacturing or reaction badge. A subtitle counts how many jobs lean on that
+print and the total runs or cycles they ask of it.
+
+![Needed blueprints flagging which prints you own and which to buy](/docs/img/industry/planner-needed-blueprints.png)
+
+A status pill on the right tells you where each blueprint stands. A print you own
+reads as a BPO or a BPC, appends its ME when the copy carries one, and notes when
+the only copy sits outside the current scope. A print you do not own reads BUY /
+INVENT, and its whole row picks up a warning tint so the gaps in your library
+stand out at a glance.
+
+### Build order
+
+The merged build order lists the jobs the plan runs. It collapses duplicate jobs
+that share the same item, ME, TE, and facility into one line and sums their
+demand, so you see one entry per distinct job instead of a repeated stack.
+Producer jobs list before the jobs that consume their output. Each line names the
+item, the runs, the ME and TE, and the facility.
+
+![The Build order collapsing duplicate jobs into one line each](/docs/img/industry/planner-build-order.png)
+
 ### Splitting a build-order job into segments
 
 A build-order job runs as one block by default. Right-clicking the job's header
@@ -158,6 +196,8 @@ reads "Split job again" and adds another segment, and a "Merge back into one job
 option folds every segment back into a single block. When a job has too few runs
 to divide any further, the split option is disabled and reads "Too few runs to
 split further".
+
+![A build-order job split into independent run segments](/docs/img/industry/planner-split-jobs.png)
 
 A split job carries an "N-WAY" badge next to its name, where N is the number of
 segments, and each segment appears as its own indented row beneath the job

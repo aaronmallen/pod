@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use iced::{
   Background, Border, Color, Element, Length, Padding, Point,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, Stack, button, container, mouse_area, scrollable, svg, text},
+  widget::{Column, Row, Space, Stack, container, mouse_area, scrollable, svg, text},
 };
 
 use super::{
@@ -15,8 +15,8 @@ use super::{
 use crate::{
   sync::SyncStatus,
   ui::{
-    components::{eyebrow::eyebrow, icon::Icon, rule, status},
-    style::{color, control, radius, spacing, typography},
+    components::{button::Button, eyebrow::eyebrow, icon::Icon, rule, status},
+    style::{color, radius, spacing, typography},
   },
 };
 
@@ -784,15 +784,9 @@ fn no_matches<'a>() -> Element<'a, Message> {
           color: Some(color::text::secondary()),
         })
         .into(),
-      button(
-        text(t!("roster.actions.clear_filters"))
-          .font(typography::body::REGULAR)
-          .size(typography::size::SM),
-      )
-      .padding(control::padding())
-      .on_press(Message::ClearSearch)
-      .style(control::primary_button)
-      .into(),
+      Button::secondary(t!("roster.actions.clear_filters"))
+        .on_press(Message::ClearSearch)
+        .into(),
     ])
     .spacing(spacing::SPACE_3)
     .align_x(Horizontal::Center)

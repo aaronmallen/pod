@@ -6,7 +6,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use iced::{
   Color, Element, Length, Subscription, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 pub use session::{CorporationAdded, SignedIn};
 
@@ -17,7 +17,10 @@ use crate::{
   services::corp_eligibility,
   store::Database,
   sync::Subject,
-  ui::style::{color, control, spacing, typography},
+  ui::{
+    components::button::Button,
+    style::{color, control, spacing, typography},
+  },
 };
 
 const PANEL_MAX_WIDTH: f32 = 520.0;
@@ -263,21 +266,9 @@ fn panel(flow: &Flow) -> Element<'_, Message> {
   };
   let mut actions: Vec<Element<'_, Message>> = Vec::new();
   if matches!(flow.status, Status::Failed(_)) {
-    actions.push(
-      button(text(t!("roster.auth.try_again").into_owned()).size(typography::size::MD))
-        .padding(control::padding())
-        .on_press(retry)
-        .style(control::primary_button)
-        .into(),
-    );
+    actions.push(Button::primary(t!("roster.auth.try_again")).on_press(retry).into());
   }
-  actions.push(
-    button(text(t!("roster.auth.cancel").into_owned()).size(typography::size::MD))
-      .padding(control::padding())
-      .on_press(Message::Cancel)
-      .style(control::ghost_button)
-      .into(),
-  );
+  actions.push(Button::ghost(t!("roster.auth.cancel")).on_press(Message::Cancel).into());
   children.push(Row::with_children(actions).spacing(spacing::SPACE_3).into());
 
   let panel = container(Column::with_children(children).spacing(spacing::SPACE_3))

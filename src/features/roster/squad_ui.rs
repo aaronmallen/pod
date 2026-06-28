@@ -1,13 +1,13 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, button, container, svg, text, text_input},
+  widget::{Column, Row, container, svg, text, text_input},
 };
 
 use super::{Message, SquadCreator};
 use crate::ui::{
-  components::{color_picker, rule},
-  style::{color, control, radius, shadow, spacing, typography},
+  components::{button::Button, color_picker, icon::Icon, rule},
+  style::{color, radius, shadow, spacing, typography},
 };
 
 static SQUADS_ICON: &[u8] = include_bytes!("../../../assets/images/icons/squads.svg");
@@ -26,21 +26,10 @@ const INPUT_PAD_X: f32 = 12.0;
 const INPUT_PAD_Y: f32 = 10.0;
 
 pub(super) fn new_squad_button<'a>() -> Element<'a, Message> {
-  button(
-    Row::with_children(vec![
-      text("+").size(typography::size::MD).into(),
-      text(t!("roster.actions.new_squad"))
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .padding(control::padding())
-  .on_press(Message::OpenSquadCreator)
-  .style(control::ghost_button)
-  .into()
+  Button::secondary(t!("roster.actions.new_squad"))
+    .icon(Icon::plus())
+    .on_press(Message::OpenSquadCreator)
+    .into()
 }
 
 pub(super) fn modal_view<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
@@ -240,28 +229,14 @@ fn color_field<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
 fn footer<'a>(creator: &'a SquadCreator) -> Element<'a, Message> {
   let can_save = !creator.name.trim().is_empty();
 
-  let cancel = button(
-    text(t!("roster.actions.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(control::padding())
-  .on_press(Message::CloseSquadCreator)
-  .style(control::ghost_button);
+  let cancel = Button::ghost(t!("roster.actions.cancel")).on_press(Message::CloseSquadCreator);
 
   let primary_label = if creator.editing.is_some() {
     t!("roster.squad.save_changes")
   } else {
     t!("roster.squad.create_squad")
   };
-  let create = button(
-    text(primary_label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(control::padding())
-  .on_press_maybe(can_save.then_some(Message::CreateSquad))
-  .style(control::primary_button);
+  let create = Button::primary(primary_label).on_press_maybe(can_save.then_some(Message::CreateSquad));
 
   let row = Row::with_children(vec![cancel.into(), create.into()])
     .spacing(spacing::SPACE_2)

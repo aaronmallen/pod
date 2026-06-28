@@ -557,6 +557,7 @@ fn reset_button(settings: &Settings) -> Element<'_, Message> {
   let enabled = !is_default_order(settings);
 
   Button::secondary(t!("settings.ui.reset_order"))
+    .icon(Icon::reset())
     .size(Size::Sm)
     .on_press_maybe(enabled.then_some(Message::ResetOrder))
     .into()

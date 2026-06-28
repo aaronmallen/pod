@@ -126,6 +126,10 @@ impl Icon {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/fleet.svg"))
   }
 
+  pub fn folder_open() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/folder-open.svg"))
+  }
+
   pub fn forward() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/forward.svg"))
   }
@@ -280,6 +284,10 @@ impl Icon {
 
   pub fn reply_all() -> Self {
     Self::from_bytes(include_bytes!("../../../assets/images/icons/reply-all.svg"))
+  }
+
+  pub fn reset() -> Self {
+    Self::from_bytes(include_bytes!("../../../assets/images/icons/reset.svg"))
   }
 
   pub fn search() -> Self {

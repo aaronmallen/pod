@@ -813,14 +813,19 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     .on_submit(Message::PathSubmitted(kind))
     .style(path_input_style);
 
-  let browse = Button::secondary(t!("settings.storage.browse")).on_press(Message::Browse(kind));
+  let browse = Button::secondary(t!("settings.storage.browse"))
+    .icon(Icon::folder_open())
+    .on_press(Message::Browse(kind));
 
   let reset = Button::secondary(t!("settings.storage.default_button"))
+    .icon(Icon::reset())
     .on_press_maybe(overridden.then_some(Message::ResetToDefault(kind)));
 
   let mut control_children: Vec<Element<'_, Message>> = vec![field.into(), browse.into()];
   if kind == PathKind::Log {
-    let reveal = Button::secondary(t!("settings.storage.reveal")).on_press(Message::RevealLogDir);
+    let reveal = Button::secondary(t!("settings.storage.reveal"))
+      .icon(Icon::arrow_out())
+      .on_press(Message::RevealLogDir);
     control_children.push(reveal.into());
   }
   control_children.push(reset.into());
@@ -1245,10 +1250,12 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
   .width(Length::Fill);
 
   let sync_now = Button::secondary(t!("settings.storage.sync_now"))
+    .icon(Icon::reset())
     .size(Size::Sm)
     .on_press(Message::SyncNow);
 
   let release = Button::secondary(t!("settings.storage.release_lock"))
+    .icon(Icon::lock())
     .size(Size::Sm)
     .on_press(Message::ReleaseLock);
 

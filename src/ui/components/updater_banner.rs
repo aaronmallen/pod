@@ -1,20 +1,22 @@
 use iced::{
   Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, text},
+  widget::{Column, Row, Space, container, text},
 };
 
 use crate::{
   services::updater::State,
   ui::{
-    components::button::{Button, Size},
-    style::{color, control, radius, shadow, spacing, typography},
+    components::{
+      button::{Button, Size},
+      icon::Icon,
+    },
+    style::{color, radius, shadow, spacing, typography},
   },
 };
 
 const BANNER_PAD_X: f32 = spacing::SPACE_3_5;
 const BANNER_PAD_Y: f32 = spacing::SPACE_2_5;
-const DISMISS_SIZE: f32 = 20.0;
 const TOAST_MARGIN: f32 = spacing::SPACE_3_5;
 const TOAST_WIDTH: f32 = 300.0;
 
@@ -221,20 +223,10 @@ fn dismiss_button<'a, M>(on_press: M) -> Element<'a, M>
 where
   M: Clone + 'a,
 {
-  button(
-    text("\u{2715}")
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(|_| text::Style {
-        color: Some(color::text::secondary()),
-      }),
-  )
-  .width(Length::Fixed(DISMISS_SIZE))
-  .height(Length::Fixed(DISMISS_SIZE))
-  .padding(0)
-  .on_press(on_press)
-  .style(control::ghost_button)
-  .into()
+  Button::ghost_icon(Icon::close())
+    .size(Size::Sm)
+    .on_press(on_press)
+    .into()
 }
 
 #[cfg(test)]

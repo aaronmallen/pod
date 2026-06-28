@@ -26,7 +26,7 @@ use corp_card::CorpCardModel;
 use iced::{
   Color, Element, Length, Task,
   alignment::{Horizontal, Vertical},
-  widget::{Column, Row, Space, button, container, operation, svg, text},
+  widget::{Column, Row, Space, container, operation, svg, text},
 };
 
 use crate::{
@@ -49,13 +49,15 @@ use crate::{
   ui::{
     components::{
       add_tag_modal::{self, AddTagMessage, AddTagModal},
+      button::Button,
       color_picker, confirm_modal,
       context_menu::{self, Item},
       header,
+      icon::Icon,
       modal_overlay::modal_overlay,
     },
     format::{corp_ticker_label, skill_label},
-    style::{color, control, spacing, typography},
+    style::{color, spacing, typography},
   },
 };
 
@@ -1639,15 +1641,9 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
       .size(typography::size::SM)
       .style(typography::colored(color::text::secondary()))
       .into(),
-    button(
-      text(t!("roster.actions.clear_filters"))
-        .font(typography::body::REGULAR)
-        .size(typography::size::SM),
-    )
-    .padding(control::padding())
-    .on_press(Message::ClearSearch)
-    .style(control::primary_button)
-    .into(),
+    Button::secondary(t!("roster.actions.clear_filters"))
+      .on_press(Message::ClearSearch)
+      .into(),
   ])
   .spacing(spacing::SPACE_3)
   .align_x(Horizontal::Center);
@@ -1661,21 +1657,10 @@ fn corp_no_matches<'a>() -> Element<'a, Message> {
 }
 
 fn add_corporation_button<'a>() -> Element<'a, Message> {
-  button(
-    Row::with_children(vec![
-      text("+").size(typography::size::MD).into(),
-      text(t!("roster.actions.add_corporation"))
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD)
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .padding(control::padding())
-  .on_press(Message::AddCorporationRequested)
-  .style(control::ghost_button)
-  .into()
+  Button::primary(t!("roster.actions.add_corporation"))
+    .icon(Icon::plus())
+    .on_press(Message::AddCorporationRequested)
+    .into()
 }
 
 fn roster_count(state: &State) -> String {

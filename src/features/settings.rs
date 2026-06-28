@@ -410,7 +410,9 @@ fn header<'a>() -> Element<'a, Message> {
     });
   let identity = Column::with_children(vec![eyebrow.into(), title.into()]).spacing(spacing::UNIT);
 
-  let reset = Button::secondary(t!("settings.shell.reset_to_defaults")).on_press(Message::ResetToDefaults);
+  let reset = Button::secondary(t!("settings.shell.reset_to_defaults"))
+    .icon(Icon::reset())
+    .on_press(Message::ResetToDefaults);
 
   header::header(vec![identity.into()], vec![reset.into()])
 }

@@ -4730,7 +4730,7 @@ mod view {
 
   fn save_plan_button(planner: &Planner) -> Element<'_, Message> {
     Button::primary(t!("industry.planner.save_build_plan").into_owned())
-      .icon(Icon::doc())
+      .icon(Icon::plus())
       .size(Size::Md)
       .block()
       .on_press_maybe(planner.product().is_some().then_some(Message::PlanSaveRequested))

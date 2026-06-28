@@ -201,7 +201,7 @@ fn folder_caption(state: &State) -> String {
 }
 
 fn compose_button<'a>() -> Element<'a, Message> {
-  Button::ghost(t!("mail.header.compose").into_owned())
+  Button::primary(t!("mail.header.compose").into_owned())
     .icon(Icon::pencil())
     .on_press(Message::ComposeOpened)
     .into()

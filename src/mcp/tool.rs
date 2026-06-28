@@ -1,23 +1,9 @@
-//! The typed tool catalog and the permission gate.
-//!
-//! A tool is registered once into the [`Registry`] with the [`Permission`] it requires and an
-//! async handler that receives a database clone plus the JSON arguments. The registry is the single
-//! plug-in point the later read/write/mail specs extend: each registers an [`McpTool`] and lets the
-//! gate refuse the call when the relevant config flag is off — handlers never re-check permissions
-//! themselves.
-
 use std::{borrow::Cow, collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 
 use crate::{config::McpPerms, mcp::args::ArgSpec, store::Database};
 
-/// The five-flag trust surface a tool can require. Mirrors [`crate::config::McpPerms`] one-to-one so
-/// the gate can map a tool's requirement straight onto the configured flag.
-///
-/// A1 ships only the `Read` smoke tool; the mutating variants are the requirement labels the
-/// write/mail tool specs (kqyllswo, quqlxuvw) attach to their tools, so today only the gate's
-/// `match` arms and this module's tests construct them.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Permission {
   DeleteMail,
@@ -38,8 +24,6 @@ impl Permission {
     }
   }
 
-  /// Whether `perms` grants this permission. The gate ([`Registry::dispatch`]) consults this; a
-  /// tool whose permission is not granted is refused before its handler runs.
   pub fn granted_by(self, perms: &McpPerms) -> bool {
     match self {
       Permission::DeleteMail => perms.delete_mail(),
@@ -51,8 +35,6 @@ impl Permission {
   }
 }
 
-/// The outcome of running a tool: either a JSON result or a structured error. The transport maps
-/// this onto a JSON-RPC response; [`ToolError::PermissionDenied`] becomes a permission-denied error.
 pub type ToolOutcome = Result<Value, ToolError>;
 
 #[derive(Clone, Debug, thiserror::Error)]
@@ -71,8 +53,6 @@ type ToolFuture = Pin<Box<dyn Future<Output = ToolOutcome> + Send>>;
 
 type ToolHandler = Arc<dyn Fn(Database, Value) -> ToolFuture + Send + Sync>;
 
-/// One registered MCP tool: its name, a one-line description surfaced to the agent, the permission
-/// it requires, and the async handler that produces its result.
 #[derive(Clone)]
 pub struct McpTool {
   args: Vec<ArgSpec>,
@@ -102,8 +82,6 @@ impl McpTool {
     }
   }
 
-  /// Attaches the declarative argument list that becomes this tool's advertised JSON Schema. Tools
-  /// that omit this call advertise empty properties.
   pub fn with_args(mut self, args: impl IntoIterator<Item = ArgSpec>) -> Self {
     self.args = args.into_iter().collect();
     self
@@ -139,8 +117,6 @@ impl std::fmt::Debug for McpTool {
   }
 }
 
-/// The catalog of tools an agent may list and call. Built once at startup; the read/write/mail specs
-/// register their tools here. Lookups and listing are name-keyed and deterministic.
 #[derive(Clone, Debug, Default)]
 pub struct Registry {
   tools: BTreeMap<&'static str, McpTool>,

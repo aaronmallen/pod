@@ -1,11 +1,3 @@
-//! The MCP server lifecycle and its localhost accept loop.
-//!
-//! [`Server`] is the controller the app holds: [`Server::apply`] reconciles the live listener with
-//! the current [`McpConfig`] — starting it when `enabled` flips true, stopping it (and closing the
-//! port) when false, and restarting it when the port changes. The accept loop binds `127.0.0.1`,
-//! authorizes each request via [`super::transport`], resolves catalog methods in-band, and routes a
-//! `tools/call` to the update loop through [`super::bridge`], awaiting the reply before responding.
-
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use tokio::{
@@ -24,13 +16,8 @@ use crate::{
   },
 };
 
-/// How long the accept loop waits for the update loop to answer a tool call before giving up. The
-/// reply travels to the UI thread and back; a few seconds is generous for the local read/write work
-/// the tools perform and bounds a wedged call so a connection cannot hang forever.
 const TOOL_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Snapshot of the parts of [`McpConfig`] the listener actually binds against, so [`Server::apply`]
-/// can decide between leaving the listener alone, restarting it, or stopping it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Binding {
   port: u16,
@@ -46,8 +33,6 @@ impl Binding {
   }
 }
 
-/// What [`Server::apply`] should do to reconcile the live listener with a new config. Pulled out as
-/// a pure function ([`plan`]) so the start/stop/restart logic is tested without a socket.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Action {
   Restart,
@@ -56,15 +41,11 @@ enum Action {
   None,
 }
 
-/// The running listener's handle: dropping `shutdown` (or sending on it) ends the accept loop.
 struct Running {
   binding: Binding,
   shutdown: oneshot::Sender<()>,
 }
 
-/// The app-held controller over the embedded MCP listener. Holds the tool catalog the listener
-/// advertises and reconciles the listener against config on demand. Tools themselves run in the
-/// update loop (over the app's live database) via the bridge, so the controller holds no database.
 pub struct Server {
   registry: Arc<Registry>,
   running: Option<Running>,
@@ -78,9 +59,6 @@ impl Server {
     }
   }
 
-  /// Reconciles the live listener with `config`: starts it when enabled, stops it when disabled, and
-  /// restarts it when the port or token changed. Safe to call repeatedly; a no-op when already in
-  /// the desired state. Call this on startup and whenever the MCP config changes.
   pub fn apply(&mut self, config: &McpConfig) {
     let want = config.enabled().then(|| Binding::of(config));
     let have = self.running.as_ref().map(|running| running.binding.clone());
@@ -124,15 +102,12 @@ impl Server {
   }
 }
 
-/// Per-connection state the accept loop needs: the tool catalog it advertises, and the bearer token
-/// requests are checked against.
 #[derive(Clone)]
 struct Context {
   registry: Arc<Registry>,
   token: String,
 }
 
-/// Decides how to reconcile the live binding `have` with the desired binding `want`.
 fn plan(have: Option<&Binding>, want: Option<&Binding>) -> Action {
   match (have, want) {
     (None, None) => Action::None,
@@ -198,8 +173,6 @@ async fn read_request(stream: &mut TcpStream) -> std::io::Result<String> {
   Ok(String::from_utf8_lossy(&buffer).into_owned())
 }
 
-/// Whether the buffer holds a full request: the header terminator plus a body at least as long as
-/// the declared `Content-Length`. Keeps the read loop from blocking on a client that never closes.
 fn request_is_complete(buffer: &[u8]) -> bool {
   let text = String::from_utf8_lossy(buffer);
   let Some((head, body)) = text.split_once("\r\n\r\n") else {
@@ -282,8 +255,6 @@ mod tests {
     }
   }
 
-  /// Claims an ephemeral port and frees it so the server can bind it next. There is a small race
-  /// window between release and rebind, acceptable for a single-process test.
   async fn free_port() -> u16 {
     let listener = TcpListener::bind((transport::BIND_ADDR, 0)).await.unwrap();
     listener.local_addr().unwrap().port()
@@ -297,7 +268,6 @@ mod tests {
     config
   }
 
-  /// Sends one HTTP request to the listening server and returns the raw response.
   async fn round_trip(port: u16, request: &str) -> String {
     let mut stream = TcpStream::connect((transport::BIND_ADDR, port)).await.unwrap();
     stream.write_all(request.as_bytes()).await.unwrap();

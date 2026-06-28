@@ -49,8 +49,6 @@ impl Avatar {
     self
   }
 
-  /// Overlays a corporation logo as a corner badge, signalling that a market
-  /// trade exists in both this character's and the corp's wallet.
   pub fn corp_badge(mut self, logo: Option<PathBuf>) -> Self {
     self.corp_badge = logo;
     self

@@ -22,8 +22,6 @@ use crate::telemetry_contract::Batch;
 /// authenticates each ingest POST against the rotating key set on this header.
 const WRITE_KEY_HEADER: &str = "X-Pod-Telemetry-Key";
 
-/// Single-shot POST timeout (§7.3). Telemetry is best-effort and must never
-/// stall a flush, so the request is capped tightly.
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Minimal static user agent (§7.3). Deliberately content-free beyond the
@@ -41,23 +39,13 @@ pub fn anon_id(machine_id: &str) -> String {
   digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// The build-time-baked ingest endpoint (§7.3, §7.5). Present only in release
-/// builds where both `POD_TELEMETRY_URL` and `POD_TELEMETRY_KEY` were injected;
-/// absent (and therefore a no-op) everywhere else.
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-  /// The ingest URL (`POD_TELEMETRY_URL`, a literal in release.yml).
   pub url: String,
-  /// The write key (`POD_TELEMETRY_KEY`, a CI secret), sent on
-  /// [`WRITE_KEY_HEADER`].
   pub key: String,
 }
 
 impl Endpoint {
-  /// Resolve the endpoint from the build-time environment (§7.3). `Some` only
-  /// when both `option_env!("POD_TELEMETRY_URL")` and
-  /// `option_env!("POD_TELEMETRY_KEY")` are present and non-blank; else `None`
-  /// (the whole subsystem no-ops). Mirrors `updater::Config::from_env`.
   pub fn from_env() -> Option<Self> {
     let url = option_env!("POD_TELEMETRY_URL")?.trim().to_owned();
     if url.is_empty() {
@@ -74,8 +62,6 @@ impl Endpoint {
   }
 }
 
-/// The fire-and-forget telemetry sender (§7.3): a reqwest client plus the baked
-/// endpoint. Cheap to clone (the endpoint is `Arc`-shared).
 #[derive(Clone)]
 pub struct Sender {
   client: reqwest::Client,
@@ -83,9 +69,6 @@ pub struct Sender {
 }
 
 impl Sender {
-  /// Build a sender for a resolved [`Endpoint`]. Returns `None` if the reqwest
-  /// client cannot be constructed (e.g. no TLS backend) — another fail-closed
-  /// no-op path.
   pub fn new(endpoint: Endpoint) -> Option<Self> {
     let client = reqwest::Client::builder()
       .user_agent(USER_AGENT)
@@ -150,10 +133,6 @@ mod tests {
   use super::*;
   use crate::telemetry_contract::SESSION_ALL_STREAMS_FIXTURE;
 
-  // The sender serializes the canonical contract `Batch`; this asserts the
-  // reused types produce the golden session fixture byte-for-byte (compact body
-  // matches the pretty fixture once re-pretty-printed), pinning that the
-  // transport rides exactly the frozen contract.
   #[test]
   fn batch_serializes_byte_for_byte_to_the_golden_session_fixture() {
     let batch: Batch = serde_json::from_str(SESSION_ALL_STREAMS_FIXTURE).unwrap();
@@ -161,11 +140,8 @@ mod tests {
     assert_eq!(reserialized, SESSION_ALL_STREAMS_FIXTURE.trim_end());
   }
 
-  // ---- §7.2 identity: lowercase hex sha256, derived on the fly, never stored.
-
   #[test]
   fn anon_id_is_lowercase_hex_sha256_of_the_machine_id() {
-    // sha256("") — the documented valid empty-input hash.
     assert_eq!(
       anon_id(""),
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -185,27 +161,16 @@ mod tests {
     assert_ne!(anon_id("machine-a"), anon_id("machine-b"));
   }
 
-  // ---- §7.3 endpoint: Some only when both vars present & non-blank.
-
   #[test]
   fn endpoint_from_env_is_none_when_build_time_vars_absent() {
-    // These option_env! vars are unset in the test build, so resolution must
-    // no-op exactly as it does in every local / dev build.
     assert!(Endpoint::from_env().is_none());
   }
-
-  // ---- §7.3 send: the real reqwest POST, exercised end-to-end against a
-  // wiremock server so every branch of `send` (request construction, 2xx ->
-  // true, non-2xx -> false, transport error -> false) runs under coverage. The
-  // network I/O is local-loopback only; no live endpoint is contacted.
 
   use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{header, method, path},
   };
 
-  /// A sender whose baked endpoint points at `url` with key `key`, built from
-  /// the public `Endpoint` fields (no build-time env needed).
   fn sender_for(url: &str, key: &str) -> Sender {
     Sender::new(Endpoint {
       url: url.to_owned(),
@@ -234,8 +199,6 @@ mod tests {
     let accepted = sender.send(&fixture_batch()).await;
 
     assert!(accepted, "a 2xx ingest response is reported as accepted");
-    // The mock's `.expect(1)` asserts on drop that exactly one matching POST
-    // (correct path, key header, content-type, JSON body) arrived.
   }
 
   #[tokio::test]
@@ -254,8 +217,6 @@ mod tests {
 
   #[tokio::test]
   async fn send_swallows_a_transport_error_and_returns_false() {
-    // No server is listening on this loopback port, so the POST fails at the
-    // transport layer; `send` must swallow it into a debug log and return false.
     let sender = sender_for("http://127.0.0.1:1/ingest", "key");
     let accepted = sender.send(&fixture_batch()).await;
 

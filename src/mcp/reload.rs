@@ -1,10 +1,3 @@
-//! The data-changed (reload/invalidate) signal an MCP write tool raises after mutating the database.
-//!
-//! Write tools land in later specs, but the mechanism is defined here so they have a stable hook:
-//! after a tool commits a write, it calls [`signal`], an iced [`Subscription`] delivers a
-//! [`DataChanged`] marker into the update loop, and the app reloads whatever the open view shows.
-//! The marker is deliberately coarse — "something an agent changed"; the app decides what to reload.
-
 use std::sync::Mutex;
 
 use iced::{Subscription, futures::Stream};
@@ -18,13 +11,10 @@ type Sender = iced::futures::channel::mpsc::Sender<DataChanged>;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DataChanged;
 
-/// The iced subscription that stashes the live sender so [`signal`] can reach the update loop.
 pub fn subscription() -> Subscription<DataChanged> {
   Subscription::run(stream)
 }
 
-/// Raises the data-changed signal so any open GUI view reloads. Safe to call from any thread; a
-/// no-op when no subscription is active yet.
 pub fn signal() {
   if let Ok(mut guard) = SENDER.lock()
     && let Some(tx) = guard.as_mut()

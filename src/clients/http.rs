@@ -25,9 +25,6 @@ const HTTP_TARGET: &str = "pod::http";
 // the single SQLite writer. Bounding the fan-out caps that burst while still overlapping enough page
 // fetches to stay fast.
 const MAX_CONCURRENT_PAGES: usize = 6;
-// Soft size threshold for the write-behind HTTP cache buffer. When buffered (unflushed) cache
-// entries reach this many, an upsert eagerly flushes the batch so a long-running job can't grow the
-// buffer without bound. A per-job flush in the sync engine bounds it on the time axis.
 const CACHE_FLUSH_THRESHOLD: usize = 32;
 const RATELIMIT_GROUP_HEADER: &str = "X-Ratelimit-Group";
 const RATELIMIT_LIMIT_HEADER: &str = "X-Ratelimit-Limit";
@@ -61,7 +58,6 @@ impl Cache {
   }
 
   async fn get(&self, url: &str) -> Result<Option<HttpCacheEntry>, store::Error> {
-    // Read-your-writes: a buffered (not-yet-flushed) entry shadows the database row for the same URL.
     if let Some(entry) = self.buffered(url) {
       return Ok(Some(entry));
     }
@@ -89,8 +85,6 @@ impl Cache {
     write_batch(&self.db, pending).await
   }
 
-  /// Flush every buffered entry to the database in a single transaction. Anchored per sync job so a
-  /// job's cache writes land as one batched write rather than one transaction per ESI call.
   async fn flush(&self) -> Result<(), store::Error> {
     let pending = {
       let mut buffer = self.pending.lock().expect("http cache buffer mutex poisoned");
@@ -104,8 +98,6 @@ impl Cache {
 }
 
 async fn write_batch(db: &store::Database, entries: HashMap<String, HttpCacheEntry>) -> Result<(), store::Error> {
-  // A lone entry is already a single atomic statement, so skip the explicit transaction and reuse the
-  // shared single-row upsert; only a real batch is worth wrapping in one BEGIN/COMMIT.
   if entries.len() == 1 {
     if let Some(entry) = entries.values().next() {
       return infra::http_cache_upsert(db, entry).await;
@@ -179,8 +171,6 @@ impl Client {
       return Ok(items);
     }
 
-    // Fetch the remaining pages with a bounded number of simultaneous requests instead of an
-    // unbounded fan-out, capping the concurrent connection/write burst at the single SQLite writer.
     let mut pages = stream::iter(2..=total_pages)
       .map(|page| {
         let inner = &self.inner;
@@ -249,9 +239,6 @@ impl Client {
     handle_status(resp).await
   }
 
-  /// Flush the write-behind HTTP cache buffer to the database. The sync engine calls this once after
-  /// each job so a job's many ESI cache writes are coalesced into a single batched transaction
-  /// instead of one transaction per request, cutting the writer's queue depth during a sync.
   pub async fn flush_cache(&self) -> Result<(), store::Error> {
     self.cache.flush().await
   }

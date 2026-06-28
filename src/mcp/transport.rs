@@ -7,7 +7,6 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
-/// The single route the server answers. A request to any other path is a 404.
 pub const ENDPOINT: &str = "/mcp";
 
 /// The only HTTP method the endpoint answers. Streamable HTTP carries every JSON-RPC message in a
@@ -19,11 +18,8 @@ pub const ALLOWED_METHOD: &str = "POST";
 /// the machine, so it is pinned to localhost.
 pub const BIND_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
-/// Cap on the request body so a malformed or hostile client cannot make the server buffer without
-/// bound. MCP requests are small JSON documents.
 pub const MAX_BODY_BYTES: usize = 1 << 20;
 
-/// A parsed HTTP request: just the parts the JSON-RPC layer and the auth checks need.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Request {
   pub authorization: Option<String>,
@@ -34,7 +30,6 @@ pub struct Request {
   pub path: String,
 }
 
-/// Why a request was refused before it reached the JSON-RPC layer. Each maps to an HTTP status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Reject {
   BadOrigin,
@@ -77,7 +72,6 @@ pub fn authorize(request: &Request, token: &str) -> Result<(), Reject> {
   Ok(())
 }
 
-/// Whether the `Authorization` header is exactly `Bearer <token>` for a non-empty token.
 fn bearer_matches(header: Option<&str>, token: &str) -> bool {
   if token.is_empty() {
     return false;
@@ -109,16 +103,12 @@ fn host_is_local(host: Option<&str>) -> bool {
   matches!(name, "localhost" | "127.0.0.1" | "::1")
 }
 
-/// Extracts the `host[:port]` authority from a URL-shaped `Origin` value (`scheme://host:port`).
 fn host_part_of(origin: &str) -> Option<&str> {
   origin
     .split_once("://")
     .map(|(_scheme, rest)| rest.split('/').next().unwrap_or(rest))
 }
 
-/// Parses the head and body of an HTTP/1.1 request from its raw bytes. Returns `None` for a request
-/// that is not well-formed enough to route (no request line). Header names are matched
-/// case-insensitively; only the handful this transport needs are retained.
 pub fn parse_request(raw: &str) -> Option<Request> {
   let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((raw, ""));
   let mut lines = head.lines();
@@ -153,13 +143,10 @@ pub fn parse_request(raw: &str) -> Option<Request> {
   })
 }
 
-/// Serializes a JSON body into a complete HTTP/1.1 response with the given status line.
 pub fn http_response(status_line: &str, json: &str) -> String {
   http_response_with_headers(status_line, json, &[])
 }
 
-/// Like [`http_response`], but threads through extra header lines (e.g. `Allow: POST` on a 405). Each
-/// entry is a `(name, value)` pair emitted verbatim before the body.
 pub fn http_response_with_headers(status_line: &str, json: &str, headers: &[(&str, &str)]) -> String {
   let extra: String = headers
     .iter()
@@ -171,9 +158,6 @@ pub fn http_response_with_headers(status_line: &str, json: &str, headers: &[(&st
   )
 }
 
-/// A complete HTTP/1.1 response with no body (`Content-Length: 0`) for the given status line — the
-/// shape Streamable HTTP wants for a `POST` that carried only notifications/responses (202 Accepted).
-/// Optional extra header lines are threaded through as in [`http_response_with_headers`].
 pub fn empty_response(status_line: &str, headers: &[(&str, &str)]) -> String {
   let extra: String = headers
     .iter()
@@ -330,8 +314,6 @@ mod tests {
 
     #[test]
     fn a_post_carrying_session_and_protocol_headers_still_authorizes() {
-      // Mcp-Session-Id / MCP-Protocol-Version are dropped by parse_request, so they never reach the
-      // checks — a request carrying them is indistinguishable from one without.
       assert_eq!(authorize(&request(), "pod_mcp_secret"), Ok(()));
     }
 

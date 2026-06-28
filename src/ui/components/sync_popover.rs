@@ -22,9 +22,6 @@ const COUNTDOWN_WIDTH: f32 = 72.0;
 const GLYPH_WIDTH: f32 = 36.0;
 const INSET_X: f32 = 16.0;
 const LIST_MAX_HEIGHT: f32 = 360.0;
-/// The per-pilot sync jobs the popover surfaces, paired with their display labels. A featureless job
-/// (e.g. Profile) always runs and is always shown; a feature-gated job is only shown when its feature
-/// is enabled.
 const POPOVER_JOBS: [(JobKind, &str); 7] = [
   (JobKind::AssetSync, "Assets"),
   (JobKind::CharacterClones, "Clones"),
@@ -84,11 +81,6 @@ pub struct Model {
   pub total: usize,
 }
 
-/// The disambiguated freshness a row renders, mirroring the shared `Freshness` vocabulary
-/// (`crate::sync`) one-for-one, with the attention bucket split into its user-distinct conditions so
-/// the row can carry a clear label. No bare "Queued" remains: a job the engine has not yet reported
-/// on is `CatchingUp`, a transient backoff is `Refreshing` (calm), and only persistent failure /
-/// blocked / re-auth land in an attention state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RowState {
   Blocked,
@@ -100,8 +92,6 @@ pub enum RowState {
 }
 
 impl RowState {
-  /// The shared freshness state this row maps onto, so a row's rendering always agrees with the
-  /// chip's aggregate from the same `Freshness` vocabulary.
   fn freshness(self) -> Freshness {
     match self {
       RowState::Blocked | RowState::Failed | RowState::Reauth => Freshness::Attention,
@@ -180,7 +170,6 @@ pub fn job_stats(pilots: &[OwnedPilot], status: &sync::SyncStatus, features: &Fe
   stats.total = summary.total;
   stats.done = summary.fresh;
   stats.active = summary.refreshing;
-  // Persistent failures surface as errors in the chip; blocked/needs-reauth/not-ready as attention.
   stats.attention = summary.attention.saturating_sub(stats.errors);
   stats
 }
@@ -199,15 +188,6 @@ fn is_error_phase(status: &sync::SyncStatus, key: &JobKey) -> bool {
 /// re-auth as its own user-actionable attention state rather than a generic "blocked".
 const REAUTH_REASON: &str = "needs re-authentication";
 
-/// Derive a row's disambiguated freshness state and its detail line from the shared phase, never
-/// collapsing distinct conditions onto a bare "Queued":
-///
-/// - `Done`/`Empty` -> `Fresh` (the next-in countdown is rendered separately from `next_in_secs`).
-/// - `Syncing`/`BackingOff` -> `Refreshing`; a transient backoff self-heals and stays calm, so it is
-///   never an attention state — though its retry detail is kept for the sub-label.
-/// - `None` (enrolled but never reported) -> `CatchingUp`.
-/// - `Failed` -> `Failed`; `Blocked`/`NotReady` -> `Blocked`, except a `needs re-authentication`
-///   reason, which becomes the distinct `Reauth` state.
 pub fn row_state(status: &sync::SyncStatus, key: &JobKey) -> (RowState, Option<String>) {
   match status.phase(key) {
     None => (RowState::CatchingUp, None),
@@ -359,8 +339,6 @@ fn for_each_job(pilots: &[OwnedPilot], features: &FeatureFlags, mut visit: impl 
   for pilot in pilots {
     let subject = Subject::Character(pilot.id);
     for (kind, label) in POPOVER_JOBS {
-      // The engine enrolls on sub-features (is_feature_enabled), so the row domain gates the same way:
-      // no phantom "Queued" row exists for a job the engine will never service.
       if !kind.is_feature_enabled(features) {
         continue;
       }
@@ -440,8 +418,6 @@ fn job_row<'a, M>(row: &JobRow, pulse_on: bool) -> Element<'a, M>
 where
   M: 'a,
 {
-  // A catching-up row is the calmest, faintest state (never-reported-yet); its border recedes the way
-  // the old "Queued" row did.
   let catching_up = row.state == RowState::CatchingUp;
 
   let body = Row::with_children(vec![
@@ -515,9 +491,7 @@ where
   let (label, tone) = match row.state {
     RowState::Refreshing => ("Refreshing".to_owned(), color::text::secondary()),
     RowState::CatchingUp => ("Catching up".to_owned(), color::text::tertiary()),
-    // Attention rows carry their detail in the sub-label, so the countdown column stays clear.
     RowState::Blocked | RowState::Failed | RowState::Reauth => (String::new(), color::text::tertiary()),
-    // Fresh — the only state with a meaningful next-run deadline.
     RowState::Fresh => match row.next_in_secs {
       Some(secs) => (format!("Next in {}", format_next_in(secs)), color::text::tertiary()),
       None => (String::new(), color::text::tertiary()),
@@ -580,8 +554,6 @@ where
       color: Some(primary_color),
     });
 
-  // The sub-label carries the attention detail (failure reason / blocked / re-auth) in its state tone,
-  // and otherwise names the character; a fresh "No data" empty result reads as a benign tertiary note.
   let (sub_text, sub_color) = match (row.state, &row.error) {
     (RowState::Failed, Some(message)) => (message.to_uppercase(), color::status::DANGER),
     (RowState::Failed, None) => (row.character_name.to_uppercase(), color::status::DANGER),

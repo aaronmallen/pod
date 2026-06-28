@@ -75,8 +75,6 @@ mod tests {
 
     #[test]
     fn it_uses_a_true_zero_width_for_an_empty_segment() {
-      // `FillPortion(0)` resolves to the full width, so an empty segment must be
-      // `Fixed(0.0)` to avoid a 0% bar painting full / a 100% bar painting empty.
       assert_eq!(portion(0), Length::Fixed(0.0));
     }
   }

@@ -92,7 +92,6 @@ mod tests {
       let mut tree = iced::advanced::widget::Tree::new(&el);
       tree.diff(&el);
 
-      // A Stack root with the base alone at child[0], even with no overlay.
       assert_eq!(tree.children.len(), 1);
     }
 
@@ -115,9 +114,6 @@ mod tests {
       let mut open_tree = iced::advanced::widget::Tree::new(&open);
       open_tree.diff(&open);
 
-      // Iced matches runtime state by tree position + tag; child[0] (the base) must
-      // carry the same tag whether or not overlay siblings are present, so its
-      // state (a scrollable's offset) survives the open/close reshape.
       assert_eq!(closed_tree.children[0].tag, open_tree.children[0].tag);
     }
   }

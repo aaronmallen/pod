@@ -20,15 +20,11 @@ const TOAST_WIDTH: f32 = 360.0;
 
 static CLOSE_ICON: &[u8] = include_bytes!("../../../assets/images/icons/close.svg");
 
-/// One toast's render inputs: the notification it surfaces and the resolved "who" name.
 pub struct ToastView<'a> {
   pub notification: &'a Notification,
   pub who: &'a str,
 }
 
-/// The bottom-right toast host: a full-size transparent layer that bottom-right-anchors a stacked
-/// column of toast cards. Returns `None` when there is nothing to show so the caller can skip the
-/// Stack layer entirely. `on_activate`/`on_dismiss`/`on_hover` are keyed by notification id.
 pub fn toaster<'a, M, A, D, H>(
   toasts: &[ToastView<'a>],
   on_activate: A,
@@ -119,7 +115,6 @@ where
     .spacing(spacing::UNIT / 2.0)
     .width(Length::Fill);
 
-  // The whole body activates (mark read + navigate); only the X dismisses without reading.
   let activate_area = button(body)
     .width(Length::Fill)
     .padding(0)

@@ -1,15 +1,3 @@
-//! A reusable anchored-dropdown widget.
-//!
-//! Renders an `underlay` (the trigger element) inline. When `open`, it floats a `popover` element in
-//! the overlay layer positioned directly below the trigger's layout bounds, width-matched to the
-//! trigger, floating *over* the content below without pushing any siblings (no layout shift). An
-//! outside click emits `on_dismiss`.
-//!
-//! This is the same mechanism iced's own `pick_list`/`combo_box` use to anchor their menus: a custom
-//! [`Widget`] with a real [`Widget::overlay`] that positions an [`overlay::Element`] from the
-//! underlay's bounds. Unlike a cursor-anchored popover, the popover always tracks the trigger and
-//! never resizes the surrounding layout.
-
 use iced::{
   Element, Event, Length, Rectangle, Size, Vector,
   advanced::{
@@ -24,10 +12,8 @@ use iced::{
 
 use crate::ui::components::overlay_layer::OverlayLayer;
 
-/// Vertical gap between the trigger's bottom edge and the floating popover.
 const DROPDOWN_GAP: f32 = 6.0;
 
-/// A widget that anchors a floating `popover` directly below its `underlay` trigger.
 pub struct AnchoredDropdown<'a, Message, Theme, Renderer> {
   underlay: Element<'a, Message, Theme, Renderer>,
   popover: Option<Element<'a, Message, Theme, Renderer>>,
@@ -39,7 +25,6 @@ impl<'a, Message, Theme, Renderer> AnchoredDropdown<'a, Message, Theme, Renderer
 where
   Renderer: iced::advanced::Renderer,
 {
-  /// Creates a dropdown around `underlay`. When `popover` is `Some`, it floats below the trigger.
   pub fn new(
     underlay: impl Into<Element<'a, Message, Theme, Renderer>>,
     popover: Option<Element<'a, Message, Theme, Renderer>>,
@@ -52,15 +37,11 @@ where
     }
   }
 
-  /// Sets the message emitted when the user clicks outside the open popover.
   pub fn on_dismiss(mut self, message: Message) -> Self {
     self.on_dismiss = Some(message);
     self
   }
 
-  /// Overrides the popover's width. By default the popover is width-matched to
-  /// the trigger (the combobox/menu convention); set this when the popover's
-  /// content needs more room than a narrow trigger affords.
   pub fn popover_width(mut self, width: f32) -> Self {
     self.popover_width = Some(width);
     self
@@ -197,11 +178,9 @@ where
 struct DropdownOverlay<'a, 'b, Message, Theme, Renderer> {
   popover: &'a mut Element<'b, Message, Theme, Renderer>,
   tree: &'a mut Tree,
-  /// The trigger's bounds in the root coordinate space (anchor for the popover).
   bounds: Rectangle,
   viewport: Rectangle,
   on_dismiss: Option<Message>,
-  /// Explicit popover width; falls back to the trigger width when `None`.
   width: Option<f32>,
 }
 
@@ -212,7 +191,6 @@ where
   Renderer: iced::advanced::Renderer,
 {
   fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node {
-    // Width-match the trigger; let the popover choose its own height up to the space available.
     let space_below = bounds.height - (self.bounds.y + self.bounds.height + DROPDOWN_GAP);
     let space_above = self.bounds.y - DROPDOWN_GAP;
     let width = self.width.unwrap_or(self.bounds.width).min(bounds.width).max(1.0);
@@ -236,7 +214,6 @@ where
     let node = self.popover.as_widget_mut().layout(self.tree, renderer, &limits);
     let size = node.size();
 
-    // Keep the popover within the viewport horizontally.
     let max_x = (bounds.width - size.width).max(0.0);
     let x = self.bounds.x.min(max_x).max(0.0);
     let y = if flip_up {
@@ -271,7 +248,6 @@ where
     clipboard: &mut dyn Clipboard,
     shell: &mut Shell<'_, Message>,
   ) {
-    // An outside click (not on the trigger, not on the popover) dismisses the dropdown.
     if let Some(on_dismiss) = &self.on_dismiss
       && let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
     {
@@ -391,7 +367,6 @@ mod tests {
 
     #[test]
     fn it_flips_up_near_the_bottom_when_more_room_is_above() {
-      // A tall popover that does not fit in the 35px below the trigger flips up.
       assert!(should_flip_up(35.0, 500.0, 240.0));
     }
 

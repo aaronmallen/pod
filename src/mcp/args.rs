@@ -119,8 +119,6 @@ impl ArgSpec {
   }
 }
 
-/// Builds the JSON Schema for a tool's argument list: an object whose `properties` describe each
-/// argument by wire type and description, and whose `required` array names the non-optional ones.
 pub fn input_schema(specs: &[ArgSpec]) -> Value {
   let mut properties = serde_json::Map::new();
   let mut required: Vec<Value> = Vec::new();
@@ -140,7 +138,6 @@ pub fn require_i64(args: &Value, key: &str) -> Result<i64, ToolError> {
     .ok_or_else(|| ToolError::InvalidArguments(format!("`{key}` is required and must be an integer")))
 }
 
-/// Extracts an integer-array argument, applying the same lenient string coercion element-wise.
 pub fn require_i64_array(args: &Value, key: &str) -> Result<Vec<i64>, ToolError> {
   let items = args
     .get(key)
@@ -178,8 +175,6 @@ pub fn pagination(args: &Value) -> (i64, i64) {
   (page, limit)
 }
 
-/// Slices `rows` to the requested page and reports whether further pages remain, taking ownership of
-/// the window so callers serialize without an extra clone.
 pub fn paginate_vec<T>(rows: &mut Vec<T>, page: i64, limit: i64) -> (Vec<T>, bool) {
   let start = (page * limit).min(rows.len() as i64).max(0) as usize;
   let end = (start as i64 + limit).min(rows.len() as i64).max(0) as usize;

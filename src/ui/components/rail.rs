@@ -98,8 +98,6 @@ impl Destination {
   }
 }
 
-/// Inputs the cascade-aware rail needs beyond the per-frame `on_*` closures: which icon is hovered,
-/// which sub-section is active (for highlight), and how the cascade should surface (flyout/off).
 pub struct RailProps<'a> {
   pub active: Destination,
   pub active_sub: Option<&'static str>,
@@ -357,8 +355,6 @@ where
       ..container::Style::default()
     });
 
-  // The dividing rule sits on the inboard side of the sub-rail (toward the content), so right-docked
-  // nav mirrors it to the left edge.
   let children: Vec<Element<'a, M>> = match nav_location {
     NavLocation::Left => vec![body.into(), edge.into()],
     NavLocation::Right => vec![edge.into(), body.into()],
@@ -812,8 +808,6 @@ where
     .into()
 }
 
-/// A rail icon carrying an unread-count pill in its top-right corner (displaying `9+` past 9), used by
-/// the notification bell. A zero count renders the bare icon.
 fn nav_item_count_badged<'a, M>(icon: &'static [u8], active: bool, count: i64, message: M) -> Element<'a, M>
 where
   M: Clone + 'a,
@@ -898,8 +892,6 @@ fn flyout_keeps_open(cursor: mouse::Cursor, panel_bounds: Rectangle) -> bool {
   cursor.is_over(panel_bounds)
 }
 
-/// A side-anchored flyout: floats `popover` to the right of `underlay` (left when the rail is docked
-/// right via the viewport-edge clamp) and opens downward, or upward for a near-bottom trigger.
 struct SideFlyout<'a, M, Theme, Renderer> {
   open_up: bool,
   popover: Element<'a, M, Theme, Renderer>,
@@ -1060,9 +1052,6 @@ where
     let node = self.popover.as_widget_mut().layout(self.tree, renderer, &limits);
     let size = node.size();
 
-    // Anchor the popover flush to the trigger; the visible gap is the popover's own gutter padding,
-    // so there is no dead space between the icon and the panel. Prefer the right of the trigger;
-    // flip to the left if it would overflow the viewport (the rail docked on the right edge).
     let right_x = self.bounds.x + self.bounds.width;
     let x = if right_x + size.width <= bounds.width {
       right_x
@@ -1196,7 +1185,6 @@ mod tests {
 
   #[test]
   fn nav_item_count_badged_renders_with_and_without_a_count() {
-    // A zero count collapses to the bare icon; a count past 9 renders the "9+" pill.
     let _none: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 0, ());
     let _some: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 3, ());
     let _overflow: Element<'_, ()> = nav_item_count_badged(BELL_ICON, false, 42, ());
@@ -1302,8 +1290,6 @@ mod tests {
 
   #[test]
   fn flyout_width_is_bounded_not_full_screen() {
-    // The flyout must stay a narrow side-anchored panel: the bounded width keeps the overlay from
-    // stretching across the viewport (the original full-width bug).
     const {
       assert!(FLYOUT_MIN_WIDTH > 0.0);
       assert!(
@@ -1319,9 +1305,6 @@ mod tests {
 
   #[test]
   fn flyout_stays_open_while_the_cursor_is_over_the_panel() {
-    // The keep-open predicate drives the overlay's event-capture: cursor anywhere over the panel
-    // bounds must report "stay open" (so the icon's on_exit close is suppressed), and a cursor over
-    // neither icon nor panel must report "close" (so the rail's leave-grace timer can fire).
     let panel = Rectangle {
       x: 68.0,
       y: 100.0,
@@ -1383,8 +1366,6 @@ mod tests {
 
   #[test]
   fn flyout_panel_builds_for_either_dock_side() {
-    // Both dock sides build the panel through the gap-bridging gutter (the keep-open-on-flyout-hover
-    // path): the panel's mouse_area carries the icon→panel gap as part of its hover region.
     let section = nav_catalog::section(Destination::Wallet).expect("wallet section");
     let _left: Element<'_, Destination> = flyout_panel(
       section,
@@ -1469,8 +1450,6 @@ mod tests {
 
   #[test]
   fn sub_rail_renders_an_empty_state_for_a_sectionless_destination() {
-    // Mail has a catalog section but no sub-sections; the column still renders (with its empty-state
-    // line) rather than collapsing.
     let el = sub_rail(Destination::Mail, None, NavLocation::Left, |d, _| d);
 
     assert!(el.is_some(), "Mail renders the empty-state sub-rail");

@@ -169,7 +169,6 @@ where
     .into()
 }
 
-/// Renders the constrained ESI label color picker; selection is limited to `LABEL_COLORS` with no free-form hex entry.
 pub fn label_color_grid<'a, M>(current: &str, on_select: impl Fn(String) -> M + 'a) -> Element<'a, M>
 where
   M: Clone + 'static,

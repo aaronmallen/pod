@@ -123,7 +123,6 @@ where
   Chip::new(label, color).view()
 }
 
-/// Renders a neutral pill with an uppercased label; the colored dot is omitted when `hex` is `None` or unparseable.
 pub fn label_chip<'a, M>(name: &str, hex: Option<&str>) -> Element<'a, M>
 where
   M: 'a,

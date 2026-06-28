@@ -50,8 +50,6 @@ pub fn picker_character_row<'a, M: 'a + Clone>(
 ) -> Element<'a, M> {
   let name = name.into();
 
-  // The avatar always renders; a missing-scope pilot is flagged by the gold subtitle and the
-  // trailing lock (see the design), never by hiding the portrait.
   let portrait_cell = container(avatar(id, &name, Length::Fixed(ROW_PORTRAIT), ROW_PORTRAIT, portrait))
     .width(Length::Fixed(ROW_PORTRAIT))
     .height(Length::Fixed(ROW_PORTRAIT))

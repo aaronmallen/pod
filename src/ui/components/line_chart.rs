@@ -66,9 +66,6 @@ impl<'a, Message> LineChart<'a, Message> {
 
   // Consumed by the asset tracker (next consumer); kept on the shared API.
   #[expect(dead_code)]
-  /// Overrides the default x-axis tick formatter.
-  ///
-  /// The closure receives `(days_ago, span_days)` and returns a display string.
   pub fn date_label(mut self, date_label: impl Fn(i64, i64) -> String + 'a) -> Self {
     self.date_label = Box::new(date_label);
     self
@@ -91,9 +88,6 @@ impl<'a, Message> LineChart<'a, Message> {
     self
   }
 
-  /// Sets the fractional whitespace added above and below the data range.
-  ///
-  /// For example, `0.08` adds 8% of `(max - min)` to each end of the Y axis.
   pub fn value_pad(mut self, value_pad: f64) -> Self {
     self.value_pad = value_pad;
     self

@@ -31,9 +31,6 @@ pub fn accent(kind: NotificationKind) -> iced::Color {
   }
 }
 
-/// The per-kind colored icon tile: the kind's icon centered in a fixed square with a tinted
-/// background and border derived from `accent(kind)`. Shared so the notification center row and the
-/// toast card render an identical tile from one source of geometry and color.
 pub fn type_tile<'a, M>(kind: NotificationKind) -> Element<'a, M>
 where
   M: 'a,
@@ -76,10 +73,6 @@ pub fn kind_label(kind: NotificationKind) -> &'static str {
   }
 }
 
-/// A single notification row: a per-kind colored icon tile beside the kind label, title, body, the
-/// resolved "who" (character/corporation name), and a relative timestamp. Shared by the notification
-/// center panel and the toast host so both render identically. `unread_dot` draws the right-edge
-/// unread marker the center uses; the toast passes `false`.
 pub fn notification_row<'a, M>(
   notification: &Notification,
   who: &str,

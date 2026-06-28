@@ -80,6 +80,7 @@ impl LocationSearch {
     });
   }
 
+  // Awaited by Enter-to-select keyboard handling for the combobox; until then the highlight is only stepped in tests.
   #[expect(dead_code)]
   pub fn highlighted(&self) -> Option<&LocationRef> {
     self.highlight.and_then(|index| self.results.get(index))
@@ -167,19 +168,16 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
     self
   }
 
-  /// Sets the search-input handler used by [`LocationCombobox::popover`].
   pub fn on_input(mut self, on_input: impl Fn(String) -> M + 'a) -> Self {
     self.on_input = Some(Box::new(on_input));
     self
   }
 
-  /// Sets the row-selection handler used by [`LocationCombobox::popover`].
   pub fn on_pick(mut self, on_pick: impl Fn(LocationRef) -> M + 'a) -> Self {
     self.on_pick = Some(Box::new(on_pick));
     self
   }
 
-  /// Sets the message emitted when the [`LocationCombobox::trigger`] button is pressed (open/close).
   pub fn on_toggle(mut self, message: M) -> Self {
     self.on_toggle = Some(message);
     self
@@ -215,8 +213,6 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
     self
   }
 
-  /// The always-visible field showing the selected location as a two-line card (or the empty placeholder).
-  /// Pressing it toggles the [`LocationCombobox::popover`] open; the popover (not this button) owns the search input.
   pub fn trigger(self) -> Element<'a, M> {
     let card: Element<'a, M> = match &self.selection {
       Some(location) => selected_card(location),
@@ -260,9 +256,6 @@ impl<'a, M: Clone + 'static> LocationCombobox<'a, M> {
       .into()
   }
 
-  /// The floating results popover: a search input, a result-count chip, the result rows, and an optional
-  /// clear footer. Hosts anchor this under the [`LocationCombobox::trigger`] button so the two read as one
-  /// combobox.
   pub fn popover(self) -> Element<'a, M> {
     let Self {
       highlight,
@@ -479,8 +472,6 @@ fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
 
-/// Renders a security pill only for tiers that carry a security band (system and below); region and
-/// constellation tiers are suppressed even when a `security_status` value is present.
 fn sec_pill<'a, M: 'a>(tier: Option<LocationTier>, security_status: Option<f64>) -> Option<Element<'a, M>> {
   if !tier.is_some_and(LocationTier::has_security) {
     return None;
@@ -562,7 +553,6 @@ fn status_label<'a, M: 'a>(label: impl text::IntoFragment<'a>) -> Element<'a, M>
     .into()
 }
 
-/// The colored band assigned to each location tier so the leading level tag is scannable at a glance.
 fn tier_color(tier: Option<LocationTier>) -> Color {
   match tier {
     Some(LocationTier::Region) => color::chart::GOLD,

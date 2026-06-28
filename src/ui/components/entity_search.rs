@@ -44,9 +44,6 @@ impl EntityKind {
     }
   }
 
-  /// The glyph shown in place of a portrait for location kinds, which have no fetched image.
-  /// Portrait-backed kinds (characters, corporations, alliances) return `None` and fall back to
-  /// their cached avatar.
   pub fn glyph(self) -> Option<Icon> {
     match self {
       Self::SolarSystem => Some(Icon::tier_system()),
@@ -179,8 +176,6 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
     }
   }
 
-  /// Renders the chips and input bare (no bordered field box), for hosts that already supply their own field
-  /// chrome — e.g. the mail compose To/Cc rows, which place the recipient picker inline inside a labelled field row.
   pub fn inline(mut self, inline: bool) -> Self {
     self.inline = inline;
     self
@@ -204,8 +199,6 @@ impl<'a, M: Clone + 'static> MultiSelect<'a, M> {
   pub fn view(self) -> Element<'a, M> {
     let mut chips = Row::new().spacing(spacing::UNIT + 2.0).align_y(Vertical::Center);
 
-    // The inline field carries its own leading search glyph so it reads like the Contacts search
-    // field; the bordered (non-inline) path gets the glyph from the shared `TextInput` instead.
     if self.inline {
       chips = chips.push(
         Icon::search()
@@ -432,8 +425,6 @@ fn dropdown<'a, M: Clone + 'static>(
     if searching {
       return wrap_dropdown(status_row(t!("common.entity_search.searching")));
     }
-    // Suppress the dropdown entirely until the query is long enough to search; only a real, completed search that
-    // returned nothing surfaces "No matches", so the resting/just-opened picker shows no stray empty panel.
     if searchable {
       return wrap_dropdown(no_matches());
     }
@@ -469,9 +460,6 @@ fn entity_avatar<'a, M: 'static>(entity: &EntityRef, size: f32) -> Element<'a, M
   .view()
 }
 
-/// Renders a selected recipient as a rounded pill carrying the entity's portrait, name, and a
-/// remove affordance — mirroring the design's `RecipientPill`. The avatar shape follows the kind
-/// (round for characters, rounded-square for corporations, glyph tile for locations).
 fn recipient_pill<'a, M>(entity: &EntityRef, on_remove: M) -> Element<'a, M>
 where
   M: Clone + 'a + 'static,
@@ -517,8 +505,6 @@ where
   .into()
 }
 
-/// Renders a location glyph in an avatar-sized tile, standing in for the portrait that location
-/// entities (solar systems, stations) do not have.
 fn glyph_tile<'a, M: 'static>(glyph: Icon, size: f32, radius: f32) -> Element<'a, M> {
   container(glyph.size(size * 0.55).color(color::text::secondary()).render())
     .width(Length::Fixed(size))
@@ -610,9 +596,6 @@ fn result_row<'a, M: Clone + 'static>(entity: &'a EntityRef, on_pick: &impl Fn(E
   .into()
 }
 
-/// Whether `query` is long enough for a search to have run. Mirrors the `SEARCH_MIN_CHARS` gate in
-/// [`EntitySearch::set_query`] so the dropdown stays empty (rather than showing "No matches") until a real search
-/// could have produced results.
 fn searchable(query: &str) -> bool {
   query.trim().chars().count() >= SEARCH_MIN_CHARS
 }
@@ -846,8 +829,6 @@ mod tests {
 
     #[test]
     fn it_renders_recipient_pills_with_portraits_across_avatar_shapes() {
-      // Exercises the portrait-pill path for each avatar shape: round (character),
-      // rounded-square (corporation), and the glyph-tile fallback (location).
       let chips = vec![
         sample(EntityKind::Character, 95, "Vex Voronova"),
         sample(EntityKind::Corporation, 96, "Vex Holdings"),

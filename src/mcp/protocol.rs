@@ -1,10 +1,3 @@
-//! The JSON-RPC 2.0 surface of the MCP server, independent of the HTTP transport.
-//!
-//! Pod speaks the small slice of MCP an automation agent needs over plain JSON-RPC: `initialize`,
-//! `ping`, `tools/list`, and `tools/call`. Methods that only read the catalog resolve synchronously
-//! here; `tools/call` is routed out to the update loop (it needs the live database), so this layer
-//! returns a [`Dispatch`] describing what to do rather than performing the call itself.
-
 use serde_json::{Value, json};
 
 use crate::mcp::{
@@ -17,37 +10,24 @@ use crate::mcp::{
 /// single-endpoint transport rather than the legacy two-endpoint HTTP+SSE transport.
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// The protocol revisions Pod will echo back when a client requests one. Any other requested version
-/// falls back to [`PROTOCOL_VERSION`].
 const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2024-11-05", "2025-03-26", "2025-06-18"];
 
 const SERVER_NAME: &str = "pod";
 
-/// JSON-RPC error code for an unsupported method.
 const METHOD_NOT_FOUND: i64 = -32601;
 
-/// JSON-RPC error code for malformed params.
 const INVALID_PARAMS: i64 = -32602;
 
-/// Application error code Pod uses for a permission-denied tool call.
 const PERMISSION_DENIED: i64 = -32001;
 
-/// Application error code Pod uses for any other tool failure.
 const TOOL_ERROR: i64 = -32000;
 
-/// What a parsed request resolves to: either a response ready to serialize, or a tool call that must
-/// be forwarded to the update loop (carrying the id so the eventual reply can be correlated).
 #[derive(Debug)]
 pub enum Dispatch {
-  /// A fully-resolved response (`initialize`, `ping`, `tools/list`, or an error).
   Respond(Value),
-  /// A `tools/call` to route to the update loop: the request id, tool name, and arguments.
   ToolCall { id: Value, tool: String, args: Value },
 }
 
-/// Resolves a single JSON-RPC request against the catalog. Catalog-only methods produce a
-/// [`Dispatch::Respond`] immediately; `tools/call` produces a [`Dispatch::ToolCall`] for the update
-/// loop. A JSON-RPC notification (no `id`) for an unsupported method yields no response.
 pub fn dispatch(request: &Value, registry: &Registry) -> Option<Dispatch> {
   let id = request.get("id").cloned();
   let method = request.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -66,7 +46,6 @@ pub fn dispatch(request: &Value, registry: &Registry) -> Option<Dispatch> {
   }
 }
 
-/// Builds the JSON-RPC response wrapping a tool outcome, correlated to the original call id.
 pub fn tool_response(id: Value, outcome: Result<Value, ToolError>) -> Value {
   match outcome {
     Ok(value) => success(id, tool_content(&value)),
@@ -79,7 +58,6 @@ pub fn tool_response(id: Value, outcome: Result<Value, ToolError>) -> Value {
   }
 }
 
-/// Builds a top-level JSON-RPC error for a request that could not even be parsed or authorized.
 pub fn error(id: Option<Value>, code: i64, message: &str) -> Value {
   json!({
     "jsonrpc": "2.0",
@@ -100,9 +78,6 @@ fn initialize_result(request: &Value) -> Value {
   })
 }
 
-/// Picks the protocol version to advertise: echo the client's requested `params.protocolVersion` when
-/// Pod recognizes it, otherwise fall back to Pod's latest ([`PROTOCOL_VERSION`]). A request with no
-/// requested version also falls back to the default.
 fn negotiated_version(request: &Value) -> &str {
   request
     .get("params")
@@ -126,7 +101,6 @@ fn tools_result(registry: &Registry) -> Value {
   json!({ "tools": tools })
 }
 
-/// Wraps a tool's JSON result in the MCP `content` envelope a client expects from `tools/call`.
 fn tool_content(value: &Value) -> Value {
   let text = serde_json::to_string(value).unwrap_or_else(|_| "null".to_owned());
   json!({ "content": [ { "type": "text", "text": text } ] })

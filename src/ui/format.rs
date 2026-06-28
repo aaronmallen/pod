@@ -14,7 +14,6 @@ pub fn fmt_count(count: i64) -> String {
   group_digits(count)
 }
 
-/// Includes a seconds component; returns `"0m"` for non-positive input.
 pub fn fmt_duration(seconds: i64) -> String {
   if seconds <= 0 {
     return "0m".to_owned();
@@ -34,7 +33,6 @@ pub fn fmt_duration(seconds: i64) -> String {
   }
 }
 
-/// Omits seconds entirely; clamps negatives to zero and bottoms out at `"0m"`.
 pub fn fmt_duration_coarse(seconds: i64) -> String {
   let total = seconds.max(0);
   let days = total / SECONDS_PER_DAY;
@@ -49,7 +47,6 @@ pub fn fmt_duration_coarse(seconds: i64) -> String {
   }
 }
 
-/// Zero-pads hours and minutes; returns an em-dash for non-positive input.
 pub fn fmt_duration_padded(seconds: i64) -> String {
   if seconds <= 0 {
     return EM_DASH.to_owned();
@@ -82,7 +79,6 @@ pub fn fmt_isk(value: f64) -> String {
   }
 }
 
-/// Full unabbreviated integer (rounded, comma-grouped); no suffix.
 pub fn fmt_isk_full(value: f64) -> String {
   group_digits(value.round() as i64)
 }
@@ -94,7 +90,6 @@ pub fn fmt_isk_opt(balance: Option<f64>) -> String {
   }
 }
 
-/// Two-decimal millions (`1.23M`), whole-number uppercase-K thousands (`12K`).
 pub fn fmt_sp(sp: i64) -> String {
   if sp >= 1_000_000 {
     format!("{:.2}M", sp as f64 / 1_000_000.0)
@@ -105,7 +100,6 @@ pub fn fmt_sp(sp: i64) -> String {
   }
 }
 
-/// One-decimal thousands (`2.5k`, lowercase k) and millions (`1.5M`).
 pub fn fmt_sp_compact(sp: u64) -> String {
   if sp >= 1_000_000 {
     format!("{:.1}M", sp as f64 / 1_000_000.0)
@@ -126,7 +120,6 @@ pub fn fmt_sp_labeled(sp: u64) -> String {
   }
 }
 
-/// Em-dash for `None` or `Some(0)`; one-decimal millions, whole-number uppercase-K thousands.
 pub fn fmt_sp_opt(total: Option<i64>) -> String {
   match total {
     None | Some(0) => EM_DASH.to_owned(),
@@ -143,7 +136,6 @@ pub fn fmt_sp_opt(total: Option<i64>) -> String {
   }
 }
 
-/// Whole-number thousands (`12k`, no decimal), one-decimal millions; no suffix.
 pub fn fmt_sp_short(sp: u64) -> String {
   if sp >= 1_000_000 {
     format!("{:.1}M", sp as f64 / 1_000_000.0)

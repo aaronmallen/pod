@@ -5,7 +5,6 @@ use iced::{
 
 use crate::ui::style::{color, control, radius};
 
-/// Alpha of the plasma glow ring drawn around a selected [`selectable_card`].
 const SELECTED_RING_ALPHA: f32 = 0.15;
 /// Blur radius (logical px) of the selected glow ring. Iced has no shadow
 /// spread, so a soft blur stands in for the design's crisp `0 0 0 3px` ring.
@@ -25,12 +24,6 @@ where
   container(content).padding(padding).style(control::card).into()
 }
 
-/// A selectable preview card: a borderless [`button`] wrapping `content` on the
-/// raised surface, with the shared nav-card radius. When `selected`, the border
-/// turns plasma and a soft plasma glow ring is drawn so the choice stands out
-/// beyond border color alone; otherwise the border lifts to the strong rule on
-/// hover. Both the Settings rail-side and rail-cascade cards route through this
-/// so they stay consistent by construction.
 pub fn selectable_card<'a, M>(content: impl Into<Element<'a, M>>, selected: bool, on_press: M) -> button::Button<'a, M>
 where
   M: Clone + 'a,

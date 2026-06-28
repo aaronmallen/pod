@@ -158,8 +158,6 @@ where
   M: 'a,
 {
   let headline = mono_text(t!("common.sync_chip.up_to_date"), color::status::ONLINE);
-  // The quiet last-sync time is a steady aside: it only appears once everything has truly settled,
-  // so a routine mid-refresh never decorates the calm headline with a churning timestamp.
   match state.last_synced_secs {
     Some(secs) if state.summary.is_up_to_date() => Row::with_children(vec![
       headline,
@@ -277,7 +275,6 @@ mod tests {
         "the strict settled check still sees the in-flight refresh"
       );
 
-      // The headline words are still the calm Up-to-date state; only the dot pulses.
       let _label: Element<'_, ()> = active_label(&state);
     }
   }

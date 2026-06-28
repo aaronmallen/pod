@@ -32,8 +32,6 @@ pub struct McpRequest {
 }
 
 impl McpRequest {
-  /// Builds a request and its pending response receiver. The server thread awaits `rx`; the update
-  /// loop fulfills it by calling [`McpRequest::reply`] with the tool outcome.
   pub fn new(tool: String, args: Value) -> (Self, oneshot::Receiver<ToolOutcome>) {
     let (tx, rx) = oneshot::channel();
     let request = Self {
@@ -52,8 +50,6 @@ impl McpRequest {
     &self.tool
   }
 
-  /// Sends the tool outcome back to the waiting server thread, consuming the one-shot reply. A
-  /// no-op on a second call or if the receiver has already been dropped.
   pub fn reply(&self, outcome: ToolOutcome) {
     if let Ok(mut guard) = self.reply.lock()
       && let Some(tx) = guard.take()
@@ -71,13 +67,10 @@ impl std::fmt::Debug for McpRequest {
   }
 }
 
-/// The iced subscription that stashes the live sender so [`deliver`] can reach the update loop.
 pub fn subscription() -> Subscription<McpRequest> {
   Subscription::run(stream)
 }
 
-/// Hands a request from the server thread to the update loop. Returns `false` when no subscription
-/// is active yet (the server should reply to its client with an unavailable error).
 pub fn deliver(request: McpRequest) -> bool {
   if let Ok(mut guard) = SENDER.lock()
     && let Some(tx) = guard.as_mut()

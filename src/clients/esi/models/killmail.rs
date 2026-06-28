@@ -8,7 +8,6 @@ pub struct Attacker {
   pub character_id: Option<i64>,
   #[serde(default)]
   pub corporation_id: Option<i64>,
-  /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
   #[serde(default)]
   pub damage_done: i64,
   #[serde(default)]
@@ -21,7 +20,6 @@ pub struct Attacker {
 #[derive(Debug, Deserialize)]
 pub struct Item {
   pub flag: i64,
-  /// Nested cargo contents; accepted so the recursive shape deserializes cleanly, but never used for valuation.
   #[serde(default)]
   // Read only by this module's tests; production never consumes this nested DTO field.
   #[cfg_attr(not(test), expect(dead_code))]
@@ -54,7 +52,6 @@ pub struct Victim {
   pub character_id: Option<i64>,
   #[serde(default)]
   pub corporation_id: Option<i64>,
-  /// ESI marks this required, but `#[serde(default)]` lets partial mock/test payloads deserialize.
   #[serde(default)]
   pub damage_taken: i64,
   #[serde(default)]

@@ -46,7 +46,6 @@ impl Client {
     })
   }
 
-  /// Probes for the latest SDE build number; returns None on any failure to gracefully fall back to the full download.
   pub async fn latest_build_version(&self) -> Option<String> {
     let bytes = self
       .http

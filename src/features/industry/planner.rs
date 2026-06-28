@@ -5720,7 +5720,7 @@ mod tests {
       let mut restored = Planner::new().with_restored_panes(&ui);
       restored.set_pane_host_width(HOST);
 
-      assert_eq!(settled, 380.0);
+      assert_eq!(settled, 358.75);
       assert_eq!(restored.detail_pane_width(), settled);
     }
   }

@@ -7399,6 +7399,43 @@ mod tests {
         "with no splash the handler keeps its existing running-app banner/toast behaviour"
       );
     }
+
+    #[test]
+    fn the_preflight_is_inert_without_a_splash() {
+      let mut app = test_app();
+      assert!(app.splash.is_none());
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert!(
+        app.splash.is_none(),
+        "the preflight does nothing when there is no splash to drive"
+      );
+    }
+
+    #[test]
+    fn the_preflight_ignores_a_state_that_does_not_match_the_phase() {
+      let mut app = splash_app();
+      app.splash.as_mut().unwrap().phase = splash::Phase::Loading;
+
+      let _ = drive_splash_preflight(
+        &mut app,
+        &updater::State::UpdateAvailable {
+          version: "9.9.9".to_owned(),
+        },
+      );
+
+      assert_eq!(
+        phase(&app),
+        &splash::Phase::Loading,
+        "an update available outside the checking phase leaves the splash untouched"
+      );
+    }
   }
 
   mod build_sync_esi {

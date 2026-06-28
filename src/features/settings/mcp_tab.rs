@@ -1,14 +1,14 @@
 use iced::{
   Background, Border, Element, Length, Padding, Task,
   alignment::Vertical,
-  widget::{Column, Row, Space, button, container, scrollable, svg, text, text_input},
+  widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
 
 use super::Outcome;
 use crate::{
   config::Settings,
   ui::{
-    components::{rule, toggle},
+    components::{button::Button, icon::Icon, rule, toggle},
     style::{color, radius, spacing, typography},
   },
 };
@@ -20,8 +20,6 @@ const MASKED_TOKEN_LEN: usize = 48;
 const MIN_PORT: u16 = 1024;
 const PANEL_SIDE_PADDING: f32 = 36.0;
 const STATUS_DOT_SIZE: f32 = 9.0;
-
-static COPY_ICON: &[u8] = include_bytes!("../../../assets/images/icons/copy.svg");
 
 const EFFECT_TOOLS: [Tool; 3] = [
   Tool {
@@ -910,35 +908,11 @@ fn group_label(label: &'static str, accent: iced::Color) -> Element<'static, Mes
 }
 
 fn ghost_text_button(label: &'static str, message: Message) -> Element<'static, Message> {
-  button(text(label).font(typography::body::MEDIUM).size(typography::size::MD))
-    .padding(crate::ui::style::control::padding())
-    .on_press(message)
-    .style(crate::ui::style::control::ghost_button)
-    .into()
+  Button::secondary(label).on_press(message).into()
 }
 
 fn primary_copy_button(label: &'static str, message: Message) -> Element<'static, Message> {
-  let icon = svg(svg::Handle::from_memory(COPY_ICON))
-    .width(Length::Fixed(14.0))
-    .height(Length::Fixed(14.0))
-    .style(|_, _| svg::Style {
-      color: Some(color::surface::BASE),
-    });
-  let content = Row::with_children(vec![
-    icon.into(),
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .into(),
-  ])
-  .align_y(Vertical::Center)
-  .spacing(spacing::SPACE_2);
-
-  button(content)
-    .padding(crate::ui::style::control::padding())
-    .on_press(message)
-    .style(crate::ui::style::control::primary_button)
-    .into()
+  Button::primary(label).icon(Icon::copy()).on_press(message).into()
 }
 
 fn section_head(label: &'static str, note: &'static str, chip: String, lit: bool) -> Element<'static, Message> {

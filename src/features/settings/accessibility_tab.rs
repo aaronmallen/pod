@@ -9,7 +9,11 @@ use crate::{
   config::Settings,
   i18n::Language,
   ui::{
-    components::{icon::Icon, rule, toggle},
+    components::{
+      button::{Button, Size},
+      icon::Icon,
+      rule, toggle,
+    },
     style::{color, control, radius, spacing, typography},
   },
 };
@@ -675,57 +679,19 @@ fn language_confirm_row(pending: Language) -> Element<'static, Message> {
 }
 
 fn language_apply_button() -> Element<'static, Message> {
-  let label = text(super::i18n::tr_static("settings.accessibility.language_apply"))
-    .font(typography::body::MEDIUM)
-    .size(typography::size::SM)
-    .style(typography::colored(color::on_fill(color::status::WARNING)));
-
-  button(container(label).padding(Padding {
-    top: spacing::SPACE_2_5,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_2_5,
-    left: spacing::SPACE_3_5,
-  }))
-  .padding(0)
-  .on_press(Message::LanguageRestartConfirmed)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::status::WARNING)),
-    border: Border {
-      color: color::status::WARNING,
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(super::i18n::tr_static("settings.accessibility.language_apply"))
+    .size(Size::Sm)
+    .on_press(Message::LanguageRestartConfirmed)
+    .into()
 }
 
 // The escape hatch from a pending switch: a quiet secondary button that drops the pending selection
 // and reverts to the running language without persisting or restarting.
 fn language_cancel_button() -> Element<'static, Message> {
-  let label = text(super::i18n::tr_static("settings.accessibility.language_cancel"))
-    .font(typography::body::MEDIUM)
-    .size(typography::size::SM)
-    .style(typography::colored(color::text::secondary()));
-
-  button(container(label).padding(Padding {
-    top: spacing::SPACE_2_5,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_2_5,
-    left: spacing::SPACE_3_5,
-  }))
-  .padding(0)
-  .on_press(Message::LanguageChangeCanceled)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(iced::Color::TRANSPARENT)),
-    border: Border {
-      color: color::rule(),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  })
-  .into()
+  Button::secondary(super::i18n::tr_static("settings.accessibility.language_cancel"))
+    .size(Size::Sm)
+    .on_press(Message::LanguageChangeCanceled)
+    .into()
 }
 
 fn contrast_toggle_row(high_contrast: bool) -> Element<'static, Message> {

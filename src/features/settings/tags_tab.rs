@@ -14,7 +14,9 @@ use crate::{
   },
   ui::{
     components::{
-      backdrop, chip, color_picker,
+      backdrop,
+      button::Button,
+      chip, color_picker,
       icon::Icon,
       modal_overlay::modal_overlay,
       rule, status,
@@ -837,24 +839,7 @@ fn create_row<'a>(section: &'a Section, msgs: &'a Msgs) -> Element<'a, Message> 
   })
   .style(sunken_well_style);
 
-  let add = button(
-    text(t!("settings.tags.add"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(if can_add {
-        color::surface::BASE
-      } else {
-        color::text::tertiary()
-      })),
-  )
-  .padding(Padding {
-    top: 7.0,
-    right: spacing::SPACE_3_5,
-    bottom: 7.0,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press_maybe(can_add.then(add_tag))
-  .style(move |_, _| add_button_style(can_add));
+  let add = Button::primary(t!("settings.tags.add")).on_press_maybe(can_add.then(add_tag));
 
   Row::with_children(vec![
     create_well.into(),
@@ -1273,32 +1258,6 @@ fn sunken_well_style(_theme: &iced::Theme) -> container::Style {
       radius: radius::CONTROL.into(),
     },
     ..container::Style::default()
-  }
-}
-
-fn add_button_style(enabled: bool) -> button::Style {
-  if enabled {
-    button::Style {
-      background: Some(Background::Color(color::accent::PLASMA)),
-      text_color: color::surface::BASE,
-      border: Border {
-        color: color::accent::PLASMA,
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    }
-  } else {
-    button::Style {
-      background: Some(Background::Color(color::with_alpha(color::text::PRIMARY, 0.06))),
-      text_color: color::text::tertiary(),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, 0.1),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    }
   }
 }
 

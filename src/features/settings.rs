@@ -22,7 +22,7 @@ use crate::{
   config::{self, Settings},
   store::Database,
   ui::{
-    components::{header, icon::Icon, rule},
+    components::{button::Button, header, icon::Icon, rule},
     style::{color, radius, spacing, typography},
   },
 };
@@ -410,34 +410,7 @@ fn header<'a>() -> Element<'a, Message> {
     });
   let identity = Column::with_children(vec![eyebrow.into(), title.into()]).spacing(spacing::UNIT);
 
-  let reset = button(
-    text(t!("settings.shell.reset_to_defaults"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3_5,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press(Message::ResetToDefaults)
-  .style(|_, status| {
-    let border_alpha = match status {
-      button::Status::Hovered | button::Status::Pressed => 0.18,
-      _ => 0.1,
-    };
-    button::Style {
-      background: Some(Background::Color(iced::Color::TRANSPARENT)),
-      text_color: color::text::secondary(),
-      border: Border {
-        color: color::with_alpha(color::text::PRIMARY, border_alpha),
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      ..button::Style::default()
-    }
-  });
+  let reset = Button::secondary(t!("settings.shell.reset_to_defaults")).on_press(Message::ResetToDefaults);
 
   header::header(vec![identity.into()], vec![reset.into()])
 }

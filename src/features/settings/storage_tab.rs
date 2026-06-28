@@ -6,7 +6,7 @@ use std::{
 
 use chrono::{DateTime, Local, Utc};
 use iced::{
-  Background, Border, Color, Element, Length, Padding,
+  Background, Border, Element, Length, Padding,
   alignment::{Horizontal, Vertical},
   widget::{Column, Row, Space, button, container, scrollable, text, text_input},
 };
@@ -19,7 +19,12 @@ use super::{
 use crate::{
   config::{LogLevel, Settings, StorageConfig, StorageMode},
   ui::{
-    components::{icon::Icon, modal_overlay::modal_overlay, rule, status},
+    components::{
+      button::{Button, Size},
+      icon::Icon,
+      modal_overlay::modal_overlay,
+      rule, status,
+    },
     style::{color, control, radius, shadow, spacing, typography},
   },
 };
@@ -808,36 +813,14 @@ fn path_card<'a>(state: &'a State, kind: PathKind, settings: &'a Settings) -> El
     .on_submit(Message::PathSubmitted(kind))
     .style(path_input_style);
 
-  let browse = button(
-    text(t!("settings.storage.browse"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::Browse(kind))
-  .style(control::ghost_button);
+  let browse = Button::secondary(t!("settings.storage.browse")).on_press(Message::Browse(kind));
 
-  let mut reset = button(
-    text(t!("settings.storage.default_button"))
-      .font(typography::body::REGULAR)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .style(control::ghost_button);
-  if overridden {
-    reset = reset.on_press(Message::ResetToDefault(kind));
-  }
+  let reset = Button::secondary(t!("settings.storage.default_button"))
+    .on_press_maybe(overridden.then_some(Message::ResetToDefault(kind)));
 
   let mut control_children: Vec<Element<'_, Message>> = vec![field.into(), browse.into()];
   if kind == PathKind::Log {
-    let reveal = button(
-      text(t!("settings.storage.reveal"))
-        .font(typography::body::MEDIUM)
-        .size(typography::size::MD),
-    )
-    .padding(control::padding())
-    .on_press(Message::RevealLogDir)
-    .style(control::ghost_button);
+    let reveal = Button::secondary(t!("settings.storage.reveal")).on_press(Message::RevealLogDir);
     control_children.push(reveal.into());
   }
   control_children.push(reset.into());
@@ -909,17 +892,12 @@ fn log_export_row(state: &State) -> Element<'_, Message> {
   ];
 
   for preset in PRESETS {
-    let mut control = button(
-      text(preset.label())
-        .font(typography::body::REGULAR)
-        .size(typography::size::MD),
-    )
-    .padding(control::padding())
-    .style(control::ghost_button);
-    if !state.export_pending {
-      control = control.on_press(Message::ExportLogs(preset));
-    }
-    children.push(control.into());
+    children.push(
+      Button::secondary(preset.label())
+        .size(Size::Sm)
+        .on_press_maybe((!state.export_pending).then_some(Message::ExportLogs(preset)))
+        .into(),
+    );
   }
 
   if state.export_pending {
@@ -962,20 +940,16 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
     .spacing(spacing::SPACE_2)
     .width(Length::Fill);
 
-  let mut control = button(action_button_label(
-    (!state.data_export_pending).then(Icon::archive),
-    if state.data_export_pending {
-      super::i18n::tr_static("settings.storage.preparing_archive")
-    } else {
-      super::i18n::tr_static("settings.storage.export_data_action")
-    },
-    color::accent::PLASMA,
-  ))
-  .padding(control::padding())
-  .style(accent_ghost_button);
-  if !state.data_export_pending {
-    control = control.on_press(Message::RequestDataExport);
+  let pending = state.data_export_pending;
+  let mut control = Button::primary(if pending {
+    super::i18n::tr_static("settings.storage.preparing_archive")
+  } else {
+    super::i18n::tr_static("settings.storage.export_data_action")
+  });
+  if !pending {
+    control = control.icon(Icon::archive());
   }
+  let control = control.on_press_maybe((!pending).then_some(Message::RequestDataExport));
 
   let row = Row::with_children(vec![copy.into(), control.into()])
     .align_y(Vertical::Top)
@@ -991,48 +965,6 @@ fn data_export_row(state: &State) -> Element<'_, Message> {
   Column::with_children(vec![cell.into(), rule::horizontal()])
     .width(Length::Fill)
     .into()
-}
-
-/// Composes a button child of an icon (optional, hidden while the action is in flight) followed by a
-/// text label, mirroring the mockup's right-aligned export/import controls. The `tint` colors both
-/// glyph and label so the accent (export) and ghost (import) variants match their button styles.
-fn action_button_label<'a>(icon: Option<Icon>, label: &'a str, tint: Color) -> Element<'a, Message> {
-  let mut children: Vec<Element<'a, Message>> = Vec::new();
-  if let Some(icon) = icon {
-    children.push(icon.color(tint).size(15.0).render::<Message>());
-  }
-  children.push(
-    text(label.to_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(tint))
-      .into(),
-  );
-  Row::with_children(children)
-    .align_y(Vertical::Center)
-    .spacing(spacing::SPACE_2)
-    .into()
-}
-
-/// The accent variant of the storage ghost button: a faint plasma wash behind a plasma border, used
-/// for the primary "Export data" action so it reads as the emphasized control without the solid fill
-/// of `primary_button`. Matches the accent `GhostBtn` in the Settings → Storage mockup.
-fn accent_ghost_button(_theme: &iced::Theme, status: button::Status) -> button::Style {
-  let bg_alpha = match status {
-    button::Status::Hovered | button::Status::Pressed => 0.12,
-    button::Status::Disabled => 0.04,
-    _ => 0.06,
-  };
-  button::Style {
-    background: Some(Background::Color(color::with_alpha(color::accent::PLASMA, bg_alpha))),
-    text_color: color::accent::PLASMA,
-    border: Border {
-      color: color::with_alpha(color::accent::PLASMA, 0.4),
-      width: 1.0,
-      radius: radius::CONTROL.into(),
-    },
-    ..button::Style::default()
-  }
 }
 
 fn data_import_row(state: &State) -> Element<'_, Message> {
@@ -1059,20 +991,16 @@ fn data_import_row(state: &State) -> Element<'_, Message> {
     .spacing(spacing::SPACE_2)
     .width(Length::Fill);
 
-  let mut control = button(action_button_label(
-    (!state.data_import_pending).then(Icon::upload),
-    if state.data_import_pending {
-      super::i18n::tr_static("settings.storage.restoring")
-    } else {
-      super::i18n::tr_static("settings.storage.import_data_action")
-    },
-    color::text::PRIMARY,
-  ))
-  .padding(control::padding())
-  .style(control::ghost_button);
-  if !state.data_import_pending {
-    control = control.on_press(Message::RequestDataImport);
+  let pending = state.data_import_pending;
+  let mut control = Button::secondary(if pending {
+    super::i18n::tr_static("settings.storage.restoring")
+  } else {
+    super::i18n::tr_static("settings.storage.import_data_action")
+  });
+  if !pending {
+    control = control.icon(Icon::upload());
   }
+  let control = control.on_press_maybe((!pending).then_some(Message::RequestDataImport));
 
   let row = Row::with_children(vec![copy.into(), control.into()])
     .align_y(Vertical::Top)
@@ -1316,23 +1244,13 @@ fn sync_status_row(status: &SyncStatus) -> Element<'_, Message> {
   .spacing(spacing::SPACE_2)
   .width(Length::Fill);
 
-  let sync_now = button(
-    text(t!("settings.storage.sync_now"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::SyncNow)
-  .style(control::ghost_button);
+  let sync_now = Button::secondary(t!("settings.storage.sync_now"))
+    .size(Size::Sm)
+    .on_press(Message::SyncNow);
 
-  let release = button(
-    text(t!("settings.storage.release_lock"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::ReleaseLock)
-  .style(control::ghost_button);
+  let release = Button::secondary(t!("settings.storage.release_lock"))
+    .size(Size::Sm)
+    .on_press(Message::ReleaseLock);
 
   let row = Row::with_children(vec![summary_row.into(), sync_now.into(), release.into()])
     .align_y(Vertical::Center)
@@ -1357,19 +1275,9 @@ fn sync_suggestion_banner<'a>() -> Element<'a, Message> {
     .style(typography::colored(color::accent::PLASMA))
     .width(Length::Fill);
 
-  let dismiss = button(
-    text(t!("settings.storage.dismiss"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(Padding {
-    top: spacing::UNIT,
-    right: spacing::SPACE_2,
-    bottom: spacing::UNIT,
-    left: spacing::SPACE_2,
-  })
-  .on_press(Message::SyncSuggestionDismissed)
-  .style(control::ghost_button);
+  let dismiss = Button::ghost(t!("settings.storage.dismiss"))
+    .size(Size::Sm)
+    .on_press(Message::SyncSuggestionDismissed);
 
   container(
     Row::with_children(vec![copy.into(), dismiss.into()])
@@ -1397,19 +1305,9 @@ fn error_banner(message: &str) -> Element<'_, Message> {
     .style(typography::colored(color::status::DANGER))
     .width(Length::Fill);
 
-  let dismiss = button(
-    text(t!("settings.storage.dismiss"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM),
-  )
-  .padding(Padding {
-    top: spacing::UNIT,
-    right: spacing::SPACE_2,
-    bottom: spacing::UNIT,
-    left: spacing::SPACE_2,
-  })
-  .on_press(Message::DismissError)
-  .style(control::ghost_button);
+  let dismiss = Button::ghost(t!("settings.storage.dismiss"))
+    .size(Size::Sm)
+    .on_press(Message::DismissError);
 
   container(
     Row::with_children(vec![copy.into(), dismiss.into()])
@@ -1461,30 +1359,9 @@ fn confirm_move_modal(pending: &PendingMove) -> Element<'_, Message> {
     left: spacing::SPACE_6,
   });
 
-  let cancel = button(
-    text(t!("settings.storage.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::CancelMove)
-  .style(control::ghost_button);
-  let skip = button(
-    text(t!("settings.storage.relocate_skip"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::SkipMove)
-  .style(control::ghost_button);
-  let move_button = button(
-    text(t!("settings.storage.relocate_confirm"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::ConfirmMove)
-  .style(control::primary_button);
+  let cancel = Button::ghost(t!("settings.storage.cancel")).on_press(Message::CancelMove);
+  let skip = Button::secondary(t!("settings.storage.relocate_skip")).on_press(Message::SkipMove);
+  let move_button = Button::primary(t!("settings.storage.relocate_confirm")).on_press(Message::ConfirmMove);
 
   let footer = container(
     Row::with_children(vec![
@@ -1576,22 +1453,8 @@ fn confirm_import_modal(pending: &PendingImport) -> Element<'_, Message> {
     left: spacing::SPACE_6,
   });
 
-  let cancel = button(
-    text(t!("settings.storage.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::CancelDataImport)
-  .style(control::ghost_button);
-  let replace = button(
-    text(t!("settings.storage.restore_confirm"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD),
-  )
-  .padding(control::padding())
-  .on_press(Message::ConfirmDataImport)
-  .style(control::danger_button);
+  let cancel = Button::ghost(t!("settings.storage.cancel")).on_press(Message::CancelDataImport);
+  let replace = Button::danger(t!("settings.storage.restore_confirm")).on_press(Message::ConfirmDataImport);
 
   let footer = container(
     Row::with_children(vec![
@@ -2603,27 +2466,6 @@ mod tests {
       state.data_import_pending = true;
 
       let _el: Element<'_, Message> = data_import_row(&state);
-    }
-
-    #[test]
-    fn the_action_label_drops_the_icon_when_no_glyph_is_supplied() {
-      let _with_icon: Element<'_, Message> =
-        action_button_label(Some(Icon::archive()), "Export data\u{2026}", color::accent::PLASMA);
-      let _without_icon: Element<'_, Message> =
-        action_button_label(None, "Preparing archive\u{2026}", color::accent::PLASMA);
-    }
-
-    #[test]
-    fn the_accent_ghost_button_styles_every_status() {
-      for status in [
-        button::Status::Active,
-        button::Status::Hovered,
-        button::Status::Pressed,
-        button::Status::Disabled,
-      ] {
-        let style = accent_ghost_button(&iced::Theme::Dark, status);
-        assert_eq!(style.text_color, color::accent::PLASMA);
-      }
     }
   }
 }

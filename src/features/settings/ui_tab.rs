@@ -9,7 +9,12 @@ use crate::{
   config::{CascadeMode, NavLocation, Settings},
   features::shell::registry,
   ui::{
-    components::{card, icon::Icon, rule},
+    components::{
+      button::{Button, Size},
+      card,
+      icon::Icon,
+      rule,
+    },
     style::{color, radius, spacing, typography},
   },
 };
@@ -550,43 +555,10 @@ fn radio_dot<'a>(selected: bool) -> Element<'a, Message> {
 
 fn reset_button(settings: &Settings) -> Element<'_, Message> {
   let enabled = !is_default_order(settings);
-  let label = text(t!("settings.ui.reset_order"))
-    .font(typography::body::REGULAR)
-    .size(typography::size::SM)
-    .style(typography::colored(if enabled {
-      color::text::secondary()
-    } else {
-      color::text::tertiary()
-    }));
 
-  button(label)
-    .padding(Padding {
-      top: spacing::SPACE_2,
-      right: spacing::SPACE_3,
-      bottom: spacing::SPACE_2,
-      left: spacing::SPACE_3,
-    })
+  Button::secondary(t!("settings.ui.reset_order"))
+    .size(Size::Sm)
     .on_press_maybe(enabled.then_some(Message::ResetOrder))
-    .style(move |_, status| {
-      let border_alpha = match status {
-        button::Status::Hovered | button::Status::Pressed if enabled => 0.18,
-        _ => 0.1,
-      };
-      button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: if enabled {
-          color::text::secondary()
-        } else {
-          color::text::tertiary()
-        },
-        border: Border {
-          color: color::with_alpha(color::text::PRIMARY, border_alpha),
-          width: 1.0,
-          radius: radius::SUBTLE.into(),
-        },
-        ..button::Style::default()
-      }
-    })
     .into()
 }
 

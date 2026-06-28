@@ -1,7 +1,6 @@
 use getset::{CopyGetters, Getters};
 use sqlx::FromRow;
 
-// Asset membership entity-type, consumed by the asset assign/unassign and inventory tagging tasks.
 pub const ENTITY_TYPE_ASSET: &str = "asset";
 
 pub const ENTITY_TYPE_CHARACTER: &str = "character";

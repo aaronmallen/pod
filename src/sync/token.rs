@@ -46,7 +46,6 @@ impl TokenCache {
   }
 }
 
-/// Returns the stored token, or refreshes it via SSO and persists the rotated credential when it is near expiry.
 pub async fn fresh_token(
   db: &Database,
   sso: &eve_sso::Client,

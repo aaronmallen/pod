@@ -101,13 +101,10 @@ impl JobKind {
     crate::features::shell::registry::feature_for_job(self)
   }
 
-  /// The set of sub-features that own this job; empty for the feature-less maintenance jobs.
   pub fn owning_sub_features(self) -> Vec<SubFeature> {
     crate::features::shell::registry::sub_features_for_job(self)
   }
 
-  /// A job runs while ANY of its owning sub-features is enabled. A feature-less maintenance job (no
-  /// owners) always runs.
   pub fn is_feature_enabled(self, features: &FeatureFlags) -> bool {
     let owners = self.owning_sub_features();
     owners.is_empty() || owners.iter().any(|&sub| features.is_sub_enabled(sub))
@@ -352,8 +349,6 @@ impl JobKind {
         scopes::CORPORATION_WALLET,
         scopes::CORPORATION_DIVISIONS,
       ],
-      // Public kinds run without any granted scope: char/corp abyssals (derived offline from the
-      // asset table), the character profile, and the global maintenance jobs.
       Self::BudgetAssignmentReconcile
       | Self::CharacterAbyssals
       | Self::CharacterProfile
@@ -391,9 +386,6 @@ pub struct JobCtx<'a> {
   pub image: &'a eve_image::Client,
   pub image_store: &'a images::Store,
   pub key: JobKey,
-  /// The SSO client, supplied so the global TokenAudit job can attempt a refresh against every
-  /// stored credential to detect a revoked token. Per-subject jobs never touch it (their grant is
-  /// already resolved before dispatch), so it is `None` for them.
   pub sso: Option<&'a eve_sso::Client>,
 }
 
@@ -746,7 +738,6 @@ mod tests {
       fn it_resolves_a_static_scope_list_for_every_job_kind() {
         for kind in JobKind::ALL.iter().copied() {
           let scopes = kind.required_scope();
-          // Public kinds run without any granted scope; everything else lists at least one.
           let is_public = matches!(
             kind,
             JobKind::BudgetAssignmentReconcile

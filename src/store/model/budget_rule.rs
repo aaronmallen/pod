@@ -48,8 +48,6 @@ pub enum MatchMode {
   Any,
 }
 
-// Budget automation rule storage (child A); consumed by the matching engine in child B and the
-// inspector UI in child C. Exercised only by unit tests until then.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewRule {
   pub category_id: i64,
@@ -141,7 +139,6 @@ impl MatchMode {
     }
   }
 
-  /// Parses a DB key, returning `All` for any unrecognised value rather than panicking.
   pub fn from_key(key: &str) -> Self {
     match key {
       MATCH_MODE_ANY => MatchMode::Any,
@@ -165,7 +162,6 @@ impl RuleField {
     }
   }
 
-  /// Parses a DB key, returning `Text` for any unrecognised value rather than panicking.
   pub fn from_key(key: &str) -> Self {
     match key {
       FIELD_AMOUNT => RuleField::Amount,
@@ -195,7 +191,6 @@ impl RuleOp {
     }
   }
 
-  /// Parses a DB key, returning `Contains` for any unrecognised value rather than panicking.
   pub fn from_key(key: &str) -> Self {
     match key {
       OP_BETWEEN => RuleOp::Between,

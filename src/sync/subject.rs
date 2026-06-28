@@ -5,6 +5,7 @@ pub enum Subject {
 }
 
 impl Subject {
+  // Exercised by unit tests; not yet wired into a production call site.
   #[expect(dead_code)]
   pub fn id(self) -> i64 {
     match self {

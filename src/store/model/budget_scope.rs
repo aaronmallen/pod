@@ -4,8 +4,6 @@ const SCOPE_KIND_CHARACTER: &str = "character";
 
 const SCOPE_KIND_CORPORATION: &str = "corporation";
 
-// Budget storage foundation (B1); the keyed variants and `from_key` are constructed by the Budget
-// feature layer in B2+, and exercised only by unit tests until then.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum BudgetScope {
   #[default]
@@ -15,6 +13,7 @@ pub enum BudgetScope {
 }
 
 impl BudgetScope {
+  // Public store API exercised by unit tests; not yet wired into a production call site.
   #[cfg_attr(not(test), expect(dead_code))]
   pub fn from_key(scope_kind: &str, scope_id: Option<i64>) -> Option<Self> {
     match (scope_kind, scope_id) {

@@ -1,5 +1,4 @@
 pub mod assets;
-// Consumed by the Industry Blueprints sync + UI in a follow-up; the storage layer lands first.
 pub mod blueprints;
 pub mod budget;
 pub mod calendar;

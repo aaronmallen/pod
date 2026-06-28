@@ -298,11 +298,6 @@ mod tests {
   mod language_dependence {
     use super::*;
 
-    // Every job that reaches a resolve_* reference-row helper (here or in structure_resolution.rs)
-    // persists localized text and must re-sync on a language switch (ADR-0041 section 1). This pins
-    // that coupling at the resolver site: a new resolver caller has to join this list AND
-    // JobKind::is_language_dependent, or this test fails. The names path is deliberately absent: it is
-    // language-invariant (see resolve_names / universe().names).
     const RESOLVER_BACKED_JOBS: [JobKind; 15] = [
       JobKind::AssetSync,
       JobKind::CharacterClones,

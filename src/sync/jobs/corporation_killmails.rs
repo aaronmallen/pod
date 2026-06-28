@@ -78,8 +78,6 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   Ok(outcome(corporation_id, synced, skipped))
 }
 
-/// Returns `Synced` when at least one killmail was stored, even if others were skipped; the skip
-/// count is warned rather than downgrading the outcome so the ledger reflects real progress.
 fn outcome(corporation_id: i64, synced: usize, skipped: usize) -> Outcome {
   if synced > 0 {
     if skipped > 0 {
@@ -247,10 +245,6 @@ async fn persist_killmail_detail(
   resolve_third_party_names(ctx, detail).await
 }
 
-/// Ensures name-bearing local rows exist for every third party referenced by the killmail —
-/// attacker (and victim) characters, corporations, and alliances — that is not already tracked.
-/// A single bulk `resolve_names` call filters out ids the universe cannot name (NPCs, structures)
-/// before the per-id `ensure_*` resolutions, so unresolvable ids are skipped without a wasted fetch.
 async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Result<(), Error> {
   let parties = PartyIds::from_killmail(detail);
   let nameable = resolve_names(ctx, &parties.all()).await?;
@@ -696,8 +690,6 @@ mod tests {
     use super::*;
     use crate::store::repo::character;
 
-    // A ctx whose ESI base url is an unroutable loopback port; a fixture that names no third
-    // parties leaves `all_ids` empty so `resolve_names` returns without ever reaching the network.
     fn offline_ctx<'a>(
       db: &'a store::Database,
       esi: &'a esi::Client,
@@ -739,8 +731,6 @@ mod tests {
         "attackers": [{ "damage_done": 100, "final_blow": true }]
       }));
 
-      // No ids are referenced, so `resolve_names` short-circuits without an ESI call and nothing
-      // is persisted.
       resolve_third_party_names(&ctx, &detail).await.unwrap();
 
       assert!(character::get(&db, 42).await.unwrap().is_none());

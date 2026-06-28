@@ -441,7 +441,6 @@ pub async fn entries(db: &Database, plan_id: i64) -> Result<Vec<SkillPlanEntry>,
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn insert_entry(db: &Database, plan_id: i64, skill_id: i64, to_level: i64) -> Result<SkillPlanEntry, Error> {
   let entry = sqlx::query_as::<_, SkillPlanEntry>(
     "INSERT INTO skill_plan_entries (plan_id, skill_id, to_level, position) \
@@ -457,7 +456,6 @@ pub async fn insert_entry(db: &Database, plan_id: i64, skill_id: i64, to_level: 
   Ok(entry)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn remove_entry(db: &Database, id: i64) -> Result<(), Error> {
   let Some(plan_id) = sqlx::query_scalar::<_, i64>("SELECT plan_id FROM skill_plan_entries WHERE id = ?")
     .bind(id)
@@ -521,7 +519,6 @@ pub async fn replace_entries(
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 async fn densify(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, plan_id: i64) -> Result<(), Error> {
   let ids = sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_entries WHERE plan_id = ? ORDER BY position, id")
     .bind(plan_id)
@@ -592,7 +589,6 @@ pub async fn remove_remap_point(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn reanchor_remap_points(db: &Database, plan_id: i64, entry_id: i64) -> Result<(), Error> {
   let dependents =
     sqlx::query_scalar::<_, i64>("SELECT id FROM skill_plan_remap_points WHERE plan_id = ? AND after_entry_id = ?")
@@ -717,7 +713,6 @@ pub async fn replace_cert_proficiencies(
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 async fn slot_is_occupied(
   tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
   plan_id: i64,

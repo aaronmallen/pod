@@ -268,8 +268,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_fills_an_esi_adjusted_only_super_from_zkill_current_price() {
-      // A supercapital: ESI returns a lowball adjusted_price but no average_price. The sweep
-      // overwrites it with the zKill currentPrice as a source='zkill' row.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -305,8 +303,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_sweeps_a_market_traded_type_with_an_esi_average_to_zkill() {
-      // zKill is canonical: a market-traded type carrying an ESI average_price is still swept and its
-      // ESI row overwritten with the zKill price as a source='zkill' row.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -365,7 +361,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_keeps_the_esi_row_when_zkill_returns_no_price() {
-      // zKill cannot price the held type (empty snapshot), so the fresh ESI row is the fallback.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,
@@ -395,8 +390,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_lets_esi_reclaim_a_previously_zkill_row() {
-      // A type once priced by zKill that zKill can no longer price (empty snapshot) falls back to the
-      // ESI bulk row, so the row reverts to source='esi'.
       let esi_server = MockServer::start().await;
       mount_prices(
         &esi_server,

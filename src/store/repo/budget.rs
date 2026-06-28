@@ -7,8 +7,6 @@ use crate::store::{
   },
 };
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn create_category(db: &Database, category: &NewCategory) -> Result<BudgetCategory, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, BudgetCategory>(
@@ -28,8 +26,6 @@ pub async fn create_category(db: &Database, category: &NewCategory) -> Result<Bu
   Ok(row)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn create_group(db: &Database, group: &NewGroup) -> Result<BudgetCategoryGroup, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, BudgetCategoryGroup>(
@@ -48,8 +44,6 @@ pub async fn create_group(db: &Database, group: &NewGroup) -> Result<BudgetCateg
   Ok(row)
 }
 
-// Budget automation rule storage (child A); consumed by the matching engine in child B and the
-// inspector UI in child C. Exercised only by unit tests until then.
 pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let row = sqlx::query_as::<_, RuleRow>(
@@ -79,8 +73,6 @@ pub async fn create_rule(db: &Database, rule: &NewRule) -> Result<Rule, Error> {
   })
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn delete_category(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_categories WHERE id = ?")
     .bind(id)
@@ -169,7 +161,6 @@ const DELETE_EVENT_ASSIGNMENTS_SQL: &str = "WITH legs AS ( \
 /// reuses the same linkage as [`reconcile_split_owner_assignments`] so the two stay
 /// in step, and combined with the reconciler's `updated_at` guard guarantees a
 /// cleared mark is not resurrected on the next sync.
-// Authoritative cross-owner unassign; called from the wallet chip- and bulk-clear paths.
 pub async fn delete_event_assignments(
   db: &Database,
   owner: BudgetOwner,
@@ -194,8 +185,6 @@ pub async fn delete_event_assignments(
 /// owner-keyed so a corp and a character sharing an EVE id are never confused,
 /// and set-based so a single call cleans the whole table. Returns the number of
 /// overrides removed.
-// Per-entry budget assignment GC; run from the BudgetAssignmentReconcile post-sync job so a
-// reconciled copy whose wallet row later disappears is collected on the next pass.
 pub async fn prune_orphan_entry_assignments(db: &Database) -> Result<u64, Error> {
   let result = sqlx::query(
     "DELETE FROM budget_entry_assignments \
@@ -298,7 +287,6 @@ const RECONCILE_SPLIT_OWNER_ASSIGNMENTS_SQL: &str = "WITH legs AS ( \
 /// Operates over the All scope only (resolution is always `scope_kind='all'`).
 /// Returns the number of sibling copies written. This SQL is the source of truth
 /// the one-time backfill migration mirrors.
-// Cross-owner budget reconciliation (post-sync job); wired into BudgetAssignmentReconcile.
 pub async fn reconcile_split_owner_assignments(db: &Database) -> Result<u64, Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let result = sqlx::query(RECONCILE_SPLIT_OWNER_ASSIGNMENTS_SQL)
@@ -308,8 +296,6 @@ pub async fn reconcile_split_owner_assignments(db: &Database) -> Result<u64, Err
   Ok(result.rows_affected())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_category_groups WHERE id = ?")
     .bind(id)
@@ -318,8 +304,6 @@ pub async fn delete_group(db: &Database, id: i64) -> Result<(), Error> {
   Ok(())
 }
 
-// Budget automation rule storage (child A); deleting a rule cascades its conditions via the FK.
-// Exercised only by unit tests until child B/C wire it.
 pub async fn delete_rule(db: &Database, id: i64) -> Result<(), Error> {
   sqlx::query("DELETE FROM budget_rules WHERE id = ?")
     .bind(id)
@@ -339,8 +323,6 @@ pub async fn delete_target(db: &Database, category_id: i64) -> Result<(), Error>
   Ok(())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn list_assignments(db: &Database, category_id: i64) -> Result<Vec<BudgetAssignment>, Error> {
   let rows = sqlx::query_as::<_, BudgetAssignment>(
     "SELECT id, category_id, month, assigned FROM budget_assignments WHERE category_id = ? ORDER BY month",
@@ -351,8 +333,6 @@ pub async fn list_assignments(db: &Database, category_id: i64) -> Result<Vec<Bud
   Ok(rows)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetCategory>, Error> {
   let rows = sqlx::query_as::<_, BudgetCategory>(
     "SELECT id, group_id, name, note, tone, position, created_at, updated_at \
@@ -364,7 +344,6 @@ pub async fn list_categories(db: &Database, group_id: i64) -> Result<Vec<BudgetC
   Ok(rows)
 }
 
-// Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
 pub async fn is_scope_seeded(db: &Database, scope: BudgetScope) -> Result<bool, Error> {
   let row: Option<i64> = sqlx::query_scalar("SELECT 1 FROM budget_scope_seeded WHERE scope_kind = ? AND scope_id IS ?")
     .bind(scope.scope_kind())
@@ -374,7 +353,6 @@ pub async fn is_scope_seeded(db: &Database, scope: BudgetScope) -> Result<bool, 
   Ok(row.is_some())
 }
 
-// Budget storage foundation; consumed by the Budget seed path. Exercised by unit tests until wired.
 pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -389,8 +367,6 @@ pub async fn mark_scope_seeded(db: &Database, scope: BudgetScope) -> Result<(), 
   Ok(())
 }
 
-// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
-// Exercised by unit tests until then.
 pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetEntryAssignment>, Error> {
   let rows = sqlx::query_as::<_, BudgetEntryAssignment>(
     "SELECT id, scope_kind, scope_id, owner_kind, owner_id, entry_kind, entry_id, category_id, created_at, updated_at \
@@ -404,8 +380,6 @@ pub async fn list_entry_assignments(db: &Database, scope: BudgetScope) -> Result
   Ok(rows)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn list_groups(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetCategoryGroup>, Error> {
   let rows = sqlx::query_as::<_, BudgetCategoryGroup>(
     "SELECT id, scope_kind, scope_id, name, position, created_at, updated_at \
@@ -419,8 +393,6 @@ pub async fn list_groups(db: &Database, scope: BudgetScope) -> Result<Vec<Budget
   Ok(rows)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn list_ref_type_maps(db: &Database, scope: BudgetScope) -> Result<Vec<BudgetRefTypeMap>, Error> {
   let rows = sqlx::query_as::<_, BudgetRefTypeMap>(
     "SELECT id, scope_kind, scope_id, ref_type, category_id FROM budget_ref_type_maps \
@@ -433,8 +405,6 @@ pub async fn list_ref_type_maps(db: &Database, scope: BudgetScope) -> Result<Vec
   Ok(rows)
 }
 
-// Budget automation rule loader (child A): every rule for the active scope, in priority order, with
-// its conditions nested in position order — the exact shape the matching engine in child B consumes.
 pub async fn list_rules(db: &Database, scope: BudgetScope) -> Result<Vec<Rule>, Error> {
   let rule_rows = sqlx::query_as::<_, RuleRow>(
     "SELECT id, category_id, name, enabled, match_mode FROM budget_rules \
@@ -482,8 +452,6 @@ pub async fn list_rules(db: &Database, scope: BudgetScope) -> Result<Vec<Rule>, 
   Ok(rules.into_iter().map(|(_, rule)| rule).collect())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn load_target(db: &Database, category_id: i64) -> Result<Option<BudgetTarget>, Error> {
   let row = sqlx::query_as::<_, BudgetTarget>(
     "SELECT category_id, kind, amount, by_date FROM budget_targets WHERE category_id = ?",
@@ -511,8 +479,6 @@ pub async fn scope_assigned_total(db: &Database, scope: BudgetScope) -> Result<f
   Ok(total.unwrap_or(0.0))
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn set_target(db: &Database, category_id: i64, target: &TargetInput) -> Result<BudgetTarget, Error> {
   let row = sqlx::query_as::<_, BudgetTarget>(
     "INSERT INTO budget_targets (category_id, kind, amount, by_date) VALUES (?, ?, ?, ?) \
@@ -528,8 +494,6 @@ pub async fn set_target(db: &Database, category_id: i64, target: &TargetInput) -
   Ok(row)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE budget_category_groups SET name = ?, updated_at = ? WHERE id = ?")
@@ -541,8 +505,6 @@ pub async fn rename_group(db: &Database, id: i64, name: &str) -> Result<(), Erro
   Ok(())
 }
 
-// Budget automation rule storage (child A): rewrite the priority order by persisting each rule's new
-// position from its index in `ordered_ids`, in one transaction (cf. skills::reorder_entries).
 pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   let mut tx = db.writer().begin().await?;
@@ -558,8 +520,6 @@ pub async fn reorder_rules(db: &Database, ordered_ids: &[i64]) -> Result<(), Err
   Ok(())
 }
 
-// Budget automation rule storage (child A): replace a rule's full condition set in one transaction,
-// re-numbering positions from slice order so the engine reads them in the builder's order.
 pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[RuleCondition]) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM budget_rule_conditions WHERE rule_id = ?")
@@ -584,8 +544,6 @@ pub async fn replace_rule_conditions(db: &Database, rule_id: i64, conditions: &[
   Ok(())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -604,8 +562,6 @@ pub async fn update_category(db: &Database, category: &BudgetCategory) -> Result
   Ok(())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query("UPDATE budget_category_groups SET name = ?, position = ?, updated_at = ? WHERE id = ?")
@@ -618,8 +574,6 @@ pub async fn update_group(db: &Database, group: &BudgetCategoryGroup) -> Result<
   Ok(())
 }
 
-// Budget automation rule storage (child A): update a rule's editable fields by id. Position is owned
-// by reorder_rules and conditions by replace_rule_conditions, so neither is touched here.
 pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
   let now = chrono::Utc::now().to_rfc3339();
   sqlx::query(
@@ -636,8 +590,6 @@ pub async fn update_rule(db: &Database, rule: &Rule) -> Result<(), Error> {
   Ok(())
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn upsert_assignment(
   db: &Database,
   category_id: i64,
@@ -657,8 +609,6 @@ pub async fn upsert_assignment(
   Ok(row)
 }
 
-// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
-// Exercised by unit tests until then.
 pub async fn owner_holds_entry(
   db: &Database,
   owner: BudgetOwner,
@@ -690,8 +640,6 @@ pub async fn owner_holds_entry(
   Ok(exists != 0)
 }
 
-// Per-entry budget assignment storage (child A); consumed by the Budget derivation/UI in children B/C.
-// Exercised by unit tests until then.
 pub async fn upsert_entry_assignment(
   db: &Database,
   scope: BudgetScope,
@@ -723,8 +671,6 @@ pub async fn upsert_entry_assignment(
   Ok(row)
 }
 
-// Budget storage foundation (B1); consumed by the Budget sync/UI in B2+. Some items are exercised only by
-// unit tests until then.
 pub async fn upsert_ref_type_map(
   db: &Database,
   scope: BudgetScope,
@@ -1026,7 +972,6 @@ mod tests {
       upsert_assignment(&db, rent.id(), "2026-05", 100.0).await.unwrap();
       upsert_assignment(&db, rent.id(), "2026-06", 120.0).await.unwrap();
       upsert_assignment(&db, food.id(), "2026-06", 80.0).await.unwrap();
-      // A different scope's assignment must not leak into the total.
       let other = group(&db, BudgetScope::Character(2), "Other").await;
       let other_cat = category(&db, other.id(), "Misc").await;
       upsert_assignment(&db, other_cat.id(), "2026-06", 999.0).await.unwrap();
@@ -1299,10 +1244,6 @@ mod tests {
 
     use super::*;
 
-    // The cross-owner delete resolves an event's legs from real wallet rows, so the
-    // test seeds the market/journal twins directly. Wallet tables carry an owner FK
-    // (characters/corporations); the linkage query never reads those parents, so the
-    // FK is disabled to keep the fixture to just the legs under test.
     async fn disable_foreign_keys(db: &Database) {
       sqlx::query("PRAGMA foreign_keys = OFF")
         .execute(db.writer())
@@ -1316,8 +1257,6 @@ mod tests {
       } else {
         (", division", ", 1")
       };
-      // Closed set of literal table / column names from this test module, never caller
-      // data, so the dynamically-built statement is safe to assert.
       sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {table} \
           (transaction_id, {owner_col}, client_id, date, is_buy, journal_ref_id, location_id, quantity, type_id, unit_price{extra_col}) \
@@ -1346,7 +1285,6 @@ mod tests {
         ""
       };
       let division_val = if owner_col == "corporation_id" { ", 1" } else { "" };
-      // Closed set of literal table / column names (see seed_market) — safe to assert.
       sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO {table} (id, {owner_col}{division}, date, description, ref_type, amount, context_id) \
           VALUES (?, ?{division_val}, '2026-06-01T00:00:00Z', '', ?, -1.0, ?)"
@@ -1366,18 +1304,14 @@ mod tests {
       disable_foreign_keys(&db).await;
       let grp = group(&db, BudgetScope::All, "Trade").await;
       let cat = category(&db, grp.id(), "Sales").await;
-      // One trade mirrored into a character and a corporation, sharing transaction_id 500.
       seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
       seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
-      // Both owners hold a mark on their market copy (as if reconciliation had filled
-      // the corp copy while its wallet was loaded earlier).
       for owner in [BudgetOwner::Character(1), BudgetOwner::Corporation(2)] {
         upsert_entry_assignment(&db, BudgetScope::All, owner, BudgetEntryKind::Market, 500, cat.id())
           .await
           .unwrap();
       }
 
-      // Clear via the character leg only — the sibling corp wallet is not "loaded".
       delete_event_assignments(&db, BudgetOwner::Character(1), BudgetEntryKind::Market, 500)
         .await
         .unwrap();
@@ -1395,8 +1329,6 @@ mod tests {
       disable_foreign_keys(&db).await;
       let grp = group(&db, BudgetScope::All, "Trade").await;
       let cat = category(&db, grp.id(), "Sales").await;
-      // Market mirror plus the corp journal twin and a tax fee leg, all linked by
-      // transaction_id 500 / context_id 500.
       seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
       seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
       seed_journal(
@@ -1483,7 +1415,6 @@ mod tests {
       let cat = category(&db, grp.id(), "Sales").await;
       seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
       seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 500, 9002).await;
-      // Mark under both owners, then authoritatively clear via the character leg.
       for owner in [BudgetOwner::Character(1), BudgetOwner::Corporation(2)] {
         upsert_entry_assignment(&db, BudgetScope::All, owner, BudgetEntryKind::Market, 500, cat.id())
           .await
@@ -1493,8 +1424,6 @@ mod tests {
         .await
         .unwrap();
 
-      // The reconciler must find no surviving source mark to propagate, so the cleared
-      // event stays gone (the updated_at guard has nothing newer to resurrect from).
       reconcile_split_owner_assignments(&db).await.unwrap();
 
       assert!(
@@ -1732,12 +1661,6 @@ mod tests {
     }
   }
 
-  // Coverage for the one-time `0104_backfill_split_owner_assignments` migration. The
-  // migration is the mirror of the runtime reconciler above; these tests prove it heals a
-  // pre-existing split mark on upgrade and is a no-op on re-run. `open_test` already applies
-  // the migration once, so the tests re-execute its exact SQL text (via `include_str!`)
-  // against a seeded split state to exercise the upgrade path and then re-run it to assert
-  // idempotence.
   mod backfill_split_owner_assignments {
     use super::*;
     use crate::store::{
@@ -1875,9 +1798,6 @@ mod tests {
       seed_owners(&db).await;
       let grp = group(&db, "Trade").await;
       let cat = category(&db, grp.id(), "Sales").await;
-      // A corp-on-behalf trade mirrored into the fast character wallet (market + journal twin) and the
-      // slow corp wallet (market + journal twin + a transaction-tax fee leg). Journal twins and the fee
-      // leg link to the trade via context_id == transaction_id.
       seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
       seed_journal(
         &db,
@@ -1910,8 +1830,6 @@ mod tests {
         Some(500),
       )
       .await;
-      // The split: only the fast character market copy carries the mark; the corp-side legs synced later
-      // and were left unmarked by the broken cascade.
       upsert_entry_assignment(
         &db,
         BudgetScope::All,
@@ -1973,7 +1891,6 @@ mod tests {
       )
       .await
       .unwrap();
-      // The corp owner already chose a deliberately different category for its own copy.
       upsert_entry_assignment(
         &db,
         BudgetScope::All,

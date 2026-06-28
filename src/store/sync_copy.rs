@@ -526,7 +526,6 @@ mod tests {
     #[test]
     fn it_backs_up_a_non_empty_destination_before_overwriting_it() {
       let layout = Layout::new();
-      // The gen-0-vs-0 data-loss scenario: an empty working copy about to clobber real canonical data.
       fs::write(&layout.canonical, b"real canonical data").unwrap();
       fs::write(&layout.working_copy, b"").unwrap();
 
@@ -564,9 +563,7 @@ mod tests {
     fn it_skips_the_backup_when_the_destination_is_missing_or_empty() {
       let layout = Layout::new();
       fs::write(&layout.working_copy, b"new data").unwrap();
-      // Destination absent.
       publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
-      // Destination present but empty.
       fs::write(&layout.canonical, b"").unwrap();
       publish_database(&layout.working_copy, &layout.canonical, true).unwrap();
 

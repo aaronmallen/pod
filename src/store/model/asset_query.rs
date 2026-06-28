@@ -8,7 +8,6 @@ use crate::{
 const INVENTORY_ICON_SIZE: Size = Size::S64;
 
 #[derive(Clone, Debug, Default, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct AssetCompleteness {
   pub distinct_type_ids: i64,
   pub resolved: i64,
@@ -16,14 +15,12 @@ pub struct AssetCompleteness {
 }
 
 impl AssetCompleteness {
-  // Public store API exercised by unit tests; not yet wired into a production call site.
   pub fn is_complete(&self) -> bool {
     self.unresolved.is_empty()
   }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct AssetRenderRow {
   pub category: String,
   pub container_id: Option<i64>,
@@ -138,12 +135,6 @@ pub struct GeoSystemNode {
   pub value: f64,
 }
 
-/// Ordering applied to every tier of the location tree.
-///
-/// `Value` ranks nodes by their rolled-up ISK descending (today's default);
-/// `Alpha` ranks them alphabetically by name. Both fall back to the node id as
-/// a deterministic tiebreaker so equal-value or equal-name nodes never reshuffle
-/// between renders.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum GeoSort {
   Alpha,
@@ -389,7 +380,6 @@ pub struct InventoryRow {
 }
 
 impl InventoryRow {
-  // The reproc-vs-sell verdict; surfaced on inventory rows by the assets UI.
   pub fn worth_reprocessing(&self) -> bool {
     self.reproc_value > self.value
   }
@@ -473,28 +463,24 @@ pub struct InventoryTotals {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct NodeRollup {
   pub items: i64,
   pub value: f64,
 }
 
 #[derive(FromRow)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct NodeRollupSql {
   pub items: Option<i64>,
   pub value: Option<f64>,
 }
 
 #[derive(Clone, Debug, Eq, FromRow, Hash, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct ReferencedLocation {
   pub location_id: i64,
   pub location_type: String,
 }
 
 #[derive(FromRow)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct RenderRowSql {
   pub category: String,
   pub container_id: Option<i64>,
@@ -514,7 +500,6 @@ pub struct RenderRowSql {
 }
 
 impl RenderRowSql {
-  // Public store API exercised by unit tests; not yet wired into a production call site.
   pub fn into_row(self) -> AssetRenderRow {
     AssetRenderRow {
       category: self.category,
@@ -671,9 +656,6 @@ mod tests {
       assert_eq!(GeoTree::from_locations(&[]), GeoTree::default());
     }
 
-    /// A second region (Domain → Throne Worlds → Amarr) so region-tier ordering
-    /// is observable. `value` controls the Value-mode rank, `region_id` the tie
-    /// break.
     fn other_region(region_id: i64, name: &str, value: f64) -> GeoLocation {
       GeoLocation {
         constellation_id: Some(20_000_322),
@@ -693,8 +675,6 @@ mod tests {
 
     #[test]
     fn it_orders_regions_alphabetically_in_alpha_mode() {
-      // "The Forge" rolls up a far larger value than "Domain", yet Alpha ignores
-      // value and ranks "Domain" first by name.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 2, 9_999.0),
         other_region(10_000_043, "Domain", 1.0),
@@ -712,8 +692,6 @@ mod tests {
 
     #[test]
     fn it_orders_regions_by_descending_value_in_value_mode() {
-      // "The Forge" is the higher-value region but sorts after "Domain"
-      // alphabetically — Value must put it first.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 2, 9_999.0),
         other_region(10_000_043, "Domain", 1.0),
@@ -731,8 +709,6 @@ mod tests {
 
     #[test]
     fn it_orders_locations_within_a_system_by_descending_value_in_value_mode() {
-      // Two stations in Jita: the cheaper one sorts first alphabetically but must
-      // sort last by value.
       let rows = vec![
         nested(60_003_760, "Aaa Station", "station", 1, 10.0),
         nested(60_000_001, "Zzz Station", "station", 1, 1_000.0),
@@ -761,8 +737,6 @@ mod tests {
 
     #[test]
     fn it_breaks_equal_value_ties_by_id_deterministically() {
-      // Two regions with identical rolled-up value; Value mode must fall back to a
-      // stable name+id order so they never reshuffle between renders.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
         other_region(10_000_043, "Domain", 100.0),
@@ -778,8 +752,6 @@ mod tests {
       );
     }
 
-    /// A station in a named, *sibling* constellation of The Forge so constellation-tier ordering is
-    /// observable. `value` controls Value rank; `constellation_id` the tie break.
     fn other_constellation(
       constellation_id: i64,
       name: &str,
@@ -805,7 +777,6 @@ mod tests {
 
     #[test]
     fn it_orders_constellations_within_a_region_by_both_modes() {
-      // Kimotoro (Jita) rolls up a far larger value than the sibling "Aaa Constellation".
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 1, 9_999.0),
         other_constellation(20_000_001, "Aaa Constellation", 30_000_001, "Aaa System", 1.0),
@@ -837,8 +808,6 @@ mod tests {
 
     #[test]
     fn it_breaks_equal_value_constellation_ties_by_name_then_id() {
-      // Two constellations under The Forge with identical value; Value must fall back to name+id so
-      // the order is stable across renders.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
         other_constellation(20_000_001, "Aaa Constellation", 30_000_001, "Aaa System", 100.0),
@@ -858,8 +827,6 @@ mod tests {
       );
     }
 
-    /// A second system inside Kimotoro so system-tier ordering is observable without changing the
-    /// constellation. `value` controls Value rank; `system_id` the tie break.
     fn other_system(system_id: i64, system_name: &str, location_id: i64, value: f64) -> GeoLocation {
       GeoLocation {
         constellation_id: Some(20_000_020),
@@ -879,7 +846,6 @@ mod tests {
 
     #[test]
     fn it_orders_systems_within_a_constellation_by_both_modes() {
-      // Jita rolls up more value than the sibling "Aaa System" but sorts after it alphabetically.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 1, 9_999.0),
         other_system(30_000_001, "Aaa System", 60_000_777, 1.0),
@@ -911,7 +877,6 @@ mod tests {
 
     #[test]
     fn it_breaks_equal_value_system_ties_by_name_then_id() {
-      // Two systems in Kimotoro with identical value; Value falls back to name then id.
       let rows = vec![
         nested(60_003_760, "Jita IV - Moon 4", "station", 1, 100.0),
         other_system(30_000_001, "Aaa System", 60_000_777, 100.0),
@@ -933,8 +898,6 @@ mod tests {
 
     #[test]
     fn it_breaks_equal_name_and_value_locations_by_id() {
-      // Two stations with the same label *and* value in the same system: only the location id can
-      // order them, exercising the final `.then(id.cmp)` tiebreak in both modes.
       let rows = vec![
         nested(60_000_050, "Twin Station", "station", 1, 100.0),
         nested(60_000_049, "Twin Station", "station", 1, 100.0),
@@ -964,7 +927,6 @@ mod tests {
       );
     }
 
-    /// A location that resolves to no region/constellation/system, so it lands in `orphans`.
     fn orphan(location_id: i64, label: &str, value: f64) -> GeoLocation {
       let mut row = nested(location_id, label, "structure", 1, value);
       row.constellation_id = None;
@@ -1008,7 +970,6 @@ mod tests {
         [1_000.0, 50.0, 50.0, 10.0],
         "Value orders orphans by descending value"
       );
-      // The two equal-value "Mid Orphan" entries resolve by label then ascending id.
       let mids: Vec<i64> = tree
         .orphans
         .iter()

@@ -368,7 +368,6 @@ mod tests {
     #[tokio::test]
     async fn it_suppresses_the_abyssals_job_while_keeping_asset_sync_for_other_sub_features() {
       let now = Instant::now();
-      // Abyssals off (no MutaMarket evaluation), but Inventory/Values keep AssetSync alive.
       let flags: FeatureFlags = toml::from_str("[asset_tracking]\nabyssals = false").unwrap();
       let mut schedule = Schedule::with_features(flags);
 
@@ -392,7 +391,6 @@ mod tests {
       let mut schedule = Schedule::with_features(flags);
 
       schedule.enroll(CHARACTER, now);
-      // Mirror the engine's on-success trigger: AssetSync would make the abyssals job due now.
       schedule.make_due_now_for_subject(JobKind::CharacterAbyssals, CHARACTER, now);
 
       assert!(

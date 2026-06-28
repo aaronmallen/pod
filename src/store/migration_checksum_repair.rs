@@ -45,9 +45,6 @@ fn crlf_checksum(migration: &sqlx::migrate::Migration) -> Vec<u8> {
 /// Runs on the writer connection inside a single transaction; must be called *before*
 /// [`Migrator::run`], which is what validates the checksums.
 pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrator) -> Result<usize, sqlx::Error> {
-  // Fresh database: sqlx has not created its bookkeeping table yet, so there is nothing
-  // recorded to heal. `Migrator::run` will create it and apply every migration with LF
-  // checksums.
   let table_exists: i64 =
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations')")
       .fetch_one(writer)
@@ -56,7 +53,6 @@ pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrat
     return Ok(0);
   }
 
-  // One read of every recorded checksum, keyed by version.
   let applied: std::collections::HashMap<i64, Vec<u8>> =
     sqlx::query_as::<_, (i64, Vec<u8>)>("SELECT version, checksum FROM _sqlx_migrations")
       .fetch_all(writer)
@@ -64,9 +60,6 @@ pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrat
       .into_iter()
       .collect();
 
-  // Collect the versions whose stored checksum is the CRLF twin of the embedded LF
-  // checksum. Hashing happens only for the rows that actually mismatch, so a healthy
-  // database does no `Sha384` work at all.
   let mut healed: Vec<(i64, Vec<u8>)> = Vec::new();
   for migration in migrator.iter() {
     let Some(stored) = applied.get(&migration.version) else {
@@ -74,7 +67,7 @@ pub(crate) async fn repair_crlf_checksums(writer: &SqlitePool, migrator: &Migrat
     };
     let embedded_lf = migration.checksum.as_ref();
     if stored.as_slice() == embedded_lf {
-      continue; // already healthy
+      continue;
     }
     if stored.as_slice() == crlf_checksum(migration).as_slice() {
       healed.push((migration.version, embedded_lf.to_vec()));
@@ -106,8 +99,6 @@ mod tests {
 
   use super::*;
 
-  /// A single-connection pool over a fresh file database, with every migration applied (LF
-  /// checksums recorded). Returns the pool and the file path.
   async fn migrated_pool() -> (SqlitePool, tempfile::TempDir) {
     let dir = tempdir().unwrap();
     let options = SqliteConnectOptions::new()
@@ -122,8 +113,6 @@ mod tests {
     (pool, dir)
   }
 
-  /// Overwrite a recorded checksum, simulating what a pre-0.6.7 Windows build wrote (or, for
-  /// the negative test, a genuine modification).
   async fn set_stored_checksum(pool: &SqlitePool, version: i64, checksum: &[u8]) {
     sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
       .bind(checksum)
@@ -147,11 +136,8 @@ mod tests {
     let migrator = sqlx::migrate!();
     let first = migrator.iter().next().unwrap();
 
-    // Simulate a pre-0.6.7 Windows database: migration 1's recorded checksum is the CRLF
-    // twin of its LF source.
     set_stored_checksum(&pool, first.version, &crlf_checksum(first)).await;
 
-    // The bug reproduces: validation rejects the database.
     let err = sqlx::migrate!().run(&pool).await.unwrap_err();
     assert!(
       matches!(err, sqlx::migrate::MigrateError::VersionMismatch(v) if v == first.version),
@@ -166,7 +152,6 @@ mod tests {
       "the stored checksum is rewritten to the embedded LF value"
     );
 
-    // The store now opens: validation passes.
     sqlx::migrate!().run(&pool).await.unwrap();
   }
 
@@ -176,8 +161,6 @@ mod tests {
     let migrator = sqlx::migrate!();
     let first = migrator.iter().next().unwrap();
 
-    // A checksum that is neither the LF nor the CRLF digest: a real modification, not line
-    // endings.
     let tampered = vec![0xAB_u8; 48];
     set_stored_checksum(&pool, first.version, &tampered).await;
 
@@ -188,7 +171,6 @@ mod tests {
       tampered,
       "the tampered checksum is left exactly as-is"
     );
-    // Tamper detection is preserved: sqlx still refuses to open.
     let err = sqlx::migrate!().run(&pool).await.unwrap_err();
     assert!(matches!(err, sqlx::migrate::MigrateError::VersionMismatch(v) if v == first.version));
   }
@@ -198,10 +180,8 @@ mod tests {
     let (pool, _dir) = migrated_pool().await;
     let migrator = sqlx::migrate!();
 
-    // Healthy LF database: nothing to heal.
     assert_eq!(repair_crlf_checksums(&pool, &migrator).await.unwrap(), 0);
 
-    // Heal a CRLF row, then prove a second pass heals nothing.
     let first = migrator.iter().next().unwrap();
     set_stored_checksum(&pool, first.version, &crlf_checksum(first)).await;
     assert_eq!(repair_crlf_checksums(&pool, &migrator).await.unwrap(), 1);
@@ -220,7 +200,6 @@ mod tests {
       .await
       .unwrap();
 
-    // No migrations have run yet, so `_sqlx_migrations` does not exist.
     assert_eq!(repair_crlf_checksums(&pool, &sqlx::migrate!()).await.unwrap(), 0);
   }
 }

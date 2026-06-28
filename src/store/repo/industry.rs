@@ -78,9 +78,6 @@ pub async fn cost_indices_for_system(db: &Database, solar_system_id: i64) -> Res
   Ok(row)
 }
 
-/// Resolves a system's security status, region name, and system name via the SDE geography joins
-/// (solar_systems → constellations → regions), for facilities resolved outside [`accessible_facilities`]
-/// such as live ESI search hits. Returns `(security_status, region, system_name)`.
 pub async fn system_geo(
   db: &Database,
   solar_system_id: i64,
@@ -211,9 +208,6 @@ pub async fn create_plan(db: &Database, name: &str, tree: &PlanTree) -> Result<I
   Ok(plan)
 }
 
-/// Wholesale replaces the segment rows for a saved plan: drops every existing segment, then inserts `segments`
-/// in one transaction. Pass an empty slice to clear a plan's segments (every type then loads as one implicit
-/// full unassigned segment).
 pub async fn replace_plan_segments(db: &Database, plan_id: i64, segments: &[PlanSegment]) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
   sqlx::query("DELETE FROM industry_plan_segments WHERE plan_id = ?")
@@ -226,8 +220,6 @@ pub async fn replace_plan_segments(db: &Database, plan_id: i64, segments: &[Plan
   Ok(())
 }
 
-/// Loads a plan's persisted segments ordered by `(type_id, segment_index)`. A type with no rows is absent here
-/// and is treated by the caller as one implicit full unassigned segment.
 pub async fn segments_for_plan(db: &Database, plan_id: i64) -> Result<Vec<PlanSegment>, Error> {
   let rows = sqlx::query_as::<_, (Option<i64>, Option<i64>, i64, i64, i64)>(
     "SELECT clone_id, pilot_id, runs, segment_index, type_id \

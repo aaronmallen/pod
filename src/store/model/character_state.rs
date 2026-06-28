@@ -1,5 +1,6 @@
 use sqlx::FromRow;
 
+// Public store API exercised by unit tests; not yet wired into a production call site.
 #[expect(dead_code)]
 #[derive(Clone, Debug, FromRow)]
 pub struct CharacterState {

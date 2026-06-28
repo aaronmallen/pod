@@ -9,8 +9,6 @@ pub enum ContactCursor {
   Text(String, i64),
 }
 
-/// The column a contacts page is keyset-ordered by. Mirrors the address-book sort header so the UI can push its
-/// active sort into SQL instead of holding the full set in memory and sorting client-side.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContactSortColumn {
   Name,
@@ -18,7 +16,6 @@ pub enum ContactSortColumn {
   Type,
 }
 
-/// Sort direction for a contacts page; pairs with [`ContactSortColumn`] to drive the keyset comparison.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContactSortDir {
   Asc,

@@ -38,8 +38,6 @@ mod tests {
     },
   };
 
-  // Wallet rows carry an owner FK to characters / corporations (enforced in the test DB), so the
-  // owning character (id 1) and corporation (id 2) must exist before any leg is seeded.
   async fn seed_owners(db: &Database) {
     let corp_id = 90_000_001;
     let alliance_id = 99_000_001;
@@ -93,15 +91,11 @@ mod tests {
   }
 
   async fn seed_market(db: &Database, table: &str, owner_col: &str, owner_id: i64, transaction_id: i64, twin: i64) {
-    // A character transaction carries an `is_personal` flag; a corporation one a `division` — both
-    // NOT NULL, so the column the owner kind requires is appended with a 0 value.
     let (extra_col, extra_val) = if owner_col == "character_id" {
       (", is_personal", ", 0")
     } else {
       (", division", ", 1")
     };
-    // The table / column names come from a closed set of literals in this test module, never caller
-    // data, so the dynamically-built statement is safe to assert.
     sqlx::query(sqlx::AssertSqlSafe(format!(
       "INSERT INTO {table} \
         (transaction_id, {owner_col}, client_id, date, is_buy, journal_ref_id, location_id, quantity, type_id, unit_price{extra_col}) \
@@ -130,7 +124,6 @@ mod tests {
       ""
     };
     let division_val = if owner_col == "corporation_id" { ", 1" } else { "" };
-    // Closed set of literal table / column names (see seed_market) — safe to assert.
     sqlx::query(sqlx::AssertSqlSafe(format!(
       "INSERT INTO {table} (id, {owner_col}{division}, date, description, ref_type, amount, context_id) \
         VALUES (?, ?{division_val}, '2026-06-01T00:00:00Z', '', ?, -1.0, ?)"
@@ -185,8 +178,6 @@ mod tests {
     seed_owners(&db).await;
     let grp = group(&db, "Trade").await;
     let cat = category(&db, grp.id(), "Sales").await;
-    // The same trade mirrored into a character (fast) and a corporation (slow). Twin journal ids and a
-    // tax fee leg link via context_id == transaction_id.
     seed_market(&db, "character_wallet_transaction", "character_id", 1, 500, 9001).await;
     seed_journal(
       &db,
@@ -219,7 +210,6 @@ mod tests {
       Some(500),
     )
     .await;
-    // The pilot marks only the fast character market copy.
     upsert_entry_assignment(
       &db,
       BudgetScope::All,
@@ -256,8 +246,6 @@ mod tests {
     let cat = category(&db, grp.id(), "Sales").await;
     seed_market(&db, "character_wallet_transaction", "character_id", 1, 700, 8001).await;
     seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 700, 8002).await;
-    // A broker fee leg that exists ONLY as a journal row keyed by context_id — no market row of its
-    // own. This proves the journal-id linkage path, not just transaction_id.
     seed_journal(
       &db,
       "corporation_wallet_journal",
@@ -307,7 +295,6 @@ mod tests {
     )
     .await
     .unwrap();
-    // The corp owner already chose a deliberately different category.
     upsert_entry_assignment(
       &db,
       BudgetScope::All,
@@ -336,8 +323,6 @@ mod tests {
     let cat = category(&db, grp.id(), "Sales").await;
     seed_market(&db, "character_wallet_transaction", "character_id", 1, 111, 1).await;
     seed_market(&db, "corporation_wallet_transaction", "corporation_id", 2, 111, 2).await;
-    // The pilot marks the character copy, then unassigns it before the corp wallet syncs. With no
-    // remaining source assignment in the group, the late corp sync must NOT resurrect the mark.
     upsert_entry_assignment(
       &db,
       BudgetScope::All,
@@ -404,8 +389,6 @@ mod tests {
     let db = store::open_test().await.unwrap();
     let grp = group(&db, "Trade").await;
     let cat = category(&db, grp.id(), "Sales").await;
-    // An assignment whose entry_id resolves to no live wallet row for its owner: the prune step in the
-    // same job must collect it.
     upsert_entry_assignment(
       &db,
       BudgetScope::All,

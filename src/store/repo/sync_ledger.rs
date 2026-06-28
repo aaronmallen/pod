@@ -17,10 +17,6 @@ pub async fn all(db: &Database) -> Result<Vec<SyncLedger>, Error> {
   Ok(rows)
 }
 
-// Deletes every ledger row whose kind is in `kinds`, across all subjects, so the engine re-dispatches
-// those jobs as never-attempted on the next discovery pass. Used to force a re-fetch on a detected
-// language switch (ADR-0041 section 4), reusing ADR-0040's `DELETE FROM sync_ledger WHERE kind IN (...)`
-// precedent. Idempotent: expiring an already-expired (absent) row deletes nothing.
 pub async fn expire_kinds(db: &Database, kinds: &[&str]) -> Result<u64, Error> {
   if kinds.is_empty() {
     return Ok(0);

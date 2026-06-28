@@ -6,27 +6,19 @@ use crate::store::{
 };
 
 #[derive(Clone, Debug, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct CharacterContacts {
   pub contacts: Vec<CharacterContact>,
-  /// Per-contact entity avatar, keyed by `contact_id`: a character portrait, corporation logo, or alliance logo
-  /// resolved at load time. Surfaced through `stale_images` so evicted avatars get refetched.
   pub images: HashMap<i64, ImageState>,
   pub labels: Vec<CharacterContactLabel>,
 }
 
 impl CharacterContacts {
-  /// Looks up a contact's resolved avatar by `contact_id`. The character-detail tab now paginates contacts and
-  /// resolves each page's avatars itself, so this whole-set accessor survives only for the view-model tests and
-  /// any future whole-set consumer.
   // Public store API exercised by unit tests; not yet wired into a production call site.
   #[cfg_attr(not(test), expect(dead_code))]
   pub fn image(&self, contact_id: i64) -> Option<&ImageState> {
     self.images.get(&contact_id)
   }
 
-  /// Builds the view from raw rows, resolving each contact's avatar against the image cache.
-  // Public store API exercised by unit tests; not yet wired into a production call site.
   pub fn resolved(store: &Store, contacts: Vec<CharacterContact>, labels: Vec<CharacterContactLabel>) -> Self {
     let images = contacts
       .iter()
@@ -44,7 +36,6 @@ impl CharacterContacts {
   }
 }
 
-/// Maps an ESI contact type to its avatar image kind. Unknown types fall back to a corporation logo.
 pub fn image_kind(contact_type: &str) -> ImageKind {
   match contact_type.to_ascii_lowercase().as_str() {
     "alliance" => ImageKind::AllianceLogo,

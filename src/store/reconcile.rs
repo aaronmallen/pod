@@ -202,7 +202,6 @@ mod tests {
     #[test]
     fn it_adopts_a_canonical_with_no_sidecar_instead_of_opening_an_empty_working_copy() {
       let layout = Layout::new();
-      // The documented gen-0 boot scenario: real canonical data, no .generation sidecar, no working copy.
       fs::write(&layout.canonical, b"real canonical data").unwrap();
 
       reconcile_sync(&layout.canonical, &layout.working_copy).unwrap();
@@ -280,7 +279,6 @@ mod tests {
     #[test]
     fn it_prunes_pre_existing_backup_piles_beside_both_databases_to_the_newest_three() {
       let layout = Layout::new();
-      // In-step markers so no divergence branch fires: the prune must run on its own.
       fs::write(&layout.canonical, b"canonical").unwrap();
       fs::write(&layout.working_copy, b"working copy").unwrap();
       write_generation(&sidecar_path(&layout.canonical), 5).unwrap();

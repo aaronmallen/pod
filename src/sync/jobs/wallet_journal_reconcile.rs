@@ -257,8 +257,6 @@ mod tests {
 
     #[test]
     fn it_flags_the_pair_bracketing_a_missing_entry() {
-      // entry 2 (id 5) reports a balance that, given its amount, can only hold if an entry between
-      // id 1 and id 5 is missing: 100 + (-30) = 70, but the balance jumped to 1070.
       let entries = [(1, Some(100.0), Some(100.0)), (5, Some(-30.0), Some(1070.0))];
 
       assert_eq!(
@@ -272,8 +270,6 @@ mod tests {
 
     #[test]
     fn it_never_flags_the_genesis_entry() {
-      // A single first-ever entry has no predecessor to compare against, however far its balance sits
-      // from its amount, so it can never be a gap.
       let entries = [(1, Some(-9_000_000_000.0), Some(500.0))];
 
       assert!(detect(&entries).is_empty());
@@ -281,8 +277,6 @@ mod tests {
 
     #[test]
     fn it_skips_rows_with_a_null_balance_or_amount() {
-      // The middle row omits balance/amount (some ref types do); it is skipped, and the comparison
-      // runs from id 1 straight to id 3, which stays continuous (100 + 25 = 125).
       let entries = [
         (1, Some(100.0), Some(100.0)),
         (2, None, None),

@@ -398,10 +398,6 @@ pub async fn corporation_contract_items(
   Ok(rows)
 }
 
-/// Names of the items contained in each of a character's contracts, keyed by
-/// `contract_id`, so the Contracts search box can match a contract by what it
-/// carries. Names resolve from the bundled SDE `item_types` via `type_id` and
-/// span every contract regardless of status or `is_included` flag.
 pub async fn contract_item_names(
   db: &Database,
   character_id: i64,
@@ -416,7 +412,6 @@ pub async fn contract_item_names(
   Ok(group_item_names(rows))
 }
 
-/// Corporation counterpart to [`contract_item_names`].
 pub async fn corporation_contract_item_names(
   db: &Database,
   corporation_id: i64,
@@ -778,8 +773,6 @@ pub async fn corporation_wallet_transactions(
   Ok(rows)
 }
 
-/// Pages a corporation's wallet journal across *all* divisions (unlike the per-division
-/// `corporation_wallet_transactions` sibling), cursoring on a descending `id`.
 pub async fn corporation_wallet_journal_page(
   db: &Database,
   corporation_id: i64,
@@ -802,8 +795,6 @@ pub async fn corporation_wallet_journal_page(
   Ok(rows)
 }
 
-/// Pages a corporation's wallet transactions across *all* divisions (unlike the per-division
-/// `corporation_wallet_transactions` sibling), cursoring on a descending `transaction_id`.
 pub async fn corporation_wallet_transactions_page(
   db: &Database,
   corporation_id: i64,
@@ -1275,7 +1266,6 @@ pub async fn append_wallet_transaction(
   Ok(())
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn wallet_transactions(db: &Database, character_id: i64) -> Result<Vec<CharacterWalletTransaction>, Error> {
   let rows = sqlx::query_as::<_, CharacterWalletTransaction>(
     "SELECT character_id, client_id, date, is_buy, is_personal, journal_ref_id, location_id, \
@@ -2958,7 +2948,6 @@ mod market_tests {
     async fn it_includes_a_market_traded_type_with_an_esi_average_price() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      // zKill is canonical: a type ESI priced with both an adjusted and an average is still swept.
       insert_char_asset(&db, 1, 700, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(700, Some(1_000.0), Some(2_000.0))])
         .await
@@ -2973,26 +2962,20 @@ mod market_tests {
     async fn it_sweeps_every_held_non_blueprint_type_and_excludes_blueprint_copies() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      // 100: absent from market_prices
       insert_char_asset(&db, 1, 100, None).await;
-      // 200: market-traded, ESI average_price present -> now swept, not skipped
       insert_char_asset(&db, 2, 200, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(200, Some(5.0), Some(7.0))])
         .await
         .unwrap();
-      // 300: ESI row but resolved price 0
       insert_char_asset(&db, 3, 300, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(300, None, Some(0.0))])
         .await
         .unwrap();
-      // 400: corp-held type with an existing zkill row -> re-swept
       insert_corp_asset(&db, 4, 400, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::zkill(400, 9_000.0)])
         .await
         .unwrap();
-      // 500: blueprint copy -> excluded
       insert_char_asset(&db, 5, 500, Some(1)).await;
-      // 600: supercapital — ESI adjusted_price only, no average_price
       insert_char_asset(&db, 6, 600, None).await;
       market_prices_upsert_many(&db, &[MarketPrice::esi(600, Some(1_000.0), None)])
         .await
@@ -4526,8 +4509,6 @@ mod contract_detail_tests {
       insert_item_type(&db, 601, "Rhea").await;
       insert_item_type(&db, 34, "Tritanium").await;
 
-      // Contract 1 (a finished/unloaded contract) carries a requested (is_included
-      // = false) Rhea; contract 2 carries Tritanium.
       super::replace_contract_items_for_character(&db, 42, 1, &[char_item(42, 1, 100, 601, false)])
         .await
         .unwrap();

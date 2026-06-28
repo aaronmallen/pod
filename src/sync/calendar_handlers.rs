@@ -54,7 +54,6 @@ impl KindHandler for RespondHandler {
 struct RespondPayload {
   character_id: i64,
   event_id: i64,
-  /// The pilot's RSVP before `apply` optimistically overwrote it, carried so `compensate` can restore it on ESI failure.
   previous_response: String,
   response: String,
 }

@@ -28,8 +28,6 @@ use crate::{
 
 pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   let Some(sso) = ctx.sso else {
-    // A global job is always dispatched with the SSO client; its absence means a caller built the
-    // ctx wrong rather than a recoverable condition, so surface it loudly but harmlessly.
     tracing::warn!("token audit dispatched without an SSO client; skipping this cycle");
     return Ok(Outcome::Skipped {
       reason: "no SSO client".to_string(),
@@ -40,9 +38,6 @@ pub async fn run(ctx: &JobCtx<'_>) -> Result<Outcome, Error> {
   Ok(audit(ctx.db, sso, &credentials, features).await)
 }
 
-/// Audits the supplied credentials and returns how many were flagged this pass. Split out from
-/// [`run`] so tests can drive it with an explicit credential set and feature list rather than the
-/// on-disk config and the full engine dispatch.
 pub async fn audit(
   db: &Database,
   sso: &eve_sso::Client,
@@ -88,7 +83,6 @@ pub async fn audit(
   Outcome::from_rows(flagged)
 }
 
-/// True when the credential's granted scopes already cover everything the enabled features require.
 fn scopes_sufficient(credential: &Credential, features: config::FeatureFlags) -> bool {
   let required = match credential.owner_type() {
     OwnerType::Character => auth::scopes_for(&features),
@@ -178,7 +172,6 @@ mod tests {
     eve_sso::Client::new(http, "test-client").with_token_url(format!("{}/token", server.uri()))
   }
 
-  // A scope every enabled feature is known to need, so a credential lacking it is under-scoped.
   fn a_required_character_scope() -> String {
     auth::scopes_for(&all_features())
       .first()
@@ -189,14 +182,12 @@ mod tests {
   #[tokio::test]
   async fn it_cascades_a_dead_director_onto_its_corporation() {
     let server = MockServer::start().await;
-    // The director (and corp, which shares the token path) refresh against the same revoked endpoint.
     mount_revoked_token(&server).await;
     let db = store::open_test().await.unwrap();
     let sso = sso_for(&server, &db);
     let far_future = chrono::Utc::now().timestamp() + 86_400;
     let char_scopes = auth::scopes_for(&all_features()).join(" ");
     let corp_scopes = auth::corp_scopes_for(&all_features()).join(" ");
-    // Director character 400 authorizes corporation 9000.
     infra::upsert(
       &db,
       400,
@@ -279,7 +270,6 @@ mod tests {
     let db = store::open_test().await.unwrap();
     let sso = sso_for(&server, &db);
     let far_future = chrono::Utc::now().timestamp() + 86_400;
-    // A live token, but its granted scopes are empty while features require some.
     infra::upsert(&db, 200, OwnerType::Character, "at", "rt", far_future, None, Some(""))
       .await
       .unwrap();
@@ -306,7 +296,6 @@ mod tests {
     mount_revoked_token(&server).await;
     let db = store::open_test().await.unwrap();
     let sso = sso_for(&server, &db);
-    // Far-future expiry: the token is not near expiry, so only a forced refresh reveals revocation.
     let far_future = chrono::Utc::now().timestamp() + 86_400;
     let scopes = a_required_character_scope();
     infra::upsert(

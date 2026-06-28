@@ -45,16 +45,11 @@ mod tests {
 
   #[test]
   fn normalize_name_matches_repo_find_or_create_semantics() {
-    // Mirrors `WHERE lower(name) = lower(?)` (SQLite ASCII `lower`) over a trimmed UI input:
-    // ASCII-case- and whitespace-insensitive, so "Roller" and "  roller " collapse to one key.
     assert_eq!(normalize_name("Roller"), normalize_name("  roller "));
   }
 
   #[test]
   fn normalize_name_folds_only_ascii_to_stay_in_lock_step_with_sqlite_lower() {
-    // SQLite's `lower()` (and thus the unique index + repo guard) leaves non-ASCII bytes untouched, so
-    // the helper must NOT Unicode-fold — otherwise it would treat "Étagère"/"étagère" as one name while
-    // the store stores them as two distinct rows, and the in-memory guard would diverge from reality.
     assert_ne!(normalize_name("Étagère"), normalize_name("étagère"));
   }
 }

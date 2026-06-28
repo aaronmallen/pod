@@ -114,10 +114,6 @@ fn is_participant(character_id: i64, detail: &Killmail) -> bool {
 /// global-feed contamination rather than a few stray mails, and the WARN is emitted.
 const SUSPECTED_GLOBAL_FEED_MIN_BATCH: usize = 25;
 
-/// Emits a loud WARN when a fallback batch is implausibly large and (nearly) all of its mails were
-/// discarded as non-participants — the signature of a zKill global "recent kills" firehose served in
-/// place of the character's own feed during an ESI outage — so the contamination is diagnosable from
-/// logs. The participant guard already prevented any of these mails from being written.
 fn warn_on_suspected_global_feed(character_id: i64, candidates: usize, non_participants: usize) {
   if candidates >= SUSPECTED_GLOBAL_FEED_MIN_BATCH && non_participants * 4 >= candidates * 3 {
     tracing::warn!(
@@ -129,8 +125,6 @@ fn warn_on_suspected_global_feed(character_id: i64, candidates: usize, non_parti
   }
 }
 
-/// Returns `Synced` when at least one killmail was stored, even if others were skipped; the skip
-/// count is warned rather than downgrading the outcome so the ledger reflects real progress.
 fn outcome(character_id: i64, synced: usize, skipped: usize) -> Outcome {
   if synced > 0 {
     if skipped > 0 {
@@ -401,10 +395,6 @@ pub async fn persist_killmail_detail(
   resolve_third_party_names(ctx, detail).await
 }
 
-/// Ensures name-bearing local rows exist for every third party referenced by the killmail —
-/// attacker (and victim) characters, corporations, and alliances — that is not already tracked.
-/// A single bulk `resolve_names` call filters out ids the universe cannot name (NPCs, structures)
-/// before the per-id `ensure_*` resolutions, so unresolvable ids are skipped without a wasted fetch.
 async fn resolve_third_party_names(ctx: &JobCtx<'_>, detail: &Killmail) -> Result<(), Error> {
   let mut alliance_ids = Vec::new();
   let mut character_ids = Vec::new();
@@ -727,9 +717,6 @@ mod tests {
 
     #[tokio::test]
     async fn it_writes_no_rows_when_the_discovery_feed_returns_killmails_the_character_is_not_on() {
-      // Simulates the zKill global "recent kills" firehose served during an ESI outage: the feed
-      // hands back a killmail the syncing character (42) neither dealt nor took, so the participant
-      // guard must discard it without writing any summary or child rows.
       let esi_server = MockServer::start().await;
       Mock::given(method("GET"))
         .and(path("/characters/42/killmails/recent/"))

@@ -1039,8 +1039,6 @@ mod tests {
       const CEO_OWN_CORP_ID: i64 = 1_000_038;
       const CEO_OWN_CORP_CEO_ID: i64 = 3_009_999;
       let server = MockServer::start().await;
-      // The owner corp's CEO is an NPC agent enlisted in a DIFFERENT, un-tracked NPC corp. Without
-      // ensuring that corp's row first, the deferred characters.corporation_id FK 787s at commit.
       Mock::given(method("GET"))
         .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1057,8 +1055,6 @@ mod tests {
         })))
         .mount(&server)
         .await;
-      // The CEO's own corp is fetched exactly once and persisted as a bare row — its own CEO is
-      // never expanded into a character (no /characters/3009999/ mock is needed).
       Mock::given(method("GET"))
         .and(path(format!("/corporations/{CEO_OWN_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1121,7 +1117,6 @@ mod tests {
     #[tokio::test]
     async fn it_persists_a_corp_without_a_ceo_when_the_ceo_is_not_found() {
       let server = MockServer::start().await;
-      // A biomassed player CEO answers 404; the corp must still persist.
       Mock::given(method("GET"))
         .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1169,7 +1164,6 @@ mod tests {
     #[tokio::test]
     async fn it_persists_an_npc_corp_without_a_ceo_when_the_ceo_is_unprocessable() {
       let server = MockServer::start().await;
-      // NPC corporations report ceo_id = 1, and GET /characters/1/ answers 422.
       Mock::given(method("GET"))
         .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1305,7 +1299,6 @@ mod tests {
     #[tokio::test]
     async fn it_resolves_the_ceos_own_alliance_and_faction_when_the_corp_carries_neither() {
       let server = MockServer::start().await;
-      // The corporation itself belongs to no alliance and no faction...
       Mock::given(method("GET"))
         .and(path(format!("/corporations/{OWNER_CORP_ID}/")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1314,7 +1307,6 @@ mod tests {
         })))
         .mount(&server)
         .await;
-      // ...but its CEO personally holds an alliance and is enlisted in factional warfare.
       Mock::given(method("GET"))
         .and(path("/characters/3004029/"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({

@@ -254,9 +254,6 @@ async fn sync_event(
     _ => Some(authenticated.calendar_event(event_id).await?),
   };
 
-  // Attendees are fetched eagerly only for events worth the extra round trip: upcoming events and
-  // important ones. Past, unimportant events keep whatever attendee set was previously cached, since
-  // their tallies no longer change and rarely matter — a lazy policy that caps per-sync ESI volume.
   let attendees = if should_fetch_attendees(summary, now) {
     fetch_attendees(authenticated, character_id, event_id).await?
   } else {
@@ -327,8 +324,6 @@ mod tests {
       .await;
   }
 
-  // The list endpoint is paginated by from_event_id; the empty terminator (matched first, since it
-  // carries the cursor param) stops the walk after the single seed page is served.
   async fn mount_calendar_list(server: &MockServer, body: serde_json::Value) {
     Mock::given(method("GET"))
       .and(path("/characters/42/calendar/"))

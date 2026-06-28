@@ -46,8 +46,6 @@ pub struct HistoryCursor {
   pub id: i64,
 }
 
-// In-app notification storage substrate (epic zyrmyrlk, spec A). Constructed/read by the detectors
-// (spec B) and the center/toast UI (specs C/D); exercised only by unit tests until those land.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NewNotification {
   pub body: String,
@@ -133,8 +131,6 @@ pub(crate) struct NotificationRow {
 }
 
 impl HistoryCursor {
-  // The cursor positioned just after the last row of a page, or None when the page was empty (no
-  // further rows to request).
   pub fn from_page(page: &[Notification]) -> Option<Self> {
     page.last().map(|last| Self {
       created_at: last.created_at().clone(),

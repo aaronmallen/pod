@@ -28,8 +28,6 @@ pub async fn abyssal_type_ids(db: &Database) -> Result<Vec<i64>, Error> {
   Ok(rows)
 }
 
-/// Count the abyssal items the page query would yield: the same [`page_for_characters`] WHERE clause
-/// (character set, rolled-type, per-attribute stat ranges) minus the cursor/limit pagination.
 pub async fn count_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -112,11 +110,6 @@ pub async fn filtered_for_characters(
   page_for_characters(db, character_ids, source_type_id, stat_ranges, None, None).await
 }
 
-/// Fetch one cursor-delimited page of abyssal items for the given characters.
-///
-/// Pass `cursor: None` for the first page and `limit: None` for the unbounded
-/// full set (the in-memory fallback path / tests). The shared filter clauses
-/// (rolled-type and per-attribute stat ranges) match [`filtered_for_characters`].
 pub async fn page_for_characters(
   db: &Database,
   character_ids: &[i64],
@@ -678,7 +671,6 @@ pub async fn for_character(db: &Database, character_id: i64) -> Result<Vec<Chara
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationAsset>, Error> {
   if !corp_scope_visible(db, corporation_id).await? {
     return Ok(Vec::new());
@@ -904,7 +896,6 @@ macro_rules! geo_extra_join_sql {
   };
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const RENDER_CHARACTER_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
     a.name AS name, it.name AS type_name, ig.name AS group_name, ",
@@ -920,7 +911,6 @@ const RENDER_CHARACTER_SQL: &str = concat!(
   "WHERE a.character_id = ? ORDER BY a.item_id"
 );
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const RENDER_CORPORATION_SQL: &str = concat!(
   "SELECT a.item_id, a.type_id, a.quantity, a.location_id, a.location_flag, a.container_id, a.depth, a.is_container, \
     a.name AS name, it.name AS type_name, ig.name AS group_name, ",
@@ -1272,9 +1262,7 @@ macro_rules! asset_value_as_of_sql {
   };
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ASSET_VALUE_AS_OF_CHARACTER: &str = asset_value_as_of_sql!("character_assets", "character_id", "abyssal_items");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ASSET_VALUE_AS_OF_CORPORATION: &str =
   asset_value_as_of_sql!("corporation_assets", "corporation_id", "corporation_abyssal_items");
 
@@ -1293,7 +1281,6 @@ pub async fn asset_value_as_of_for_corporation(db: &Database, corporation_id: i6
   asset_value_as_of(db, ASSET_VALUE_AS_OF_CORPORATION, corporation_id, date).await
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 async fn asset_value_as_of(db: &Database, sql: &'static str, owner_id: i64, date: &str) -> Result<f64, Error> {
   let value = sqlx::query_scalar::<_, f64>(sql)
     .bind(date)
@@ -1685,7 +1672,6 @@ pub async fn rows_by_item_id_for_corporation(
   .await
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 async fn child_count(
   db: &Database,
   table: &'static str,
@@ -1704,7 +1690,6 @@ async fn child_count(
   Ok(count)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 async fn node_rollup(
   db: &Database,
   table: &'static str,
@@ -2223,7 +2208,6 @@ fn inventory_totals_head(table: &str, owner_column: &str) -> &'static str {
   }
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 fn child_count_head(table: &str, owner_column: &str) -> &'static str {
   match (table, owner_column) {
     ("character_assets", "character_id") => "SELECT COUNT(*) FROM character_assets WHERE character_id ",
@@ -2232,7 +2216,6 @@ fn child_count_head(table: &str, owner_column: &str) -> &'static str {
   }
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 fn node_rollup_sql(table: &str, owner_column: &str) -> (&'static str, &'static str, &'static str) {
   match (table, owner_column) {
     ("character_assets", "character_id") => (
@@ -2491,27 +2474,17 @@ macro_rules! ancestors_recurse_sql_lit {
   };
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_ANCHOR_CHARACTER: &str = node_rollup_anchor_sql_lit!("character_assets", "character_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_ANCHOR_CORPORATION: &str = node_rollup_anchor_sql_lit!("corporation_assets", "corporation_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_RECURSE_CHARACTER: &str = node_rollup_recurse_sql_lit!("character_assets", "character_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_RECURSE_CORPORATION: &str = node_rollup_recurse_sql_lit!("corporation_assets", "corporation_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_AGGREGATE_CHARACTER: &str =
   node_rollup_aggregate_sql_lit!("character_assets", "character_id", "abyssal_items");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const NODE_ROLLUP_AGGREGATE_CORPORATION: &str =
   node_rollup_aggregate_sql_lit!("corporation_assets", "corporation_id", "corporation_abyssal_items");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ANCESTORS_ANCHOR_CHARACTER: &str = ancestors_anchor_sql_lit!("character_assets", "character_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ANCESTORS_ANCHOR_CORPORATION: &str = ancestors_anchor_sql_lit!("corporation_assets", "corporation_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ANCESTORS_RECURSE_CHARACTER: &str = ancestors_recurse_sql_lit!("character_assets", "character_id");
-// Public store API exercised by unit tests; not yet wired into a production call site.
 const ANCESTORS_RECURSE_CORPORATION: &str = ancestors_recurse_sql_lit!("corporation_assets", "corporation_id");
 
 // Public store API exercised by unit tests; not yet wired into a production call site.
@@ -2559,7 +2532,6 @@ pub async fn completeness_for_corporation(db: &Database, corporation_id: i64) ->
   Ok(report)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 fn into_completeness(distinct_type_ids: i64, unresolved: Vec<i64>) -> AssetCompleteness {
   AssetCompleteness {
     distinct_type_ids,
@@ -2568,7 +2540,6 @@ fn into_completeness(distinct_type_ids: i64, unresolved: Vec<i64>) -> AssetCompl
   }
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 fn log_completeness(owner_kind: &str, owner_id: i64, report: &AssetCompleteness) {
   if !report.is_complete() {
     tracing::warn!(
@@ -2878,10 +2849,6 @@ pub async fn location_name(db: &Database, location_id: i64) -> Result<Option<Str
   Ok(name)
 }
 
-/// Resolve a (possibly nested) location id to the id of its enclosing station / structure /
-/// solar system by walking the asset container hierarchy across character and corporation
-/// assets. Returns `None` when the id is not a tracked container item — callers fall back to a
-/// direct lookup. Mirrors the recursive walk in `locations_for_items`.
 pub async fn enclosing_location_id(db: &Database, location_id: i64) -> Result<Option<i64>, Error> {
   let enclosing = sqlx::query_scalar::<_, i64>(
     "WITH RECURSIVE assets(item_id, location_id, location_type) AS ( \
@@ -3362,8 +3329,6 @@ mod abyssal_tests {
 
     #[tokio::test]
     async fn enclosing_location_id_walks_a_container_up_to_its_station() {
-      // A blueprint's location_id points at a hangar container; the container is itself an asset
-      // docked in a station. The walk returns the station id so the caller can name it.
       let db = store::open_test().await.unwrap();
       disable_foreign_keys(&db).await;
       insert_asset(&db, 1000, 60_000_001, "station").await;
@@ -3458,8 +3423,6 @@ mod abyssal_tests {
 
     use super::*;
 
-    /// `item_id`, `type_id` and `source_type_id` are all distinct so ordering and
-    /// the keyset cursor can be asserted unambiguously.
     fn item(item_id: i64, character_id: i64, source_type_id: i64) -> AbyssalItem {
       AbyssalItem::new(
         item_id,
@@ -3505,7 +3468,6 @@ mod abyssal_tests {
     async fn it_orders_by_source_type_then_item_so_groups_stay_contiguous() {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
-      // Interleave source types so insertion order can't accidentally satisfy the assert.
       upsert(&db, &item(3, 42, 100)).await.unwrap();
       upsert(&db, &item(1, 42, 200)).await.unwrap();
       upsert(&db, &item(2, 42, 100)).await.unwrap();
@@ -3535,7 +3497,6 @@ mod abyssal_tests {
         .await
         .unwrap();
 
-      // Only items after (100, 2) remain: (200, 3).
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].item_id(), 3);
     }
@@ -4310,8 +4271,6 @@ mod asset_tests {
 
     use super::*;
 
-    /// Seeds container 100 holding a Tritanium match (101), a non-matching Rifter sibling (102), and
-    /// a path sub-container (103) leading to a deeper Tritanium match (104).
     async fn seed_mixed_container(db: &Database) {
       seed_character(db, 42).await;
       seed_item_type(db, 24, "Tritanium", 18, "Mineral", "Mineral").await;
@@ -4351,7 +4310,6 @@ mod asset_tests {
         .await
         .unwrap();
 
-      // The match 101 and the path container 103 survive; the non-matching Rifter 102 is pruned.
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101, 103]);
     }
 
@@ -4364,7 +4322,6 @@ mod asset_tests {
         .await
         .unwrap();
 
-      // With no path exception, only the matching leaf 101 remains.
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [101]);
     }
 
@@ -4377,7 +4334,6 @@ mod asset_tests {
         .await
         .unwrap();
 
-      // The negation keeps only the non-material children: the Rifter 102 and the sub-container 103.
       assert_eq!(children.iter().map(|r| r.item_id).collect::<Vec<_>>(), [102, 103]);
     }
 
@@ -4944,14 +4900,12 @@ mod asset_tests {
         .await
         .unwrap();
 
-      // Item 100 disappears from the next sync; item 101 persists.
       replace_for_character(&db, 42, &[char_asset(101, 42, None)])
         .await
         .unwrap();
 
       let asset_members = infra::members(&db, tag.id(), ENTITY_TYPE_ASSET).await.unwrap();
       assert_eq!(asset_members, vec![101]);
-      // The like-numbered character membership is a different scope and must survive.
       assert_eq!(
         infra::members(&db, tag.id(), crate::store::model::ENTITY_TYPE_CHARACTER)
           .await
@@ -5021,7 +4975,6 @@ mod asset_tests {
       seed_character(&db, 42).await;
       let initial: Vec<_> = (100..105).map(|id| char_asset(id, 42, None)).collect();
 
-      // Batch size 2 over 5 rows forces three separate upsert transactions.
       replace_for_character_batched(&db, 42, &initial, 2).await.unwrap();
       let mut ids: Vec<_> = for_character(&db, 42)
         .await
@@ -5036,7 +4989,6 @@ mod asset_tests {
         "every row survives multiple upsert batches"
       );
 
-      // Re-replace with a subset so three ids go stale and are pruned across multiple delete batches.
       let next: Vec<_> = (100..102).map(|id| char_asset(id, 42, None)).collect();
       replace_for_character_batched(&db, 42, &next, 2).await.unwrap();
       let mut ids: Vec<_> = for_character(&db, 42)
@@ -5570,7 +5522,6 @@ mod asset_tests {
       infra::assign(&db, ENTITY_TYPE_ASSET, 100, tag.id()).await.unwrap();
       infra::assign(&db, ENTITY_TYPE_ASSET, 101, tag.id()).await.unwrap();
 
-      // Item 100 disappears from the next sync; item 101 persists.
       replace_for_corporation(&db, CORP_ID, &[corp_asset(101, CORP_ID, None)])
         .await
         .unwrap();
@@ -6547,7 +6498,6 @@ mod asset_tests {
       }
     }
 
-    // Character 42 holds item 100 in Jita (The Forge) and item 101 in Dodixie (Sinq Laison).
     async fn seed_single_scope(db: &Database) {
       seed_character(db, 42).await;
       seed_item_type(db, 587, "Rifter", 25, "Frigate", "Ship").await;
@@ -6579,7 +6529,6 @@ mod asset_tests {
       .collect()
     }
 
-    // Character 42 holds item 100 in Jita; the corp holds item 200 in Dodixie.
     async fn seed_combined_scope(db: &Database) {
       seed_character(db, 42).await;
       authorize_corp(db).await;
@@ -7905,7 +7854,6 @@ mod asset_tests {
 
       let rows = inventory_page_for_character(&db, 42, &query()).await.unwrap();
 
-      // per_unit = 1000*5 + 500*10 = 10_000; floor(300/100) = 3; yield 0.5 => 10_000 * 0.5 * 3.
       assert_eq!(rows.len(), 1);
       assert_eq!(rows[0].reproc_value, 15_000.0);
     }
@@ -7926,7 +7874,6 @@ mod asset_tests {
       query.reproc_yield = 1.0;
       let rows = inventory_page_for_character(&db, 42, &query).await.unwrap();
 
-      // per_unit = 100 * 5 = 500; full yield, one portion.
       assert_eq!(rows[0].reproc_value, 500.0);
     }
 
@@ -7935,10 +7882,8 @@ mod asset_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_reprocessable_type(&db, 587, 1).await;
-      // Material value 1000/unit; refined at 0.5 yield => 500/unit reproc.
       seed_price(&db, TRIT, 1_000.0).await;
       seed_materials(&db, 587, &[(TRIT, 1)]).await;
-      // Sell value below the 500 reproc => worth reprocessing.
       seed_price(&db, 587, 100.0).await;
       let mut asset = char_asset(100, 42, None);
       asset.type_id = 587;
@@ -7951,7 +7896,6 @@ mod asset_tests {
       assert_eq!(rows[0].value, 100.0);
       assert!(rows[0].worth_reprocessing());
 
-      // Raise the sell price above the reproc value => no longer worth it.
       sqlx::query("UPDATE market_prices SET adjusted_price = 1000.0 WHERE type_id = 587")
         .execute(db.writer())
         .await
@@ -8036,7 +7980,6 @@ mod asset_tests {
         .await
         .unwrap();
 
-      // per_unit = 1000*5 = 5000; floor(300/100)=3; yield 0.5 => 7500 per stack, both scopes.
       assert_eq!(single[0].reproc_value, 7_500.0);
       assert_eq!(combined.len(), 2);
       for row in &combined {

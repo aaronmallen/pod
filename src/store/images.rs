@@ -18,9 +18,6 @@ static DEFAULT_STORE: OnceLock<Store> = OnceLock::new();
 
 static IMAGE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-/// A snapshot of the icon cache directories' filenames, read once via `read_dir` so a bulk caller can resolve many
-/// type icons with in-memory membership checks instead of a `Path::exists` stat per type. Built by [`Store::icon_index`]
-/// and resolves identically to [`Store::resolve_type_icon`] for the directory layout in effect at snapshot time.
 #[derive(Clone, Debug, Default)]
 pub struct IconIndex {
   committed_dir: Option<PathBuf>,
@@ -30,9 +27,6 @@ pub struct IconIndex {
 }
 
 impl IconIndex {
-  /// Resolves a type icon against the cached filename sets, mirroring [`Store::resolve_type_icon`]: the runtime
-  /// data tier wins, then (only at [`Size::S64`]) the committed tier, preferring a `_bpc` render for a blueprint
-  /// copy. Returns the same paths the per-call resolver would have hit, without touching the filesystem.
   pub fn resolve_type_icon(&self, type_id: i64, is_blueprint_copy: Option<bool>, size: Size) -> IconResolution {
     let variant = IconVariant::from_blueprint_copy(is_blueprint_copy);
 
@@ -143,9 +137,6 @@ impl Store {
     self.root.join("corporations").join(format!("{corporation_id}.png"))
   }
 
-  /// Snapshots the type-icon cache directories (the runtime `types` dir and, when configured, the committed items
-  /// dir) into an [`IconIndex`], issuing one `read_dir` per directory. Lets a bulk caller resolve thousands of
-  /// icons with in-memory lookups rather than a stat storm.
   pub fn icon_index(&self) -> IconIndex {
     let data_dir = self.root.join("types");
     let data_files = read_dir_file_names(&data_dir);
@@ -225,7 +216,6 @@ impl Store {
   }
 }
 
-/// Initializes the process-wide image cache root from the loaded settings. Called once at boot; subsequent calls are ignored.
 pub fn init_root(root: PathBuf) {
   let _ = IMAGE_ROOT.set(root);
 }
@@ -244,8 +234,6 @@ fn build_default_store() -> Store {
   Store::new(root).with_committed_items(config::resource_dir().join("assets").join("images").join("items"))
 }
 
-/// A missing or unreadable file is treated as stale (callers should refetch); a file whose mtime is in the future is
-/// treated as fresh.
 pub fn is_fresh(path: &Path, max_age: Duration) -> bool {
   fs::metadata(path)
     .and_then(|meta| meta.modified())
@@ -264,8 +252,6 @@ pub fn resolve(store: &Store, kind: ImageKind, id: i64) -> ImageState {
   }
 }
 
-/// The set of file names directly under `dir`; an empty set when the directory is absent or unreadable (a cache
-/// not yet populated), so a membership check degrades to "missing" exactly as a `Path::exists` would.
 fn read_dir_file_names(dir: &Path) -> HashSet<String> {
   fs::read_dir(dir)
     .into_iter()

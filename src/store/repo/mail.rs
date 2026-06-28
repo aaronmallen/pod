@@ -12,7 +12,6 @@ use crate::store::{
   },
 };
 
-/// The visible-header column list, aliased to `m` (the `character_mail` table).
 const VISIBLE_HEADER_COLUMNS: &str = "SELECT m.character_id, m.from_id, m.from_name, m.is_read, m.has_attachment, \
   m.important, m.from_corp, m.from_system, m.mail_id, m.subject, m.timestamp FROM character_mail m ";
 
@@ -582,8 +581,6 @@ pub async fn expired_trashed_mails(db: &Database, cutoff: &str) -> Result<Vec<Ma
   Ok(rows)
 }
 
-/// Persists a draft and returns its row id. `None` inserts a fresh row (preserving `created_at`); `Some(id)` updates
-/// that row in place so re-saving an open draft never duplicates it.
 pub async fn upsert_draft(db: &Database, id: Option<i64>, input: &DraftInput) -> Result<i64, Error> {
   let now = Utc::now().to_rfc3339();
   let id = match id {
@@ -680,8 +677,6 @@ pub async fn overlay_state(db: &Database, character_id: i64, mail_id: i64) -> Re
   Ok(row)
 }
 
-/// Captures every local row a mail owns so a permanent delete can be undone. Returns `None` when
-/// the mail header is gone (nothing to delete).
 pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Result<Option<MailSnapshot>, Error> {
   let Some(header) = sqlx::query_as::<_, CharacterMail>(
     "SELECT character_id, from_corp, from_id, from_name, from_system, has_attachment, important, is_read, mail_id, \
@@ -743,8 +738,6 @@ pub async fn snapshot_mail(db: &Database, character_id: i64, mail_id: i64) -> Re
   }))
 }
 
-/// Permanently removes every local row a mail owns across all dependent tables in one transaction,
-/// leaving no orphans.
 pub async fn purge_mail(db: &Database, character_id: i64, mail_id: i64) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
 
@@ -787,8 +780,6 @@ pub async fn purge_synthetic_sent(db: &Database, character_id: i64) -> Result<()
   Ok(())
 }
 
-/// Re-inserts every row captured by [`snapshot_mail`], reversing a [`purge_mail`] in one
-/// transaction. Used to compensate a permanently failed ESI delete.
 pub async fn restore_mail(db: &Database, snapshot: &MailSnapshot) -> Result<(), Error> {
   let mut tx = db.writer().begin().await?;
 
@@ -980,10 +971,6 @@ pub async fn visible_headers_for_label(
   Ok(rows)
 }
 
-/// One bounded page of the inbox listing (visible), newest first.
-///
-/// This is the keyset-paginated replacement for the unbounded [`visible_headers`]
-/// fetch: it seeks past `cursor` when one is supplied.
 pub async fn visible_headers_page(
   db: &Database,
   character_id: i64,
@@ -1000,7 +987,6 @@ pub async fn visible_headers_page(
   Ok(rows)
 }
 
-/// One bounded page of a label folder's listing (visible), newest first.
 pub async fn visible_headers_for_label_page(
   db: &Database,
   character_id: i64,
@@ -1020,11 +1006,6 @@ pub async fn visible_headers_for_label_page(
   Ok(rows)
 }
 
-/// One bounded page of visible mail whose subject or sender matches `needle`.
-///
-/// The bounded replacement for scanning the whole mailbox in memory on every
-/// keystroke. `needle` is matched case-insensitively as a substring of the subject
-/// or sender; `label_id` scopes the search to a label folder.
 pub async fn search_visible_headers_page(
   db: &Database,
   character_id: i64,
@@ -1055,11 +1036,6 @@ pub async fn search_visible_headers_page(
   Ok(rows)
 }
 
-/// One bounded page of unified (roster-wide) mail matching `needle`, newest first.
-///
-/// The unified-folder counterpart of [`search_visible_headers_page`]: it searches
-/// the cross-character `mail_unified` view so the default folder's search still
-/// spans the whole roster, keyset-paginated and excluding filed/snoozed mail.
 pub async fn search_visible_unified_page(
   db: &Database,
   now: &str,
@@ -1085,13 +1061,11 @@ pub async fn search_visible_unified_page(
   Ok(rows)
 }
 
-/// Join `character_mail` to its label membership for a label-scoped listing.
 fn push_label_join(builder: &mut QueryBuilder<Sqlite>) {
   builder
     .push("JOIN character_mail_label_membership mem ON mem.character_id = m.character_id AND mem.mail_id = m.mail_id ");
 }
 
-/// Exclude mail that is filed or snoozed.
 fn push_visible_tail_predicate(builder: &mut QueryBuilder<Sqlite>, now: &str) {
   builder.push(
     " AND NOT EXISTS ( \
@@ -2103,7 +2077,6 @@ mod overlay_tests {
     }
   }
 
-  /// A corp broadcast: `from_corp = 1` and a sender id distinct from the owner.
   fn corp_sender(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
     CharacterMail {
       character_id,
@@ -2118,7 +2091,6 @@ mod overlay_tests {
     }
   }
 
-  /// System mail: `from_system = 1`.
   fn system_sender(character_id: i64, mail_id: i64, ts: &str) -> CharacterMail {
     CharacterMail {
       character_id,
@@ -2133,7 +2105,6 @@ mod overlay_tests {
     }
   }
 
-  /// A mail received by `character_id` whose sender is another owned character.
   fn cross_character(character_id: i64, mail_id: i64, from_id: i64, ts: &str) -> CharacterMail {
     CharacterMail {
       character_id,
@@ -2147,7 +2118,6 @@ mod overlay_tests {
     }
   }
 
-  /// Override a header's subject so search tests can share one needle across senders.
   fn with_subject(mut header: CharacterMail, subject: &str) -> CharacterMail {
     header.subject = Some(subject.to_owned());
     header
@@ -3011,7 +2981,6 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_character(&db, 43).await;
-      // All share the searchable subject "Pod" so only the self-sent predicate filters.
       store_mail(
         &db,
         &with_subject(received(42, 1, "2026-06-01T10:00:00Z", false), "Pod from stranger"),
@@ -3049,15 +3018,10 @@ mod overlay_tests {
       let db = store::open_test().await.unwrap();
       seed_character(&db, 42).await;
       seed_character(&db, 43).await;
-      // Received from a stranger.
       store_mail(&db, &received(42, 1, "2026-06-01T10:00:00Z", false)).await;
-      // Self-sent by 42 (from_id == character_id): must be hidden from All Inboxes.
       store_mail(&db, &sent(42, 2, "2026-06-02T10:00:00Z")).await;
-      // Corp broadcast (from_corp = 1) with a sender id distinct from the owner.
       store_mail(&db, &corp_sender(43, 3, "2026-06-03T10:00:00Z")).await;
-      // System mail (from_system = 1).
       store_mail(&db, &system_sender(43, 4, "2026-06-04T10:00:00Z")).await;
-      // 42 sent a mail 43 received: from_id (42) != 43's character_id, so 43's copy stays.
       store_mail(&db, &cross_character(43, 5, 42, "2026-06-05T10:00:00Z")).await;
 
       let unified = super::unified(&db).await.unwrap();

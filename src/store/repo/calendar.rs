@@ -248,19 +248,15 @@ mod tests {
       seed_character(&db, 42).await;
       let now = "2026-06-12T00:00:00Z";
 
-      // Future corp invite, already answered — excluded (acknowledging clears it).
       super::upsert_complete(&db, &make_event(42, 1, "2026-06-20T19:00:00Z", 1, "accepted"), &[])
         .await
         .unwrap();
-      // Future corp invite, unanswered — the one that counts.
       super::upsert_complete(&db, &make_event(42, 2, "2026-06-21T19:00:00Z", 0, "not_responded"), &[])
         .await
         .unwrap();
-      // Future non-respondable (EVE server) downtime, unanswered — excluded, nothing to answer.
       let mut downtime = make_event(42, 3, "2026-06-22T11:00:00Z", 1, "not_responded");
       downtime.owner_type = "eve_server".to_owned();
       super::upsert_complete(&db, &downtime, &[]).await.unwrap();
-      // Past corp invite, unanswered — excluded, already elapsed.
       super::upsert_complete(&db, &make_event(42, 4, "2026-06-01T19:00:00Z", 1, "not_responded"), &[])
         .await
         .unwrap();

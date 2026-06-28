@@ -1,6 +1,3 @@
-//! Standings catalog query layer: loads raw standings for a character, computes effective standings
-//! with social-skill modifiers, and filters the combined faction/corporation/agent catalog.
-
 use sqlx::{QueryBuilder, Sqlite};
 
 use crate::store::{
@@ -156,12 +153,6 @@ async fn catalog_from(
   Ok(rows)
 }
 
-/// Fetches a single keyset page of agent rows for the standings catalog, seeking past `after`.
-///
-/// Factions and corporations are never paginated (the full set is small and always loaded by [`catalog`]); this
-/// path bounds only the agent rows. Returns no rows when the query does not surface agents and `force_agents` is
-/// false; `force_agents` lets a caller surface the full agent catalog with no narrowing facet (e.g. the All/Agents
-/// segment filter).
 pub async fn agent_page(
   db: &Database,
   character_id: i64,
@@ -185,10 +176,6 @@ pub async fn agent_page(
   agent_page_from(db, &facets, &raw, skills, force_agents, after, limit).await
 }
 
-/// Fetches a single keyset page of agent rows for a corporation's standings catalog.
-///
-/// As with [`corporation_catalog`], corporations carry no social-skill modifiers and no location, so `near_me` is not
-/// resolved.
 pub async fn corporation_agent_page(
   db: &Database,
   corporation_id: i64,
@@ -628,7 +615,6 @@ async fn social_skills(db: &Database, character_id: i64) -> Result<SocialSkills,
 }
 
 async fn near_me_systems(db: &Database, character_id: i64) -> Result<Vec<i64>, Error> {
-  // Prefer the character's live solar system; fall back to the active clone's home station system.
   let live = sqlx::query_scalar::<_, Option<i64>>("SELECT solar_system_id FROM character_state WHERE character_id = ?")
     .bind(character_id)
     .fetch_optional(&db.0)
@@ -702,9 +688,6 @@ mod tests {
       sqlx::query(sql).execute(db.writer()).await.unwrap();
     }
 
-    // Seeds a small but coherent standings universe: two factions (one empire, one pirate), three
-    // NPC corps, four agents with stations/systems/regions and skills, plus a character with social
-    // skills and one explicit corp standing.
     async fn seed(db: &store::Database) {
       exec(
         db,
@@ -883,7 +866,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(page_names(&second), vec!["Navy Sec Agent", "Sisters Agent"]);
-        // A full page always carries a cursor; the next seek confirms exhaustion with an empty page.
         assert_eq!(second.next_cursor, Some(("Sisters Agent".to_owned(), 3_000_003)));
 
         let third = agent_page(
@@ -1139,7 +1121,6 @@ mod tests {
 
       let rows = catalog(&db, CHARACTER, &parse(""), true, Some(500)).await.unwrap();
 
-      // Forced agents bypass the facet gate but must still survive `keeps`, so the full catalog appears.
       assert_eq!(of_kind(&rows, CatalogKind::Faction).len(), 2);
       assert_eq!(of_kind(&rows, CatalogKind::Corporation).len(), 3);
       assert_eq!(of_kind(&rows, CatalogKind::Agent).len(), 4);
@@ -1254,8 +1235,6 @@ mod tests {
 
       let agent = rows.iter().find(|row| row.name == "Navy Sec Agent").unwrap();
       assert_eq!(agent.raw_standing, 5.0);
-      // No social-skill modifiers for a corporation, so the cascaded corp standing stays raw (5.0), which exactly
-      // meets a level-4 agent's 5.0 access threshold.
       assert_eq!(agent.effective_standing, 5.0);
       assert_eq!(agent.accessible, Some(true));
     }
@@ -1312,7 +1291,6 @@ mod tests {
 
       let faction = rows.iter().find(|row| row.id == CALDARI_FACTION).unwrap();
       assert_eq!(faction.raw_standing, 6.0);
-      // No social-skill modifiers for a corporation: effective equals raw even with a positive empire standing.
       assert_eq!(faction.effective_standing, 6.0);
     }
   }
@@ -1343,7 +1321,6 @@ mod tests {
         ..SocialSkills::default()
       };
 
-      // -4 + (0 - -4) * 0.04 * 5 = -4 + 0.8 = -3.2
       assert!((effective_standing(-4.0, Some(CALDARI), skills) - -3.2).abs() < 1e-9);
     }
 
@@ -1354,7 +1331,6 @@ mod tests {
         ..SocialSkills::default()
       };
 
-      // 4 + (10 - 4) * 0.04 * 5 = 4 + 1.2 = 5.2
       assert!((effective_standing(4.0, Some(CALDARI), skills) - 5.2).abs() < 1e-9);
     }
 

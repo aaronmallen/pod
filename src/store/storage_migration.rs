@@ -98,7 +98,6 @@ fn migrate_direct_to_direct(from: &Layout, to: &Layout) -> Result<(), Error> {
 
 fn migrate_direct_to_sync(from: &Layout, to: &Layout) -> Result<(), Error> {
   if !from.canonical.exists() {
-    // A fresh install with no database yet: the working copy is seeded at first launch.
     return Ok(());
   }
 
@@ -326,7 +325,6 @@ mod tests {
       let old = config(&local_db, &cache, false);
       fs::create_dir_all(&local_db).unwrap();
       fs::write(old.resolved_database_path(), b"live bytes").unwrap();
-      // A file where the share directory must go forces the copy onto the share to fail.
       let blocker = dir.join("share-blocker");
       fs::write(&blocker, b"blocking file").unwrap();
       let mut new = StorageConfig::default();
@@ -354,8 +352,6 @@ mod tests {
       let share = dir.join("share");
       let cache = dir.join("cache");
       let old = config(&share, &cache, true);
-      // Point the new local location at a path whose parent cannot be created (a file blocks it),
-      // so checkpoint_into fails and the migration must abort without destroying the old layout.
       let blocker = dir.join("blocked");
       fs::write(&blocker, b"i am a file, not a directory").unwrap();
       let mut new = StorageConfig::default();
@@ -458,7 +454,6 @@ mod tests {
       let root = tempdir().unwrap();
       let db_dir = root.path().join("data");
       let cache = root.path().join("cache");
-      // The configured path is unchanged — only the sync flag flips, as when toggling the checkbox.
       let old = config(&db_dir, &cache, false);
       let new = config(&db_dir, &cache, true);
       fs::create_dir_all(&db_dir).unwrap();
@@ -554,7 +549,6 @@ mod tests {
       let root = tempdir().unwrap();
       let db_dir = root.path().join("data");
       let cache = root.path().join("cache");
-      // Only the sync flag flips; the configured path stays put, as when un-checking the box.
       let old = config(&db_dir, &cache, true);
       let new = config(&db_dir, &cache, false);
       seed_wal_database(&old.resolved_working_copy_path()).await;

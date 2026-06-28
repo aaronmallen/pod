@@ -56,7 +56,6 @@ pub struct Model {
 }
 
 #[derive(Clone, CopyGetters, Debug, FromRow, PartialEq)]
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub struct ContractEscrow {
   #[getset(get_copy = "pub")]
   pub character_id: i64,

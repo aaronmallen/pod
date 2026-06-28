@@ -308,8 +308,6 @@ pub async fn tag_all(db: &Database) -> Result<Vec<Tag>, Error> {
   tag_all_scoped(db, TAG_SCOPE_ENTITY).await
 }
 
-// Public store API consumed by the asset-tag UI tasks (filter/modal/chips/settings); exercised by unit tests
-// until those callers land.
 pub async fn tag_all_scoped(db: &Database, scope: &str) -> Result<Vec<Tag>, Error> {
   let rows = sqlx::query_as::<_, Tag>(
     "SELECT color, created_at, description, id, name, position, updated_at FROM tags WHERE scope = ? ORDER BY position",
@@ -337,8 +335,6 @@ pub async fn create(db: &Database, name: &str, description: Option<&str>, color:
   create_scoped(db, name, description, color, TAG_SCOPE_ENTITY).await
 }
 
-// Public store API consumed by the asset-tag UI tasks (settings/modal); exercised by unit tests until those
-// callers land.
 pub async fn create_scoped(
   db: &Database,
   name: &str,
@@ -445,9 +441,6 @@ pub async fn memberships(db: &Database, entity_type: &str) -> Result<Vec<EntityT
   Ok(rows)
 }
 
-// Per-entity tag membership map (entity_id -> tag_ids, in tag position order) for one entity type, so a view
-// can resolve every row's chips from a single query instead of a per-row scan. Consumed by the asset inventory
-// tag chips; exercised by unit tests until that caller lands.
 pub async fn membership_map(db: &Database, entity_type: &str) -> Result<HashMap<i64, Vec<i64>>, Error> {
   let rows = sqlx::query_as::<_, (i64, i64)>(
     "SELECT et.entity_id, et.tag_id FROM entity_tags et \
@@ -1770,7 +1763,6 @@ mod tag_tests {
         .await
         .unwrap();
 
-      // The existing row is returned untouched (original name/color), and no second row was inserted.
       assert_eq!(second.id(), first.id());
       assert_eq!(second.name(), "Roller");
       assert_eq!(second.color().as_deref(), Some("#3FB8DB"));
@@ -1853,7 +1845,6 @@ mod tag_tests {
       let db = store::open_test().await.unwrap();
       let keep = create_scoped(&db, "Keep", None, None, TAG_SCOPE_ASSET).await.unwrap();
       let sell = create_scoped(&db, "Sell", None, None, TAG_SCOPE_ASSET).await.unwrap();
-      // Assign out of position order to prove the map orders by tag position, not insert order.
       assign(&db, ENTITY_TYPE_ASSET, 1001, sell.id()).await.unwrap();
       assign(&db, ENTITY_TYPE_ASSET, 1001, keep.id()).await.unwrap();
       assign(&db, ENTITY_TYPE_ASSET, 2002, keep.id()).await.unwrap();
@@ -1988,7 +1979,6 @@ mod tag_tests {
         .expect_err("renaming onto a sibling tag's name is rejected");
 
       assert!(matches!(error, store::Error::TagNameTaken { .. }));
-      // Nothing was written: the row keeps its original name, description, and color.
       let unchanged = tag_get(&db, sell.id()).await.unwrap().unwrap();
       assert_eq!(unchanged.name(), "Sell");
       assert_eq!(unchanged.description().as_deref(), Some("dispose"));

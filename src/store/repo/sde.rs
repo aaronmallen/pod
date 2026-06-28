@@ -166,9 +166,6 @@ pub async fn get_dogma_attributes(db: &Database, attribute_ids: &[i64]) -> Resul
   Ok(rows)
 }
 
-/// Extracts every item carrying one of `attribute_ids` from its `dogma_attributes` JSON, returning one row per
-/// `(type_id, attribute_id, value)`. Used to resolve hardwiring implant manufacturing/reaction time bonuses
-/// without materializing a separate dogma-values table; `json_each` unpacks the blob inline.
 pub async fn implant_time_bonuses(db: &Database, attribute_ids: &[i64]) -> Result<Vec<ImplantTimeBonus>, Error> {
   if attribute_ids.is_empty() {
     return Ok(Vec::new());

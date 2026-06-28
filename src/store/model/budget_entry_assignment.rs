@@ -5,8 +5,6 @@ const ENTRY_KIND_JOURNAL: &str = "journal";
 
 const ENTRY_KIND_MARKET: &str = "market";
 
-// Per-entry budget assignment storage (child A); the keyed variants and conversions are consumed by
-// the Budget derivation/UI in children B/C, and exercised only by unit tests until then.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum BudgetEntryKind {
   #[default]

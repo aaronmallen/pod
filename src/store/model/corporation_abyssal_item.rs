@@ -47,6 +47,7 @@ impl Model {
     }
   }
 
+  // Public store API exercised by unit tests; not yet wired into a production call site.
   #[cfg_attr(not(test), expect(dead_code))]
   pub fn set_muta_price(&mut self, price_isk: Option<f64>, synced_at: i64) -> &mut Self {
     self.muta_price_isk = price_isk;

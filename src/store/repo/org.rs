@@ -1083,7 +1083,6 @@ pub async fn corporation_killmails_page(
   Ok(rows)
 }
 
-// Public store API exercised by unit tests; not yet wired into a production call site.
 pub async fn for_corporation(db: &Database, corporation_id: i64) -> Result<Vec<CorporationMemberRole>, Error> {
   let rows = sqlx::query_as::<_, CorporationMemberRole>(
     "SELECT character_id, corporation_id, role FROM corporation_member_roles \
@@ -1378,7 +1377,6 @@ mod corporation_tests {
     async fn seed_kills(db: &store::Database) {
       seed_character(db, CORP_ID, 7001).await;
 
-      // Two share a timestamp so the killmail_id tiebreaker is exercised.
       upsert_corporation_killmail(db, &kill(100, "2024-03-01T00:00:00Z"))
         .await
         .unwrap();

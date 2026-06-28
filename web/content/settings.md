@@ -114,8 +114,7 @@ before it.
 
 ## Accessibility
 
-The Accessibility tab controls interface scale, high contrast, and how ISK
-figures are drawn.
+The Accessibility tab controls interface scale, high contrast, and language.
 
 ![Accessibility tab: scale presets, high-contrast toggle, and contrast preview](/docs/img/settings/accessibility.png)
 
@@ -135,8 +134,20 @@ usage and target contrast) with the current and high-contrast colors side by
 side, plus the surface-edge alpha values before and after. High contrast also
 applies live.
 
-The ISK monospace setting draws ISK figures in a monospace font so digits line
-up in columns and balances are easier to compare.
+The Language selector sets which language Pod requests localized game data in
+from ESI. A grid of cards covers the nine languages EVE's ESI supports, and
+each card shows the native name, the ESI code such as "en" or "de", and the
+English name, with the current language checked. This drives the item names,
+descriptions, and other text Pod pulls from ESI, sent as an Accept-Language
+header; Pod's own interface stays in English.
+
+Language is restart gated, so picking a different card does not switch right
+away. Pod parks your choice as pending and the section shows a "Restart
+required" marker. A confirmation row appears headed "Restart required to apply"
+the language you picked, with a "Restart Pod" button to go through with the
+change and a "Keep current" button to back out. Choosing "Restart Pod"
+relaunches Pod so it re-requests game data in the new language. Until you
+confirm, a resting note shows the language Pod is currently running in.
 
 The category badge summarizes the current state. It shows the scale percentage,
 appends " · custom" when the scale sits off a preset, and appends " · HC" when

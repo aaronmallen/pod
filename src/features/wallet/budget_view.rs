@@ -12,7 +12,11 @@ use crate::{
   features::wallet::budget_engine as engine,
   store::model::{MatchMode, Rule, RuleField, RuleOp},
   ui::{
-    components::{anchored_dropdown::AnchoredDropdown, icon::Icon},
+    components::{
+      anchored_dropdown::AnchoredDropdown,
+      button::{Button, Size},
+      icon::Icon,
+    },
     style::{color, spacing, typography},
   },
 };
@@ -56,35 +60,8 @@ fn review_banner(state: &State) -> Option<Element<'_, Message>> {
     t!("wallet.budget.review_noun_plural").into_owned()
   };
 
-  let review = button(
-    text(t!("wallet.budget.review_assign"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::status::WARNING)),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(color::with_alpha(
-        color::status::WARNING,
-        if active { 0.16 } else { 0.0 },
-      ))),
-      border: Border {
-        color: color::status::WARNING,
-        width: 1.0,
-        radius: 8.0.into(),
-      },
-      text_color: color::status::WARNING,
-      ..button::Style::default()
-    }
-  });
+  let review = Button::secondary(t!("wallet.budget.review_assign"))
+    .on_press(Message::BudgetFilterApplied(BudgetFilterKind::Uncategorized));
 
   let message = Row::with_children(vec![
     color_dot(Some("warning"), 8.0),
@@ -223,46 +200,12 @@ fn edit_toggle<'a>(edit_mode: bool) -> Element<'a, Message> {
   } else {
     t!("wallet.budget.edit_budget").into_owned()
   };
-  let text_color = if edit_mode {
-    color::accent::PLASMA
+  let control = if edit_mode {
+    Button::primary(label)
   } else {
-    color::text::secondary()
+    Button::secondary(label)
   };
-  let background = if edit_mode {
-    Background::Color(color::with_alpha(color::accent::PLASMA, 0.12))
-  } else {
-    Background::Color(Color::TRANSPARENT)
-  };
-  let border_color = if edit_mode {
-    color::accent::PLASMA
-  } else {
-    color::rule()
-  };
-
-  button(
-    text(label)
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(text_color)),
-  )
-  .padding(Padding {
-    top: 7.0,
-    right: spacing::SPACE_3_5,
-    bottom: 7.0,
-    left: spacing::SPACE_3_5,
-  })
-  .on_press(Message::BudgetEditToggled)
-  .style(move |_, _| button::Style {
-    background: Some(background),
-    border: Border {
-      color: border_color,
-      width: 1.0,
-      radius: spacing::SPACE_2.into(),
-    },
-    text_color,
-    ..button::Style::default()
-  })
-  .into()
+  control.on_press(Message::BudgetEditToggled).into()
 }
 
 fn bordered<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
@@ -454,29 +397,9 @@ fn hero_message<'a>(message: &'a str) -> Element<'a, Message> {
 }
 
 fn auto_assign_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("wallet.budget.auto_assign"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(color::on_fill(color::accent::PLASMA))),
-  )
-  .padding(Padding {
-    top: 9.0,
-    right: 16.0,
-    bottom: 9.0,
-    left: 16.0,
-  })
-  .on_press(Message::BudgetAutoAssign)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::accent::PLASMA)),
-    border: Border {
-      radius: spacing::SPACE_2.into(),
-      ..Border::default()
-    },
-    text_color: color::on_fill(color::accent::PLASMA),
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(t!("wallet.budget.auto_assign"))
+    .on_press(Message::BudgetAutoAssign)
+    .into()
 }
 
 fn overspent_button<'a>(overspent: f64) -> Element<'a, Message> {
@@ -1594,36 +1517,10 @@ fn move_amount_field<'a>(draft: &str, available: f64, valid: bool) -> Row<'a, Me
       value: color::text::PRIMARY,
     });
 
-  let all = button(
-    text(t!("wallet.budget.move_all"))
-      .font(typography::mono::MEDIUM)
-      .size(typography::size::XS)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: 9.0,
-    right: 13.0,
-    bottom: 9.0,
-    left: 13.0,
-  })
-  .on_press(Message::BudgetMoveAmountChanged(move_all_prefill(available)))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(Color::TRANSPARENT)),
-      border: Border {
-        color: if active { color::rule_strong() } else { color::rule() },
-        width: 1.0,
-        radius: 7.0.into(),
-      },
-      text_color: if active {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
-      ..button::Style::default()
-    }
-  });
+  let all = Button::secondary(t!("wallet.budget.move_all"))
+    .mono()
+    .size(Size::Sm)
+    .on_press(Message::BudgetMoveAmountChanged(move_all_prefill(available)));
 
   Row::with_children(vec![input.into(), all.into()])
     .spacing(spacing::SPACE_2)
@@ -2645,30 +2542,10 @@ fn mono_caption_sans<'a>(value: &'a str) -> Element<'a, Message> {
 }
 
 fn editor_commit_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("wallet.budget.save_category"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(color::on_fill(color::accent::PLASMA))),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 9.0,
-    right: spacing::SPACE_3,
-    bottom: 9.0,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::BudgetEditorCommitted)
-  .style(|_, _| button::Style {
-    background: Some(Background::Color(color::accent::PLASMA)),
-    border: Border {
-      radius: 7.0.into(),
-      ..Border::default()
-    },
-    text_color: color::on_fill(color::accent::PLASMA),
-    ..button::Style::default()
-  })
-  .into()
+  Button::primary(t!("wallet.budget.save_category"))
+    .block()
+    .on_press(Message::BudgetEditorCommitted)
+    .into()
 }
 
 fn automation_tab<'a>(state: &'a State, category: &'a Category) -> Element<'a, Message> {
@@ -2737,47 +2614,11 @@ fn automation_intro<'a>(category: &'a Category) -> Element<'a, Message> {
 }
 
 fn new_rule_button<'a>(category_id: i64) -> Element<'a, Message> {
-  button(
-    Row::with_children(vec![
-      text("+")
-        .font(typography::body::MEDIUM)
-        .size(typography::size::LG)
-        .style(typography::colored(color::accent::PLASMA))
-        .into(),
-      text(t!("wallet.budget.new_rule"))
-        .font(typography::body::MEDIUM)
-        .size(typography::size::MD)
-        .style(typography::colored(color::accent::PLASMA))
-        .into(),
-    ])
-    .spacing(spacing::SPACE_2)
-    .align_y(Vertical::Center),
-  )
-  .width(Length::Fill)
-  .padding(Padding {
-    top: 10.0,
-    right: spacing::SPACE_3,
-    bottom: 10.0,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::BudgetRuleNewOpened(category_id))
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(color::with_alpha(
-        color::accent::PLASMA,
-        if active { 0.2 } else { 0.12 },
-      ))),
-      border: Border {
-        color: color::accent::PLASMA,
-        width: 1.0,
-        radius: 8.0.into(),
-      },
-      text_color: color::accent::PLASMA,
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::primary(t!("wallet.budget.new_rule"))
+    .icon(Icon::plus())
+    .block()
+    .on_press(Message::BudgetRuleNewOpened(category_id))
+    .into()
 }
 
 fn automation_empty_state<'a>() -> Element<'a, Message> {
@@ -4374,73 +4215,15 @@ fn rule_modal_footer<'a>(draft: &'a budget::RuleDraft) -> Element<'a, Message> {
 }
 
 fn cancel_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("wallet.budget.cancel"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: 9.0,
-    right: 16.0,
-    bottom: 9.0,
-    left: 16.0,
-  })
-  .on_press(Message::BudgetRuleEditorClosed)
-  .style(|_, status| {
-    let active = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: Some(Background::Color(Color::TRANSPARENT)),
-      border: Border {
-        color: if active { color::rule_strong() } else { color::rule() },
-        width: 1.0,
-        radius: 8.0.into(),
-      },
-      text_color: color::text::secondary(),
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::ghost(t!("wallet.budget.cancel"))
+    .on_press(Message::BudgetRuleEditorClosed)
+    .into()
 }
 
 fn save_button<'a>(label: &'a str, enabled: bool) -> Element<'a, Message> {
-  let mut save = button(
-    text(label.to_owned())
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(if enabled {
-        color::on_fill(color::accent::PLASMA)
-      } else {
-        color::text::tertiary()
-      })),
-  )
-  .padding(Padding {
-    top: 9.0,
-    right: 18.0,
-    bottom: 9.0,
-    left: 18.0,
-  })
-  .style(move |_, _| button::Style {
-    background: Some(Background::Color(if enabled {
-      color::accent::PLASMA
-    } else {
-      color::rule()
-    })),
-    border: Border {
-      radius: 8.0.into(),
-      ..Border::default()
-    },
-    text_color: if enabled {
-      color::on_fill(color::accent::PLASMA)
-    } else {
-      color::text::tertiary()
-    },
-    ..button::Style::default()
-  });
-  if enabled {
-    save = save.on_press(Message::BudgetRuleEditorCommitted);
-  }
-  save.into()
+  Button::primary(label)
+    .on_press_maybe(enabled.then_some(Message::BudgetRuleEditorCommitted))
+    .into()
 }
 
 /// A select rendered as an `AnchoredDropdown`: a bordered trigger showing the

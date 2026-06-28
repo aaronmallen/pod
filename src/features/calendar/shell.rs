@@ -13,8 +13,14 @@ use crate::{
   config::Feature,
   ui::{
     components::{
-      backdrop, forbidden, header::header as content_header, icon::Icon, positioned_dropdown::positioned_dropdown,
-      rule, segmented::segment_button,
+      backdrop,
+      button::{Button, Size},
+      forbidden,
+      header::header as content_header,
+      icon::Icon,
+      positioned_dropdown::positioned_dropdown,
+      rule,
+      segmented::segment_button,
     },
     datefmt,
     style::{color, radius, spacing, typography},
@@ -401,33 +407,10 @@ fn nav_period(state: &State) -> (String, Option<String>) {
 }
 
 fn reauth_button<'a>(target: i64) -> Element<'a, Message> {
-  button(
-    text(t!("calendar.shell.reauthenticate"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::MD)
-      .style(typography::colored(color::status::WARNING)),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-    right: spacing::SPACE_3,
-  })
-  .on_press(Message::ReauthRequested(target))
-  .style(|_, status| {
-    let hovered = matches!(status, button::Status::Hovered | button::Status::Pressed);
-    button::Style {
-      background: hovered.then(|| Background::Color(color::with_alpha(color::status::WARNING, 0.12))),
-      border: Border {
-        color: color::with_alpha(color::status::WARNING, 0.45),
-        radius: radius::CONTROL.into(),
-        width: 1.0,
-      },
-      text_color: color::status::WARNING,
-      ..button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(t!("calendar.shell.reauthenticate"))
+    .size(Size::Sm)
+    .on_press(Message::ReauthRequested(target))
+    .into()
 }
 
 fn type_legend<'a>(state: &'a State) -> Element<'a, Message> {

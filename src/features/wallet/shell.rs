@@ -20,7 +20,9 @@ use crate::{
     components::{
       anchored_dropdown::AnchoredDropdown,
       avatar::Avatar,
-      backdrop, context_menu,
+      backdrop,
+      button::{Button, Size},
+      context_menu,
       eyebrow::eyebrow_text,
       forbidden,
       glyph_badge::GlyphBadge,
@@ -467,40 +469,10 @@ fn budget_filter_badge(state: &State) -> Option<Element<'_, Message>> {
 }
 
 fn clear_filters_button<'a>() -> Element<'a, Message> {
-  button(
-    text(t!("wallet.shell.clear_filters"))
-      .font(typography::body::MEDIUM)
-      .size(typography::size::SM)
-      .style(typography::colored(color::text::secondary())),
-  )
-  .padding(Padding {
-    top: spacing::SPACE_2,
-    right: spacing::SPACE_3,
-    bottom: spacing::SPACE_2,
-    left: spacing::SPACE_3,
-  })
-  .on_press(Message::FiltersCleared)
-  .style(|_, status| {
-    let hovered = matches!(
-      status,
-      iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-    );
-    iced::widget::button::Style {
-      background: Some(Background::Color(iced::Color::TRANSPARENT)),
-      border: Border {
-        color: if hovered { color::rule_strong() } else { color::rule() },
-        width: 1.0,
-        radius: radius::CONTROL.into(),
-      },
-      text_color: if hovered {
-        color::text::PRIMARY
-      } else {
-        color::text::secondary()
-      },
-      ..iced::widget::button::Style::default()
-    }
-  })
-  .into()
+  Button::secondary(t!("wallet.shell.clear_filters"))
+    .size(Size::Sm)
+    .on_press(Message::FiltersCleared)
+    .into()
 }
 
 fn sign_control(state: &State) -> Element<'_, Message> {

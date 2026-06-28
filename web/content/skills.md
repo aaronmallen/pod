@@ -206,6 +206,8 @@ hold. The header sums the totals, for example "12 plans across 4 characters".
 Pick a character on the left and the detail pane on the right lists that pilot's
 plans.
 
+![The Manage Skill Plans window with the character rail and per-pilot plan list](/docs/img/skills/plan-manager.png)
+
 Each plan card shows its name and a "{n} skills · edited {date}" line, with three
 actions: Open opens the plan in the plan editor, Copy to copies the plan to
 another character, and Delete removes it after an inline "Delete?" confirm. New

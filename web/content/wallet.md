@@ -150,6 +150,8 @@ cursor and fetches more as you scroll. A side filter across the top switches
 between All, Buy, and Sell so you can isolate one direction of trade. The sign
 filter applies here too: In shows sells, Out shows buys.
 
+![Transactions tab](/docs/img/wallet/transactions.png)
+
 ## Contracts tab
 
 The Contracts tab lists item exchange, courier, and auction contracts tied to

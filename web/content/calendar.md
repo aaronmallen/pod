@@ -36,20 +36,28 @@ row shows the time, a color spine for the owner type, the title, the owning enti
 belongs to, along with a response pill and a short attendee tally. When the selected scope has nothing
 ahead, the list says there are no upcoming events for that pilot.
 
+![Agenda view](/docs/img/calendar/agenda.png)
+
 The Day view is an hour grid for a single date. Timed events render as blocks positioned at their start
 hour, bordered in their owner color. Events that overlap split into side-by-side lanes so none are
 hidden. All-day events sit in a strip above the grid. Pod's point-in-time overlays, such as a skill
 finishing or a timer firing, draw as a thin horizontal marker with an icon rather than a block, because
 they have no duration. When the date is today, a "now" line marks the current time.
 
+![Day view](/docs/img/calendar/day.png)
+
 The Week view shows five to seven day columns, depending on whether weekends are shown. It has two
 shapes. The default is a time grid like the Day view but spread across the week, with an all-day strip
 and an hour grid. The alternate shape is a set of agenda-style columns, where each day stacks its
 events as a short list with no hour grid. Today's column is highlighted.
 
+![Week view](/docs/img/calendar/week.png)
+
 The Year view lays out twelve mini-months. Each mini-month names its month, counts its events, and
 draws a small weekday grid where a day with events carries a colored dot. Clicking a month name opens
 the Month view for that month, and clicking a day opens the Day view for that day.
+
+![Year view](/docs/img/calendar/year.png)
 
 ## Navigating dates
 

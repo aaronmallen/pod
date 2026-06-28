@@ -28,6 +28,7 @@ const RADIO_DOT_SIZE: f32 = 14.0;
 const RADIO_CHECK_SIZE: f32 = 8.0;
 const SIDE_CARD_MAX_HEIGHT: f32 = 145.0;
 const SIDE_CARD_MAX_WIDTH: f32 = 245.0;
+const SIDE_CARDS_ROW_MAX_WIDTH: f32 = SIDE_CARD_MAX_WIDTH * 2.0 + spacing::SPACE_3_5;
 const ROW_LIST_MAX_WIDTH: f32 = 560.0;
 
 const RAIL_SIDES: [NavLocation; 2] = [NavLocation::Left, NavLocation::Right];
@@ -313,10 +314,14 @@ fn side_cards(settings: &Settings) -> Element<'_, Message> {
     .map(|side| nav_card(side, selected == side))
     .collect();
 
-  Row::with_children(cards)
-    .spacing(spacing::SPACE_3_5)
-    .width(Length::Fill)
-    .into()
+  container(
+    Row::with_children(cards)
+      .spacing(spacing::SPACE_3_5)
+      .width(Length::Fill),
+  )
+  .width(Length::Fill)
+  .max_width(SIDE_CARDS_ROW_MAX_WIDTH)
+  .into()
 }
 
 fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
@@ -357,8 +362,7 @@ fn nav_card<'a>(side: NavLocation, selected: bool) -> Element<'a, Message> {
   let card_button = card::selectable_card(card, selected, Message::SideSelected(side)).width(Length::Fill);
 
   container(card_button)
-    .width(Length::FillPortion(1))
-    .max_width(SIDE_CARD_MAX_WIDTH)
+    .width(Length::Fill)
     .max_height(SIDE_CARD_MAX_HEIGHT)
     .into()
 }
@@ -955,6 +959,11 @@ mod tests {
     #[test]
     fn it_caps_the_side_card_max_height_at_the_design_grid_bound() {
       assert_eq!(SIDE_CARD_MAX_HEIGHT, 145.0);
+    }
+
+    #[test]
+    fn it_caps_the_side_card_pair_to_two_cards_and_the_gutter() {
+      assert_eq!(SIDE_CARDS_ROW_MAX_WIDTH, 504.0);
     }
 
     #[test]

@@ -82,9 +82,13 @@ markup it does not recognize rather than showing raw tags.
 Links in the body, such as character, corporation, or station references, render as styled underlined
 text. They are shown for context and are not clickable inside the reading pane.
 
-The reading pane toolbar holds the actions for the open message, from left to right: **Label**,
-**Star** (which reads **Starred** once set), **Snooze**, **Archive**, and either **Move to Trash** or,
-for a message already in Trash, **Delete**. The message timestamp sits at the right end of the bar.
+The reading pane toolbar holds the actions for the open message, from left to right: **Reply**,
+**Reply All**, **Forward**, and **Label**, then, past a divider, **Star** (which reads **Starred**
+once set), **Snooze**, **Archive**, and either **Move to Trash** or, for a message already in Trash,
+**Delete**. The message timestamp sits at the right end of the bar.
+
+**Reply**, **Reply All**, and **Forward** each open a compose window seeded from the open message, so
+you can answer or pass it on without leaving the reading pane.
 
 When no message is selected, the reading pane shows a "Select a message" prompt. When a search returns
 nothing, the message list reports that no messages match the query.
@@ -144,6 +148,15 @@ the chosen entity as a proper in-game link. For a web URL you type the address d
 When you send, Pod writes the message into your Sent folder right away so you see it without waiting for
 the next sync. The real message replaces this optimistic copy on the next mail sync. If the send fails
 permanently on EVE's side, Pod removes the optimistic copy.
+
+### Outbox
+
+While Pod is delivering mail, an outbox indicator tracks its progress. A sending pill counts the
+messages still on their way out, and a failed pill, marked in red, counts the ones that did not go
+through. The indicator stays hidden while nothing is pending or failed.
+
+When a send fails, the indicator shows the error along with two actions for the first failure. **Retry**
+queues that message to send again, and **Dismiss** clears it from the outbox.
 
 ## Drafts
 

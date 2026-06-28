@@ -10,8 +10,9 @@
 // so install-distinctness is labeled honestly upstream in render.ts.
 //
 // The literal string "unknown" (never NULL) is what the client sends for an
-// unresolved os_version/display/locale; these rows are surfaced explicitly,
-// never filtered out.
+// unresolved os_version/window_size/screen_size/locale; these rows are surfaced
+// explicitly, never filtered out. (screen_size is also NULL for legacy rows
+// from clients that predate the field; those collapse to "unknown" too.)
 
 import type { D1Database } from "@cloudflare/workers-types";
 
@@ -34,12 +35,13 @@ export interface InstallTrend {
   points: InstallTrendPoint[];
 }
 
-/** A platform bucket: a distinct (os, os_version, arch, display) combination. */
+/** A platform bucket: a distinct (os, os_version, arch, window_size, screen_size) combination. */
 export interface PlatformRow {
   os: string;
   os_version: string;
   arch: string;
-  display: string;
+  window_size: string;
+  screen_size: string;
   /** Distinct installs reporting this exact environment combination. */
   installs: number;
 }
@@ -153,26 +155,29 @@ export async function getInstallTrend(db: D1Database, windowDays: number): Promi
 
 /**
  * Panel 2: platform mix from environment rows, grouped by the full
- * (os, os_version, arch, display) tuple. The literal "unknown" bucket is kept.
+ * (os, os_version, arch, window_size, screen_size) tuple. The literal "unknown"
+ * bucket is kept (and a NULL screen_size from a legacy row collapses to it).
  */
 export async function getPlatformBreakdown(db: D1Database): Promise<PlatformRow[]> {
-  const sql = `SELECT os, os_version, arch, display, COUNT(DISTINCT anon_id) AS installs
+  const sql = `SELECT os, os_version, arch, window_size, screen_size, COUNT(DISTINCT anon_id) AS installs
     FROM events
     WHERE stream='environment'
-    GROUP BY os, os_version, arch, display
+    GROUP BY os, os_version, arch, window_size, screen_size
     ORDER BY installs DESC, os ASC`;
   const r = await db.prepare(sql).all<{
     os: string;
     os_version: string;
     arch: string;
-    display: string;
+    window_size: string;
+    screen_size: string | null;
     installs: number;
   }>();
   return (r.results ?? []).map((row) => ({
     os: row.os ?? "unknown",
     os_version: row.os_version ?? "unknown",
     arch: row.arch ?? "unknown",
-    display: row.display ?? "unknown",
+    window_size: row.window_size ?? "unknown",
+    screen_size: row.screen_size ?? "unknown",
     installs: row.installs,
   }));
 }

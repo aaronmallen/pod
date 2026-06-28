@@ -5,14 +5,14 @@
 
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 
-import type { Envelope } from "./contract";
+import type { EnvironmentStream, Envelope } from "./contract";
 
 const INSERT_EVENT = `INSERT INTO events
   (anon_id, session, schema, app_version, git_sha,
     stream, event_kind, name, toggle_on,
     load_ms, frame_p95_ms, heap_mb,
-    os, os_version, arch, display, locale, event_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    os, os_version, arch, window_size, screen_size, locale, event_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 const INSERT_CRASH = `INSERT INTO crashes
   (anon_id, session, schema, app_version, git_sha,
@@ -41,7 +41,7 @@ export function buildStatements(db: D1Database, env: Envelope): D1PreparedStatem
             env.id, env.session, env.schema, env.app.version, gitSha,
             "usage", ev.kind, ev.name, toggleOn,
             null, null, null,
-            null, null, null, null, null, ev.t,
+            null, null, null, null, null, null, ev.t,
           ),
         );
       }
@@ -55,7 +55,7 @@ export function buildStatements(db: D1Database, env: Envelope): D1PreparedStatem
             env.id, env.session, env.schema, env.app.version, gitSha,
             "performance", null, view.name, null,
             view.load_ms, view.frame_p95_ms, perf.heap_mb,
-            null, null, null, null, null, env.sent_at,
+            null, null, null, null, null, null, env.sent_at,
           ),
         );
       }
@@ -63,12 +63,17 @@ export function buildStatements(db: D1Database, env: Envelope): D1PreparedStatem
 
     const e = env.streams.environment;
     if (e) {
+      // Legacy clients send `display`; new clients send `window_size`. Coalesce
+      // so both record into the window_size column. screen_size is null when an
+      // (old) client omits it.
+      const windowSize = (e as EnvironmentStream & { display?: string }).display ?? e.window_size;
+      const screenSize = e.screen_size ?? null;
       stmts.push(
         db.prepare(INSERT_EVENT).bind(
           env.id, env.session, env.schema, env.app.version, gitSha,
           "environment", null, null, null,
           null, null, null,
-          e.os, e.os_version, e.arch, e.display, e.locale, env.sent_at,
+          e.os, e.os_version, e.arch, windowSize, screenSize, e.locale, env.sent_at,
         ),
       );
     }

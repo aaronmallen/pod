@@ -106,7 +106,8 @@ function renderPlatforms(rows: PlatformRow[]): string {
     <td>${escapeHtml(r.os)}</td>
     <td>${escapeHtml(r.os_version)}</td>
     <td>${escapeHtml(r.arch)}</td>
-    <td>${escapeHtml(r.display)}</td>
+    <td>${escapeHtml(r.window_size)}</td>
+    <td>${escapeHtml(r.screen_size)}</td>
     <td class="n">${escapeHtml(r.installs)}</td>
     <td class="barcell">${bar(r.installs, max)}</td>
   </tr>`,
@@ -116,7 +117,7 @@ function renderPlatforms(rows: PlatformRow[]): string {
   <h2>Platform breakdown</h2>
   <p class="note">By distinct installs per environment. The literal <code>"unknown"</code> bucket is shown, never hidden.</p>
   <table>
-    <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th>Display</th><th class="n">Installs</th><th></th></tr></thead>
+    <thead><tr><th>OS</th><th>OS version</th><th>Arch</th><th>Window size</th><th>Screen size</th><th class="n">Installs</th><th></th></tr></thead>
     <tbody>${body}</tbody>
   </table>
 </section>`;

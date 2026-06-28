@@ -18,8 +18,8 @@ function baseStats(over: Partial<DashboardStats> = {}): DashboardStats {
       { day: "2026-06-26", installs: 2 },
     ] },
     platforms: [
-      { os: "macos", os_version: "15", arch: "aarch64", display: "2560x1440", installs: 2 },
-      { os: "linux", os_version: "unknown", arch: "x86_64", display: "unknown", installs: 1 },
+      { os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", installs: 2 },
+      { os: "linux", os_version: "unknown", arch: "x86_64", window_size: "unknown", screen_size: "unknown", installs: 1 },
     ],
     features: [
       { event_kind: "view_open", name: "wallet", count: 5, toggledOn: null },
@@ -89,6 +89,14 @@ describe("renderDashboard", () => {
     const out = renderDashboard(baseStats());
     expect(out).toContain("unknown");
     expect(out).toContain("linux");
+  });
+
+  it("renders the window size and screen size columns", () => {
+    const out = renderDashboard(baseStats());
+    expect(out).toContain("Window size");
+    expect(out).toContain("Screen size");
+    expect(out).toContain("3440x1440");
+    expect(out).not.toContain(">Display<");
   });
 
   it("omits the schema panel when only one schema is present", () => {

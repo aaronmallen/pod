@@ -35,7 +35,8 @@ interface EventRow {
   os: string | null;
   os_version: string | null;
   arch: string | null;
-  display: string | null;
+  window_size: string | null;
+  screen_size: string | null;
   locale: string | null;
   received_at: string;
 }
@@ -62,7 +63,8 @@ function seedEvents(): EventRow[] {
     os: null,
     os_version: null,
     arch: null,
-    display: null,
+    window_size: null,
+    screen_size: null,
     locale: null,
     toggle_on: null,
     event_kind: null,
@@ -70,9 +72,10 @@ function seedEvents(): EventRow[] {
   };
   return [
     // environment rows (one per install)
-    { ...base, anon_id: "a", app_version: "0.9.4", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", display: "2560x1440", locale: "en", received_at: todayIso },
-    { ...base, anon_id: "b", app_version: "0.9.4", stream: "environment", os: "linux", os_version: "unknown", arch: "x86_64", display: "unknown", locale: "unknown", received_at: todayIso },
-    { ...base, anon_id: "c", app_version: "0.9.3", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", display: "2560x1440", locale: "en", received_at: todayIso },
+    { ...base, anon_id: "a", app_version: "0.9.4", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", received_at: todayIso },
+    // legacy row: screen_size NULL (the client predates the field) -> "unknown" bucket
+    { ...base, anon_id: "b", app_version: "0.9.4", stream: "environment", os: "linux", os_version: "unknown", arch: "x86_64", window_size: "unknown", screen_size: null, locale: "unknown", received_at: todayIso },
+    { ...base, anon_id: "c", app_version: "0.9.3", stream: "environment", os: "macos", os_version: "15", arch: "aarch64", window_size: "2560x1440", screen_size: "3440x1440", locale: "en", received_at: todayIso },
     // usage rows
     { ...base, anon_id: "a", app_version: "0.9.4", stream: "usage", event_kind: "view_open", name: "wallet", received_at: todayIso },
     { ...base, anon_id: "b", app_version: "0.9.4", stream: "usage", event_kind: "view_open", name: "wallet", received_at: todayIso },
@@ -125,7 +128,7 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
     if (s.includes("WHERE stream='environment'")) {
       const groups = new Map<string, { row: EventRow; ids: string[] }>();
       for (const e of events.filter((e) => e.stream === "environment")) {
-        const k = `${e.os}|${e.os_version}|${e.arch}|${e.display}`;
+        const k = `${e.os}|${e.os_version}|${e.arch}|${e.window_size}|${e.screen_size}`;
         if (!groups.has(k)) groups.set(k, { row: e, ids: [] });
         groups.get(k)!.ids.push(e.anon_id);
       }
@@ -133,7 +136,8 @@ function fakeDb(events: EventRow[], crashes: CrashRow[]) {
         os: row.os,
         os_version: row.os_version,
         arch: row.arch,
-        display: row.display,
+        window_size: row.window_size,
+        screen_size: row.screen_size,
         installs: distinct(ids),
       }));
       return { results, first: null };
@@ -257,13 +261,17 @@ describe("getInstallTrend", () => {
 });
 
 describe("getPlatformBreakdown", () => {
-  it("groups by os/version/arch/display and keeps the unknown bucket", async () => {
+  it("groups by os/version/arch/window_size/screen_size and keeps the unknown bucket", async () => {
     const rows = await getPlatformBreakdown(fakeDb(seedEvents(), seedCrashes()));
     expect(rows).toHaveLength(2); // macos/15/aarch64 (2 installs) + linux/unknown
+    const macos = rows.find((r) => r.os === "macos");
+    expect(macos!.window_size).toBe("2560x1440");
+    expect(macos!.screen_size).toBe("3440x1440");
     const linux = rows.find((r) => r.os === "linux");
     expect(linux).toBeDefined();
     expect(linux!.os_version).toBe("unknown"); // unknown bucket surfaced, not hidden
-    expect(linux!.display).toBe("unknown");
+    expect(linux!.window_size).toBe("unknown");
+    expect(linux!.screen_size).toBe("unknown"); // NULL screen_size collapses to the unknown bucket
   });
 });
 

@@ -119,6 +119,70 @@ describe("tampered envelopes are rejected", () => {
   });
 });
 
+describe("environment window_size / screen_size contract", () => {
+  function withEnvironment(environment: Record<string, unknown>) {
+    const env = deepClone(SESSION) as { streams: { environment: Record<string, unknown> } };
+    env.streams.environment = environment;
+    return validateEnvelope(env, MAX_SCHEMA);
+  }
+
+  it("accepts a new payload with window_size + screen_size", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      screen_size: "3440x1440",
+      locale: "en",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a legacy payload using display (aliased to window_size)", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      display: "2560x1440",
+      locale: "en",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a payload that omits screen_size", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      locale: "en",
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects a non-string screen_size", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      window_size: "2560x1440",
+      screen_size: 1440,
+      locale: "en",
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("rejects an environment missing window_size and its display alias", () => {
+    const r = withEnvironment({
+      os: "macos",
+      os_version: "15",
+      arch: "aarch64",
+      locale: "en",
+    });
+    expect(r.ok).toBe(false);
+  });
+});
+
 describe("§5.6 crash free-text reject", () => {
   function crashWith(message: string): Envelope {
     const env = deepClone(CRASH) as Envelope;

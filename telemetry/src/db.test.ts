@@ -58,6 +58,58 @@ describe("session envelope mapping", () => {
   });
 });
 
+describe("environment row mapping", () => {
+  function envEnvelope(environment: Record<string, unknown>): Envelope {
+    return {
+      schema: 1,
+      kind: "session",
+      id: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      session: "s_1a2b3c4d",
+      app: { version: "0.9.4" },
+      sent_at: "2026-06-25T14:32:08Z",
+      streams: { environment: environment as unknown as Envelope["streams"]["environment"] },
+    };
+  }
+
+  // env-row bound params: ... os(12), os_version(13), arch(14), window_size(15),
+  // screen_size(16), locale(17), event_at(18).
+  it("binds window_size + screen_size from a new payload", () => {
+    const sink: Recorded[] = [];
+    buildStatements(
+      stubDb(sink),
+      envEnvelope({
+        os: "macos",
+        os_version: "15",
+        arch: "aarch64",
+        window_size: "2560x1440",
+        screen_size: "3440x1440",
+        locale: "en",
+      }),
+    );
+
+    expect(sink).toHaveLength(1);
+    expect(sink[0].params[15]).toBe("2560x1440");
+    expect(sink[0].params[16]).toBe("3440x1440");
+  });
+
+  it("coalesces a legacy display into window_size and nulls screen_size", () => {
+    const sink: Recorded[] = [];
+    buildStatements(
+      stubDb(sink),
+      envEnvelope({
+        os: "macos",
+        os_version: "15",
+        arch: "aarch64",
+        display: "2560x1440",
+        locale: "en",
+      }),
+    );
+
+    expect(sink[0].params[15]).toBe("2560x1440");
+    expect(sink[0].params[16]).toBeNull();
+  });
+});
+
 describe("crash envelope mapping", () => {
   it("emits one crashes row with JSON-serialized arrays", () => {
     const sink: Recorded[] = [];

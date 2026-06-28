@@ -65,7 +65,10 @@ export interface EnvironmentStream {
   os: string;
   os_version: string;
   arch: string;
-  display: string;
+  window_size: string;
+  // Optional: legacy clients omit it, and they send `display` (the old name for
+  // window_size) instead, which the ingest path aliases onto window_size.
+  screen_size?: string;
   locale: string;
 }
 
@@ -183,11 +186,24 @@ function validatePerformance(perf: unknown): string | null {
 
 function validateEnvironment(env: unknown): string | null {
   if (!isObject(env)) return "environment must be an object";
-  const keys = ["os", "os_version", "arch", "display", "locale"];
-  const extra = onlyKeys(env, keys);
+  // The canonical (current) environment key set, asserted verbatim by the Rust
+  // contract test (src/telemetry_contract.rs). Keep this literal in sync there.
+  const keys = ["os", "os_version", "arch", "window_size", "screen_size", "locale"];
+  // Legacy clients (pre-rename) still report `display` for the window size;
+  // accept it as an alias during the transition so they keep recording.
+  const allowed = [...keys, "display"];
+  const extra = onlyKeys(env, allowed);
   if (extra) return `unknown environment key: ${extra}`;
-  for (const k of keys) {
+  for (const k of ["os", "os_version", "arch", "locale"]) {
     if (typeof env[k] !== "string") return `environment.${k} must be a string`;
+  }
+  // window_size is required, but a legacy payload carries it under `display`.
+  if (typeof (env.window_size ?? env.display) !== "string") {
+    return "environment.window_size must be a string";
+  }
+  // screen_size is optional (old clients omit it); when present it must be a string.
+  if ("screen_size" in env && typeof env.screen_size !== "string") {
+    return "environment.screen_size must be a string";
   }
   return null;
 }

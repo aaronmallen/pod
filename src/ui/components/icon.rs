@@ -384,6 +384,10 @@ impl Icon {
     self
   }
 
+  pub fn handle(&self) -> svg::Handle {
+    self.handle.clone()
+  }
+
   pub fn render<'a, M: 'static>(self) -> Element<'a, M> {
     let tint = self.color;
     svg(self.handle)

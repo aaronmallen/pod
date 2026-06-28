@@ -3,6 +3,7 @@ pub mod anchored_dropdown;
 pub mod avatar;
 pub mod backdrop;
 pub mod badge;
+pub mod button;
 pub mod card;
 pub mod chip;
 pub mod clip;

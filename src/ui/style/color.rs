@@ -7,11 +7,23 @@ pub mod accent {
     b: 0.859,
     a: 1.0,
   };
+  pub const PLASMA_INK: Color = Color {
+    r: 0.0392,
+    g: 0.0902,
+    b: 0.1098,
+    a: 1.0,
+  };
   pub const PLASMA_MUTED: Color = Color {
     r: 0.247,
     g: 0.722,
     b: 0.859,
     a: 0.25,
+  };
+  pub const PLASMA_PRESSED: Color = Color {
+    r: 0.1843,
+    g: 0.6392,
+    b: 0.7686,
+    a: 1.0,
   };
 }
 
@@ -61,6 +73,18 @@ pub mod status {
     r: 0.878,
     g: 0.459,
     b: 0.349,
+    a: 1.0,
+  };
+  pub const DANGER_INK: Color = Color {
+    r: 0.1098,
+    g: 0.0549,
+    b: 0.0392,
+    a: 1.0,
+  };
+  pub const DANGER_PRESSED: Color = Color {
+    r: 0.7882,
+    g: 0.3843,
+    b: 0.2902,
     a: 1.0,
   };
   pub const ONLINE: Color = Color {
